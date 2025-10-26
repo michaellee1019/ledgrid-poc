@@ -31,8 +31,8 @@ class HardwareSPI:
         self.spi = spidev.SpiDev()
         self.spi.open(bus, device)
         
-        # SPI Mode 0 (CPOL=0, CPHA=0)
-        self.spi.mode = 0
+        # SPI Mode 3 (CPOL=1, CPHA=1) - more reliable for RP2040 slave!
+        self.spi.mode = 3
         
         # Hardware SPI can go MUCH faster
         self.spi.max_speed_hz = speed_hz
@@ -157,9 +157,6 @@ def hardware_spi_test(duration_sec=10, pattern="rainbow", speed_hz=10_000_000):
                 print(f"⚡ FPS: {fps:.1f} | Frames: {frame_count} | Elapsed: {elapsed:.1f}s")
                 last_fps_time = current_time
                 last_fps_frame = frame_count
-            spi.clear()
-            print("Cleared\n")
-            time.sleep(1)
         
         # Final stats
         total_time = time.time() - start_time
@@ -222,5 +219,5 @@ if __name__ == "__main__":
     print(f"  - strips_different_colors: Each strip a different color")
     print(f"\nUsage: python3 test_hardware_spi.py [pattern] [duration_sec] [speed_mhz]")
     
-    hardware_spi_test(duration_sec=duration, pattern=pattern, speed_hz=1)
+    hardware_spi_test(duration_sec=duration, pattern=pattern, speed_hz=speed_mhz * 1_000_000)
 

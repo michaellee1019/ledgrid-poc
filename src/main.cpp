@@ -1,31 +1,24 @@
-// SPI Slave LED Controller for RP2040 SCORPIO using HARDWARE SPI + DMA
-// CS interrupt triggers DMA transfers for reliable synchronization
+// SPI Slave LED Controller - Using the WORKING approach
+// Continuous TX FIFO fill + manual RX FIFO reads (no DMA)
+// This matches the test that successfully received data!
 
 #include <Arduino.h>
-#include <stdint.h>
-#include <string.h>
 #include <Adafruit_NeoPXL8.h>
-
-// Pico SDK for hardware SPI + DMA
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
-#include "hardware/dma.h"
 
-// SPI Configuration (SPI1 - GPIO 12-15)
 #define SPI_INST spi1
-#define SPI_MOSI_PIN 12  // RX from master
-#define SPI_CS_PIN 13    // Chip Select
-#define SPI_SCK_PIN 14   // Clock
-#define SPI_MISO_PIN 15  // TX to master (unused)
-
-// SPI Speed - Hardware can handle much faster!
-#define SPI_BAUDRATE (10 * 1000 * 1000)  // 10 MHz
+#define SPI_MOSI_PIN 12
+#define SPI_CS_PIN 13
+#define SPI_SCK_PIN 14
+#define SPI_MISO_PIN 15
+#define SPI_BAUDRATE (10 * 1000 * 1000)
 
 // LED Configuration
-#define NUM_LED 20  // 20 LEDs per strip
-#define TOTAL_LEDS (NUM_LED * 8)  // 8 strips = 160 total LEDs
+#define NUM_LED 20
+#define TOTAL_LEDS (NUM_LED * 8)
 
-// Command Protocol
+// Commands
 #define CMD_SET_PIXEL 0x01
 #define CMD_SET_BRIGHTNESS 0x02
 #define CMD_SHOW 0x03
@@ -34,151 +27,53 @@
 #define CMD_SET_ALL_PIXELS 0x06
 #define CMD_PING 0xFF
 
-// NeoPixel strips on SCORPIO
+// NeoPixel strips
 int8_t pins[8] = { 16, 17, 18, 19, 20, 21, 22, 23 };
 Adafruit_NeoPXL8 leds(NUM_LED, pins, NEO_GRB);
 
-// DMA Configuration
-#define DMA_BUFFER_SIZE 1024
-uint8_t dma_buffer[DMA_BUFFER_SIZE] __attribute__((aligned(4)));
-uint8_t dummy_tx_byte = 0x00;  // Dummy byte to send (for RX to work)
-int dma_rx_channel;  // DMA channel for receiving
-int dma_tx_channel;  // DMA channel for transmitting dummy data
-volatile bool transaction_complete = false;
-volatile uint16_t bytes_received = 0;
-
-// Statistics
-unsigned long packetsReceived = 0;
-unsigned long framesRendered = 0;
-
-
-// CS (Chip Select) GPIO interrupt handler
-void cs_gpio_callback(uint gpio, uint32_t events) {
-  if (gpio == SPI_CS_PIN) {
-    if (events & GPIO_IRQ_EDGE_FALL) {
-      // ========================================
-      // CS asserted (LOW) - START SPI transaction
-      // ========================================
-      
-      // Clear DMA buffer
-      memset(dma_buffer, 0, DMA_BUFFER_SIZE);
-      
-      // ========================================
-      // Configure TX DMA (send dummy bytes)
-      // SPI requires simultaneous TX/RX!
-      // ========================================
-      dma_channel_config tx_config = dma_channel_get_default_config(dma_tx_channel);
-      channel_config_set_transfer_data_size(&tx_config, DMA_SIZE_8);  // 8-bit transfers
-      channel_config_set_read_increment(&tx_config, false);           // Read from same dummy byte
-      channel_config_set_write_increment(&tx_config, false);          // Write to same SPI TX FIFO
-      channel_config_set_dreq(&tx_config, spi_get_dreq(SPI_INST, true));  // Triggered by SPI TX
-      
-      dma_channel_configure(
-        dma_tx_channel,
-        &tx_config,
-        &spi_get_hw(SPI_INST)->dr,     // Write to SPI data register (TX)
-        &dummy_tx_byte,                // Read from dummy byte (always 0x00)
-        DMA_BUFFER_SIZE,               // Match RX transfer size
-        true                           // Start immediately
-      );
-      
-      // ========================================
-      // Configure RX DMA (receive actual data)
-      // ========================================
-      dma_channel_config rx_config = dma_channel_get_default_config(dma_rx_channel);
-      channel_config_set_transfer_data_size(&rx_config, DMA_SIZE_8);  // 8-bit transfers
-      channel_config_set_read_increment(&rx_config, false);           // Read from same SPI RX FIFO
-      channel_config_set_write_increment(&rx_config, true);           // Write to incrementing buffer
-      channel_config_set_dreq(&rx_config, spi_get_dreq(SPI_INST, false));  // Triggered by SPI RX
-      
-      dma_channel_configure(
-        dma_rx_channel,
-        &rx_config,
-        dma_buffer,                    // Write destination
-        &spi_get_hw(SPI_INST)->dr,     // Read from SPI data register (RX)
-        DMA_BUFFER_SIZE,               // Max bytes to transfer
-        true                           // Start immediately
-      );
-      
-    } else if (events & GPIO_IRQ_EDGE_RISE) {
-      Serial.println("CS released (HIGH)");
-      // ========================================
-      // CS released (HIGH) - END SPI transaction
-      // ========================================
-      
-      // Stop both DMA transfers
-      dma_channel_abort(dma_tx_channel);
-      dma_channel_abort(dma_rx_channel);
-      
-      // Calculate how many bytes were received
-      bytes_received = DMA_BUFFER_SIZE - dma_channel_hw_addr(dma_rx_channel)->transfer_count;
-      Serial.print("Bytes received: ");
-      Serial.println(bytes_received);
-      
-      // Mark transaction as complete for processing in main loop
-      if (bytes_received > 0) {
-        transaction_complete = true;
-      }
-    }
-  }
-}
-
+// Command buffer
+#define CMD_BUFFER_SIZE 512
+uint8_t cmd_buffer[CMD_BUFFER_SIZE];
+uint16_t cmd_index = 0;
+bool in_transaction = false;
 
 void processCommand() {
-  if (bytes_received == 0) return;
+  if (cmd_index == 0) return;
   
-  uint8_t cmd = dma_buffer[0];
+  uint8_t cmd = cmd_buffer[0];
   
-  Serial.print("[RX] ");
-  Serial.print(bytes_received);
-  Serial.print(" bytes | CMD: 0x");
-  Serial.println(cmd, HEX);
-  uint8_t ck = 0;
-  for (int i = 0; i < sizeof(dma_buffer); i++) {
-    ck ^= dma_buffer[i];
-  }
-  Serial.print("  → Checksum: 0x");
-  Serial.println(ck, HEX);
-
+  Serial.print("[CMD] 0x");
+  Serial.print(cmd, HEX);
+  Serial.print(" (");
+  Serial.print(cmd_index);
+  Serial.println(" bytes)");
+  
   switch (cmd) {
     case CMD_PING:
-      Serial.println("  → Ping");
+      Serial.println("  → PING");
       break;
     
     case CMD_SET_PIXEL:
-      if (bytes_received >= 6) {
-        uint16_t pixel = (dma_buffer[1] << 8) | dma_buffer[2];
-        uint8_t r = dma_buffer[3];
-        uint8_t g = dma_buffer[4];
-        uint8_t b = dma_buffer[5];
-        
+      if (cmd_index >= 6) {
+        uint16_t pixel = (cmd_buffer[1] << 8) | cmd_buffer[2];
+        uint8_t r = cmd_buffer[3];
+        uint8_t g = cmd_buffer[4];
+        uint8_t b = cmd_buffer[5];
         if (pixel < TOTAL_LEDS) {
           leds.setPixelColor(pixel, leds.Color(r, g, b));
         }
-        Serial.print("  → Set pixel ");
-        Serial.print(pixel);
-        Serial.print(" = RGB(");
-        Serial.print(r);
-        Serial.print(",");
-        Serial.print(g);
-        Serial.print(",");
-        Serial.print(b);
-        Serial.println(")");
       }
       break;
     
     case CMD_SET_BRIGHTNESS:
-      if (bytes_received >= 2) {
-        leds.setBrightness(dma_buffer[1]);
-        Serial.print("  → Brightness: ");
-        Serial.println(dma_buffer[1]);
+      if (cmd_index >= 2) {
+        leds.setBrightness(cmd_buffer[1]);
       }
       break;
     
     case CMD_SHOW:
       leds.show();
-      framesRendered++;
-      Serial.println("  → Show LEDs");
+      Serial.println("  → SHOW");
       break;
     
     case CMD_CLEAR:
@@ -186,208 +81,89 @@ void processCommand() {
         leds.setPixelColor(i, 0);
       }
       leds.show();
-      framesRendered++;
-      Serial.println("  → Clear all");
+      Serial.println("  → CLEAR");
       break;
     
-    case CMD_SET_RANGE:
-      if (bytes_received >= 4) {
-        uint16_t start = (dma_buffer[1] << 8) | dma_buffer[2];
-        uint8_t count = dma_buffer[3];
-        uint16_t expectedBytes = 4 + (count * 3);
-        
-        if (bytes_received >= expectedBytes) {
-          for (uint8_t i = 0; i < count; i++) {
-            uint16_t pixel = start + i;
-            if (pixel < TOTAL_LEDS) {
-              uint8_t r = dma_buffer[4 + (i * 3)];
-              uint8_t g = dma_buffer[4 + (i * 3) + 1];
-              uint8_t b = dma_buffer[4 + (i * 3) + 2];
-              leds.setPixelColor(pixel, leds.Color(r, g, b));
-            }
-          }
-          Serial.print("  → Set range: ");
-          Serial.print(start);
-          Serial.print(" count: ");
-          Serial.println(count);
-        }
-      }
-      break;
-    
-    case CMD_SET_ALL_PIXELS: {
-      // Format: [0x06, r0, g0, b0, r1, g1, b1, ..., r159, g159, b159]
-      // Expected: 1 + (160 * 3) = 481 bytes
-      uint16_t expectedBytes = 1 + (TOTAL_LEDS * 3);
-      
-      if (bytes_received >= expectedBytes) {
-        // Set all pixels from buffer
+    case CMD_SET_ALL_PIXELS:
+      if (cmd_index >= 1 + (TOTAL_LEDS * 3)) {
         for (uint16_t i = 0; i < TOTAL_LEDS; i++) {
-          uint8_t r = dma_buffer[1 + (i * 3)];
-          uint8_t g = dma_buffer[1 + (i * 3) + 1];
-          uint8_t b = dma_buffer[1 + (i * 3) + 2];
+          uint8_t r = cmd_buffer[1 + (i * 3)];
+          uint8_t g = cmd_buffer[1 + (i * 3) + 1];
+          uint8_t b = cmd_buffer[1 + (i * 3) + 2];
           leds.setPixelColor(i, leds.Color(r, g, b));
         }
-        Serial.print("  → Set all pixels: ");
-        Serial.print(TOTAL_LEDS);
-        Serial.println(" LEDs");
-      } else {
-        Serial.print("  → [WARN] Expected ");
-        Serial.print(expectedBytes);
-        Serial.print(" bytes, got ");
-        Serial.println(bytes_received);
+        Serial.println("  → SET_ALL");
       }
-      break;
-    }
-    
-    default:
-      Serial.print("  → [WARN] Unknown command: 0x");
-      Serial.println(cmd, HEX);
       break;
   }
 }
 
-
 void setup() {
-  // USB Serial for debugging
   Serial.begin(115200);
   delay(2000);
   
   Serial.println("\n\n========================================");
-  Serial.println("⚡ HARDWARE SPI + DMA LED Controller");
-  Serial.println("   CS Interrupt + DMA Mode");
-  Serial.println("========================================");
-  Serial.print("LEDs per strip: ");
-  Serial.println(NUM_LED);
-  Serial.print("Total LEDs: ");
-  Serial.println(TOTAL_LEDS);
-  Serial.print("SPI Speed: ");
-  Serial.print(SPI_BAUDRATE / 1000000);
-  Serial.println(" MHz");
-  Serial.println();
+  Serial.println("LED Controller (Working Method)");
+  Serial.println("Mode 3 + Continuous TX Fill");
+  Serial.println("========================================\n");
   
-  // Initialize NeoPixels
-  Serial.println("Initializing NeoPXL8...");
+  // Initialize LEDs
   if (!leds.begin()) {
-    Serial.println("  ✗ ERROR: NeoPXL8 failed!");
+    Serial.println("✗ NeoPXL8 failed!");
     while (1) delay(1000);
   }
-  Serial.println("  ✓ NeoPXL8 initialized");
-  
   leds.setBrightness(50);
-  
-  // Clear LEDs
   for (int i = 0; i < TOTAL_LEDS; i++) {
     leds.setPixelColor(i, 0);
   }
   leds.show();
+  Serial.println("✓ NeoPXL8 initialized");
   
-  // Test flash
-  Serial.println("\nTest flash...");
-  for (int i = 0; i < TOTAL_LEDS; i++) {
-    leds.setPixelColor(i, leds.Color(255, 255, 255));
-  }
-  leds.show();
-  delay(200);
-  
-  for (int i = 0; i < TOTAL_LEDS; i++) {
-    leds.setPixelColor(i, 0);
-  }
-  leds.show();
-  
-  // ========================================
-  // Initialize HARDWARE SPI slave
-  // ========================================
-  Serial.println("\nInitializing HARDWARE SPI slave...");
-  
-  // Initialize SPI1 in slave mode
+  // Initialize SPI slave with Mode 3
   spi_init(SPI_INST, SPI_BAUDRATE);
   spi_set_slave(SPI_INST, true);
+  spi_set_format(SPI_INST, 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
   
-  // Configure SPI format: 8 bits, CPOL=0, CPHA=0 (Mode 0)
-  spi_set_format(SPI_INST, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
-  
-  // Set up SPI pins (except CS which will be GPIO)
   gpio_set_function(SPI_MOSI_PIN, GPIO_FUNC_SPI);
   gpio_set_function(SPI_SCK_PIN, GPIO_FUNC_SPI);
   gpio_set_function(SPI_MISO_PIN, GPIO_FUNC_SPI);
   
-  Serial.println("  ✓ SPI1 configured as slave");
-  Serial.print("    MOSI: GPIO ");
-  Serial.println(SPI_MOSI_PIN);
-  Serial.print("    SCK:  GPIO ");
-  Serial.println(SPI_SCK_PIN);
-  Serial.print("    MISO: GPIO ");
-  Serial.println(SPI_MISO_PIN);
-  
-  // ========================================
-  // CS pin as GPIO with interrupt
-  // ========================================
   gpio_init(SPI_CS_PIN);
   gpio_set_dir(SPI_CS_PIN, GPIO_IN);
-  gpio_pull_up(SPI_CS_PIN);  // CS is active LOW
+  gpio_pull_up(SPI_CS_PIN);
   
-  Serial.print("    CS:   GPIO ");
-  Serial.print(SPI_CS_PIN);
-  Serial.println(" (interrupt mode)");
-  
-  // ========================================
-  // Claim DMA channels (TX and RX)
-  // ========================================
-  dma_tx_channel = dma_claim_unused_channel(true);
-  dma_rx_channel = dma_claim_unused_channel(true);
-  Serial.print("  ✓ DMA TX channel claimed: ");
-  Serial.println(dma_tx_channel);
-  Serial.print("  ✓ DMA RX channel claimed: ");
-  Serial.println(dma_rx_channel);
-  
-  // ========================================
-  // Set up CS GPIO interrupt (both edges)
-  // ========================================
-  gpio_set_irq_enabled_with_callback(
-    SPI_CS_PIN, 
-    GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, 
-    true, 
-    &cs_gpio_callback
-  );
-  
-  Serial.println("  ✓ CS interrupt configured");
-  Serial.println("    FALL edge: Start DMA");
-  Serial.println("    RISE edge: Stop DMA");
-  
-  Serial.println("\n=== HARDWARE SPI + DMA Ready ===");
-  Serial.println("Wiring:");
-  Serial.println("  RPi GPIO 10 (MOSI) → SCORPIO GPIO 12");
-  Serial.println("  RPi GPIO 11 (SCLK) → SCORPIO GPIO 14");
-  Serial.println("  RPi GPIO 8  (CE0)  → SCORPIO GPIO 13");
-  Serial.println("  RPi GND → SCORPIO GND");
-  Serial.println("=====================================\n");
-  
-  Serial.println("*** Waiting for SPI commands... ***\n");
+  Serial.println("✓ SPI1 slave configured (Mode 3)");
+  Serial.println("\n*** Ready for commands! ***\n");
 }
-
 
 void loop() {
-  // Check if SPI transaction completed (CS released)
-  if (transaction_complete) {
-    transaction_complete = false;
-    
-    // Process the received command
-    if (bytes_received > 0) {
-      processCommand();
-      packetsReceived++;
-    }
+  // CRITICAL: Keep TX FIFO filled!
+  while (spi_is_writable(SPI_INST)) {
+    spi_get_hw(SPI_INST)->dr = 0x00;
   }
   
-  // Print stats every 5 seconds
-  static unsigned long lastStatsTime = 0;
-  if (millis() - lastStatsTime > 5000) {
-    Serial.print("📊 Stats | Packets: ");
-    Serial.print(packetsReceived);
-    Serial.print(" | Frames: ");
-    Serial.print(framesRendered);
-    Serial.print(" | Heap: ");
-    Serial.print(rp2040.getFreeHeap());
-    Serial.println(" bytes");
-    lastStatsTime = millis();
+  // Check CS state
+  bool cs_low = !gpio_get(SPI_CS_PIN);
+  
+  if (cs_low && !in_transaction) {
+    // Start of transaction
+    in_transaction = true;
+    cmd_index = 0;
+    memset(cmd_buffer, 0, CMD_BUFFER_SIZE);
+  }
+  
+  if (!cs_low && in_transaction) {
+    // End of transaction
+    in_transaction = false;
+    processCommand();
+  }
+  
+  // Read RX FIFO
+  while (spi_is_readable(SPI_INST)) {
+    uint8_t byte = spi_get_hw(SPI_INST)->dr;
+    if (in_transaction && cmd_index < CMD_BUFFER_SIZE) {
+      cmd_buffer[cmd_index++] = byte;
+    }
   }
 }
+
