@@ -191,7 +191,6 @@ def rainbow_animation(controller, duration=None, speed=0.3, span=None):
                 pixel_colors.append(hsv_to_rgb(hue, 1.0, 1.0))
 
             controller.set_all_pixels(pixel_colors)
-            controller.show()
 
             hue_offset += 0.01 * speed
             if hue_offset >= 1.0:
@@ -203,6 +202,9 @@ def rainbow_animation(controller, duration=None, speed=0.3, span=None):
                 elapsed = time.time() - start_time
                 fps = frame_count / elapsed
                 print(f"FPS: {fps:.1f} | Frames: {frame_count}")
+                # Reset counters to report instantaneous rate
+                frame_count = 0
+                start_time = time.time()
 
             time.sleep(0.02)
 
@@ -214,7 +216,6 @@ def solid_color(controller, r, g, b):
     """Set all LEDs to a solid color"""
     print(f"Setting all LEDs to RGB({r}, {g}, {b})")
     controller.set_all_pixels([(r, g, b)] * TOTAL_LEDS)
-    controller.show()
 
 
 def test_strips(controller):
@@ -238,7 +239,6 @@ def test_strips(controller):
             pixel_buffer[pixel_index] = (r, g, b)
 
         controller.set_all_pixels(pixel_buffer)
-        controller.show()
         time.sleep(0.5)
 
         # Clear this strip in the local buffer for the next iteration
