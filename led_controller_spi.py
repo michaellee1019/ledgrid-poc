@@ -70,6 +70,13 @@ def _normalize_global_args(argv):
 
     return front + rest
 
+
+def _pad_payload(payload):
+    pad_len = (-len(payload)) % 4
+    if pad_len:
+        payload.extend([0] * pad_len)
+    return payload
+
 # Command definitions
 CMD_SET_PIXEL = 0x01
 CMD_SET_BRIGHTNESS = 0x02
@@ -97,6 +104,10 @@ class LEDController:
         self.strip_count = strips
         self.leds_per_strip = leds_per_strip
         self.total_leds = self.strip_count * self.leds_per_strip
+        self.current_brightness = None
+        self._last_config_refresh = 0.0
+        self._last_brightness_refresh = 0.0
+        self._config_refresh_interval = 1.0  # seconds
         
         if self.debug:
             print("SPI Controller initialized")
@@ -110,18 +121,46 @@ class LEDController:
         
         # Test ping
         try:
-            self.spi.xfer2([CMD_PING])
+            self._xfer([CMD_PING])
             time.sleep(0.01)
             if self.debug:
                 print("✓ SPI connection OK\n")
         except Exception as e:
             print(f"Warning: SPI test failed: {e}\n", file=sys.stderr)
     
+    def _xfer(self, payload):
+        buf = list(payload)
+        _pad_payload(buf)
+        return self.spi.xfer2(buf)
+
+    def _refresh_configuration(self, force=False):
+        now = time.time()
+        if force or (now - self._last_config_refresh) > self._config_refresh_interval:
+            cfg = [
+                CMD_CONFIG,
+                self.strip_count & 0xFF,
+                (self.leds_per_strip >> 8) & 0xFF,
+                self.leds_per_strip & 0xFF,
+                1 if self.debug else 0,
+            ]
+            self._xfer(cfg)
+            self._last_config_refresh = now
+            if self.debug:
+                print(f"✓ Configuration refresh (strips={self.strip_count}, leds/strip={self.leds_per_strip})")
+
+        if self.current_brightness is not None and (force or (now - self._last_brightness_refresh) > self._config_refresh_interval):
+            self._xfer([CMD_SET_BRIGHTNESS, self.current_brightness & 0xFF])
+            self._last_brightness_refresh = now
+            if self.debug:
+                print(f"✓ Brightness refresh ({self.current_brightness})")
+    
     def set_pixel(self, pixel, r, g, b):
         """Set a single pixel color"""
         if pixel >= self.total_leds:
             return
         
+        self._refresh_configuration()
+
         data = [
             CMD_SET_PIXEL,
             (pixel >> 8) & 0xFF,
@@ -130,20 +169,23 @@ class LEDController:
             int(g) & 0xFF,
             int(b) & 0xFF
         ]
-        self.spi.xfer2(data)
+        self._xfer(data)
     
     def set_brightness(self, brightness):
         """Set global brightness (0-255)"""
-        data = [CMD_SET_BRIGHTNESS, int(brightness) & 0xFF]
-        self.spi.xfer2(data)
+        level = int(brightness) & 0xFF
+        self.current_brightness = level
+        self._refresh_configuration(force=True)
     
     def show(self):
         """Update the LED display"""
-        self.spi.xfer2([CMD_SHOW])
+        self._refresh_configuration()
+        self._xfer([CMD_SHOW])
     
     def clear(self):
         """Clear all LEDs"""
-        self.spi.xfer2([CMD_CLEAR])
+        self._refresh_configuration()
+        self._xfer([CMD_CLEAR])
     
     def set_range(self, start_pixel, colors):
         """
@@ -157,6 +199,8 @@ class LEDController:
 
         count = min(count, self.total_leds - start_pixel)
 
+        self._refresh_configuration()
+
         data = [
             CMD_SET_RANGE,
             (start_pixel >> 8) & 0xFF,
@@ -169,34 +213,33 @@ class LEDController:
             r, g, b = colors[i]
             data.extend([int(r) & 0xFF, int(g) & 0xFF, int(b) & 0xFF])
         
-        self.spi.xfer2(data)
+        self._xfer(data)
 
     def configure(self):
-        payload = [
-            CMD_CONFIG,
-            self.strip_count & 0xFF,
-            (self.leds_per_strip >> 8) & 0xFF,
-            self.leds_per_strip & 0xFF,
-            1 if self.debug else 0,
-        ]
-        self.spi.xfer2(payload)
-        time.sleep(0.01)
+        self.total_leds = self.strip_count * self.leds_per_strip
+        self._refresh_configuration(force=True)
         if self.debug:
             print(f"✓ Configuration sent (strips={self.strip_count}, leds/strip={self.leds_per_strip})")
 
     def set_all_pixels(self, colors):
         """Send all pixels in one SPI transaction"""
-        if len(colors) < self.total_leds:
-            colors = list(colors) + [(0, 0, 0)] * (self.total_leds - len(colors))
-        elif len(colors) > self.total_leds:
-            colors = colors[:self.total_leds]
+        self._refresh_configuration(force=True)
 
         total_pixels = self.total_leds
+        base_colors = list(colors)
+
+        if len(base_colors) < total_pixels:
+            frame_colors = base_colors + [(0, 0, 0)] * (total_pixels - len(base_colors))
+        elif len(base_colors) > total_pixels:
+            frame_colors = base_colors[:total_pixels]
+        else:
+            frame_colors = base_colors
+
         if total_pixels <= MAX_PIXELS_SET_ALL:
             data = [CMD_SET_ALL]
-            for r, g, b in colors:
+            for r, g, b in frame_colors:
                 data.extend([int(r) & 0xFF, int(g) & 0xFF, int(b) & 0xFF])
-            self.spi.xfer2(data)
+            self._xfer(data)
         else:
             start = 0
             while start < total_pixels:
@@ -207,12 +250,12 @@ class LEDController:
                     start & 0xFF,
                     count
                 ]
-                for r, g, b in colors[start:start + count]:
+                for r, g, b in frame_colors[start:start + count]:
                     payload.extend([int(r) & 0xFF, int(g) & 0xFF, int(b) & 0xFF])
-                self.spi.xfer2(payload)
+                self._xfer(payload)
                 start += count
 
-            self.spi.xfer2([CMD_SHOW])
+            self._xfer([CMD_SHOW])
     
     def close(self):
         """Close SPI connection"""

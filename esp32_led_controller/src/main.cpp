@@ -51,6 +51,7 @@ static constexpr uint8_t CMD_SET_ALL        = 0x06;
 static constexpr uint8_t CMD_CONFIG         = 0x07;
 static constexpr uint8_t CMD_PING           = 0xFF;
 
+
 // =========================
 // SPI buffers / bookkeeping
 // =========================
