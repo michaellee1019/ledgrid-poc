@@ -14,10 +14,10 @@ from animation_system import AnimationBase
 class FlameBurstAnimation(AnimationBase):
     """Energetic flame burst expanding from the grid center"""
 
-    ANIMATION_NAME = "Flame Burst"
+    ANIMATION_NAME = "Frame Burst"
     ANIMATION_DESCRIPTION = "Radial flame burst from the strip center with hot gradients and flicker"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.0"
+    ANIMATION_VERSION = "1.1"
 
     def __init__(self, controller, config: Dict[str, Any] = None):
         super().__init__(controller, config)

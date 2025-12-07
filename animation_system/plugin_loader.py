@@ -9,7 +9,7 @@ import importlib
 import importlib.util
 import inspect
 import traceback
-from typing import Dict, List, Type, Optional, Any
+from typing import Dict, List, Type, Optional, Any, Iterable
 from pathlib import Path
 
 from .animation_base import AnimationBase
@@ -18,15 +18,18 @@ from .animation_base import AnimationBase
 class AnimationPluginLoader:
     """Loads and manages animation plugins"""
     
-    def __init__(self, plugins_dir: str = "animations"):
+    def __init__(self, plugins_dir: str = "animations", allowed_plugins: Optional[Iterable[str]] = None):
         """
         Initialize plugin loader
         
         Args:
             plugins_dir: Directory containing animation plugins
+            allowed_plugins: Optional iterable of plugin stems to load (others are ignored)
         """
         self.plugins_dir = Path(plugins_dir)
         self.plugins_dir.mkdir(exist_ok=True)
+
+        self.allowed_plugins = set(allowed_plugins) if allowed_plugins else None
         
         # Ensure plugins directory is in Python path
         if str(self.plugins_dir.absolute()) not in sys.path:
@@ -50,6 +53,8 @@ class AnimationPluginLoader:
                 continue
                 
             plugin_name = file_path.stem
+            if self.allowed_plugins and plugin_name not in self.allowed_plugins:
+                continue
             plugin_names.append(plugin_name)
             self.plugin_files[plugin_name] = file_path
             
@@ -150,10 +155,16 @@ class AnimationPluginLoader:
         plugin_class = self.get_plugin(plugin_name)
         if plugin_class is None:
             return None
-        
-        # Create temporary instance to get info
+
+        # Build a lightweight controller so plugins that inspect dimensions don't crash
+        class _InfoController:
+            strip_count = 7
+            leds_per_strip = 20
+            total_leds = strip_count * leds_per_strip
+            debug = False
+
         try:
-            temp_instance = plugin_class(None)  # No controller for metadata
+            temp_instance = plugin_class(_InfoController())
             info = temp_instance.get_info()
             info['plugin_name'] = plugin_name
             info['file_path'] = str(self.plugin_files.get(plugin_name, ''))

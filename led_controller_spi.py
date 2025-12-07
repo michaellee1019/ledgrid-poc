@@ -223,7 +223,7 @@ class LEDController:
 
     def set_all_pixels(self, colors):
         """Send all pixels in one SPI transaction"""
-        self._refresh_configuration(force=True)
+        self._refresh_configuration()
 
         total_pixels = self.total_leds
         base_colors = list(colors)
@@ -240,6 +240,8 @@ class LEDController:
             for r, g, b in frame_colors:
                 data.extend([int(r) & 0xFF, int(g) & 0xFF, int(b) & 0xFF])
             self._xfer(data)
+            # Explicit show keeps behavior consistent with the chunked path
+            self._xfer([CMD_SHOW])
         else:
             start = 0
             while start < total_pixels:

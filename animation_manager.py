@@ -9,6 +9,7 @@ Handles animation switching, parameter updates, and frame generation.
 import time
 import threading
 import traceback
+from collections import deque
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
@@ -83,6 +84,16 @@ class PreviewLEDController:
 
 class AnimationManager:
     """Manages animation playback and plugin system"""
+
+    # Only ship with a small, known-good set of animations
+    ALLOWED_PLUGINS = {
+        "rainbow",
+        "emoji",
+        "sparkle",
+        "fluid_tank",
+        "flame_burst",
+        "simple_test",
+    }
     
     def __init__(self, controller: LEDController, plugins_dir: str = "animations"):
         """
@@ -93,7 +104,9 @@ class AnimationManager:
             plugins_dir: Directory containing animation plugins
         """
         self.controller = controller
-        self.plugin_loader = AnimationPluginLoader(plugins_dir)
+        self.plugin_loader = AnimationPluginLoader(
+            plugins_dir, allowed_plugins=self.ALLOWED_PLUGINS
+        )
         
         # Animation state
         self.current_animation: Optional[AnimationBase] = None
@@ -108,8 +121,7 @@ class AnimationManager:
         self.stop_event = threading.Event()
         
         # Performance tracking
-        self.fps_history = []
-        self.last_fps_update = 0.0
+        self.frame_timestamps = deque(maxlen=240)  # ~4 seconds at 60 FPS
 
         # Current frame data for web interface
         self.current_frame_data = []
@@ -177,12 +189,20 @@ class AnimationManager:
             print(f"🔍 Animation instance created: {type(self.current_animation)}")
             print(f"🔍 Is StatefulAnimationBase? {isinstance(self.current_animation, StatefulAnimationBase)}")
 
+            # Ensure controller is configured before frames start flowing
+            if hasattr(self.controller, "configure"):
+                try:
+                    self.controller.configure()
+                except Exception as controller_error:
+                    print(f"⚠️ Controller configure failed: {controller_error}")
+
             # Start animation
             self.current_animation.start()
             self.is_running = True
             self.stop_event.clear()
             self.frame_count = 0
-            self.start_time = time.time()
+            self.frame_timestamps.clear()
+            self.start_time = time.perf_counter()
 
             # Check if this is a stateful animation
             if isinstance(self.current_animation, StatefulAnimationBase):
@@ -210,6 +230,7 @@ class AnimationManager:
             # Stop frame-based animation thread if it exists
             if self.animation_thread and self.animation_thread.is_alive():
                 self.animation_thread.join(timeout=1.0)
+            self.animation_thread = None
 
             # Stop the animation (stateful animations handle their own threads)
             if self.current_animation:
@@ -218,6 +239,9 @@ class AnimationManager:
                 self.current_animation = None
 
             self.current_animation_name = None
+            self.frame_timestamps.clear()
+            with self.frame_data_lock:
+                self.current_frame_data = []
 
             # Clear LEDs
             self.controller.clear()
@@ -242,7 +266,7 @@ class AnimationManager:
             'is_running': self.is_running,
             'current_animation': self.current_animation_name,
             'frame_count': self.frame_count,
-            'uptime': time.time() - self.start_time if self.is_running else 0,
+            'uptime': (time.perf_counter() - self.start_time) if self.is_running else 0,
             'target_fps': self.target_fps,
             'actual_fps': self._calculate_fps(),
             'led_info': {
@@ -308,6 +332,8 @@ class AnimationManager:
                 if hasattr(temp_animation, 'get_current_colors'):
                     frame_data = temp_animation.get_current_colors()
 
+            frame_data = self._normalize_frame(frame_data)
+
             return {
                 'frame_data': frame_data,
                 'led_info': {
@@ -342,60 +368,84 @@ class AnimationManager:
 
     def _animation_loop(self):
         """Main animation loop running in separate thread"""
-        frame_time = 1.0 / self.target_fps
-        
+        target_frame_time = 1.0 / max(1, int(self.target_fps) or 1)
+
         while self.is_running and not self.stop_event.is_set():
-            loop_start = time.time()
-            
+            loop_start = time.perf_counter()
+
             try:
-                if self.current_animation:
-                    # Generate frame
-                    time_elapsed = time.time() - self.start_time
-                    colors = self.current_animation.generate_frame(time_elapsed, self.frame_count)
+                if not self.current_animation:
+                    break
 
-                    # Store frame data for web interface
-                    with self.frame_data_lock:
-                        self.current_frame_data = list(colors)
+                # Generate frame
+                time_elapsed = loop_start - self.start_time
+                colors = self.current_animation.generate_frame(time_elapsed, self.frame_count)
+                frame = self._normalize_frame(colors)
 
-                    # Send to LEDs
-                    self.controller.set_all_pixels(colors)
+                # Store frame data for web interface
+                with self.frame_data_lock:
+                    self.current_frame_data = frame
 
-                    self.frame_count += 1
+                # Send to LEDs
+                self.controller.set_all_pixels(frame)
 
-                    # Update FPS tracking
-                    self._update_fps_tracking()
-                
+                # Some controllers need an explicit show; call if present
+                if hasattr(self.controller, "show"):
+                    try:
+                        self.controller.show()
+                    except Exception:
+                        # Controllers that embed show inside set_all_pixels will ignore this
+                        pass
+
+                self.frame_count += 1
+
+                # Update FPS tracking
+                self._update_fps_tracking(loop_start)
+
             except Exception as e:
                 print(f"✗ Animation loop error: {e}")
                 traceback.print_exc()
-                break
-            
+                time.sleep(0.05)
+
             # Sleep to maintain target FPS
-            loop_time = time.time() - loop_start
-            sleep_time = max(0, frame_time - loop_time)
+            loop_duration = time.perf_counter() - loop_start
+            sleep_time = max(0.0, target_frame_time - loop_duration)
             if sleep_time > 0:
                 time.sleep(sleep_time)
+
+    def _normalize_frame(self, colors: Optional[List[Any]]) -> List[Any]:
+        """Ensure frame length matches the LED count and is always a list"""
+        total_pixels = self.controller.total_leds
+
+        if colors is None:
+            return [(0, 0, 0)] * total_pixels
+
+        frame = list(colors)
+
+        if len(frame) < total_pixels:
+            frame.extend([(0, 0, 0)] * (total_pixels - len(frame)))
+        elif len(frame) > total_pixels:
+            frame = frame[:total_pixels]
+
+        return frame
     
-    def _update_fps_tracking(self):
-        """Update FPS calculation"""
-        now = time.time()
-        if now - self.last_fps_update >= 1.0:  # Update every second
-            if self.start_time > 0:
-                elapsed = now - self.start_time
-                current_fps = self.frame_count / elapsed if elapsed > 0 else 0
-                self.fps_history.append(current_fps)
-                
-                # Keep only last 10 seconds of history
-                if len(self.fps_history) > 10:
-                    self.fps_history.pop(0)
-            
-            self.last_fps_update = now
+    def _update_fps_tracking(self, timestamp: Optional[float] = None):
+        """Record frame timestamps for FPS calculation"""
+        now = timestamp if timestamp is not None else time.perf_counter()
+        self.frame_timestamps.append(now)
+
+        # Keep only a small window of timestamps to reflect current performance
+        while self.frame_timestamps and (now - self.frame_timestamps[0]) > 5.0:
+            self.frame_timestamps.popleft()
     
     def _calculate_fps(self) -> float:
         """Calculate current FPS"""
-        if not self.fps_history:
+        if len(self.frame_timestamps) < 2:
             return 0.0
-        return sum(self.fps_history) / len(self.fps_history)
+        duration = self.frame_timestamps[-1] - self.frame_timestamps[0]
+        if duration <= 0:
+            return 0.0
+        return (len(self.frame_timestamps) - 1) / duration
     
     def save_animation(self, name: str, code: str) -> bool:
         """Save new animation plugin"""
