@@ -3,6 +3,40 @@
 {% block title %}LED Grid Dashboard{% endblock %}
 
 {% block content %}
+<!-- Animation Renderer -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5><i class="fas fa-tv"></i> Live Animation Preview</h5>
+                <div class="btn-group btn-group-sm" role="group">
+                    <button type="button" class="btn btn-outline-secondary" id="toggleRenderer" onclick="toggleRenderer()">
+                        <i class="fas fa-eye"></i> Hide
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" onclick="resetRenderer()">
+                        <i class="fas fa-sync"></i> Reset
+                    </button>
+                    <button type="button" class="btn btn-outline-primary" id="previewToggle" onclick="togglePreviewMode()">
+                        <i class="fas fa-search"></i> <span id="previewToggleText">Preview Mode</span>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body" id="rendererContainer">
+                <div id="animationRenderer" class="text-center">
+                    <canvas id="ledCanvas" width="1200" height="600" style="border: 1px solid #ddd; border-radius: 5px; max-width: 100%;"></canvas>
+                    <div class="mt-2">
+                        <small class="text-muted">
+                            <span id="rendererStatus">Waiting for animation...</span> |
+                            <span id="rendererFPS">0 FPS</span> |
+                            <span id="rendererFrameCount">0 frames</span>
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row">
     <div class="col-md-8">
         <h2><i class="fas fa-palette"></i> Available Animations</h2>
@@ -10,7 +44,7 @@
         <div class="row">
             {% for animation in animations %}
             <div class="col-md-6 mb-3">
-                <div class="card animation-card h-100" onclick="startAnimation('{{ animation.plugin_name }}')">
+                <div class="card animation-card h-100">
                     <div class="card-body">
                         <h5 class="card-title">
                             <i class="fas fa-play-circle text-primary"></i>
@@ -18,9 +52,17 @@
                         </h5>
                         <p class="card-text">{{ animation.description }}</p>
                         <small class="text-muted">
-                            <i class="fas fa-user"></i> {{ animation.author }} 
+                            <i class="fas fa-user"></i> {{ animation.author }}
                             <span class="ms-2"><i class="fas fa-tag"></i> v{{ animation.version }}</span>
                         </small>
+                        <div class="mt-3 d-flex gap-2">
+                            <button class="btn btn-outline-primary btn-sm" onclick="previewAnimation('{{ animation.plugin_name }}')">
+                                <i class="fas fa-eye"></i> Preview
+                            </button>
+                            <button class="btn btn-primary btn-sm" onclick="startAnimation('{{ animation.plugin_name }}')">
+                                <i class="fas fa-play"></i> Start
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -136,6 +178,277 @@
 
 {% block scripts %}
 <script>
+    // Animation Renderer
+    class LEDAnimationRenderer {
+        constructor(canvasId) {
+            this.canvas = document.getElementById(canvasId);
+            this.ctx = this.canvas.getContext('2d');
+            this.isRunning = false;
+            this.frameCount = 0;
+            this.lastFrameTime = 0;
+            this.fps = 0;
+
+            // Preview mode settings
+            this.previewMode = false;
+            this.previewAnimation = null;
+            this.fpsCounter = 0;
+            this.lastFpsTime = Date.now();
+
+            // LED configuration - will be updated from server
+            this.stripCount = 7;
+            this.ledsPerStrip = 500;
+            this.totalLeds = this.stripCount * this.ledsPerStrip;
+
+            // Rendering configuration - larger LEDs with tight spacing
+            this.ledSize = 6;           // Larger LED size
+            this.ledSpacing = 0.5;      // Very tight spacing between LEDs in a strip
+            this.stripSpacing = 1;      // Very tight spacing between strips (less than 1/5 of LED size)
+
+            this.setupCanvas();
+            this.startRendering();
+        }
+
+        setupCanvas() {
+            // Calculate canvas dimensions based on LED layout
+            const stripWidth = this.ledsPerStrip * (this.ledSize + this.ledSpacing);
+            const totalHeight = this.stripCount * (this.ledSize + this.stripSpacing);
+
+            // Set canvas size - much larger canvas
+            this.canvas.width = Math.min(stripWidth, 1400);
+            this.canvas.height = Math.min(totalHeight, 700);
+
+            // Scale LEDs to fit canvas
+            this.scaleX = this.canvas.width / stripWidth;
+            this.scaleY = this.canvas.height / totalHeight;
+            this.scale = Math.min(this.scaleX, this.scaleY);
+
+            // Recalculate LED size based on scale
+            this.actualLedSize = Math.max(1, this.ledSize * this.scale);
+            this.actualLedSpacing = this.ledSpacing * this.scale;
+            this.actualStripSpacing = this.stripSpacing * this.scale;
+        }
+
+        async fetchFrameData() {
+            try {
+                if (this.previewMode && this.previewAnimation) {
+                    // In preview mode, fetch preview data for specific animation
+                    const response = await fetch(`/api/preview/${this.previewAnimation}`);
+                    const data = await response.json();
+                    return data;
+                } else {
+                    // Normal mode - fetch current running animation
+                    const response = await fetch('/api/frame');
+                    const data = await response.json();
+                    return data;
+                }
+            } catch (error) {
+                console.error('Error fetching frame data:', error);
+                return null;
+            }
+        }
+
+        setPreviewAnimation(animationName) {
+            this.previewAnimation = animationName;
+            console.log(`Preview animation set to: ${animationName}`);
+        }
+
+        togglePreviewMode() {
+            this.previewMode = !this.previewMode;
+            console.log(`Preview mode: ${this.previewMode ? 'ON' : 'OFF'}`);
+
+            // Update status display
+            this.updateStatusDisplay();
+
+            return this.previewMode;
+        }
+
+        renderFrame(frameData) {
+            if (!frameData || !frameData.frame_data) {
+                this.renderNoAnimation();
+                return;
+            }
+
+            // Update LED configuration if changed
+            if (frameData.led_info) {
+                if (this.stripCount !== frameData.led_info.strip_count ||
+                    this.ledsPerStrip !== frameData.led_info.leds_per_strip) {
+                    this.stripCount = frameData.led_info.strip_count;
+                    this.ledsPerStrip = frameData.led_info.leds_per_strip;
+                    this.totalLeds = frameData.led_info.total_leds;
+                    this.setupCanvas();
+                }
+            }
+
+            // Clear canvas
+            this.ctx.fillStyle = '#000000';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+            // Render LEDs
+            const colors = frameData.frame_data;
+            for (let strip = 0; strip < this.stripCount; strip++) {
+                for (let led = 0; led < this.ledsPerStrip; led++) {
+                    const pixelIndex = strip * this.ledsPerStrip + led;
+                    if (pixelIndex < colors.length) {
+                        const [r, g, b] = colors[pixelIndex];
+                        this.renderLED(strip, led, r, g, b);
+                    }
+                }
+            }
+
+            // Update frame counter
+            this.frameCount++;
+            this.updateFPS();
+        }
+
+        renderLED(strip, led, r, g, b) {
+            const x = led * (this.actualLedSize + this.actualLedSpacing);
+            const y = strip * (this.actualLedSize + this.actualStripSpacing);
+
+            this.ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+            this.ctx.fillRect(x, y, this.actualLedSize, this.actualLedSize);
+        }
+
+        renderNoAnimation() {
+            // Clear canvas and show "no animation" state
+            this.ctx.fillStyle = '#1a1a1a';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+            // Draw grid pattern to show LED layout
+            this.ctx.strokeStyle = '#333333';
+            this.ctx.lineWidth = 0.5;
+
+            for (let strip = 0; strip < this.stripCount; strip++) {
+                for (let led = 0; led < Math.min(this.ledsPerStrip, 100); led += 10) {
+                    const x = led * (this.actualLedSize + this.actualLedSpacing);
+                    const y = strip * (this.actualLedSize + this.actualStripSpacing);
+                    this.ctx.strokeRect(x, y, this.actualLedSize, this.actualLedSize);
+                }
+            }
+        }
+
+        updateFPS() {
+            this.fpsCounter++;
+            const now = Date.now();
+            if (now - this.lastFpsTime >= 1000) {
+                this.fps = this.fpsCounter;
+                this.fpsCounter = 0;
+                this.lastFpsTime = now;
+
+                // Update UI
+                document.getElementById('rendererFPS').textContent = `${this.fps} FPS`;
+                document.getElementById('rendererFrameCount').textContent = `${this.frameCount} frames`;
+            }
+        }
+
+        async renderLoop() {
+            if (!this.isRunning) return;
+
+            const frameData = await this.fetchFrameData();
+            this.renderFrame(frameData);
+
+            // Update status
+            this.updateStatusDisplay(frameData);
+
+            // Schedule next frame
+            requestAnimationFrame(() => this.renderLoop());
+        }
+
+        updateStatusDisplay(frameData = null) {
+            const statusEl = document.getElementById('rendererStatus');
+
+            if (this.previewMode) {
+                statusEl.textContent = `Preview: ${this.previewAnimation || 'None selected'}`;
+                statusEl.className = 'text-primary'; // Blue for preview mode
+            } else if (frameData && frameData.is_running) {
+                statusEl.textContent = `Running: ${frameData.current_animation || 'Unknown'}`;
+                statusEl.className = 'text-success'; // Green for running
+            } else {
+                statusEl.textContent = 'No animation';
+                statusEl.className = 'text-muted'; // Gray for stopped
+            }
+        }
+
+        startRendering() {
+            this.isRunning = true;
+            this.renderLoop();
+        }
+
+        stopRendering() {
+            this.isRunning = false;
+        }
+
+        reset() {
+            this.frameCount = 0;
+            this.fps = 0;
+            this.fpsCounter = 0;
+            this.lastFpsTime = Date.now();
+            document.getElementById('rendererFrameCount').textContent = '0 frames';
+            document.getElementById('rendererFPS').textContent = '0 FPS';
+        }
+    }
+
+    // Global renderer instance
+    let animationRenderer = null;
+
+    // Initialize renderer when page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        animationRenderer = new LEDAnimationRenderer('ledCanvas');
+    });
+
+    // Renderer control functions
+    function toggleRenderer() {
+        const container = document.getElementById('rendererContainer');
+        const button = document.getElementById('toggleRenderer');
+
+        if (container.style.display === 'none') {
+            container.style.display = 'block';
+            button.innerHTML = '<i class="fas fa-eye"></i> Hide';
+            if (animationRenderer) {
+                animationRenderer.startRendering();
+            }
+        } else {
+            container.style.display = 'none';
+            button.innerHTML = '<i class="fas fa-eye-slash"></i> Show';
+            if (animationRenderer) {
+                animationRenderer.stopRendering();
+            }
+        }
+    }
+
+    function resetRenderer() {
+        if (animationRenderer) {
+            animationRenderer.reset();
+        }
+    }
+
+    function togglePreviewMode() {
+        if (animationRenderer) {
+            const isPreviewMode = animationRenderer.togglePreviewMode();
+            const button = document.getElementById('previewToggle');
+            const buttonText = document.getElementById('previewToggleText');
+
+            if (isPreviewMode) {
+                button.className = 'btn btn-primary btn-sm';
+                buttonText.textContent = 'Live Mode';
+            } else {
+                button.className = 'btn btn-outline-primary btn-sm';
+                buttonText.textContent = 'Preview Mode';
+            }
+        }
+    }
+
+    function previewAnimation(animationName) {
+        if (animationRenderer) {
+            // Enable preview mode if not already enabled
+            if (!animationRenderer.previewMode) {
+                togglePreviewMode();
+            }
+
+            // Set the animation to preview
+            animationRenderer.setPreviewAnimation(animationName);
+        }
+    }
+
     // Handle animation card clicks with feedback
     function startAnimation(name, config = {}) {
         // Show loading state

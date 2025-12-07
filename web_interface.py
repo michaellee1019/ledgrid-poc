@@ -8,12 +8,44 @@ and adjusting parameters in real-time.
 
 import os
 import json
+import time
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
 from werkzeug.utils import secure_filename
 from pathlib import Path
 
 from animation_manager import AnimationManager
-from led_controller_spi import LEDController
+
+# Try to import the real LED controller, fall back to mock for testing
+try:
+    from led_controller_spi import LEDController
+except ImportError:
+    # Mock LED controller for testing without SPI hardware
+    class LEDController:
+        def __init__(self, strips=7, leds_per_strip=20, **kwargs):
+            self.strip_count = strips
+            self.leds_per_strip = leds_per_strip
+            self.total_leds = strips * leds_per_strip
+            self.debug = kwargs.get('debug', False)
+            print(f"🔧 Mock LED Controller: {strips} strips × {leds_per_strip} LEDs = {self.total_leds} total")
+
+        def set_all_pixels(self, pixel_data):
+            """Mock set all pixels"""
+            if self.debug and len(pixel_data) > 0:
+                r, g, b = pixel_data[0]
+                print(f"📊 Frame: First pixel = RGB({r}, {g}, {b})")
+
+        def show(self):
+            """Mock show"""
+            pass
+
+        def clear(self):
+            """Mock clear"""
+            if self.debug:
+                print("🧹 Cleared LEDs")
+
+        def configure(self):
+            """Mock configure"""
+            pass
 
 
 class AnimationWebInterface:
@@ -88,6 +120,33 @@ class AnimationWebInterface:
             """API: Get current status"""
             status = self.animation_manager.get_current_status()
             return jsonify(status)
+
+        @self.app.route('/api/frame')
+        def api_get_frame():
+            """API: Get current animation frame data"""
+            frame_data = self.animation_manager.get_current_frame()
+            return jsonify(frame_data)
+
+        @self.app.route('/api/preview/<animation_name>')
+        def api_get_preview(animation_name):
+            """API: Get preview frame data for a specific animation"""
+            try:
+                # Get a sample frame from the animation without starting it
+                preview_data = self.animation_manager.get_animation_preview(animation_name)
+                return jsonify(preview_data)
+            except Exception as e:
+                return jsonify({
+                    'error': f'Failed to get preview for {animation_name}: {str(e)}',
+                    'frame_data': [],
+                    'led_info': {
+                        'total_leds': self.animation_manager.controller.total_leds,
+                        'strip_count': self.animation_manager.controller.strip_count,
+                        'leds_per_strip': self.animation_manager.controller.leds_per_strip
+                    },
+                    'is_running': False,
+                    'frame_count': 0,
+                    'timestamp': time.time()
+                }), 500
         
         @self.app.route('/api/parameters', methods=['POST'])
         def api_update_parameters():
@@ -176,7 +235,7 @@ class AnimationWebInterface:
         self.app.run(host=self.host, port=self.port, debug=debug, threaded=True)
 
 
-def create_app(controller_config=None):
+def create_app(controller_config=None, host='0.0.0.0', port=5000):
     """Factory function to create the web application"""
     # Default controller configuration
     if controller_config is None:
@@ -186,7 +245,7 @@ def create_app(controller_config=None):
             'speed': 5000000,
             'mode': 3,
             'strips': 7,
-            'leds_per_strip': 500,
+            'leds_per_strip': 20,
             'debug': False
         }
     
@@ -197,8 +256,8 @@ def create_app(controller_config=None):
     animation_manager = AnimationManager(controller)
     
     # Create web interface
-    web_interface = AnimationWebInterface(animation_manager)
-    
+    web_interface = AnimationWebInterface(animation_manager, host=host, port=port)
+
     return web_interface
 
 
@@ -215,7 +274,7 @@ if __name__ == '__main__':
     parser.add_argument('--device', type=int, default=0, help='SPI device number')
     parser.add_argument('--spi-speed', type=int, default=5000000, help='SPI speed')
     parser.add_argument('--strips', type=int, default=7, help='Number of strips')
-    parser.add_argument('--leds-per-strip', type=int, default=500, help='LEDs per strip')
+    parser.add_argument('--leds-per-strip', type=int, default=20, help='LEDs per strip')
     parser.add_argument('--controller-debug', action='store_true', help='Enable controller debug')
     
     args = parser.parse_args()

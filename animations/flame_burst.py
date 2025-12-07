@@ -27,7 +27,11 @@ class FlameBurstAnimation(AnimationBase):
             'burst_rate': 0.9,       # Bursts per second
             'shell_thickness': 0.22, # Width of the expanding wave (normalized 0-1)
             'flicker': 0.35,         # Extra flicker energy
-            'afterglow': 0.35        # How much heat lingers behind the front
+            'afterglow': 0.35,       # How much heat lingers behind the front
+            'serpentine': False,     # Account for serpentine wiring when mapping Y
+            'visible_leds': 20,      # How many LEDs actually exist per strip (for geometry)
+            'center_offset_x': 0.0,  # Shift burst center horizontally (in strip units)
+            'center_offset_y': 0.0   # Shift burst center vertically (in LED units)
         })
 
         self.params = {**self.default_params, **self.config}
@@ -62,17 +66,51 @@ class FlameBurstAnimation(AnimationBase):
                 'max': 1.0,
                 'default': 0.35,
                 'description': 'Lingering heat behind the wave front'
+            },
+            'serpentine': {
+                'type': 'bool',
+                'default': False,
+                'description': 'Flip every other strip to match serpentine wiring'
+            },
+            'visible_leds': {
+                'type': 'int',
+                'min': 1,
+                'max': 1000,
+                'default': 20,
+                'description': 'Physical LEDs per strip for geometry math'
+            },
+            'center_offset_x': {
+                'type': 'float',
+                'min': -3.0,
+                'max': 3.0,
+                'default': 0.0,
+                'description': 'Horizontal center adjustment (strips)'
+            },
+            'center_offset_y': {
+                'type': 'float',
+                'min': -10.0,
+                'max': 10.0,
+                'default': 0.0,
+                'description': 'Vertical center adjustment (LEDs)'
             }
         })
         return schema
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
         strip_count, leds_per_strip = self.get_strip_info()
+        visible_leds = max(1, min(int(self.params.get('visible_leds', leds_per_strip)), leds_per_strip))
 
         # Grid geometry
-        center_x = (strip_count - 1) / 2.0
-        center_y = (leds_per_strip - 1) / 2.0
-        max_distance = math.hypot(center_x, center_y) or 1.0
+        center_x = (strip_count - 1) / 2.0 + self.params.get('center_offset_x', 0.0)
+        center_y = (visible_leds - 1) / 2.0 + self.params.get('center_offset_y', 0.0)
+        corners = [
+            (0.0, 0.0),
+            (strip_count - 1.0, 0.0),
+            (0.0, visible_leds - 1.0),
+            (strip_count - 1.0, visible_leds - 1.0)
+        ]
+        max_distance = max(math.hypot(center_x - x, center_y - y) for x, y in corners) or 1.0
+        serpentine = bool(self.params.get('serpentine', False))
 
         # Animation parameters
         speed = self.params.get('speed', 1.0)
@@ -94,8 +132,12 @@ class FlameBurstAnimation(AnimationBase):
 
         for strip in range(strip_count):
             for led in range(leds_per_strip):
+                # Map Y to physical position if wiring snakes back and forth
+                y_pos = leds_per_strip - 1 - led if serpentine and (strip % 2 == 1) else led
+                y_pos = min(y_pos, visible_leds - 1)
+
                 dx = strip - center_x
-                dy = led - center_y
+                dy = y_pos - center_y
                 distance_norm = math.hypot(dx, dy) / max_distance
 
                 # Strong shell at the moving front plus a molten core and trailing heat

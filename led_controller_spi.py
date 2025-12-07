@@ -11,7 +11,7 @@ import spidev
 import sys
 
 # LED Configuration defaults
-DEFAULT_LED_PER_STRIP = 500
+DEFAULT_LED_PER_STRIP = 20
 DEFAULT_NUM_STRIPS = 7
 
 # SPI Configuration
@@ -449,4 +449,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

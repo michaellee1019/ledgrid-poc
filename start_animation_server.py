@@ -35,8 +35,8 @@ def main():
                        help='SPI speed in Hz (default: 5000000)')
     parser.add_argument('--strips', type=int, default=7, 
                        help='Number of LED strips (default: 7)')
-    parser.add_argument('--leds-per-strip', type=int, default=500, 
-                       help='LEDs per strip (default: 500)')
+    parser.add_argument('--leds-per-strip', type=int, default=20, 
+                       help='LEDs per strip (default: 20)')
     parser.add_argument('--controller-debug', action='store_true', 
                        help='Enable LED controller debug output')
     
@@ -71,8 +71,8 @@ def main():
     
     try:
         # Create web application
-        web_interface = create_app(controller_config)
-        
+        web_interface = create_app(controller_config, host=args.host, port=args.port)
+
         # Set target FPS
         web_interface.animation_manager.target_fps = args.target_fps
         

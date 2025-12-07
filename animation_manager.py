@@ -13,7 +13,38 @@ from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 from animation_system import AnimationBase, StatefulAnimationBase, AnimationPluginLoader
-from led_controller_spi import LEDController
+
+# Try to import the real LED controller, fall back to mock for testing
+try:
+    from led_controller_spi import LEDController
+except ImportError:
+    # Mock LED controller for testing without SPI hardware
+    class LEDController:
+        def __init__(self, strips=7, leds_per_strip=20, **kwargs):
+            self.strip_count = strips
+            self.leds_per_strip = leds_per_strip
+            self.total_leds = strips * leds_per_strip
+            self.debug = kwargs.get('debug', False)
+            print(f"🔧 Mock LED Controller: {strips} strips × {leds_per_strip} LEDs = {self.total_leds} total")
+
+        def set_all_pixels(self, pixel_data):
+            """Mock set all pixels"""
+            if self.debug and len(pixel_data) > 0:
+                r, g, b = pixel_data[0]
+                print(f"📊 Frame: First pixel = RGB({r}, {g}, {b})")
+
+        def show(self):
+            """Mock show"""
+            pass
+
+        def clear(self):
+            """Mock clear"""
+            if self.debug:
+                print("🧹 Cleared LEDs")
+
+        def configure(self):
+            """Mock configure"""
+            pass
 
 
 class AnimationManager:
@@ -45,7 +76,11 @@ class AnimationManager:
         # Performance tracking
         self.fps_history = []
         self.last_fps_update = 0.0
-        
+
+        # Current frame data for web interface
+        self.current_frame_data = []
+        self.frame_data_lock = threading.Lock()
+
         # Load all plugins on startup
         self.refresh_plugins()
     
@@ -180,7 +215,85 @@ class AnimationManager:
             status['animation_info'] = self.current_animation.get_info()
         
         return status
-    
+
+    def get_current_frame(self) -> Dict[str, Any]:
+        """Get current animation frame data for web rendering"""
+        with self.frame_data_lock:
+            frame_data = list(self.current_frame_data)
+
+        return {
+            'frame_data': frame_data,
+            'led_info': {
+                'total_leds': self.controller.total_leds,
+                'strip_count': self.controller.strip_count,
+                'leds_per_strip': self.controller.leds_per_strip
+            },
+            'is_running': self.is_running,
+            'frame_count': self.frame_count,
+            'current_animation': self.current_animation_name if self.is_running else None,
+            'timestamp': time.time()
+        }
+
+    def get_animation_preview(self, animation_name: str) -> Dict[str, Any]:
+        """Get a preview frame from a specific animation without starting it"""
+        if animation_name not in self.plugin_loader.loaded_plugins:
+            raise ValueError(f"Animation '{animation_name}' not found")
+
+        animation_class = self.plugin_loader.loaded_plugins[animation_name]
+
+        try:
+            # Create a temporary instance of the animation
+            temp_animation = animation_class(self.controller, {})
+
+            # Generate a sample frame
+            if hasattr(temp_animation, 'generate_frame'):
+                # For frame-based animations
+                frame_data = temp_animation.generate_frame(time_elapsed=0.0, frame_count=0)
+                if frame_data is None:
+                    frame_data = [(0, 0, 0)] * self.controller.total_leds
+            else:
+                # For step-based animations, run a few steps
+                temp_animation.reset()
+                for _ in range(5):  # Run a few steps to get interesting output
+                    temp_animation.step()
+
+                # Get the current state
+                frame_data = [(0, 0, 0)] * self.controller.total_leds
+                if hasattr(temp_animation, 'get_current_colors'):
+                    frame_data = temp_animation.get_current_colors()
+
+            return {
+                'frame_data': frame_data,
+                'led_info': {
+                    'total_leds': self.controller.total_leds,
+                    'strip_count': self.controller.strip_count,
+                    'leds_per_strip': self.controller.leds_per_strip
+                },
+                'is_running': False,
+                'frame_count': 0,
+                'current_animation': animation_name,
+                'timestamp': time.time(),
+                'preview': True
+            }
+
+        except Exception as e:
+            print(f"Error generating preview for {animation_name}: {e}")
+            # Return a default pattern
+            return {
+                'frame_data': [(50, 50, 50)] * self.controller.total_leds,  # Dim gray
+                'led_info': {
+                    'total_leds': self.controller.total_leds,
+                    'strip_count': self.controller.strip_count,
+                    'leds_per_strip': self.controller.leds_per_strip
+                },
+                'is_running': False,
+                'frame_count': 0,
+                'current_animation': animation_name,
+                'timestamp': time.time(),
+                'preview': True,
+                'error': str(e)
+            }
+
     def _animation_loop(self):
         """Main animation loop running in separate thread"""
         frame_time = 1.0 / self.target_fps
@@ -193,12 +306,16 @@ class AnimationManager:
                     # Generate frame
                     time_elapsed = time.time() - self.start_time
                     colors = self.current_animation.generate_frame(time_elapsed, self.frame_count)
-                    
+
+                    # Store frame data for web interface
+                    with self.frame_data_lock:
+                        self.current_frame_data = list(colors)
+
                     # Send to LEDs
                     self.controller.set_all_pixels(colors)
-                    
+
                     self.frame_count += 1
-                    
+
                     # Update FPS tracking
                     self._update_fps_tracking()
                 
