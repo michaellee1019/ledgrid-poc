@@ -96,6 +96,21 @@ class AnimationWebInterface:
             """API: Get current status"""
             status = self.control_channel.read_status() or self._empty_status()
             return jsonify(status)
+        
+        @self.app.route('/api/stats')
+        def api_get_stats():
+            """API: Get runtime stats for the active animation"""
+            status = self.control_channel.read_status() or self._empty_status()
+            return jsonify({
+                'current_animation': status.get('current_animation'),
+                'is_running': status.get('is_running'),
+                'frame_count': status.get('frame_count'),
+                'uptime': status.get('uptime'),
+                'target_fps': status.get('target_fps'),
+                'actual_fps': status.get('actual_fps'),
+                'stats': status.get('animation_stats') or {},
+                'timestamp': status.get('updated_at') or status.get('timestamp')
+            })
 
         @self.app.route('/api/frame')
         def api_get_frame():
@@ -231,6 +246,8 @@ class AnimationWebInterface:
             'uptime': 0,
             'target_fps': 0,
             'actual_fps': 0,
+            'animation_stats': {},
+            'animation_info': None,
             'led_info': {
                 'total_leds': self.preview_manager.controller.total_leds,
                 'strip_count': self.preview_manager.controller.strip_count,

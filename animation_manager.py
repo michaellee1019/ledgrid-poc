@@ -301,8 +301,16 @@ class AnimationManager:
             }
         }
         
+        status['animation_info'] = None
+        status['animation_stats'] = {}
         if self.current_animation:
             status['animation_info'] = self.current_animation.get_info()
+            try:
+                stats = self.current_animation.get_runtime_stats()
+                if isinstance(stats, dict):
+                    status['animation_stats'] = stats
+            except Exception as exc:
+                status['animation_stats'] = {'error': str(exc)}
 
         performance = self._get_perf_summary()
         if performance:

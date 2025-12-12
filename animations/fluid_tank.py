@@ -27,7 +27,8 @@ class FluidTankAnimation(AnimationBase):
 
         self.default_params.update({
             'speed': 1.0,
-            'drop_rate': 3.0,           # drops per second
+            'drop_rate': 1.0,           # multiplier on computed fill rate (1.0 ≈ 60s fill)
+            'target_fill_time': 60.0,   # seconds to fill the entire panel
             'flow_steps': 2,            # physics iterations per frame
             'bubble_interval': 2.4,     # seconds between bubbles
             'bubble_strength': 1.2,     # ripple strength when a bubble surfaces
@@ -44,8 +45,12 @@ class FluidTankAnimation(AnimationBase):
 
         self.params = {**self.default_params, **self.config}
 
-        self.width = getattr(controller, 'leds_per_strip', DEFAULT_LEDS_PER_STRIP)
-        self.height = getattr(controller, 'strip_count', DEFAULT_STRIP_COUNT)
+        # Physical layout (controller expectations)
+        self.panel_strips = getattr(controller, 'strip_count', DEFAULT_STRIP_COUNT)
+        self.panel_leds_per_strip = getattr(controller, 'leds_per_strip', DEFAULT_LEDS_PER_STRIP)
+        # Simulation grid rotated clockwise 90° → width = strip count, height = LEDs per strip
+        self.width = self.panel_strips
+        self.height = self.panel_leds_per_strip
 
         self.water: List[List[int]] = []
         self.ripple_height: List[List[float]] = []
@@ -67,19 +72,31 @@ class FluidTankAnimation(AnimationBase):
         self.drain_reservoir = 0.0  # carries fractional drain budget across frames
         self.drain_reference_volume = 0.0  # total volume at puncture time
         self.hole_open_time = 0.0
+        self.fill_cycle_start_time = 0.0
+        self.fill_cycle_initialized = False
+        self.awaiting_cycle_reset = False
+        self.fill_correction_rate = 0.0
+        self.last_fill_stats: Dict[str, Any] = {}
+        self.last_stats: Dict[str, Any] = {}
+        self.spray_particles: List[Dict[str, float]] = []
+        self.max_bubble_rise = 0.0
+        self.last_spray_time = 0.0
 
         self._reset_state()
 
     def start(self):
         super().start()
-        self.width = getattr(self.controller, 'leds_per_strip', DEFAULT_LEDS_PER_STRIP)
-        self.height = getattr(self.controller, 'strip_count', DEFAULT_STRIP_COUNT)
+        self.panel_strips = getattr(self.controller, 'strip_count', DEFAULT_STRIP_COUNT)
+        self.panel_leds_per_strip = getattr(self.controller, 'leds_per_strip', DEFAULT_LEDS_PER_STRIP)
+        self.width = self.panel_strips
+        self.height = self.panel_leds_per_strip
         self._reset_state()
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
         schema.update({
-            'drop_rate': {'type': 'float', 'min': 0.2, 'max': 60.0, 'default': 3.0, 'description': 'Drops per second'},
+            'drop_rate': {'type': 'float', 'min': 0.1, 'max': 20.0, 'default': 1.0, 'description': 'Multiplier on the computed fill rate (1.0 ≈ 60s fill)'},
+            'target_fill_time': {'type': 'float', 'min': 5.0, 'max': 600.0, 'default': 60.0, 'description': 'Seconds to fill the entire display'},
             'flow_steps': {'type': 'int', 'min': 1, 'max': 8, 'default': 2, 'description': 'Physics iterations per frame'},
             'bubble_interval': {'type': 'float', 'min': 0.3, 'max': 8.0, 'default': 2.4, 'description': 'Seconds between bottom bubbles'},
             'bubble_strength': {'type': 'float', 'min': 0.2, 'max': 2.5, 'default': 1.2, 'description': 'Ripple energy from surfacing bubbles'},
@@ -97,17 +114,28 @@ class FluidTankAnimation(AnimationBase):
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
         if self.last_time is None:
-            self.last_time = time_elapsed
-        dt = max(0.005, min(0.05, time_elapsed - self.last_time))
+            dt_real = 1.0 / 30.0
+        else:
+            dt_real = max(0.0, time_elapsed - self.last_time)
         self.last_time = time_elapsed
 
-        speed = max(0.1, float(self.params.get('speed', 1.0)))
-        dt_scaled = dt * speed
+        dt_physics = max(0.005, min(0.05, dt_real if dt_real > 0.0 else 1.0 / 60.0))
 
+        speed = max(0.1, float(self.params.get('speed', 1.0)))
+        dt_scaled = dt_physics * speed
+
+        drop_dt = min(max(dt_real, 0.0), 1.0)
+        if drop_dt <= 0.0:
+            drop_dt = dt_physics
+        spawn_budget = drop_dt
+
+        fill_stats = self._update_fill_guidance(time_elapsed)
         self._maybe_puncture_hole(time_elapsed)
 
         prev_water = [row[:] for row in self.water]
-        self._spawn_drops(dt_scaled, speed)
+        spawn_allowed = bool(fill_stats.get('spawn_allowed', True)) and not self.hole_active
+        if spawn_allowed:
+            self._spawn_drops(spawn_budget)
         if self.hole_active:
             self._apply_hole(dt_scaled, time_elapsed)
 
@@ -121,7 +149,18 @@ class FluidTankAnimation(AnimationBase):
         self._inject_ripples()
         self._update_ripples(dt_scaled)
         self._update_bubbles(dt_scaled, time_elapsed)
+        self._update_spray_particles(dt_physics)
         self._update_hole_timers(dt_scaled, time_elapsed)
+        self._snapshot_stats(
+            time_elapsed=time_elapsed,
+            dt_real=dt_real,
+            dt_physics=dt_physics,
+            drop_dt=drop_dt,
+            spawn_budget=spawn_budget,
+            speed=speed,
+            flow_steps=flow_steps,
+            fill_stats=fill_stats
+        )
 
         return self._render_frame(time_elapsed)
 
@@ -141,19 +180,28 @@ class FluidTankAnimation(AnimationBase):
         self.drain_reservoir = 0.0
         self.drain_reference_volume = 0.0
         self.hole_open_time = 0.0
+        self.fill_cycle_start_time = 0.0
+        self.fill_cycle_initialized = False
+        self.awaiting_cycle_reset = False
+        self.fill_correction_rate = 0.0
+        self.last_fill_stats = {}
+        self.last_stats = {}
+        self.spray_particles = []
+        self.max_bubble_rise = 0.0
+        self.last_spray_time = 0.0
 
-    def _spawn_drops(self, dt: float, speed: float):
-        base_rate = max(0.5, float(self.params.get('drop_rate', 3.0)))
-        # Scale drop rate with area so larger grids still visibly fill.
-        area_scale = max(1.0, (self.width * self.height) / (7 * 20))
-        rate = base_rate * math.sqrt(area_scale) * speed
+    def _spawn_drops(self, dt: float):
+        fill_time = max(5.0, float(self.params.get('target_fill_time', 60.0)))
+        drop_multiplier = max(0.1, float(self.params.get('drop_rate', 1.0)))
+        base_rate = (self.width * self.height) / fill_time  # cells per second
+        rate = (base_rate + self.fill_correction_rate) * drop_multiplier
         self.drop_accumulator += dt * rate
         while self.drop_accumulator >= 1.0:
             self.drop_accumulator -= 1.0
             self._add_water_pixel(random.randrange(self.width))
 
     def _add_water_pixel(self, x: int):
-        for y in range(self.height):
+        for y in range(self.height - 1, -1, -1):
             if self._is_hole_cell(x, y):
                 continue
             if self.water[y][x] == 0:
@@ -273,13 +321,16 @@ class FluidTankAnimation(AnimationBase):
     def _update_bubbles(self, dt: float, time_elapsed: float):
         self.time_since_bubble += dt
         interval = max(0.3, float(self.params.get('bubble_interval', 2.4)))
-        if self.time_since_bubble >= interval and self._fill_ratio() > 0.2:
+        fill_ratio = self._fill_ratio()
+        if self.time_since_bubble >= interval and fill_ratio > 0.08:
             self.time_since_bubble = 0.0
-            self.bubbles.append({
+            bubble = {
                 'x': random.uniform(0, self.width - 1),
                 'y': self.height - 0.1,
-                'vy': -0.45
-            })
+                'vy': -0.6,
+                'origin_y': self.height - 0.1
+            }
+            self.bubbles.append(bubble)
 
         active_bubbles = []
         for bubble in self.bubbles:
@@ -288,18 +339,37 @@ class FluidTankAnimation(AnimationBase):
             if surface is None:
                 continue
 
-            bubble['vy'] -= 3.2 * dt
-            bubble['vy'] = max(bubble['vy'], -3.0)
+            bubble['vy'] -= 2.8 * dt
+            bubble['vy'] = max(bubble['vy'], -3.2)
             bubble['y'] += bubble['vy'] * dt
 
             if bubble['y'] <= surface - 0.1:
+                rise = bubble.get('origin_y', bubble['y']) - bubble['y']
+                if rise > 0:
+                    self.max_bubble_rise = max(self.max_bubble_rise, rise)
                 self._queue_ripple(col, max(0, surface - 1), float(self.params.get('bubble_strength', 1.2)))
                 continue
 
             bubble['y'] = min(bubble['y'], self.height - 0.2)
+            bubble['y'] = max(-1.0, bubble['y'])
             active_bubbles.append(bubble)
 
         self.bubbles = active_bubbles
+    
+    def _update_spray_particles(self, dt: float):
+        if not self.spray_particles:
+            return
+        gravity = 1.6
+        active: List[Dict[str, float]] = []
+        for particle in self.spray_particles:
+            particle['vy'] += gravity * dt
+            particle['x'] += particle['vx'] * dt
+            particle['y'] += particle['vy'] * dt
+            particle['life'] -= dt
+            if particle['life'] <= 0.0 or particle['y'] < -2.0 or particle['y'] >= self.height + 2:
+                continue
+            active.append(particle)
+        self.spray_particles = active
 
     def _fill_ratio(self) -> float:
         total = self.width * self.height
@@ -328,6 +398,8 @@ class FluidTankAnimation(AnimationBase):
         self.drain_reservoir = 0.0
         self.drain_reference_volume = max(1, sum(sum(row) for row in self.water))
         self.hole_open_time = time_elapsed
+        self.awaiting_cycle_reset = True
+        self.fill_correction_rate = 0.0
         self._queue_ripple(cx, cy, 1.4)
 
     def _apply_hole(self, dt: float, time_elapsed: float):
@@ -349,19 +421,26 @@ class FluidTankAnimation(AnimationBase):
                     self.ripple_velocity[y][x] *= 0.55
 
         total_water = sum(sum(row) for row in self.water)
-        if total_water > 0 and filled_positions:
+        removed_total = 0
+        if total_water > 0:
             target_time = max(0.5, float(self.params.get('target_drain_time', 3.0)))
             reference = max(total_water, self.drain_reference_volume or total_water)
             drain_rate = reference / target_time  # cells per second
             self.drain_reservoir += drain_rate * dt
-            allowed = min(len(filled_positions), int(self.drain_reservoir))
+            allowed = min(int(self.drain_reservoir), total_water)
             if allowed > 0:
-                random.shuffle(filled_positions)
-                for x, y in filled_positions[:allowed]:
-                    if self.water[y][x]:
-                        self.water[y][x] = 0
-                        drained = True
                 self.drain_reservoir -= allowed
+                random.shuffle(filled_positions)
+                for x, y in filled_positions:
+                    if self.water[y][x] and removed_total < allowed:
+                        self.water[y][x] = 0
+                        removed_total += 1
+                if removed_total < allowed:
+                    removed_total += self._bulk_drain_water(allowed - removed_total)
+                if removed_total > 0:
+                    drained = True
+                    self._spawn_spray_particles(cx, cy, removed_total)
+                    self.last_spray_time = time_elapsed
 
         if drained:
             self.last_drain_time = time_elapsed
@@ -409,6 +488,168 @@ class FluidTankAnimation(AnimationBase):
                 if dx * dx + dy * dy <= r2 and self.water[y][x]:
                     count += 1
         return count
+    
+    def _bulk_drain_water(self, amount: int) -> int:
+        if amount <= 0:
+            return 0
+        removed = 0
+        for y in range(self.height - 1, -1, -1):
+            for x in range(self.width):
+                if self.water[y][x]:
+                    self.water[y][x] = 0
+                    removed += 1
+                    if removed >= amount:
+                        return removed
+        return removed
+
+    def _spawn_spray_particles(self, cx: float, cy: float, count: int):
+        if count <= 0:
+            return
+        max_particles = min(60, count * 2)
+        for _ in range(max_particles):
+            particle = {
+                'x': cx + random.uniform(-1.2, 1.2),
+                'y': cy + random.uniform(-0.5, 0.5),
+                'vx': random.uniform(-2.0, 2.0),
+                'vy': -random.uniform(3.0, 5.5),
+                'life': random.uniform(0.4, 0.9)
+            }
+            self.spray_particles.append(particle)
+
+    def _snapshot_stats(self, time_elapsed: float, dt_real: float, dt_physics: float,
+                        drop_dt: float, spawn_budget: float, speed: float,
+                        flow_steps: int, fill_stats: Optional[Dict[str, Any]]):
+        total_cells = self.width * self.height
+        fill_time = max(5.0, float(self.params.get('target_fill_time', 60.0)))
+        drop_multiplier = max(0.1, float(self.params.get('drop_rate', 1.0)))
+        base_rate = (total_cells / fill_time) if fill_time > 0 else 0.0
+        effective_rate = (base_rate + self.fill_correction_rate) * drop_multiplier
+
+        stats = {
+            'time': time_elapsed,
+            'dt_real': dt_real,
+            'dt_physics': dt_physics,
+            'drop_dt': drop_dt,
+            'spawn_budget': spawn_budget,
+            'speed': speed,
+            'flow_steps': flow_steps,
+            'fill_ratio': self._fill_ratio(),
+            'fill_correction_rate': self.fill_correction_rate,
+            'drop_accumulator': self.drop_accumulator,
+            'base_drop_rate': base_rate,
+            'drop_multiplier': drop_multiplier,
+            'effective_drop_rate': effective_rate,
+            'width': self.width,
+            'height': self.height,
+            'total_cells': total_cells,
+            'hole_active': self.hole_active,
+            'hole_flash_timer': self.hole_flash_timer,
+            'hole_cooldown_timer': self.hole_cooldown_timer,
+            'awaiting_cycle_reset': self.awaiting_cycle_reset,
+            'bubble_count': len(self.bubbles),
+            'pending_ripples': len(self.pending_ripples),
+            'hole_water_remaining': self._hole_water_count() if self.hole_active else 0,
+            'drain_reference_volume': self.drain_reference_volume,
+            'spray_particle_count': len(self.spray_particles),
+            'max_bubble_rise': self.max_bubble_rise,
+            'last_spray_time': self.last_spray_time
+        }
+
+        if fill_stats:
+            stats.update({k: v for k, v in fill_stats.items() if k not in stats})
+
+        if self.bubbles:
+            stats['bubble_preview'] = [
+                {
+                    'x': round(bubble['x'], 2),
+                    'y': round(bubble['y'], 2),
+                    'vy': round(bubble['vy'], 2)
+                }
+                for bubble in self.bubbles[:4]
+            ]
+
+        if self.spray_particles:
+            stats['spray_preview'] = [
+                {
+                    'x': round(p['x'], 2),
+                    'y': round(p['y'], 2),
+                    'life': round(p['life'], 2)
+                }
+                for p in self.spray_particles[:6]
+            ]
+
+        self.last_stats = stats
+
+    def _update_fill_guidance(self, time_elapsed: float) -> Dict[str, Any]:
+        total_cells = self.width * self.height
+        fill_ratio = self._fill_ratio()
+        fill_time = max(5.0, float(self.params.get('target_fill_time', 60.0)))
+
+        stats = {
+            'time': time_elapsed,
+            'total_cells': total_cells,
+            'fill_ratio': fill_ratio,
+            'fill_cycle_start_time': self.fill_cycle_start_time,
+            'fill_cycle_initialized': self.fill_cycle_initialized,
+            'awaiting_cycle_reset': self.awaiting_cycle_reset,
+            'hole_active': self.hole_active,
+            'hole_flash_timer': self.hole_flash_timer,
+            'target_fill_time': fill_time,
+            'spawn_allowed': True
+        }
+
+        if total_cells <= 0:
+            self.fill_correction_rate = 0.0
+            stats['fill_correction_rate'] = self.fill_correction_rate
+            stats['spawn_allowed'] = False
+            self.last_fill_stats = stats
+            return stats
+
+        if not self.fill_cycle_initialized and not self.hole_active and not self.awaiting_cycle_reset:
+            self.fill_cycle_start_time = time_elapsed
+            self.fill_cycle_initialized = True
+            stats['fill_cycle_start_time'] = self.fill_cycle_start_time
+
+        if self.awaiting_cycle_reset:
+            if not self.hole_active and self.hole_flash_timer <= 0.0 and fill_ratio <= 0.05:
+                self.fill_cycle_start_time = time_elapsed
+                self.awaiting_cycle_reset = False
+                self.fill_cycle_initialized = True
+                stats['fill_cycle_start_time'] = self.fill_cycle_start_time
+                stats['awaiting_cycle_reset'] = False
+            else:
+                self.fill_correction_rate = 0.0
+                stats['fill_correction_rate'] = self.fill_correction_rate
+                stats['spawn_allowed'] = False
+                self.last_fill_stats = stats
+                return stats
+
+        if self.hole_active:
+            self.fill_correction_rate = 0.0
+            stats['fill_correction_rate'] = self.fill_correction_rate
+            stats['spawn_allowed'] = False
+            self.last_fill_stats = stats
+            return stats
+
+        elapsed = max(0.0, time_elapsed - self.fill_cycle_start_time)
+        expected_ratio = min(1.0, elapsed / fill_time)
+        stats['fill_cycle_elapsed'] = elapsed
+        stats['expected_ratio'] = expected_ratio
+
+        overfill = fill_ratio >= expected_ratio + 0.01
+        if overfill:
+            self.fill_correction_rate = 0.0
+            stats['spawn_allowed'] = False
+        else:
+            deficit = expected_ratio - fill_ratio
+            correction_window = max(fill_time * 0.25, 5.0)
+            self.fill_correction_rate = (deficit * total_cells) / correction_window
+            stats['spawn_allowed'] = True
+
+        stats['fill_correction_rate'] = self.fill_correction_rate
+        stats['overfill'] = overfill
+        self.last_fill_stats = stats
+        return stats
 
     def _hole_visual_intensity(self, x: int, y: int, time_elapsed: float) -> float:
         cx, cy = self.hole_position
@@ -438,14 +679,23 @@ class FluidTankAnimation(AnimationBase):
             bx = max(0, min(width - 1, int(round(bubble['x']))))
             by = max(0, min(height - 1, int(round(bubble['y']))))
             bubble_cells[(bx, by)] = True
+        
+        spray_cells: Dict[Tuple[int, int], float] = {}
+        for particle in self.spray_particles:
+            sx = int(round(particle['x']))
+            sy = int(round(particle['y']))
+            if 0 <= sx < width and 0 <= sy < height:
+                key = (sx, sy)
+                spray_cells[key] = max(spray_cells.get(key, 0.0), min(1.0, particle['life']))
 
-        pixels: List[Tuple[int, int, int]] = [(0, 0, 0)] * (width * height)
+        pixels: List[Tuple[int, int, int]] = [(0, 0, 0)] * (self.panel_leds_per_strip * self.panel_strips)
 
         air_color = (1, 2, 5)
         deep_water = (6, 40, 80)
         surface_water = (70, 160, 255)
         foam_color = (210, 235, 255)
         hole_flash_color = (140, 220, 255)
+        spray_color = (200, 240, 255)
 
         shimmer = float(self.params.get('surface_shimmer', 0.35))
         foam_bias = float(self.params.get('foam_bias', 0.25))
@@ -454,8 +704,10 @@ class FluidTankAnimation(AnimationBase):
             depth_factor = y / max(1, height - 1)
             base_water = self._mix_color(surface_water, deep_water, depth_factor * 0.7)
             for x in range(width):
-                mapped_x = x if not (serpentine and y % 2 == 1) else (width - 1 - x)
-                idx = y * width + mapped_x
+                strip_index = x
+                led_index = y if not (serpentine and (strip_index % 2 == 1)) else (height - 1 - y)
+                led_index = height - 1 - led_index
+                idx = strip_index * self.panel_leds_per_strip + led_index
 
                 hole_intensity = self._hole_visual_intensity(x, y, time_elapsed)
                 if hole_intensity > 0.0:
@@ -479,9 +731,17 @@ class FluidTankAnimation(AnimationBase):
                 else:
                     color = air_color
 
+                spray_intensity = spray_cells.get((x, y), 0.0)
+                if spray_intensity > 0.0:
+                    color = self._mix_color(color, spray_color, min(1.0, spray_intensity * 1.4))
+
                 pixels[idx] = self.apply_brightness(color)
 
         return pixels
+    
+    def get_runtime_stats(self) -> Dict[str, Any]:
+        """Expose the latest fill/flow telemetry for debugging."""
+        return dict(self.last_stats) if self.last_stats else {}
 
     @staticmethod
     def _mix_color(a: Tuple[int, int, int], b: Tuple[int, int, int], t: float) -> Tuple[int, int, int]:

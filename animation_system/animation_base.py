@@ -111,6 +111,13 @@ class AnimationBase(ABC):
             'current_params': self.params
         }
     
+    def get_runtime_stats(self) -> Dict[str, Any]:
+        """
+        Optional hook for animations to expose debugging/telemetry data.
+        Default implementation returns an empty dict.
+        """
+        return {}
+    
     def start(self):
         """Called when animation starts"""
         self.start_time = time.time()
