@@ -14,6 +14,7 @@ from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 from animation_system import AnimationBase, StatefulAnimationBase, AnimationPluginLoader
+from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 # Try to import the real LED controller, fall back to mock for testing
 try:
@@ -21,7 +22,7 @@ try:
 except ImportError:
     # Mock LED controller for testing without SPI hardware
     class LEDController:
-        def __init__(self, strips=7, leds_per_strip=20, **kwargs):
+        def __init__(self, strips=DEFAULT_STRIP_COUNT, leds_per_strip=DEFAULT_LEDS_PER_STRIP, **kwargs):
             self.strip_count = strips
             self.leds_per_strip = leds_per_strip
             self.total_leds = strips * leds_per_strip

@@ -6,6 +6,8 @@ Simple test for just the plugin system without dependencies
 import sys
 from pathlib import Path
 
+from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+
 # Add current directory to Python path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -43,8 +45,8 @@ def test_plugin_loading():
                 # Create a mock controller for testing
                 class MockController:
                     def __init__(self):
-                        self.strips = 7
-                        self.leds_per_strip = 500
+                        self.strips = DEFAULT_STRIP_COUNT
+                        self.leds_per_strip = DEFAULT_LEDS_PER_STRIP
                 
                 mock_controller = MockController()
                 instance = plugin_class(mock_controller)
@@ -53,7 +55,7 @@ def test_plugin_loading():
                 
                 # Test frame generation
                 frame = instance.generate_frame(0.0, 0)
-                expected_pixels = 7 * 500
+                expected_pixels = DEFAULT_STRIP_COUNT * DEFAULT_LEDS_PER_STRIP
                 if len(frame) == expected_pixels:
                     print(f"  ✓ Frame generation: {len(frame)} pixels")
                 else:

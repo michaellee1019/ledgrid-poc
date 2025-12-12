@@ -9,6 +9,7 @@ Lights up all LEDs in solid colors to verify which strips work.
 import time
 from typing import List, Tuple, Dict, Any
 from animation_system import AnimationBase
+from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 
 class SimpleTestAnimation(AnimationBase):
@@ -39,8 +40,8 @@ class SimpleTestAnimation(AnimationBase):
         ]
         
         # Get controller dimensions
-        self.num_strips = getattr(controller, 'strip_count', 7)
-        self.leds_per_strip = getattr(controller, 'leds_per_strip', 500)
+        self.num_strips = getattr(controller, 'strip_count', DEFAULT_STRIP_COUNT)
+        self.leds_per_strip = getattr(controller, 'leds_per_strip', DEFAULT_LEDS_PER_STRIP)
         self.total_leds = self.num_strips * self.leds_per_strip
         
         print(f"🔍 Simple Test Animation initialized:")

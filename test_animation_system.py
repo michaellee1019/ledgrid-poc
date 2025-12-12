@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+
 # Add current directory to Python path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -21,7 +23,7 @@ sys.modules['werkzeug.utils'] = MagicMock()
 class MockLEDController:
     """Mock LED controller for testing without hardware"""
     
-    def __init__(self, strips=7, leds_per_strip=500, **kwargs):
+    def __init__(self, strips=DEFAULT_STRIP_COUNT, leds_per_strip=DEFAULT_LEDS_PER_STRIP, **kwargs):
         self.strips = strips
         self.leds_per_strip = leds_per_strip
         self.total_leds = strips * leds_per_strip

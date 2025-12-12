@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from animation_manager import AnimationManager
 from control_channel import FileControlChannel
+from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from web_interface import create_app
 
 # Try to import the real LED controller, fall back to mock for testing
@@ -23,7 +24,7 @@ try:
     from led_controller_spi import LEDController
 except ImportError:
     class LEDController:
-        def __init__(self, strips=7, leds_per_strip=20, **kwargs):
+        def __init__(self, strips=DEFAULT_STRIP_COUNT, leds_per_strip=DEFAULT_LEDS_PER_STRIP, **kwargs):
             self.strip_count = strips
             self.leds_per_strip = leds_per_strip
             self.total_leds = strips * leds_per_strip
@@ -163,10 +164,10 @@ def main():
                         help='Path to control file (default: run_state/control.json)')
     parser.add_argument('--status-file', default='run_state/status.json',
                         help='Path to status file (default: run_state/status.json)')
-    parser.add_argument('--strips', type=int, default=7,
-                        help='Number of LED strips (default: 7)')
-    parser.add_argument('--leds-per-strip', type=int, default=20,
-                        help='LEDs per strip (default: 20)')
+    parser.add_argument('--strips', type=int, default=DEFAULT_STRIP_COUNT,
+                        help=f'Number of LED strips (default: {DEFAULT_STRIP_COUNT})')
+    parser.add_argument('--leds-per-strip', type=int, default=DEFAULT_LEDS_PER_STRIP,
+                        help=f'LEDs per strip (default: {DEFAULT_LEDS_PER_STRIP})')
 
     # Web options
     parser.add_argument('--host', default='0.0.0.0',

@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from led_controller_spi import LEDController
 from animation_system import StatefulAnimationBase
+from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 
 def test_strips_standalone():
@@ -26,8 +27,8 @@ def test_strips_standalone():
         device=0,
         speed=5000000,
         mode=3,
-        strips=7,
-        leds_per_strip=500,
+        strips=DEFAULT_STRIP_COUNT,
+        leds_per_strip=DEFAULT_LEDS_PER_STRIP,
         debug=True
     )
     

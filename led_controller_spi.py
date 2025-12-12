@@ -10,9 +10,11 @@ import argparse
 import spidev
 import sys
 
+from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+
 # LED Configuration defaults
-DEFAULT_LED_PER_STRIP = 20
-DEFAULT_NUM_STRIPS = 7
+DEFAULT_LED_PER_STRIP = DEFAULT_LEDS_PER_STRIP
+DEFAULT_NUM_STRIPS = DEFAULT_STRIP_COUNT
 
 # SPI Configuration
 SPI_BUS = 0  # SPI bus number (0 = /dev/spidev0.X)

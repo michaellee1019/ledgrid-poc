@@ -12,6 +12,8 @@ import traceback
 from typing import Dict, List, Type, Optional, Any, Iterable
 from pathlib import Path
 
+from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+
 from .animation_base import AnimationBase
 
 
@@ -158,8 +160,8 @@ class AnimationPluginLoader:
 
         # Build a lightweight controller so plugins that inspect dimensions don't crash
         class _InfoController:
-            strip_count = 7
-            leds_per_strip = 20
+            strip_count = DEFAULT_STRIP_COUNT
+            leds_per_strip = DEFAULT_LEDS_PER_STRIP
             total_leds = strip_count * leds_per_strip
             debug = False
 

@@ -161,8 +161,19 @@ echo \"\"
 echo \"Press Ctrl+C to stop\"
 echo \"\"
 
-STRIPS=\${STRIPS:-7}
-LEDS_PER_STRIP=\${LEDS_PER_STRIP:-20}
+DEFAULT_STRIPS=\$(python - <<'PY'
+from led_layout import DEFAULT_STRIP_COUNT
+print(DEFAULT_STRIP_COUNT)
+PY
+)
+DEFAULT_LEDS_PER_STRIP=\$(python - <<'PY'
+from led_layout import DEFAULT_LEDS_PER_STRIP
+print(DEFAULT_LEDS_PER_STRIP)
+PY
+)
+
+STRIPS=\${STRIPS:-\$DEFAULT_STRIPS}
+LEDS_PER_STRIP=\${LEDS_PER_STRIP:-\$DEFAULT_LEDS_PER_STRIP}
 TARGET_FPS=\${TARGET_FPS:-50}
 HOST=\${HOST:-0.0.0.0}
 PORT=\${PORT:-5000}

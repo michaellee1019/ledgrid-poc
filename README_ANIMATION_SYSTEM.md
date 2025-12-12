@@ -156,8 +156,8 @@ python start_animation_server.py --help
 Key options:
 - `--host 0.0.0.0` - Bind to all interfaces
 - `--port 5000` - Web server port
-- `--strips 7` - Number of LED strips
-- `--leds-per-strip 500` - LEDs per strip
+- `--strips 8` - Number of LED strips
+- `--leds-per-strip 140` - LEDs per strip
 - `--spi-speed 5000000` - SPI communication speed
 - `--target-fps 50` - Animation frame rate
 

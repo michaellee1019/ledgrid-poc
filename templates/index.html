@@ -178,6 +178,9 @@
 
 {% block scripts %}
 <script>
+    const INITIAL_STRIP_COUNT = {{ status.led_info.strip_count | default(8) }};
+    const INITIAL_LEDS_PER_STRIP = {{ status.led_info.leds_per_strip | default(140) }};
+
     // Animation Renderer
     class LEDAnimationRenderer {
         constructor(canvasId) {
@@ -199,8 +202,8 @@
             this.lastFrameData = null;
 
             // LED configuration - will be updated from server
-            this.stripCount = 7;
-            this.ledsPerStrip = 500;
+            this.stripCount = INITIAL_STRIP_COUNT;
+            this.ledsPerStrip = INITIAL_LEDS_PER_STRIP;
             this.totalLeds = this.stripCount * this.ledsPerStrip;
 
             // Rendering configuration - larger LEDs with tight spacing

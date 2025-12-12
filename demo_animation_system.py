@@ -12,12 +12,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from animation_system.plugin_loader import AnimationPluginLoader
+from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 
 class MockLEDController:
     """Mock LED controller that simulates the real hardware interface"""
     
-    def __init__(self, strips=7, leds_per_strip=500):
+    def __init__(self, strips=DEFAULT_STRIP_COUNT, leds_per_strip=DEFAULT_LEDS_PER_STRIP):
         self.strip_count = strips
         self.leds_per_strip = leds_per_strip
         self.total_leds = strips * leds_per_strip
@@ -89,7 +90,7 @@ def main():
     print("=" * 50)
     
     # Create mock controller
-    controller = MockLEDController(strips=7, leds_per_strip=500)
+    controller = MockLEDController(strips=DEFAULT_STRIP_COUNT, leds_per_strip=DEFAULT_LEDS_PER_STRIP)
     
     # Load plugins
     loader = AnimationPluginLoader('animations')

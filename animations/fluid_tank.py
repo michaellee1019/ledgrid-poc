@@ -11,6 +11,7 @@ import math
 import random
 from typing import List, Tuple, Dict, Optional, Any
 from animation_system import AnimationBase
+from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 
 class FluidTankAnimation(AnimationBase):
@@ -43,8 +44,8 @@ class FluidTankAnimation(AnimationBase):
 
         self.params = {**self.default_params, **self.config}
 
-        self.width = getattr(controller, 'leds_per_strip', 20)
-        self.height = getattr(controller, 'strip_count', 7)
+        self.width = getattr(controller, 'leds_per_strip', DEFAULT_LEDS_PER_STRIP)
+        self.height = getattr(controller, 'strip_count', DEFAULT_STRIP_COUNT)
 
         self.water: List[List[int]] = []
         self.ripple_height: List[List[float]] = []
@@ -71,8 +72,8 @@ class FluidTankAnimation(AnimationBase):
 
     def start(self):
         super().start()
-        self.width = getattr(self.controller, 'leds_per_strip', 20)
-        self.height = getattr(self.controller, 'strip_count', 7)
+        self.width = getattr(self.controller, 'leds_per_strip', DEFAULT_LEDS_PER_STRIP)
+        self.height = getattr(self.controller, 'strip_count', DEFAULT_STRIP_COUNT)
         self._reset_state()
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:

@@ -14,6 +14,7 @@ from werkzeug.utils import secure_filename
 
 from animation_manager import AnimationManager, PreviewLEDController
 from control_channel import FileControlChannel
+from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 
 class AnimationWebInterface:
@@ -242,8 +243,8 @@ class AnimationWebInterface:
 def create_app(control_channel: FileControlChannel = None,
                host: str = '0.0.0.0',
                port: int = 5000,
-               strips: int = 7,
-               leds_per_strip: int = 20,
+               strips: int = DEFAULT_STRIP_COUNT,
+               leds_per_strip: int = DEFAULT_LEDS_PER_STRIP,
                animations_dir: str = 'animations'):
     """Factory function to create the web application"""
     if control_channel is None:
@@ -270,8 +271,8 @@ if __name__ == '__main__':
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     
     # LED layout for previews (does not touch hardware)
-    parser.add_argument('--strips', type=int, default=7, help='Number of strips')
-    parser.add_argument('--leds-per-strip', type=int, default=20, help='LEDs per strip')
+    parser.add_argument('--strips', type=int, default=DEFAULT_STRIP_COUNT, help='Number of strips')
+    parser.add_argument('--leds-per-strip', type=int, default=DEFAULT_LEDS_PER_STRIP, help='LEDs per strip')
     
     args = parser.parse_args()
     
