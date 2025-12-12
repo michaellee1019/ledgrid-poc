@@ -3,18 +3,17 @@
 {% block title %}LED Grid Dashboard{% endblock %}
 
 {% block content %}
-<!-- Animation Renderer -->
 <div class="row mb-4">
-    <div class="col-lg-8 mb-3 mb-lg-0">
-        <div class="card h-100">
+    <div class="col-lg-4 mb-4 mb-lg-0">
+        <div class="card mb-3">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h5><i class="fas fa-tv"></i> Live Animation Preview</h5>
+                <h5 class="mb-0"><i class="fas fa-tv"></i> Live Preview</h5>
                 <div class="btn-group btn-group-sm" role="group">
                     <button type="button" class="btn btn-outline-secondary" id="toggleRenderer" onclick="toggleRenderer()">
-                        <i class="fas fa-eye"></i> Hide
+                        <i class="fas fa-eye"></i>
                     </button>
                     <button type="button" class="btn btn-outline-secondary" onclick="resetRenderer()">
-                        <i class="fas fa-sync"></i> Reset
+                        <i class="fas fa-sync"></i>
                     </button>
                     <button type="button" class="btn btn-outline-primary" id="previewToggle" onclick="togglePreviewMode()">
                         <i class="fas fa-search"></i> <span id="previewToggleText">Preview Mode</span>
@@ -23,10 +22,10 @@
             </div>
             <div class="card-body" id="rendererContainer">
                 <div id="animationRenderer" class="text-center">
-                    <canvas id="ledCanvas" width="900" height="900" class="led-preview" style="border: 1px solid #ddd; border-radius: 8px; max-width: 100%; cursor: pointer;"></canvas>
+                    <canvas id="ledCanvas" width="420" height="840" class="led-preview w-100" style="border: 1px solid #ddd; border-radius: 8px; max-width: 100%; cursor: pointer;"></canvas>
                     <div class="mt-2">
-                        <small class="text-muted d-block">
-                            Canvas rotated to match the physical panel. Click anywhere to punch a random hole during the live scene.
+                        <small class="text-muted d-block mb-1">
+                            Canvas rotated to match the physical panel. Click to punch a random hole instantly.
                         </small>
                         <small class="text-muted">
                             <span id="rendererStatus">Waiting for animation...</span> |
@@ -37,22 +36,21 @@
                 </div>
             </div>
         </div>
-    </div>
-    <div class="col-lg-4">
-        <div class="card mb-3">
+
+        <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-tint"></i> Scene Controls & Stats</h5>
+                <h5 class="mb-0"><i class="fas fa-tint"></i> Scene Stats</h5>
                 <button class="btn btn-sm btn-outline-danger" onclick="requestRandomHole()">
-                    <i class="fas fa-bolt"></i> Punch Hole
+                    <i class="fas fa-bolt"></i>
                 </button>
             </div>
-            <div class="card-body">
+            <div class="card-body small">
                 <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
                     <span>Fill Level</span>
                     <strong id="statFill">--</strong>
                 </div>
                 <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>On-Schedule</span>
+                    <span>Expected Level</span>
                     <strong id="statExpected">--</strong>
                 </div>
                 <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
@@ -60,29 +58,34 @@
                     <strong id="statHole">--</strong>
                 </div>
                 <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Bubbles (rise)</span>
+                    <span>Bubbles (peak rise)</span>
                     <strong id="statBubbles">--</strong>
                 </div>
                 <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
                     <span>Spray Particles</span>
                     <strong id="statSpray">--</strong>
                 </div>
-                <div class="d-flex justify-content-between align-items-center">
+                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
                     <span>Spawn Allowed</span>
                     <strong id="statSpawnAllowed">--</strong>
                 </div>
+                <div class="d-flex justify-content-between align-items-center">
+                    <span>Animation Hash</span>
+                    <code id="statHash">--</code>
+                </div>
                 <small class="text-muted d-block mt-2">
-                    Stats update live from <code>/api/stats</code> so hardware and simulator stay in sync.
+                    Stats update from <code>/api/status</code> so sims + hardware stay in sync.
                 </small>
             </div>
         </div>
-        <div class="card">
+
+        <div class="card mt-3">
             <div class="card-header">
                 <h5><i class="fas fa-info-circle"></i> System Status</h5>
             </div>
             <div class="card-body">
-                <div class="mb-3">
-                    <strong>Animation Status:</strong><br>
+                <div class="mb-2">
+                    <strong>Animation:</strong><br>
                     <span class="status-indicator {{ 'status-running' if status.is_running else 'status-stopped' }}"></span>
                     <span class="status-text">
                         {% if status.is_running %}
@@ -92,114 +95,126 @@
                         {% endif %}
                     </span>
                 </div>
-                
-                <div class="mb-3">
+                <div class="mb-2">
                     <strong>Performance:</strong><br>
                     <span class="fps-display">{{ "%.1f"|format(status.actual_fps) }} FPS</span>
                     <small class="text-muted">(Target: {{ status.target_fps }} FPS)</small>
                 </div>
-                
-                <div class="mb-3">
+                <div class="mb-2">
                     <strong>LED Configuration:</strong><br>
-                    {{ status.led_info.strip_count }} strips × {{ status.led_info.leds_per_strip }} LEDs<br>
-                    <small class="text-muted">Total: {{ status.led_info.total_leds }} LEDs</small>
+                    {{ status.led_info.strip_count }} strips × {{ status.led_info.leds_per_strip }} LEDs
                 </div>
-                
                 {% if status.is_running %}
-                <div class="mb-3">
+                <div class="mb-2">
                     <strong>Runtime:</strong><br>
                     {{ "%.1f"|format(status.uptime) }}s
                     <small class="text-muted">({{ status.frame_count }} frames)</small>
                 </div>
                 {% endif %}
-                
-                {% if status.is_running and status.animation_info %}
-                <div class="mb-3">
-                    <strong>{{ status.animation_info.name }}</strong><br>
-                    <small class="text-muted">{{ status.animation_info.description }}</small>
-                </div>
-                {% endif %}
-                
                 <div class="d-grid gap-2">
                     {% if status.is_running %}
                     <button class="btn btn-danger" onclick="stopAnimation()">
                         <i class="fas fa-stop"></i> Stop Animation
                     </button>
                     {% endif %}
-                    
                     <button class="btn btn-outline-secondary" onclick="refreshPlugins()">
                         <i class="fas fa-sync"></i> Refresh Plugins
                     </button>
-                    <a href="{{ url_for('control_page') }}" class="btn btn-outline-primary">
-                        <i class="fas fa-sliders-h"></i> Control Panel
-                    </a>
                 </div>
             </div>
         </div>
     </div>
-</div>
 
-<div class="row">
-    <div class="col-12">
-        <h2><i class="fas fa-palette"></i> Available Animations</h2>
-        
-        <div class="row">
-            {% for animation in animations %}
-            <div class="col-md-6 mb-3">
-                <div class="card animation-card h-100">
-                    <div class="card-body">
-                        <h5 class="card-title">
-                            <i class="fas fa-play-circle text-primary"></i>
-                            {{ animation.name }}
-                        </h5>
-                        <p class="card-text">{{ animation.description }}</p>
-                        <small class="text-muted">
-                            <i class="fas fa-user"></i> {{ animation.author }}
-                            <span class="ms-2"><i class="fas fa-tag"></i> v{{ animation.version }}</span>
-                        </small>
-                        <div class="mt-3 d-flex gap-2">
-                            <button class="btn btn-outline-primary btn-sm" onclick="previewAnimation('{{ animation.plugin_name }}')">
-                                <i class="fas fa-eye"></i> Preview
-                            </button>
-                            <button class="btn btn-primary btn-sm" onclick="startAnimation('{{ animation.plugin_name }}')">
-                                <i class="fas fa-play"></i> Start
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header pb-0">
+                <ul class="nav nav-tabs card-header-tabs" id="dashboardTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="tab-animations-link" data-bs-toggle="tab" data-bs-target="#tab-animations" type="button" role="tab">Animations</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-controls-link" data-bs-toggle="tab" data-bs-target="#tab-controls" type="button" role="tab">Controls</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="tab-status-link" data-bs-toggle="tab" data-bs-target="#tab-status" type="button" role="tab">Status JSON</button>
+                    </li>
+                </ul>
+            </div>
+            <div class="card-body tab-content">
+                <div class="tab-pane fade show active" id="tab-animations" role="tabpanel">
+                    <div class="row">
+                        {% for animation in animations %}
+                        <div class="col-md-6 mb-3">
+                            <div class="card animation-card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="fas fa-play-circle text-primary"></i>
+                                        {{ animation.name }}
+                                    </h5>
+                                    <p class="card-text">{{ animation.description }}</p>
+                                    <small class="text-muted">
+                                        <i class="fas fa-user"></i> {{ animation.author }}
+                                        <span class="ms-2"><i class="fas fa-tag"></i> v{{ animation.version }}</span>
+                                    </small>
+                                    <div class="mt-3 d-flex gap-2">
+                                        <button class="btn btn-outline-primary btn-sm" onclick="previewAnimation('{{ animation.plugin_name }}')">
+                                            <i class="fas fa-eye"></i> Preview
+                                        </button>
+                                        <button class="btn btn-primary btn-sm" onclick="startAnimation('{{ animation.plugin_name }}')">
+                                            <i class="fas fa-play"></i> Start
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% if not animations %}
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        No animations found. Upload some animation plugins to get started!
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="tab-pane fade" id="tab-controls" role="tabpanel">
+                    <div class="mb-3">
+                        <h5 class="fw-semibold">Select Animation</h5>
+                        <div class="row">
+                            {% for animation in animations %}
+                            <div class="col-md-6 mb-2">
+                                <button class="btn btn-outline-primary w-100 control-animation-btn" 
+                                        data-animation="{{ animation.plugin_name }}"
+                                        onclick="selectControlAnimation('{{ animation.plugin_name }}')">
+                                    {{ animation.name }}
+                                </button>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <div class="mt-2">
+                            <button class="btn btn-danger btn-sm" onclick="stopAnimation()">
+                                <i class="fas fa-stop"></i> Stop Animation
                             </button>
                         </div>
                     </div>
+                    <div class="card" id="controlParametersCard" style="display: none;">
+                        <div class="card-header">
+                            <h6 class="mb-0">Animation Parameters</h6>
+                            <small class="text-muted">Adjust values to steer the scene in real-time.</small>
+                        </div>
+                        <div class="card-body" id="controlParametersContainer"></div>
+                    </div>
                 </div>
-            </div>
-            {% endfor %}
-        </div>
-        
-        {% if not animations %}
-        <div class="alert alert-warning">
-            <i class="fas fa-exclamation-triangle"></i>
-            No animations found. Upload some animation plugins to get started!
-        </div>
-        {% endif %}
-    </div>
-</div>
-
-<div class="row mt-4">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header">
-                <h5><i class="fas fa-question-circle"></i> Quick Start</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-4">
-                        <h6><i class="fas fa-play"></i> Start Animation</h6>
-                        <p>Click any animation card above to start it immediately with default settings.</p>
+                <div class="tab-pane fade" id="tab-status" role="tabpanel">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div>
+                            <h6 class="mb-0">Live Status Payload</h6>
+                            <small class="text-muted">Data pulled from <code>/api/status</code></small>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="copyStatusJson()">
+                            <i class="fas fa-copy"></i> Copy
+                        </button>
                     </div>
-                    <div class="col-md-4">
-                        <h6><i class="fas fa-sliders-h"></i> Adjust Parameters</h6>
-                        <p>Use the <a href="{{ url_for('control_page') }}">Control Panel</a> to fine-tune animation parameters in real-time.</p>
-                    </div>
-                    <div class="col-md-4">
-                        <h6><i class="fas fa-upload"></i> Upload Animations</h6>
-                        <p>Create custom animations and <a href="{{ url_for('upload_page') }}">upload them</a> as Python plugins.</p>
-                    </div>
+                    <pre id="statusJson" class="bg-dark text-white p-3 rounded" style="max-height: 400px; overflow:auto;">Loading...</pre>
                 </div>
             </div>
         </div>
@@ -462,6 +477,9 @@
     // Global renderer & stats polling
     let animationRenderer = null;
     let statsPollTimer = null;
+    let latestStatusJson = '';
+    let controlSelectedAnimation = null;
+    let controlParameterUpdateTimeout = null;
 
     // Initialize renderer when page loads
     document.addEventListener('DOMContentLoaded', function() {
@@ -529,7 +547,7 @@
         const cards = document.querySelectorAll('.animation-card');
         cards.forEach(card => card.style.opacity = '0.6');
         
-        fetch(`/api/start/${name}`, {
+        return fetch(`/api/start/${name}`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(config)
@@ -537,17 +555,17 @@
         .then(r => r.json())
         .then(result => {
             if (result.success) {
-                // Show success feedback
                 showToast(`Started animation: ${name}`, 'success');
             } else {
                 showToast(`Failed to start animation: ${name}`, 'error');
             }
+            return result;
         })
         .catch(error => {
             showToast(`Error: ${error.message}`, 'error');
+            return {success: false, error: error.message};
         })
         .finally(() => {
-            // Restore card opacity
             cards.forEach(card => card.style.opacity = '1');
         });
     }
@@ -575,10 +593,12 @@
 
     async function fetchSceneStats() {
         try {
-            const response = await fetch('/api/stats');
+            const response = await fetch('/api/status');
             if (!response.ok) return;
             const data = await response.json();
+            latestStatusJson = JSON.stringify(data, null, 2);
             updateSceneStatsPanel(data);
+            updateStatusJson(data);
         } catch (err) {
             console.error('Failed to fetch stats', err);
         }
@@ -586,7 +606,7 @@
 
     function updateSceneStatsPanel(payload) {
         if (!payload) return;
-        const stats = payload.stats || {};
+        const stats = payload.animation_stats || payload.stats || {};
         safeSetText('statFill', stats.fill_ratio != null ? formatPercent(stats.fill_ratio) : '--');
         const expected = stats.expected_ratio != null ? formatPercent(stats.expected_ratio) : '--';
         safeSetText('statExpected', expected);
@@ -596,6 +616,41 @@
         safeSetText('statBubbles', bubbleLabel);
         safeSetText('statSpray', stats.spray_particle_count != null ? stats.spray_particle_count : '--');
         safeSetText('statSpawnAllowed', stats.spawn_allowed === false ? 'Paused' : 'Yes');
+        safeSetText('statHash', payload.animation_hash || '--');
+    }
+
+    function updateStatusJson(payload) {
+        const el = document.getElementById('statusJson');
+        if (el) {
+            el.textContent = latestStatusJson || JSON.stringify(payload, null, 2);
+        }
+    }
+
+    function copyStatusJson() {
+        if (!latestStatusJson) {
+            showToast('No status data yet', 'info');
+            return;
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(latestStatusJson)
+                .then(() => showToast('Status JSON copied', 'success'))
+                .catch(err => {
+                    console.error('Clipboard copy failed', err);
+                    fallbackCopy(latestStatusJson);
+                });
+        } else {
+            fallbackCopy(latestStatusJson);
+        }
+    }
+
+    function fallbackCopy(text) {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        showToast('Status JSON copied', 'success');
     }
 
     function safeSetText(id, value) {
@@ -607,6 +662,131 @@
 
     function formatPercent(value) {
         return `${Math.round(value * 100)}%`;
+    }
+
+    function humanizeParamName(name) {
+        return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    function highlightControlSelection(name) {
+        document.querySelectorAll('.control-animation-btn').forEach(btn => {
+            btn.classList.remove('btn-primary');
+            btn.classList.add('btn-outline-primary');
+            if (btn.dataset.animation === name) {
+                btn.classList.remove('btn-outline-primary');
+                btn.classList.add('btn-primary');
+            }
+        });
+    }
+
+    function selectControlAnimation(name, options = {}) {
+        controlSelectedAnimation = name;
+        highlightControlSelection(name);
+        const shouldStart = !(options && options.skipStart);
+        const startPromise = shouldStart ? startAnimation(name) : Promise.resolve({success: true});
+        startPromise.then(() => loadControlParameters(name));
+    }
+
+    function loadControlParameters(name) {
+        fetch(`/api/animations/${name}`)
+            .then(r => r.json())
+            .then(info => {
+                if (info && info.parameters) {
+                    renderControlParameterControls(info.parameters, info.current_params || {});
+                    document.getElementById('controlParametersCard').style.display = 'block';
+                }
+            })
+            .catch(console.error);
+    }
+
+    function renderControlParameterControls(schema, currentParams) {
+        const container = document.getElementById('controlParametersContainer');
+        if (!container) return;
+        container.innerHTML = '';
+
+        Object.entries(schema).forEach(([paramName, paramInfo]) => {
+            const currentValue = currentParams[paramName] ?? paramInfo.default;
+            const prettyName = humanizeParamName(paramName);
+            const rangeText = (paramInfo.min !== undefined && paramInfo.max !== undefined)
+                ? `Range: ${paramInfo.min} – ${paramInfo.max} (default ${paramInfo.default})`
+                : `Default: ${paramInfo.default ?? '--'}`;
+            const controlDiv = document.createElement('div');
+            controlDiv.className = 'parameter-control mb-3';
+            const inputId = `control-${paramName}`;
+            let controlHtml = `
+                <label class="form-label mb-1">
+                    <strong>${prettyName}</strong>
+                    <small class="text-muted d-block">${paramInfo.description}</small>
+                    <small class="text-muted">${rangeText}</small>
+                </label>
+            `;
+            if (paramInfo.type === 'float' || paramInfo.type === 'int') {
+                const step = paramInfo.type === 'float' ? '0.1' : '1';
+                controlHtml += `
+                    <div class="row align-items-center">
+                        <div class="col-8">
+                            <input type="range" class="form-range"
+                                   id="${inputId}"
+                                   min="${paramInfo.min}"
+                                   max="${paramInfo.max}"
+                                   step="${step}"
+                                   value="${currentValue}"
+                                   oninput="updateControlParameter('${paramName}', this.value, '${paramInfo.type}')">
+                        </div>
+                        <div class="col-4">
+                            <input type="number" class="form-control form-control-sm"
+                                   value="${currentValue}"
+                                   min="${paramInfo.min}"
+                                   max="${paramInfo.max}"
+                                   step="${step}"
+                                   onchange="updateControlParameter('${paramName}', this.value, '${paramInfo.type}'); document.getElementById('${inputId}').value = this.value;">
+                        </div>
+                    </div>
+                `;
+            } else if (paramInfo.type === 'bool') {
+                controlHtml += `
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="${inputId}"
+                               ${currentValue ? 'checked' : ''}
+                               onchange="updateControlParameter('${paramName}', this.checked, 'bool')">
+                        <label class="form-check-label" for="${inputId}">Enable</label>
+                    </div>
+                `;
+            } else {
+                controlHtml += `
+                    <input type="text" class="form-control"
+                           id="${inputId}"
+                           value="${currentValue}"
+                           onchange="updateControlParameter('${paramName}', this.value, 'str')">
+                `;
+            }
+            controlDiv.innerHTML = controlHtml;
+            container.appendChild(controlDiv);
+        });
+    }
+
+    function updateControlParameter(name, value, type) {
+        let convertedValue = value;
+        if (type === 'int') {
+            convertedValue = parseInt(value, 10);
+        } else if (type === 'float') {
+            convertedValue = parseFloat(value);
+        } else if (type === 'bool') {
+            convertedValue = Boolean(value);
+        }
+
+        if (controlParameterUpdateTimeout) {
+            clearTimeout(controlParameterUpdateTimeout);
+        }
+        controlParameterUpdateTimeout = setTimeout(() => {
+            const params = {};
+            params[name] = convertedValue;
+            updateParameters(params).then(result => {
+                if (!result.success) {
+                    console.error('Failed to update parameter:', name);
+                }
+            });
+        }, 120);
     }
     
     function showToast(message, type = 'info') {

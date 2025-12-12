@@ -148,6 +148,10 @@ class AnimationPluginLoader:
         """Get a loaded plugin by name"""
         return self.loaded_plugins.get(plugin_name)
     
+    def get_plugin_file(self, plugin_name: str) -> Optional[Path]:
+        """Get the backing file path for a loaded plugin"""
+        return self.plugin_files.get(plugin_name)
+    
     def list_plugins(self) -> List[str]:
         """Get list of loaded plugin names"""
         return list(self.loaded_plugins.keys())

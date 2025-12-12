@@ -6,6 +6,7 @@ Coordinates between LED controller, animation plugins, and web interface.
 Handles animation switching, parameter updates, and frame generation.
 """
 
+import hashlib
 import time
 import threading
 import traceback
@@ -114,6 +115,7 @@ class AnimationManager:
         # Animation state
         self.current_animation: Optional[AnimationBase] = None
         self.current_animation_name: Optional[str] = None
+        self.current_animation_hash: Optional[str] = None
         self.is_running = False
         self.target_fps = 40
         self.frame_count = 0
@@ -207,6 +209,7 @@ class AnimationManager:
             # Create animation instance
             self.current_animation = animation_class(self.controller, config or {})
             self.current_animation_name = animation_name
+            self.current_animation_hash = self._compute_animation_hash(animation_name)
 
             print(f"🔍 Animation instance created: {type(self.current_animation)}")
             print(f"🔍 Is StatefulAnimationBase? {isinstance(self.current_animation, StatefulAnimationBase)}")
@@ -271,6 +274,8 @@ class AnimationManager:
             self.controller.clear()
 
             print("✓ Animation stopped")
+        
+        self.current_animation_hash = None
     
     def update_animation_parameters(self, params: Dict[str, Any]) -> bool:
         """Update current animation parameters in real-time"""
@@ -289,16 +294,17 @@ class AnimationManager:
         status = {
             'is_running': self.is_running,
             'current_animation': self.current_animation_name,
-            'frame_count': self.frame_count,
-            'uptime': (time.perf_counter() - self.start_time) if self.is_running else 0,
-            'target_fps': self.target_fps,
-            'animation_speed_scale': self.animation_speed_scale,
-            'actual_fps': self._calculate_fps(),
-            'led_info': {
-                'total_leds': self.controller.total_leds,
-                'strip_count': self.controller.strip_count,
-                'leds_per_strip': self.controller.leds_per_strip
-            }
+                'frame_count': self.frame_count,
+                'uptime': (time.perf_counter() - self.start_time) if self.is_running else 0,
+                'target_fps': self.target_fps,
+                'animation_speed_scale': self.animation_speed_scale,
+                'actual_fps': self._calculate_fps(),
+                'animation_hash': self.current_animation_hash,
+                'led_info': {
+                    'total_leds': self.controller.total_leds,
+                    'strip_count': self.controller.strip_count,
+                    'leds_per_strip': self.controller.leds_per_strip
+                }
         }
         
         status['animation_info'] = None
@@ -329,6 +335,20 @@ class AnimationManager:
             except Exception as exc:
                 print(f"⚠️ Failed to trigger hole: {exc}")
         return False
+
+    def _compute_animation_hash(self, animation_name: str) -> Optional[str]:
+        path = self.plugin_loader.get_plugin_file(animation_name)
+        if not path:
+            return None
+        try:
+            hasher = hashlib.sha256()
+            with open(path, 'rb') as fh:
+                for chunk in iter(lambda: fh.read(8192), b''):
+                    hasher.update(chunk)
+            return hasher.hexdigest()
+        except OSError as exc:
+            print(f"⚠️ Failed to hash animation file {path}: {exc}")
+            return None
 
     def get_current_frame(self) -> Dict[str, Any]:
         """Get current animation frame data for web rendering"""

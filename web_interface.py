@@ -8,6 +8,7 @@ and adjusting parameters in real-time.
 
 import time
 from pathlib import Path
+from typing import Any, Dict
 
 from flask import Flask, jsonify, render_template, request
 from werkzeug.utils import secure_filename
@@ -59,7 +60,7 @@ class AnimationWebInterface:
         def index():
             """Main dashboard"""
             animations = self.preview_manager.list_animations()
-            status = self._read_status_for_view()
+            status = self._status_payload()
             return render_template('index.html', animations=animations, status=status)
         
         @self.app.route('/api/animations')
@@ -94,51 +95,24 @@ class AnimationWebInterface:
         @self.app.route('/api/status')
         def api_get_status():
             """API: Get current status"""
-            status = self.control_channel.read_status() or self._empty_status()
-            return jsonify(status)
+            return jsonify(self._status_payload())
         
         @self.app.route('/api/stats')
         def api_get_stats():
-            """API: Get runtime stats for the active animation"""
-            status = self.control_channel.read_status() or self._empty_status()
-            return jsonify({
-                'current_animation': status.get('current_animation'),
-                'is_running': status.get('is_running'),
-                'frame_count': status.get('frame_count'),
-                'uptime': status.get('uptime'),
-                'target_fps': status.get('target_fps'),
-                'actual_fps': status.get('actual_fps'),
-                'stats': status.get('animation_stats') or {},
-                'timestamp': status.get('updated_at') or status.get('timestamp'),
-                'led_info': status.get('led_info')
-            })
-        
+            """API: Runtime stats payload that mirrors /api/status"""
+            status = self._status_payload()
+            return jsonify(status)
+
         @self.app.route('/api/hole', methods=['POST'])
         def api_trigger_hole():
             """API: Ask the running animation to punch a random hole"""
             self.control_channel.send_command('puncture_hole')
             return jsonify({'success': True})
-        
-        @self.app.route('/api/stats')
-        def api_get_stats():
-            """API: Get runtime stats for the active animation"""
-            status = self.control_channel.read_status() or self._empty_status()
-            return jsonify({
-                'current_animation': status.get('current_animation'),
-                'is_running': status.get('is_running'),
-                'frame_count': status.get('frame_count'),
-                'uptime': status.get('uptime'),
-                'target_fps': status.get('target_fps'),
-                'actual_fps': status.get('actual_fps'),
-                'stats': status.get('animation_stats') or {},
-                'timestamp': status.get('updated_at') or status.get('timestamp')
-            })
 
         @self.app.route('/api/frame')
         def api_get_frame():
             """API: Get current animation frame data"""
-            status = self.control_channel.read_status() or self._empty_status()
-            return jsonify(status)
+            return jsonify(self._status_payload())
 
         @self.app.route('/api/preview/<animation_name>')
         def api_get_preview(animation_name):
@@ -241,7 +215,7 @@ class AnimationWebInterface:
         def control_page():
             """Animation control page"""
             animations = self.preview_manager.list_animations()
-            status = self._read_status_for_view()
+            status = self._status_payload()
             return render_template('control.html', animations=animations, status=status)
     
     def run(self, debug=False):
@@ -253,11 +227,38 @@ class AnimationWebInterface:
         
         self.app.run(host=self.host, port=self.port, debug=debug, threaded=True)
 
-    def _read_status_for_view(self):
-        status = self.control_channel.read_status()
-        if status:
-            return status
-        return self._empty_status()
+    def _status_payload(self) -> Dict[str, Any]:
+        """Normalize the controller status so every consumer sees the same structure."""
+        raw_status = self.control_channel.read_status()
+        if not raw_status:
+            return self._empty_status()
+
+        status = dict(raw_status)
+        default_led_info = {
+            'total_leds': self.preview_manager.controller.total_leds,
+            'strip_count': self.preview_manager.controller.strip_count,
+            'leds_per_strip': self.preview_manager.controller.leds_per_strip
+        }
+
+        status.setdefault('led_info', default_led_info)
+        status.setdefault('frame_data', raw_status.get('frame_data', []))
+        stats = status.get('animation_stats') or status.get('stats') or {}
+        status['animation_stats'] = stats
+        status['stats'] = stats
+        status.setdefault('animation_hash', None)
+        status.setdefault('animation_info', None)
+        status.setdefault('performance', {})
+        status.setdefault('current_animation', None)
+        status.setdefault('is_running', False)
+        status.setdefault('frame_count', 0)
+        status.setdefault('target_fps', 0)
+        status.setdefault('actual_fps', 0)
+        status.setdefault('uptime', 0)
+        timestamp = status.get('updated_at') or status.get('timestamp')
+        if not timestamp:
+            timestamp = time.time()
+        status['timestamp'] = timestamp
+        return status
 
     def _empty_status(self):
         """Fallback status when controller process has not written a status file yet."""
@@ -269,13 +270,16 @@ class AnimationWebInterface:
             'target_fps': 0,
             'actual_fps': 0,
             'animation_stats': {},
+            'stats': {},
+            'animation_hash': None,
             'animation_info': None,
             'led_info': {
                 'total_leds': self.preview_manager.controller.total_leds,
                 'strip_count': self.preview_manager.controller.strip_count,
                 'leds_per_strip': self.preview_manager.controller.leds_per_strip
             },
-            'frame_data': []
+            'frame_data': [],
+            'timestamp': time.time()
         }
 
 
