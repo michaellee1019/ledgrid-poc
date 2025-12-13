@@ -1,0 +1,19 @@
+{
+  "animation": "sparkle",
+  "source": "ledwallleft@ledwallleft.local",
+  "saved_at": "2025-12-13T02:19:59Z",
+  "params": {
+    "speed": 0.2,
+    "brightness": 0.5,
+    "color_saturation": 1.0,
+    "color_value": 1.0,
+    "base_red": 111,
+    "base_green": 183,
+    "base_blue": 24,
+    "sparkle_red": 255,
+    "sparkle_green": 0,
+    "sparkle_blue": 0,
+    "sparkle_probability": 0.025,
+    "fade_speed": 0.9
+  }
+}
