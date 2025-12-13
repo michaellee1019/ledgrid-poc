@@ -100,6 +100,8 @@ class AnimationManager:
         "fluid_tank",
         "flame_burst",
         "simple_test",
+        "tetris",
+        "christmas_tree",
     }
     
     def __init__(self, controller: LEDController, plugins_dir: str = "animations",
