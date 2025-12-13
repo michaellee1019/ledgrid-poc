@@ -19,35 +19,38 @@ from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 # Try to import the real LED controller, fall back to mock for testing
 try:
-    from led_controller_spi import LEDController
+    from led_controller_spi_multi import MultiDeviceLEDController as LEDController
 except ImportError:
-    # Mock LED controller for testing without SPI hardware
-    class LEDController:
-        def __init__(self, strips=DEFAULT_STRIP_COUNT, leds_per_strip=DEFAULT_LEDS_PER_STRIP, **kwargs):
-            self.strip_count = strips
-            self.leds_per_strip = leds_per_strip
-            self.total_leds = strips * leds_per_strip
-            self.debug = kwargs.get('debug', False)
-            print(f"🔧 Mock LED Controller: {strips} strips × {leds_per_strip} LEDs = {self.total_leds} total")
+    try:
+        from led_controller_spi import LEDController
+    except ImportError:
+        # Mock LED controller for testing without SPI hardware
+        class LEDController:
+            def __init__(self, strips=DEFAULT_STRIP_COUNT, leds_per_strip=DEFAULT_LEDS_PER_STRIP, **kwargs):
+                self.strip_count = strips
+                self.leds_per_strip = leds_per_strip
+                self.total_leds = strips * leds_per_strip
+                self.debug = kwargs.get('debug', False)
+                print(f"🔧 Mock LED Controller: {strips} strips × {leds_per_strip} LEDs = {self.total_leds} total")
 
-        def set_all_pixels(self, pixel_data):
-            """Mock set all pixels"""
-            if self.debug and len(pixel_data) > 0:
-                r, g, b = pixel_data[0]
-                print(f"📊 Frame: First pixel = RGB({r}, {g}, {b})")
+            def set_all_pixels(self, pixel_data):
+                """Mock set all pixels"""
+                if self.debug and len(pixel_data) > 0:
+                    r, g, b = pixel_data[0]
+                    print(f"📊 Frame: First pixel = RGB({r}, {g}, {b})")
 
-        def show(self):
-            """Mock show"""
-            pass
+            def show(self):
+                """Mock show"""
+                pass
 
-        def clear(self):
-            """Mock clear"""
-            if self.debug:
-                print("🧹 Cleared LEDs")
+            def clear(self):
+                """Mock clear"""
+                if self.debug:
+                    print("🧹 Cleared LEDs")
 
-        def configure(self):
-            """Mock configure"""
-            pass
+            def configure(self):
+                """Mock configure"""
+                pass
 
 
 class PreviewLEDController:

@@ -21,40 +21,62 @@ from web_interface import create_app
 
 # Try to import the real LED controller, fall back to mock for testing
 try:
-    from led_controller_spi import LEDController
+    from led_controller_spi_multi import MultiDeviceLEDController as LEDController
 except ImportError:
-    class LEDController:
-        def __init__(self, strips=DEFAULT_STRIP_COUNT, leds_per_strip=DEFAULT_LEDS_PER_STRIP, **kwargs):
-            self.strip_count = strips
-            self.leds_per_strip = leds_per_strip
-            self.total_leds = strips * leds_per_strip
-            self.debug = kwargs.get('debug', False)
-            print(f"🔧 Mock LED Controller: {strips} strips × {leds_per_strip} LEDs = {self.total_leds} total")
+    try:
+        from led_controller_spi import LEDController
+    except ImportError:
+        class LEDController:
+            def __init__(self, strips=DEFAULT_STRIP_COUNT, leds_per_strip=DEFAULT_LEDS_PER_STRIP, **kwargs):
+                self.strip_count = strips
+                self.leds_per_strip = leds_per_strip
+                self.total_leds = strips * leds_per_strip
+                self.debug = kwargs.get('debug', False)
+                self.inline_show = True
+                print(f"🔧 Mock LED Controller: {strips} strips × {leds_per_strip} LEDs = {self.total_leds} total")
 
-        def set_all_pixels(self, *_args, **_kwargs):
-            pass
+            def set_all_pixels(self, *_args, **_kwargs):
+                pass
 
-        def show(self):
-            pass
+            def show(self):
+                pass
 
-        def clear(self):
-            pass
+            def clear(self):
+                pass
 
-        def configure(self):
-            pass
+            def configure(self):
+                pass
 
 
 def run_controller_mode(args):
     """Controller process: drives LEDs and writes status/frames to disk."""
-    controller = LEDController(
-        bus=args.bus,
-        device=args.device,
-        speed=args.spi_speed,
-        mode=3,
-        strips=args.strips,
-        leds_per_strip=args.leds_per_strip,
-        debug=args.controller_debug,
-    )
+    # Determine if we're using multi-device or single-device controller
+    # Multi-device controller expects total strips, single-device expects strips per device
+    if hasattr(LEDController, '__name__') and 'Multi' in LEDController.__name__:
+        # Multi-device controller - calculate number of devices from strip count
+        strips_per_device = 8
+        num_devices = args.strips // strips_per_device
+        controller = LEDController(
+            num_devices=num_devices,
+            bus=args.bus,
+            speed=args.spi_speed,
+            mode=3,
+            strips_per_device=strips_per_device,
+            leds_per_strip=args.leds_per_strip,
+            debug=args.controller_debug,
+            parallel=True,
+        )
+    else:
+        # Single-device or mock controller
+        controller = LEDController(
+            bus=args.bus,
+            device=args.device,
+            speed=args.spi_speed,
+            mode=3,
+            strips=args.strips,
+            leds_per_strip=args.leds_per_strip,
+            debug=args.controller_debug,
+        )
     manager = AnimationManager(
         controller,
         plugins_dir=args.animations_dir,

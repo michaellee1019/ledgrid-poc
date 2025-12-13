@@ -283,6 +283,30 @@ start_system() {
     fi
 }
 
+# Tail logs to monitor startup
+tail_logs() {
+    echo ""
+    echo -e "${BLUE}📋 Monitoring logs (Ctrl+C to exit)...${NC}"
+    echo "========================================"
+    echo ""
+    
+    # Give processes a moment to start writing logs
+    sleep 1
+    
+    # Show initial log state
+    echo -e "${GREEN}=== Web Server Log (last 10 lines) ===${NC}"
+    ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && tail -10 web.log 2>/dev/null || echo 'No web.log yet'"
+    echo ""
+    echo -e "${GREEN}=== Controller Log (last 10 lines) ===${NC}"
+    ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && tail -10 controller.log 2>/dev/null || echo 'No controller.log yet'"
+    echo ""
+    echo -e "${BLUE}=== Following logs (press Ctrl+C to stop) ===${NC}"
+    echo ""
+    
+    # Tail both logs simultaneously
+    ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && tail -f web.log controller.log"
+}
+
 # Main deployment process
 main() {
     echo "🚀 LED Grid Animation System Deployment"
@@ -297,6 +321,7 @@ main() {
     check_spi
     create_startup_script
     start_system
+    tail_logs
 }
 
 # Run main function
