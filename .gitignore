@@ -5,4 +5,5 @@
 .vscode/launch.json
 .vscode/ipch
 __pycache__/*
+esp32_led_controller/.cache/*
 
