@@ -16,7 +16,7 @@
 | Drop visibility | Fresh drops now leave transient “drop glow” markers so impacts remain visible even in dense fill states. |
 | Hole spray | Draining spawns spray particles that shoot toward the top for ~1s, and timestamps are reported to `/api/stats`. Manual triggers (via UI clicks) reuse the same logic. |
 | Instrumentation | `FluidTankAnimation.get_runtime_stats()` mirrors `/api/stats`, exposing fill ratios, spawn gating, bubble/spray previews, and manual hole timestamps. |
-| Simulation harness | `debugging/fluid_tank_simulation.py` offers `run_simulation()` for pytest and CLI runs; stats samples share the same schema as the live status API. |
+| Simulation harness | `tools/diagnostics/fluid_tank_simulation.py` offers `run_simulation()` for pytest and CLI runs; stats samples share the same schema as the live status API. |
 | UI/Preview | Canvas renderer is rotated to match the physical orientation, pinned to the left column, supports click-to-hole events, and the right-hand tabs surface animations, controls, and a live `/api/status` JSON view (with copy + animation hash) so hardware + sims stay in sync. |
 
 ## Testing Strategy

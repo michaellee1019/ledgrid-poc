@@ -72,9 +72,7 @@
 
 ### Top Priority Open Questions
 
-- Keep or remove `water_simulation*.py`?
 - Which animations are actively used in production?
-- Purpose of `extract_frame_payload.py`?
 - Target deployment environment details?
 - Acceptable UI to LED latency?
 
@@ -134,7 +132,7 @@ ledgrid-poc/
 ├── animation/plugins/                # Animation plugins (GOOD)
 │   ├── rainbow.py, sparkle.py, emoji.py, etc.
 │   └── [17 animation files]
-├── debugging/                 # Mixed debugging tools (NEEDS CLEANUP)
+├── tools/diagnostics/legacy/debugging/  # Archived bring-up scripts
 │   └── [50+ test scripts, many obsolete]
 ├── firmware/esp32/      # Hardware firmware (GOOD)
 │   ├── platformio.ini
@@ -198,15 +196,15 @@ ledgrid-poc/
 
 #### ⚠️ Questionable Components (Review Needed)
 
-**Root Level Files:**
-- `water_simulation.py` - Standalone water sim (duplicate of fluid_tank?)
-- `water_simulation_server.py` - Server version (unused?)
+**Root/Legacy Files:**
+- `tools/dev/legacy/water_simulation.py` - Archived standalone water sim (replaced by fluid_tank)
+- `tools/dev/legacy/water_simulation_server.py` - Archived standalone server demo
 - `debug_emoji.py` - Emoji debugging (obsolete?)
 - `demo_animation_system.py` - Demo script (keep for testing?)
 - `test_animation_system.py` - Test script (keep?)
 - `test_plugins_only.py` - Plugin test (keep?)
 - `test_venv_deploy.py` - Deployment test (keep?)
-- `extract_frame_payload.py` - Utility script (purpose?)
+- `tools/diagnostics/extract_frame_payload.py` - Frame decode utility
 
 **Animation Duplicates:**
 - `animation/plugins/led_controller_spi.py` - Duplicate of driver test?
@@ -220,13 +218,12 @@ ledgrid-poc/
 #### ❌ Dead Code (Remove)
 
 **Debugging Directory (50+ files, mostly obsolete):**
-- `debugging/test_*.py` - 30+ test scripts from hardware bring-up
-- `debugging/diagnose_*.py` - Diagnostic scripts (consolidate?)
-- `debugging/led_controller.py` - Old controller implementation
-- `debugging/led_controller_spi_bitbang.py` - Bitbang SPI (obsolete)
-- `debugging/fluid_tank_simulation.py` - Duplicate?
-- `debugging/*.sh` - Shell scripts for pin testing
-- `debugging/*.ino` - Arduino test sketches
+- `tools/diagnostics/legacy/debugging/test_*.py` - 30+ test scripts from hardware bring-up
+- `tools/diagnostics/legacy/debugging/diagnose_*.py` - Diagnostic scripts (consolidate?)
+- `tools/diagnostics/legacy/debugging/led_controller.py` - Old controller implementation
+- `tools/diagnostics/legacy/debugging/led_controller_spi_bitbang.py` - Bitbang SPI (obsolete)
+- `tools/diagnostics/legacy/debugging/*.sh` - Shell scripts for pin testing
+- `tools/diagnostics/legacy/debugging/*.ino` - Arduino test sketches
 
 **Backup Files:**
 - `firmware/esp32/src/main_spi.cpp.bak` - Backup file (remove)
@@ -695,7 +692,7 @@ checking items as they complete.
 - [x] Create `ipc/README.md`
 - [x] Create `firmware/esp32/README.md`
 - [x] Create `tools/README.md`
-- [ ] Move existing docs to `docs/`
+- [x] Move existing docs to `docs/`
 
 #### Verification
 - [ ] All imports resolve correctly
@@ -718,20 +715,20 @@ checking items as they complete.
 **Goal:** Remove obsolete code and consolidate duplicates
 
 #### Dead Code Removal
-- [ ] Review `debugging/` directory with user
-- [ ] Archive or delete `debugging/` directory
+- [x] Review `debugging/` directory with user
+- [x] Archive or delete `debugging/` directory
 - [ ] Remove `firmware/esp32/src/main_spi.cpp.bak`
 - [ ] Remove any other `*.bak` files
 - [ ] Remove `__pycache__/` directories (add to .gitignore)
 
 #### Duplicate Consolidation
-- [ ] Decide on `water_simulation.py` vs `fluid_tank.py`
-- [ ] Remove duplicate if confirmed
-- [ ] Decide on `water_simulation_server.py` fate
+- [x] Decide on `water_simulation.py` vs `fluid_tank.py`
+- [x] Remove duplicate if confirmed
+- [x] Decide on `water_simulation_server.py` fate
 - [ ] Review `animation/plugins/led_controller_spi*.py` duplicates
 - [ ] Remove confirmed duplicates
 - [ ] Review `debug_emoji.py` - keep or remove?
-- [ ] Review `extract_frame_payload.py` - keep or remove?
+- [x] Review `extract_frame_payload.py` - keep or remove?
 
 #### Test File Review
 - [ ] Review `demo_animation_system.py` - move to tools/dev/?
@@ -747,14 +744,14 @@ checking items as they complete.
 - [ ] Remove `debug_sequential.py` if not needed
 
 #### Documentation Consolidation
-- [ ] Move `README.md` -> `docs/README.md`
-- [ ] Move `README_ANIMATION_SYSTEM.md` -> `docs/ANIMATION_SYSTEM.md`
-- [ ] Move `SYSTEM_COMPLETE.md` -> `docs/SYSTEM_COMPLETE.md`
-- [ ] Move `DEPLOYMENT_GUIDE.md` -> `docs/DEPLOYMENT.md`
-- [ ] Move `VENV_DEPLOYMENT_COMPLETE.md` -> archive or merge
-- [ ] Move `WIRING.md` -> `docs/HARDWARE.md`
-- [ ] Move `ASCII_DROP_ANIMATION.md` -> `docs/` or remove
-- [ ] Create new root `README.md` with quick start
+- [x] Move `README.md` -> `docs/README.md`
+- [x] Move `README_ANIMATION_SYSTEM.md` -> `docs/ANIMATION_SYSTEM.md`
+- [x] Move `SYSTEM_COMPLETE.md` -> `docs/SYSTEM_COMPLETE.md`
+- [x] Move `DEPLOYMENT_GUIDE.md` -> `docs/DEPLOYMENT.md`
+- [x] Move `VENV_DEPLOYMENT_COMPLETE.md` -> archive or merge
+- [x] Move `WIRING.md` -> `docs/HARDWARE.md`
+- [x] Move `ASCII_DROP_ANIMATION.md` -> `docs/` or remove
+- [x] Create new root `README.md` with quick start
 
 #### .gitignore Updates
 - [ ] Add `__pycache__/`
@@ -923,7 +920,7 @@ checking items as they complete.
 - [ ] Document system layers
 - [ ] Document data flow
 - [ ] Document process architecture
-- [ ] Add diagrams (use ARCHITECTURE_DIAGRAM.md)
+- [ ] Add diagrams (use docs/ARCHITECTURE_DIAGRAM.md)
 
 #### API Documentation
 - [ ] Create `docs/API.md`
@@ -1710,10 +1707,10 @@ Response: {
 ### Open Questions
 
 1. **Q:** Should we keep water_simulation.py and water_simulation_server.py?
-   **A:** TBD - Need to check if they're used or if fluid_tank.py replaces them
+   **A:** Archived to `tools/dev/legacy/` (fluid_tank.py is the active animation)
 
 2. **Q:** What is the purpose of extract_frame_payload.py?
-   **A:** TBD - Appears to be a utility script, need to verify usage
+   **A:** Kept as a frame decode utility (moved to `tools/diagnostics/`)
 
 3. **Q:** Are all animations in animation/plugins/ directory active?
    **A:** TBD - Need to verify which are used in production

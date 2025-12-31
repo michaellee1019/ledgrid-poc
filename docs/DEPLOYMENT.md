@@ -247,7 +247,7 @@ class LEDController:
 ```
 
 ### Wiring
-See `WIRING.md` for ESP32/SCORPIO connection details.
+See `HARDWARE.md` for ESP32/SCORPIO connection details.
 
 ## Security Notes
 

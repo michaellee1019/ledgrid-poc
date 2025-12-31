@@ -92,7 +92,7 @@ ledgrid-poc/
 ├── animation/core/manager.py        # Animation coordination service
 ├── web/app.py           # Flask web server
 ├── scripts/start_server.py  # Easy startup script
-└── README_ANIMATION_SYSTEM.md # Complete documentation
+└── docs/ANIMATION_SYSTEM.md # Complete documentation
 ```
 
 ## 🎯 Key Features Achieved

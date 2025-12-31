@@ -1,5 +1,7 @@
 # ✅ Virtual Environment Deployment - COMPLETE
 
+> Archived: deployment instructions now live in `docs/DEPLOYMENT.md`.
+
 ## 🎯 **Updated for Virtual Environment**
 
 The deployment system has been **enhanced** to work within a Python virtual environment inside the deploy directory, providing better isolation and dependency management.

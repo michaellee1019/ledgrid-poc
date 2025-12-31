@@ -190,7 +190,7 @@ GND             ──────→ GND     ───────────�
 - ✅ System automatically manages which board to talk to
 
 ### Testing Dual Boards:
-See [DUAL_BOARD_SETUP.md](DUAL_BOARD_SETUP.md) for complete instructions.
+Run the SPI verification steps and confirm both `/dev/spidev0.0` and `/dev/spidev0.1` respond.
 
 ## LED Strip Connections
 

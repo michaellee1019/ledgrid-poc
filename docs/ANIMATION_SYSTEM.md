@@ -168,7 +168,7 @@ The system supports:
 - **ESP32-S3** via SPI (recommended for high performance)
 - **RP2040 SCORPIO** via SPI (8 parallel outputs)
 
-See `WIRING.md` for connection details.
+See `HARDWARE.md` for connection details.
 
 ## Performance Tips
 

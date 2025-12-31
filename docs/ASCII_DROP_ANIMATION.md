@@ -63,15 +63,15 @@ All 38 characters (A-Z, 0-9, _, space) are included with carefully designed bitm
 ## Files Created
 
 - `animation/plugins/ascii_drop.py` - Main animation implementation
-- `ASCII_DROP_ANIMATION.md` - This documentation
+- `docs/ASCII_DROP_ANIMATION.md` - This documentation
 
 ## Usage
 
 The animation can be selected through the web interface or programmatically:
 
 ```python
-from animations.ascii_drop import AsciiDropAnimation
-from led_controller_spi import LEDController
+from animation.plugins.ascii_drop import AsciiDropAnimation
+from drivers.spi_controller import LEDController
 
 controller = LEDController()
 config = {
