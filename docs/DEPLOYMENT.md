@@ -2,6 +2,17 @@
 
 ## Quick Deployment
 
+### 0. Prepare Deploy Target (once)
+```bash
+just setup
+```
+
+This will:
+- ✅ Ensure PlatformIO is installed on the Pi
+- ✅ Add the deploy user to the serial group (dialout)
+- ✅ Verify the ESP32 devices are visible
+Note: adding to `dialout` may require a logout/login on the Pi.
+
 ### 1. Deploy to Raspberry Pi
 ```bash
 ./tools/deployment/deploy.sh
@@ -14,6 +25,7 @@ This single command will:
 - ✅ Create startup scripts
 - ✅ Start the animation system
 - ✅ Display the web URL to access
+- ✅ Flash ESP32 firmware when firmware sources change
 
 ### 2. Access Web Interface
 After deployment, open your browser to the URL shown:
@@ -62,6 +74,7 @@ sudo raspi-config
 7. **Startup Script** - Creates `start.sh` for easy system management
 8. **System Start** - Launches the animation server
 9. **URL Display** - Shows web interface URLs
+10. **ESP32 Flash** - Builds and flashes firmware when sources change
 
 ### Files Deployed
 ```
@@ -83,31 +96,31 @@ sudo raspi-config
 ### Start/Stop/Restart
 ```bash
 # Stop the system
-./stop_remote.sh stop
+./tools/deployment/stop_remote.sh stop
 
 # Check status
-./stop_remote.sh status
+./tools/deployment/stop_remote.sh status
 
 # Restart the system
-./stop_remote.sh restart
+./tools/deployment/stop_remote.sh restart
 ```
 
 ### Virtual Environment Management
 ```bash
 # Check virtual environment status
-./manage_venv.sh status
+./tools/deployment/manage_venv.sh status
 
 # Recreate virtual environment (if broken)
-./manage_venv.sh recreate
+./tools/deployment/manage_venv.sh recreate
 
 # Install additional packages
-./manage_venv.sh install numpy
+./tools/deployment/manage_venv.sh install numpy
 
 # Update all packages
-./manage_venv.sh update
+./tools/deployment/manage_venv.sh update
 
 # Open interactive shell with venv activated
-./manage_venv.sh shell
+./tools/deployment/manage_venv.sh shell
 ```
 
 ### Manual Control on Pi
@@ -179,7 +192,7 @@ ls /dev/spi*
 **Dependencies Failed**
 ```bash
 # SSH to Pi and recreate virtual environment
-./manage_venv.sh recreate
+./tools/deployment/manage_venv.sh recreate
 
 # Or manually:
 ssh ledwallleft@ledwallleft.local
@@ -193,13 +206,13 @@ pip install -r requirements.txt
 **Virtual Environment Issues**
 ```bash
 # Check virtual environment status
-./manage_venv.sh status
+./tools/deployment/manage_venv.sh status
 
 # Recreate if broken
-./manage_venv.sh recreate
+./tools/deployment/manage_venv.sh recreate
 
 # Get detailed info
-./manage_venv.sh info
+./tools/deployment/manage_venv.sh info
 ```
 
 ### Runtime Issues
@@ -207,7 +220,7 @@ pip install -r requirements.txt
 **Web Interface Not Accessible**
 ```bash
 # Check if system is running
-./stop_remote.sh status
+./tools/deployment/stop_remote.sh status
 
 # Check Pi's IP address
 ssh ledwallleft@ledwallleft.local "hostname -I"
@@ -222,7 +235,7 @@ ssh ledwallleft@ledwallleft.local "sudo ufw status"
 ssh ledwallleft@ledwallleft.local "cd ledgrid-pod && tail -f animation_system.log"
 
 # Restart system
-./stop_remote.sh restart
+./tools/deployment/stop_remote.sh restart
 ```
 
 **Low Performance**
@@ -273,7 +286,7 @@ sudo raspi-config
 - Use efficient algorithms
 - Cache expensive calculations
 - Minimize memory allocations in frame loops
-- Test with `demo_animation_system.py` first
+- Test with `tools/dev/demo_animation_system.py` first
 
 ## Next Steps
 

@@ -8,8 +8,11 @@ import time
 import threading
 from pathlib import Path
 
-# Add current directory to Python path
-sys.path.insert(0, str(Path(__file__).parent))
+# Add repo root to Python path
+repo_root = Path(__file__).resolve()
+while repo_root != repo_root.parent and not (repo_root / "animation").exists():
+    repo_root = repo_root.parent
+sys.path.insert(0, str(repo_root))
 
 from animation.core.plugin_loader import AnimationPluginLoader
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP

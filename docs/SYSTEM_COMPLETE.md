@@ -40,7 +40,7 @@ Your request has been **fully implemented**:
 
 ## 🚀 System Verification
 
-**Demo Results** (from `python demo_animation_system.py`):
+**Demo Results** (from `python tools/dev/demo_animation_system.py`):
 ```
 ✓ 4 animation plugins loaded successfully
 ✓ Sparkle animation: 17.3 FPS with dynamic sparkles

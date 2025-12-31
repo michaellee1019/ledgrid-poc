@@ -199,11 +199,11 @@ ledgrid-poc/
 **Root/Legacy Files:**
 - `tools/dev/legacy/water_simulation.py` - Archived standalone water sim (replaced by fluid_tank)
 - `tools/dev/legacy/water_simulation_server.py` - Archived standalone server demo
-- `debug_emoji.py` - Emoji debugging (obsolete?)
-- `demo_animation_system.py` - Demo script (keep for testing?)
-- `test_animation_system.py` - Test script (keep?)
-- `test_plugins_only.py` - Plugin test (keep?)
-- `test_venv_deploy.py` - Deployment test (keep?)
+- `tools/dev/legacy/debug_emoji.py` - Emoji debugging (obsolete?)
+- `tools/dev/demo_animation_system.py` - Demo script (keep for testing?)
+- `tools/dev/legacy/test_animation_system.py` - Test script (keep?)
+- `tools/dev/legacy/test_plugins_only.py` - Plugin test (keep?)
+- `tools/deployment/test_venv_deploy.py` - Deployment test (keep?)
 - `tools/diagnostics/extract_frame_payload.py` - Frame decode utility
 
 **Animation Duplicates:**
@@ -351,11 +351,13 @@ ledgrid-poc/
 │   │   ├── spi_analyzer.py        # SPI throughput analysis
 │   │   └── strip_test.py          # Individual strip testing
 │   ├── deployment/                # Deployment utilities
-│   │   ├── deploy.py              # Main deployment script
-│   │   └── manage_venv.sh         # Virtual environment management
+│   │   ├── deploy.sh              # Main deployment script
+│   │   ├── manage_venv.sh         # Virtual environment management
+│   │   ├── stop_remote.sh         # Remote start/stop helper
+│   │   └── test_venv_deploy.py    # Deployment test script
 │   └── dev/                       # Development utilities
-│       ├── demo.py                # System demo
-│       └── benchmark.py           # Performance benchmarking
+│       ├── demo_animation_system.py  # System demo
+│       └── legacy/                # Archived local scripts
 │
 ├── tests/                         # 🧪 Test suite
 │   ├── unit/                      # Unit tests
@@ -727,14 +729,14 @@ checking items as they complete.
 - [x] Decide on `water_simulation_server.py` fate
 - [ ] Review `animation/plugins/led_controller_spi*.py` duplicates
 - [ ] Remove confirmed duplicates
-- [ ] Review `debug_emoji.py` - keep or remove?
+- [x] Review `debug_emoji.py` - keep or remove?
 - [x] Review `extract_frame_payload.py` - keep or remove?
 
 #### Test File Review
-- [ ] Review `demo_animation_system.py` - move to tools/dev/?
-- [ ] Review `test_animation_system.py` - move to tests/?
-- [ ] Review `test_plugins_only.py` - move to tests/?
-- [ ] Review `test_venv_deploy.py` - move to tools/deployment/?
+- [x] Review `demo_animation_system.py` - move to tools/dev/?
+- [x] Review `test_animation_system.py` - move to tests/?
+- [x] Review `test_plugins_only.py` - move to tests/?
+- [x] Review `test_venv_deploy.py` - move to tools/deployment/?
 
 #### Animation Cleanup
 - [ ] Verify which animations are active

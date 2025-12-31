@@ -21,18 +21,18 @@ The deployment system has been **enhanced** to work within a Python virtual envi
 
 ### 2. **`manage_venv.sh`** - Virtual Environment Management
 ```bash
-./manage_venv.sh status      # Check venv status
-./manage_venv.sh recreate    # Rebuild venv if broken
-./manage_venv.sh install pkg # Install additional packages
-./manage_venv.sh update      # Update all packages
-./manage_venv.sh shell       # Interactive shell with venv
+./tools/deployment/manage_venv.sh status      # Check venv status
+./tools/deployment/manage_venv.sh recreate    # Rebuild venv if broken
+./tools/deployment/manage_venv.sh install pkg # Install additional packages
+./tools/deployment/manage_venv.sh update      # Update all packages
+./tools/deployment/manage_venv.sh shell       # Interactive shell with venv
 ```
 
 ### 3. **`stop_remote.sh`** - Updated for Virtual Environment
 ```bash
-./stop_remote.sh stop        # Stop system
-./stop_remote.sh status      # Check status
-./stop_remote.sh restart     # Restart with venv
+./tools/deployment/stop_remote.sh stop        # Stop system
+./tools/deployment/stop_remote.sh status      # Check status
+./tools/deployment/stop_remote.sh restart     # Restart with venv
 ```
 
 ## 📁 **Deployment Structure**
@@ -65,7 +65,7 @@ The `start.sh` script now:
 ## 🧪 **Tested and Verified**
 
 ```bash
-python test_venv_deploy.py
+python tools/deployment/test_venv_deploy.py
 ```
 
 **Test Results:**
@@ -108,25 +108,25 @@ python test_venv_deploy.py
 ### Manage Virtual Environment
 ```bash
 # Check if venv is working
-./manage_venv.sh status
+./tools/deployment/manage_venv.sh status
 
 # Install additional package
-./manage_venv.sh install numpy
+./tools/deployment/manage_venv.sh install numpy
 
 # Get interactive shell with venv activated
-./manage_venv.sh shell
+./tools/deployment/manage_venv.sh shell
 ```
 
 ### System Management
 ```bash
 # Stop system
-./stop_remote.sh stop
+./tools/deployment/stop_remote.sh stop
 
 # Check status
-./stop_remote.sh status
+./tools/deployment/stop_remote.sh status
 
 # Restart system
-./stop_remote.sh restart
+./tools/deployment/stop_remote.sh restart
 ```
 
 ## 🔍 **Benefits of Virtual Environment**

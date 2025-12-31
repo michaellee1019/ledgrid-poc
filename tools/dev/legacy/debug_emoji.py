@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 import sys
-sys.path.append('.')
+from pathlib import Path
+
+repo_root = Path(__file__).resolve()
+while repo_root != repo_root.parent and not (repo_root / "animation").exists():
+    repo_root = repo_root.parent
+sys.path.insert(0, str(repo_root))
 from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 
 # Create mock controller (same as in animation_manager.py)

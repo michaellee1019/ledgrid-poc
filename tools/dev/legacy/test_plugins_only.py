@@ -6,10 +6,14 @@ Simple test for just the plugin system without dependencies
 import sys
 from pathlib import Path
 
-from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+# Add repo root to Python path
+repo_root = Path(__file__).resolve()
+while repo_root != repo_root.parent and not (repo_root / "animation").exists():
+    repo_root = repo_root.parent
+sys.path.insert(0, str(repo_root))
 
-# Add current directory to Python path
-sys.path.insert(0, str(Path(__file__).parent))
+# Local imports (after sys.path update)
+from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 
 def test_plugin_loading():
