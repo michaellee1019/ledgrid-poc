@@ -5,34 +5,33 @@
 #include "driver/gpio.h"
 
 // =========================
-// SPI pin mapping (ESP32 WROOM VSPI)
+// SPI pin mapping (ESP32 XIAO S3)
 // =========================
-static constexpr gpio_num_t PIN_SPI_MOSI = GPIO_NUM_23;
-static constexpr gpio_num_t PIN_SPI_MISO = GPIO_NUM_19;
-static constexpr gpio_num_t PIN_SPI_SCLK = GPIO_NUM_18;
-static constexpr gpio_num_t PIN_SPI_CS   = GPIO_NUM_5;
+static constexpr gpio_num_t PIN_SPI_MOSI = GPIO_NUM_9;
+static constexpr gpio_num_t PIN_SPI_MISO = GPIO_NUM_8;
+static constexpr gpio_num_t PIN_SPI_SCLK = GPIO_NUM_7;
+static constexpr gpio_num_t PIN_SPI_CS   = GPIO_NUM_44;
 
 // =========================
-// LED configuration (8 strips)
+// LED configuration (7 strips on D0-D6)
 // =========================
-static constexpr uint8_t MAX_STRIPS         = 8;
+static constexpr uint8_t MAX_STRIPS         = 7;
 static constexpr uint16_t MAX_LEDS_PER_STRIP = 500;
 static constexpr uint16_t MAX_TOTAL_LEDS    = MAX_STRIPS * MAX_LEDS_PER_STRIP;
 
-static constexpr uint8_t DEFAULT_STRIPS     = 8;
+static constexpr uint8_t DEFAULT_STRIPS     = 7;
 static constexpr uint16_t DEFAULT_LEDS_PER_STRIP = 140;
 
-// LED data pins - avoiding SPI pins (18,19,23) and strapping pins
-static constexpr uint8_t PIN_STRIP_0 = 4;
-static constexpr uint8_t PIN_STRIP_1 = 13;
-static constexpr uint8_t PIN_STRIP_2 = 14;
-static constexpr uint8_t PIN_STRIP_3 = 16;
-static constexpr uint8_t PIN_STRIP_4 = 17;
-static constexpr uint8_t PIN_STRIP_5 = 25;
-static constexpr uint8_t PIN_STRIP_6 = 26;
-static constexpr uint8_t PIN_STRIP_7 = 32;  // Changed from 27 to 32
+// LED data pins - XIAO S3 D0-D6 pins
+static constexpr uint8_t PIN_STRIP_0 = 1;   // D0
+static constexpr uint8_t PIN_STRIP_1 = 2;   // D1
+static constexpr uint8_t PIN_STRIP_2 = 3;   // D2
+static constexpr uint8_t PIN_STRIP_3 = 4;   // D3
+static constexpr uint8_t PIN_STRIP_4 = 5;   // D4
+static constexpr uint8_t PIN_STRIP_5 = 6;   // D5
+static constexpr uint8_t PIN_STRIP_6 = 43;  // D6
 
-static constexpr uint8_t PIN_STATUS_LED = 2;
+static constexpr uint8_t PIN_STATUS_LED = 21;  // XIAO S3 built-in LED
 
 static CRGB leds[MAX_TOTAL_LEDS];
 static uint8_t active_strips = DEFAULT_STRIPS;
@@ -66,14 +65,19 @@ static volatile uint32_t cs_edge_count = 0;
 static volatile uint32_t sck_edge_count = 0;
 static volatile uint32_t mosi_edge_count = 0;
 static volatile uint32_t zero_payload_packets = 0;
+static volatile uint32_t config_commands_received = 0;
+static volatile uint32_t set_all_commands_received = 0;
 
 static uint32_t last_packet_millis = 0;
 static uint32_t last_show_duration = 0;
 static uint32_t last_frame_sample_time = 0;
 static uint32_t last_frame_sample_count = 0;
+static uint32_t total_bytes_received = 0;
+static uint32_t last_bytes_sample = 0;
+static uint32_t last_bytes_sample_time = 0;
 static bool debug_logging = false;
 
-#define DEBUG_PRINT(...) do { if (debug_logging) { Serial.printf(__VA_ARGS__); } } while (0)
+  #define DEBUG_PRINT(...) do { if (debug_logging) { Serial.printf(__VA_ARGS__); } } while (0)
 #define DEBUG_PRINTLN(msg) do { if (debug_logging) { Serial.println(msg); } } while (0)
 
 inline uint16_t logical_to_physical(uint16_t logical) {
@@ -108,6 +112,7 @@ static void IRAM_ATTR mosi_edge_isr(void* arg) {
 static void process_command(const uint8_t *data, size_t length) {
   if (length == 0) return;
 
+  total_bytes_received += length;
   const uint8_t cmd = data[0];
 
   if (length > 1) {
@@ -152,7 +157,7 @@ static void process_command(const uint8_t *data, size_t length) {
       uint32_t start_us = micros();
       FastLED.show();
       last_show_duration = micros() - start_us;
-      frames_rendered++;
+      // Don't increment frames_rendered here - only count SET_ALL frames
       DEBUG_PRINTLN("📥 CMD_SHOW");
       break;
     }
@@ -164,7 +169,7 @@ static void process_command(const uint8_t *data, size_t length) {
         }
       }
       FastLED.show();
-      frames_rendered++;
+      // Don't increment frames_rendered here - only count SET_ALL frames
       DEBUG_PRINTLN("📥 CMD_CLEAR");
       break;
     }
@@ -192,6 +197,7 @@ static void process_command(const uint8_t *data, size_t length) {
     }
 
     case CMD_SET_ALL: {
+      set_all_commands_received++;
       const size_t expected = 1 + static_cast<size_t>(total_leds) * 3;
       if (length < expected) {
         Serial.printf("⚠️ CMD_SET_ALL expected %u bytes, got %u\n", 
@@ -219,6 +225,7 @@ static void process_command(const uint8_t *data, size_t length) {
     }
 
     case CMD_CONFIG: {
+      config_commands_received++;
       if (length < 4) return;
       uint8_t new_strips = data[1];
       uint16_t new_len = (static_cast<uint16_t>(data[2]) << 8) | data[3];
@@ -226,15 +233,25 @@ static void process_command(const uint8_t *data, size_t length) {
       if (new_strips == 0 || new_strips > MAX_STRIPS) return;
       if (new_len == 0 || new_len > MAX_LEDS_PER_STRIP) return;
 
+      // Only clear LEDs if configuration actually changed
+      bool config_changed = (active_strips != new_strips) || (leds_per_strip != new_len);
+      
       active_strips = new_strips;
       leds_per_strip = new_len;
       total_leds = active_strips * leds_per_strip;
 
-      // Clear all LEDs
-      for (uint16_t i = 0; i < MAX_TOTAL_LEDS; ++i) {
-        leds[i] = CRGB::Black;
+      if (config_changed) {
+        // Clear all LEDs only on actual config change
+        for (uint16_t i = 0; i < MAX_TOTAL_LEDS; ++i) {
+          leds[i] = CRGB::Black;
+        }
+        FastLED.show();
+        DEBUG_PRINT("📐 Config changed: strips=%u, length=%u, total=%u (cleared LEDs)\n",
+                    active_strips, leds_per_strip, total_leds);
+      } else {
+        DEBUG_PRINT("📐 Config refresh: strips=%u, length=%u, total=%u (no change)\n",
+                    active_strips, leds_per_strip, total_leds);
       }
-      FastLED.show();
       
       if (length >= 5) {
         debug_logging = data[4] != 0;
@@ -242,9 +259,6 @@ static void process_command(const uint8_t *data, size_t length) {
           Serial.println("🔧 Debug logging enabled");
         }
       }
-
-      DEBUG_PRINT("📐 Config: strips=%u, length=%u, total=%u\n",
-                  active_strips, leds_per_strip, total_leds);
       break;
     }
 
@@ -263,9 +277,9 @@ void setup() {
 
   Serial.println("");
   Serial.println("========================================");
-  Serial.println("ESP32 WROOM SPI Slave LED Controller");
+  Serial.println("ESP32 XIAO S3 SPI Slave LED Controller");
   Serial.println("========================================");
-  Serial.printf("Board: ESP32-D0WDQ6\n");
+  Serial.printf("Board: ESP32-S3FN8\n");
   Serial.printf("Strips: %d x %d LEDs = %d total\n", active_strips, leds_per_strip, total_leds);
   Serial.println("\nPin mapping:");
   Serial.println("SPI:");
@@ -273,17 +287,16 @@ void setup() {
   Serial.printf("  MISO: GPIO %d\n", PIN_SPI_MISO);
   Serial.printf("  SCK:  GPIO %d\n", PIN_SPI_SCLK);
   Serial.printf("  CS:   GPIO %d\n", PIN_SPI_CS);
-  Serial.println("LED Strips:");
-  Serial.printf("  Strip 0: GPIO %d\n", PIN_STRIP_0);
-  Serial.printf("  Strip 1: GPIO %d\n", PIN_STRIP_1);
-  Serial.printf("  Strip 2: GPIO %d\n", PIN_STRIP_2);
-  Serial.printf("  Strip 3: GPIO %d\n", PIN_STRIP_3);
-  Serial.printf("  Strip 4: GPIO %d\n", PIN_STRIP_4);
-  Serial.printf("  Strip 5: GPIO %d\n", PIN_STRIP_5);
-  Serial.printf("  Strip 6: GPIO %d\n", PIN_STRIP_6);
-  Serial.printf("  Strip 7: GPIO %d\n", PIN_STRIP_7);
+  Serial.println("LED Strips (D0-D6):");
+  Serial.printf("  Strip 0 (D0): GPIO %d\n", PIN_STRIP_0);
+  Serial.printf("  Strip 1 (D1): GPIO %d\n", PIN_STRIP_1);
+  Serial.printf("  Strip 2 (D2): GPIO %d\n", PIN_STRIP_2);
+  Serial.printf("  Strip 3 (D3): GPIO %d\n", PIN_STRIP_3);
+  Serial.printf("  Strip 4 (D4): GPIO %d\n", PIN_STRIP_4);
+  Serial.printf("  Strip 5 (D5): GPIO %d\n", PIN_STRIP_5);
+  Serial.printf("  Strip 6 (D6): GPIO %d\n", PIN_STRIP_6);
 
-  // Init FastLED for all 8 strips
+  // Init FastLED for all 7 strips
   FastLED.addLeds<NEOPIXEL, PIN_STRIP_0>(leds + (0 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
   FastLED.addLeds<NEOPIXEL, PIN_STRIP_1>(leds + (1 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
   FastLED.addLeds<NEOPIXEL, PIN_STRIP_2>(leds + (2 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
@@ -291,7 +304,6 @@ void setup() {
   FastLED.addLeds<NEOPIXEL, PIN_STRIP_4>(leds + (4 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
   FastLED.addLeds<NEOPIXEL, PIN_STRIP_5>(leds + (5 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
   FastLED.addLeds<NEOPIXEL, PIN_STRIP_6>(leds + (6 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_7>(leds + (7 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
 
   FastLED.setBrightness(global_brightness);
   FastLED.clear();
@@ -360,6 +372,25 @@ void setup() {
 
   Serial.println("\n✅ SPI slave ready");
   Serial.printf("Buffer size: %u bytes\n", SPI_BUFFER_SIZE);
+  
+  // DEBUG: Rainbow animation for first 10 seconds to verify LED strips
+  Serial.println("\n🌈 Running rainbow animation for 10 seconds...");
+  uint32_t rainbow_start = millis();
+  uint8_t hue = 0;
+  while (millis() - rainbow_start < 10000) {
+    for (uint16_t i = 0; i < total_leds; ++i) {
+      uint16_t physical = logical_to_physical(i);
+      leds[physical] = CHSV(hue + (i * 256 / total_leds), 255, 200);
+    }
+    FastLED.show();
+    hue += 2;
+    delay(20);
+  }
+  
+  // Clear after rainbow
+  FastLED.clear();
+  FastLED.show();
+  Serial.println("✅ Rainbow complete, entering SPI mode\n");
 }
 
 void loop() {
@@ -402,16 +433,49 @@ void loop() {
     last_frame_sample_time = now_ms;
     last_frame_sample_count = frames_rendered;
 
-    Serial.printf("📊 Pkts=%u Frames=%u Heap=%u | CS=%u SCK=%u MOSI=%u | Zero=%u | Show=%lu µs | FPS=%.1f | %ux%u\n",
+    // Calculate throughput
+    float throughput_kbps = 0.0f;
+    if (last_bytes_sample_time != 0) {
+      uint32_t dt = now_ms - last_bytes_sample_time;
+      uint32_t bytes_delta = total_bytes_received - last_bytes_sample;
+      if (dt > 0) {
+        throughput_kbps = (bytes_delta * 8.0f) / static_cast<float>(dt);  // kbps
+      }
+    }
+    last_bytes_sample = total_bytes_received;
+    last_bytes_sample_time = now_ms;
+
+    // Calculate frame success rate (successful SET_ALL commands)
+    float set_all_success_rate = 0.0f;
+    if (set_all_commands_received > 0) {
+      // Only SET_ALL increments frames_rendered, so this should be close to 100%
+      set_all_success_rate = (100.0f * frames_rendered) / static_cast<float>(set_all_commands_received);
+    }
+    
+    // Calculate packet error rate
+    float packet_error_rate = 0.0f;
+    if (packets_received > 0) {
+      packet_error_rate = (100.0f * zero_payload_packets) / static_cast<float>(packets_received);
+    }
+
+    Serial.printf("📊 Pkts=%u Frames=%u FPS=%.1f | Throughput=%.1fkb/s | Success=%.1f%% Errors=%.1f%% | Show=%luµs | Heap=%u\n",
                   static_cast<unsigned>(packets_received),
                   static_cast<unsigned>(frames_rendered),
-                  static_cast<unsigned>(ESP.getFreeHeap()),
+                  fps,
+                  throughput_kbps,
+                  set_all_success_rate,
+                  packet_error_rate,
+                  static_cast<unsigned long>(last_show_duration),
+                  static_cast<unsigned>(ESP.getFreeHeap()));
+    Serial.printf("    CS=%u SCK=%u MOSI=%u | Configs=%u SetAlls=%u ZeroPayload=%u | Buffer=%u/%u bytes | %ux%u LEDs\n",
                   static_cast<unsigned>(cs_edge_count),
                   static_cast<unsigned>(sck_edge_count),
                   static_cast<unsigned>(mosi_edge_count),
+                  static_cast<unsigned>(config_commands_received),
+                  static_cast<unsigned>(set_all_commands_received),
                   static_cast<unsigned>(zero_payload_packets),
-                  static_cast<unsigned long>(last_show_duration),
-                  fps,
+                  static_cast<unsigned>(SPI_FRAME_BYTES),
+                  static_cast<unsigned>(SPI_BUFFER_SIZE),
                   active_strips,
                   leds_per_strip);
     last_stats = now_ms;

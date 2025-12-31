@@ -13,11 +13,11 @@ class MultiDeviceLEDController:
     """Multi-device LED controller that manages multiple ESP32 devices"""
     
     def __init__(self, 
-                 num_devices: int = 2,
+                 num_devices: int = 1,
                  bus: int = SPI_BUS,
                  speed: int = SPI_SPEED,
                  mode: int = SPI_MODE,
-                 strips_per_device: int = 8,
+                 strips_per_device: int = 7,
                  leds_per_strip: int = 140,
                  debug: bool = False,
                  parallel: bool = True):
@@ -25,11 +25,11 @@ class MultiDeviceLEDController:
         Initialize multi-device LED controller
         
         Args:
-            num_devices: Number of ESP32 devices (default: 2)
+            num_devices: Number of ESP32 devices (default: 1 for XIAO S3)
             bus: SPI bus number (default: 0)
             speed: SPI speed in Hz (default: 8MHz)
             mode: SPI mode (default: 3)
-            strips_per_device: LED strips per device (default: 8)
+            strips_per_device: LED strips per device (default: 7 for XIAO S3 D0-D6)
             leds_per_strip: LEDs per strip (default: 140)
             debug: Enable debug output
             parallel: Send data to devices in parallel using threads

@@ -1,11 +1,11 @@
-# ESP32-S3 SPI Slave LED Controller
+# ESP32 XIAO S3 SPI Slave LED Controller
 
 High-performance LED controller using ESP32-S3's hardware SPI slave with DMA.
 
 ## Hardware
 
 - **Board**: Seeed XIAO ESP32-S3
-- **LEDs**: WS2812B/NeoPixels (160 LEDs, 8 virtual strips of 20)
+- **LEDs**: WS2812B/NeoPixels (7 strips on D0-D6, default 140 LEDs per strip = 980 total)
 - **SPI Master**: Raspberry Pi
 
 ## Wiring
@@ -13,16 +13,23 @@ High-performance LED controller using ESP32-S3's hardware SPI slave with DMA.
 ```
 Raspberry Pi          →  XIAO ESP32-S3
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-GPIO 10 (MOSI)       →  GPIO9  (D10)
-GPIO 11 (SCLK)       →  GPIO7  (D8)
-GPIO 8  (CE0)        →  GPIO2  (D1)
-GPIO 9  (MISO)       →  GPIO8  (D9) [optional]
+GPIO 10 (MOSI)       →  GPIO9  (SPI MOSI)
+GPIO 11 (SCLK)       →  GPIO7  (SPI SCK)
+GPIO 8  (CE0)        →  GPIO44 (SPI CS)
+GPIO 9  (MISO)       →  GPIO8  (SPI MISO) [optional]
 GND                  →  GND
 
-NeoPixels Data       →  GPIO5  (D4)
+LED Strips:
+Strip 0 Data         →  GPIO1  (D0)
+Strip 1 Data         →  GPIO2  (D1)
+Strip 2 Data         →  GPIO3  (D2)
+Strip 3 Data         →  GPIO4  (D3)
+Strip 4 Data         →  GPIO5  (D4)
+Strip 5 Data         →  GPIO6  (D5)
+Strip 6 Data         →  GPIO43 (D6)
 ```
 
-**Note**: The XIAO ESP32-S3 has limited exposed pins. We use the available GPIOs and configure SPI slave to use them.
+**Note**: The XIAO ESP32-S3 uses GPIO 7, 8, 9, 44 for SPI communication, leaving D0-D6 (GPIO 1-6, 43) for LED strips.
 
 ## Setup
 

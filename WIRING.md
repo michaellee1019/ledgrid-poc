@@ -1,14 +1,14 @@
-# SPI Wiring Guide: Raspberry Pi to SCORPIO
+# SPI Wiring Guide: Raspberry Pi to ESP32 XIAO S3
 
 ## Connection Table
 
-| Signal | Raspberry Pi GPIO | **RPi Physical Pin** | SCORPIO GPIO | SCORPIO Board Label | Notes |
-|--------|------------------|---------------------|--------------|---------------------|-------|
-| **SCLK** | **GPIO 11** | **🔴 Pin 23** | **GPIO 14** | **SCK** | **CLOCK - Most common issue!** |
-| **MOSI** | **GPIO 10** | **🔴 Pin 19** | **GPIO 12** | *(no label)* | **Data from Pi to SCORPIO** |
-| CS/CE0 | GPIO 8 | **Pin 24** | GPIO 13 | *(no label)* | Chip Select (active LOW) |
-| MISO | GPIO 9 | Pin 21 | GPIO 15 | **MO** | Data from SCORPIO to Pi (optional) |
-| GND | GND | Pin 6, 9, 14, 20, 25, 30, 34, or 39 | GND | **GND** | **CRITICAL: Common ground** |
+| Signal | Raspberry Pi GPIO | **RPi Physical Pin** | ESP32 XIAO S3 Pin | Notes |
+|--------|------------------|---------------------|-------------------|-------|
+| **SCLK** | **GPIO 11** | **🔴 Pin 23** | **GPIO 7** | **CLOCK - Most common issue!** |
+| **MOSI** | **GPIO 10** | **🔴 Pin 19** | **GPIO 9** | **Data from Pi to ESP32** |
+| CS/CE0 | GPIO 8 | **Pin 24** | **GPIO 44** | Chip Select (active LOW) |
+| MISO | GPIO 9 | Pin 21 | **GPIO 8** | Data from ESP32 to Pi (optional) |
+| GND | GND | Pin 6, 9, 14, 20, 25, 30, 34, or 39 | **GND** | **CRITICAL: Common ground** |
 
 ### Quick Reference - Raspberry Pi Physical Pins:
 ```
@@ -27,15 +27,14 @@
          GND [25] [26] GPIO7 CE1
 ```
 
-**Note about board labels:** The SCORPIO silkscreen labels (MO, MI, SCK) are for **master mode**. Since we're using the board as a **slave**, the pin assignments differ. The table above shows the correct pins for slave mode.
-
-**IMPORTANT:** RP2040 SPI1 requires all pins from the same GPIO set:
-- **Set A:** GPIO 8-11 (alternate configuration)
-- **Set B:** GPIO 12-15 (current configuration - CS=13, MOSI=12, SCK=14, MISO=15)
+### ESP32 XIAO S3 Pin Layout:
+- **D0-D6**: GPIO1-6, GPIO43 (LED strip outputs)
+- **SPI Pins**: GPIO7 (SCK), GPIO8 (MISO), GPIO9 (MOSI), GPIO44 (CS)
+- **Power**: 5V, 3.3V, GND
 
 ## Physical Setup
 
-1. **Power the SCORPIO** - Connect USB cable to SCORPIO for power and debugging
+1. **Power the ESP32 XIAO S3** - Connect USB-C cable to XIAO S3 for power and debugging
 2. **Connect SPI wires** - Use female-to-female jumper wires
 3. **Connect GND** - Mandatory for signal reference
 4. **Verify connections** - Double-check each wire before powering on
@@ -59,33 +58,43 @@ python3 -c "import spidev; spi=spidev.SpiDev(); spi.open(0,0); print('SPI OK')"
 python3 led_controller_spi.py rainbow
 ```
 
-### On SCORPIO (via Serial Monitor):
+### On ESP32 XIAO S3 (via Serial Monitor):
 You should see:
 ```
-*** CRITICAL: Verify this wiring! ***
-  Raspberry Pi -> SCORPIO (SPI1 Set B: GPIO 12-15)
-  GPIO 8 (CE0)   -> GPIO 13 (CS)
-  GPIO 10 (MOSI) -> GPIO 12 (MOSI) <-- DATA IN
-  GPIO 9 (MISO)  -> GPIO 15 (MISO)
-  GPIO 11 (SCLK) -> GPIO 14 (SCK)
-  GND -> GND
+========================================
+ESP32 XIAO S3 SPI Slave LED Controller
+========================================
+Board: ESP32-S3FN8
+Strips: 7 x 140 LEDs = 980 total
+
+Pin mapping:
+SPI:
+  MOSI: GPIO 9
+  MISO: GPIO 8
+  SCK:  GPIO 7
+  CS:   GPIO 44
+LED Strips (D0-D6):
+  Strip 0 (D0): GPIO 1
+  Strip 1 (D1): GPIO 2
+  Strip 2 (D2): GPIO 3
+  Strip 3 (D3): GPIO 4
+  Strip 4 (D4): GPIO 5
+  Strip 5 (D5): GPIO 6
+  Strip 6 (D6): GPIO 43
+
+✅ SPI slave ready
 ```
 
 ## Troubleshooting
 
-### Problem: "SCK never toggled! Check SCK wire (GPIO 14)" (MOST COMMON)
+### Problem: "SCK never toggled! Check SCK wire (GPIO 7)" (MOST COMMON)
 **This is the most common wiring issue!**
 
-The SCORPIO detects CS assertions but never sees clock pulses:
-```
-[CS] Asserted - transaction start
-[CS] Released after 1ms - SCK toggles: 0 - NO DATA in FIFO!
-  → SCK never toggled! Check SCK wire (GPIO 14)
-```
+The ESP32 XIAO S3 detects CS assertions but never sees clock pulses.
 
 **Solution:**
 1. **Verify physical connection:**
-   - Raspberry Pi **Physical Pin 23** → SCORPIO **GPIO 14** (labeled "SCK")
+   - Raspberry Pi **Physical Pin 23** (GPIO 11) → ESP32 XIAO S3 **GPIO 7** (SCK)
    - This is Pin 23 on the Pi (bottom row, 12th pin from the left)
    - Double-check you're counting correctly on the Pi header
    
@@ -99,67 +108,103 @@ The SCORPIO detects CS assertions but never sees clock pulses:
    - Using Pin 22 instead of Pin 23 (easy to miscount)
    - Wire connected to wrong header pin
    - Loose connection
-   - SCORPIO side connected to wrong GPIO
+   - ESP32 side connected to wrong GPIO
 
 ### Problem: CS detected but no data after SCK toggles
-```
-[CS] Released after Xms - SCK toggles: 64 - NO DATA in FIFO!
-  → SCK toggled but no data received
-```
-
 **Solution:**
-- **Most likely:** MOSI (GPIO 10 → GPIO 12) not connected
-- **Check:** Raspberry Pi **Physical Pin 19** → SCORPIO **GPIO 12** (unlabeled)
+- **Most likely:** MOSI (GPIO 10 → GPIO 9) not connected
+- **Check:** Raspberry Pi **Physical Pin 19** (GPIO 10) → ESP32 XIAO S3 **GPIO 9** (MOSI)
 - **Verify:** Use multimeter in continuity mode
-- **Note:** GPIO 12 is between the labeled "SCK" and "CS" pins on SCORPIO
 
 ### Problem: No CS activity detected
-```
-[DEBUG] SPI SR: 0x3 | RNE=0 | BSY=0 | CS=HIGH
-(CS never goes LOW)
-```
-
 **Solution:**
-- **Most likely:** CS (GPIO 8 → GPIO 13) not connected
-- **Check:** Raspberry Pi **Physical Pin 24** → SCORPIO **GPIO 13** (unlabeled)
+- **Most likely:** CS (GPIO 8 → GPIO 44) not connected
+- **Check:** Raspberry Pi **Physical Pin 24** (GPIO 8) → ESP32 XIAO S3 **GPIO 44** (CS)
 
 ### Problem: Device not detected or erratic behavior
 - **Most likely:** No common ground
-- **Fix:** Connect any GND pin from Pi to GND on SCORPIO
+- **Fix:** Connect any GND pin from Pi to GND on ESP32 XIAO S3
 - **Critical:** GND MUST be connected for any signals to work
 
-## Notes on SCORPIO GPIO Pins and Board Labels
+## Notes on ESP32 XIAO S3 GPIO Pins
 
-The SCORPIO board uses specific pins for different functions:
-- **GPIO 16-23**: NeoPixel LED outputs (DO NOT USE for SPI)
-- **GPIO 12-15**: SPI1 Set B pins (current slave configuration)
-  - GPIO 12: **MOSI** (SPI1 RX - receives data from Pi) - *unlabeled on board*
-  - GPIO 13: **CS** (SPI1 CSn - Chip Select) - *unlabeled on board*
-  - GPIO 14: **SCK** (SPI1 SCK - Clock) - *labeled "SCK" on board* ✓
-  - GPIO 15: **MISO** (SPI1 TX - sends data to Pi) - *labeled "MO" on board* ✓
-- **GPIO 8-11**: SPI1 Set A pins (alternate - not used)
-  - GPIO 8 is labeled "MI" on board, but cannot be used with GPIO 14 SCK
-- **GPIO 2-3**: I2C (not used in this project)
+The ESP32 XIAO S3 uses specific pins for different functions:
+- **D0-D6 (GPIO 1-6, 43)**: NeoPixel LED outputs (7 strips total)
+- **SPI Pins**: GPIO 7, 8, 9, 44
+  - GPIO 7: **SCK** (SPI Clock)
+  - GPIO 8: **MISO** (SPI Master In, Slave Out)
+  - GPIO 9: **MOSI** (SPI Master Out, Slave In - receives data from Pi)
+  - GPIO 44: **CS** (Chip Select)
+- **GPIO 21**: Built-in LED (used for status indication)
+- **Other pins**: Available for future expansion
 
 **CRITICAL:** 
-1. All SPI pins must be from the same set (either 8-11 OR 12-15). Mixing sets will not work!
-2. Board labels (MO, MI, SCK) are for **master mode**. In **slave mode**, pin functions differ.
-3. The "MI" label at GPIO 8 cannot be used when SCK is at GPIO 14 (they're from different pin sets).
+1. Do not use GPIO 7, 8, 9, 44 for LED strips - they are reserved for SPI communication
+2. The XIAO S3 has limited GPIO pins, so we use 7 strips instead of 8
+3. GPIO 43 (D6) is used for the 7th LED strip
 
-## Multi-SCORPIO Setup (Future)
+## Multi-Device Setup (2 ESP32 Boards)
 
-To control multiple SCORPIO boards:
-- Use different CS pins for each board (CE0, CE1, or manual GPIO pins)
-- All MOSI, MISO, SCLK, and GND are shared
-- Each SCORPIO gets its own CS line
+The system supports multiple ESP32 XIAO S3 boards for more LED strips.
 
-Example for 2 boards:
+### Configuration for 2 Boards:
+- **Board 1:** Uses CE0 (Pi GPIO 8 / Pin 24)
+- **Board 2:** Uses CE1 (Pi GPIO 7 / Pin 26)
+- **All other SPI signals are shared** (MOSI, SCLK, MISO, GND)
+
+### Wiring Table for Dual Boards:
+
+| Signal | Pi GPIO | Pi Pin | ESP32 #1 | ESP32 #2 | Notes |
+|--------|---------|--------|----------|----------|-------|
+| MOSI | GPIO 10 | Pin 19 | GPIO 9 | GPIO 9 | Shared |
+| SCLK | GPIO 11 | Pin 23 | GPIO 7 | GPIO 7 | Shared |
+| MISO | GPIO 9 | Pin 21 | GPIO 8 | GPIO 8 | Shared (optional) |
+| CE0 | GPIO 8 | Pin 24 | GPIO 44 | - | Board 1 only |
+| CE1 | GPIO 7 | Pin 26 | - | GPIO 44 | Board 2 only |
+| GND | GND | Multiple | GND | GND | **Must be common!** |
+
+### Wiring Diagram:
 ```
-Pi GPIO 8 (CE0) → SCORPIO #1 GPIO 13
-Pi GPIO 7 (CE1) → SCORPIO #2 GPIO 13
-Pi GPIO 10 (MOSI) → Both SCORPIO GPIO 12 (shared)
-Pi GPIO 11 (SCLK) → Both SCORPIO GPIO 14 (shared)
-Pi GPIO 9 (MISO) → Both SCORPIO GPIO 15 (shared)
-Pi GND → Both SCORPIO GND (shared)
+Raspberry Pi          ESP32 #1 (CE0)         ESP32 #2 (CE1)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GPIO 10 (MOSI)  ──────→ GPIO 9  ────┬──────→ GPIO 9
+                                     │
+GPIO 11 (SCLK)  ──────→ GPIO 7  ────┼──────→ GPIO 7
+                                     │
+GPIO 9  (MISO)  ──────→ GPIO 8  ────┴──────→ GPIO 8
+
+GPIO 8  (CE0)   ──────→ GPIO 44
+                         (Board 1)
+
+GPIO 7  (CE1)   ───────────────────────────→ GPIO 44
+                                              (Board 2)
+
+GND             ──────→ GND     ────────────→ GND
 ```
+
+### Key Points:
+- ✅ MOSI, SCLK, MISO are **wired to both boards in parallel**
+- ✅ Each board has its own CS (Chip Select) wire
+- ✅ Both boards run the **same firmware**
+- ✅ GND **must be common** across all devices
+- ✅ System automatically manages which board to talk to
+
+### Testing Dual Boards:
+See [DUAL_BOARD_SETUP.md](DUAL_BOARD_SETUP.md) for complete instructions.
+
+## LED Strip Connections
+
+Connect your WS2812B/NeoPixel LED strips to the following pins on the ESP32 XIAO S3:
+- **Strip 0** → D0 (GPIO 1)
+- **Strip 1** → D1 (GPIO 2)
+- **Strip 2** → D2 (GPIO 3)
+- **Strip 3** → D3 (GPIO 4)
+- **Strip 4** → D4 (GPIO 5)
+- **Strip 5** → D5 (GPIO 6)
+- **Strip 6** → D6 (GPIO 43)
+
+Each strip should also have:
+- **Power**: Connect 5V and GND to your LED power supply
+- **Data**: Connect to the corresponding GPIO pin above
+- **Ground**: Ensure all grounds are connected together (Pi, ESP32, LED power supply)
 

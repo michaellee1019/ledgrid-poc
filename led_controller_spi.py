@@ -19,8 +19,9 @@ DEFAULT_NUM_STRIPS = DEFAULT_STRIP_COUNT
 # SPI Configuration
 SPI_BUS = 0  # SPI bus number (0 = /dev/spidev0.X)
 SPI_DEVICE = 0  # CE0 matches wiring to XIAO GPIO2 (D1)
-SPI_SPEED = 8000000  # 8 MHz default
+SPI_SPEED = 8000000  # 8 MHz - now stable with 0.1% error rate
 SPI_MODE = 3  # CPOL=1, CPHA=1 required by ESP32 slave driver
+SPI_INTER_FRAME_DELAY = 0.0  # No delay needed - SPI is stable now
 
 MAX_SPI_TRANSFER = 4096
 MAX_PIXELS_SET_ALL = (MAX_SPI_TRANSFER - 1) // 3
@@ -111,7 +112,8 @@ class LEDController:
         self.current_brightness = None
         self._last_config_refresh = 0.0
         self._last_brightness_refresh = 0.0
-        self._config_refresh_interval = 1.0  # seconds
+        self._config_refresh_interval = 30.0  # seconds - reduced frequency to avoid LED blanking
+        self._last_sent_config = None  # Track last config to avoid unnecessary refreshes
         
         if self.debug:
             print("SPI Controller initialized")
@@ -139,7 +141,12 @@ class LEDController:
 
     def _refresh_configuration(self, force=False):
         now = time.time()
-        if force or (now - self._last_config_refresh) > self._config_refresh_interval:
+        
+        # Only send config if it's actually different or forced
+        current_config = (self.strip_count, self.leds_per_strip)
+        config_changed = (self._last_sent_config != current_config)
+        
+        if force or config_changed or (now - self._last_config_refresh) > self._config_refresh_interval:
             cfg = [
                 CMD_CONFIG,
                 self.strip_count & 0xFF,
@@ -149,6 +156,7 @@ class LEDController:
             ]
             self._xfer(cfg)
             self._last_config_refresh = now
+            self._last_sent_config = current_config
             if self.debug:
                 print(f"✓ Configuration refresh (strips={self.strip_count}, leds/strip={self.leds_per_strip})")
 
@@ -244,8 +252,10 @@ class LEDController:
             for r, g, b in frame_colors:
                 data.extend([int(r) & 0xFF, int(g) & 0xFF, int(b) & 0xFF])
             self._xfer(data)
-            # Explicit show keeps behavior consistent with the chunked path
-            self._xfer([CMD_SHOW])
+            # Inter-frame delay if configured (0 = no delay)
+            if SPI_INTER_FRAME_DELAY > 0:
+                time.sleep(SPI_INTER_FRAME_DELAY)
+            # CMD_SET_ALL already calls FastLED.show(), no explicit SHOW needed
         else:
             start = 0
             while start < total_pixels:
