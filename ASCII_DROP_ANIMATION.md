@@ -55,14 +55,14 @@ All 38 characters (A-Z, 0-9, _, space) are included with carefully designed bitm
 
 ## Integration
 
-- ✅ Added to `animation_manager.py` ALLOWED_PLUGINS list
+- ✅ Added to `animation/core/manager.py` ALLOWED_PLUGINS list
 - ✅ Follows AnimationBase interface for seamless integration
 - ✅ Compatible with web interface and parameter controls
 - ✅ Supports all standard animation features (brightness, serpentine, etc.)
 
 ## Files Created
 
-- `animations/ascii_drop.py` - Main animation implementation
+- `animation/plugins/ascii_drop.py` - Main animation implementation
 - `ASCII_DROP_ANIMATION.md` - This documentation
 
 ## Usage

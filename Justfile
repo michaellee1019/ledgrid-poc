@@ -4,7 +4,7 @@ web_venv := ".venv-web"
 
 # Deploy to the Raspberry Pi using the existing deployment script.
 deploy:
-	./deploy.sh
+	./tools/deployment/deploy.sh
 
 # Create/refresh the lightweight virtualenv for serving the web controller locally.
 setup:
@@ -22,4 +22,4 @@ start:
 	PORT="${PORT:-5000}"; \
 	ARGS=(--mode web --host "$HOST" --port "$PORT"); \
 	if [ -n "${DEBUG+x}" ] && [ "$DEBUG" != "0" ]; then ARGS+=("--debug"); fi; \
-	exec {{web_venv}}/bin/python start_animation_server.py "${ARGS[@]}"
+	exec {{web_venv}}/bin/python scripts/start_server.py "${ARGS[@]}"

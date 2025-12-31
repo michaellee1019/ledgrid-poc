@@ -10,7 +10,7 @@ import argparse
 import json
 from pathlib import Path
 
-from frame_data_codec import decode_frame_data
+from drivers.frame_codec import decode_frame_data
 
 
 def load_status_payload(path: Path) -> dict:

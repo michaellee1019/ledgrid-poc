@@ -35,7 +35,7 @@ A high-performance SPI-controlled LED system using the Seeed XIAO ESP32-S3 board
 1. Install [PlatformIO](https://platformio.org/)
 2. Build and upload the firmware:
    ```bash
-   cd esp32_led_controller
+   cd firmware/esp32
    pio run --target upload
    ```
 3. Monitor the serial output:
@@ -64,12 +64,12 @@ The system has two modes:
 
 **Web Mode** (default - provides web interface):
 ```bash
-python3 start_animation_server.py --mode web
+python3 scripts/start_server.py --mode web
 ```
 
 **Controller Mode** (drives the LEDs):
 ```bash
-python3 start_animation_server.py --mode controller
+python3 scripts/start_server.py --mode controller
 ```
 
 For production, run both modes in separate terminals or use the deployment script.
@@ -80,13 +80,13 @@ You can also control LEDs directly:
 
 ```bash
 # Rainbow animation
-python3 led_controller_spi.py rainbow
+python3 -m drivers.spi_controller rainbow
 
 # Solid color
-python3 led_controller_spi.py solid
+python3 -m drivers.spi_controller solid
 
 # Test strips
-python3 led_controller_spi.py test
+python3 -m drivers.spi_controller test
 ```
 
 ## SPI Protocol
@@ -106,7 +106,7 @@ The firmware supports the following commands:
 
 ## Configuration
 
-### Firmware (`esp32_led_controller/src/main.cpp`)
+### Firmware (`firmware/esp32/src/main.cpp`)
 - `DEFAULT_STRIPS`: Number of LED strips (default: 7)
 - `DEFAULT_LEDS_PER_STRIP`: LEDs per strip (default: 140)
 - `MAX_STRIPS`: Maximum strips supported (default: 7)
@@ -114,7 +114,7 @@ The firmware supports the following commands:
 - SPI pins: GPIO 7 (SCK), GPIO 8 (MISO), GPIO 9 (MOSI), GPIO 44 (CS)
 - LED pins: GPIO 1-6, 43 (D0-D6)
 
-### Python (`led_layout.py`)
+### Python (`drivers/led_layout.py`)
 - `DEFAULT_STRIP_COUNT`: Total number of strips (default: 7)
 - `DEFAULT_LEDS_PER_STRIP`: LEDs per strip (default: 140)
 
@@ -146,7 +146,7 @@ python3 -c "import spidev; spi=spidev.SpiDev(); spi.open(0,0); print('SPI OK')"
 
 **"No response from ESP32"**
 1. Make sure the ESP32 firmware is uploaded and running
-2. Check the serial monitor output: `cd esp32_led_controller && pio device monitor`
+2. Check the serial monitor output: `cd firmware/esp32 && pio device monitor`
 3. Verify SPI wiring (see [WIRING.md](WIRING.md)):
    - ESP32 GPIO 9 (MOSI) ← Raspberry Pi GPIO 10 (Pin 19)
    - ESP32 GPIO 7 (SCK) ← Raspberry Pi GPIO 11 (Pin 23)
@@ -155,7 +155,7 @@ python3 -c "import spidev; spi=spidev.SpiDev(); spi.open(0,0); print('SPI OK')"
 4. **Most common issue**: SCK wire not connected properly
 
 **"Permission denied"**
-- Run with sudo: `sudo python3 led_controller_spi.py rainbow`
+- Run with sudo: `sudo python3 -m drivers.spi_controller rainbow`
 - Or add user to spi group: `sudo usermod -a -G spi $USER` (logout/login required)
 
 **"LEDs not lighting up"**
@@ -165,4 +165,3 @@ python3 -c "import spidev; spi=spidev.SpiDev(); spi.open(0,0); print('SPI OK')"
 - Verify data pin connections (D0-D6)
 
 For detailed troubleshooting, see [WIRING.md](WIRING.md).
-

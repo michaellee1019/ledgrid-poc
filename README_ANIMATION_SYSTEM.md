@@ -20,7 +20,7 @@ A plugin-based animation system with web interface for hot-swapping animations o
 
 2. **Start the animation server:**
    ```bash
-   python start_animation_server.py
+   python scripts/start_server.py
    ```
 
 3. **Open web interface:**
@@ -51,7 +51,7 @@ A plugin-based animation system with web interface for hot-swapping animations o
 ```python
 #!/usr/bin/env python3
 from typing import List, Tuple, Dict, Any
-from animation_system import AnimationBase
+from animation import AnimationBase
 
 class MyAnimation(AnimationBase):
     ANIMATION_NAME = "My Animation"
@@ -106,15 +106,15 @@ def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[in
 
 The system comes with several example animations:
 
-### Rainbow (`animations/rainbow.py`)
+### Rainbow (`animation/plugins/rainbow.py`)
 - **RainbowAnimation**: Classic rainbow cycle
 - **RainbowWaveAnimation**: Rainbow wave effect
 
-### Solid Colors (`animations/solid.py`)
+### Solid Colors (`animation/plugins/solid.py`)
 - **SolidColorAnimation**: Solid color with breathing effect
 - **GradientAnimation**: Color gradients
 
-### Effects (`animations/effects.py`)
+### Effects (`animation/plugins/effects.py`)
 - **SparkleAnimation**: Random sparkle effect
 - **WaveAnimation**: Sine wave patterns
 
@@ -150,7 +150,7 @@ The system comes with several example animations:
 ### Command Line Options
 
 ```bash
-python start_animation_server.py --help
+python scripts/start_server.py --help
 ```
 
 Key options:
@@ -182,7 +182,7 @@ See `WIRING.md` for connection details.
 ### Common Issues
 
 1. **No animations showing**
-   - Check `animations/` directory exists
+   - Check `animation/plugins/` directory exists
    - Verify Python syntax in animation files
    - Check web console for errors
 
@@ -200,7 +200,7 @@ See `WIRING.md` for connection details.
 
 Enable debug output:
 ```bash
-python start_animation_server.py --debug --controller-debug
+python scripts/start_server.py --debug --controller-debug
 ```
 
 This provides detailed logging for troubleshooting.

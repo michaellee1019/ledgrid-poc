@@ -64,11 +64,11 @@
 
 ### Key Files to Understand
 
-- `start_animation_server.py` (entry point)
-- `animation_manager.py` (animation coordination)
-- `led_controller_spi_multi.py` (multi-device control)
-- `web_interface.py` (web UI)
-- `esp32_led_controller/src/main.cpp` (firmware)
+- `scripts/start_server.py` (entry point)
+- `animation/core/manager.py` (animation coordination)
+- `drivers/multi_device.py` (multi-device control)
+- `web/app.py` (web UI)
+- `firmware/esp32/src/main.cpp` (firmware)
 
 ### Top Priority Open Questions
 
@@ -128,26 +128,26 @@ The LED Grid Control System is a multi-layered hardware control system that has 
 
 ```
 ledgrid-poc/
-├── animation_system/          # Core animation framework (GOOD)
-│   ├── animation_base.py      # Base classes for animations
+├── animation/core/          # Core animation framework (GOOD)
+│   ├── base.py      # Base classes for animations
 │   └── plugin_loader.py       # Plugin discovery and loading
-├── animations/                # Animation plugins (GOOD)
+├── animation/plugins/                # Animation plugins (GOOD)
 │   ├── rainbow.py, sparkle.py, emoji.py, etc.
 │   └── [17 animation files]
 ├── debugging/                 # Mixed debugging tools (NEEDS CLEANUP)
 │   └── [50+ test scripts, many obsolete]
-├── esp32_led_controller/      # Hardware firmware (GOOD)
+├── firmware/esp32/      # Hardware firmware (GOOD)
 │   ├── platformio.ini
 │   └── src/main.cpp
-├── templates/                 # Web UI templates (GOOD)
+├── web/templates/                 # Web UI templates (GOOD)
 ├── scripts/                   # Deployment helpers (GOOD)
 ├── Root level files          # NEEDS ORGANIZATION
-│   ├── animation_manager.py   # Core service
-│   ├── web_interface.py       # Flask app
-│   ├── led_controller_spi.py  # SPI driver
-│   ├── led_controller_spi_multi.py  # Multi-device driver
-│   ├── control_channel.py     # IPC mechanism
-│   ├── frame_data_codec.py    # Data compression
+│   ├── animation/core/manager.py   # Core service
+│   ├── web/app.py       # Flask app
+│   ├── drivers/spi_controller.py  # SPI driver
+│   ├── drivers/multi_device.py  # Multi-device driver
+│   ├── ipc/control_channel.py     # IPC mechanism
+│   ├── drivers/frame_codec.py    # Data compression
 │   └── [20+ other files]
 └── Documentation files        # Multiple README files (CONSOLIDATE)
 ```
@@ -157,42 +157,42 @@ ledgrid-poc/
 #### ✅ Production Components (Keep & Organize)
 
 **Hardware Layer:**
-- `esp32_led_controller/src/main.cpp` - ESP32 firmware with SPI slave + FastLED
-- `esp32_led_controller/platformio.ini` - PlatformIO configuration
+- `firmware/esp32/src/main.cpp` - ESP32 firmware with SPI slave + FastLED
+- `firmware/esp32/platformio.ini` - PlatformIO configuration
 
 **Driver Layer:**
-- `led_controller_spi.py` - Single-device SPI controller
-- `led_controller_spi_multi.py` - Multi-device coordinator with parallel writes
-- `frame_data_codec.py` - Frame data compression (zlib + base64)
-- `led_layout.py` - Central LED configuration (16 strips × 140 LEDs)
+- `drivers/spi_controller.py` - Single-device SPI controller
+- `drivers/multi_device.py` - Multi-device coordinator with parallel writes
+- `drivers/frame_codec.py` - Frame data compression (zlib + base64)
+- `drivers/led_layout.py` - Central LED configuration (16 strips × 140 LEDs)
 
 **Animation Framework:**
-- `animation_system/animation_base.py` - Base classes (AnimationBase, StatefulAnimationBase)
-- `animation_system/plugin_loader.py` - Hot-reload plugin system
-- `animation_manager.py` - Animation coordination service
+- `animation/core/base.py` - Base classes (AnimationBase, StatefulAnimationBase)
+- `animation/core/plugin_loader.py` - Hot-reload plugin system
+- `animation/core/manager.py` - Animation coordination service
 
 **Animation Plugins (Active):**
-- `animations/rainbow.py` - Classic rainbow effects
-- `animations/sparkle.py` - Sparkle effects
-- `animations/emoji.py` - Emoji display system
-- `animations/emoji_arranger.py` - Interactive emoji placement
-- `animations/fluid_tank.py` - Fluid simulation
-- `animations/flame_burst.py` - Fire effects
-- `animations/christmas_tree.py` - Holiday animation
-- `animations/tetris.py` - Tetris game
-- `animations/simple_test.py` - Hardware test patterns
-- `animations/hardware_diagnostics.py` - Hardware debugging
+- `animation/plugins/rainbow.py` - Classic rainbow effects
+- `animation/plugins/sparkle.py` - Sparkle effects
+- `animation/plugins/emoji.py` - Emoji display system
+- `animation/plugins/emoji_arranger.py` - Interactive emoji placement
+- `animation/plugins/fluid_tank.py` - Fluid simulation
+- `animation/plugins/flame_burst.py` - Fire effects
+- `animation/plugins/christmas_tree.py` - Holiday animation
+- `animation/plugins/tetris.py` - Tetris game
+- `animation/plugins/simple_test.py` - Hardware test patterns
+- `animation/plugins/hardware_diagnostics.py` - Hardware debugging
 
 **Web Layer:**
-- `web_interface.py` - Flask application with REST API
-- `templates/` - HTML templates (base, index, control, upload, emoji_arranger)
-- `control_channel.py` - File-based IPC between web and controller processes
+- `web/app.py` - Flask application with REST API
+- `web/templates/` - HTML templates (base, index, control, upload, emoji_arranger)
+- `ipc/control_channel.py` - File-based IPC between web and controller processes
 
 **Entry Points:**
-- `start_animation_server.py` - Main startup script (controller or web mode)
+- `scripts/start_server.py` - Main startup script (controller or web mode)
 
 **Deployment:**
-- `deploy.sh` - Deployment script to Raspberry Pi
+- `tools/deployment/deploy.sh` - Deployment script to Raspberry Pi
 - `Justfile` - Build automation (minimal)
 - `requirements.txt` - Python dependencies
 
@@ -209,13 +209,13 @@ ledgrid-poc/
 - `extract_frame_payload.py` - Utility script (purpose?)
 
 **Animation Duplicates:**
-- `animations/led_controller_spi.py` - Duplicate of root file?
-- `animations/led_controller_spi_standalone.py` - Standalone version?
-- `animations/test_animation.py` - Test animation (keep?)
-- `animations/debug_sequential.py` - Debug animation (keep?)
-- `animations/effects.py` - Generic effects (active?)
-- `animations/solid.py` - Solid colors (active?)
-- `animations/ascii_drop.py` - ASCII animation (active?)
+- `animation/plugins/led_controller_spi.py` - Duplicate of driver test?
+- `animation/plugins/led_controller_spi_standalone.py` - Standalone version?
+- `animation/plugins/test_animation.py` - Test animation (keep?)
+- `animation/plugins/debug_sequential.py` - Debug animation (keep?)
+- `animation/plugins/effects.py` - Generic effects (active?)
+- `animation/plugins/solid.py` - Solid colors (active?)
+- `animation/plugins/ascii_drop.py` - ASCII animation (active?)
 
 #### ❌ Dead Code (Remove)
 
@@ -229,7 +229,7 @@ ledgrid-poc/
 - `debugging/*.ino` - Arduino test sketches
 
 **Backup Files:**
-- `esp32_led_controller/src/main_spi.cpp.bak` - Backup file (remove)
+- `firmware/esp32/src/main_spi.cpp.bak` - Backup file (remove)
 
 **Documentation Overlap:**
 - Multiple README files with overlapping content (consolidate)
@@ -241,25 +241,25 @@ ledgrid-poc/
 ```
 User Browser
     ↓ HTTP POST
-web_interface.py (Flask)
+web/app.py (Flask)
     ↓ write JSON
-control_channel.py (FileControlChannel)
+ipc/control_channel.py (FileControlChannel)
     ↓ write run_state/control.json
 [File System]
     ↓ poll & read
-start_animation_server.py (controller mode)
+scripts/start_server.py (controller mode)
     ↓ parse command
-animation_manager.py (AnimationManager)
+animation/core/manager.py (AnimationManager)
     ↓ load plugin
-animation_system/plugin_loader.py
+animation/core/plugin_loader.py
     ↓ instantiate
-animations/*.py (AnimationBase subclass)
+animation/plugins/*.py (AnimationBase subclass)
     ↓ generate_frame()
-animation_manager.py
+animation/core/manager.py
     ↓ set_all_pixels()
-led_controller_spi_multi.py (MultiDeviceLEDController)
+drivers/multi_device.py (MultiDeviceLEDController)
     ↓ split frame by device
-led_controller_spi.py (LEDController) × 2
+drivers/spi_controller.py (LEDController) × 2
     ↓ SPI transfer
 /dev/spidev0.0, /dev/spidev0.1
     ↓ SPI slave
@@ -312,7 +312,7 @@ ledgrid-poc/
 │   ├── spi_controller.py          # Single-device SPI driver
 │   ├── multi_device.py            # Multi-device coordinator
 │   ├── frame_codec.py             # Frame data encoding/decoding
-│   ├── led_layout.py              # LED configuration
+│   ├── drivers/led_layout.py              # LED configuration
 │   └── README.md
 │
 ├── animation/                     # 🎨 Animation framework layer
@@ -345,7 +345,7 @@ ledgrid-poc/
 │
 ├── ipc/                           # 🔄 Inter-process communication
 │   ├── __init__.py
-│   ├── control_channel.py         # File-based IPC
+│   ├── ipc/control_channel.py         # File-based IPC
 │   └── README.md
 │
 ├── tools/                         # 🛠️ Development & debugging tools
@@ -410,7 +410,7 @@ ledgrid-poc/
 - `spi_controller.py` - Single ESP32 device control
 - `multi_device.py` - Multi-device coordination
 - `frame_codec.py` - Frame data compression
-- `led_layout.py` - LED configuration constants
+- `drivers/led_layout.py` - LED configuration constants
 
 **Interface:**
 ```python
@@ -460,7 +460,7 @@ class AnimationManager:
 **Key Components:**
 - `app.py` - Flask application setup
 - `api.py` - REST API endpoints
-- `templates/` - HTML templates
+- `web/templates/` - HTML templates
 
 **Interface (REST API):**
 ```
@@ -478,7 +478,7 @@ GET  /api/hardware/stats      - Hardware statistics (NEW)
 **Responsibility:** Communication between web and controller processes
 
 **Key Components:**
-- `control_channel.py` - File-based command/status exchange
+- `ipc/control_channel.py` - File-based command/status exchange
 
 **Interface:**
 ```python
@@ -648,44 +648,44 @@ checking items as they complete.
 
 #### Directory Creation
 - [ ] Create `docs/` directory
-- [ ] Create `firmware/esp32/` directory
-- [ ] Create `drivers/` directory
-- [ ] Create `animation/core/` directory
-- [ ] Create `animation/plugins/` directory
-- [ ] Create `web/` directory
-- [ ] Create `ipc/` directory
-- [ ] Create `tools/diagnostics/` directory
-- [ ] Create `tools/deployment/` directory
+- [x] Create `firmware/esp32/` directory
+- [x] Create `drivers/` directory
+- [x] Create `animation/core/` directory
+- [x] Create `animation/plugins/` directory
+- [x] Create `web/` directory
+- [x] Create `ipc/` directory
+- [x] Create `tools/diagnostics/` directory
+- [x] Create `tools/deployment/` directory
 - [ ] Create `tools/dev/` directory
 - [ ] Create `tests/unit/` directory
 - [ ] Create `tests/integration/` directory
 - [ ] Create `config/` directory
-- [ ] Create `scripts/` directory
+- [x] Create `scripts/` directory
 
 #### File Migration (Use git mv!)
-- [ ] Move `esp32_led_controller/*` -> `firmware/esp32/`
-- [ ] Move `led_controller_spi.py` -> `drivers/spi_controller.py`
-- [ ] Move `led_controller_spi_multi.py` -> `drivers/multi_device.py`
-- [ ] Move `frame_data_codec.py` -> `drivers/frame_codec.py`
-- [ ] Move `led_layout.py` -> `drivers/led_layout.py`
-- [ ] Move `animation_system/animation_base.py` -> `animation/core/base.py`
-- [ ] Move `animation_system/plugin_loader.py` -> `animation/core/plugin_loader.py`
-- [ ] Move `animation_manager.py` -> `animation/core/manager.py`
-- [ ] Move `animations/*.py` -> `animation/plugins/`
-- [ ] Move `web_interface.py` -> `web/app.py`
-- [ ] Move `templates/` -> `web/templates/`
-- [ ] Move `control_channel.py` -> `ipc/control_channel.py`
-- [ ] Move `deploy.sh` -> `tools/deployment/deploy.sh`
-- [ ] Move `start_animation_server.py` -> `scripts/start_server.py`
+- [x] Move `esp32_led_controller/*` -> `firmware/esp32/`
+- [x] Move `led_controller_spi.py` -> `drivers/spi_controller.py`
+- [x] Move `led_controller_spi_multi.py` -> `drivers/multi_device.py`
+- [x] Move `frame_data_codec.py` -> `drivers/frame_codec.py`
+- [x] Move `led_layout.py` -> `drivers/led_layout.py`
+- [x] Move `animation_system/animation_base.py` -> `animation/core/base.py`
+- [x] Move `animation/core/plugin_loader.py` -> `animation/core/plugin_loader.py`
+- [x] Move `animation_manager.py` -> `animation/core/manager.py`
+- [x] Move `animations/*.py` -> `animation/plugins/`
+- [x] Move `web_interface.py` -> `web/app.py`
+- [x] Move `templates/` -> `web/templates/`
+- [x] Move `control_channel.py` -> `ipc/control_channel.py`
+- [x] Move `deploy.sh` -> `tools/deployment/deploy.sh`
+- [x] Move `start_animation_server.py` -> `scripts/start_server.py`
 
 #### Import Path Updates
-- [ ] Update imports in `drivers/` files
-- [ ] Update imports in `animation/core/` files
-- [ ] Update imports in `animation/plugins/` files
-- [ ] Update imports in `web/` files
-- [ ] Update imports in `ipc/` files
-- [ ] Update imports in `scripts/` files
-- [ ] Update imports in `tools/` files
+- [x] Update imports in `drivers/` files
+- [x] Update imports in `animation/core/` files
+- [x] Update imports in `animation/plugins/` files
+- [x] Update imports in `web/` files
+- [x] Update imports in `ipc/` files
+- [x] Update imports in `scripts/` files
+- [x] Update imports in `tools/` files
 
 #### Documentation
 - [ ] Create `drivers/README.md`
@@ -693,7 +693,7 @@ checking items as they complete.
 - [ ] Create `animation/plugins/README.md`
 - [ ] Create `web/README.md`
 - [ ] Create `ipc/README.md`
-- [ ] Create `firmware/esp32/README.md`
+- [x] Create `firmware/esp32/README.md`
 - [ ] Create `tools/README.md`
 - [ ] Move existing docs to `docs/`
 
@@ -720,7 +720,7 @@ checking items as they complete.
 #### Dead Code Removal
 - [ ] Review `debugging/` directory with user
 - [ ] Archive or delete `debugging/` directory
-- [ ] Remove `esp32_led_controller/src/main_spi.cpp.bak`
+- [ ] Remove `firmware/esp32/src/main_spi.cpp.bak`
 - [ ] Remove any other `*.bak` files
 - [ ] Remove `__pycache__/` directories (add to .gitignore)
 
@@ -728,7 +728,7 @@ checking items as they complete.
 - [ ] Decide on `water_simulation.py` vs `fluid_tank.py`
 - [ ] Remove duplicate if confirmed
 - [ ] Decide on `water_simulation_server.py` fate
-- [ ] Review `animations/led_controller_spi*.py` duplicates
+- [ ] Review `animation/plugins/led_controller_spi*.py` duplicates
 - [ ] Remove confirmed duplicates
 - [ ] Review `debug_emoji.py` - keep or remove?
 - [ ] Review `extract_frame_payload.py` - keep or remove?
@@ -1715,7 +1715,7 @@ Response: {
 2. **Q:** What is the purpose of extract_frame_payload.py?
    **A:** TBD - Appears to be a utility script, need to verify usage
 
-3. **Q:** Are all animations in animations/ directory active?
+3. **Q:** Are all animations in animation/plugins/ directory active?
    **A:** TBD - Need to verify which are used in production
 
 4. **Q:** Should we use pytest or another test framework?
@@ -1736,13 +1736,13 @@ Response: {
    **Validation:** Verify with user before major changes
 
 2. **Assumption:** 2 ESP32 devices × 8 strips × 140 LEDs = 2,240 total LEDs
-   **Validation:** Confirmed in led_layout.py
+   **Validation:** Confirmed in drivers/led_layout.py
 
 3. **Assumption:** SPI Mode 3 (CPOL=1, CPHA=1) is required
    **Validation:** Confirmed in firmware and driver code
 
 4. **Assumption:** Target FPS is 40
-   **Validation:** Confirmed in animation_manager.py
+   **Validation:** Confirmed in animation/core/manager.py
 
 5. **Assumption:** File-based IPC is intentional for process isolation
    **Validation:** Appears to separate web UI from hardware control

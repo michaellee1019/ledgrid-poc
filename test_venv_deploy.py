@@ -144,7 +144,7 @@ def main():
     if passed == len(results):
         print("\n🎉 All tests passed! Virtual environment deployment should work correctly.")
         print("\n🚀 Ready to deploy:")
-        print("   ./deploy.sh")
+        print("   ./tools/deployment/deploy.sh")
     else:
         print("\n⚠️  Some tests failed. Check your Python/venv setup.")
         return 1

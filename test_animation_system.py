@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 # Add current directory to Python path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -53,10 +53,10 @@ def test_plugin_system():
     print("=" * 40)
     
     try:
-        from animation_system.plugin_loader import AnimationPluginLoader
+        from animation.core.plugin_loader import AnimationPluginLoader
         
         # Create plugin loader
-        loader = AnimationPluginLoader('animations')
+        loader = AnimationPluginLoader()
         
         # Discover plugins
         plugins = loader.discover_plugins()
@@ -82,7 +82,7 @@ def test_animation_manager():
     print("=" * 40)
     
     try:
-        from animation_manager import AnimationManager
+        from animation.core.manager import AnimationManager
         
         # Create mock controller
         controller = MockLEDController()
@@ -132,15 +132,18 @@ def test_web_interface():
     
     try:
         # Import the web interface (mocks already set up)
-        from web_interface import AnimationWebInterface
-        from animation_manager import AnimationManager
+        from web.app import AnimationWebInterface
+        from animation.core.manager import AnimationManager
+        from ipc.control_channel import FileControlChannel
         
-        # Create mock controller and manager
+        # Create mock controller, manager, and control channel
         controller = MockLEDController()
         manager = AnimationManager(controller)
+        channel = FileControlChannel(control_path="run_state/test_control.json",
+                                      status_path="run_state/test_status.json")
         
         # Create web interface
-        web_interface = AnimationWebInterface(manager, host='127.0.0.1', port=5001)
+        web_interface = AnimationWebInterface(channel, manager, host='127.0.0.1', port=5001)
         
         print("✓ Web interface created successfully")
         print(f"  Host: {web_interface.host}")
@@ -181,7 +184,7 @@ def main():
         print("\n🎉 All tests passed! System is ready.")
         print("\nTo start the full system:")
         print("  1. Install dependencies: pip install flask spidev")
-        print("  2. Run: python start_animation_server.py")
+        print("  2. Run: python scripts/start_server.py")
         print("  3. Open: http://localhost:5000/")
     else:
         print("\n⚠️  Some tests failed. Check the errors above.")

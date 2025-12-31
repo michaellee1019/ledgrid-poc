@@ -6,9 +6,9 @@ The deployment system has been **enhanced** to work within a Python virtual envi
 
 ## 🚀 **Deployment Scripts**
 
-### 1. **`deploy.sh`** - Enhanced Deployment
+### 1. **`tools/deployment/deploy.sh`** - Enhanced Deployment
 ```bash
-./deploy.sh
+./tools/deployment/deploy.sh
 ```
 
 **Now includes:**
@@ -41,12 +41,12 @@ The deployment system has been **enhanced** to work within a Python virtual envi
 │   ├── bin/                  #     Python executables
 │   ├── lib/                  #     Installed packages
 │   └── pyvenv.cfg           #     Environment config
-├── animation_system/         # Core plugin system
-├── animations/              # Example animation plugins
-├── templates/               # Web interface templates
-├── animation_manager.py     # Animation coordination
-├── web_interface.py        # Flask web server
-├── start_animation_server.py # Main startup script
+├── animation/core/         # Core plugin system
+├── animation/plugins/              # Example animation plugins
+├── web/templates/               # Web interface templates
+├── animation/core/manager.py     # Animation coordination
+├── web/app.py        # Flask web server
+├── scripts/start_server.py # Main startup script
 ├── requirements.txt        # Python dependencies
 ├── start.sh                # 🆕 Enhanced startup script (uses venv)
 └── animation_system.log    # Runtime log file
@@ -77,7 +77,7 @@ python test_venv_deploy.py
 
 ### Deploy System
 ```bash
-./deploy.sh
+./tools/deployment/deploy.sh
 ```
 
 **Output:**
@@ -163,7 +163,7 @@ The enhanced deployment system is **production-ready** with:
 
 ```bash
 # 1. Deploy to Raspberry Pi
-./deploy.sh
+./tools/deployment/deploy.sh
 
 # 2. Open web interface (URL shown after deployment)
 # http://[PI_IP]:5000/

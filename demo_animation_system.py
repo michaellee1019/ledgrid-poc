@@ -11,8 +11,8 @@ from pathlib import Path
 # Add current directory to Python path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from animation_system.plugin_loader import AnimationPluginLoader
-from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+from animation.core.plugin_loader import AnimationPluginLoader
+from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 
 class MockLEDController:
@@ -93,7 +93,7 @@ def main():
     controller = MockLEDController(strips=DEFAULT_STRIP_COUNT, leds_per_strip=DEFAULT_LEDS_PER_STRIP)
     
     # Load plugins
-    loader = AnimationPluginLoader('animations')
+    loader = AnimationPluginLoader()
     plugins = loader.load_all_plugins()
     
     print(f"\n📦 Loaded {len(plugins)} animation plugins:")
@@ -108,7 +108,7 @@ def main():
     print("\n🎉 Demo completed!")
     print("\nTo run the full web interface:")
     print("  1. Install Flask: pip install flask")
-    print("  2. Start server: python start_animation_server.py")
+    print("  2. Start server: python scripts/start_server.py")
     print("  3. Open browser: http://localhost:5000/")
 
 

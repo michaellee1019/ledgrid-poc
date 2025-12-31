@@ -13,9 +13,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from animation_manager import AnimationManager
-from animation_system import AnimationPluginLoader
-from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+from animation.core.manager import AnimationManager
+from animation.core.plugin_loader import AnimationPluginLoader
+from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 
 def build_snapshot(animations_dir: str, status_path: str) -> dict:
@@ -51,7 +51,8 @@ def build_snapshot(animations_dir: str, status_path: str) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Dump animation configuration snapshot")
-    parser.add_argument("--animations-dir", default="animations", help="Animation directory to scan")
+    default_plugins_dir = str(REPO_ROOT / "animation" / "plugins")
+    parser.add_argument("--animations-dir", default=default_plugins_dir, help="Animation directory to scan")
     parser.add_argument("--status", default="run_state/status.json", help="Status JSON file to read")
     args = parser.parse_args()
 

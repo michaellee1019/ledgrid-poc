@@ -35,24 +35,24 @@ stop_system() {
     log_info "Stopping LED Grid Animation System on $PI_HOST..."
     
     # Check if system is running
-    if ssh "$PI_HOST" "pgrep -f 'start_animation_server.py' > /dev/null"; then
+    if ssh "$PI_HOST" "pgrep -f 'start_server.py' > /dev/null"; then
         log_info "Found running animation server, stopping..."
         
         # Stop the process
-        ssh "$PI_HOST" "pkill -f 'start_animation_server.py' || true"
+        ssh "$PI_HOST" "pkill -f 'start_server.py' || true"
         
         # Wait a moment
         sleep 2
         
         # Check if stopped
-        if ! ssh "$PI_HOST" "pgrep -f 'start_animation_server.py' > /dev/null"; then
+        if ! ssh "$PI_HOST" "pgrep -f 'start_server.py' > /dev/null"; then
             log_success "Animation system stopped successfully"
         else
             log_warning "Process may still be running, trying force stop..."
-            ssh "$PI_HOST" "pkill -9 -f 'start_animation_server.py' || true"
+            ssh "$PI_HOST" "pkill -9 -f 'start_server.py' || true"
             sleep 1
             
-            if ! ssh "$PI_HOST" "pgrep -f 'start_animation_server.py' > /dev/null"; then
+            if ! ssh "$PI_HOST" "pgrep -f 'start_server.py' > /dev/null"; then
                 log_success "Animation system force stopped"
             else
                 log_error "Failed to stop animation system"
@@ -68,7 +68,7 @@ stop_system() {
 show_status() {
     log_info "Checking system status..."
     
-    if ssh "$PI_HOST" "pgrep -f 'start_animation_server.py' > /dev/null"; then
+    if ssh "$PI_HOST" "pgrep -f 'start_server.py' > /dev/null"; then
         PI_IP=$(ssh "$PI_HOST" "hostname -I | awk '{print \$1}'")
         echo -e "${GREEN}Status: RUNNING${NC}"
         echo "Web interface: http://$PI_IP:5000/"

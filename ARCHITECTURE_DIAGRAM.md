@@ -104,10 +104,10 @@
 2. Browser sends POST /api/animation/start {"name": "rainbow"}
    │
    ▼
-3. Flask app (web_interface.py) receives request
+3. Flask app (web/app.py) receives request
    │
    ▼
-4. Flask writes to control_channel.py
+4. Flask writes to ipc/control_channel.py
    │
    ▼
 5. control_channel writes run_state/control.json
@@ -189,7 +189,7 @@
 │                    Raspberry Pi                             │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │  Process 1: Web Server (start_animation_server.py)   │  │
+│  │  Process 1: Web Server (scripts/start_server.py)   │  │
 │  │  - Flask app on port 5000                            │  │
 │  │  - Serves HTML/CSS/JS                                │  │
 │  │  - REST API endpoints                                │  │
@@ -201,7 +201,7 @@
 │                           │ File-based IPC                  │
 │                           │                                 │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │  Process 2: Controller (start_animation_server.py)   │  │
+│  │  Process 2: Controller (scripts/start_server.py)   │  │
 │  │  - Animation loop (40 FPS)                           │  │
 │  │  - Plugin management                                 │  │
 │  │  - SPI communication                                 │  │
@@ -284,4 +284,3 @@ Raspberry Pi                    ESP32
 ---
 
 **Last Updated:** 2025-12-25
-

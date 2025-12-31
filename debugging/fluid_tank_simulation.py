@@ -6,8 +6,8 @@ from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 import time
 
-from animations.fluid_tank import FluidTankAnimation
-from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+from animation.plugins.fluid_tank import FluidTankAnimation
+from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 
 @dataclass

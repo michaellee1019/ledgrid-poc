@@ -6,7 +6,7 @@ Simple test for just the plugin system without dependencies
 import sys
 from pathlib import Path
 
-from led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 # Add current directory to Python path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -18,10 +18,10 @@ def test_plugin_loading():
     print("=" * 40)
     
     try:
-        from animation_system.plugin_loader import AnimationPluginLoader
+        from animation.core.plugin_loader import AnimationPluginLoader
         
         # Create plugin loader
-        loader = AnimationPluginLoader('animations')
+        loader = AnimationPluginLoader()
         
         # Scan for plugin files
         plugin_names = loader.scan_plugins()
@@ -79,10 +79,10 @@ def test_plugin_creation():
     print("=" * 40)
     
     try:
-        from animation_system.plugin_loader import AnimationPluginLoader
+        from animation.core.plugin_loader import AnimationPluginLoader
         
         # Create plugin loader
-        loader = AnimationPluginLoader('animations')
+        loader = AnimationPluginLoader()
         
         # Test plugin code
         test_code = '''#!/usr/bin/env python3
@@ -92,7 +92,7 @@ Test Animation Plugin
 
 import math
 from typing import List, Tuple, Dict, Any
-from animation_system import AnimationBase
+from animation import AnimationBase
 
 
 class TestAnimation(AnimationBase):
@@ -162,7 +162,7 @@ def main():
         print("\nNext steps:")
         print("  1. Install Flask: pip install flask")
         print("  2. Install spidev: pip install spidev (on Raspberry Pi)")
-        print("  3. Run full system: python start_animation_server.py")
+        print("  3. Run full system: python scripts/start_server.py")
     else:
         print("\n⚠️  Some plugin tests failed.")
 

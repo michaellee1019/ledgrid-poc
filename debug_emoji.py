@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
 sys.path.append('.')
-from animations.emoji_arranger import EmojiArrangerAnimation
+from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 
 # Create mock controller (same as in animation_manager.py)
 class MockLEDController:

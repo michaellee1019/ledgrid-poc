@@ -55,7 +55,7 @@ sudo raspi-config
 python3 -c "import spidev; spi=spidev.SpiDev(); spi.open(0,0); print('SPI OK')"
 
 # 4. Run LED controller
-python3 led_controller_spi.py rainbow
+python3 -m drivers.spi_controller rainbow
 ```
 
 ### On ESP32 XIAO S3 (via Serial Monitor):
@@ -207,4 +207,3 @@ Each strip should also have:
 - **Power**: Connect 5V and GND to your LED power supply
 - **Data**: Connect to the corresponding GPIO pin above
 - **Ground**: Ensure all grounds are connected together (Pi, ESP32, LED power supply)
-

@@ -4,7 +4,7 @@
 
 ### 1. Deploy to Raspberry Pi
 ```bash
-./deploy.sh
+./tools/deployment/deploy.sh
 ```
 
 This single command will:
@@ -51,7 +51,7 @@ sudo raspi-config
 
 ## Deployment Process
 
-### What `deploy.sh` Does
+### What `tools/deployment/deploy.sh` Does
 
 1. **Connection Test** - Verifies SSH connectivity
 2. **Directory Setup** - Creates `~/ledgrid-pod/` on Pi
@@ -67,12 +67,12 @@ sudo raspi-config
 ```
 ~/ledgrid-pod/
 ├── venv/                     # Python virtual environment
-├── animation_system/          # Core plugin system
-├── animations/               # Example animation plugins
-├── templates/                # Web interface templates
-├── animation_manager.py      # Animation coordination
-├── web_interface.py         # Flask web server
-├── start_animation_server.py # Main startup script
+├── animation/core/          # Core plugin system
+├── animation/plugins/               # Example animation plugins
+├── web/templates/                # Web interface templates
+├── animation/core/manager.py      # Animation coordination
+├── web/app.py         # Flask web server
+├── scripts/start_server.py # Main startup script
 ├── requirements.txt         # Python dependencies
 ├── start.sh                 # Convenience startup script
 └── animation_system.log     # Runtime log file
@@ -128,7 +128,7 @@ source venv/bin/activate
 tail -f animation_system.log
 
 # Stop system (Ctrl+C or)
-pkill -f start_animation_server.py
+pkill -f scripts/start_server.py
 ```
 
 ## Web Interface URLs
@@ -226,14 +226,14 @@ ssh ledwallleft@ledwallleft.local "cd ledgrid-pod && tail -f animation_system.lo
 ```
 
 **Low Performance**
-- Check SPI speed settings in `start_animation_server.py`
+- Check SPI speed settings in `scripts/start_server.py`
 - Reduce animation complexity
 - Lower target FPS
 
 ## Hardware Integration
 
 ### LED Controller Setup
-Ensure your `led_controller_spi.py` is compatible:
+Ensure your `drivers/spi_controller.py` is compatible:
 ```python
 class LEDController:
     def __init__(self, bus=0, device=0, speed=8000000, **kwargs):
@@ -277,7 +277,7 @@ sudo raspi-config
 
 ## Next Steps
 
-1. **Deploy**: Run `./deploy.sh`
+1. **Deploy**: Run `./tools/deployment/deploy.sh`
 2. **Test**: Open web interface and try animations
 3. **Create**: Upload your own animation plugins
 4. **Customize**: Modify parameters and create new effects

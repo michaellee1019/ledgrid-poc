@@ -15,15 +15,15 @@ Your request has been **fully implemented**:
 - **Plugin Loader**: Automatic discovery and loading of animation files
 
 ### ✅ Your Original Rainbow Animation
-**Converted to plugin format** in `animations/rainbow.py`:
+**Converted to plugin format** in `animation/plugins/rainbow.py`:
 - `RainbowAnimation` - Your exact original rainbow cycle
 - `RainbowWaveAnimation` - Enhanced version with wave effects
 - **All original behavior preserved** with added real-time parameter control
 
 ### ✅ Example Animations
-- **Rainbow** (`animations/rainbow.py`) - Your original animation as plugin
-- **Solid Colors** (`animations/solid.py`) - Solid colors and gradients  
-- **Effects** (`animations/effects.py`) - Sparkle and wave effects
+- **Rainbow** (`animation/plugins/rainbow.py`) - Your original animation as plugin
+- **Solid Colors** (`animation/plugins/solid.py`) - Solid colors and gradients  
+- **Effects** (`animation/plugins/effects.py`) - Sparkle and wave effects
 - **Test Animation** - Automatically created during testing
 
 ### ✅ Web Interface (Complete)
@@ -57,7 +57,7 @@ Your request has been **fully implemented**:
 pip install flask spidev
 
 # Start animation server
-python start_animation_server.py
+python scripts/start_server.py
 
 # Open web interface
 # http://localhost:5000/
@@ -76,22 +76,22 @@ python start_animation_server.py
 ## 📁 File Structure
 ```
 ledgrid-poc/
-├── animation_system/           # Core plugin system
+├── animation/core/           # Core plugin system
 │   ├── __init__.py
 │   ├── animation_base.py       # Base class for animations
 │   └── plugin_loader.py        # Hot-loading system
-├── animations/                 # Animation plugins
+├── animation/plugins/                 # Animation plugins
 │   ├── rainbow.py             # Your original animation (converted)
 │   ├── solid.py               # Solid colors and gradients
 │   └── effects.py             # Special effects
-├── templates/                  # Web interface templates
+├── web/templates/                  # Web interface templates
 │   ├── base.html
 │   ├── index.html             # Dashboard
 │   ├── control.html           # Control panel
 │   └── upload.html            # Upload page
-├── animation_manager.py        # Animation coordination service
-├── web_interface.py           # Flask web server
-├── start_animation_server.py  # Easy startup script
+├── animation/core/manager.py        # Animation coordination service
+├── web/app.py           # Flask web server
+├── scripts/start_server.py  # Easy startup script
 └── README_ANIMATION_SYSTEM.md # Complete documentation
 ```
 
@@ -113,7 +113,7 @@ ledgrid-poc/
 - Threaded animation loop for smooth performance
 
 ### ✅ Original Animation Preserved
-Your rainbow animation from `led_controller_spi.py` is now available as a plugin with enhanced features:
+Your rainbow animation from `drivers/spi_controller.py` is now available as a plugin with enhanced features:
 - Real-time speed control
 - Direction control (forward/reverse)
 - Span ratio adjustment
@@ -141,7 +141,7 @@ The system is **complete and ready** for your LED grid. Simply:
 
 1. Transfer files to your Raspberry Pi
 2. Install dependencies: `pip install flask spidev`
-3. Run: `python start_animation_server.py`
+3. Run: `python scripts/start_server.py`
 4. Access web interface from any device on your network
 
 Your original rainbow animation is preserved and enhanced, and you can now easily create and upload new animations over the air! 🎨✨
