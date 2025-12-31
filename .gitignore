@@ -4,9 +4,6 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
-__pycache__/*
-esp32_led_controller/.cache/*
-animation_system/__pycache__/*
+**/__pycache__/
 .venv-web
 run_state
-

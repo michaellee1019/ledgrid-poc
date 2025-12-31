@@ -208,7 +208,7 @@ ledgrid-poc/
 
 **Animation Duplicates:**
 - `animation/plugins/led_controller_spi.py` - Duplicate of driver test?
-- `animation/plugins/led_controller_spi_standalone.py` - Standalone version?
+- `tools/diagnostics/led_controller_spi_test.py` - Standalone SPI test
 - `animation/plugins/test_animation.py` - Test animation (keep?)
 - `animation/plugins/debug_sequential.py` - Debug animation (keep?)
 - `animation/plugins/effects.py` - Generic effects (active?)
@@ -719,16 +719,17 @@ checking items as they complete.
 #### Dead Code Removal
 - [x] Review `debugging/` directory with user
 - [x] Archive or delete `debugging/` directory
-- [ ] Remove `firmware/esp32/src/main_spi.cpp.bak`
-- [ ] Remove any other `*.bak` files
-- [ ] Remove `__pycache__/` directories (add to .gitignore)
+- [x] Remove `firmware/esp32/src/main_spi.cpp.bak`
+- [x] Remove any other `*.bak` files
+- [x] Remove `__pycache__/` directories (add to .gitignore)
 
 #### Duplicate Consolidation
 - [x] Decide on `water_simulation.py` vs `fluid_tank.py`
 - [x] Remove duplicate if confirmed
 - [x] Decide on `water_simulation_server.py` fate
-- [ ] Review `animation/plugins/led_controller_spi*.py` duplicates
-- [ ] Remove confirmed duplicates
+- [x] Review `animation/plugins/led_controller_spi*.py` duplicates
+- [x] Move standalone SPI test to `tools/diagnostics/led_controller_spi_test.py`
+- [x] Remove confirmed duplicates
 - [x] Review `debug_emoji.py` - keep or remove?
 - [x] Review `extract_frame_payload.py` - keep or remove?
 
