@@ -84,6 +84,16 @@ upload_files() {
     log_success "File upload completed"
 }
 
+# Flash ESP32 firmware if sources changed (non-fatal on failure).
+flash_esp32_firmware() {
+    log_info "Checking ESP32 firmware..."
+    if ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && DEPLOY_DIR=~/$DEPLOY_DIR bash tools/deployment/flash_esp32.sh"; then
+        log_success "ESP32 firmware check complete"
+    else
+        log_warning "ESP32 flash failed; continuing deployment"
+    fi
+}
+
 # Create virtual environment and install dependencies
 setup_venv_and_dependencies() {
     log_info "Setting up Python virtual environment..."
@@ -317,6 +327,7 @@ main() {
     create_deploy_directory
     stop_running
     upload_files
+    flash_esp32_firmware
     setup_venv_and_dependencies
     check_spi
     create_startup_script
