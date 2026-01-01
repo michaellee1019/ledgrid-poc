@@ -189,8 +189,7 @@ class AnimationWebInterface:
             self.control_channel.send_command('update_params', params=params)
             return jsonify({'success': True})
 
-        @self.app.route('/dpad/<direction>', methods=['POST'])
-        def api_dpad(direction):
+        def _handle_dpad(direction: str):
             """API: Send a D-pad input to the running animation."""
             direction = (direction or '').lower().replace('_', '-')
             valid = {'up', 'down', 'left', 'right', 'rotate-left', 'rotate-right', 'drop'}
@@ -198,6 +197,14 @@ class AnimationWebInterface:
                 return jsonify({'error': 'Invalid dpad direction'}), 400
             self.control_channel.send_command('dpad', direction=direction)
             return jsonify({'success': True, 'direction': direction})
+
+        @self.app.route('/dpad/<direction>', methods=['POST'])
+        def api_dpad(direction):
+            return _handle_dpad(direction)
+
+        @self.app.route('/api/dpad/<direction>', methods=['POST'])
+        def api_dpad_via_api(direction):
+            return _handle_dpad(direction)
 
         @self.app.route('/api/upload', methods=['POST'])
         def api_upload_animation():
