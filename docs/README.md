@@ -158,6 +158,12 @@ python3 -c "import spidev; spi=spidev.SpiDev(); spi.open(0,0); print('SPI OK')"
 - Run with sudo: `sudo python3 -m drivers.spi_controller rainbow`
 - Or add user to spi group: `sudo usermod -a -G spi $USER` (logout/login required)
 
+## Observability
+
+- Metrics and status payloads: `docs/METRICS.md`
+- Debugging workflow: `docs/DEBUGGING.md`
+- Remote diagnostics: `just diagnose-remote`
+
 **"LEDs not lighting up"**
 - 3.3V logic level issue - WS2812B LEDs prefer 5V logic
 - Use a level shifter (74AHCT125 or similar) between ESP32 and LED data line

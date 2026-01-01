@@ -1681,7 +1681,51 @@ Response: {
 
 **Action Items:**
 - [ ] Capture checkpoint commit/tag
-- [ ] Document metrics endpoints and driver stats in docs
+- [x] Document metrics endpoints and driver stats in docs
+- [ ] Decide next observability tasks (status.json, UI display, diagnostics tools)
+
+### Session 2026-01-01: Observability Docs Update
+
+**Attendees:** Developer + AI Assistant
+
+**Objectives:**
+1. Document metrics endpoints and status payloads
+2. Add debugging workflow notes
+3. Update web API doc list
+
+**Progress:**
+- Added `docs/METRICS.md` with status payload + API examples
+- Added `docs/DEBUGGING.md` with quick checks and diagnostics references
+- Updated `web/README.md` to list API routes
+- Linked new docs from `docs/README.md`
+
+**Status:**
+- Docs refreshed, API endpoints documented
+
+**Action Items:**
+- [ ] Capture checkpoint commit/tag
+- [ ] Decide next observability tasks (status.json, UI display, diagnostics tools)
+
+### Session 2026-01-01: Live Metrics Verification
+
+**Attendees:** Developer + AI Assistant
+
+**Objectives:**
+1. Verify `/api/status`, `/api/metrics`, and `/api/hardware/stats` on the deploy host
+2. Confirm driver stats update under live load
+3. Decide observability scope (API-only vs UI)
+
+**Progress:**
+- Remote web server restarted and reachable on port 5000
+- `/api/status`, `/api/metrics`, `/api/hardware/stats` returned JSON successfully
+- Driver stats showed increasing frames/bytes; actual FPS near target
+- Observability scope set to API-only for now
+
+**Status:**
+- Live metrics verification complete
+
+**Action Items:**
+- [ ] Capture checkpoint commit/tag
 - [ ] Decide next observability tasks (status.json, UI display, diagnostics tools)
 
 ### Session 2025-12-25: Initial Survey & Planning
@@ -1798,17 +1842,17 @@ Response: {
 ### Immediate (Checkpoint Follow-Through)
 
 1. **Capture checkpoint**: commit current changes and add a tag (optional but recommended)
-2. **Document metrics**: update docs for `/api/metrics` and `/api/hardware/stats`
-3. **Decide observability scope**: status.json metrics + web UI display vs. API-only
-4. **Verify metrics in a live run**: confirm driver stats update under load
+2. **Document metrics**: update docs for `/api/metrics` and `/api/hardware/stats` ✅
+3. **Decide observability scope**: status.json metrics + web UI display vs. API-only ✅ (API-only for now)
+4. **Verify metrics in a live run**: confirm driver stats update under load ✅
 
 ### Phase 4 Follow-Through (Observability)
 
 1. Add metrics to `run_state/status.json`
 2. Add UI surface for metrics (if desired)
 3. Create diagnostic tools (`tools/diagnostics/*`) or confirm they are unnecessary
-4. Add `docs/METRICS.md` and `docs/DEBUGGING.md`
-5. Update `web/README.md` API docs
+4. Add `docs/METRICS.md` and `docs/DEBUGGING.md` ✅
+5. Update `web/README.md` API docs ✅
 
 ### Future Considerations
 

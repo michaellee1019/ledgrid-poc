@@ -20,6 +20,16 @@ setup: setup-web
 test:
 	python3 -m unittest discover -s tests -p 'test_*.py'
 
+# Diagnose the deploy host (API + logs). Outputs to diagnostics/remote_diagnostics.out.
+diagnose-remote:
+	mkdir -p diagnostics
+	OUT_FILE=diagnostics/remote_diagnostics.out tools/diagnostics/remote_diagnostics.sh
+
+# Diagnose the deploy host and restart the web server if needed.
+diagnose-remote-restart:
+	mkdir -p diagnostics
+	OUT_FILE=diagnostics/remote_diagnostics.out KILL_PORT=1 RESTART_WEB=1 tools/diagnostics/remote_diagnostics.sh
+
 # Run the web controller locally (defaults to HOST=127.0.0.1, PORT=5000).
 start:
 	if [ ! -x {{web_venv}}/bin/python ]; then \
