@@ -29,8 +29,8 @@
 
 ## Quick Start
 
-**Current Status:** In progress - driver stats + metrics endpoints added, deploy rsync hardened  
-**Next Action:** Capture checkpoint (commit/tag) and decide Phase 4 follow-through  
+**Current Status:** In progress - driver stats + metrics endpoints added, metrics UI added, deploy rsync hardened  
+**Next Action:** Capture checkpoint (commit/tag) and finish remaining Phase 4 diagnostics tools  
 **Command:** Use `/refactor` to start or resume (see `.codex/commands/refactor.md`)
 
 ### What We're Doing
@@ -829,15 +829,15 @@ checking items as they complete.
 #### Metrics Implementation
 - [x] Implement stats collection in `LEDController`
 - [x] Implement stats collection in `MultiDeviceLEDController`
-- [ ] Implement stats collection in `AnimationManager`
-- [ ] Add performance tracking to animation loop
-- [ ] Add timing measurements for SPI transfers
+- [x] Implement stats collection in `AnimationManager`
+- [x] Add performance tracking to animation loop
+- [x] Add timing measurements for SPI transfers
 
 #### API Endpoints
 - [x] Add `GET /api/metrics` endpoint
 - [x] Add `GET /api/hardware/stats` endpoint
-- [ ] Add metrics to status.json
-- [ ] Update web UI to display metrics
+- [x] Add metrics to status.json
+- [x] Update web UI to display metrics
 
 #### Diagnostic Tools
 - [ ] Create `tools/diagnostics/hardware_test.py`
@@ -846,8 +846,8 @@ checking items as they complete.
 - [ ] Document diagnostic tools in `tools/README.md`
 
 #### Documentation
-- [ ] Create debugging guide in `docs/DEBUGGING.md`
-- [ ] Document metrics in `docs/METRICS.md`
+- [x] Create debugging guide in `docs/DEBUGGING.md`
+- [x] Document metrics in `docs/METRICS.md`
 - [ ] Add troubleshooting section to docs
 
 #### Verification
@@ -1027,7 +1027,7 @@ checking items as they complete.
 
 **Checklist Version:** 1.0  
 **Last Updated:** 2025-12-31  
-**Status:** In progress - Phase 4 partial (metrics + endpoints landed)
+**Status:** In progress - Phase 4 partial (metrics + endpoints + UI landed)
 
 ---
 
@@ -1726,7 +1726,27 @@ Response: {
 
 **Action Items:**
 - [ ] Capture checkpoint commit/tag
-- [ ] Decide next observability tasks (status.json, UI display, diagnostics tools)
+- [ ] Decide next observability tasks (diagnostics tools, troubleshooting doc)
+
+### Session 2026-01-02: Metrics UI Added
+
+**Attendees:** Developer + AI Assistant
+
+**Objectives:**
+1. Surface metrics on the web UI
+2. Confirm metrics update live
+
+**Progress:**
+- Added performance snapshot panels to dashboard and control views
+- Wired UI updates to `/api/status` refresh loop
+- Verified live updates on deploy host
+
+**Status:**
+- Metrics UI live and updating
+
+**Action Items:**
+- [ ] Capture checkpoint commit/tag
+- [ ] Finish diagnostics tools (spi analyzer / hardware tests)
 
 ### Session 2025-12-25: Initial Survey & Planning
 
@@ -1845,11 +1865,12 @@ Response: {
 2. **Document metrics**: update docs for `/api/metrics` and `/api/hardware/stats` ✅
 3. **Decide observability scope**: status.json metrics + web UI display vs. API-only ✅ (API-only for now)
 4. **Verify metrics in a live run**: confirm driver stats update under load ✅
+5. **Add metrics UI**: dashboard + control panels ✅
 
 ### Phase 4 Follow-Through (Observability)
 
-1. Add metrics to `run_state/status.json`
-2. Add UI surface for metrics (if desired)
+1. Add metrics to `run_state/status.json` ✅
+2. Add UI surface for metrics (if desired) ✅
 3. Create diagnostic tools (`tools/diagnostics/*`) or confirm they are unnecessary
 4. Add `docs/METRICS.md` and `docs/DEBUGGING.md` ✅
 5. Update `web/README.md` API docs ✅

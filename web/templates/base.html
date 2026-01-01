@@ -110,6 +110,105 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     
     <script>
+        function setTextIfPresent(id, value) {
+            const el = document.getElementById(id);
+            if (el) {
+                el.textContent = value;
+            }
+        }
+
+        function formatNumber(value, digits = 0) {
+            const num = Number(value);
+            if (!Number.isFinite(num)) {
+                return '--';
+            }
+            return num.toFixed(digits);
+        }
+
+        function formatMs(value) {
+            const num = Number(value);
+            if (!Number.isFinite(num)) {
+                return '--';
+            }
+            return `${num.toFixed(2)} ms`;
+        }
+
+        function formatBytes(value) {
+            const num = Number(value);
+            if (!Number.isFinite(num)) {
+                return '--';
+            }
+            if (num < 1024) {
+                return `${num} B`;
+            }
+            if (num < 1024 * 1024) {
+                return `${(num / 1024).toFixed(1)} KB`;
+            }
+            if (num < 1024 * 1024 * 1024) {
+                return `${(num / (1024 * 1024)).toFixed(1)} MB`;
+            }
+            return `${(num / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+        }
+
+        function formatHz(value) {
+            const num = Number(value);
+            if (!Number.isFinite(num)) {
+                return '--';
+            }
+            if (num >= 1000000) {
+                return `${(num / 1000000).toFixed(2)} MHz`;
+            }
+            if (num >= 1000) {
+                return `${(num / 1000).toFixed(1)} kHz`;
+            }
+            return `${num} Hz`;
+        }
+
+        function deriveDriverSummary(driverStats) {
+            if (!driverStats || typeof driverStats !== 'object') {
+                return { aggregate: {}, deviceCount: 0, spiSpeedHz: null };
+            }
+
+            const hasDevices = Array.isArray(driverStats.devices);
+            const aggregate = hasDevices ? (driverStats.aggregate || {}) : driverStats;
+            const deviceCount = hasDevices ? driverStats.devices.length : (Object.keys(driverStats).length ? 1 : 0);
+            let spiSpeedHz = aggregate.spi_speed_hz;
+            if (!spiSpeedHz && hasDevices && driverStats.devices.length) {
+                spiSpeedHz = driverStats.devices[0].spi_speed_hz;
+            }
+            return { aggregate, deviceCount, spiSpeedHz };
+        }
+
+        function updateMetricsPanel(status) {
+            if (!status) {
+                return;
+            }
+
+            const performance = status.performance || {};
+            const driverStats = status.driver_stats || {};
+            const { aggregate, deviceCount, spiSpeedHz } = deriveDriverSummary(driverStats);
+
+            setTextIfPresent('metricTargetFps', formatNumber(status.target_fps, 0));
+            setTextIfPresent('metricActualFps', formatNumber(status.actual_fps, 1));
+            setTextIfPresent('metricTargetFrame', formatMs(performance.target_frame_ms));
+            setTextIfPresent('metricAvgGenerate', formatMs(performance.avg_generate_ms));
+            setTextIfPresent('metricAvgSend', formatMs(performance.avg_send_ms));
+            setTextIfPresent('metricAvgFrame', formatMs(performance.avg_frame_ms));
+            setTextIfPresent('metricLastFrame', formatMs(performance.last_frame_ms));
+            setTextIfPresent('metricInlineShow', performance.controller_inline_show === undefined
+                ? '--'
+                : (performance.controller_inline_show ? 'Yes' : 'No'));
+            setTextIfPresent('metricPerfSamples', formatNumber(performance.samples, 0));
+
+            setTextIfPresent('metricDeviceCount', deviceCount ? deviceCount.toString() : '--');
+            setTextIfPresent('metricDriverFrames', formatNumber(aggregate.frames_sent, 0));
+            setTextIfPresent('metricDriverBytes', formatBytes(aggregate.bytes_sent));
+            setTextIfPresent('metricDriverErrors', formatNumber(aggregate.errors, 0));
+            setTextIfPresent('metricDriverAvg', formatMs(aggregate.avg_frame_duration_ms));
+            setTextIfPresent('metricDriverLast', formatMs(aggregate.last_frame_duration_ms));
+            setTextIfPresent('metricSpiSpeed', formatHz(spiSpeedHz));
+        }
+
         // Global functions for API calls
         function startAnimation(name, config = {}) {
             return fetch(`/api/start/${name}`, {
@@ -160,6 +259,8 @@
                 if (fpsDisplay) {
                     fpsDisplay.textContent = `${status.actual_fps.toFixed(1)} FPS`;
                 }
+
+                updateMetricsPanel(status);
             }).catch(console.error);
         }
         
