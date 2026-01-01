@@ -108,6 +108,27 @@ class AnimationWebInterface:
             status = self._status_payload()
             return jsonify(status)
 
+        @self.app.route('/api/metrics')
+        def api_get_metrics():
+            """API: Summarized performance metrics."""
+            status = self._status_payload()
+            return jsonify({
+                'animation': {
+                    'target_fps': status.get('target_fps', 0),
+                    'actual_fps': status.get('actual_fps', 0),
+                    'uptime': status.get('uptime', 0),
+                },
+                'performance': status.get('performance', {}),
+                'driver': status.get('driver_stats', {}),
+                'system': {},
+            })
+
+        @self.app.route('/api/hardware/stats')
+        def api_get_hardware_stats():
+            """API: Hardware stats for SPI devices."""
+            status = self._status_payload()
+            return jsonify(status.get('driver_stats', {}))
+
         @self.app.route('/api/hole', methods=['POST'])
         def api_trigger_hole():
             """API: Ask the running animation to punch a random hole"""
@@ -279,6 +300,7 @@ class AnimationWebInterface:
         status.setdefault('animation_hash', None)
         status.setdefault('animation_info', None)
         status.setdefault('performance', {})
+        status.setdefault('driver_stats', {})
         status.setdefault('current_animation', None)
         status.setdefault('is_running', False)
         status.setdefault('frame_count', 0)
@@ -337,6 +359,7 @@ class AnimationWebInterface:
                 'strip_count': self.preview_manager.controller.strip_count,
                 'leds_per_strip': self.preview_manager.controller.leds_per_strip
             },
+            'driver_stats': {},
             'frame_data': [],
             'frame_data_encoded': '',
             'frame_data_length': 0,

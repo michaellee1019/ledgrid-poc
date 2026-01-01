@@ -114,6 +114,11 @@ class LEDController:
         self._last_brightness_refresh = 0.0
         self._config_refresh_interval = 30.0  # seconds - reduced frequency to avoid LED blanking
         self._last_sent_config = None  # Track last config to avoid unnecessary refreshes
+        self._frames_sent = 0
+        self._bytes_sent = 0
+        self._errors = 0
+        self._last_frame_duration = 0.0
+        self._total_frame_duration = 0.0
         
         if self.debug:
             print("SPI Controller initialized")
@@ -137,7 +142,12 @@ class LEDController:
     def _xfer(self, payload):
         buf = list(payload)
         _pad_payload(buf)
-        return self.spi.xfer2(buf)
+        self._bytes_sent += len(buf)
+        try:
+            return self.spi.xfer2(buf)
+        except Exception:
+            self._errors += 1
+            raise
 
     def _refresh_configuration(self, force=False):
         now = time.time()
@@ -236,6 +246,7 @@ class LEDController:
     def set_all_pixels(self, colors):
         """Send all pixels in one SPI transaction"""
         self._refresh_configuration()
+        start_time = time.perf_counter()
 
         total_pixels = self.total_leds
         base_colors = list(colors)
@@ -247,35 +258,59 @@ class LEDController:
         else:
             frame_colors = base_colors
 
-        if total_pixels <= MAX_PIXELS_SET_ALL:
-            data = [CMD_SET_ALL]
-            for r, g, b in frame_colors:
-                data.extend([int(r) & 0xFF, int(g) & 0xFF, int(b) & 0xFF])
-            self._xfer(data)
-            # Inter-frame delay if configured (0 = no delay)
-            if SPI_INTER_FRAME_DELAY > 0:
-                time.sleep(SPI_INTER_FRAME_DELAY)
-            # CMD_SET_ALL already calls FastLED.show(), no explicit SHOW needed
-        else:
-            start = 0
-            while start < total_pixels:
-                count = min(MAX_PIXELS_PER_RANGE, total_pixels - start)
-                payload = [
-                    CMD_SET_RANGE,
-                    (start >> 8) & 0xFF,
-                    start & 0xFF,
-                    count
-                ]
-                for r, g, b in frame_colors[start:start + count]:
-                    payload.extend([int(r) & 0xFF, int(g) & 0xFF, int(b) & 0xFF])
-                self._xfer(payload)
-                start += count
+        success = False
+        try:
+            if total_pixels <= MAX_PIXELS_SET_ALL:
+                data = [CMD_SET_ALL]
+                for r, g, b in frame_colors:
+                    data.extend([int(r) & 0xFF, int(g) & 0xFF, int(b) & 0xFF])
+                self._xfer(data)
+                # Inter-frame delay if configured (0 = no delay)
+                if SPI_INTER_FRAME_DELAY > 0:
+                    time.sleep(SPI_INTER_FRAME_DELAY)
+                # CMD_SET_ALL already calls FastLED.show(), no explicit SHOW needed
+            else:
+                start = 0
+                while start < total_pixels:
+                    count = min(MAX_PIXELS_PER_RANGE, total_pixels - start)
+                    payload = [
+                        CMD_SET_RANGE,
+                        (start >> 8) & 0xFF,
+                        start & 0xFF,
+                        count
+                    ]
+                    for r, g, b in frame_colors[start:start + count]:
+                        payload.extend([int(r) & 0xFF, int(g) & 0xFF, int(b) & 0xFF])
+                    self._xfer(payload)
+                    start += count
 
-            self._xfer([CMD_SHOW])
+                self._xfer([CMD_SHOW])
+            success = True
+        finally:
+            if success:
+                duration = time.perf_counter() - start_time
+                self._frames_sent += 1
+                self._last_frame_duration = duration
+                self._total_frame_duration += duration
     
     def close(self):
         """Close SPI connection"""
         self.spi.close()
+
+    def get_stats(self):
+        """Return controller performance statistics."""
+        avg_ms = 0.0
+        if self._frames_sent:
+            avg_ms = (self._total_frame_duration / self._frames_sent) * 1000.0
+        return {
+            'spi_speed_hz': getattr(self.spi, 'max_speed_hz', None),
+            'total_leds': self.total_leds,
+            'last_frame_duration_ms': self._last_frame_duration * 1000.0,
+            'avg_frame_duration_ms': avg_ms,
+            'frames_sent': self._frames_sent,
+            'bytes_sent': self._bytes_sent,
+            'errors': self._errors,
+        }
 
 
 def hsv_to_rgb(h, s, v):

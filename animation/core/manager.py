@@ -328,6 +328,14 @@ class AnimationManager:
         performance = self._get_perf_summary()
         if performance:
             status['performance'] = performance
+
+        driver_stats = {}
+        if hasattr(self.controller, "get_stats"):
+            try:
+                driver_stats = self.controller.get_stats()
+            except Exception as exc:
+                driver_stats = {'error': str(exc)}
+        status['driver_stats'] = driver_stats
         
         return status
 

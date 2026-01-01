@@ -1,7 +1,7 @@
 # LED Grid Control System - Refactor Design and Plan
 
-**Last Updated:** 2025-12-25  
-**Status:** Planning Complete - Awaiting Approval  
+**Last Updated:** 2025-12-31  
+**Status:** In Progress - Metrics + deployment improvements landed, system stable  
 **Estimated Duration:** 4 weeks  
 **Repository:** ledgrid-poc  
 **Single Source of Truth:** This file consolidates refactor* documentation.
@@ -29,8 +29,8 @@
 
 ## Quick Start
 
-**Current Status:** Planning complete - awaiting approval  
-**Next Action:** Review this plan and approve Phase 1 work  
+**Current Status:** In progress - driver stats + metrics endpoints added, deploy rsync hardened  
+**Next Action:** Capture checkpoint (commit/tag) and decide Phase 4 follow-through  
 **Command:** Use `/refactor` to start or resume (see `.codex/commands/refactor.md`)
 
 ### What We're Doing
@@ -784,8 +784,8 @@ checking items as they complete.
 **Goal:** Establish clear contracts between layers
 
 #### Driver Layer Interfaces
-- [ ] Add `get_stats()` to `LEDController`
-- [ ] Add `get_stats()` to `MultiDeviceLEDController`
+- [x] Add `get_stats()` to `LEDController`
+- [x] Add `get_stats()` to `MultiDeviceLEDController`
 - [ ] Add type hints to all public methods
 - [ ] Document interface in `drivers/README.md`
 - [ ] Add docstrings to all public methods
@@ -827,15 +827,15 @@ checking items as they complete.
 **Goal:** Add metrics and debugging capabilities
 
 #### Metrics Implementation
-- [ ] Implement stats collection in `LEDController`
-- [ ] Implement stats collection in `MultiDeviceLEDController`
+- [x] Implement stats collection in `LEDController`
+- [x] Implement stats collection in `MultiDeviceLEDController`
 - [ ] Implement stats collection in `AnimationManager`
 - [ ] Add performance tracking to animation loop
 - [ ] Add timing measurements for SPI transfers
 
 #### API Endpoints
-- [ ] Add `GET /api/metrics` endpoint
-- [ ] Add `GET /api/hardware/stats` endpoint
+- [x] Add `GET /api/metrics` endpoint
+- [x] Add `GET /api/hardware/stats` endpoint
 - [ ] Add metrics to status.json
 - [ ] Update web UI to display metrics
 
@@ -1026,8 +1026,8 @@ checking items as they complete.
 (Ideas for future enhancements)
 
 **Checklist Version:** 1.0  
-**Last Updated:** 2025-12-25  
-**Status:** Ready for execution
+**Last Updated:** 2025-12-31  
+**Status:** In progress - Phase 4 partial (metrics + endpoints landed)
 
 ---
 
@@ -1659,6 +1659,31 @@ Response: {
 
 ## Session Notes
 
+### Session 2025-12-31: Metrics + Deployment Checkpoint
+
+**Attendees:** Developer + AI Assistant
+
+**Objectives:**
+1. Capture current refactor progress
+2. Document checkpoint while system is stable
+3. Update plan with metrics/deploy changes
+
+**Progress:**
+- Added driver stats collection in `drivers/spi_controller.py` and `drivers/multi_device.py`
+- Exposed driver stats via `animation/core/manager.py` status payload
+- Added `/api/metrics` and `/api/hardware/stats` endpoints in `web/app.py`
+- Hardened `tools/deployment/deploy.sh` rsync excludes (build artifacts, .pio, dist/out)
+
+**Status:**
+- System reported working end-to-end
+- Deployment reported working reliably
+- Good checkpoint for commit/tag
+
+**Action Items:**
+- [ ] Capture checkpoint commit/tag
+- [ ] Document metrics endpoints and driver stats in docs
+- [ ] Decide next observability tasks (status.json, UI display, diagnostics tools)
+
 ### Session 2025-12-25: Initial Survey & Planning
 
 **Attendees:** Developer + AI Assistant
@@ -1770,21 +1795,20 @@ Response: {
 
 ## Next Steps
 
-### Immediate (Before Next Session)
+### Immediate (Checkpoint Follow-Through)
 
-1. **Get User Feedback** on this refactoring plan
-2. **Verify Assumptions** about production usage
-3. **Identify Critical Paths** that must not break
-4. **Backup Current State** before starting refactor
+1. **Capture checkpoint**: commit current changes and add a tag (optional but recommended)
+2. **Document metrics**: update docs for `/api/metrics` and `/api/hardware/stats`
+3. **Decide observability scope**: status.json metrics + web UI display vs. API-only
+4. **Verify metrics in a live run**: confirm driver stats update under load
 
-### Phase 1 Execution (After Approval)
+### Phase 4 Follow-Through (Observability)
 
-1. Create new directory structure
-2. Move files with git mv (preserve history)
-3. Update all import paths
-4. Test end-to-end functionality
-5. Update deployment script
-6. Commit and tag as "refactor-phase-1"
+1. Add metrics to `run_state/status.json`
+2. Add UI surface for metrics (if desired)
+3. Create diagnostic tools (`tools/diagnostics/*`) or confirm they are unnecessary
+4. Add `docs/METRICS.md` and `docs/DEBUGGING.md`
+5. Update `web/README.md` API docs
 
 ### Future Considerations
 
@@ -1826,6 +1850,6 @@ grep -r "TODO\|FIXME\|XXX" --include="*.py" .
 ---
 
 **Document Version:** 1.0
-**Last Reviewed:** 2025-12-25
-**Next Review:** After Phase 1 completion
+**Last Reviewed:** 2025-12-31
+**Next Review:** After Phase 4 follow-through
 ```

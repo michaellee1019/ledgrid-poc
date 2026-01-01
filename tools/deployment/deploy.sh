@@ -70,7 +70,7 @@ upload_files() {
     log_info "Uploading animation system files (full sync with delete)..."
 
     # Use rsync to mirror repo minus local-only artifacts
-    rsync -avz --delete --progress \
+    rsync -az --delete --stats \
         -e "ssh $SSH_OPTS" \
         --exclude '.git' \
         --exclude 'venv' \
@@ -79,6 +79,20 @@ upload_files() {
         --exclude '*.pyc' \
         --exclude '.DS_Store' \
         --exclude 'animation_system.log' \
+        --exclude '.pio' \
+        --exclude '.pio/**' \
+        --exclude 'build' \
+        --exclude 'build/**' \
+        --exclude '*/build' \
+        --exclude '*/build/**' \
+        --exclude 'dist' \
+        --exclude 'dist/**' \
+        --exclude '*/dist' \
+        --exclude '*/dist/**' \
+        --exclude 'out' \
+        --exclude 'out/**' \
+        --exclude '*/out' \
+        --exclude '*/out/**' \
         "$LOCAL_DIR"/ "$PI_HOST:~/$DEPLOY_DIR/"
 
     log_success "File upload completed"

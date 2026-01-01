@@ -207,3 +207,46 @@ class MultiDeviceLEDController:
             except Exception as e:
                 if self.debug:
                     print(f"⚠ Device {device_id} close warning: {e}")
+
+    def get_stats(self):
+        """Return aggregated stats across all devices."""
+        device_stats = []
+        total_leds = 0
+        frames_sent = 0
+        bytes_sent = 0
+        errors = 0
+        last_frame_ms = 0.0
+        weighted_avg_total = 0.0
+        weighted_avg_frames = 0
+
+        for device in self.devices:
+            stats = {}
+            if hasattr(device, "get_stats"):
+                stats = device.get_stats()
+            device_stats.append(stats)
+
+            total_leds += int(stats.get('total_leds', 0) or 0)
+            frames = int(stats.get('frames_sent', 0) or 0)
+            frames_sent += frames
+            bytes_sent += int(stats.get('bytes_sent', 0) or 0)
+            errors += int(stats.get('errors', 0) or 0)
+
+            last_frame_ms = max(last_frame_ms, float(stats.get('last_frame_duration_ms', 0.0) or 0.0))
+            avg_ms = float(stats.get('avg_frame_duration_ms', 0.0) or 0.0)
+            if frames > 0:
+                weighted_avg_total += avg_ms * frames
+                weighted_avg_frames += frames
+
+        avg_frame_ms = weighted_avg_total / weighted_avg_frames if weighted_avg_frames else 0.0
+
+        return {
+            'devices': device_stats,
+            'aggregate': {
+                'total_leds': total_leds,
+                'frames_sent': frames_sent,
+                'bytes_sent': bytes_sent,
+                'errors': errors,
+                'last_frame_duration_ms': last_frame_ms,
+                'avg_frame_duration_ms': avg_frame_ms,
+            }
+        }
