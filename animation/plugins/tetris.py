@@ -2,6 +2,7 @@
 """Tetris animation that plays itself on the LED grid."""
 
 import random
+import threading
 from typing import List, Tuple, Dict, Any, Optional
 
 from animation import AnimationBase
@@ -107,6 +108,9 @@ class TetrisAnimation(AnimationBase):
         self.lines_cleared = 0
         self.random = random.Random()
         self.game_over_flash = 0.0
+        self.input_queue: List[str] = []
+        self.input_lock = threading.Lock()
+        self.manual_override = 0.0
 
         self.default_params.update({
             'speed': 1.0,
@@ -183,6 +187,18 @@ class TetrisAnimation(AnimationBase):
 
         return frame
 
+    def handle_input(self, action: str):
+        """Handle player input from the D-pad."""
+        action = (action or '').lower().replace('_', '-')
+        if action == 'up':
+            action = 'rotate-right'
+        valid = {'left', 'right', 'down', 'rotate-left', 'rotate-right', 'drop'}
+        if action not in valid:
+            return
+        with self.input_lock:
+            self.input_queue.append(action)
+        self.manual_override = max(self.manual_override, 2.0)
+
     def _update_game(self, delta: float):
         if self.board_width <= 0 or self.board_height <= 0:
             return
@@ -196,10 +212,16 @@ class TetrisAnimation(AnimationBase):
         if self.current_piece is None:
             return
 
-        self.action_accumulator += delta
-        while self.action_accumulator >= self.action_interval:
-            self._run_player_step()
-            self.action_accumulator -= self.action_interval
+        if self.manual_override > 0.0:
+            self.manual_override = max(0.0, self.manual_override - delta)
+
+        self._apply_pending_inputs()
+
+        if self.manual_override <= 0.0:
+            self.action_accumulator += delta
+            while self.action_accumulator >= self.action_interval:
+                self._run_player_step()
+                self.action_accumulator -= self.action_interval
 
         self.fall_progress += delta * self.drop_speed
         while self.fall_progress >= 1.0:
@@ -280,6 +302,32 @@ class TetrisAnimation(AnimationBase):
 
         chosen['piece'] = self.current_piece
         self.current_plan = chosen
+
+    def _apply_pending_inputs(self):
+        with self.input_lock:
+            if not self.input_queue:
+                return
+            pending = list(self.input_queue)
+            self.input_queue.clear()
+
+        for action in pending:
+            if not self.current_piece:
+                return
+            if action == 'left':
+                self._move_piece(-1, 0)
+            elif action == 'right':
+                self._move_piece(1, 0)
+            elif action == 'down':
+                self._move_piece(0, 1)
+            elif action == 'rotate-left':
+                self._rotate_piece(-1)
+            elif action == 'rotate-right':
+                self._rotate_piece(1)
+            elif action == 'drop':
+                while self._move_piece(0, 1):
+                    pass
+                self._lock_piece()
+                return
 
     def _enumerate_moves(self, piece: str) -> List[Dict[str, Any]]:
         info = TETROMINOS[piece]
