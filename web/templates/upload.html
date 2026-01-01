@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Animation{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <h2><i class="fas fa-upload"></i> Upload Animation Plugin</h2>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5>Upload Python File</h5>
+            </div>
+            <div class="card-body">
+                <form id="uploadForm" enctype="multipart/form-data">
+                    <div class="upload-area" id="uploadArea">
+                        <i class="fas fa-cloud-upload-alt fa-3x text-muted mb-3"></i>
+                        <h5>Drop your Python file here</h5>
+                        <p class="text-muted">or click to browse</p>
+                        <input type="file" id="fileInput" accept=".py" style="display: none;">
+                        <button type="button" class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                            <i class="fas fa-folder-open"></i> Browse Files
+                        </button>
+                    </div>
+                    
+                    <div id="fileInfo" class="mt-3" style="display: none;">
+                        <div class="alert alert-info">
+                            <strong>Selected file:</strong> <span id="fileName"></span><br>
+                            <strong>Size:</strong> <span id="fileSize"></span>
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-success">
+                                <i class="fas fa-upload"></i> Upload Animation
+                            </button>
+                            <button type="button" class="btn btn-secondary" onclick="clearFile()">
+                                <i class="fas fa-times"></i> Clear
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5>Create New Animation</h5>
+            </div>
+            <div class="card-body">
+                <form id="codeForm">
+                    <div class="mb-3">
+                        <label for="animationName" class="form-label">Animation Name</label>
+                        <input type="text" class="form-control" id="animationName" 
+                               placeholder="my_animation" required>
+                        <small class="text-muted">Will be saved as {name}.py</small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="animationCode" class="form-label">Python Code</label>
+                        <textarea class="form-control code-editor" id="animationCode" 
+                                  rows="20" placeholder="Enter your animation code here..."></textarea>
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> Save Animation
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="loadTemplate()">
+                            <i class="fas fa-file-code"></i> Load Template
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h6><i class="fas fa-info-circle"></i> Animation Guidelines</h6>
+            </div>
+            <div class="card-body">
+                <h6>Required Structure:</h6>
+                <ul class="small">
+                    <li>Import <code>AnimationBase</code></li>
+                    <li>Create class inheriting from <code>AnimationBase</code></li>
+                    <li>Implement <code>generate_frame()</code> method</li>
+                    <li>Return list of (r,g,b) tuples</li>
+                </ul>
+                
+                <h6 class="mt-3">Available Methods:</h6>
+                <ul class="small">
+                    <li><code>self.hsv_to_rgb(h, s, v)</code></li>
+                    <li><code>self.apply_brightness(color)</code></li>
+                    <li><code>self.get_pixel_count()</code></li>
+                    <li><code>self.get_strip_info()</code></li>
+                </ul>
+                
+                <h6 class="mt-3">Parameters:</h6>
+                <ul class="small">
+                    <li>Access via <code>self.params['name']</code></li>
+                    <li>Define schema in <code>get_parameter_schema()</code></li>
+                    <li>Support real-time updates</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="card mt-3">
+            <div class="card-header">
+                <h6><i class="fas fa-lightbulb"></i> Tips</h6>
+            </div>
+            <div class="card-body">
+                <ul class="small">
+                    <li>Use <code>time_elapsed</code> for smooth animations</li>
+                    <li>Keep calculations efficient for high FPS</li>
+                    <li>Test with different parameter values</li>
+                    <li>Add descriptive metadata</li>
+                    <li>Handle edge cases gracefully</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// File upload handling
+const uploadArea = document.getElementById('uploadArea');
+const fileInput = document.getElementById('fileInput');
+const fileInfo = document.getElementById('fileInfo');
+
+// Drag and drop
+uploadArea.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    uploadArea.style.borderColor = '#007bff';
+});
+
+uploadArea.addEventListener('dragleave', () => {
+    uploadArea.style.borderColor = '#ccc';
+});
+
+uploadArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadArea.style.borderColor = '#ccc';
+    
+    const files = e.dataTransfer.files;
+    if (files.length > 0 && files[0].name.endsWith('.py')) {
+        handleFileSelect(files[0]);
+    } else {
+        alert('Please select a Python (.py) file');
+    }
+});
+
+// File input change
+fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length > 0) {
+        handleFileSelect(e.target.files[0]);
+    }
+});
+
+function handleFileSelect(file) {
+    document.getElementById('fileName').textContent = file.name;
+    document.getElementById('fileSize').textContent = formatFileSize(file.size);
+    fileInfo.style.display = 'block';
+    uploadArea.style.display = 'none';
+}
+
+function clearFile() {
+    fileInput.value = '';
+    fileInfo.style.display = 'none';
+    uploadArea.style.display = 'block';
+}
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Upload form submission
+document.getElementById('uploadForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    
+    fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+    })
+    .then(r => r.json())
+    .then(result => {
+        if (result.success) {
+            alert(`Animation "${result.plugin_name}" uploaded successfully!`);
+            clearFile();
+        } else {
+            alert(`Upload failed: ${result.error}`);
+        }
+    })
+    .catch(error => {
+        alert(`Upload error: ${error.message}`);
+    });
+});
+
+// Code form submission
+document.getElementById('codeForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    
+    const name = document.getElementById('animationName').value;
+    const code = document.getElementById('animationCode').value;
+    
+    if (!name || !code) {
+        alert('Please provide both name and code');
+        return;
+    }
+    
+    fetch('/api/upload', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: name, code: code})
+    })
+    .then(r => r.json())
+    .then(result => {
+        if (result.success) {
+            alert(`Animation "${name}" saved successfully!`);
+            document.getElementById('animationName').value = '';
+            document.getElementById('animationCode').value = '';
+        } else {
+            alert(`Save failed: ${result.error}`);
+        }
+    })
+    .catch(error => {
+        alert(`Save error: ${error.message}`);
+    });
+});
+
+// Load animation template
+function loadTemplate() {
+    const template = `#!/usr/bin/env python3
+"""
+Custom Animation Plugin
+
+Description of your animation here.
+"""
+
+import math
+from typing import List, Tuple, Dict, Any
+from animation import AnimationBase
+
+
+class MyAnimation(AnimationBase):
+    """Your custom animation class"""
+    
+    ANIMATION_NAME = "My Animation"
+    ANIMATION_DESCRIPTION = "Description of what this animation does"
+    ANIMATION_AUTHOR = "Your Name"
+    ANIMATION_VERSION = "1.0"
+    
+    def __init__(self, controller, config: Dict[str, Any] = None):
+        super().__init__(controller, config)
+        
+        # Add custom parameters
+        self.default_params.update({
+            'speed': 1.0,
+            'color_hue': 0.0,
+            # Add more parameters here
+        })
+        
+        self.params = {**self.default_params, **self.config}
+    
+    def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+        schema = super().get_parameter_schema()
+        schema.update({
+            'color_hue': {
+                'type': 'float',
+                'min': 0.0,
+                'max': 1.0,
+                'default': 0.0,
+                'description': 'Base color hue (0.0-1.0)'
+            }
+        })
+        return schema
+    
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
+        """Generate animation frame"""
+        strip_count, leds_per_strip = self.get_strip_info()
+        
+        # Get parameters
+        speed = self.params.get('speed', 1.0)
+        base_hue = self.params.get('color_hue', 0.0)
+        
+        pixel_colors = []
+        
+        for strip in range(strip_count):
+            for led in range(leds_per_strip):
+                # Your animation logic here
+                hue = (base_hue + time_elapsed * speed * 0.1) % 1.0
+                color = self.hsv_to_rgb(hue, 1.0, 1.0)
+                color = self.apply_brightness(color)
+                
+                pixel_colors.append(color)
+        
+        return pixel_colors
+`;
+    
+    document.getElementById('animationCode').value = template;
+}
+</script>
+{% endblock %}

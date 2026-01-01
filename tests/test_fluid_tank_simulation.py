@@ -2,7 +2,7 @@
 
 import unittest
 
-from debugging.fluid_tank_simulation import SimulationConfig, run_simulation
+from tools.diagnostics.fluid_tank_simulation import SimulationConfig, run_simulation
 
 
 class FluidTankSimulationTests(unittest.TestCase):
