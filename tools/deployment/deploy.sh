@@ -9,6 +9,7 @@ PI_HOST="ledwallleft@ledwallleft.local"
 DEPLOY_DIR="ledgrid-pod"
 LOCAL_DIR="."
 SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
+PI_USER="${PI_HOST%@*}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -60,7 +61,7 @@ create_deploy_directory() {
 # Stop any running instances on the Pi
 stop_running() {
     log_info "Stopping any running animation server on the Pi..."
-    if ! ssh $SSH_OPTS "$PI_HOST" "pkill -f start_server.py || true; pkill -f start.sh || true"; then
+    if ! ssh $SSH_OPTS "$PI_HOST" "sudo systemctl stop ledgrid.service 2>/dev/null || true; pkill -f start_server.py || true; pkill -f start.sh || true"; then
         log_warning "Stop step failed (likely nothing running); continuing..."
     fi
 }
@@ -262,6 +263,36 @@ EOF"
     log_success "Startup script created"
 }
 
+create_systemd_service() {
+    log_info "Installing systemd service..."
+
+    if ssh $SSH_OPTS "$PI_HOST" "cat > /tmp/ledgrid.service << 'EOF'
+[Unit]
+Description=LED Grid Animation System
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$PI_USER
+WorkingDirectory=/home/$PI_USER/$DEPLOY_DIR
+ExecStart=/bin/bash /home/$PI_USER/$DEPLOY_DIR/scripts/start_systemd.sh
+Restart=always
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo mv /tmp/ledgrid.service /etc/systemd/system/ledgrid.service
+sudo systemctl daemon-reload
+sudo systemctl enable ledgrid.service"; then
+        log_success "systemd service installed"
+    else
+        log_warning "systemd service install failed (check sudo permissions)"
+    fi
+}
+
 # Start the animation system
 start_system() {
     log_info "Starting LED Grid Animation System..."
@@ -283,10 +314,14 @@ start_system() {
     echo "   • Control animations in real-time"
     echo ""
     
-    # Start the system in background
-    log_info "Starting animation server in background..."
-    ssh -f -n $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && nohup ./start.sh > animation_system.log 2>&1 </dev/null &"
-    log_success "Background start command issued"
+    # Start the system via systemd when available.
+    log_info "Restarting systemd service..."
+    if ssh $SSH_OPTS "$PI_HOST" "sudo systemctl restart ledgrid.service"; then
+        log_success "systemd restart issued"
+    else
+        log_warning "systemd restart failed; falling back to manual start.sh"
+        ssh -f -n $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && nohup ./start.sh > animation_system.log 2>&1 </dev/null &"
+    fi
 
     # Wait a moment for startup
     sleep 2
@@ -345,6 +380,7 @@ main() {
     setup_venv_and_dependencies
     check_spi
     create_startup_script
+    create_systemd_service
     start_system
     tail_logs
 }
