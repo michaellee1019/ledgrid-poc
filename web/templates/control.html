@@ -6,6 +6,54 @@
 <div class="row">
     <div class="col-md-8">
         <h2><i class="fas fa-sliders-h"></i> Animation Control Panel</h2>
+        <style>
+            .dpad {
+                display: grid;
+                grid-template-columns: repeat(3, 56px);
+                grid-template-rows: repeat(3, 56px);
+                gap: 10px;
+                justify-content: center;
+                align-items: center;
+            }
+
+            .dpad-btn {
+                font-size: 1.5rem;
+                border: 1px solid #dee2e6;
+                background: #f8f9fa;
+                border-radius: 12px;
+                height: 56px;
+                width: 56px;
+                line-height: 1;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                transition: transform 0.05s ease, box-shadow 0.05s ease;
+            }
+
+            .dpad-btn:active {
+                transform: translateY(1px);
+                box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.15);
+            }
+
+            .dpad-spacer {
+                height: 56px;
+                width: 56px;
+            }
+
+            @media (max-width: 575.98px) {
+                .dpad {
+                    grid-template-columns: repeat(3, 48px);
+                    grid-template-rows: repeat(3, 48px);
+                    gap: 8px;
+                }
+
+                .dpad-btn,
+                .dpad-spacer {
+                    height: 48px;
+                    width: 48px;
+                }
+            }
+        </style>
         
         <div class="card">
             <div class="card-header">
@@ -39,6 +87,26 @@
             </div>
             <div class="card-body" id="parametersContainer">
                 <!-- Parameters will be loaded here -->
+            </div>
+        </div>
+
+        <div class="card mt-3" id="tetrisControlsCard" style="display: none;">
+            <div class="card-header">
+                <h5>🎮 Tetris D-Pad</h5>
+                <small class="text-muted">Use ⬆️ to rotate, ⬅️/➡️ to move, ⬇️ to soft drop.</small>
+            </div>
+            <div class="card-body">
+                <div class="dpad" aria-label="Tetris D-pad">
+                    <div class="dpad-spacer"></div>
+                    <button class="dpad-btn" data-direction="up" aria-label="Rotate">⬆️</button>
+                    <div class="dpad-spacer"></div>
+                    <button class="dpad-btn" data-direction="left" aria-label="Move left">⬅️</button>
+                    <div class="dpad-spacer"></div>
+                    <button class="dpad-btn" data-direction="right" aria-label="Move right">➡️</button>
+                    <div class="dpad-spacer"></div>
+                    <button class="dpad-btn" data-direction="down" aria-label="Soft drop">⬇️</button>
+                    <div class="dpad-spacer"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -168,6 +236,7 @@
 <script>
 let currentAnimation = null;
 let parameterUpdateTimeout = null;
+let dpadCooldown = null;
 
 function humanizeParamName(name) {
     return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -176,6 +245,7 @@ function humanizeParamName(name) {
 // Select and start animation
 function selectAnimation(name) {
     currentAnimation = name;
+    updateTetrisControls(name);
     
     // Update button states
     document.querySelectorAll('.animation-btn').forEach(btn => {
@@ -204,6 +274,19 @@ function loadAnimationParameters(name) {
                 document.getElementById('parametersCard').style.display = 'block';
             }
         })
+        .catch(console.error);
+}
+
+function updateTetrisControls(name) {
+    const card = document.getElementById('tetrisControlsCard');
+    if (!card) return;
+    const isTetris = name && name.toLowerCase() === 'tetris';
+    card.style.display = isTetris ? 'block' : 'none';
+}
+
+function sendDpad(direction) {
+    return fetch(`/api/dpad/${direction}`, {method: 'POST'})
+        .then(r => r.json())
         .catch(console.error);
 }
 
@@ -332,6 +415,20 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
+document.querySelectorAll('.dpad-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const direction = btn.getAttribute('data-direction');
+        if (!direction) return;
+        if (dpadCooldown) {
+            clearTimeout(dpadCooldown);
+        }
+        sendDpad(direction);
+        dpadCooldown = setTimeout(() => {
+            dpadCooldown = null;
+        }, 75);
+    });
+});
+
 // Enhanced status updates
 function updateStatus() {
     getStatus().then(status => {
@@ -362,6 +459,7 @@ function updateStatus() {
         // Update current animation button state
         if (status.is_running && status.current_animation !== currentAnimation) {
             currentAnimation = status.current_animation;
+            updateTetrisControls(currentAnimation);
             document.querySelectorAll('.animation-btn').forEach(btn => {
                 btn.classList.remove('btn-primary');
                 btn.classList.add('btn-outline-primary');
@@ -372,6 +470,9 @@ function updateStatus() {
                 currentBtn.classList.remove('btn-outline-primary');
                 currentBtn.classList.add('btn-primary');
             }
+        } else if (!status.is_running) {
+            currentAnimation = null;
+            updateTetrisControls(null);
         }
     }).catch(console.error);
 }
@@ -379,6 +480,7 @@ function updateStatus() {
 // Start with current animation if running
 {% if status.is_running %}
 currentAnimation = '{{ status.current_animation }}';
+updateTetrisControls(currentAnimation);
 loadAnimationParameters(currentAnimation);
 {% endif %}
 </script>
