@@ -124,7 +124,7 @@ class TetrisAnimation(AnimationBase):
     def _refresh_runtime_params(self):
         speed = max(0.2, float(self.params.get('speed', 1.0)))
         self.drop_speed = self.base_drop_speed * speed
-        self.action_interval = max(0.025, 0.1 / speed)
+        self.action_interval = max(0.0125, 0.1 / speed)
         self.fail_rate = min(0.6, max(0.0, float(self.params.get('bot_imperfection', 0.18))))
 
     def get_parameter_schema(self) -> Dict[str, Any]:

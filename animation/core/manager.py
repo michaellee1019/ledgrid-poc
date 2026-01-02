@@ -124,7 +124,7 @@ class AnimationManager:
         self.current_animation_name: Optional[str] = None
         self.current_animation_hash: Optional[str] = None
         self.is_running = False
-        self.target_fps = 40
+        self.target_fps = 80
         self.frame_count = 0
         self.start_time = 0.0
         self.animation_speed_scale = animation_speed_scale

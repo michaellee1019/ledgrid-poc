@@ -199,7 +199,7 @@ PY
 
 STRIPS=\${STRIPS:-\$DEFAULT_STRIPS}
 LEDS_PER_STRIP=\${LEDS_PER_STRIP:-\$DEFAULT_LEDS_PER_STRIP}
-TARGET_FPS=\${TARGET_FPS:-40}
+TARGET_FPS=\${TARGET_FPS:-80}
 ANIMATION_SPEED_SCALE=\${ANIMATION_SPEED_SCALE:-0.2}
 HOST=\${HOST:-0.0.0.0}
 PORT=\${PORT:-5000}
@@ -376,7 +376,11 @@ main() {
     create_deploy_directory
     stop_running
     upload_files
-    flash_esp32_firmware
+    if [ -z "${SKIP_FIRMWARE:-}" ]; then
+        flash_esp32_firmware
+    else
+        log_warning "Skipping ESP32 firmware flash (SKIP_FIRMWARE set)"
+    fi
     setup_venv_and_dependencies
     check_spi
     create_startup_script

@@ -6,6 +6,10 @@ web_venv := ".venv-web"
 deploy:
 	./tools/deployment/deploy.sh
 
+# Deploy app + server bits without flashing ESP32 firmware.
+deploy-no-firmware:
+	SKIP_FIRMWARE=1 ./tools/deployment/deploy.sh
+
 # Create/refresh the lightweight virtualenv for serving the web controller locally.
 setup-web:
 	if [ ! -d {{web_venv}} ]; then python3 -m venv {{web_venv}}; fi
