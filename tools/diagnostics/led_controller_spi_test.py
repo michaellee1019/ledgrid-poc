@@ -25,7 +25,7 @@ def test_strips_standalone():
     controller = LEDController(
         bus=0,
         device=0,
-        speed=8000000,
+        speed=10000000,
         mode=3,
         strips=DEFAULT_STRIP_COUNT,
         leds_per_strip=DEFAULT_LEDS_PER_STRIP,

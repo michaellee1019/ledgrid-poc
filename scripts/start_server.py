@@ -219,12 +219,12 @@ def main():
                         help='SPI bus number (default: 0)')
     parser.add_argument('--device', type=int, default=0,
                         help='SPI device number (default: 0)')
-    parser.add_argument('--spi-speed', type=int, default=8000000,
-                        help='SPI speed in Hz (default: 8000000)')
+    parser.add_argument('--spi-speed', type=int, default=10000000,
+                        help='SPI speed in Hz (default: 10000000)')
     parser.add_argument('--controller-debug', action='store_true',
                         help='Enable LED controller debug output')
-    parser.add_argument('--target-fps', type=int, default=80,
-                        help='Target animation FPS (default: 80)')
+    parser.add_argument('--target-fps', type=int, default=150,
+                        help='Target animation FPS (default: 150)')
     parser.add_argument('--animation-speed-scale', type=float, default=0.2,
                         help='Multiplier applied to each animation\'s speed parameter (default: 0.2)')
     parser.add_argument('--poll-interval', type=float, default=0.5,

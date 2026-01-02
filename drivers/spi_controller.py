@@ -19,7 +19,7 @@ DEFAULT_NUM_STRIPS = DEFAULT_STRIP_COUNT
 # SPI Configuration
 SPI_BUS = 0  # SPI bus number (0 = /dev/spidev0.X)
 SPI_DEVICE = 0  # CE0 matches wiring to XIAO GPIO2 (D1)
-SPI_SPEED = 8000000  # 8 MHz - now stable with 0.1% error rate
+SPI_SPEED = 10000000  # 10 MHz - now stable with 0.1% error rate
 SPI_MODE = 3  # CPOL=1, CPHA=1 required by ESP32 slave driver
 SPI_INTER_FRAME_DELAY = 0.0  # No delay needed - SPI is stable now
 

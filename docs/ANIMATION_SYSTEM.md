@@ -158,7 +158,7 @@ Key options:
 - `--port 5000` - Web server port
 - `--strips 8` - Number of LED strips
 - `--leds-per-strip 140` - LEDs per strip
-- `--spi-speed 8000000` - SPI communication speed
+- `--spi-speed 10000000` - SPI communication speed
 - `--target-fps 40` - Animation frame rate
 - `--animation-speed-scale 0.2` - Multiplier applied to animation speed parameters (lower = slower motion)
 
