@@ -115,6 +115,8 @@ class TetrisAnimation(AnimationBase):
         self.default_params.update({
             'speed': 1.0,
             'bot_imperfection': 0.18,
+            'smooth_drop': True,
+            'smooth_drop_strength': 0.6,
         })
         self.params = {**self.default_params, **self.config}
 
@@ -136,6 +138,18 @@ class TetrisAnimation(AnimationBase):
                 'max': 0.6,
                 'default': 0.18,
                 'description': 'Chance for the bot to pick a risky move'
+            },
+            'smooth_drop': {
+                'type': 'bool',
+                'default': True,
+                'description': 'Blend falling pieces across rows for smoother motion'
+            },
+            'smooth_drop_strength': {
+                'type': 'float',
+                'min': 0.0,
+                'max': 1.0,
+                'default': 0.6,
+                'description': 'Blend intensity for smooth falling pieces'
             }
         })
         return schema
@@ -179,11 +193,22 @@ class TetrisAnimation(AnimationBase):
         if self.current_piece:
             active_color = self._active_piece_color(self.current_piece)
             coords = self._current_shape()
+            fall_offset = max(0.0, min(1.0, self.fall_progress))
+            smooth_drop = bool(self.params.get('smooth_drop', True))
             for cx, cy in coords:
                 px = self.piece_x + cx
                 py = self.piece_y + cy
-                if 0 <= px < self.board_width and 0 <= py < self.board_height:
-                    self._set_pixel(frame, px + 1, py, active_color)
+                base_row = py
+                next_row = py + 1
+                if 0 <= px < self.board_width:
+                    if not smooth_drop or fall_offset <= 0.0:
+                        if 0 <= base_row < self.board_height:
+                            self._set_pixel(frame, px + 1, base_row, active_color)
+                    else:
+                        if 0 <= base_row < self.board_height:
+                            self._set_pixel_blend(frame, px + 1, base_row, active_color, 1.0 - fall_offset)
+                        if 0 <= next_row < self.board_height:
+                            self._set_pixel_blend(frame, px + 1, next_row, active_color, fall_offset)
 
         return frame
 
@@ -486,6 +511,33 @@ class TetrisAnimation(AnimationBase):
         idx = strip * self.leds_per_strip + phys_led
         if 0 <= idx < len(frame):
             frame[idx] = self.apply_brightness(color)
+
+    def _set_pixel_blend(self, frame: List[Color], strip: int, led: int, color: Color, alpha: float):
+        if alpha <= 0.0:
+            return
+        strength = float(self.params.get('smooth_drop_strength', 0.6))
+        strength = max(0.0, min(1.0, strength))
+        alpha = min(1.0, alpha) * strength
+        if alpha <= 0.0:
+            return
+        scaled = self.apply_brightness((
+            int(color[0] * alpha),
+            int(color[1] * alpha),
+            int(color[2] * alpha),
+        ))
+        if strip < 0 or strip >= self.num_strips:
+            return
+        if led < 0 or led >= self.leds_per_strip:
+            return
+        phys_led = (self.leds_per_strip - 1) - led
+        idx = strip * self.leds_per_strip + phys_led
+        if 0 <= idx < len(frame):
+            base = frame[idx]
+            frame[idx] = (
+                min(255, base[0] + scaled[0]),
+                min(255, base[1] + scaled[1]),
+                min(255, base[2] + scaled[2]),
+            )
 
     def get_runtime_stats(self) -> Dict[str, Any]:
         return {
