@@ -315,6 +315,7 @@ function renderParameterControls(schema, currentParams) {
         
         if (paramInfo.type === 'float' || paramInfo.type === 'int') {
             const step = paramInfo.type === 'float' ? '0.1' : '1';
+            const numberInputId = `${paramName}-value`;
             controlHtml += `
                 <div class="row">
                     <div class="col-8">
@@ -324,7 +325,7 @@ function renderParameterControls(schema, currentParams) {
                                max="${paramInfo.max}" 
                                step="${step}"
                                value="${currentValue}"
-                               oninput="updateParameter('${paramName}', this.value, '${paramInfo.type}')">
+                               oninput="handleRangeInput('${paramName}', this.value, '${paramInfo.type}', '${numberInputId}')">
                     </div>
                     <div class="col-4">
                         <input type="number" class="form-control form-control-sm" 
@@ -332,7 +333,8 @@ function renderParameterControls(schema, currentParams) {
                                min="${paramInfo.min}" 
                                max="${paramInfo.max}" 
                                step="${step}"
-                               onchange="updateParameter('${paramName}', this.value, '${paramInfo.type}'); document.getElementById('${paramName}').value = this.value;">
+                               id="${numberInputId}"
+                               oninput="handleNumberInput('${paramName}', this.value, '${paramInfo.type}', '${paramName}')">
                     </div>
                 </div>
             `;
@@ -358,6 +360,25 @@ function renderParameterControls(schema, currentParams) {
         controlDiv.innerHTML = controlHtml;
         container.appendChild(controlDiv);
     });
+}
+
+function handleRangeInput(name, value, type, mirrorInputId) {
+    const mirror = document.getElementById(mirrorInputId);
+    if (mirror) {
+        mirror.value = value;
+    }
+    updateParameter(name, value, type);
+}
+
+function handleNumberInput(name, value, type, mirrorSliderId) {
+    if (value === '' || value === null) {
+        return;
+    }
+    const slider = document.getElementById(mirrorSliderId);
+    if (slider) {
+        slider.value = value;
+    }
+    updateParameter(name, value, type);
 }
 
 // Update parameter with debouncing
