@@ -215,7 +215,8 @@ class ConwayLifeAnimation(AnimationBase):
         neighbor_intensity = 0.65 + (neighbors / 8.0) * 0.55
         neighbor_intensity = max(0.4, min(1.3, neighbor_intensity))
 
-        base_green = (0, 255, 120)
+        base_alive = (0, 255, 120)
+        base_spawn = (0, 255, 40)
         base_red = (255, 40, 20)
         phase_ratio = 0.0
         if self.phase_frames > 1:
@@ -228,23 +229,23 @@ class ConwayLifeAnimation(AnimationBase):
                 red_mix = phase_ratio
                 green_mix = 1.0 - phase_ratio
                 color = (
-                    int((base_green[0] * green_mix + base_red[0] * red_mix) * neighbor_intensity),
-                    int((base_green[1] * green_mix + base_red[1] * red_mix) * neighbor_intensity),
-                    int((base_green[2] * green_mix + base_red[2] * red_mix) * neighbor_intensity),
+                    int((base_alive[0] * green_mix + base_red[0] * red_mix) * neighbor_intensity),
+                    int((base_alive[1] * green_mix + base_red[1] * red_mix) * neighbor_intensity),
+                    int((base_alive[2] * green_mix + base_red[2] * red_mix) * neighbor_intensity),
                 )
                 return self._clamp_color(color)
             color = (
-                int(base_green[0] * neighbor_intensity),
-                int(base_green[1] * neighbor_intensity),
-                int(base_green[2] * neighbor_intensity),
+                int(base_alive[0] * neighbor_intensity),
+                int(base_alive[1] * neighbor_intensity),
+                int(base_alive[2] * neighbor_intensity),
             )
             return self._clamp_color(color)
 
         if alive_now and alive_next:
             color = (
-                int(base_green[0] * neighbor_intensity),
-                int(base_green[1] * neighbor_intensity),
-                int(base_green[2] * neighbor_intensity),
+                int(base_alive[0] * neighbor_intensity),
+                int(base_alive[1] * neighbor_intensity),
+                int(base_alive[2] * neighbor_intensity),
             )
             return self._clamp_color(color)
         if alive_now and not alive_next:
@@ -258,9 +259,9 @@ class ConwayLifeAnimation(AnimationBase):
         if (not alive_now) and alive_next:
             fade = phase_ratio
             color = (
-                int(base_green[0] * neighbor_intensity * fade),
-                int(base_green[1] * neighbor_intensity * fade),
-                int(base_green[2] * neighbor_intensity * fade),
+                int(base_spawn[0] * neighbor_intensity * fade),
+                int(base_spawn[1] * neighbor_intensity * fade),
+                int(base_spawn[2] * neighbor_intensity * fade),
             )
             return self._clamp_color(color)
         return None
