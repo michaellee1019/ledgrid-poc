@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Conway's Game of Life animation for the LED grid."""
 
+import math
 import random
 from typing import List, Tuple, Dict, Any, Optional, Iterable
 
@@ -37,6 +38,12 @@ class ConwayLifeAnimation(AnimationBase):
         self.random = random.Random()
         self.grid: List[List[int]] = [[0 for _ in range(self.width)] for _ in range(self.height)]
         self.next_grid: List[List[int]] = [[0 for _ in range(self.width)] for _ in range(self.height)]
+        self.natural_grid: List[List[Optional[Color]]] = [
+            [None for _ in range(self.width)] for _ in range(self.height)
+        ]
+        self.next_natural_grid: List[List[Optional[Color]]] = [
+            [None for _ in range(self.width)] for _ in range(self.height)
+        ]
         self.neighbor_counts: List[List[int]] = [[0 for _ in range(self.width)] for _ in range(self.height)]
         self.generation = 0
         self.last_step_elapsed: Optional[float] = None
@@ -44,7 +51,7 @@ class ConwayLifeAnimation(AnimationBase):
         self.phase_frame = 0
         self.phase_frames = 10
         self.frame_progress = 0.0
-        self.target_fps = 100.0
+        self.generations_per_second = 5.0
         self.glider_interval = 10.0
         self.last_glider_time = 0.0
         self._initialize_grid(self.params.get('seed_cells'))
@@ -109,12 +116,15 @@ class ConwayLifeAnimation(AnimationBase):
 
     def _initialize_grid(self, seed_cells: Optional[Iterable[Any]]):
         self.grid = [[0 for _ in range(self.width)] for _ in range(self.height)]
+        self.natural_grid = [[None for _ in range(self.width)] for _ in range(self.height)]
         has_explicit_seed = seed_cells is not None
         parsed = self._parse_seed_cells(seed_cells)
+        initial_color = self._random_natural_color()
         if has_explicit_seed:
             for x, y in parsed:
                 if 0 <= x < self.width and 0 <= y < self.height:
                     self.grid[y][x] = 1
+                    self.natural_grid[y][x] = initial_color
         else:
             density = float(self.params.get('random_density', 0.14) or 0.0)
             density = max(0.0, min(0.4, density))
@@ -123,6 +133,7 @@ class ConwayLifeAnimation(AnimationBase):
                     for x in range(self.width):
                         if self.random.random() < density:
                             self.grid[y][x] = 1
+                            self.natural_grid[y][x] = initial_color
         self.generation = 0
         self.last_step_elapsed = None
         self.phase = 'color'
@@ -156,8 +167,9 @@ class ConwayLifeAnimation(AnimationBase):
 
     def _step_interval(self) -> float:
         speed = max(0.1, float(self.params.get('speed', 1.0)))
-        target_fps = self.target_fps * speed
-        return 1.0 / max(1.0, target_fps)
+        generations_per_second = self.generations_per_second * speed
+        steps_per_generation = max(1.0, self.phase_frames * 2.0)
+        return 1.0 / max(1.0, generations_per_second * steps_per_generation)
 
     def _advance_phase(self):
         self.phase_frame += 1
@@ -168,6 +180,7 @@ class ConwayLifeAnimation(AnimationBase):
             self.phase_frame = 0
             return
         self.grid = [row[:] for row in self.next_grid]
+        self.natural_grid = [row[:] for row in self.next_natural_grid]
         self.generation += 1
         self.phase = 'color'
         self.phase_frame = 0
@@ -176,18 +189,44 @@ class ConwayLifeAnimation(AnimationBase):
     def _compute_next_state(self):
         wrap = bool(self.params.get('wrap_edges', True))
         self.next_grid = [[0 for _ in range(self.width)] for _ in range(self.height)]
+        self.next_natural_grid = [[None for _ in range(self.width)] for _ in range(self.height)]
         self.neighbor_counts = [[0 for _ in range(self.width)] for _ in range(self.height)]
         for y in range(self.height):
             for x in range(self.width):
-                neighbors = self._count_neighbors(x, y, wrap)
+                neighbors = 0
+                color_sum = [0, 0, 0]
+                color_count = 0
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        if dx == 0 and dy == 0:
+                            continue
+                        nx = x + dx
+                        ny = y + dy
+                        if wrap:
+                            nx %= self.width
+                            ny %= self.height
+                        if 0 <= nx < self.width and 0 <= ny < self.height:
+                            if self.grid[ny][nx] > 0:
+                                neighbors += 1
+                                neighbor_color = self.natural_grid[ny][nx]
+                                if neighbor_color is not None:
+                                    color_sum[0] += neighbor_color[0]
+                                    color_sum[1] += neighbor_color[1]
+                                    color_sum[2] += neighbor_color[2]
+                                    color_count += 1
                 self.neighbor_counts[y][x] = neighbors
                 alive = self.grid[y][x] > 0
                 if alive and neighbors in (2, 3):
                     self.next_grid[y][x] = min(self.grid[y][x] + 1, 20)
+                    self.next_natural_grid[y][x] = self.natural_grid[y][x]
                 elif (not alive) and neighbors == 3:
                     self.next_grid[y][x] = 1
+                    self.next_natural_grid[y][x] = self._blend_neighbor_colors(
+                        color_sum, color_count
+                    )
                 else:
                     self.next_grid[y][x] = 0
+                    self.next_natural_grid[y][x] = None
 
     def _count_neighbors(self, x: int, y: int, wrap: bool) -> int:
         count = 0
@@ -215,9 +254,14 @@ class ConwayLifeAnimation(AnimationBase):
         neighbor_intensity = 0.65 + (neighbors / 8.0) * 0.55
         neighbor_intensity = max(0.4, min(1.3, neighbor_intensity))
 
-        base_alive = (0, 255, 120)
-        base_spawn = (0, 255, 40)
+        base_spawn = (0, 255, 0)
         base_red = (255, 40, 20)
+        natural_now = self.natural_grid[y][x]
+        natural_next = self.next_natural_grid[y][x]
+        if natural_now is None:
+            natural_now = self._random_natural_color()
+        if natural_next is None:
+            natural_next = self._random_natural_color()
         phase_ratio = 0.0
         if self.phase_frames > 1:
             phase_ratio = self.phase_frame / (self.phase_frames - 1)
@@ -226,26 +270,27 @@ class ConwayLifeAnimation(AnimationBase):
             if not alive_now:
                 return None
             if alive_now and not alive_next:
-                red_mix = phase_ratio
-                green_mix = 1.0 - phase_ratio
+                color = self._blend_colors(natural_now, base_red, phase_ratio)
                 color = (
-                    int((base_alive[0] * green_mix + base_red[0] * red_mix) * neighbor_intensity),
-                    int((base_alive[1] * green_mix + base_red[1] * red_mix) * neighbor_intensity),
-                    int((base_alive[2] * green_mix + base_red[2] * red_mix) * neighbor_intensity),
+                    int(color[0] * neighbor_intensity),
+                    int(color[1] * neighbor_intensity),
+                    int(color[2] * neighbor_intensity),
                 )
                 return self._clamp_color(color)
+            shimmer_phase = (self.generation * self.phase_frames + self.phase_frame) / self.phase_frames
+            shimmer = 0.92 + 0.08 * math.sin(shimmer_phase * math.tau)
             color = (
-                int(base_alive[0] * neighbor_intensity),
-                int(base_alive[1] * neighbor_intensity),
-                int(base_alive[2] * neighbor_intensity),
+                int(natural_now[0] * neighbor_intensity * shimmer),
+                int(natural_now[1] * neighbor_intensity * shimmer),
+                int(natural_now[2] * neighbor_intensity * shimmer),
             )
             return self._clamp_color(color)
 
         if alive_now and alive_next:
             color = (
-                int(base_alive[0] * neighbor_intensity),
-                int(base_alive[1] * neighbor_intensity),
-                int(base_alive[2] * neighbor_intensity),
+                int(natural_now[0] * neighbor_intensity),
+                int(natural_now[1] * neighbor_intensity),
+                int(natural_now[2] * neighbor_intensity),
             )
             return self._clamp_color(color)
         if alive_now and not alive_next:
@@ -258,13 +303,42 @@ class ConwayLifeAnimation(AnimationBase):
             return self._clamp_color(color)
         if (not alive_now) and alive_next:
             fade = phase_ratio
+            color = self._blend_colors(base_spawn, natural_next, phase_ratio)
             color = (
-                int(base_spawn[0] * neighbor_intensity * fade),
-                int(base_spawn[1] * neighbor_intensity * fade),
-                int(base_spawn[2] * neighbor_intensity * fade),
+                int(color[0] * neighbor_intensity * fade),
+                int(color[1] * neighbor_intensity * fade),
+                int(color[2] * neighbor_intensity * fade),
             )
             return self._clamp_color(color)
         return None
+
+    def _blend_neighbor_colors(self, color_sum: List[int], color_count: int) -> Color:
+        if color_count <= 0:
+            return self._random_natural_color()
+        if color_count == 1:
+            return self._clamp_color((color_sum[0], color_sum[1], color_sum[2]))
+        avg = (
+            int(color_sum[0] / color_count),
+            int(color_sum[1] / color_count),
+            int(color_sum[2] / color_count),
+        )
+        return self._clamp_color(avg)
+
+    def _blend_colors(self, a: Color, b: Color, ratio: float) -> Color:
+        ratio = max(0.0, min(1.0, ratio))
+        inv = 1.0 - ratio
+        return (
+            int(a[0] * inv + b[0] * ratio),
+            int(a[1] * inv + b[1] * ratio),
+            int(a[2] * inv + b[2] * ratio),
+        )
+
+    def _random_natural_color(self) -> Color:
+        return (
+            self.random.randint(40, 255),
+            self.random.randint(40, 255),
+            self.random.randint(40, 255),
+        )
 
     def _clamp_color(self, color: Color) -> Color:
         return (
@@ -289,11 +363,13 @@ class ConwayLifeAnimation(AnimationBase):
             if (origin_x, origin_y) in used_origins:
                 continue
             used_origins.add((origin_x, origin_y))
+            glider_color = self._random_natural_color()
             for dx, dy in glider:
                 x = origin_x + dx
                 y = origin_y + dy
                 if 0 <= x < self.width and 0 <= y < self.height:
                     self.grid[y][x] = 1
+                    self.natural_grid[y][x] = glider_color
         self.phase = 'color'
         self.phase_frame = 0
         self.frame_progress = 0.0
