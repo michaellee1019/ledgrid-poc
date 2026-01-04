@@ -109,6 +109,18 @@
                 </div>
             </div>
         </div>
+
+        <div class="card mt-3" id="conwayControlsCard" style="display: none;">
+            <div class="card-header">
+                <h5>🧬 Conway Controls</h5>
+                <small class="text-muted">Spawn a south-to-north glider on demand.</small>
+            </div>
+            <div class="card-body">
+                <button class="btn btn-success w-100" onclick="sendConwayGlider()">
+                    Send Glider
+                </button>
+            </div>
+        </div>
     </div>
     
     <div class="col-md-4">
@@ -246,6 +258,7 @@ function humanizeParamName(name) {
 function selectAnimation(name) {
     currentAnimation = name;
     updateTetrisControls(name);
+    updateConwayControls(name);
     
     // Update button states
     document.querySelectorAll('.animation-btn').forEach(btn => {
@@ -284,10 +297,25 @@ function updateTetrisControls(name) {
     card.style.display = isTetris ? 'block' : 'none';
 }
 
+function updateConwayControls(name) {
+    const card = document.getElementById('conwayControlsCard');
+    if (!card) return;
+    const isConway = name && name.toLowerCase() === 'conway_life';
+    card.style.display = isConway ? 'block' : 'none';
+}
+
 function sendDpad(direction) {
     return fetch(`/api/dpad/${direction}`, {method: 'POST'})
         .then(r => r.json())
         .catch(console.error);
+}
+
+function sendConwayGlider() {
+    updateParameters({spawn_glider: true}).then(result => {
+        if (!result.success) {
+            console.error('Failed to send glider');
+        }
+    });
 }
 
 // Render parameter controls
@@ -481,6 +509,7 @@ function updateStatus() {
         if (status.is_running && status.current_animation !== currentAnimation) {
             currentAnimation = status.current_animation;
             updateTetrisControls(currentAnimation);
+            updateConwayControls(currentAnimation);
             document.querySelectorAll('.animation-btn').forEach(btn => {
                 btn.classList.remove('btn-primary');
                 btn.classList.add('btn-outline-primary');
@@ -494,6 +523,7 @@ function updateStatus() {
         } else if (!status.is_running) {
             currentAnimation = null;
             updateTetrisControls(null);
+            updateConwayControls(null);
         }
     }).catch(console.error);
 }
@@ -502,6 +532,7 @@ function updateStatus() {
 {% if status.is_running %}
 currentAnimation = '{{ status.current_animation }}';
 updateTetrisControls(currentAnimation);
+updateConwayControls(currentAnimation);
 loadAnimationParameters(currentAnimation);
 {% endif %}
 </script>

@@ -10,6 +10,10 @@ deploy:
 deploy-no-firmware:
 	SKIP_FIRMWARE=1 ./tools/deployment/deploy.sh
 
+# Save current animation state, sync plugins, and restart the remote server.
+iterate:
+	./tools/dev/iterate.sh
+
 # Create/refresh the lightweight virtualenv for serving the web controller locally.
 setup-web:
 	if [ ! -d {{web_venv}} ]; then python3 -m venv {{web_venv}}; fi

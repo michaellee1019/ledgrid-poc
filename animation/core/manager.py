@@ -101,7 +101,9 @@ class AnimationManager:
         "flame_burst",
         "simple_test",
         "tetris",
+        "conway_life",
         "christmas_tree",
+        "space_invaders",
     }
     
     def __init__(self, controller: LEDController, plugins_dir: Optional[str] = None,
