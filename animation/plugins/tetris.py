@@ -103,6 +103,7 @@ class TetrisAnimation(AnimationBase):
         self.piece_y = 0
         self.fall_progress = 0.0
         self.last_elapsed: Optional[float] = None
+        self.last_fall_rows = 0
         self.action_accumulator = 0.0
         self.current_plan: Optional[Dict[str, Any]] = None
         self.lines_cleared = 0
@@ -113,7 +114,7 @@ class TetrisAnimation(AnimationBase):
         self.manual_override = 0.0
 
         self.default_params.update({
-            'speed': 1.0,
+            'speed': 3.0,
             'bot_imperfection': 0.18,
             'smooth_drop': True,
             'smooth_drop_strength': 0.6,
@@ -138,6 +139,13 @@ class TetrisAnimation(AnimationBase):
                 'max': 0.6,
                 'default': 0.18,
                 'description': 'Chance for the bot to pick a risky move'
+            },
+            'speed': {
+                'type': 'float',
+                'min': 0.2,
+                'max': 5.0,
+                'default': 2.0,
+                'description': 'Playback speed multiplier'
             },
             'smooth_drop': {
                 'type': 'bool',
@@ -201,6 +209,12 @@ class TetrisAnimation(AnimationBase):
                 base_row = py
                 next_row = py + 1
                 if 0 <= px < self.board_width:
+                    if smooth_drop and self.last_fall_rows > 1:
+                        for step in range(1, self.last_fall_rows):
+                            trail_row = base_row - step
+                            alpha = 1.0 - (step / self.last_fall_rows)
+                            if 0 <= trail_row < self.board_height:
+                                self._set_pixel_blend(frame, px + 1, trail_row, active_color, alpha)
                     if not smooth_drop or fall_offset <= 0.0:
                         if 0 <= base_row < self.board_height:
                             self._set_pixel(frame, px + 1, base_row, active_color)
@@ -228,6 +242,7 @@ class TetrisAnimation(AnimationBase):
         if self.board_width <= 0 or self.board_height <= 0:
             return
 
+        self.last_fall_rows = 0
         if self.game_over_flash > 0.0:
             self.game_over_flash = max(0.0, self.game_over_flash - delta)
 
@@ -254,12 +269,14 @@ class TetrisAnimation(AnimationBase):
                 self._lock_piece()
                 break
             self.fall_progress -= 1.0
+            self.last_fall_rows += 1
 
     def _spawn_piece(self):
         piece = self.random.choice(list(TETROMINOS.keys()))
         self.current_piece = piece
         self.current_rotation = 0
         self.fall_progress = 0.0
+        self.last_fall_rows = 0
         self.action_accumulator = 0.0
         coords = self._current_shape()
         width = self._shape_extent(coords, axis=0)
@@ -407,12 +424,57 @@ class TetrisAnimation(AnimationBase):
                     column_filled = True
                 elif not cell and column_filled:
                     holes += 1
+
         aggregate_height = sum(heights)
+        max_height = max(heights, default=0)
         bumpiness = 0
         for x in range(self.board_width - 1):
             bumpiness += abs(heights[x] - heights[x + 1])
         lines = sum(1 for row in board if all(row))
-        score = (lines * 12.0) - (aggregate_height * 0.25) - (holes * 1.6) - (bumpiness * 0.4)
+
+        well_sums = 0
+        for x in range(self.board_width):
+            left_height = heights[x - 1] if x > 0 else self.board_height
+            right_height = heights[x + 1] if x < self.board_width - 1 else self.board_height
+            min_side = min(left_height, right_height)
+            if min_side > heights[x]:
+                depth = min_side - heights[x]
+                well_sums += depth * (depth + 1) // 2
+
+        row_transitions = 0
+        for y in range(self.board_height):
+            prev_filled = True
+            row = board[y]
+            for x in range(self.board_width):
+                filled = bool(row[x])
+                if filled != prev_filled:
+                    row_transitions += 1
+                prev_filled = filled
+            if not prev_filled:
+                row_transitions += 1
+
+        col_transitions = 0
+        for x in range(self.board_width):
+            prev_filled = True
+            for y in range(self.board_height):
+                filled = bool(board[y][x])
+                if filled != prev_filled:
+                    col_transitions += 1
+                prev_filled = filled
+            if not prev_filled:
+                col_transitions += 1
+
+        score = (
+            (lines * 1.5)
+            + (lines ** 2) * 0.75
+            - (aggregate_height * 0.45)
+            - (max_height * 0.6)
+            - (holes * 1.2)
+            - (bumpiness * 0.35)
+            - (well_sums * 0.3)
+            - (row_transitions * 0.25)
+            - (col_transitions * 0.35)
+        )
         return score
 
     def _move_piece(self, dx: int, dy: int) -> bool:
