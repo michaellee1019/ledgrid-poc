@@ -30,7 +30,7 @@
                             <canvas id="ledCanvas" width="315" height="630" class="led-preview preview-canvas" style="border: 1px solid #ddd; border-radius: 8px; cursor: pointer;"></canvas>
                             <div class="mt-2">
                                 <small class="text-muted d-block mb-1">
-                                    Canvas rotated to match the physical panel. Click to punch a random hole instantly.
+                                    Canvas rotated to match the physical panel. In Conway preview, click/drag to draw live cells; otherwise click to punch a random hole.
                                 </small>
                                 <small class="text-muted">
                                     <span id="rendererStatus">Waiting for animation...</span> |
@@ -306,6 +306,17 @@
                         </div>
                         <div class="card-body" id="controlParametersContainer"></div>
                     </div>
+                    <div class="card mt-3" id="conwayControlCard" style="display: none;">
+                        <div class="card-header">
+                            <h6 class="mb-0">Conway Actions</h6>
+                            <small class="text-muted">Launch a south-to-north glider.</small>
+                        </div>
+                        <div class="card-body">
+                            <button class="btn btn-success w-100" type="button" onclick="sendConwayGlider()">
+                                Send Glider
+                            </button>
+                        </div>
+                    </div>
                     <div class="alert alert-info mt-3" id="controlParametersPlaceholder">
                         Start or select an animation to adjust its live controls.
                     </div>
@@ -364,7 +375,6 @@
             this.ledSize = 6;
             this.ledSpacing = 0.5;
             this.stripSpacing = 1;
-            this.canvas.addEventListener('click', () => requestRandomHole());
 
             this.setupCanvas();
             this.startRendering();
@@ -386,6 +396,23 @@
             this.actualLedSize = Math.max(1, this.ledSize * this.scale);
             this.actualLedSpacing = this.ledSpacing * this.scale;
             this.actualStripSpacing = this.stripSpacing * this.scale;
+        }
+
+        getCellFromCanvas(x, y) {
+            const pitchX = this.actualLedSize + this.actualStripSpacing;
+            const pitchY = this.actualLedSize + this.actualLedSpacing;
+            const strip = Math.floor(x / pitchX);
+            const ledRow = Math.floor(y / pitchY);
+
+            if (strip < 0 || strip >= this.stripCount) {
+                return null;
+            }
+            if (ledRow < 0 || ledRow >= this.ledsPerStrip) {
+                return null;
+            }
+
+            const led = (this.ledsPerStrip - 1) - ledRow;
+            return {strip, led};
         }
 
         async fetchFrameData() {
@@ -607,15 +634,112 @@
     let controlSelectedAnimation = null;
     let controlParameterUpdateTimeout = null;
     let controlParameterStore = {};
+    const LIFE_ANIMATION_NAME = 'conway_life';
+    const lifeSeedSet = new Set();
+    let lifeSeedFlushTimer = null;
+    let lifeIsDrawing = false;
+    let lifeLastCellKey = null;
 
     // Initialize renderer when page loads
     document.addEventListener('DOMContentLoaded', function() {
         animationRenderer = new LEDAnimationRenderer('ledCanvas');
+        attachLifeCanvasHandlers();
         if (INITIAL_STATUS) {
             syncControlPanel(INITIAL_STATUS);
         }
         startStatsPolling();
     });
+
+    function attachLifeCanvasHandlers() {
+        const canvas = document.getElementById('ledCanvas');
+        if (!canvas) return;
+
+        canvas.addEventListener('pointerdown', (event) => {
+            if (event.button !== undefined && event.button !== 0) {
+                return;
+            }
+            if (isLifePreviewActive()) {
+                lifeIsDrawing = true;
+                if (canvas.setPointerCapture) {
+                    canvas.setPointerCapture(event.pointerId);
+                }
+                paintLifeCell(event);
+            } else {
+                requestRandomHole();
+            }
+        });
+
+        canvas.addEventListener('pointermove', (event) => {
+            if (!lifeIsDrawing) return;
+            paintLifeCell(event);
+        });
+
+        const stopDrawing = () => {
+            lifeIsDrawing = false;
+            lifeLastCellKey = null;
+        };
+        canvas.addEventListener('pointerup', stopDrawing);
+        canvas.addEventListener('pointerleave', stopDrawing);
+        window.addEventListener('pointerup', stopDrawing);
+    }
+
+    function isLifePreviewActive() {
+        return Boolean(
+            animationRenderer &&
+            animationRenderer.previewMode &&
+            animationRenderer.previewAnimation === LIFE_ANIMATION_NAME
+        );
+    }
+
+    function paintLifeCell(event) {
+        if (!animationRenderer) return;
+        const rect = animationRenderer.canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        const cell = animationRenderer.getCellFromCanvas(x, y);
+        if (!cell) return;
+        const key = `${cell.strip},${cell.led}`;
+        if (key === lifeLastCellKey) return;
+        lifeLastCellKey = key;
+        if (!lifeSeedSet.has(key)) {
+            lifeSeedSet.add(key);
+            queueLifeSeedUpdate();
+        }
+    }
+
+    function queueLifeSeedUpdate() {
+        if (lifeSeedFlushTimer) {
+            return;
+        }
+        lifeSeedFlushTimer = setTimeout(() => {
+            lifeSeedFlushTimer = null;
+            flushLifeSeedUpdate();
+        }, 60);
+    }
+
+    function flushLifeSeedUpdate() {
+        const seedCells = collectLifeSeedCells();
+
+        if (!controlParameterStore[LIFE_ANIMATION_NAME]) {
+            controlParameterStore[LIFE_ANIMATION_NAME] = {};
+        }
+        controlParameterStore[LIFE_ANIMATION_NAME].seed_cells = seedCells;
+
+        if (isLifePreviewActive()) {
+            animationRenderer.setPreviewParams(controlParameterStore[LIFE_ANIMATION_NAME]);
+        }
+
+        if (controlSelectedAnimation === LIFE_ANIMATION_NAME) {
+            updateParameters({seed_cells: seedCells});
+        }
+    }
+
+    function collectLifeSeedCells() {
+        return Array.from(lifeSeedSet, key => {
+            const [x, y] = key.split(',').map(Number);
+            return [x, y];
+        });
+    }
 
     // Renderer control functions
     function toggleRenderer() {
@@ -849,6 +973,7 @@
                 controlSelectedAnimation = null;
                 highlightControlSelection(null);
             }
+            updateConwayControlCard(null);
             showControlPlaceholder('Start or select an animation to adjust its live controls.', {clearControls: true});
             return;
         }
@@ -857,6 +982,7 @@
         }
         controlSelectedAnimation = runningAnimation;
         highlightControlSelection(runningAnimation);
+        updateConwayControlCard(runningAnimation);
         loadControlParameters(runningAnimation, {
             placeholderMessage: `Loading controls for ${humanizeParamName(runningAnimation)}...`
         });
@@ -885,6 +1011,7 @@
     function selectControlAnimation(name, options = {}) {
         controlSelectedAnimation = name;
         highlightControlSelection(name);
+        updateConwayControlCard(name);
         if (animationRenderer && animationRenderer.previewMode) {
             const params = controlParameterStore[name] || null;
             animationRenderer.setPreviewAnimation(name, params);
@@ -1020,6 +1147,10 @@
             container.appendChild(controlDiv);
         });
 
+        if (controlSelectedAnimation === LIFE_ANIMATION_NAME && lifeSeedSet.size) {
+            parameterSnapshot.seed_cells = collectLifeSeedCells();
+        }
+
         if (controlSelectedAnimation) {
             controlParameterStore[controlSelectedAnimation] = parameterSnapshot;
             syncPreviewParameters(controlSelectedAnimation);
@@ -1069,6 +1200,21 @@
                 }
             });
         }, 120);
+    }
+
+    function updateConwayControlCard(name) {
+        const card = document.getElementById('conwayControlCard');
+        if (!card) return;
+        const isConway = name === LIFE_ANIMATION_NAME;
+        card.style.display = isConway ? 'block' : 'none';
+    }
+
+    function sendConwayGlider() {
+        updateParameters({spawn_glider: true}).then(result => {
+            if (!result.success) {
+                console.error('Failed to send glider');
+            }
+        });
     }
     
     function showToast(message, type = 'info') {
