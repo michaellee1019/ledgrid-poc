@@ -1,18 +1,19 @@
 set shell := ["bash", "-euxo", "pipefail", "-c"]
 
 web_venv := ".venv-web"
+spi_speed := "16000000"
 
 # Deploy to the Raspberry Pi using the existing deployment script.
 deploy:
-	./tools/deployment/deploy.sh
+	SPI_SPEED="${SPI_SPEED:-{{spi_speed}}}" ./tools/deployment/deploy.sh
 
 # Deploy app + server bits without flashing ESP32 firmware.
 deploy-no-firmware:
-	SKIP_FIRMWARE=1 ./tools/deployment/deploy.sh
+	SPI_SPEED="${SPI_SPEED:-{{spi_speed}}}" SKIP_FIRMWARE=1 ./tools/deployment/deploy.sh
 
 # Save current animation state, sync plugins, and restart the remote server.
 iterate:
-	./tools/dev/iterate.sh
+	SPI_SPEED="${SPI_SPEED:-{{spi_speed}}}" START_CMD="cd ~/$DEPLOY_DIR && SPI_SPEED=${SPI_SPEED:-{{spi_speed}}} nohup ./start.sh > animation_system.log 2>&1 </dev/null &" ./tools/dev/iterate.sh
 
 # Create/refresh the lightweight virtualenv for serving the web controller locally.
 setup-web:

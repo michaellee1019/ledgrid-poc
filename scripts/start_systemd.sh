@@ -26,6 +26,7 @@ STRIPS=${STRIPS:-$DEFAULT_STRIPS}
 LEDS_PER_STRIP=${LEDS_PER_STRIP:-$DEFAULT_LEDS_PER_STRIP}
 TARGET_FPS=${TARGET_FPS:-150}
 ANIMATION_SPEED_SCALE=${ANIMATION_SPEED_SCALE:-0.2}
+SPI_SPEED=${SPI_SPEED:-10000000}
 HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-5000}
 CONTROL_FILE=${CONTROL_FILE:-run_state/control.json}
@@ -46,6 +47,7 @@ python scripts/start_server.py \
     --strips "$STRIPS" \
     --leds-per-strip "$LEDS_PER_STRIP" \
     --target-fps "$TARGET_FPS" \
+    --spi-speed "$SPI_SPEED" \
     --animation-speed-scale "$ANIMATION_SPEED_SCALE" \
     --poll-interval "$POLL_INTERVAL" \
     --status-interval "$STATUS_INTERVAL" \

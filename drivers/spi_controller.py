@@ -9,6 +9,8 @@ import colorsys
 import argparse
 import spidev
 import sys
+import struct
+import threading
 
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
@@ -88,6 +90,7 @@ CMD_CLEAR = 0x04
 CMD_SET_RANGE = 0x05
 CMD_SET_ALL = 0x06
 CMD_CONFIG = 0x07
+CMD_STATS = 0x08
 CMD_PING = 0xFF
 
 
@@ -119,6 +122,8 @@ class LEDController:
         self._errors = 0
         self._last_frame_duration = 0.0
         self._total_frame_duration = 0.0
+        self._spi_lock = threading.Lock()
+        self._last_firmware_stats = {}
         
         if self.debug:
             print("SPI Controller initialized")
@@ -142,12 +147,43 @@ class LEDController:
     def _xfer(self, payload):
         buf = list(payload)
         _pad_payload(buf)
-        self._bytes_sent += len(buf)
+        with self._spi_lock:
+            self._bytes_sent += len(buf)
+            try:
+                return self.spi.xfer2(buf)
+            except Exception:
+                self._errors += 1
+                raise
+
+    def _parse_firmware_stats(self, response):
+        if not response or len(response) < 40:
+            return None
+        header = bytes(response[:4])
+        if header != b"LGS1":
+            return None
+        payload = bytes(response[4:40])
+        fields = struct.unpack("<IIIIIIIII", payload)
+        return {
+            'uptime_ms': fields[0],
+            'frames_rendered': fields[1],
+            'set_all_commands_received': fields[2],
+            'packets_received': fields[3],
+            'zero_payload_packets': fields[4],
+            'last_show_duration_us': fields[5],
+            'total_bytes_received': fields[6],
+            'active_strips': fields[7],
+            'leds_per_strip': fields[8],
+        }
+
+    def read_firmware_stats(self):
         try:
-            return self.spi.xfer2(buf)
+            response = self._xfer([CMD_STATS] + ([0] * 39))
+            parsed = self._parse_firmware_stats(response)
+            if parsed:
+                self._last_firmware_stats = parsed
+            return self._last_firmware_stats
         except Exception:
-            self._errors += 1
-            raise
+            return self._last_firmware_stats
 
     def _refresh_configuration(self, force=False):
         now = time.time()
@@ -302,7 +338,7 @@ class LEDController:
         avg_ms = 0.0
         if self._frames_sent:
             avg_ms = (self._total_frame_duration / self._frames_sent) * 1000.0
-        return {
+        stats = {
             'spi_speed_hz': getattr(self.spi, 'max_speed_hz', None),
             'total_leds': self.total_leds,
             'last_frame_duration_ms': self._last_frame_duration * 1000.0,
@@ -311,6 +347,10 @@ class LEDController:
             'bytes_sent': self._bytes_sent,
             'errors': self._errors,
         }
+        firmware_stats = self.read_firmware_stats()
+        if firmware_stats:
+            stats['firmware'] = firmware_stats
+        return stats
 
 
 def hsv_to_rgb(h, s, v):
