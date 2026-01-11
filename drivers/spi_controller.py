@@ -156,13 +156,13 @@ class LEDController:
                 raise
 
     def _parse_firmware_stats(self, response):
-        if not response or len(response) < 40:
+        if not response or len(response) < 48:
             return None
         header = bytes(response[:4])
         if header != b"LGS1":
             return None
-        payload = bytes(response[4:40])
-        fields = struct.unpack("<IIIIIIIII", payload)
+        payload = bytes(response[4:48])
+        fields = struct.unpack("<IIIIIIIIIII", payload)
         return {
             'uptime_ms': fields[0],
             'frames_rendered': fields[1],
@@ -173,11 +173,13 @@ class LEDController:
             'total_bytes_received': fields[6],
             'active_strips': fields[7],
             'leds_per_strip': fields[8],
+            'last_command_seen': fields[9],
+            'unknown_commands_received': fields[10],
         }
 
     def read_firmware_stats(self):
         try:
-            response = self._xfer([CMD_STATS] + ([0] * 39))
+            response = self._xfer([CMD_STATS] + ([0] * 47))
             parsed = self._parse_firmware_stats(response)
             if parsed:
                 self._last_firmware_stats = parsed

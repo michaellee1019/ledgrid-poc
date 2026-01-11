@@ -1,4 +1,7 @@
 #include <Arduino.h>
+#ifndef FASTLED_USES_ESP32S3_I2S
+#define FASTLED_USES_ESP32S3_I2S
+#endif
 #include <FastLED.h>
 #include "driver/spi_slave.h"
 #include "driver/spi_common.h"
@@ -68,6 +71,8 @@ static volatile uint32_t mosi_edge_count = 0;
 static volatile uint32_t zero_payload_packets = 0;
 static volatile uint32_t config_commands_received = 0;
 static volatile uint32_t set_all_commands_received = 0;
+static volatile uint32_t unknown_commands_received = 0;
+static volatile uint32_t last_command_seen = 0;
 
 static uint32_t last_packet_millis = 0;
 static uint32_t last_show_duration = 0;
@@ -102,6 +107,8 @@ static void update_stats_buffer() {
   write_u32_le(spi_tx_buffer, 28, total_bytes_received);
   write_u32_le(spi_tx_buffer, 32, active_strips);
   write_u32_le(spi_tx_buffer, 36, leds_per_strip);
+  write_u32_le(spi_tx_buffer, 40, last_command_seen);
+  write_u32_le(spi_tx_buffer, 44, unknown_commands_received);
 }
 
 inline uint16_t logical_to_physical(uint16_t logical) {
@@ -138,6 +145,7 @@ static void process_command(const uint8_t *data, size_t length) {
 
   total_bytes_received += length;
   const uint8_t cmd = data[0];
+  last_command_seen = cmd;
 
   if (length > 1) {
     uint8_t payload_or = 0;
@@ -291,6 +299,7 @@ static void process_command(const uint8_t *data, size_t length) {
     }
 
     default:
+      unknown_commands_received++;
       DEBUG_PRINT("⚠️ Unknown command 0x%02X\n", cmd);
       break;
   }
@@ -307,6 +316,15 @@ void setup() {
   Serial.println("========================================");
   Serial.println("ESP32 XIAO S3 SPI Slave LED Controller");
   Serial.println("========================================");
+#if defined(FASTLED_USES_ESP32S3_I2S)
+  #if __has_include("esp_memory_utils.h")
+  Serial.println("FastLED driver: ESP32-S3 I2S");
+  #else
+  Serial.println("FastLED driver: ESP32-S3 I2S (unavailable, missing esp_memory_utils.h)");
+  #endif
+#else
+  Serial.println("FastLED driver: default (RMT/clockless)");
+#endif
   Serial.printf("Board: ESP32-S3FN8\n");
   Serial.printf("Strips: %d x %d LEDs = %d total\n", active_strips, leds_per_strip, total_leds);
   Serial.println("\nPin mapping:");
@@ -325,13 +343,13 @@ void setup() {
   Serial.printf("  Strip 6 (D6): GPIO %d\n", PIN_STRIP_6);
 
   // Init FastLED for all 7 strips
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_0>(leds + (0 * MAX_LEDS_PER_STRIP), leds_per_strip);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_1>(leds + (1 * MAX_LEDS_PER_STRIP), leds_per_strip);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_2>(leds + (2 * MAX_LEDS_PER_STRIP), leds_per_strip);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_3>(leds + (3 * MAX_LEDS_PER_STRIP), leds_per_strip);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_4>(leds + (4 * MAX_LEDS_PER_STRIP), leds_per_strip);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_5>(leds + (5 * MAX_LEDS_PER_STRIP), leds_per_strip);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_6>(leds + (6 * MAX_LEDS_PER_STRIP), leds_per_strip);
+  FastLED.addLeds<WS2812, PIN_STRIP_0, GRB>(leds + (0 * MAX_LEDS_PER_STRIP), leds_per_strip);
+  FastLED.addLeds<WS2812, PIN_STRIP_1, GRB>(leds + (1 * MAX_LEDS_PER_STRIP), leds_per_strip);
+  FastLED.addLeds<WS2812, PIN_STRIP_2, GRB>(leds + (2 * MAX_LEDS_PER_STRIP), leds_per_strip);
+  FastLED.addLeds<WS2812, PIN_STRIP_3, GRB>(leds + (3 * MAX_LEDS_PER_STRIP), leds_per_strip);
+  FastLED.addLeds<WS2812, PIN_STRIP_4, GRB>(leds + (4 * MAX_LEDS_PER_STRIP), leds_per_strip);
+  FastLED.addLeds<WS2812, PIN_STRIP_5, GRB>(leds + (5 * MAX_LEDS_PER_STRIP), leds_per_strip);
+  FastLED.addLeds<WS2812, PIN_STRIP_6, GRB>(leds + (6 * MAX_LEDS_PER_STRIP), leds_per_strip);
 
   FastLED.setBrightness(global_brightness);
   FastLED.clear();
