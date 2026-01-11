@@ -104,6 +104,7 @@ class AnimationManager:
         "conway_life",
         "christmas_tree",
         "space_invaders",
+        "spiral_single",
     }
     
     def __init__(self, controller: LEDController, plugins_dir: Optional[str] = None,
@@ -140,6 +141,11 @@ class AnimationManager:
         self.perf_samples = deque(maxlen=300)
         self.perf_lock = threading.Lock()
         self._last_perf_sample: Dict[str, float] = {}
+        self._driver_fps = 0.0
+        self._driver_fps_last_frames: Optional[int] = None
+        self._driver_fps_last_time: Optional[float] = None
+        self._driver_device_last_frames: Dict[int, int] = {}
+        self._driver_device_last_time: Dict[int, float] = {}
 
         # Current frame data for web interface
         self.current_frame_data = []
@@ -338,6 +344,7 @@ class AnimationManager:
             except Exception as exc:
                 driver_stats = {'error': str(exc)}
         status['driver_stats'] = driver_stats
+        status['pipeline_fps'] = self._compute_driver_fps(driver_stats)
         
         return status
 
@@ -624,6 +631,83 @@ class AnimationManager:
         if duration <= 0:
             return 0.0
         return (len(self.frame_timestamps) - 1) / duration
+
+    def _compute_driver_fps(self, driver_stats: Dict[str, Any]) -> float:
+        """Estimate hardware-applied FPS from driver frame counters."""
+        if not driver_stats or not isinstance(driver_stats, dict):
+            return self._driver_fps
+
+        devices = driver_stats.get('devices')
+        now = time.perf_counter()
+
+        if isinstance(devices, list) and devices:
+            fps_samples = []
+            for idx, device in enumerate(devices):
+                frames_sent = device.get('frames_sent')
+                try:
+                    frames_sent_int = int(frames_sent)
+                except (TypeError, ValueError):
+                    continue
+
+                last_frames = self._driver_device_last_frames.get(idx)
+                last_time = self._driver_device_last_time.get(idx)
+                self._driver_device_last_frames[idx] = frames_sent_int
+                self._driver_device_last_time[idx] = now
+
+                if last_frames is None or last_time is None:
+                    continue
+
+                delta_frames = frames_sent_int - last_frames
+                delta_time = now - last_time
+                if delta_frames < 0 or delta_time <= 0:
+                    continue
+
+                fps_samples.append(delta_frames / delta_time)
+
+            if fps_samples:
+                self._driver_fps = min(fps_samples)
+            return self._driver_fps
+
+        frames_sent = None
+        if 'aggregate' in driver_stats and isinstance(driver_stats.get('aggregate'), dict):
+            frames_sent = driver_stats['aggregate'].get('frames_sent')
+        else:
+            frames_sent = driver_stats.get('frames_sent')
+
+        if frames_sent is None:
+            return self._driver_fps
+
+        try:
+            frames_sent_int = int(frames_sent)
+        except (TypeError, ValueError):
+            return self._driver_fps
+
+        last_frames = self._driver_fps_last_frames
+        last_time = self._driver_fps_last_time
+        self._driver_fps_last_frames = frames_sent_int
+        self._driver_fps_last_time = now
+
+        if last_frames is None or last_time is None:
+            return self._driver_fps
+
+        delta_frames = frames_sent_int - last_frames
+        delta_time = now - last_time
+        if delta_frames < 0 or delta_time <= 0:
+            return self._driver_fps
+
+        device_count = driver_stats.get('device_count') or driver_stats.get('devices')
+        if isinstance(device_count, list):
+            device_count = len(device_count)
+        try:
+            device_count_int = int(device_count)
+        except (TypeError, ValueError):
+            device_count_int = 0
+
+        if device_count_int > 1:
+            delta_frames = delta_frames / device_count_int
+
+        self._driver_fps = delta_frames / delta_time
+        return self._driver_fps
 
     def _record_perf_sample(self, sample: Dict[str, float]):
         """Store per-frame timing samples for debugging"""
