@@ -1,6 +1,6 @@
 """Central LED layout defaults so the entire stack stays in sync."""
 
-DEFAULT_STRIP_COUNT = 14  # 2 ESP32 XIAO S3 boards with 7 strips each (D0-D6)
+DEFAULT_STRIP_COUNT = 8  # 1 ESP32-S3 DevKitC with 8 strips
 DEFAULT_LEDS_PER_STRIP = 140
 
 
