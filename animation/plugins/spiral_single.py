@@ -24,7 +24,6 @@ class SpiralSingleAnimation(AnimationBase):
             'red': 255,
             'green': 255,
             'blue': 255,
-            'serpentine': False,
         })
         self.params = {**self.default_params, **self.config}
 
@@ -32,8 +31,7 @@ class SpiralSingleAnimation(AnimationBase):
         self.leds_per_strip = getattr(controller, 'leds_per_strip', DEFAULT_LEDS_PER_STRIP)
         self.total_pixels = self.num_strips * self.leds_per_strip
 
-        self.serpentine = bool(self.params.get('serpentine', False))
-        self.spiral_indices = self._build_spiral_indices(self.num_strips, self.leds_per_strip, self.serpentine)
+        self.spiral_indices = self._build_spiral_indices(self.num_strips, self.leds_per_strip)
         self.step_index = 0
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
@@ -42,25 +40,9 @@ class SpiralSingleAnimation(AnimationBase):
             'red': {'type': 'int', 'min': 0, 'max': 255, 'default': 255, 'description': 'Red component (0-255)'},
             'green': {'type': 'int', 'min': 0, 'max': 255, 'default': 255, 'description': 'Green component (0-255)'},
             'blue': {'type': 'int', 'min': 0, 'max': 255, 'default': 255, 'description': 'Blue component (0-255)'},
-            'serpentine': {
-                'type': 'bool',
-                'default': False,
-                'description': 'Flip every other strip to match serpentine wiring',
-            },
         })
         schema['speed']['description'] = 'Ignored; animation always advances one pixel per frame'
         return schema
-
-    def update_parameters(self, params: Dict[str, Any]):
-        """Update animation parameters."""
-        super().update_parameters(params)
-        new_serpentine = bool(self.params.get('serpentine', False))
-        if new_serpentine != self.serpentine:
-            self.serpentine = new_serpentine
-            self.spiral_indices = self._build_spiral_indices(
-                self.num_strips, self.leds_per_strip, self.serpentine
-            )
-            self.step_index %= len(self.spiral_indices)
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
         if self.total_pixels <= 0:
@@ -80,7 +62,7 @@ class SpiralSingleAnimation(AnimationBase):
 
         return frame
 
-    def _build_spiral_indices(self, width: int, height: int, serpentine: bool) -> List[int]:
+    def _build_spiral_indices(self, width: int, height: int) -> List[int]:
         coords: List[Tuple[int, int]] = []
         left = 0
         right = width - 1
@@ -106,8 +88,7 @@ class SpiralSingleAnimation(AnimationBase):
 
         indices = []
         for x, y in coords:
-            mapped_y = y if not (serpentine and (x % 2 == 1)) else (height - 1 - y)
-            phys_led = (height - 1) - mapped_y
+            phys_led = (height - 1) - y
             idx = x * height + phys_led
             if 0 <= idx < self.total_pixels:
                 indices.append(idx)

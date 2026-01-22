@@ -10,7 +10,6 @@ DEPLOY_DIR="ledgrid-pod"
 LOCAL_DIR="."
 SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
 PI_USER="${PI_HOST%@*}"
-SPI_SPEED="${SPI_SPEED:-10000000}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -202,7 +201,6 @@ STRIPS=\${STRIPS:-\$DEFAULT_STRIPS}
 LEDS_PER_STRIP=\${LEDS_PER_STRIP:-\$DEFAULT_LEDS_PER_STRIP}
 TARGET_FPS=\${TARGET_FPS:-150}
 ANIMATION_SPEED_SCALE=\${ANIMATION_SPEED_SCALE:-0.2}
-SPI_SPEED=\${SPI_SPEED:-10000000}
 HOST=\${HOST:-0.0.0.0}
 PORT=\${PORT:-5000}
 CONTROL_FILE=\${CONTROL_FILE:-run_state/control.json}
@@ -230,7 +228,6 @@ nohup python scripts/start_server.py \\
     --strips \"\$STRIPS\" \\
     --leds-per-strip \"\$LEDS_PER_STRIP\" \\
     --target-fps \"\$TARGET_FPS\" \\
-    --spi-speed \"\$SPI_SPEED\" \\
     --animation-speed-scale \"\$ANIMATION_SPEED_SCALE\" \\
     --poll-interval \"\$POLL_INTERVAL\" \\
     --status-interval \"\$STATUS_INTERVAL\" \\
@@ -283,7 +280,6 @@ ExecStart=/bin/bash /home/$PI_USER/$DEPLOY_DIR/scripts/start_systemd.sh
 Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1
-Environment=SPI_SPEED=$SPI_SPEED
 
 [Install]
 WantedBy=multi-user.target
@@ -324,7 +320,7 @@ start_system() {
         log_success "systemd restart issued"
     else
         log_warning "systemd restart failed; falling back to manual start.sh"
-        ssh -f -n $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && SPI_SPEED=$SPI_SPEED nohup ./start.sh > animation_system.log 2>&1 </dev/null &"
+        ssh -f -n $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && nohup ./start.sh > animation_system.log 2>&1 </dev/null &"
     fi
 
     # Wait a moment for startup

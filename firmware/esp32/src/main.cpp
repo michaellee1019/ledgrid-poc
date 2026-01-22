@@ -50,7 +50,6 @@ static constexpr uint8_t CMD_CLEAR          = 0x04;
 static constexpr uint8_t CMD_SET_RANGE      = 0x05;
 static constexpr uint8_t CMD_SET_ALL        = 0x06;
 static constexpr uint8_t CMD_CONFIG         = 0x07;
-static constexpr uint8_t CMD_STATS          = 0x08;
 static constexpr uint8_t CMD_PING           = 0xFF;
 
 // =========================
@@ -78,29 +77,6 @@ static bool debug_logging = false;
 
   #define DEBUG_PRINT(...) do { if (debug_logging) { Serial.printf(__VA_ARGS__); } } while (0)
 #define DEBUG_PRINTLN(msg) do { if (debug_logging) { Serial.println(msg); } } while (0)
-
-static void write_u32_le(uint8_t *buffer, size_t offset, uint32_t value) {
-  buffer[offset + 0] = static_cast<uint8_t>(value & 0xFF);
-  buffer[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
-  buffer[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
-  buffer[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
-}
-
-static void update_stats_buffer() {
-  spi_tx_buffer[0] = 'L';
-  spi_tx_buffer[1] = 'G';
-  spi_tx_buffer[2] = 'S';
-  spi_tx_buffer[3] = '1';
-  write_u32_le(spi_tx_buffer, 4, millis());
-  write_u32_le(spi_tx_buffer, 8, frames_rendered);
-  write_u32_le(spi_tx_buffer, 12, set_all_commands_received);
-  write_u32_le(spi_tx_buffer, 16, packets_received);
-  write_u32_le(spi_tx_buffer, 20, zero_payload_packets);
-  write_u32_le(spi_tx_buffer, 24, last_show_duration);
-  write_u32_le(spi_tx_buffer, 28, total_bytes_received);
-  write_u32_le(spi_tx_buffer, 32, active_strips);
-  write_u32_le(spi_tx_buffer, 36, leds_per_strip);
-}
 
 inline uint16_t logical_to_physical(uint16_t logical) {
   uint16_t strip = logical / leds_per_strip;
@@ -239,10 +215,6 @@ static void process_command(const uint8_t *data, size_t length) {
       FastLED.show();
       last_show_duration = micros() - start_us;
       frames_rendered++;
-      break;
-    }
-
-    case CMD_STATS: {
       break;
     }
 
@@ -408,7 +380,6 @@ void setup() {
 
 void loop() {
   memset(spi_rx_buffer, 0, sizeof(spi_rx_buffer));
-  update_stats_buffer();
 
   spi_slave_transaction_t trans = {};
   trans.length = SPI_BUFFER_SIZE * 8;
