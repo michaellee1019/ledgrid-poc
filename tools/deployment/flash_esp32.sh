@@ -67,7 +67,7 @@ for entry in data:
     if path.startswith("/dev/ttyACM") or path.startswith("/dev/ttyUSB"):
         ports.append(path)
 
-for path in sorted(ports)[:2]:
+for path in sorted(ports):
     print(path)
 PY
 )"
@@ -78,18 +78,20 @@ if [ -z "$ports" ]; then
 fi
 
 port_count="$(echo "$ports" | wc -l | tr -d ' ')"
-if [ "$port_count" -lt 2 ]; then
-  log_warning "Only detected $port_count ESP32 device(s); skipping flash"
+if [ "$port_count" -lt 1 ]; then
+  log_warning "No ESP32 device(s) detected; skipping flash"
   exit 1
 fi
 
+log_info "Detected $port_count ESP32 device(s)"
+
 log_info "Building firmware..."
-(cd "$FIRMWARE_DIR" && $PIO_CMD run -e seeed_xiao_esp32s3)
+(cd "$FIRMWARE_DIR" && $PIO_CMD run -e esp32-s3-devkitc-1)
 
 log_info "Flashing firmware to ESP32 devices..."
 while IFS= read -r port; do
   log_info "Uploading to $port"
-  (cd "$FIRMWARE_DIR" && $PIO_CMD run -e seeed_xiao_esp32s3 -t upload --upload-port "$port")
+  (cd "$FIRMWARE_DIR" && $PIO_CMD run -e esp32-s3-devkitc-1 -t upload --upload-port "$port")
 done <<< "$ports"
 
 echo "$current_hash" > "$HASH_FILE"

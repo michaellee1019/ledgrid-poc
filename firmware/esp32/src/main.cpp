@@ -1,16 +1,5 @@
 #include <Arduino.h>
 #include <FastLED.h>
-#include "driver/spi_slave.h"
-#include "driver/spi_common.h"
-#include "driver/gpio.h"
-
-// =========================
-// SPI pin mapping (ESP32-S3 DevKitC - VSPI)
-// =========================
-static constexpr gpio_num_t PIN_SPI_MOSI = GPIO_NUM_11;
-static constexpr gpio_num_t PIN_SPI_MISO = GPIO_NUM_13;
-static constexpr gpio_num_t PIN_SPI_SCLK = GPIO_NUM_12;
-static constexpr gpio_num_t PIN_SPI_CS   = GPIO_NUM_10;
 
 // =========================
 // LED configuration (8 strips)
@@ -41,7 +30,7 @@ static uint16_t total_leds = DEFAULT_STRIPS * DEFAULT_LEDS_PER_STRIP;
 static uint8_t global_brightness = 50;
 
 // =========================
-// SPI protocol definitions
+// UART protocol definitions
 // =========================
 static constexpr uint8_t CMD_SET_PIXEL      = 0x01;
 static constexpr uint8_t CMD_SET_BRIGHTNESS = 0x02;
@@ -50,23 +39,29 @@ static constexpr uint8_t CMD_CLEAR          = 0x04;
 static constexpr uint8_t CMD_SET_RANGE      = 0x05;
 static constexpr uint8_t CMD_SET_ALL        = 0x06;
 static constexpr uint8_t CMD_CONFIG         = 0x07;
+static constexpr uint8_t CMD_ECHO           = 0xFE;
 static constexpr uint8_t CMD_PING           = 0xFF;
 
-// =========================
-// SPI buffers
-// =========================
-static constexpr size_t SPI_FRAME_BYTES = 1 + (MAX_TOTAL_LEDS * 3);
-static constexpr size_t SPI_BUFFER_SIZE = ((SPI_FRAME_BYTES + 63) / 64) * 64;
-DMA_ATTR static uint8_t spi_rx_buffer[SPI_BUFFER_SIZE];
-DMA_ATTR static uint8_t spi_tx_buffer[SPI_BUFFER_SIZE];
+// UART packet framing
+static constexpr uint8_t PACKET_START       = 0xAA;
+static constexpr uint8_t PACKET_END         = 0x55;
+static constexpr size_t MAX_PACKET_SIZE     = 1 + (MAX_TOTAL_LEDS * 3);  // cmd + RGB data
+static uint8_t uart_buffer[MAX_PACKET_SIZE];
 
+// Response codes
+static constexpr uint8_t RESP_OK            = 0x00;
+static constexpr uint8_t RESP_ERROR         = 0x01;
+static constexpr uint8_t RESP_STATUS        = 0x02;
+
+// =========================
+// Statistics
+// =========================
 static volatile uint32_t packets_received = 0;
 static volatile uint32_t frames_rendered = 0;
-static volatile uint32_t zero_payload_packets = 0;
+static volatile uint32_t packet_errors = 0;
 static volatile uint32_t config_commands_received = 0;
 static volatile uint32_t set_all_commands_received = 0;
 
-static uint32_t last_packet_millis = 0;
 static uint32_t last_show_duration = 0;
 static uint32_t last_frame_sample_time = 0;
 static uint32_t last_frame_sample_count = 0;
@@ -75,8 +70,30 @@ static uint32_t last_bytes_sample = 0;
 static uint32_t last_bytes_sample_time = 0;
 static bool debug_logging = false;
 
-  #define DEBUG_PRINT(...) do { if (debug_logging) { Serial.printf(__VA_ARGS__); } } while (0)
+#define DEBUG_PRINT(...) do { if (debug_logging) { Serial.printf(__VA_ARGS__); } } while (0)
 #define DEBUG_PRINTLN(msg) do { if (debug_logging) { Serial.println(msg); } } while (0)
+
+// Send response packet back to Pi
+void send_response(uint8_t response_code, const char* message = nullptr) {
+  Serial.write(PACKET_START);
+  
+  // Calculate payload length
+  uint16_t payload_len = 1;  // response code
+  if (message) {
+    payload_len += strlen(message);
+  }
+  
+  Serial.write(payload_len & 0xFF);
+  Serial.write((payload_len >> 8) & 0xFF);
+  Serial.write(response_code);
+  
+  if (message) {
+    Serial.print(message);
+  }
+  
+  Serial.write(PACKET_END);
+  Serial.flush();
+}
 
 inline uint16_t logical_to_physical(uint16_t logical) {
   uint16_t strip = logical / leds_per_strip;
@@ -88,42 +105,59 @@ inline uint16_t logical_to_physical(uint16_t logical) {
   return strip * MAX_LEDS_PER_STRIP + offset;
 }
 
-static void IRAM_ATTR on_spi_post_transaction(spi_slave_transaction_t *trans) {
-  packets_received++;
-}
-
 static void process_command(const uint8_t *data, size_t length) {
   if (length == 0) return;
 
   total_bytes_received += length;
   const uint8_t cmd = data[0];
+  packets_received++;
 
-  // DEBUG: Show first 10 packets to diagnose the issue
-  static uint32_t debug_packet_count = 0;
-  if (debug_packet_count < 10) {
+  // Always log first 20 packets for debugging
+  static uint32_t startup_packet_count = 0;
+  if (startup_packet_count < 20) {
     Serial.printf("🔍 Pkt#%u: cmd=0x%02X len=%u bytes: ", 
-                  debug_packet_count++, cmd, length);
-    for (size_t i = 0; i < min(length, (size_t)16); i++) {
+                  startup_packet_count++, cmd, length);
+    for (size_t i = 0; i < min(length, (size_t)32); i++) {
       Serial.printf("%02X ", data[i]);
     }
+    if (length > 32) Serial.print("...");
     Serial.println();
   }
-
-  if (length > 1) {
-    uint8_t payload_or = 0;
-    for (size_t i = 1; i < length; ++i) {
-      payload_or |= data[i];
-    }
-    if (payload_or == 0) {
-      zero_payload_packets++;
-      DEBUG_PRINT("⚠️ Packet cmd=0x%02X has zero payload\n", cmd);
-    }
-  }
+  
+  DEBUG_PRINT("📥 Pkt#%u: cmd=0x%02X len=%u\n", packets_received, cmd, length);
 
   switch (cmd) {
+    case CMD_ECHO: {
+      // Echo back exactly what we received
+      Serial.printf("📥 CMD_ECHO: %u bytes received, echoing back...\n", length);
+      
+      // Print what we received
+      Serial.print("   RX: ");
+      for (size_t i = 0; i < min(length, (size_t)32); i++) {
+        Serial.printf("%02X ", data[i]);
+      }
+      if (length > 32) Serial.print("...");
+      Serial.println();
+      
+      // Echo it back with RESP_OK prefix
+      Serial.write(PACKET_START);
+      uint16_t response_len = 1 + length; // RESP_OK + original data
+      Serial.write(response_len & 0xFF);
+      Serial.write((response_len >> 8) & 0xFF);
+      Serial.write(RESP_OK);
+      Serial.write(data, length); // Echo back the entire payload
+      Serial.write(PACKET_END);
+      Serial.flush();
+      
+      Serial.println("   ✅ Echo sent");
+      break;
+    }
+    
     case CMD_PING: {
-      DEBUG_PRINTLN("📥 CMD_PING");
+      Serial.println("📥 CMD_PING received - sending ACK");
       digitalWrite(PIN_STATUS_LED, !digitalRead(PIN_STATUS_LED));
+      send_response(RESP_OK, "PONG");
+      Serial.println("✅ ACK sent");
       break;
     }
 
@@ -151,7 +185,6 @@ static void process_command(const uint8_t *data, size_t length) {
       uint32_t start_us = micros();
       FastLED.show();
       last_show_duration = micros() - start_us;
-      // Don't increment frames_rendered here - only count SET_ALL frames
       DEBUG_PRINTLN("📥 CMD_SHOW");
       break;
     }
@@ -163,7 +196,6 @@ static void process_command(const uint8_t *data, size_t length) {
         }
       }
       FastLED.show();
-      // Don't increment frames_rendered here - only count SET_ALL frames
       DEBUG_PRINTLN("📥 CMD_CLEAR");
       break;
     }
@@ -194,9 +226,20 @@ static void process_command(const uint8_t *data, size_t length) {
       set_all_commands_received++;
       const size_t expected = 1 + static_cast<size_t>(total_leds) * 3;
       if (length < expected) {
-        Serial.printf("⚠️ CMD_SET_ALL expected %u bytes, got %u\n", 
-                      static_cast<unsigned>(expected), static_cast<unsigned>(length));
+        Serial.printf("⚠️ CMD_SET_ALL expected %u bytes, got %u (strips=%u, leds=%u)\n", 
+                      static_cast<unsigned>(expected), static_cast<unsigned>(length),
+                      active_strips, leds_per_strip);
+        packet_errors++;
+        send_response(RESP_ERROR, "SIZE_MISMATCH");
         return;
+      }
+
+      // Log first few SET_ALL for debugging
+      if (set_all_commands_received <= 5) {
+        Serial.printf("✅ CMD_SET_ALL #%u: %u bytes, first RGB: (%02X,%02X,%02X) - rendering...\n",
+                      static_cast<unsigned>(set_all_commands_received),
+                      static_cast<unsigned>(length),
+                      data[1], data[2], data[3]);
       }
 
       for (uint16_t logical = 0; logical < total_leds; ++logical) {
@@ -215,17 +258,33 @@ static void process_command(const uint8_t *data, size_t length) {
       FastLED.show();
       last_show_duration = micros() - start_us;
       frames_rendered++;
+      
+      // Send acknowledgment for first few frames
+      if (frames_rendered <= 3) {
+        send_response(RESP_OK, "FRAME_OK");
+      }
       break;
     }
 
     case CMD_CONFIG: {
       config_commands_received++;
-      if (length < 4) return;
+      if (length < 4) {
+        send_response(RESP_ERROR, "CONFIG_TOO_SHORT");
+        return;
+      }
       uint8_t new_strips = data[1];
       uint16_t new_len = (static_cast<uint16_t>(data[2]) << 8) | data[3];
 
-      if (new_strips == 0 || new_strips > MAX_STRIPS) return;
-      if (new_len == 0 || new_len > MAX_LEDS_PER_STRIP) return;
+      if (new_strips == 0 || new_strips > MAX_STRIPS) {
+        Serial.printf("⚠️ Invalid strips: %u (max %u)\n", new_strips, MAX_STRIPS);
+        send_response(RESP_ERROR, "INVALID_STRIPS");
+        return;
+      }
+      if (new_len == 0 || new_len > MAX_LEDS_PER_STRIP) {
+        Serial.printf("⚠️ Invalid LEDs/strip: %u (max %u)\n", new_len, MAX_LEDS_PER_STRIP);
+        send_response(RESP_ERROR, "INVALID_LENGTH");
+        return;
+      }
 
       // Only clear LEDs if configuration actually changed
       bool config_changed = (active_strips != new_strips) || (leds_per_strip != new_len);
@@ -240,11 +299,13 @@ static void process_command(const uint8_t *data, size_t length) {
           leds[i] = CRGB::Black;
         }
         FastLED.show();
-        DEBUG_PRINT("📐 Config changed: strips=%u, length=%u, total=%u (cleared LEDs)\n",
+        Serial.printf("📐 Config changed: strips=%u, length=%u, total=%u (cleared LEDs)\n",
                     active_strips, leds_per_strip, total_leds);
+        send_response(RESP_OK, "CONFIG_CHANGED");
       } else {
         DEBUG_PRINT("📐 Config refresh: strips=%u, length=%u, total=%u (no change)\n",
                     active_strips, leds_per_strip, total_leds);
+        send_response(RESP_OK, "CONFIG_OK");
       }
       
       if (length >= 5) {
@@ -258,28 +319,25 @@ static void process_command(const uint8_t *data, size_t length) {
 
     default:
       DEBUG_PRINT("⚠️ Unknown command 0x%02X\n", cmd);
+      packet_errors++;
       break;
   }
 }
 
 void setup() {
-  // Initialize Serial (UART)
-  Serial.begin(115200);
+  // Initialize Serial (USB-CDC)
+  Serial.begin(115200);  // Standard baudrate for compatibility
   delay(1000);  // Give time for serial to stabilize
   
   Serial.println("");
   Serial.println("========================================");
-  Serial.println("ESP32-S3 DevKitC SPI Slave LED Controller");  
+  Serial.println("ESP32-S3 DevKitC UART LED Controller");  
   Serial.println("========================================");
   Serial.printf("Board: ESP32-S3 DevKitC (8MB Flash)\n");
   Serial.printf("Strips: %d x %d LEDs = %d total\n", active_strips, leds_per_strip, total_leds);
-  Serial.println("\nPin mapping:");
-  Serial.println("SPI:");
-  Serial.printf("  MOSI: GPIO %d\n", PIN_SPI_MOSI);
-  Serial.printf("  MISO: GPIO %d\n", PIN_SPI_MISO);
-  Serial.printf("  SCK:  GPIO %d\n", PIN_SPI_SCLK);
-  Serial.printf("  CS:   GPIO %d\n", PIN_SPI_CS);
-  Serial.println("LED Strips:");
+  Serial.printf("Protocol: UART (USB-CDC) @ 115200 bps\n");
+  Serial.printf("Max packet size: %u bytes\n", MAX_PACKET_SIZE);
+  Serial.println("\nLED Strip Pins:");
   Serial.printf("  Strip 0: GPIO %d\n", PIN_STRIP_0);
   Serial.printf("  Strip 1: GPIO %d\n", PIN_STRIP_1);
   Serial.printf("  Strip 2: GPIO %d\n", PIN_STRIP_2);
@@ -316,50 +374,9 @@ void setup() {
   FastLED.clear();
   FastLED.show();
   delay(200);
-
-  // Configure SPI pins - CRITICAL: Set all as INPUT before SPI init
-  gpio_reset_pin(PIN_SPI_CS);
-  gpio_reset_pin(PIN_SPI_SCLK);
-  gpio_reset_pin(PIN_SPI_MOSI);
-  gpio_set_direction(PIN_SPI_CS, GPIO_MODE_INPUT);
-  gpio_set_direction(PIN_SPI_SCLK, GPIO_MODE_INPUT);  // FIX: Explicitly set as input
-  gpio_set_direction(PIN_SPI_MOSI, GPIO_MODE_INPUT);  // FIX: Explicitly set as input
-  gpio_set_pull_mode(PIN_SPI_CS, GPIO_PULLUP_ONLY);
-  gpio_set_pull_mode(PIN_SPI_SCLK, GPIO_FLOATING);
-  gpio_set_pull_mode(PIN_SPI_MOSI, GPIO_FLOATING);
-
-  // Configure SPI slave
-  spi_bus_config_t bus_cfg = {};
-  bus_cfg.mosi_io_num = PIN_SPI_MOSI;
-  bus_cfg.miso_io_num = PIN_SPI_MISO;
-  bus_cfg.sclk_io_num = PIN_SPI_SCLK;
-  bus_cfg.quadwp_io_num = -1;
-  bus_cfg.quadhd_io_num = -1;
-  bus_cfg.max_transfer_sz = SPI_BUFFER_SIZE;
-  bus_cfg.flags = SPICOMMON_BUSFLAG_SCLK | SPICOMMON_BUSFLAG_MOSI | SPICOMMON_BUSFLAG_MISO;
-  bus_cfg.intr_flags = 0;
-
-  spi_slave_interface_config_t slave_cfg = {};
-  slave_cfg.mode = 3;  // CPOL=1, CPHA=1
-  slave_cfg.spics_io_num = PIN_SPI_CS;
-  slave_cfg.queue_size = 4;
-  slave_cfg.flags = 0;
-  slave_cfg.post_setup_cb = nullptr;
-  slave_cfg.post_trans_cb = on_spi_post_transaction;
-
-  esp_err_t err = spi_slave_initialize(SPI2_HOST, &bus_cfg, &slave_cfg, SPI_DMA_CH_AUTO);
-  if (err != ESP_OK) {
-    Serial.printf("❌ spi_slave_initialize failed: %d\n", err);
-    while (true) delay(1000);
-  }
-
-  memset(spi_tx_buffer, 0, sizeof(spi_tx_buffer));
-
-  Serial.println("\n✅ SPI slave ready");
-  Serial.printf("Buffer size: %u bytes\n", SPI_BUFFER_SIZE);
   
-  // DEBUG: Rainbow animation for first 10 seconds to verify LED strips
-  Serial.println("\n🌈 Running rainbow animation for 10 seconds...");
+  // Rainbow animation for first 1 second to verify LED strips
+  Serial.println("\n🌈 Running rainbow animation for 1 second...");
   uint32_t rainbow_start = millis();
   uint8_t hue = 0;
   while (millis() - rainbow_start < 1000) {
@@ -375,32 +392,61 @@ void setup() {
   // Clear after rainbow
   FastLED.clear();
   FastLED.show();
-  Serial.println("✅ Rainbow complete, entering SPI mode\n");
+  Serial.println("✅ Rainbow complete, entering UART mode\n");
+  Serial.println("Waiting for packets...\n");
 }
 
 void loop() {
-  memset(spi_rx_buffer, 0, sizeof(spi_rx_buffer));
-
-  spi_slave_transaction_t trans = {};
-  trans.length = SPI_BUFFER_SIZE * 8;
-  trans.tx_buffer = spi_tx_buffer;
-  trans.rx_buffer = spi_rx_buffer;
-
-  const esp_err_t err = spi_slave_transmit(SPI2_HOST, &trans, pdMS_TO_TICKS(100));
-  if (err == ESP_OK) {
-    if (trans.trans_len > 0) {
-      const size_t bytes = trans.trans_len / 8;
-      uint32_t now = millis();
-      if (last_packet_millis != 0) {
-        DEBUG_PRINT("⏱️ Interval: %lu ms\n", now - last_packet_millis);
+  // UART packet reading with framing
+  // Packet format: [0xAA] [LEN_LOW] [LEN_HIGH] [PAYLOAD...] [0x55]
+  
+  if (Serial.available() >= 4) {  // At least: start + len(2) + end
+    uint8_t start = Serial.read();
+    
+    if (start == PACKET_START) {
+      // Read packet length (16-bit, little-endian)
+      uint8_t len_low = Serial.read();
+      uint8_t len_high = Serial.read();
+      uint16_t payload_len = len_low | (len_high << 8);
+      
+      // Validate length
+      if (payload_len > MAX_PACKET_SIZE) {
+        DEBUG_PRINT("⚠️ Invalid packet length: %u (max %u)\n", payload_len, MAX_PACKET_SIZE);
+        packet_errors++;
+        // Flush serial buffer
+        while (Serial.available()) Serial.read();
+        return;
       }
-      last_packet_millis = now;
-
-      DEBUG_PRINT("📥 %u bytes, cmd=0x%02X\n", static_cast<unsigned>(bytes), spi_rx_buffer[0]);
-      process_command(spi_rx_buffer, bytes);
+      
+      // Wait for complete payload + end byte (with timeout)
+      uint32_t timeout_start = millis();
+      while (Serial.available() < payload_len + 1) {
+        if (millis() - timeout_start > 100) {  // 100ms timeout
+          DEBUG_PRINTLN("⚠️ Packet timeout");
+          packet_errors++;
+          return;
+        }
+        delayMicroseconds(100);
+      }
+      
+      // Read payload
+      Serial.readBytes(uart_buffer, payload_len);
+      
+      // Read end marker
+      uint8_t end = Serial.read();
+      if (end != PACKET_END) {
+        DEBUG_PRINT("⚠️ Invalid end marker: 0x%02X (expected 0x%02X)\n", end, PACKET_END);
+        packet_errors++;
+        return;
+      }
+      
+      // Process the command
+      process_command(uart_buffer, payload_len);
+    } else {
+      // Not a start marker - discard and resync
+      DEBUG_PRINT("⚠️ Expected start marker 0x%02X, got 0x%02X\n", PACKET_START, start);
+      packet_errors++;
     }
-  } else if (err != ESP_ERR_TIMEOUT) {
-    Serial.printf("⚠️ SPI error %d\n", err);
   }
 
   // Stats every 5 seconds
@@ -430,34 +476,17 @@ void loop() {
     last_bytes_sample = total_bytes_received;
     last_bytes_sample_time = now_ms;
 
-    // Calculate frame success rate (successful SET_ALL commands)
-    float set_all_success_rate = 0.0f;
-    if (set_all_commands_received > 0) {
-      // Only SET_ALL increments frames_rendered, so this should be close to 100%
-      set_all_success_rate = (100.0f * frames_rendered) / static_cast<float>(set_all_commands_received);
-    }
-    
-    // Calculate packet error rate
-    float packet_error_rate = 0.0f;
-    if (packets_received > 0) {
-      packet_error_rate = (100.0f * zero_payload_packets) / static_cast<float>(packets_received);
-    }
-
-    Serial.printf("📊 Pkts=%u Frames=%u FPS=%.1f | Throughput=%.1fkb/s | Success=%.1f%% Errors=%.1f%% | Show=%luµs | Heap=%u\n",
+    Serial.printf("📊 Pkts=%u Frames=%u FPS=%.1f | Throughput=%.1fkb/s | Errors=%u | Show=%luµs | Heap=%u\n",
                   static_cast<unsigned>(packets_received),
                   static_cast<unsigned>(frames_rendered),
                   fps,
                   throughput_kbps,
-                  set_all_success_rate,
-                  packet_error_rate,
+                  static_cast<unsigned>(packet_errors),
                   static_cast<unsigned long>(last_show_duration),
                   static_cast<unsigned>(ESP.getFreeHeap()));
-    Serial.printf("    Configs=%u SetAlls=%u ZeroPayload=%u | Buffer=%u/%u bytes | %ux%u LEDs\n",
+    Serial.printf("    Configs=%u SetAlls=%u | %ux%u LEDs\n",
                   static_cast<unsigned>(config_commands_received),
                   static_cast<unsigned>(set_all_commands_received),
-                  static_cast<unsigned>(zero_payload_packets),
-                  static_cast<unsigned>(SPI_FRAME_BYTES),
-                  static_cast<unsigned>(SPI_BUFFER_SIZE),
                   active_strips,
                   leds_per_strip);
     last_stats = now_ms;

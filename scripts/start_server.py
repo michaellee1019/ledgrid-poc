@@ -21,10 +21,10 @@ from web.app import create_app
 
 # Try to import the real LED controller, fall back to mock for testing
 try:
-    from drivers.multi_device import MultiDeviceLEDController as LEDController
+    from drivers.uart_controller import LEDController
 except ImportError:
     try:
-        from drivers.spi_controller import LEDController
+        from drivers.multi_device import MultiDeviceLEDController as LEDController
     except ImportError:
         class LEDController:
             def __init__(self, strips=DEFAULT_STRIP_COUNT, leds_per_strip=DEFAULT_LEDS_PER_STRIP, **kwargs):
@@ -58,25 +58,25 @@ def run_controller_mode(args):
         num_devices = max(1, args.strips // strips_per_device)
         controller = LEDController(
             num_devices=num_devices,
-            bus=args.bus,
-            speed=args.spi_speed,
-            mode=3,
+            ports=[f'/dev/ttyACM{i}' for i in range(num_devices)],
+            baudrate=args.baudrate,
             strips_per_device=strips_per_device,
             leds_per_strip=args.leds_per_strip,
             debug=args.controller_debug,
             parallel=True,
         )
     else:
-        # Single-device or mock controller
+        # Single-device UART controller or mock
+        # Enable debug for first few frames to verify communication
         controller = LEDController(
-            bus=args.bus,
-            device=args.device,
-            speed=args.spi_speed,
-            mode=3,
+            port=args.serial_port,
+            baudrate=args.baudrate,
             strips=args.strips,
             leds_per_strip=args.leds_per_strip,
-            debug=args.controller_debug,
+            debug=True,  # Always enable for initial feedback
         )
+        print(f"✓ Controller initialized: {args.strips} strips × {args.leds_per_strip} LEDs")
+        print()
     manager = AnimationManager(
         controller,
         plugins_dir=args.animations_dir,
@@ -215,12 +215,10 @@ def main():
                         help='Enable debug mode for Flask')
 
     # Controller options
-    parser.add_argument('--bus', type=int, default=0,
-                        help='SPI bus number (default: 0)')
-    parser.add_argument('--device', type=int, default=0,
-                        help='SPI device number (default: 0)')
-    parser.add_argument('--spi-speed', type=int, default=10000000,
-                        help='SPI speed in Hz (default: 10000000)')
+    parser.add_argument('--serial-port', default='/dev/ttyACM0',
+                        help='Serial port for ESP32 (default: /dev/ttyACM0)')
+    parser.add_argument('--baudrate', type=int, default=921600,
+                        help='Serial baudrate (default: 921600 for high FPS)')
     parser.add_argument('--controller-debug', action='store_true',
                         help='Enable LED controller debug output')
     parser.add_argument('--target-fps', type=int, default=150,
@@ -243,7 +241,7 @@ def main():
 
     try:
         if args.mode == 'controller':
-            print(f"SPI: /dev/spidev{args.bus}.{args.device} @ {args.spi_speed/1000000:.1f} MHz")
+            print(f"UART: {args.serial_port} @ {args.baudrate} bps")
             print(f"Target FPS: {args.target_fps}")
             print()
             run_controller_mode(args)

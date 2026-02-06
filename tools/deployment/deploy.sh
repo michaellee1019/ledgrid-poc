@@ -58,12 +58,23 @@ create_deploy_directory() {
     log_success "Deployment directory created"
 }
 
-# Stop any running instances on the Pi
+# Stop any running instances on the Pi and clean up old files
 stop_running() {
     log_info "Stopping any running animation server on the Pi..."
-    if ! ssh $SSH_OPTS "$PI_HOST" "sudo systemctl stop ledgrid.service 2>/dev/null || true; pkill -f start_server.py || true; pkill -f start.sh || true"; then
+    if ! ssh $SSH_OPTS "$PI_HOST" "sudo systemctl stop ledgrid.service 2>/dev/null || true; pkill -f start_server.py || true; pkill -f start_animation_server.py || true; pkill -f start.sh || true; pkill -f start_systemd.sh || true"; then
         log_warning "Stop step failed (likely nothing running); continuing..."
     fi
+    
+    # Clean up old files from previous versions
+    log_info "Cleaning up old files..."
+    ssh $SSH_OPTS "$PI_HOST" "
+        cd ~/$DEPLOY_DIR 2>/dev/null || exit 0
+        rm -f start_animation_server.py animation_manager.py 2>/dev/null || true
+        rm -f run_state/*.pid 2>/dev/null || true
+    " || true
+    
+    # Give processes time to terminate
+    sleep 2
 }
 
 # Upload files to Pi (aggressive sync)
