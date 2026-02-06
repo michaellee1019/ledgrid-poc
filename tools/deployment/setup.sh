@@ -4,7 +4,7 @@
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
-PI_HOST="${PI_HOST:-ledwallleft@ledwallleft.local}"
+PI_HOST="${PI_HOST:-bedsidestreamdeck@bedsidestreamdeck.local}"
 DEPLOY_DIR="${DEPLOY_DIR:-ledgrid-pod}"
 SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
 
@@ -89,7 +89,8 @@ sudo usermod -a -G dialout "$USER"
 echo "[SUCCESS] Added user to dialout group; re-login may be required"
 EOF
 
-log_info "Detecting connected ESP32 devices..."
+EXPECTED_ESP32_DEVICES="${EXPECTED_ESP32_DEVICES:-1}"
+log_info "Detecting connected ESP32 devices (expecting ${EXPECTED_ESP32_DEVICES})..."
 if ! ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
@@ -127,9 +128,10 @@ for entry in data:
         ports.append(path)
 
 ports = sorted(ports)
+expected = int(os.environ.get("EXPECTED_ESP32_DEVICES", "1") or "1")
 print(f"[INFO] Detected {len(ports)} USB serial device(s): {ports}")
-if len(ports) < 2:
-    print("[ERROR] Expected 2 ESP32 devices for flashing")
+if len(ports) < expected:
+    print(f"[ERROR] Expected {expected} ESP32 device(s) for flashing")
     raise SystemExit(1)
 PY
 EOF

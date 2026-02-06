@@ -7,7 +7,7 @@ if [ -n "${OUT_FILE}" ]; then
   exec >"${OUT_FILE}" 2>&1
 fi
 
-REMOTE=${REMOTE:-ledwallleft@ledwallleft.local}
+REMOTE=${REMOTE:-bedsidestreamdeck@bedsidestreamdeck.local}
 REMOTE_DIR=${REMOTE_DIR:-"~/ledgrid-pod"}
 PORT=${PORT:-5000}
 ANIMATION=${ANIMATION:-}

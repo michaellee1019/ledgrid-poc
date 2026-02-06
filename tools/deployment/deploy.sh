@@ -5,7 +5,7 @@
 set -euo pipefail  # Exit on any error and fail on unset vars
 
 # Configuration
-PI_HOST="ledwallleft@ledwallleft.local"
+PI_HOST="bedsidestreamdeck@bedsidestreamdeck.local"
 DEPLOY_DIR="ledgrid-pod"
 LOCAL_DIR="."
 SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
@@ -46,7 +46,7 @@ check_ssh_connection() {
         log_error "  1. Raspberry Pi is powered on and connected to network"
         log_error "  2. SSH is enabled on the Pi"
         log_error "  3. Passwordless SSH is configured"
-        log_error "  4. Hostname 'ledwallleft.local' resolves correctly"
+        log_error "  4. Hostname 'bedsidestreamdeck.local' resolves correctly"
         exit 1
     fi
 }
@@ -112,6 +112,20 @@ flash_esp32_firmware() {
 # Create virtual environment and install dependencies
 setup_venv_and_dependencies() {
     log_info "Setting up Python virtual environment..."
+
+    log_info "Ensuring Python build dependencies (spidev headers)..."
+    ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
+set -euo pipefail
+PY_VER=$(python3 - <<'PY'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+PY
+)
+sudo apt-get update
+if ! sudo apt-get install -y "python${PY_VER}-dev" build-essential; then
+  sudo apt-get install -y python3-dev build-essential
+fi
+EOF
 
     # Create virtual environment
     ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && python3 -m venv venv"

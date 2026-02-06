@@ -330,7 +330,7 @@
 
 {% block scripts %}
 <script>
-    const INITIAL_STRIP_COUNT = {{ status.led_info.strip_count | default(8) }};
+    const INITIAL_STRIP_COUNT = {{ status.led_info.strip_count | default(7) }};
     const INITIAL_LEDS_PER_STRIP = {{ status.led_info.leds_per_strip | default(140) }};
     const INITIAL_STATUS = {{ status | tojson }};
 

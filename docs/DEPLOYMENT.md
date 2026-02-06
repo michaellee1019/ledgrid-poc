@@ -38,7 +38,7 @@ After deployment, open your browser to the URL shown:
 ### Raspberry Pi Setup
 - ✅ Raspberry Pi with Raspberry Pi OS
 - ✅ SSH enabled (`sudo systemctl enable ssh`)
-- ✅ Passwordless SSH configured to `ledwallleft@ledwallleft.local`
+- ✅ Passwordless SSH configured to `bedsidestreamdeck@bedsidestreamdeck.local`
 - ✅ Python 3 installed (default on Raspberry Pi OS)
 - ✅ Network connectivity
 
@@ -48,10 +48,10 @@ After deployment, open your browser to the URL shown:
 ssh-keygen -t rsa -b 4096
 
 # Copy key to Pi
-ssh-copy-id ledwallleft@ledwallleft.local
+ssh-copy-id bedsidestreamdeck@bedsidestreamdeck.local
 
 # Test connection
-ssh ledwallleft@ledwallleft.local "echo 'SSH working'"
+ssh bedsidestreamdeck@bedsidestreamdeck.local "echo 'SSH working'"
 ```
 
 ### SPI Configuration (for LED hardware)
@@ -126,7 +126,7 @@ sudo raspi-config
 ### Manual Control on Pi
 ```bash
 # SSH to Pi
-ssh ledwallleft@ledwallleft.local
+ssh bedsidestreamdeck@bedsidestreamdeck.local
 
 # Navigate to deployment
 cd ledgrid-pod
@@ -170,13 +170,13 @@ After deployment, access these URLs:
 **SSH Connection Failed**
 ```bash
 # Check Pi is reachable
-ping ledwallleft.local
+ping bedsidestreamdeck.local
 
 # Test SSH manually
-ssh ledwallleft@ledwallleft.local
+ssh bedsidestreamdeck@bedsidestreamdeck.local
 
 # Check SSH key
-ssh-copy-id ledwallleft@ledwallleft.local
+ssh-copy-id bedsidestreamdeck@bedsidestreamdeck.local
 ```
 
 **SPI Not Available**
@@ -195,7 +195,7 @@ ls /dev/spi*
 ./tools/deployment/manage_venv.sh recreate
 
 # Or manually:
-ssh ledwallleft@ledwallleft.local
+ssh bedsidestreamdeck@bedsidestreamdeck.local
 cd ledgrid-pod
 rm -rf venv
 python3 -m venv venv
@@ -223,16 +223,16 @@ pip install -r requirements.txt
 ./tools/deployment/stop_remote.sh status
 
 # Check Pi's IP address
-ssh ledwallleft@ledwallleft.local "hostname -I"
+ssh bedsidestreamdeck@bedsidestreamdeck.local "hostname -I"
 
 # Check firewall (if enabled)
-ssh ledwallleft@ledwallleft.local "sudo ufw status"
+ssh bedsidestreamdeck@bedsidestreamdeck.local "sudo ufw status"
 ```
 
 **Animation Not Working**
 ```bash
 # Check logs
-ssh ledwallleft@ledwallleft.local "cd ledgrid-pod && tail -f animation_system.log"
+ssh bedsidestreamdeck@bedsidestreamdeck.local "cd ledgrid-pod && tail -f animation_system.log"
 
 # Restart system
 ./tools/deployment/stop_remote.sh restart

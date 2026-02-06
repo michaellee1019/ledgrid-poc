@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-ledwallleft@ledwallleft.local}"
+PI_HOST="${PI_HOST:-bedsidestreamdeck@bedsidestreamdeck.local}"
 REMOTE_DIR="${REMOTE_DIR:-ledgrid-pod}"
 SSH_OPTS="${SSH_OPTS:--o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new}"
 API_PORT="${API_PORT:-5000}"
