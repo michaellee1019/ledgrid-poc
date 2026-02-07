@@ -202,6 +202,7 @@
 
             setTextIfPresent('metricDeviceCount', deviceCount ? deviceCount.toString() : '--');
             setTextIfPresent('metricDriverFrames', formatNumber(aggregate.frames_sent, 0));
+            setTextIfPresent('metricDriverFps', formatNumber(status.pipeline_fps, 1));
             setTextIfPresent('metricDriverBytes', formatBytes(aggregate.bytes_sent));
             setTextIfPresent('metricDriverErrors', formatNumber(aggregate.errors, 0));
             setTextIfPresent('metricDriverAvg', formatMs(aggregate.avg_frame_duration_ms));
