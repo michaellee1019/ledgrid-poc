@@ -107,15 +107,15 @@ The firmware supports the following commands:
 ## Configuration
 
 ### Firmware (`firmware/esp32/src/main.cpp`)
-- `DEFAULT_STRIPS`: Number of LED strips (default: 7)
+- `DEFAULT_STRIPS`: Number of LED strips (default: 8)
 - `DEFAULT_LEDS_PER_STRIP`: LEDs per strip (default: 140)
-- `MAX_STRIPS`: Maximum strips supported (default: 7)
+- `MAX_STRIPS`: Maximum strips supported (default: 8)
 - `MAX_LEDS_PER_STRIP`: Maximum LEDs per strip (default: 500)
 - SPI pins: GPIO 7 (SCK), GPIO 8 (MISO), GPIO 9 (MOSI), GPIO 44 (CS)
 - LED pins: GPIO 1-6, 43 (D0-D6)
 
 ### Python (`drivers/led_layout.py`)
-- `DEFAULT_STRIP_COUNT`: Total number of strips (default: 7)
+- `DEFAULT_STRIP_COUNT`: Total number of strips (default: 32)
 - `DEFAULT_LEDS_PER_STRIP`: LEDs per strip (default: 140)
 
 ## The ESP32 XIAO S3 Board

@@ -141,8 +141,21 @@ static void process_command(const uint8_t *data, size_t length) {
 
     case CMD_SET_BRIGHTNESS: {
       if (length < 2) return;
+      
+      // Reject corrupted packets - legitimate brightness commands are exactly 2 bytes
+      // Packets with length > 10 are likely misaligned CMD_SET_ALL packets
+      if (length > 10) {
+        Serial.printf("⚠️ Rejecting corrupt brightness packet (length=%u, would set %u)\n", 
+                      length, data[1]);
+        return;
+      }
+      
+      uint8_t old_brightness = global_brightness;
       global_brightness = data[1];
       FastLED.setBrightness(global_brightness);
+      // Log brightness changes for diagnosis
+      Serial.printf("🔆 BRIGHTNESS CHANGE: %u → %u (millis=%lu, length=%u)\n", 
+                    old_brightness, global_brightness, millis(), length);
       DEBUG_PRINT("📥 Brightness → %u\n", global_brightness);
       break;
     }
@@ -288,6 +301,8 @@ void setup() {
   Serial.printf("  Strip 5: GPIO %d\n", PIN_STRIP_5);
   Serial.printf("  Strip 6: GPIO %d\n", PIN_STRIP_6);
   Serial.printf("  Strip 7: GPIO %d\n", PIN_STRIP_7);
+  Serial.printf("\n🔆 Initial brightness: %u/255 (~%d%%)\n", 
+                global_brightness, (global_brightness * 100) / 255);
 
   // Init FastLED for all 8 strips (maximum supported)
   // Using MAX_LEDS_PER_STRIP to allow dynamic configuration via CMD_CONFIG

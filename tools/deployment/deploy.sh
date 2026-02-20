@@ -113,6 +113,48 @@ flash_esp32_firmware() {
 setup_venv_and_dependencies() {
     log_info "Setting up Python virtual environment..."
 
+    log_info "Ensuring SPI0 is configured for 4 chip-select lines..."
+    ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
+set -euo pipefail
+CONFIG_FILES=()
+if [ -f /boot/firmware/config.txt ]; then
+  CONFIG_FILES+=("/boot/firmware/config.txt")
+fi
+if [ -f /boot/config.txt ]; then
+  CONFIG_FILES+=("/boot/config.txt")
+fi
+
+if [ ${#CONFIG_FILES[@]} -eq 0 ]; then
+  echo "[ERROR] Could not find a boot config file." >&2
+  exit 1
+fi
+
+ensure_line() {
+  local line="$1"
+  local file="$2"
+  if ! grep -qE "^\s*${line}\s*$" "$file"; then
+    echo "$line" | sudo tee -a "$file" >/dev/null
+  fi
+}
+
+for cfg in "${CONFIG_FILES[@]}"; do
+  sudo sed -i.bak '/dtoverlay=spi0-2cs/d' "$cfg"
+  sudo sed -i.bak '/dtoverlay=spi0-4cs/d' "$cfg"
+  sudo sed -i.bak '/dtoverlay=spi0-hw-cs/d' "$cfg"
+  sudo sed -i.bak '/dtoverlay=spi1-1cs/d' "$cfg"
+  sudo sed -i.bak '/dtoverlay=spi1-2cs/d' "$cfg"
+  sudo sed -i.bak '/dtoverlay=spi1-3cs/d' "$cfg"
+done
+
+TARGET_CONFIG="${CONFIG_FILES[0]}"
+ensure_line "dtparam=spi=on" "$TARGET_CONFIG"
+ensure_line "dtoverlay=spi0-4cs" "$TARGET_CONFIG"
+ensure_line "dtoverlay=spi1-2cs" "$TARGET_CONFIG"
+
+echo "[INFO] Updated ${TARGET_CONFIG}. Reboot required to expose /dev/spidev0.2 and /dev/spidev0.3."
+echo "[INFO] SPI1 (spi1-2cs) enabled as a fallback if spi0-4cs is not supported."
+EOF
+
     log_info "Ensuring Python build dependencies (spidev headers)..."
     ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
 set -euo pipefail
@@ -222,8 +264,11 @@ STATUS_FILE=\${STATUS_FILE:-run_state/status.json}
 ANIM_DIR=\${ANIM_DIR:-animation/plugins}
 POLL_INTERVAL=\${POLL_INTERVAL:-0.5}
 STATUS_INTERVAL=\${STATUS_INTERVAL:-0.5}
+SPI_SPEED=\${SPI_SPEED:-2000000}
+LEDGRID_SPI1_MODE=\${LEDGRID_SPI1_MODE:-0}
 PYTHONUNBUFFERED=1
 export PYTHONUNBUFFERED
+export LEDGRID_SPI1_MODE
 
 mkdir -p \"\$(dirname \"\$CONTROL_FILE\")\" \"\$(dirname \"\$STATUS_FILE\")\"
 
@@ -234,6 +279,7 @@ echo \"\"
 
 # Start controller process
 echo \"▶️  Starting controller (hardware) process...\"
+echo \"    SPI Speed: \$(echo \"scale=1; \$SPI_SPEED / 1000000\" | bc) MHz\"
 nohup python scripts/start_server.py \\
     --mode controller \\
     --control-file \"\$CONTROL_FILE\" \\
@@ -245,6 +291,7 @@ nohup python scripts/start_server.py \\
     --animation-speed-scale \"\$ANIMATION_SPEED_SCALE\" \\
     --poll-interval \"\$POLL_INTERVAL\" \\
     --status-interval \"\$STATUS_INTERVAL\" \\
+    --spi-speed \"\$SPI_SPEED\" \\
     > controller.log 2>&1 &
 echo \$! > run_state/controller.pid
 echo \"    Controller PID: \$(cat run_state/controller.pid)\"
@@ -294,6 +341,7 @@ ExecStart=/bin/bash /home/$PI_USER/$DEPLOY_DIR/scripts/start_systemd.sh
 Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1
+Environment=LEDGRID_SPI1_MODE=0
 
 [Install]
 WantedBy=multi-user.target

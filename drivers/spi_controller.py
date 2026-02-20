@@ -101,7 +101,13 @@ class LEDController:
         self.spi = spidev.SpiDev()
         self.spi.open(bus, device)
         self.spi.max_speed_hz = speed
-        self.spi.mode = mode
+        try:
+            self.spi.mode = mode
+        except OSError as exc:
+            raise OSError(
+                f"Failed to set SPI mode {mode} on /dev/spidev{bus}.{device}. "
+                "If this is SPI1, try setting LEDGRID_SPI1_MODE=0 and restart."
+            ) from exc
         self.spi.bits_per_word = 8
 
         self.strip_count = strips
@@ -170,11 +176,13 @@ class LEDController:
             if self.debug:
                 print(f"✓ Configuration refresh (strips={self.strip_count}, leds/strip={self.leds_per_strip})")
 
-        if self.current_brightness is not None and (force or (now - self._last_brightness_refresh) > self._config_refresh_interval):
-            self._xfer([CMD_SET_BRIGHTNESS, self.current_brightness & 0xFF])
-            self._last_brightness_refresh = now
-            if self.debug:
-                print(f"✓ Brightness refresh ({self.current_brightness})")
+        # Disabled periodic brightness refresh to reduce SPI corruption opportunities
+        # Brightness commands will only be sent when explicitly set via set_brightness()
+        # if self.current_brightness is not None and (force or (now - self._last_brightness_refresh) > self._config_refresh_interval):
+        #     self._xfer([CMD_SET_BRIGHTNESS, self.current_brightness & 0xFF])
+        #     self._last_brightness_refresh = now
+        #     if self.debug:
+        #         print(f"✓ Brightness refresh ({self.current_brightness})")
     
     def set_pixel(self, pixel, r, g, b):
         """Set a single pixel color"""

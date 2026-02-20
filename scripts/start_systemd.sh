@@ -33,6 +33,7 @@ STATUS_FILE=${STATUS_FILE:-run_state/status.json}
 ANIM_DIR=${ANIM_DIR:-animation/plugins}
 POLL_INTERVAL=${POLL_INTERVAL:-0.5}
 STATUS_INTERVAL=${STATUS_INTERVAL:-0.5}
+SPI_SPEED=${SPI_SPEED:-2000000}
 
 export PYTHONUNBUFFERED=1
 
@@ -49,6 +50,7 @@ python scripts/start_server.py \
     --animation-speed-scale "$ANIMATION_SPEED_SCALE" \
     --poll-interval "$POLL_INTERVAL" \
     --status-interval "$STATUS_INTERVAL" \
+    --spi-speed "$SPI_SPEED" \
     > controller.log 2>&1 &
 CONTROLLER_PID=$!
 echo "$CONTROLLER_PID" > run_state/controller.pid

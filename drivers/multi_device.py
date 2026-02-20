@@ -4,8 +4,9 @@ Multi-Device LED Grid Controller - SPI version
 Controls multiple ESP32 devices via SPI with different CS pins
 """
 
+import os
 import threading
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from drivers.spi_controller import LEDController, SPI_BUS, SPI_SPEED, SPI_MODE
 
 
@@ -20,7 +21,8 @@ class MultiDeviceLEDController:
                  strips_per_device: int = 8,
                  leds_per_strip: int = 140,
                  debug: bool = False,
-                 parallel: bool = True):
+                 parallel: bool = True,
+                 device_map: Optional[List[Tuple[int, int]]] = None):
         """
         Initialize multi-device LED controller
         
@@ -33,6 +35,7 @@ class MultiDeviceLEDController:
             leds_per_strip: LEDs per strip (default: 140)
             debug: Enable debug output
             parallel: Send data to devices in parallel using threads
+            device_map: Optional list of (bus, device) tuples for each device
         """
         self.num_devices = num_devices
         self.strips_per_device = strips_per_device
@@ -58,17 +61,20 @@ class MultiDeviceLEDController:
             print(f"  Total LEDs: {self.total_leds}")
             print(f"  Parallel mode: {parallel}")
         
+        # Build device map (auto-detects SPI1 fallback if needed)
+        self.device_map = device_map or self._build_device_map(num_devices, bus)
+        
         # Initialize individual device controllers
         self.devices: List[LEDController] = []
-        for device_id in range(num_devices):
+        for device_index, (device_bus, device_id) in enumerate(self.device_map):
             if self.debug:
-                print(f"\nInitializing Device {device_id} on /dev/spidev{bus}.{device_id}")
+                print(f"\nInitializing Device {device_index} on /dev/spidev{device_bus}.{device_id}")
             
             device = LEDController(
-                bus=bus,
+                bus=device_bus,
                 device=device_id,  # CE0, CE1, etc.
                 speed=speed,
-                mode=mode,
+                mode=self._resolve_mode(device_bus, mode),
                 strips=strips_per_device,
                 leds_per_strip=leds_per_strip,
                 debug=debug
@@ -250,3 +256,70 @@ class MultiDeviceLEDController:
                 'avg_frame_duration_ms': avg_frame_ms,
             }
         }
+    
+    @staticmethod
+    def _device_exists(bus: int, device: int) -> bool:
+        """Check if a /dev/spidev device exists"""
+        return os.path.exists(f"/dev/spidev{bus}.{device}")
+    
+    def _build_device_map(self, num_devices: int, primary_bus: int) -> List[Tuple[int, int]]:
+        """
+        Map devices to available SPI buses.
+        
+        Prefers sequential devices on the primary bus, but if additional chip
+        selects are unavailable (e.g. only 0.0/0.1 exist), falls back to SPI1.
+        
+        Args:
+            num_devices: Number of devices to map
+            primary_bus: Primary SPI bus (usually 0)
+            
+        Returns:
+            List of (bus, device_id) tuples
+        """
+        map_entries: List[Tuple[int, int]] = []
+        
+        # For 1-2 devices, just use the primary bus
+        if num_devices <= 2:
+            for device_id in range(num_devices):
+                map_entries.append((primary_bus, device_id))
+            return map_entries
+        
+        # For 3+ devices, check if CE2+ exist on primary bus
+        # If not, fall back to SPI1 for devices 3-4
+        if not self._device_exists(primary_bus, 2) and self._device_exists(1, 0):
+            # Use SPI0 for first 2 devices, SPI1 for the rest
+            for idx in range(num_devices):
+                if idx < 2:
+                    map_entries.append((primary_bus, idx))
+                else:
+                    map_entries.append((1, idx - 2))
+            
+            if self.debug:
+                print(f"[INFO] Using SPI1 fallback for devices {2} and {3}")
+        else:
+            # All devices on primary bus
+            for device_id in range(num_devices):
+                map_entries.append((primary_bus, device_id))
+        
+        return map_entries
+    
+    @staticmethod
+    def _resolve_mode(bus: int, default_mode: int) -> int:
+        """
+        Allow per-bus SPI mode overrides via env (LEDGRID_SPI0_MODE, LEDGRID_SPI1_MODE).
+        
+        Args:
+            bus: SPI bus number
+            default_mode: Default SPI mode
+            
+        Returns:
+            Resolved SPI mode
+        """
+        env_key = f"LEDGRID_SPI{bus}_MODE"
+        raw = os.environ.get(env_key)
+        if raw is None:
+            return default_mode
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return default_mode
