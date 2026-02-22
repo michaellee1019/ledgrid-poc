@@ -300,7 +300,7 @@ function renderParameterControls(schema, currentParams) {
     container.innerHTML = '';
     
     Object.entries(schema).forEach(([paramName, paramInfo]) => {
-        const currentValue = currentParams[paramName] || paramInfo.default;
+        const currentValue = currentParams[paramName] ?? paramInfo.default;
         const prettyName = humanizeParamName(paramName);
         const rangeText = (paramInfo.min !== undefined && paramInfo.max !== undefined)
             ? `Range: ${paramInfo.min} – ${paramInfo.max} (default ${paramInfo.default})`

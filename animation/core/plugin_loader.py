@@ -40,7 +40,7 @@ class AnimationPluginLoader:
         if (repo_root / "drivers").exists() and str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
         if str(self.plugins_dir.absolute()) not in sys.path:
-            sys.path.insert(0, str(self.plugins_dir.absolute()))
+            sys.path.append(str(self.plugins_dir.absolute()))
         
         self.loaded_plugins: Dict[str, Type[AnimationBase]] = {}
         self.plugin_modules: Dict[str, Any] = {}
@@ -82,9 +82,11 @@ class AnimationPluginLoader:
             if not file_path or not file_path.exists():
                 print(f"Plugin file not found: {plugin_name}")
                 return None
+
+            module_name = f"animation_plugin_{plugin_name}"
             
             # Load module from file
-            spec = importlib.util.spec_from_file_location(plugin_name, file_path)
+            spec = importlib.util.spec_from_file_location(module_name, file_path)
             if spec is None or spec.loader is None:
                 print(f"Could not create spec for plugin: {plugin_name}")
                 return None
@@ -94,8 +96,8 @@ class AnimationPluginLoader:
             # If module was previously loaded, reload it
             if plugin_name in self.plugin_modules:
                 # Remove from sys.modules to force reload
-                if plugin_name in sys.modules:
-                    del sys.modules[plugin_name]
+                if module_name in sys.modules:
+                    del sys.modules[module_name]
             
             spec.loader.exec_module(module)
             self.plugin_modules[plugin_name] = module

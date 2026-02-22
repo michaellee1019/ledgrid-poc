@@ -105,6 +105,7 @@ class AnimationManager:
         "conway_life",
         "space_invaders",
         "spiral_single",
+        "dashboard",
     }
     
     def __init__(self, controller: LEDController, plugins_dir: Optional[str] = None,
