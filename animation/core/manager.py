@@ -102,6 +102,7 @@ class AnimationManager:
         "simple_test",
         "tetris",
         "christmas_tree",
+        "conway_life",
         "space_invaders",
         "spiral_single",
     }
