@@ -276,6 +276,21 @@ class MultiDeviceLEDController:
         Returns:
             List of (bus, device_id) tuples
         """
+        # Physical left-to-right board order for 4-board wall installs:
+        # SPI1-CS0, SPI1-CS1, SPI0-CS1, SPI0-CS0
+        # This keeps logical strip order aligned with how panels are mounted.
+        if (
+            num_devices == 4
+            and self._device_exists(1, 1)
+            and self._device_exists(1, 0)
+            and self._device_exists(primary_bus, 1)
+            and self._device_exists(primary_bus, 0)
+        ):
+            reordered = [(1, 0), (1, 1), (primary_bus, 1), (primary_bus, 0)]
+            if self.debug:
+                print(f"[INFO] Using physical board order map: {reordered}")
+            return reordered
+
         map_entries: List[Tuple[int, int]] = []
         
         # For 1-2 devices, just use the primary bus
