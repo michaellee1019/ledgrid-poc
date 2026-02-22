@@ -4,7 +4,7 @@
 
 {% block content %}
 <div class="row mb-4">
-    <div class="col-lg-4 mb-4 mb-lg-0 order-1 order-lg-2">
+    <div class="col-lg-6 mb-4 mb-lg-0 order-1 order-lg-2">
         <div class="sticky-preview">
             <div class="card mb-3">
                 <div class="card-header d-flex justify-content-between align-items-center">
@@ -232,7 +232,7 @@
         </div>
     </div>
 
-    <div class="col-lg-8 order-2 order-lg-1">
+    <div class="col-lg-6 order-2 order-lg-1">
         <div class="card">
             <div class="card-header pb-0">
                 <ul class="nav nav-tabs card-header-tabs" id="dashboardTabs" role="tablist">
@@ -334,8 +334,8 @@
 
 {% block scripts %}
 <script>
-    const INITIAL_STRIP_COUNT = {{ status.led_info.strip_count | default(32) }};
-    const INITIAL_LEDS_PER_STRIP = {{ status.led_info.leds_per_strip | default(140) }};
+    const INITIAL_STRIP_COUNT = Number({{ status.led_info.strip_count }});
+    const INITIAL_LEDS_PER_STRIP = Number({{ status.led_info.leds_per_strip }});
     const INITIAL_STATUS = {{ status | tojson }};
 
     // Animation Renderer
@@ -360,8 +360,8 @@
             this.previewParams = null;
 
             // LED configuration - will be updated from server
-            this.stripCount = INITIAL_STRIP_COUNT;
-            this.ledsPerStrip = INITIAL_LEDS_PER_STRIP;
+            this.stripCount = Number.isFinite(INITIAL_STRIP_COUNT) && INITIAL_STRIP_COUNT > 0 ? INITIAL_STRIP_COUNT : 1;
+            this.ledsPerStrip = Number.isFinite(INITIAL_LEDS_PER_STRIP) && INITIAL_LEDS_PER_STRIP > 0 ? INITIAL_LEDS_PER_STRIP : 1;
             this.totalLeds = this.stripCount * this.ledsPerStrip;
 
             // Rendering configuration
@@ -369,27 +369,110 @@
             this.ledSpacing = 0.5;
             this.stripSpacing = 1;
             this.canvas.addEventListener('click', () => requestRandomHole());
+            this._onResize = () => this.syncDisplayWidth();
+            window.addEventListener('resize', this._onResize);
 
             this.setupCanvas();
+            this.initialize();
+        }
+
+        async initialize() {
+            await this.syncLayoutFromStatus();
+            this.setupCanvas();
+            this.syncDisplayWidth();
+            requestAnimationFrame(() => this.syncDisplayWidth());
             this.startRendering();
         }
 
+        applyLedInfo(ledInfo) {
+            if (!ledInfo || typeof ledInfo !== 'object') {
+                return false;
+            }
+
+            const stripCount = Number(ledInfo.strip_count);
+            const ledsPerStrip = Number(ledInfo.leds_per_strip);
+            if (!Number.isFinite(stripCount) || !Number.isFinite(ledsPerStrip) ||
+                stripCount <= 0 || ledsPerStrip <= 0) {
+                return false;
+            }
+
+            const providedTotal = Number(ledInfo.total_leds);
+            const totalLeds = Number.isFinite(providedTotal) && providedTotal > 0
+                ? providedTotal
+                : stripCount * ledsPerStrip;
+            const changed = this.stripCount !== stripCount ||
+                this.ledsPerStrip !== ledsPerStrip ||
+                this.totalLeds !== totalLeds;
+            if (!changed) {
+                return false;
+            }
+
+            this.stripCount = stripCount;
+            this.ledsPerStrip = ledsPerStrip;
+            this.totalLeds = totalLeds;
+            this.setupCanvas();
+            return true;
+        }
+
+        async syncLayoutFromStatus() {
+            try {
+                const response = await fetch('/api/status');
+                if (!response.ok) {
+                    return;
+                }
+                const status = await response.json();
+                this.applyLedInfo(status && status.led_info);
+            } catch (error) {
+                console.warn('Failed to load LED layout from /api/status', error);
+            }
+        }
+
         setupCanvas() {
-            // Calculate canvas dimensions based on rotated LED layout (strips run horizontally)
+            // Match the canvas dimensions to the exact grid footprint at a fixed 2x UI scale.
             const totalWidth = this.stripCount * (this.ledSize + this.stripSpacing);
             const totalHeight = this.ledsPerStrip * (this.ledSize + this.ledSpacing);
-
-            this.canvas.width = Math.min(totalWidth * 6, 900);
-            this.canvas.height = Math.min(totalHeight * 4, 900);
-
-            // Scale LEDs to fit canvas
-            this.scaleX = this.canvas.width / totalWidth;
-            this.scaleY = this.canvas.height / totalHeight;
-            this.scale = Math.min(this.scaleX, this.scaleY);
+            this.scale = 2;
 
             this.actualLedSize = Math.max(1, this.ledSize * this.scale);
             this.actualLedSpacing = this.ledSpacing * this.scale;
             this.actualStripSpacing = this.stripSpacing * this.scale;
+
+            const gridPixelWidth = this.stripCount * (this.actualLedSize + this.actualStripSpacing);
+            const gridPixelHeight = this.ledsPerStrip * (this.actualLedSize + this.actualLedSpacing);
+            this.canvas.width = Math.max(1, Math.ceil(gridPixelWidth));
+            this.canvas.height = Math.max(1, Math.ceil(gridPixelHeight));
+            this.syncDisplayWidth();
+        }
+
+        getTargetDisplayWidth() {
+            const previewContainer = document.getElementById('rendererContainer');
+            const previewWidth = previewContainer ? previewContainer.clientWidth : 0;
+            const card = document.querySelector('#tab-animations .animation-card');
+            const cardWidth = card ? card.getBoundingClientRect().width : 0;
+            const controlButton = document.querySelector('#tab-controls .control-animation-btn');
+            const controlButtonWidth = controlButton ? controlButton.getBoundingClientRect().width : 0;
+            const targetWidth = cardWidth > 0 ? cardWidth : controlButtonWidth;
+
+            if (targetWidth > 0 && previewWidth > 0) {
+                return Math.min(targetWidth, previewWidth);
+            }
+            if (targetWidth > 0) {
+                return targetWidth;
+            }
+            if (previewWidth > 0) {
+                return previewWidth;
+            }
+            return 0;
+        }
+
+        syncDisplayWidth() {
+            const displayWidth = this.getTargetDisplayWidth();
+            if (displayWidth <= 0) {
+                return;
+            }
+            this.canvas.style.width = `${Math.round(displayWidth)}px`;
+            this.canvas.style.maxWidth = '100%';
+            this.canvas.style.height = 'auto';
         }
 
         async fetchFrameData() {
@@ -445,20 +528,13 @@
         }
 
         renderFrame(frameData) {
-            if (!frameData || !frameData.frame_data) {
-                this.renderNoAnimation();
-                return;
+            if (frameData && frameData.led_info) {
+                this.applyLedInfo(frameData.led_info);
             }
 
-            // Update LED configuration if changed
-            if (frameData.led_info) {
-                if (this.stripCount !== frameData.led_info.strip_count ||
-                    this.ledsPerStrip !== frameData.led_info.leds_per_strip) {
-                    this.stripCount = frameData.led_info.strip_count;
-                    this.ledsPerStrip = frameData.led_info.leds_per_strip;
-                    this.totalLeds = frameData.led_info.total_leds;
-                    this.setupCanvas();
-                }
+            if (!frameData || !Array.isArray(frameData.frame_data)) {
+                this.renderNoAnimation();
+                return;
             }
 
             // Clear canvas
@@ -630,6 +706,7 @@
             container.style.display = 'block';
             button.innerHTML = '<i class="fas fa-eye"></i> Hide';
             if (animationRenderer) {
+                animationRenderer.syncDisplayWidth();
                 animationRenderer.startRendering();
             }
         } else {

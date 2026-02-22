@@ -8,7 +8,7 @@ and adjusting parameters in real-time.
 
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from flask import Flask, jsonify, render_template, request
 from werkzeug.utils import secure_filename
@@ -144,6 +144,7 @@ class AnimationWebInterface:
         def api_get_preview(animation_name):
             """API: Get preview frame data for a specific animation"""
             try:
+                self._sync_preview_layout_from_status()
                 # Get a sample frame from the animation without starting it
                 preview_data = self.preview_manager.get_animation_preview(animation_name)
                 return jsonify(preview_data)
@@ -151,11 +152,7 @@ class AnimationWebInterface:
                 return jsonify({
                     'error': f'Failed to get preview for {animation_name}: {str(e)}',
                     'frame_data': [],
-                    'led_info': {
-                        'total_leds': self.preview_manager.controller.total_leds,
-                        'strip_count': self.preview_manager.controller.strip_count,
-                        'leds_per_strip': self.preview_manager.controller.leds_per_strip
-                    },
+                    'led_info': self._fallback_led_info(),
                     'is_running': False,
                     'frame_count': 0,
                     'timestamp': time.time()
@@ -165,6 +162,7 @@ class AnimationWebInterface:
         def api_get_preview_with_params(animation_name):
             """API: Get preview frame data for a specific animation with custom parameters"""
             try:
+                self._sync_preview_layout_from_status()
                 params = request.get_json() or {}
                 preview_data = self.preview_manager.get_animation_preview_with_params(animation_name, params)
                 return jsonify(preview_data)
@@ -172,11 +170,7 @@ class AnimationWebInterface:
                 return jsonify({
                     'error': f'Failed to get preview for {animation_name}: {str(e)}',
                     'frame_data': [],
-                    'led_info': {
-                        'total_leds': self.preview_manager.controller.total_leds,
-                        'strip_count': self.preview_manager.controller.strip_count,
-                        'leds_per_strip': self.preview_manager.controller.leds_per_strip
-                    },
+                    'led_info': self._fallback_led_info(),
                     'is_running': False,
                     'frame_count': 0,
                     'timestamp': time.time()
@@ -285,7 +279,8 @@ class AnimationWebInterface:
         @self.app.route('/emoji')
         def emoji_arranger_page():
             """Emoji arranger page"""
-            return render_template('emoji_arranger.html')
+            status = self._status_payload()
+            return render_template('emoji_arranger.html', status=status)
     
     def run(self, debug=False):
         """Start the web server"""
@@ -297,6 +292,61 @@ class AnimationWebInterface:
         
         self.app.run(host=self.host, port=self.port, debug=debug, threaded=True)
 
+    def _fallback_led_info(self) -> Dict[str, int]:
+        """Current preview-manager dimensions used as a fallback layout."""
+        return {
+            'total_leds': self.preview_manager.controller.total_leds,
+            'strip_count': self.preview_manager.controller.strip_count,
+            'leds_per_strip': self.preview_manager.controller.leds_per_strip,
+        }
+
+    @staticmethod
+    def _coerce_positive_int(value: Any, fallback: int) -> int:
+        """Parse positive integers from untrusted payloads."""
+        try:
+            parsed = int(value)
+            if parsed > 0:
+                return parsed
+        except (TypeError, ValueError):
+            pass
+        return fallback
+
+    def _normalize_led_info(self, led_info: Any) -> Dict[str, int]:
+        """Normalize LED layout payloads into a validated shape."""
+        fallback = self._fallback_led_info()
+        if not isinstance(led_info, dict):
+            return fallback
+
+        strip_count = self._coerce_positive_int(led_info.get('strip_count'), fallback['strip_count'])
+        leds_per_strip = self._coerce_positive_int(led_info.get('leds_per_strip'), fallback['leds_per_strip'])
+        return {
+            'strip_count': strip_count,
+            'leds_per_strip': leds_per_strip,
+            'total_leds': strip_count * leds_per_strip,
+        }
+
+    def _apply_preview_layout(self, led_info: Dict[str, int]):
+        """Keep preview manager/controller dimensions in lock-step."""
+        self.preview_manager.controller.strip_count = led_info['strip_count']
+        self.preview_manager.controller.leds_per_strip = led_info['leds_per_strip']
+        self.preview_manager.controller.total_leds = led_info['total_leds']
+
+        preview_controller = getattr(self.preview_manager, 'preview_controller', None)
+        if preview_controller is not None:
+            preview_controller.strip_count = led_info['strip_count']
+            preview_controller.leds_per_strip = led_info['leds_per_strip']
+            preview_controller.total_leds = led_info['total_leds']
+
+    def _sync_preview_layout_from_status(self, raw_status: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
+        """
+        Sync preview dimensions from controller status so preview and live frames
+        use the same geometry.
+        """
+        status = raw_status if isinstance(raw_status, dict) else (self.control_channel.read_status() or {})
+        led_info = self._normalize_led_info(status.get('led_info'))
+        self._apply_preview_layout(led_info)
+        return led_info
+
     def _status_payload(self, decode_frame: bool = False) -> Dict[str, Any]:
         """Normalize the controller status so every consumer sees the same structure."""
         raw_status = self.control_channel.read_status()
@@ -304,13 +354,7 @@ class AnimationWebInterface:
             return self._empty_status()
 
         status = dict(raw_status)
-        default_led_info = {
-            'total_leds': self.preview_manager.controller.total_leds,
-            'strip_count': self.preview_manager.controller.strip_count,
-            'leds_per_strip': self.preview_manager.controller.leds_per_strip
-        }
-
-        status.setdefault('led_info', default_led_info)
+        status['led_info'] = self._sync_preview_layout_from_status(status)
         stats = status.get('animation_stats') or status.get('stats') or {}
         status['animation_stats'] = stats
         status['stats'] = stats
@@ -371,11 +415,7 @@ class AnimationWebInterface:
             'stats': {},
             'animation_hash': None,
             'animation_info': None,
-            'led_info': {
-                'total_leds': self.preview_manager.controller.total_leds,
-                'strip_count': self.preview_manager.controller.strip_count,
-                'leds_per_strip': self.preview_manager.controller.leds_per_strip
-            },
+            'led_info': self._fallback_led_info(),
             'driver_stats': {},
             'frame_data': [],
             'frame_data_encoded': '',

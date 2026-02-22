@@ -110,6 +110,8 @@ let currentAnimation = 'emoji_arranger';
 let animationRenderer = null;
 let parameterUpdateTimeout = null;
 let currentParams = {}; // Track current parameters for preview
+const INITIAL_STRIP_COUNT = Number({{ status.led_info.strip_count }});
+const INITIAL_LEDS_PER_STRIP = Number({{ status.led_info.leds_per_strip }});
 
 // Initialize when page loads
 document.addEventListener('DOMContentLoaded', function() {
@@ -300,14 +302,56 @@ class LEDAnimationRenderer {
     constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
         this.ctx = this.canvas.getContext('2d');
-        this.stripCount = 32;
-        this.ledsPerStrip = 140;
+        this.stripCount = Number.isFinite(INITIAL_STRIP_COUNT) && INITIAL_STRIP_COUNT > 0 ? INITIAL_STRIP_COUNT : 1;
+        this.ledsPerStrip = Number.isFinite(INITIAL_LEDS_PER_STRIP) && INITIAL_LEDS_PER_STRIP > 0 ? INITIAL_LEDS_PER_STRIP : 1;
         this.ledSize = 6;
         this.ledSpacing = 0.5;
         this.stripSpacing = 1;
 
         this.setupCanvas();
+        this.initialize();
+    }
+
+    async initialize() {
+        await this.syncLayoutFromStatus();
+        this.setupCanvas();
         this.startRendering();
+    }
+
+    applyLedInfo(ledInfo) {
+        if (!ledInfo || typeof ledInfo !== 'object') {
+            return false;
+        }
+
+        const stripCount = Number(ledInfo.strip_count);
+        const ledsPerStrip = Number(ledInfo.leds_per_strip);
+        if (!Number.isFinite(stripCount) || !Number.isFinite(ledsPerStrip) ||
+            stripCount <= 0 || ledsPerStrip <= 0) {
+            return false;
+        }
+
+        const changed = this.stripCount !== stripCount || this.ledsPerStrip !== ledsPerStrip;
+        if (!changed) {
+            return false;
+        }
+
+        this.stripCount = stripCount;
+        this.ledsPerStrip = ledsPerStrip;
+        this.setupCanvas();
+        return true;
+    }
+
+    async syncLayoutFromStatus() {
+        try {
+            const response = await fetch('/api/status');
+            if (!response.ok) {
+                return;
+            }
+            const status = await response.json();
+            this.applyLedInfo(status && status.led_info);
+        } catch (error) {
+            console.warn('Failed to load LED layout from /api/status', error);
+        }
     }
 
     setupCanvas() {
@@ -346,7 +390,11 @@ class LEDAnimationRenderer {
     }
 
     renderFrame(frameData) {
-        if (!frameData || !frameData.frame_data) {
+        if (frameData && frameData.led_info) {
+            this.applyLedInfo(frameData.led_info);
+        }
+
+        if (!frameData || !Array.isArray(frameData.frame_data)) {
             this.renderNoAnimation();
             return;
         }
