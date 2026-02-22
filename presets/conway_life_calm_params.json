@@ -1,0 +1,15 @@
+{
+  "animation": "conway_life",
+  "source": "codex-local",
+  "saved_at": "2026-02-22T00:00:00Z",
+  "params": {
+    "speed": 0.7,
+    "brightness": 0.45,
+    "wrap_edges": true,
+    "random_density": 0.09,
+    "phase_frames": 14,
+    "generations_per_second": 3.0,
+    "glider_interval": 18.0,
+    "stagnation_generations": 180
+  }
+}
