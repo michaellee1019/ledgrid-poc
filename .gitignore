@@ -7,3 +7,5 @@
 **/__pycache__/
 .venv-web
 run_state
+calibration_photos/*
+config/plant_pixel_map.json

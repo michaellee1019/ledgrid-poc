@@ -104,6 +104,7 @@ class AnimationManager:
         "christmas_tree",
         "conway_life",
         "plant_calibration",
+        "plant_mask_highlight",
         "space_invaders",
         "spiral_single",
     }
