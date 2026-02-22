@@ -103,6 +103,7 @@ class AnimationManager:
         "tetris",
         "christmas_tree",
         "conway_life",
+        "plant_calibration",
         "space_invaders",
         "spiral_single",
     }
