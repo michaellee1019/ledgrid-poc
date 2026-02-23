@@ -24,6 +24,24 @@ High-performance SPI-controlled LED grid with a web UI and hot-swappable animati
 4. Open the UI:
    - http://localhost:5000/
 
+## Guided Calibration
+
+1. In the web UI, start `Plant Calibration`.
+2. No-tripod flow (default): set `manual_pattern_index=-1` so patterns auto-cycle while you shoot.
+3. Recommended handsfree capture settings in the animation:
+   - `pattern_hold_seconds=8`
+   - `transition_seconds=1`
+4. Run the guided workflow:
+   ```bash
+   .venv-web/bin/python scripts/calibrate.py --guided-capture --capture-mode handsfree --pattern-files auto --image-dir calibration_photos
+   ```
+5. Optional manual flow (if you can interact during capture):
+   - set `manual_pattern_index` to `0..4` and use `--capture-mode manual`
+6. If you only want the camera/capture checklist:
+   ```bash
+   .venv-web/bin/python scripts/calibrate.py --capture-guide-only --capture-mode handsfree --image-dir calibration_photos
+   ```
+
 ## Documentation
 
 - `docs/README.md` - system overview and setup details

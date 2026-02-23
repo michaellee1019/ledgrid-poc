@@ -6,9 +6,11 @@ Flask-based web server for controlling animations, uploading plugins,
 and adjusting parameters in real-time.
 """
 
+import json
+import re
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from flask import Flask, jsonify, render_template, request
 from werkzeug.utils import secure_filename
@@ -43,6 +45,8 @@ class AnimationWebInterface:
         self.preview_manager = preview_manager
         self.host = host
         self.port = port
+        self.project_root = Path(__file__).resolve().parents[1]
+        self.painter_presets_dir = self.project_root / "presets" / "frame_painter"
 
         # Create Flask app
         self.app = Flask(__name__)
@@ -50,10 +54,11 @@ class AnimationWebInterface:
 
         # Configure upload settings
         self.app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1MB max file size
-        self.app.config['UPLOAD_FOLDER'] = str(Path(__file__).resolve().parents[1] / "animation" / "plugins")
+        self.app.config['UPLOAD_FOLDER'] = str(self.project_root / "animation" / "plugins")
 
         # Ensure upload directory exists
         Path(self.app.config['UPLOAD_FOLDER']).mkdir(exist_ok=True)
+        self.painter_presets_dir.mkdir(parents=True, exist_ok=True)
 
         # Register routes
         self._register_routes()
@@ -139,6 +144,91 @@ class AnimationWebInterface:
         def api_get_frame():
             """API: Get current animation frame data"""
             return jsonify(self._status_payload(decode_frame=True))
+
+        @self.app.route('/api/painter/updates', methods=['POST'])
+        def api_painter_apply_updates():
+            """API: Apply sparse frame painter pixel updates."""
+            payload = request.get_json(silent=True) or {}
+            updates = payload.get('updates')
+            if not isinstance(updates, list) or not updates:
+                return jsonify({'error': 'updates must be a non-empty list'}), 400
+
+            self.control_channel.send_command('painter_apply_updates', updates=updates)
+            return jsonify({'success': True, 'queued_updates': len(updates)})
+
+        @self.app.route('/api/painter/frame', methods=['POST'])
+        def api_painter_set_frame():
+            """API: Replace the entire frame painter frame."""
+            payload = request.get_json(silent=True) or {}
+            led_info = self._normalize_led_info(payload.get('led_info'))
+            normalized_frame = self._extract_normalized_frame(payload, led_info=led_info)
+            if normalized_frame is None:
+                return jsonify({'error': 'Provide frame_data or frame_data_encoded'}), 400
+
+            self.control_channel.send_command(
+                'painter_set_frame',
+                frame_data_encoded=encode_frame_data(normalized_frame),
+                frame_data_length=len(normalized_frame),
+            )
+            return jsonify({'success': True, 'frame_data_length': len(normalized_frame)})
+
+        @self.app.route('/api/painter/clear', methods=['POST'])
+        def api_painter_clear():
+            """API: Clear the frame painter output to black."""
+            self.control_channel.send_command('painter_clear')
+            return jsonify({'success': True})
+
+        @self.app.route('/api/painter/presets')
+        def api_painter_list_presets():
+            """API: List available frame painter presets."""
+            return jsonify({'presets': self._list_painter_presets()})
+
+        @self.app.route('/api/painter/presets/<preset_id>')
+        def api_painter_get_preset(preset_id: str):
+            """API: Load a frame painter preset by id."""
+            preset = self._load_painter_preset(preset_id)
+            if not preset:
+                return jsonify({'error': 'Preset not found'}), 404
+            return jsonify(preset)
+
+        @self.app.route('/api/painter/presets', methods=['POST'])
+        def api_painter_save_preset():
+            """API: Save or overwrite a frame painter preset."""
+            payload = request.get_json(silent=True) or {}
+            raw_name = (payload.get('name') or '').strip()
+            if not raw_name:
+                return jsonify({'error': 'Preset name is required'}), 400
+
+            preset_id = self._sanitize_preset_id(raw_name)
+            if not preset_id:
+                return jsonify({'error': 'Preset name is invalid'}), 400
+
+            status = self._status_payload()
+            led_info = self._normalize_led_info(payload.get('led_info') or status.get('led_info'))
+            frame_data = self._extract_normalized_frame(payload, led_info=led_info)
+            if frame_data is None:
+                frame_data = self._extract_normalized_frame(status, led_info=led_info)
+            if frame_data is None:
+                frame_data = [[0, 0, 0] for _ in range(led_info['total_leds'])]
+
+            existing = self._load_painter_preset(preset_id)
+            now = time.time()
+            preset_payload = {
+                'preset_id': preset_id,
+                'name': raw_name,
+                'created_at': existing.get('created_at', now) if isinstance(existing, dict) else now,
+                'updated_at': now,
+                'led_info': led_info,
+                'frame_encoding': FRAME_ENCODING_NAME,
+                'frame_data_length': len(frame_data),
+                'frame_data_encoded': encode_frame_data(frame_data),
+            }
+            self._write_painter_preset(preset_id, preset_payload)
+
+            return jsonify({
+                'success': True,
+                'preset': self._preset_summary(preset_payload),
+            })
 
         @self.app.route('/api/preview/<animation_name>')
         def api_get_preview(animation_name):
@@ -281,12 +371,19 @@ class AnimationWebInterface:
             """Emoji arranger page"""
             status = self._status_payload()
             return render_template('emoji_arranger.html', status=status)
+
+        @self.app.route('/painter')
+        def frame_painter_page():
+            """Frame painter page."""
+            status = self._status_payload()
+            return render_template('painter.html', status=status)
     
     def run(self, debug=False):
         """Start the web server"""
         print(f"🌐 Starting web interface at http://{self.host}:{self.port}")
         print(f"   Dashboard: http://{self.host}:{self.port}/")
         print(f"   Control:   http://{self.host}:{self.port}/control")
+        print(f"   Painter:   http://{self.host}:{self.port}/painter")
         print(f"   Emoji:     http://{self.host}:{self.port}/emoji")
         print(f"   Upload:    http://{self.host}:{self.port}/upload")
         
@@ -324,6 +421,138 @@ class AnimationWebInterface:
             'leds_per_strip': leds_per_strip,
             'total_leds': strip_count * leds_per_strip,
         }
+
+    @staticmethod
+    def _coerce_byte(value: Any) -> int:
+        """Clamp any input to an 8-bit channel value."""
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = 0
+        return max(0, min(255, parsed))
+
+    def _normalize_frame_data(self, frame_data: Any, led_info: Optional[Dict[str, int]] = None) -> Optional[List[List[int]]]:
+        """Normalize incoming frame payloads to a fixed-length RGB list."""
+        if not isinstance(frame_data, list):
+            return None
+
+        layout = self._normalize_led_info(led_info)
+        total_leds = layout['total_leds']
+        normalized: List[List[int]] = []
+
+        for pixel in frame_data[:total_leds]:
+            if isinstance(pixel, (list, tuple)) and len(pixel) >= 3:
+                normalized.append([
+                    self._coerce_byte(pixel[0]),
+                    self._coerce_byte(pixel[1]),
+                    self._coerce_byte(pixel[2]),
+                ])
+            else:
+                normalized.append([0, 0, 0])
+
+        if len(normalized) < total_leds:
+            normalized.extend([[0, 0, 0] for _ in range(total_leds - len(normalized))])
+
+        return normalized
+
+    def _extract_normalized_frame(self, payload: Dict[str, Any], led_info: Optional[Dict[str, int]] = None) -> Optional[List[List[int]]]:
+        """Read either raw or encoded frame payloads and normalize the result."""
+        if not isinstance(payload, dict):
+            return None
+
+        frame_data = payload.get('frame_data')
+        normalized = self._normalize_frame_data(frame_data, led_info=led_info)
+        if normalized is not None:
+            return normalized
+
+        encoded = payload.get('frame_data_encoded')
+        if isinstance(encoded, str) and encoded:
+            decoded = decode_frame_data(encoded)
+            return self._normalize_frame_data(decoded, led_info=led_info)
+
+        return None
+
+    @staticmethod
+    def _sanitize_preset_id(raw_name: str) -> str:
+        """Convert user-provided preset names to a filesystem-safe id."""
+        cleaned = re.sub(r'[^a-zA-Z0-9_-]+', '_', (raw_name or '').strip().lower())
+        cleaned = re.sub(r'_+', '_', cleaned).strip('_')
+        return cleaned[:64]
+
+    def _preset_path(self, preset_id: str) -> Optional[Path]:
+        """Resolve a preset id to a file path in the painter preset directory."""
+        safe_id = self._sanitize_preset_id(preset_id)
+        if not safe_id:
+            return None
+        return self.painter_presets_dir / f"{safe_id}.json"
+
+    def _read_json_file(self, path: Path) -> Optional[Dict[str, Any]]:
+        """Read a JSON object from disk."""
+        try:
+            raw = path.read_text(encoding='utf-8')
+            payload = json.loads(raw)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _preset_summary(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a concise summary shape for preset list responses."""
+        return {
+            'preset_id': payload.get('preset_id'),
+            'name': payload.get('name'),
+            'updated_at': payload.get('updated_at'),
+            'created_at': payload.get('created_at'),
+            'led_info': self._normalize_led_info(payload.get('led_info')),
+            'frame_data_length': self._coerce_positive_int(payload.get('frame_data_length'), 0),
+        }
+
+    def _list_painter_presets(self) -> List[Dict[str, Any]]:
+        """Read and summarize all painter presets from disk."""
+        summaries: List[Dict[str, Any]] = []
+        for path in sorted(self.painter_presets_dir.glob('*.json')):
+            payload = self._read_json_file(path)
+            if not payload:
+                continue
+            payload.setdefault('preset_id', path.stem)
+            payload.setdefault('name', path.stem)
+            summaries.append(self._preset_summary(payload))
+        summaries.sort(key=lambda preset: preset.get('updated_at') or 0, reverse=True)
+        return summaries
+
+    def _load_painter_preset(self, preset_id: str) -> Optional[Dict[str, Any]]:
+        """Load and decode a painter preset for editing."""
+        path = self._preset_path(preset_id)
+        if path is None or not path.exists():
+            return None
+
+        payload = self._read_json_file(path)
+        if not payload:
+            return None
+
+        payload.setdefault('preset_id', path.stem)
+        payload.setdefault('name', path.stem)
+        led_info = self._normalize_led_info(payload.get('led_info'))
+        frame_data = self._extract_normalized_frame(payload, led_info=led_info)
+        if frame_data is None:
+            frame_data = [[0, 0, 0] for _ in range(led_info['total_leds'])]
+
+        return {
+            **payload,
+            'led_info': led_info,
+            'frame_data': frame_data,
+            'frame_data_length': len(frame_data),
+            'frame_encoding': FRAME_ENCODING_NAME,
+        }
+
+    def _write_painter_preset(self, preset_id: str, payload: Dict[str, Any]):
+        """Persist a painter preset atomically."""
+        path = self._preset_path(preset_id)
+        if path is None:
+            raise ValueError("Invalid preset id")
+
+        tmp_path = path.with_suffix('.json.tmp')
+        tmp_path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+        tmp_path.replace(path)
 
     def _apply_preview_layout(self, led_info: Dict[str, int]):
         """Keep preview manager/controller dimensions in lock-step."""
@@ -364,6 +593,9 @@ class AnimationWebInterface:
         status.setdefault('driver_stats', {})
         status.setdefault('current_animation', None)
         status.setdefault('is_running', False)
+        status.setdefault('mode', 'animation' if status.get('is_running') else 'idle')
+        status.setdefault('painter_active', status.get('mode') == 'painter')
+        status.setdefault('painter_updated_at', None)
         status.setdefault('frame_count', 0)
         status.setdefault('target_fps', 0)
         status.setdefault('actual_fps', 0)
@@ -406,6 +638,9 @@ class AnimationWebInterface:
         """Fallback status when controller process has not written a status file yet."""
         return {
             'is_running': False,
+            'mode': 'idle',
+            'painter_active': False,
+            'painter_updated_at': None,
             'current_animation': None,
             'frame_count': 0,
             'uptime': 0,

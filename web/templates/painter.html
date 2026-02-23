@@ -1,0 +1,644 @@
+{% extends "base.html" %}
+
+{% block title %}Frame Painter - LED Grid{% endblock %}
+
+{% block content %}
+<style>
+    .painter-canvas-wrap {
+        overflow: auto;
+        max-height: 78vh;
+        border: 1px solid #d9d9d9;
+        border-radius: 8px;
+        background: #121212;
+        padding: 10px;
+    }
+
+    #painterCanvas {
+        display: block;
+        margin: 0 auto;
+        image-rendering: pixelated;
+        cursor: crosshair;
+        touch-action: none;
+    }
+
+    .preset-list {
+        max-height: 320px;
+        overflow-y: auto;
+    }
+</style>
+
+<div class="row">
+    <div class="col-lg-8 mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h2 class="mb-0"><i class="fas fa-paintbrush"></i> Frame Painter</h2>
+            <span class="badge bg-secondary" id="layoutBadge">--</span>
+        </div>
+        <p class="text-muted small mb-3">
+            Click/drag to paint individual LEDs. Changes are streamed to hardware as sparse pixel updates.
+        </p>
+
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0">Canvas</h6>
+                <small class="text-muted" id="paintStatus">Ready</small>
+            </div>
+            <div class="card-body">
+                <div class="painter-canvas-wrap" id="canvasWrap">
+                    <canvas id="painterCanvas" width="1" height="1"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4 mb-4">
+        <div class="card mb-3">
+            <div class="card-header">
+                <h6 class="mb-0">Tools</h6>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="colorPicker" class="form-label">Color</label>
+                    <input type="color" class="form-control form-control-color" id="colorPicker" value="#ff4500">
+                </div>
+
+                <div class="mb-3">
+                    <label for="brightnessRange" class="form-label d-flex justify-content-between">
+                        <span>Brightness</span>
+                        <span id="brightnessLabel">100%</span>
+                    </label>
+                    <input type="range" class="form-range" id="brightnessRange" min="1" max="100" value="100">
+                </div>
+
+                <div class="mb-3">
+                    <label for="zoomRange" class="form-label d-flex justify-content-between">
+                        <span>Pixel Size</span>
+                        <span id="zoomLabel">6px</span>
+                    </label>
+                    <input type="range" class="form-range" id="zoomRange" min="3" max="12" value="6">
+                </div>
+
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" id="eraseMode">
+                    <label class="form-check-label" for="eraseMode">
+                        Erase Mode
+                    </label>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button class="btn btn-outline-secondary btn-sm" id="pushFrameBtn">
+                        <i class="fas fa-upload"></i> Push Full Frame
+                    </button>
+                    <button class="btn btn-outline-danger btn-sm" id="clearFrameBtn">
+                        <i class="fas fa-trash"></i> Clear Frame
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0">Presets</h6>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="presetName" class="form-label">Preset Name</label>
+                    <input type="text" class="form-control" id="presetName" maxlength="64" placeholder="e.g. warm_sunset">
+                </div>
+                <div class="d-grid gap-2 mb-3">
+                    <button class="btn btn-primary btn-sm" id="savePresetBtn">
+                        <i class="fas fa-save"></i> Save Preset
+                    </button>
+                    <button class="btn btn-outline-secondary btn-sm" id="refreshPresetsBtn">
+                        <i class="fas fa-rotate"></i> Refresh Presets
+                    </button>
+                </div>
+                <div class="list-group preset-list" id="presetList">
+                    <div class="text-muted small">Loading presets...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const INITIAL_STATUS = {{ status | tojson }};
+
+function clampByte(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+        return 0;
+    }
+    return Math.max(0, Math.min(255, Math.round(n)));
+}
+
+function nowMs() {
+    return Date.now();
+}
+
+class FramePainter {
+    constructor() {
+        this.canvas = document.getElementById('painterCanvas');
+        this.ctx = this.canvas.getContext('2d');
+        this.layout = this.readLayout(INITIAL_STATUS);
+        this.totalLeds = this.layout.stripCount * this.layout.ledsPerStrip;
+        this.frame = new Uint8Array(this.totalLeds * 3);
+
+        this.pixelSize = Number(document.getElementById('zoomRange').value) || 6;
+        this.pixelGap = 1;
+        this.isDrawing = false;
+        this.lastPaintedIndex = null;
+
+        this.pendingUpdates = new Map();
+        this.flushTimer = null;
+        this.flushInFlight = false;
+        this.needsFlush = false;
+        this.flushIntervalMs = 90;
+
+        this.lastStatusMessageAt = 0;
+        this.activePresetId = null;
+
+        this.bindEvents();
+        this.updateLayoutBadge();
+        this.resizeCanvas();
+    }
+
+    readLayout(statusPayload) {
+        const ledInfo = (statusPayload && statusPayload.led_info) || {};
+        const stripCount = Number(ledInfo.strip_count);
+        const ledsPerStrip = Number(ledInfo.leds_per_strip);
+        return {
+            stripCount: Number.isFinite(stripCount) && stripCount > 0 ? stripCount : 1,
+            ledsPerStrip: Number.isFinite(ledsPerStrip) && ledsPerStrip > 0 ? ledsPerStrip : 1,
+        };
+    }
+
+    bindEvents() {
+        this.canvas.addEventListener('pointerdown', (event) => this.onPointerDown(event));
+        this.canvas.addEventListener('pointermove', (event) => this.onPointerMove(event));
+        this.canvas.addEventListener('pointerup', () => this.onPointerUp());
+        this.canvas.addEventListener('pointerleave', () => this.onPointerUp());
+        this.canvas.addEventListener('pointercancel', () => this.onPointerUp());
+
+        const brightnessRange = document.getElementById('brightnessRange');
+        const brightnessLabel = document.getElementById('brightnessLabel');
+        brightnessRange.addEventListener('input', () => {
+            brightnessLabel.textContent = `${brightnessRange.value}%`;
+        });
+
+        const zoomRange = document.getElementById('zoomRange');
+        const zoomLabel = document.getElementById('zoomLabel');
+        zoomRange.addEventListener('input', () => {
+            this.pixelSize = Number(zoomRange.value) || 6;
+            zoomLabel.textContent = `${this.pixelSize}px`;
+            this.resizeCanvas();
+            this.renderFrame();
+        });
+
+        document.getElementById('pushFrameBtn').addEventListener('click', () => this.pushFullFrame());
+        document.getElementById('clearFrameBtn').addEventListener('click', () => this.clearFrame());
+        document.getElementById('savePresetBtn').addEventListener('click', () => this.savePreset());
+        document.getElementById('refreshPresetsBtn').addEventListener('click', () => this.loadPresetList());
+    }
+
+    updateLayout(layout) {
+        this.layout = {
+            stripCount: Math.max(1, Number(layout.stripCount) || 1),
+            ledsPerStrip: Math.max(1, Number(layout.ledsPerStrip) || 1),
+        };
+        this.totalLeds = this.layout.stripCount * this.layout.ledsPerStrip;
+        this.frame = new Uint8Array(this.totalLeds * 3);
+        this.pendingUpdates.clear();
+        this.resizeCanvas();
+        this.updateLayoutBadge();
+        this.renderFrame();
+    }
+
+    updateLayoutBadge() {
+        const badge = document.getElementById('layoutBadge');
+        badge.textContent = `${this.layout.stripCount} x ${this.layout.ledsPerStrip} (${this.totalLeds} px)`;
+    }
+
+    resizeCanvas() {
+        const step = this.pixelSize + this.pixelGap;
+        this.canvas.width = this.layout.stripCount * step;
+        this.canvas.height = this.layout.ledsPerStrip * step;
+    }
+
+    indexToCoord(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.totalLeds) {
+            return null;
+        }
+        const strip = Math.floor(index / this.layout.ledsPerStrip);
+        const led = index % this.layout.ledsPerStrip;
+        const row = this.layout.ledsPerStrip - 1 - led;
+        return { strip, row };
+    }
+
+    coordToIndex(x, y) {
+        const step = this.pixelSize + this.pixelGap;
+        const strip = Math.floor(x / step);
+        const row = Math.floor(y / step);
+        const inGapX = (x % step) > this.pixelSize;
+        const inGapY = (y % step) > this.pixelSize;
+
+        if (inGapX || inGapY) {
+            return null;
+        }
+        if (strip < 0 || strip >= this.layout.stripCount || row < 0 || row >= this.layout.ledsPerStrip) {
+            return null;
+        }
+
+        const led = this.layout.ledsPerStrip - 1 - row;
+        const index = strip * this.layout.ledsPerStrip + led;
+        return (index >= 0 && index < this.totalLeds) ? index : null;
+    }
+
+    getPointerIndex(event) {
+        const rect = this.canvas.getBoundingClientRect();
+        const scaleX = this.canvas.width / rect.width;
+        const scaleY = this.canvas.height / rect.height;
+        const x = (event.clientX - rect.left) * scaleX;
+        const y = (event.clientY - rect.top) * scaleY;
+        return this.coordToIndex(x, y);
+    }
+
+    getCurrentPaintColor() {
+        if (document.getElementById('eraseMode').checked) {
+            return [0, 0, 0];
+        }
+
+        const hex = document.getElementById('colorPicker').value || '#000000';
+        const brightness = (Number(document.getElementById('brightnessRange').value) || 100) / 100;
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return [
+            clampByte(r * brightness),
+            clampByte(g * brightness),
+            clampByte(b * brightness),
+        ];
+    }
+
+    getPixel(index) {
+        const offset = index * 3;
+        return [
+            this.frame[offset],
+            this.frame[offset + 1],
+            this.frame[offset + 2],
+        ];
+    }
+
+    setPixel(index, color, queueUpdate = true) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.totalLeds) {
+            return false;
+        }
+
+        const [r, g, b] = [clampByte(color[0]), clampByte(color[1]), clampByte(color[2])];
+        const offset = index * 3;
+        const changed = this.frame[offset] !== r || this.frame[offset + 1] !== g || this.frame[offset + 2] !== b;
+        if (!changed) {
+            return false;
+        }
+
+        this.frame[offset] = r;
+        this.frame[offset + 1] = g;
+        this.frame[offset + 2] = b;
+        this.drawPixel(index, r, g, b);
+
+        if (queueUpdate) {
+            this.pendingUpdates.set(index, [r, g, b]);
+            this.scheduleFlush();
+        }
+        return true;
+    }
+
+    drawPixel(index, r, g, b) {
+        const coord = this.indexToCoord(index);
+        if (!coord) {
+            return;
+        }
+        const step = this.pixelSize + this.pixelGap;
+        const x = coord.strip * step;
+        const y = coord.row * step;
+        this.ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+        this.ctx.fillRect(x, y, this.pixelSize, this.pixelSize);
+    }
+
+    renderFrame() {
+        this.ctx.fillStyle = '#000000';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        for (let index = 0; index < this.totalLeds; index++) {
+            const offset = index * 3;
+            this.drawPixel(index, this.frame[offset], this.frame[offset + 1], this.frame[offset + 2]);
+        }
+    }
+
+    scheduleFlush() {
+        if (this.flushTimer) {
+            return;
+        }
+        this.flushTimer = setTimeout(() => {
+            this.flushTimer = null;
+            this.flushUpdates();
+        }, this.flushIntervalMs);
+    }
+
+    async flushUpdates() {
+        if (this.flushInFlight) {
+            this.needsFlush = true;
+            return;
+        }
+
+        if (!this.pendingUpdates.size) {
+            return;
+        }
+
+        const updates = Array.from(this.pendingUpdates.entries()).map(([index, color]) => [
+            index, color[0], color[1], color[2]
+        ]);
+        this.pendingUpdates.clear();
+        this.flushInFlight = true;
+
+        try {
+            const response = await fetch('/api/painter/updates', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({updates}),
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            this.setStatus(`Sent ${updates.length} update(s)`);
+        } catch (error) {
+            console.error('Failed to flush painter updates', error);
+            this.setStatus('Painter update failed', true);
+        } finally {
+            this.flushInFlight = false;
+            if (this.pendingUpdates.size || this.needsFlush) {
+                this.needsFlush = false;
+                this.scheduleFlush();
+            }
+        }
+    }
+
+    onPointerDown(event) {
+        event.preventDefault();
+        this.isDrawing = true;
+        this.canvas.setPointerCapture(event.pointerId);
+        this.paintAtEvent(event);
+    }
+
+    onPointerMove(event) {
+        if (!this.isDrawing) {
+            return;
+        }
+        event.preventDefault();
+        this.paintAtEvent(event);
+    }
+
+    onPointerUp() {
+        this.isDrawing = false;
+        this.lastPaintedIndex = null;
+    }
+
+    paintAtEvent(event) {
+        const index = this.getPointerIndex(event);
+        if (index === null || index === this.lastPaintedIndex) {
+            return;
+        }
+        this.lastPaintedIndex = index;
+        this.setPixel(index, this.getCurrentPaintColor(), true);
+    }
+
+    frameAsList() {
+        const out = new Array(this.totalLeds);
+        for (let i = 0; i < this.totalLeds; i++) {
+            const offset = i * 3;
+            out[i] = [
+                this.frame[offset],
+                this.frame[offset + 1],
+                this.frame[offset + 2],
+            ];
+        }
+        return out;
+    }
+
+    loadFrame(frameData) {
+        if (!Array.isArray(frameData)) {
+            return;
+        }
+
+        const target = Math.min(frameData.length, this.totalLeds);
+        this.frame.fill(0);
+        for (let i = 0; i < target; i++) {
+            const pixel = frameData[i];
+            const offset = i * 3;
+            if (Array.isArray(pixel) && pixel.length >= 3) {
+                this.frame[offset] = clampByte(pixel[0]);
+                this.frame[offset + 1] = clampByte(pixel[1]);
+                this.frame[offset + 2] = clampByte(pixel[2]);
+            }
+        }
+        this.pendingUpdates.clear();
+        this.renderFrame();
+    }
+
+    async loadCurrentFrameFromServer() {
+        try {
+            const response = await fetch('/api/frame');
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const payload = await response.json();
+            const layout = this.readLayout(payload);
+            if (layout.stripCount !== this.layout.stripCount || layout.ledsPerStrip !== this.layout.ledsPerStrip) {
+                this.updateLayout(layout);
+            }
+            if (Array.isArray(payload.frame_data) && payload.frame_data.length) {
+                this.loadFrame(payload.frame_data);
+            } else {
+                this.renderFrame();
+            }
+            this.setStatus('Loaded current frame');
+        } catch (error) {
+            console.error('Failed to load current frame', error);
+            this.setStatus('Failed to load current frame', true);
+        }
+    }
+
+    async pushFullFrame() {
+        try {
+            await this.flushUpdates();
+            const response = await fetch('/api/painter/frame', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    led_info: {
+                        strip_count: this.layout.stripCount,
+                        leds_per_strip: this.layout.ledsPerStrip,
+                    },
+                    frame_data: this.frameAsList(),
+                }),
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            this.setStatus('Full frame pushed');
+        } catch (error) {
+            console.error('Failed to push full frame', error);
+            this.setStatus('Push full frame failed', true);
+        }
+    }
+
+    async clearFrame() {
+        this.pendingUpdates.clear();
+        this.frame.fill(0);
+        this.renderFrame();
+        try {
+            const response = await fetch('/api/painter/clear', {method: 'POST'});
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            this.setStatus('Frame cleared');
+        } catch (error) {
+            console.error('Failed to clear painter frame', error);
+            this.setStatus('Clear frame failed', true);
+        }
+    }
+
+    async savePreset() {
+        const input = document.getElementById('presetName');
+        const name = (input.value || '').trim();
+        if (!name) {
+            this.setStatus('Preset name required', true);
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/painter/presets', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    name,
+                    led_info: {
+                        strip_count: this.layout.stripCount,
+                        leds_per_strip: this.layout.ledsPerStrip,
+                    },
+                    frame_data: this.frameAsList(),
+                }),
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const payload = await response.json();
+            this.activePresetId = payload?.preset?.preset_id || null;
+            this.setStatus(`Saved preset: ${name}`);
+            await this.loadPresetList();
+        } catch (error) {
+            console.error('Failed to save preset', error);
+            this.setStatus('Save preset failed', true);
+        }
+    }
+
+    async loadPresetList() {
+        const listEl = document.getElementById('presetList');
+        listEl.innerHTML = '<div class="text-muted small">Loading presets...</div>';
+
+        try {
+            const response = await fetch('/api/painter/presets');
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const payload = await response.json();
+            const presets = Array.isArray(payload.presets) ? payload.presets : [];
+            this.renderPresetList(presets);
+        } catch (error) {
+            console.error('Failed to load presets', error);
+            listEl.innerHTML = '<div class="text-danger small">Failed to load presets</div>';
+        }
+    }
+
+    renderPresetList(presets) {
+        const listEl = document.getElementById('presetList');
+        if (!presets.length) {
+            listEl.innerHTML = '<div class="text-muted small">No painter presets yet.</div>';
+            return;
+        }
+
+        listEl.innerHTML = '';
+        presets.forEach((preset) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `list-group-item list-group-item-action${preset.preset_id === this.activePresetId ? ' active' : ''}`;
+            const updated = preset.updated_at
+                ? new Date(Number(preset.updated_at) * 1000).toLocaleString()
+                : 'unknown';
+            button.innerHTML = `
+                <div class="d-flex justify-content-between align-items-start">
+                    <strong>${preset.name || preset.preset_id}</strong>
+                    <small>${preset.frame_data_length || 0}</small>
+                </div>
+                <small class="text-muted">Updated ${updated}</small>
+            `;
+            button.addEventListener('click', () => this.openPreset(preset.preset_id));
+            listEl.appendChild(button);
+        });
+    }
+
+    async openPreset(presetId) {
+        try {
+            const response = await fetch(`/api/painter/presets/${encodeURIComponent(presetId)}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const preset = await response.json();
+            const ledInfo = preset.led_info || {};
+            const stripCount = Number(ledInfo.strip_count);
+            const ledsPerStrip = Number(ledInfo.leds_per_strip);
+
+            if (
+                Number.isFinite(stripCount) &&
+                Number.isFinite(ledsPerStrip) &&
+                stripCount > 0 &&
+                ledsPerStrip > 0 &&
+                (stripCount !== this.layout.stripCount || ledsPerStrip !== this.layout.ledsPerStrip)
+            ) {
+                this.updateLayout({stripCount, ledsPerStrip});
+            }
+
+            this.loadFrame(preset.frame_data || []);
+            document.getElementById('presetName').value = preset.name || preset.preset_id || '';
+            this.activePresetId = preset.preset_id || presetId;
+            await this.pushFullFrame();
+            await this.loadPresetList();
+            this.setStatus(`Loaded preset: ${preset.name || presetId}`);
+        } catch (error) {
+            console.error('Failed to open preset', error);
+            this.setStatus('Open preset failed', true);
+        }
+    }
+
+    setStatus(message, isError = false) {
+        const statusEl = document.getElementById('paintStatus');
+        statusEl.textContent = message;
+        statusEl.className = isError ? 'text-danger' : 'text-muted';
+
+        const timestamp = nowMs();
+        if (timestamp - this.lastStatusMessageAt > 1000 || isError) {
+            this.lastStatusMessageAt = timestamp;
+            console.log(`[Painter] ${message}`);
+        }
+    }
+}
+
+let painter = null;
+document.addEventListener('DOMContentLoaded', async () => {
+    painter = new FramePainter();
+    await painter.loadCurrentFrameFromServer();
+    await painter.loadPresetList();
+});
+</script>
+{% endblock %}

@@ -152,6 +152,10 @@ class AnimationManager:
         # Current frame data for web interface
         self.current_frame_data = []
         self.frame_data_lock = threading.Lock()
+        self.painter_lock = threading.Lock()
+        self.painter_active = False
+        self.painter_frame_data = [(0, 0, 0)] * self.controller.total_leds
+        self.painter_updated_at = 0.0
 
         # Preview controller avoids hitting the real SPI device during previews
         self.preview_controller = PreviewLEDController(
@@ -215,7 +219,7 @@ class AnimationManager:
         """
         try:
             # Stop current animation if running
-            self.stop_animation()
+            self.stop_animation(clear_leds=True)
             
             # Get animation class
             animation_class = self.plugin_loader.get_plugin(animation_name)
@@ -265,8 +269,10 @@ class AnimationManager:
             traceback.print_exc()
             return False
     
-    def stop_animation(self):
-        """Stop current animation"""
+    def stop_animation(self, clear_leds: bool = True):
+        """Stop current animation or painter mode output."""
+        had_output = self.is_running or self.painter_active
+
         if self.is_running:
             self.is_running = False
             self.stop_event.set()
@@ -287,12 +293,20 @@ class AnimationManager:
             with self.frame_data_lock:
                 self.current_frame_data = []
 
-            # Clear LEDs
-            self.controller.clear()
-
             print("✓ Animation stopped")
-        
+
+        if self.painter_active:
+            self.painter_active = False
+            self.current_animation_name = None
+            self.frame_timestamps.clear()
+            with self.frame_data_lock:
+                self.current_frame_data = []
+            print("✓ Painter mode stopped")
+
         self.current_animation_hash = None
+
+        if clear_leds and had_output:
+            self.controller.clear()
     
     def update_animation_parameters(self, params: Dict[str, Any]) -> bool:
         """Update current animation parameters in real-time"""
@@ -305,12 +319,151 @@ class AnimationManager:
                 print(f"✗ Failed to update parameters: {e}")
                 return False
         return False
+
+    @staticmethod
+    def _clamp_channel(value: Any) -> int:
+        """Clamp an arbitrary value to an RGB channel byte."""
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(255, parsed))
+
+    def _push_frame_to_controller(self, frame: List[Any]):
+        """Send a full frame immediately to the underlying controller."""
+        self.controller.set_all_pixels(frame)
+        inline_show = getattr(self.controller, "inline_show", False)
+        if not inline_show and hasattr(self.controller, "show"):
+            try:
+                self.controller.show()
+            except Exception:
+                pass
+
+    def _ensure_painter_frame_length(self):
+        """Resize painter buffer to match active controller geometry."""
+        total_pixels = self.controller.total_leds
+        with self.painter_lock:
+            frame = list(self.painter_frame_data)
+            if len(frame) < total_pixels:
+                frame.extend([(0, 0, 0)] * (total_pixels - len(frame)))
+            elif len(frame) > total_pixels:
+                frame = frame[:total_pixels]
+            self.painter_frame_data = frame
+
+    def _parse_painter_update(self, update: Any) -> Optional[tuple]:
+        """Parse supported painter update payload formats."""
+        index: Optional[int] = None
+        color_values: Optional[List[Any]] = None
+
+        if isinstance(update, dict):
+            if 'index' in update:
+                try:
+                    index = int(update.get('index'))
+                except (TypeError, ValueError):
+                    index = None
+            elif 'strip' in update and 'led' in update:
+                try:
+                    strip = int(update.get('strip'))
+                    led = int(update.get('led'))
+                    index = strip * self.controller.leds_per_strip + led
+                except (TypeError, ValueError):
+                    index = None
+
+            if isinstance(update.get('color'), (list, tuple)) and len(update['color']) >= 3:
+                color_values = list(update['color'][:3])
+            elif {'r', 'g', 'b'}.issubset(update.keys()):
+                color_values = [update.get('r'), update.get('g'), update.get('b')]
+        elif isinstance(update, (list, tuple)) and len(update) >= 4:
+            try:
+                index = int(update[0])
+            except (TypeError, ValueError):
+                index = None
+            color_values = [update[1], update[2], update[3]]
+
+        if index is None or color_values is None:
+            return None
+
+        return (
+            index,
+            (
+                self._clamp_channel(color_values[0]),
+                self._clamp_channel(color_values[1]),
+                self._clamp_channel(color_values[2]),
+            )
+        )
+
+    def set_painter_frame(self, frame_data: Optional[List[Any]]) -> bool:
+        """Replace the full painter frame and display it immediately."""
+        if self.is_running:
+            self.stop_animation(clear_leds=False)
+
+        frame = self._normalize_frame(frame_data)
+        with self.painter_lock:
+            self.painter_frame_data = list(frame)
+            self.painter_active = True
+            self.painter_updated_at = time.time()
+        with self.frame_data_lock:
+            self.current_frame_data = list(frame)
+
+        self._push_frame_to_controller(frame)
+        return True
+
+    def apply_painter_updates(self, updates: List[Any]) -> bool:
+        """Apply sparse painter pixel updates and display the result immediately."""
+        if not isinstance(updates, list) or not updates:
+            return False
+
+        if self.is_running:
+            self.stop_animation(clear_leds=False)
+
+        self._ensure_painter_frame_length()
+        total_pixels = self.controller.total_leds
+        changed = False
+
+        with self.painter_lock:
+            frame = list(self.painter_frame_data)
+            for update in updates:
+                parsed = self._parse_painter_update(update)
+                if not parsed:
+                    continue
+                index, color = parsed
+                if index < 0 or index >= total_pixels:
+                    continue
+                if frame[index] != color:
+                    frame[index] = color
+                    changed = True
+
+            if not changed:
+                return False
+
+            self.painter_frame_data = frame
+            self.painter_active = True
+            self.painter_updated_at = time.time()
+
+        with self.frame_data_lock:
+            self.current_frame_data = list(frame)
+
+        self._push_frame_to_controller(frame)
+        return True
+
+    def clear_painter_frame(self) -> bool:
+        """Clear all painter pixels to black and display the cleared frame."""
+        black_frame = [(0, 0, 0)] * self.controller.total_leds
+        return self.set_painter_frame(black_frame)
     
     def get_current_status(self) -> Dict[str, Any]:
         """Get current animation status and performance info"""
+        mode = 'animation' if self.is_running else ('painter' if self.painter_active else 'idle')
+        displayed_animation = self.current_animation_name if self.is_running else (
+            'frame_painter' if self.painter_active else None
+        )
+
         status = {
             'is_running': self.is_running,
-            'current_animation': self.current_animation_name,
+            'mode': mode,
+            'painter_active': self.painter_active,
+            'painter_updated_at': self.painter_updated_at if self.painter_active else None,
+            'current_animation': displayed_animation,
                 'frame_count': self.frame_count,
                 'uptime': (time.perf_counter() - self.start_time) if self.is_running else 0,
                 'target_fps': self.target_fps,
@@ -382,11 +535,17 @@ class AnimationManager:
             frame_data = list(self.current_frame_data)
 
         encoded_frame = encode_frame_data(frame_data)
+        mode = 'animation' if self.is_running else ('painter' if self.painter_active else 'idle')
+        displayed_animation = self.current_animation_name if self.is_running else (
+            'frame_painter' if self.painter_active else None
+        )
 
         return {
             'frame_data_encoded': encoded_frame,
             'frame_data_length': len(frame_data),
             'frame_encoding': FRAME_ENCODING_NAME if encoded_frame else None,
+            'mode': mode,
+            'painter_active': self.painter_active,
             'led_info': {
                 'total_leds': self.controller.total_leds,
                 'strip_count': self.controller.strip_count,
@@ -394,7 +553,7 @@ class AnimationManager:
             },
             'is_running': self.is_running,
             'frame_count': self.frame_count,
-            'current_animation': self.current_animation_name if self.is_running else None,
+            'current_animation': displayed_animation,
             'timestamp': time.time()
         }
 

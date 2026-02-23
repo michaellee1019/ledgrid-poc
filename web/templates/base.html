@@ -16,6 +16,7 @@
         }
         .status-running { background-color: #28a745; }
         .status-stopped { background-color: #dc3545; }
+        .status-painter { background-color: #0d6efd; }
         
         .animation-card {
             transition: transform 0.2s;
@@ -78,6 +79,9 @@
                 </a>
                 <a class="nav-link" href="{{ url_for('control_page') }}">
                     <i class="fas fa-sliders-h"></i> Control
+                </a>
+                <a class="nav-link" href="{{ url_for('frame_painter_page') }}">
+                    <i class="fas fa-paintbrush"></i> Painter
                 </a>
                 <a class="nav-link" href="{{ url_for('upload_page') }}">
                     <i class="fas fa-upload"></i> Upload
@@ -241,15 +245,21 @@
                 const indicator = document.querySelector('.status-indicator');
                 const statusText = document.querySelector('.status-text');
                 const fpsDisplay = document.querySelector('.fps-display');
+                const isPainter = status.mode === 'painter' || status.painter_active;
                 
                 if (indicator) {
                     indicator.className = 'status-indicator ' + 
-                        (status.is_running ? 'status-running' : 'status-stopped');
+                        (status.is_running ? 'status-running' : (isPainter ? 'status-painter' : 'status-stopped'));
                 }
                 
                 if (statusText) {
-                    statusText.textContent = status.is_running ? 
-                        `Running: ${status.current_animation}` : 'Stopped';
+                    if (status.is_running) {
+                        statusText.textContent = `Running: ${status.current_animation}`;
+                    } else if (isPainter) {
+                        statusText.textContent = 'Painter Mode';
+                    } else {
+                        statusText.textContent = 'Stopped';
+                    }
                 }
                 
                 if (fpsDisplay) {

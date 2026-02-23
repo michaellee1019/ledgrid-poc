@@ -6,9 +6,11 @@ This script is the canonical calibration workflow for this repository.
 
 Assumptions:
 - The source photos were captured from the `plant_calibration` animation plugin.
-- Pattern file order is fixed:
+- Pattern order is fixed:
   1) orientation_markers, 2) major_grid_lines, 3) checkerboard,
   4) coordinate_gradient, 5) full_white
+- Photo files can be provided explicitly via --pattern-files, or auto-selected
+  as the most recent captures in --image-dir.
 - Camera framing is stable across the 5 photos (same viewpoint).
 - Input photos may contain EXIF rotation metadata; this script always applies
   EXIF transpose before analysis.
@@ -33,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,14 +52,21 @@ from animation.plugins.plant_calibration import PlantCalibrationAnimation
 Point = Tuple[float, float]
 Color = Tuple[int, int, int]
 
-PATTERN_SEQUENCE_LABELS = [
-    "orientation_markers",
-    "major_grid_lines",
-    "checkerboard",
-    "coordinate_gradient",
-    "full_white",
-]
-DEFAULT_PATTERN_FILES = "IMG_4124.jpeg,IMG_4120.jpeg,IMG_4121.jpeg,IMG_4122.jpeg,IMG_4123.jpeg"
+PATTERN_SEQUENCE_LABELS = list(
+    getattr(
+        PlantCalibrationAnimation,
+        "PATTERN_SEQUENCE_LABELS",
+        [
+            "orientation_markers",
+            "major_grid_lines",
+            "checkerboard",
+            "coordinate_gradient",
+            "full_white",
+        ],
+    )
+)
+DEFAULT_PATTERN_FILES = "auto"
+SUPPORTED_CAPTURE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif"}
 
 
 @dataclass
@@ -107,8 +117,37 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_PATTERN_FILES,
         help=(
             "Comma-separated files in pattern order: "
-            "orientation,grid,checker,gradient,white"
+            "orientation,grid,checker,gradient,white; "
+            "or 'auto' to use the 5 most recent photos in --image-dir"
         ),
+    )
+    parser.add_argument(
+        "--guided-capture",
+        action="store_true",
+        help="Interactive workflow: prompts for photo capture, then runs calibration",
+    )
+    parser.add_argument(
+        "--capture-guide-only",
+        action="store_true",
+        help="Print capture instructions (including iPhone settings) and exit",
+    )
+    parser.add_argument(
+        "--capture-mode",
+        choices=["handsfree", "manual"],
+        default="handsfree",
+        help="Guided capture mode: handsfree requires no UI interaction during photo capture",
+    )
+    parser.add_argument(
+        "--guided-pattern-hold-seconds",
+        type=float,
+        default=8.0,
+        help="Recommended pattern_hold_seconds to set in Plant Calibration during guided capture",
+    )
+    parser.add_argument(
+        "--guided-transition-seconds",
+        type=float,
+        default=1.0,
+        help="Recommended transition_seconds to set in Plant Calibration during guided capture",
     )
     parser.add_argument(
         "--full-on-file",
@@ -219,6 +258,12 @@ def parse_args() -> argparse.Namespace:
         default="calibration_photos/plant_pixel_heatmap.png",
         help="Output logical heatmap image path",
     )
+    parser.add_argument(
+        "--auto-pattern-count",
+        type=int,
+        default=len(PATTERN_SEQUENCE_LABELS),
+        help="How many recent photos to scan when --pattern-files auto is used",
+    )
     return parser.parse_args()
 
 
@@ -243,9 +288,199 @@ def build_cli_epilog() -> str:
         "  - Capture current mask highlight still; pass --mask-pattern-file and\n"
         "    optionally --mask-map-path, then enable --use-mask-pattern.\n"
         "\n"
+        "Guided capture flow:\n"
+        "  - Use --guided-capture to get step-by-step prompts for taking photos.\n"
+        "  - Use --capture-guide-only to print camera settings and capture tips.\n"
+        "  - Default capture mode is handsfree (no UI interactions while shooting).\n"
+        "  - Optional manual mode uses manual_pattern_index 0..4.\n"
+        "\n"
         "Example:\n"
-        "  python scripts/calibrate.py --image-dir calibration_photos\n"
+        "  python scripts/calibrate.py --image-dir calibration_photos --guided-capture\n"
     )
+
+
+def _require_interactive_stdin(flag_name: str) -> None:
+    if not sys.stdin.isatty():
+        raise RuntimeError(f"{flag_name} requires an interactive terminal (TTY stdin)")
+
+
+def _prompt_enter(prompt: str) -> None:
+    _require_interactive_stdin("--guided-capture")
+    input(prompt)
+
+
+def _prompt_yes_no(prompt: str, default: bool = True) -> bool:
+    _require_interactive_stdin("--guided-capture")
+    suffix = "[Y/n]" if default else "[y/N]"
+    raw = input(f"{prompt} {suffix} ").strip().lower()
+    if not raw:
+        return default
+    if raw in {"y", "yes"}:
+        return True
+    if raw in {"n", "no"}:
+        return False
+    return default
+
+
+def _prompt_non_empty(prompt: str) -> str:
+    _require_interactive_stdin("--guided-capture")
+    while True:
+        raw = input(prompt).strip()
+        if raw:
+            return raw
+        print("Please enter a value.")
+
+
+def print_capture_guide(
+    image_dir: Path,
+    capture_mode: str = "handsfree",
+    pattern_hold_seconds: float = 8.0,
+    transition_seconds: float = 1.0,
+) -> None:
+    print("Capture Guide")
+    print("-------------")
+    print("iPhone camera settings (recommended):")
+    print("  1) Settings > Camera > Formats > Most Compatible (JPEG)")
+    print("  2) Flash OFF, Live Photo OFF")
+    print("  3) Night mode OFF (moon icon to 0s), avoid HDR shifts if possible")
+    print("  4) Use 1x lens, not ultrawide")
+    print("  5) Long-press panel to lock AE/AF, then lower exposure to about -0.7 EV")
+    print("  6) Keep framing as fixed as possible (brace elbows/use timer), no big viewpoint changes")
+    print("  7) Keep full panel visible, avoid motion blur and room reflections")
+    print("")
+    print("Panel setup:")
+    print("  - Start the 'Plant Calibration' animation in the control UI.")
+    if capture_mode == "handsfree":
+        print("  - No-tripod handsfree mode (recommended):")
+        print("    set manual_pattern_index=-1 (auto cycling)")
+        print(f"    set pattern_hold_seconds={pattern_hold_seconds:.1f}")
+        print(f"    set transition_seconds={transition_seconds:.1f}")
+        print("    then do not touch the UI while taking photos.")
+    else:
+        print("  - Manual mode:")
+        print("    set manual_pattern_index=0..4 to lock each pattern while shooting.")
+    print("")
+    print("Photo order contract:")
+    for i, label in enumerate(PATTERN_SEQUENCE_LABELS, start=1):
+        print(f"  {i}) {label}")
+    print("")
+    print(f"Store or copy the captured photos into: {image_dir}")
+
+
+def run_guided_capture_flow(args: argparse.Namespace, image_dir: Path) -> None:
+    print_capture_guide(
+        image_dir=image_dir,
+        capture_mode=args.capture_mode,
+        pattern_hold_seconds=args.guided_pattern_hold_seconds,
+        transition_seconds=args.guided_transition_seconds,
+    )
+    print("")
+    if args.capture_mode == "manual":
+        print("Capture checklist (press Enter after each photo):")
+        for i, label in enumerate(PATTERN_SEQUENCE_LABELS, start=1):
+            _prompt_enter(
+                f"  Step {i}/{len(PATTERN_SEQUENCE_LABELS)} "
+                f"(manual_pattern_index={i - 1}, {label}) -> press Enter when captured..."
+            )
+        print("")
+    else:
+        print("Handsfree checklist:")
+        print("  1) Start Plant Calibration with the settings above.")
+        print("  2) Keep framing fixed and take 1 photo per pattern as it cycles.")
+        print("  3) If timing is missed, wait for the next cycle and retake.")
+        print("")
+    _prompt_enter("Copy photos into the image directory, then press Enter to continue...")
+
+
+def parse_pattern_files_arg(raw: str) -> List[str]:
+    files = [name.strip() for name in raw.split(",") if name.strip()]
+    if len(files) != len(PATTERN_SEQUENCE_LABELS):
+        raise ValueError(
+            f"Expected exactly {len(PATTERN_SEQUENCE_LABELS)} files in --pattern-files; got {len(files)}"
+        )
+    return files
+
+
+def extract_last_int_token(text: str) -> Optional[int]:
+    m = re.search(r"(\d+)(?!.*\d)", text)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
+def discover_capture_images(image_dir: Path) -> List[Path]:
+    if not image_dir.exists():
+        return []
+    candidates: List[Path] = []
+    for p in image_dir.iterdir():
+        if not p.is_file():
+            continue
+        if p.name.startswith("."):
+            continue
+        if p.name.startswith("plant_pixel_"):
+            continue
+        if p.suffix.lower() not in SUPPORTED_CAPTURE_EXTS:
+            continue
+        candidates.append(p)
+    candidates.sort(key=lambda p: (p.stat().st_mtime, p.name))
+    return candidates
+
+
+def choose_auto_pattern_files(args: argparse.Namespace, image_dir: Path) -> List[str]:
+    required = len(PATTERN_SEQUENCE_LABELS)
+    scan_count = max(required, int(args.auto_pattern_count))
+    candidates = discover_capture_images(image_dir)
+    if len(candidates) < required:
+        raise FileNotFoundError(
+            f"Need at least {required} capture photos in {image_dir}; found {len(candidates)}"
+        )
+    numeric_candidates: List[Tuple[int, Path]] = []
+    for p in candidates:
+        token = extract_last_int_token(p.stem)
+        if token is not None:
+            numeric_candidates.append((token, p))
+
+    used_numeric_ordering = len(numeric_candidates) >= required
+    if used_numeric_ordering:
+        numeric_candidates.sort(key=lambda t: (t[0], t[1].name))
+        recent_pool = [p for _, p in numeric_candidates[-scan_count:]]
+        recent_pool.sort(key=lambda p: (extract_last_int_token(p.stem) or -1, p.name))
+    else:
+        recent_pool = candidates[-scan_count:]
+
+    selected = recent_pool[-required:]
+    names = [p.name for p in selected]
+
+    print("Auto-selected pattern files (oldest -> newest):")
+    if used_numeric_ordering:
+        print("  Ordering strategy: numeric filename sequence")
+    else:
+        print("  Ordering strategy: filesystem modified time")
+    for i, name in enumerate(names, start=1):
+        print(f"  {i}) {name}  ->  {PATTERN_SEQUENCE_LABELS[i - 1]}")
+    if any(Path(name).suffix.lower() in {".heic", ".heif"} for name in names):
+        print("Warning: HEIC files detected. If image loading fails, switch iPhone to JPEG (Most Compatible).")
+
+    if args.guided_capture:
+        use_detected = _prompt_yes_no("Use these files in this order?", default=True)
+        if not use_detected:
+            manual = _prompt_non_empty(
+                "Enter comma-separated files in pattern order "
+                "(orientation,grid,checker,gradient,white): "
+            )
+            names = parse_pattern_files_arg(manual)
+
+    return names
+
+
+def resolve_pattern_files(args: argparse.Namespace, image_dir: Path) -> List[str]:
+    pattern_files_arg = (args.pattern_files or "").strip()
+    if pattern_files_arg.lower() == "auto":
+        return choose_auto_pattern_files(args=args, image_dir=image_dir)
+    return parse_pattern_files_arg(pattern_files_arg)
 
 
 def ensure_parent(path: Path) -> None:
@@ -590,6 +825,8 @@ def assumptions_block(strips: int, leds: int) -> Dict[str, object]:
             "Use fixed camera position across all calibration photos.",
             "Keep full panel visible.",
             "Do not pre-rotate/pre-crop before calibration.",
+            "Recommended iPhone settings: AE/AF lock, -0.7 EV, flash off, night mode off.",
+            "No-tripod workflow: use auto-cycling patterns (manual_pattern_index=-1).",
             "Optional: capture supplemental full-on/full-off and current-mask photos.",
         ],
         "iteration_guidance": [
@@ -601,12 +838,13 @@ def assumptions_block(strips: int, leds: int) -> Dict[str, object]:
     }
 
 
-def build_rerun_command(args: argparse.Namespace, corners: PanelCorners) -> str:
+def build_rerun_command(args: argparse.Namespace, corners: PanelCorners, pattern_files: Sequence[str]) -> str:
     corners_arg = corners_to_arg(corners)
+    pattern_files_arg = ",".join(pattern_files)
     parts = [
         "python scripts/calibrate.py",
         f"--image-dir {args.image_dir}",
-        f"--pattern-files {args.pattern_files}",
+        f"--pattern-files \"{pattern_files_arg}\"",
         f"--strips {args.strips}",
         f"--leds-per-strip {args.leds_per_strip}",
         f"--corners \"{corners_arg}\"",
@@ -1102,9 +1340,20 @@ def write_heatmap(
 def main() -> None:
     args = parse_args()
     image_dir = Path(args.image_dir).resolve()
-    pattern_files = [name.strip() for name in args.pattern_files.split(",") if name.strip()]
-    if len(pattern_files) != len(PATTERN_SEQUENCE_LABELS):
-        raise ValueError(f"Expected exactly {len(PATTERN_SEQUENCE_LABELS)} files in --pattern-files")
+
+    if args.capture_guide_only:
+        print_capture_guide(
+            image_dir=image_dir,
+            capture_mode=args.capture_mode,
+            pattern_hold_seconds=args.guided_pattern_hold_seconds,
+            transition_seconds=args.guided_transition_seconds,
+        )
+        return
+    if args.guided_capture:
+        run_guided_capture_flow(args=args, image_dir=image_dir)
+
+    pattern_files = resolve_pattern_files(args=args, image_dir=image_dir)
+    args.pattern_files = ",".join(pattern_files)
 
     images = load_images(image_dir, pattern_files)
     full_on_image = load_optional_image(image_dir, args.full_on_file)
@@ -1186,7 +1435,7 @@ def main() -> None:
     output_map = Path(args.output_map).resolve()
     overlay_path = Path(args.overlay_image).resolve()
     heatmap_path = Path(args.heatmap_image).resolve()
-    rerun_command = build_rerun_command(args=args, corners=corners)
+    rerun_command = build_rerun_command(args=args, corners=corners, pattern_files=pattern_files)
 
     write_mask_json(
         output_map=output_map,
@@ -1221,6 +1470,7 @@ def main() -> None:
 
     print("Calibration complete")
     print(f"  Images: {image_dir}")
+    print(f"  Pattern files: {','.join(pattern_files)}")
     print(f"  Output map: {output_map}")
     print(f"  Overlay: {overlay_path}")
     print(f"  Heatmap: {heatmap_path}")

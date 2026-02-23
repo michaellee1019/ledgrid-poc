@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from animation.core.manager import AnimationManager
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+from drivers.frame_codec import decode_frame_data
 from web.app import create_app
 
 # Try to import the real LED controller, fall back to mock for testing
@@ -158,6 +159,26 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
             manager.current_animation.handle_input(direction)
         else:
             print(f"⚠️ D-pad input ignored (no handler): {direction}")
+    elif action == 'painter_set_frame':
+        frame_data = data.get('frame_data')
+        encoded = data.get('frame_data_encoded')
+        if isinstance(encoded, str) and encoded:
+            frame_data = decode_frame_data(encoded)
+        if isinstance(frame_data, list):
+            print(f"🖌️  Painter set frame ({len(frame_data)} pixels)")
+            manager.set_painter_frame(frame_data)
+        else:
+            print("⚠️ painter_set_frame ignored: missing frame payload")
+    elif action == 'painter_apply_updates':
+        updates = data.get('updates') or []
+        if isinstance(updates, list):
+            applied = manager.apply_painter_updates(updates)
+            print(f"🖌️  Painter updates: {len(updates)} ({'applied' if applied else 'no changes'})")
+        else:
+            print("⚠️ painter_apply_updates ignored: updates must be a list")
+    elif action == 'painter_clear':
+        print("🧽 Painter clear requested")
+        manager.clear_painter_frame()
     else:
         print(f"⚠️ Unknown action: {action}")
 
@@ -181,6 +202,7 @@ def run_web_mode(args):
     print(f"  URL: http://{args.host}:{args.port}")
     print(f"  Dashboard: http://{args.host}:{args.port}/")
     print(f"  Control:   http://{args.host}:{args.port}/control")
+    print(f"  Painter:   http://{args.host}:{args.port}/painter")
     print(f"  Upload:    http://{args.host}:{args.port}/upload")
     print()
 
@@ -227,7 +249,7 @@ def main():
                         help='Target animation FPS (default: 150)')
     parser.add_argument('--animation-speed-scale', type=float, default=0.2,
                         help='Multiplier applied to each animation\'s speed parameter (default: 0.2)')
-    parser.add_argument('--poll-interval', type=float, default=0.5,
+    parser.add_argument('--poll-interval', type=float, default=0.05,
                         help='Seconds between control-file polls (controller mode)')
     parser.add_argument('--status-interval', type=float, default=0.5,
                         help='Seconds between status writes (controller mode)')

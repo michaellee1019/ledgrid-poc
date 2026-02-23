@@ -24,6 +24,12 @@ API endpoints:
 - GET /api/preview/<animation_name>
 - POST /api/preview/<animation_name>/with_params
 - POST /api/parameters
+- POST /api/painter/updates
+- POST /api/painter/frame
+- POST /api/painter/clear
+- GET /api/painter/presets
+- GET /api/painter/presets/<preset_id>
+- POST /api/painter/presets
 - POST /api/upload
 - POST /api/reload/<animation_name>
 - POST /api/refresh

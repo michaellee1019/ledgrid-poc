@@ -20,20 +20,21 @@ class PlantCalibrationAnimation(AnimationBase):
     ANIMATION_NAME = "Plant Calibration"
     ANIMATION_DESCRIPTION = "Static reference patterns for wall photo calibration"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.0"
+    ANIMATION_VERSION = "1.1"
+    PATTERN_SEQUENCE_LABELS: List[str] = [
+        "orientation_markers",
+        "major_grid_lines",
+        "checkerboard",
+        "coordinate_gradient",
+        "full_white",
+    ]
 
     def __init__(self, controller, config: Dict[str, Any] = None):
         super().__init__(controller, config)
         self.strip_count, self.leds_per_strip = self.get_strip_info()
         self.total_leds = self.strip_count * self.leds_per_strip
 
-        self._pattern_names: List[str] = [
-            "orientation_markers",
-            "major_grid_lines",
-            "checkerboard",
-            "coordinate_gradient",
-            "full_white",
-        ]
+        self._pattern_names: List[str] = list(self.PATTERN_SEQUENCE_LABELS)
         self._pattern_frames: List[List[Color]] = []
         self._black_frame = [(0, 0, 0)] * self.total_leds
         self._last_stage_key = ""
@@ -43,7 +44,11 @@ class PlantCalibrationAnimation(AnimationBase):
     def start(self):
         super().start()
         self._last_stage_key = ""
+        manual = self._manual_pattern_index()
         print("Plant Calibration started")
+        if manual >= 0:
+            print(f"   Manual pattern lock enabled: index={manual} ({self._pattern_names[manual]})")
+            return
         print(
             f"   Pattern hold: {self._pattern_hold_seconds():.1f}s, "
             f"transition gap: {self._transition_seconds():.1f}s"
@@ -65,6 +70,13 @@ class PlantCalibrationAnimation(AnimationBase):
                 "max": 8.0,
                 "default": 2.0,
                 "description": "Black gap between patterns (seconds)",
+            },
+            "manual_pattern_index": {
+                "type": "int",
+                "min": -1,
+                "max": len(self._pattern_names) - 1,
+                "default": -1,
+                "description": "Lock output to one pattern index; -1 cycles automatically",
             },
             "brightness": {
                 "type": "float",
@@ -112,6 +124,17 @@ class PlantCalibrationAnimation(AnimationBase):
         if not self._pattern_frames:
             self._rebuild_pattern_frames()
 
+        manual = self._manual_pattern_index()
+        if manual >= 0:
+            stage_key = f"{manual}:manual"
+            if stage_key != self._last_stage_key:
+                print(
+                    f"Manual pattern {manual + 1}/{len(self._pattern_names)}: "
+                    f"{self._pattern_names[manual]}"
+                )
+                self._last_stage_key = stage_key
+            return self._pattern_frames[manual]
+
         pattern_index, in_transition = self._stage_for_time(time_elapsed)
 
         stage_key = f"{pattern_index}:{'gap' if in_transition else 'pattern'}"
@@ -137,11 +160,17 @@ class PlantCalibrationAnimation(AnimationBase):
             import time as _time
             time_elapsed = max(0.0, _time.time() - self.start_time)
 
-        pattern_index, in_transition = self._stage_for_time(time_elapsed)
+        manual = self._manual_pattern_index()
+        if manual >= 0:
+            pattern_index = manual
+            in_transition = False
+        else:
+            pattern_index, in_transition = self._stage_for_time(time_elapsed)
         return {
             "current_pattern_index": int(pattern_index),
             "current_pattern_name": self._pattern_names[pattern_index],
             "in_transition_gap": bool(in_transition),
+            "manual_pattern_index": int(manual),
             "pattern_hold_seconds": self._pattern_hold_seconds(),
             "transition_seconds": self._transition_seconds(),
             "cycle_duration_seconds": self._cycle_duration(),
@@ -160,6 +189,12 @@ class PlantCalibrationAnimation(AnimationBase):
 
     def _cycle_duration(self) -> float:
         return self._stage_duration() * len(self._pattern_names)
+
+    def _manual_pattern_index(self) -> int:
+        raw = int(self.params.get("manual_pattern_index", -1))
+        if raw < 0:
+            return -1
+        return min(raw, len(self._pattern_names) - 1)
 
     def _stage_for_time(self, time_elapsed: float) -> Tuple[int, bool]:
         stage_duration = self._stage_duration()
