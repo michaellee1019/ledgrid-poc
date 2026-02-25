@@ -55,7 +55,8 @@ static constexpr uint8_t CMD_PING           = 0xFF;
 // =========================
 // SPI buffers
 // =========================
-static constexpr size_t SPI_FRAME_BYTES = 1 + (MAX_TOTAL_LEDS * 3);
+static constexpr size_t CRC_BYTES = 2;
+static constexpr size_t SPI_FRAME_BYTES = 1 + (MAX_TOTAL_LEDS * 3) + CRC_BYTES;
 static constexpr size_t SPI_BUFFER_SIZE = ((SPI_FRAME_BYTES + 63) / 64) * 64;
 DMA_ATTR static uint8_t spi_rx_buffer[SPI_BUFFER_SIZE];
 DMA_ATTR static uint8_t spi_tx_buffer[SPI_BUFFER_SIZE];
@@ -65,6 +66,8 @@ static volatile uint32_t frames_rendered = 0;
 static volatile uint32_t zero_payload_packets = 0;
 static volatile uint32_t config_commands_received = 0;
 static volatile uint32_t set_all_commands_received = 0;
+static volatile uint32_t crc_errors = 0;
+static volatile uint32_t crc_ok_packets = 0;
 
 static uint32_t last_packet_millis = 0;
 static uint32_t last_show_duration = 0;
@@ -86,6 +89,21 @@ inline uint16_t logical_to_physical(uint16_t logical) {
     offset = leds_per_strip - 1;
   }
   return strip * MAX_LEDS_PER_STRIP + offset;
+}
+
+static uint16_t crc16_ccitt(const uint8_t *data, size_t length) {
+  uint16_t crc = 0xFFFF;
+  for (size_t i = 0; i < length; ++i) {
+    crc ^= static_cast<uint16_t>(data[i]) << 8;
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+      if (crc & 0x8000) {
+        crc = static_cast<uint16_t>((crc << 1) ^ 0x1021);
+      } else {
+        crc = static_cast<uint16_t>(crc << 1);
+      }
+    }
+  }
+  return crc;
 }
 
 static void IRAM_ATTR on_spi_post_transaction(spi_slave_transaction_t *trans) {
@@ -411,8 +429,25 @@ void loop() {
       }
       last_packet_millis = now;
 
-      DEBUG_PRINT("📥 %u bytes, cmd=0x%02X\n", static_cast<unsigned>(bytes), spi_rx_buffer[0]);
-      process_command(spi_rx_buffer, bytes);
+      if (bytes < (1 + CRC_BYTES)) {
+        crc_errors++;
+        DEBUG_PRINT("⚠️ CRC error: short packet (%u bytes)\n", static_cast<unsigned>(bytes));
+      } else {
+        const size_t payload_bytes = bytes - CRC_BYTES;
+        const uint16_t received_crc = (static_cast<uint16_t>(spi_rx_buffer[bytes - 2]) << 8)
+                                      | spi_rx_buffer[bytes - 1];
+        const uint16_t computed_crc = crc16_ccitt(spi_rx_buffer, payload_bytes);
+
+        if (received_crc != computed_crc) {
+          crc_errors++;
+          DEBUG_PRINT("⚠️ CRC mismatch: recv=0x%04X calc=0x%04X len=%u\n",
+                      received_crc, computed_crc, static_cast<unsigned>(payload_bytes));
+        } else {
+          crc_ok_packets++;
+          DEBUG_PRINT("📥 %u bytes, cmd=0x%02X\n", static_cast<unsigned>(payload_bytes), spi_rx_buffer[0]);
+          process_command(spi_rx_buffer, payload_bytes);
+        }
+      }
     }
   } else if (err != ESP_ERR_TIMEOUT) {
     Serial.printf("⚠️ SPI error %d\n", err);
@@ -458,13 +493,15 @@ void loop() {
       packet_error_rate = (100.0f * zero_payload_packets) / static_cast<float>(packets_received);
     }
 
-    Serial.printf("📊 Pkts=%u Frames=%u FPS=%.1f | Throughput=%.1fkb/s | Success=%.1f%% Errors=%.1f%% | Show=%luµs | Heap=%u\n",
+    Serial.printf("📊 Pkts=%u Frames=%u FPS=%.1f | Throughput=%.1fkb/s | Success=%.1f%% Errors=%.1f%% | CRC=%u/%u | Show=%luµs | Heap=%u\n",
                   static_cast<unsigned>(packets_received),
                   static_cast<unsigned>(frames_rendered),
                   fps,
                   throughput_kbps,
                   set_all_success_rate,
                   packet_error_rate,
+                  static_cast<unsigned>(crc_errors),
+                  static_cast<unsigned>(crc_ok_packets),
                   static_cast<unsigned long>(last_show_duration),
                   static_cast<unsigned>(ESP.getFreeHeap()));
     Serial.printf("    Configs=%u SetAlls=%u ZeroPayload=%u | Buffer=%u/%u bytes | %ux%u LEDs\n",

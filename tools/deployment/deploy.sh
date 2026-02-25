@@ -102,7 +102,7 @@ upload_files() {
 # Flash ESP32 firmware if sources changed (non-fatal on failure).
 flash_esp32_firmware() {
     log_info "Checking ESP32 firmware..."
-    if ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && DEPLOY_DIR=~/$DEPLOY_DIR bash tools/deployment/flash_esp32.sh"; then
+    if ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && DEPLOY_DIR=~/$DEPLOY_DIR DEBUG=${DEBUG:-0} bash tools/deployment/flash_esp32.sh"; then
         log_success "ESP32 firmware check complete"
     else
         log_warning "ESP32 flash failed; continuing deployment"

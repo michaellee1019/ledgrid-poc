@@ -24,8 +24,9 @@ SPI_MODE = 3  # CPOL=1, CPHA=1 required by ESP32 slave driver
 SPI_INTER_FRAME_DELAY = 0.0  # No delay needed - SPI is stable now
 
 MAX_SPI_TRANSFER = 4096
-MAX_PIXELS_SET_ALL = (MAX_SPI_TRANSFER - 1) // 3
-MAX_PIXELS_PER_RANGE = min(255, (MAX_SPI_TRANSFER - 4) // 3)
+CRC_BYTES = 2
+MAX_PIXELS_SET_ALL = (MAX_SPI_TRANSFER - 1 - CRC_BYTES) // 3
+MAX_PIXELS_PER_RANGE = min(255, (MAX_SPI_TRANSFER - 4 - CRC_BYTES) // 3)
 
 GLOBAL_OPTS_WITH_VALUE = {"--bus", "--device", "--spi-speed", "--mode", "--brightness", "--strips", "--leds-per-strip"}
 GLOBAL_BOOL_OPTS = {"--debug"}
@@ -74,11 +75,16 @@ def _normalize_global_args(argv):
     return front + rest
 
 
-def _pad_payload(payload):
-    pad_len = (-len(payload)) % 4
-    if pad_len:
-        payload.extend([0] * pad_len)
-    return payload
+def _crc16_ccitt(data):
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= (byte << 8)
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+    return crc
 
 # Command definitions
 CMD_SET_PIXEL = 0x01
@@ -147,7 +153,9 @@ class LEDController:
     
     def _xfer(self, payload):
         buf = list(payload)
-        _pad_payload(buf)
+        crc = _crc16_ccitt(buf)
+        buf.append((crc >> 8) & 0xFF)
+        buf.append(crc & 0xFF)
         self._bytes_sent += len(buf)
         try:
             return self.spi.xfer2(buf)
