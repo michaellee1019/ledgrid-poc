@@ -373,7 +373,7 @@ void setup() {
   bus_cfg.intr_flags = 0;
 
   spi_slave_interface_config_t slave_cfg = {};
-  slave_cfg.mode = 3;  // CPOL=1, CPHA=1
+  slave_cfg.mode = 0;  // CPOL=0, CPHA=0 - matches Pi SPI0 and SPI1
   slave_cfg.spics_io_num = PIN_SPI_CS;
   slave_cfg.queue_size = 4;
   slave_cfg.flags = 0;

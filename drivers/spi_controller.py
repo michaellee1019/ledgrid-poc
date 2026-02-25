@@ -19,8 +19,8 @@ DEFAULT_NUM_STRIPS = DEFAULT_STRIP_COUNT
 # SPI Configuration
 SPI_BUS = 0  # SPI bus number (0 = /dev/spidev0.X)
 SPI_DEVICE = 0  # CE0 matches wiring to XIAO GPIO2 (D1)
-SPI_SPEED = 10000000  # 10 MHz - now stable with 0.1% error rate
-SPI_MODE = 3  # CPOL=1, CPHA=1 required by ESP32 slave driver
+SPI_SPEED = 20000000  # 20 MHz - CRC-16 protects against corruption
+SPI_MODE = 0  # CPOL=0, CPHA=0 - universal mode supported by all Pi SPI buses
 SPI_INTER_FRAME_DELAY = 0.0  # No delay needed - SPI is stable now
 
 MAX_SPI_TRANSFER = 4096
@@ -75,15 +75,25 @@ def _normalize_global_args(argv):
     return front + rest
 
 
-def _crc16_ccitt(data):
-    crc = 0xFFFF
-    for byte in data:
-        crc ^= (byte << 8)
+def _build_crc16_table():
+    table = []
+    for i in range(256):
+        crc = i << 8
         for _ in range(8):
             if crc & 0x8000:
                 crc = ((crc << 1) ^ 0x1021) & 0xFFFF
             else:
                 crc = (crc << 1) & 0xFFFF
+        table.append(crc)
+    return table
+
+_CRC16_TABLE = _build_crc16_table()
+
+def _crc16_ccitt(data):
+    table = _CRC16_TABLE
+    crc = 0xFFFF
+    for byte in data:
+        crc = ((crc << 8) & 0xFFFF) ^ table[((crc >> 8) ^ byte) & 0xFF]
     return crc
 
 # Command definitions
@@ -112,7 +122,7 @@ class LEDController:
         except OSError as exc:
             raise OSError(
                 f"Failed to set SPI mode {mode} on /dev/spidev{bus}.{device}. "
-                "If this is SPI1, try setting LEDGRID_SPI1_MODE=0 and restart."
+                "If this is SPI1, try setting LEDGRID_SPI1_MODE to a different value and restart."
             ) from exc
         self.spi.bits_per_word = 8
 
@@ -127,7 +137,9 @@ class LEDController:
         self._config_refresh_interval = 30.0  # seconds - reduced frequency to avoid LED blanking
         self._last_sent_config = None  # Track last config to avoid unnecessary refreshes
         self._frames_sent = 0
+        self._spi_transfers = 0
         self._bytes_sent = 0
+        self._crc_bytes_sent = 0
         self._errors = 0
         self._last_frame_duration = 0.0
         self._total_frame_duration = 0.0
@@ -152,11 +164,16 @@ class LEDController:
             print(f"Warning: SPI test failed: {e}\n", file=sys.stderr)
     
     def _xfer(self, payload):
-        buf = list(payload)
+        if isinstance(payload, bytearray):
+            buf = payload
+        else:
+            buf = bytearray(payload)
         crc = _crc16_ccitt(buf)
         buf.append((crc >> 8) & 0xFF)
         buf.append(crc & 0xFF)
         self._bytes_sent += len(buf)
+        self._crc_bytes_sent += CRC_BYTES
+        self._spi_transfers += 1
         try:
             return self.spi.xfer2(buf)
         except Exception:
@@ -277,30 +294,36 @@ class LEDController:
         success = False
         try:
             if total_pixels <= MAX_PIXELS_SET_ALL:
-                data = [CMD_SET_ALL]
+                buf = bytearray(1 + total_pixels * 3)
+                buf[0] = CMD_SET_ALL
+                idx = 1
                 for r, g, b in frame_colors:
-                    data.extend([int(r) & 0xFF, int(g) & 0xFF, int(b) & 0xFF])
-                self._xfer(data)
-                # Inter-frame delay if configured (0 = no delay)
+                    buf[idx] = int(r) & 0xFF
+                    buf[idx + 1] = int(g) & 0xFF
+                    buf[idx + 2] = int(b) & 0xFF
+                    idx += 3
+                self._xfer(buf)
                 if SPI_INTER_FRAME_DELAY > 0:
                     time.sleep(SPI_INTER_FRAME_DELAY)
-                # CMD_SET_ALL already calls FastLED.show(), no explicit SHOW needed
             else:
                 start = 0
                 while start < total_pixels:
                     count = min(MAX_PIXELS_PER_RANGE, total_pixels - start)
-                    payload = [
-                        CMD_SET_RANGE,
-                        (start >> 8) & 0xFF,
-                        start & 0xFF,
-                        count
-                    ]
+                    buf = bytearray(4 + count * 3)
+                    buf[0] = CMD_SET_RANGE
+                    buf[1] = (start >> 8) & 0xFF
+                    buf[2] = start & 0xFF
+                    buf[3] = count
+                    idx = 4
                     for r, g, b in frame_colors[start:start + count]:
-                        payload.extend([int(r) & 0xFF, int(g) & 0xFF, int(b) & 0xFF])
-                    self._xfer(payload)
+                        buf[idx] = int(r) & 0xFF
+                        buf[idx + 1] = int(g) & 0xFF
+                        buf[idx + 2] = int(b) & 0xFF
+                        idx += 3
+                    self._xfer(buf)
                     start += count
 
-                self._xfer([CMD_SHOW])
+                self._xfer(bytearray([CMD_SHOW]))
             success = True
         finally:
             if success:
@@ -320,11 +343,14 @@ class LEDController:
             avg_ms = (self._total_frame_duration / self._frames_sent) * 1000.0
         return {
             'spi_speed_hz': getattr(self.spi, 'max_speed_hz', None),
+            'spi_mode': getattr(self.spi, 'mode', None),
             'total_leds': self.total_leds,
             'last_frame_duration_ms': self._last_frame_duration * 1000.0,
             'avg_frame_duration_ms': avg_ms,
             'frames_sent': self._frames_sent,
+            'spi_transfers': self._spi_transfers,
             'bytes_sent': self._bytes_sent,
+            'crc_bytes_sent': self._crc_bytes_sent,
             'errors': self._errors,
         }
 

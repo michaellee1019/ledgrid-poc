@@ -139,7 +139,7 @@ class AnimationManager:
         self.stop_event = threading.Event()
         
         # Performance tracking
-        self.frame_timestamps = deque(maxlen=240)  # ~4 seconds at 60 FPS
+        self.frame_timestamps = deque(maxlen=1000)  # 5 seconds at up to 200 FPS
         self.perf_samples = deque(maxlen=300)
         self.perf_lock = threading.Lock()
         self._last_perf_sample: Dict[str, float] = {}
@@ -855,17 +855,6 @@ class AnimationManager:
         delta_time = now - last_time
         if delta_frames < 0 or delta_time <= 0:
             return self._driver_fps
-
-        device_count = driver_stats.get('device_count') or driver_stats.get('devices')
-        if isinstance(device_count, list):
-            device_count = len(device_count)
-        try:
-            device_count_int = int(device_count)
-        except (TypeError, ValueError):
-            device_count_int = 0
-
-        if device_count_int > 1:
-            delta_frames = delta_frames / device_count_int
 
         self._driver_fps = delta_frames / delta_time
         return self._driver_fps

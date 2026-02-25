@@ -61,7 +61,7 @@ def run_controller_mode(args):
             num_devices=num_devices,
             bus=args.bus,
             speed=args.spi_speed,
-            mode=3,
+            mode=0,
             strips_per_device=strips_per_device,
             leds_per_strip=args.leds_per_strip,
             debug=args.controller_debug,
@@ -73,7 +73,7 @@ def run_controller_mode(args):
             bus=args.bus,
             device=args.device,
             speed=args.spi_speed,
-            mode=3,
+            mode=0,
             strips=args.strips,
             leds_per_strip=args.leds_per_strip,
             debug=args.controller_debug,
@@ -241,8 +241,8 @@ def main():
                         help='SPI bus number (default: 0)')
     parser.add_argument('--device', type=int, default=0,
                         help='SPI device number (default: 0)')
-    parser.add_argument('--spi-speed', type=int, default=10000000,
-                        help='SPI speed in Hz (default: 10000000)')
+    parser.add_argument('--spi-speed', type=int, default=20000000,
+                        help='SPI speed in Hz (default: 20000000)')
     parser.add_argument('--controller-debug', action='store_true',
                         help='Enable LED controller debug output')
     parser.add_argument('--target-fps', type=int, default=150,

@@ -218,8 +218,10 @@ class MultiDeviceLEDController:
         """Return aggregated stats across all devices."""
         device_stats = []
         total_leds = 0
-        frames_sent = 0
+        max_frames_sent = 0
+        spi_transfers = 0
         bytes_sent = 0
+        crc_bytes_sent = 0
         errors = 0
         last_frame_ms = 0.0
         weighted_avg_total = 0.0
@@ -233,8 +235,11 @@ class MultiDeviceLEDController:
 
             total_leds += int(stats.get('total_leds', 0) or 0)
             frames = int(stats.get('frames_sent', 0) or 0)
-            frames_sent += frames
+            # Use max (not sum) — all devices receive the same logical frame
+            max_frames_sent = max(max_frames_sent, frames)
+            spi_transfers += int(stats.get('spi_transfers', 0) or 0)
             bytes_sent += int(stats.get('bytes_sent', 0) or 0)
+            crc_bytes_sent += int(stats.get('crc_bytes_sent', 0) or 0)
             errors += int(stats.get('errors', 0) or 0)
 
             last_frame_ms = max(last_frame_ms, float(stats.get('last_frame_duration_ms', 0.0) or 0.0))
@@ -248,12 +253,17 @@ class MultiDeviceLEDController:
         return {
             'devices': device_stats,
             'aggregate': {
+                'num_devices': self.num_devices,
                 'total_leds': total_leds,
-                'frames_sent': frames_sent,
+                'frames_sent': max_frames_sent,
+                'spi_transfers': spi_transfers,
                 'bytes_sent': bytes_sent,
+                'crc_bytes_sent': crc_bytes_sent,
                 'errors': errors,
                 'last_frame_duration_ms': last_frame_ms,
                 'avg_frame_duration_ms': avg_frame_ms,
+                'spi_speed_hz': device_stats[0].get('spi_speed_hz') if device_stats else None,
+                'spi_mode': device_stats[0].get('spi_mode') if device_stats else None,
             }
         }
     

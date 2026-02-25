@@ -207,6 +207,8 @@
             setTextIfPresent('metricDriverAvg', formatMs(aggregate.avg_frame_duration_ms));
             setTextIfPresent('metricDriverLast', formatMs(aggregate.last_frame_duration_ms));
             setTextIfPresent('metricSpiSpeed', formatHz(spiSpeedHz));
+            setTextIfPresent('metricSpiTransfers', formatNumber(aggregate.spi_transfers, 0));
+            setTextIfPresent('metricCrcBytes', formatBytes(aggregate.crc_bytes_sent));
         }
 
         // Global functions for API calls
