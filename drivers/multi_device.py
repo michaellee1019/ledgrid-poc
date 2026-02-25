@@ -7,6 +7,9 @@ Controls multiple ESP32 devices via SPI with different CS pins
 import os
 import threading
 from typing import List, Tuple, Optional
+
+import numpy as np
+
 from drivers.spi_controller import LEDController, SPI_BUS, SPI_SPEED, SPI_MODE
 
 
@@ -94,31 +97,38 @@ class MultiDeviceLEDController:
         Returns:
             List of color lists, one per device
         """
+        pixels_per_device = self.strips_per_device * self.leds_per_strip
+
+        if isinstance(colors, np.ndarray):
+            total_needed = self.num_devices * pixels_per_device
+            if colors.shape[0] < total_needed:
+                colors = np.concatenate([colors, np.zeros((total_needed - colors.shape[0], 3), dtype=np.uint8)])
+            device_frames = []
+            for device_id in range(self.num_devices):
+                start = device_id * pixels_per_device
+                device_frames.append(colors[start:start + pixels_per_device])
+            return device_frames
+
         device_frames = []
-        
         for device_id in range(self.num_devices):
             device_colors = []
-            
-            # Each device gets consecutive strips
             for local_strip in range(self.strips_per_device):
                 global_strip = device_id * self.strips_per_device + local_strip
                 start_idx = global_strip * self.leds_per_strip
                 end_idx = start_idx + self.leds_per_strip
-                
-                # Extract this strip's pixels
+
                 if start_idx < len(colors):
                     strip_pixels = colors[start_idx:end_idx]
                 else:
                     strip_pixels = []
-                
-                # Pad if needed
+
                 if len(strip_pixels) < self.leds_per_strip:
-                    strip_pixels.extend([(0, 0, 0)] * (self.leds_per_strip - len(strip_pixels)))
-                
+                    strip_pixels = list(strip_pixels) + [(0, 0, 0)] * (self.leds_per_strip - len(strip_pixels))
+
                 device_colors.extend(strip_pixels[:self.leds_per_strip])
-            
+
             device_frames.append(device_colors)
-        
+
         return device_frames
     
     def _send_to_device(self, device_id: int, colors: List[Tuple[int, int, int]]):

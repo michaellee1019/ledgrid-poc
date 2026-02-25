@@ -14,6 +14,8 @@ from collections import deque
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
+import numpy as np
+
 from animation.core import AnimationBase, StatefulAnimationBase, AnimationPluginLoader
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import encode_frame_data, FRAME_ENCODING_NAME
@@ -532,7 +534,11 @@ class AnimationManager:
     def get_current_frame(self) -> Dict[str, Any]:
         """Get current animation frame data for web rendering"""
         with self.frame_data_lock:
-            frame_data = list(self.current_frame_data)
+            raw = self.current_frame_data
+            if isinstance(raw, np.ndarray):
+                frame_data = raw.tolist()
+            else:
+                frame_data = list(raw)
 
         encoded_frame = encode_frame_data(frame_data)
         mode = 'animation' if self.is_running else ('painter' if self.painter_active else 'idle')
@@ -759,12 +765,24 @@ class AnimationManager:
                 'frame': loop_duration + sleep_time,
             })
 
-    def _normalize_frame(self, colors: Optional[List[Any]]) -> List[Any]:
-        """Ensure frame length matches the LED count and is always a list"""
+    def _normalize_frame(self, colors):
+        """Ensure frame length matches the LED count.
+
+        Accepts either a list of tuples or a numpy uint8 array of shape (N, 3).
+        Returns the same type, padded/trimmed to total_pixels.
+        """
         total_pixels = self.controller.total_leds
 
         if colors is None:
             return [(0, 0, 0)] * total_pixels
+
+        if isinstance(colors, np.ndarray):
+            if colors.shape[0] < total_pixels:
+                pad = np.zeros((total_pixels - colors.shape[0], 3), dtype=np.uint8)
+                colors = np.concatenate([colors, pad])
+            elif colors.shape[0] > total_pixels:
+                colors = colors[:total_pixels]
+            return colors
 
         frame = list(colors)
 

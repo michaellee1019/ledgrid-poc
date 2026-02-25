@@ -11,6 +11,9 @@ import math
 import random
 import time
 from typing import List, Tuple, Dict, Optional, Any
+
+import numpy as np
+
 from animation import AnimationBase
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
@@ -28,34 +31,32 @@ class FluidTankAnimation(AnimationBase):
 
         self.default_params.update({
             'speed': 1.0,
-            'drop_rate': 1.0,           # multiplier on computed fill rate (1.0 ≈ 60s fill)
-            'target_fill_time': 60.0,   # seconds to fill the entire panel
-            'flow_steps': 2,            # physics iterations per frame
-            'bubble_interval': 2.4,     # seconds between bubbles
-            'bubble_strength': 1.2,     # ripple strength when a bubble surfaces
-            'ripple_damping': 0.985,    # how quickly ripples fade
-            'ripple_speed': 0.28,       # wave propagation speed
-            'surface_shimmer': 0.35,    # extra sparkle on surface waves
-            'foam_bias': 0.25,          # how quickly cresting waves turn white
-            'full_threshold': 0.94,     # fill percentage that triggers a hole
+            'drop_rate': 1.0,
+            'target_fill_time': 60.0,
+            'flow_steps': 2,
+            'bubble_interval': 2.4,
+            'bubble_strength': 1.2,
+            'ripple_damping': 0.985,
+            'ripple_speed': 0.28,
+            'surface_shimmer': 0.35,
+            'foam_bias': 0.25,
+            'full_threshold': 0.94,
             'hole_flash_duration': 0.45,
             'hole_cooldown': 2.0,
-            'target_drain_time': 3.0,   # seconds to drain full tank when punctured
+            'target_drain_time': 3.0,
             'serpentine': False
         })
 
         self.params = {**self.default_params, **self.config}
 
-        # Physical layout (controller expectations)
         self.panel_strips = getattr(controller, 'strip_count', DEFAULT_STRIP_COUNT)
         self.panel_leds_per_strip = getattr(controller, 'leds_per_strip', DEFAULT_LEDS_PER_STRIP)
-        # Simulation grid rotated clockwise 90° → width = strip count, height = LEDs per strip
         self.width = self.panel_strips
         self.height = self.panel_leds_per_strip
 
-        self.water: List[List[int]] = []
-        self.ripple_height: List[List[float]] = []
-        self.ripple_velocity: List[List[float]] = []
+        self.water: np.ndarray = np.array([])
+        self.ripple_height: np.ndarray = np.array([])
+        self.ripple_velocity: np.ndarray = np.array([])
         self.pending_ripples: List[Tuple[int, int, float]] = []
 
         self.drop_accumulator = 0.0
@@ -66,12 +67,12 @@ class FluidTankAnimation(AnimationBase):
 
         self.hole_active = False
         self.hole_position: Tuple[float, float] = (0.0, 0.0)
-        self.hole_radius = 1.5  # 3px diameter
+        self.hole_radius = 1.5
         self.last_drain_time = 0.0
         self.hole_flash_timer = 0.0
         self.hole_cooldown_timer = 0.0
-        self.drain_reservoir = 0.0  # carries fractional drain budget across frames
-        self.drain_reference_volume = 0.0  # total volume at puncture time
+        self.drain_reservoir = 0.0
+        self.drain_reference_volume = 0.0
         self.hole_open_time = 0.0
         self.fill_cycle_start_time = 0.0
         self.fill_cycle_initialized = False
@@ -115,7 +116,7 @@ class FluidTankAnimation(AnimationBase):
         })
         return schema
 
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
         if self.last_time is None:
             dt_real = 1.0 / 30.0
         else:
@@ -135,7 +136,7 @@ class FluidTankAnimation(AnimationBase):
         fill_stats = self._update_fill_guidance(time_elapsed)
         self._maybe_puncture_hole(time_elapsed)
 
-        prev_water = [row[:] for row in self.water]
+        prev_water = self.water.copy()
         spawn_allowed = bool(fill_stats.get('spawn_allowed', True)) and not self.hole_active
         if spawn_allowed:
             self._spawn_drops(spawn_budget)
@@ -169,9 +170,9 @@ class FluidTankAnimation(AnimationBase):
         return self._render_frame(time_elapsed)
 
     def _reset_state(self):
-        self.water = [[0 for _ in range(self.width)] for _ in range(self.height)]
-        self.ripple_height = [[0.0 for _ in range(self.width)] for _ in range(self.height)]
-        self.ripple_velocity = [[0.0 for _ in range(self.width)] for _ in range(self.height)]
+        self.water = np.zeros((self.height, self.width), dtype=np.int8)
+        self.ripple_height = np.zeros((self.height, self.width), dtype=np.float32)
+        self.ripple_velocity = np.zeros((self.height, self.width), dtype=np.float32)
         self.pending_ripples = []
         self.drop_accumulator = 0.0
         self.last_time = None
@@ -199,7 +200,7 @@ class FluidTankAnimation(AnimationBase):
     def _spawn_drops(self, dt: float):
         fill_time = max(5.0, float(self.params.get('target_fill_time', 60.0)))
         drop_multiplier = max(0.1, float(self.params.get('drop_rate', 1.0)))
-        base_rate = (self.width * self.height) / fill_time  # cells per second
+        base_rate = (self.width * self.height) / fill_time
         rate = (base_rate + self.fill_correction_rate) * drop_multiplier
         self.drop_accumulator += dt * rate
         while self.drop_accumulator >= 1.0:
@@ -210,31 +211,30 @@ class FluidTankAnimation(AnimationBase):
         for y in range(self.height):
             if self._is_hole_cell(x, y):
                 continue
-            if self.water[y][x] == 0:
-                self.water[y][x] = 1
+            if self.water[y, x] == 0:
+                self.water[y, x] = 1
                 self.drop_glow.append({'x': x, 'y': y, 'life': 0.35, 'max_life': 0.35, 'intensity': 1.0})
                 break
 
     def _flow_iteration(self):
         width, height = self.width, self.height
-        new_grid = [row[:] for row in self.water]
-        coords = [(x, y) for y in range(height) for x in range(width) if self.water[y][x]]
+        new_grid = self.water.copy()
+        ys, xs = np.where(self.water)
+        coords = list(zip(xs.tolist(), ys.tolist()))
         random.shuffle(coords)
 
         for x, y in coords:
             if self._is_hole_cell(x, y):
-                new_grid[y][x] = 0
+                new_grid[y, x] = 0
                 continue
 
-            if new_grid[y][x] == 0:
+            if new_grid[y, x] == 0:
                 continue
-
-            moved = False
 
             def try_move(nx: int, ny: int) -> bool:
-                if 0 <= nx < width and 0 <= ny < height and new_grid[ny][nx] == 0 and not self._is_hole_cell(nx, ny):
-                    new_grid[y][x] = 0
-                    new_grid[ny][nx] = 1
+                if 0 <= nx < width and 0 <= ny < height and new_grid[ny, nx] == 0 and not self._is_hole_cell(nx, ny):
+                    new_grid[y, x] = 0
+                    new_grid[ny, nx] = 1
                     return True
                 return False
 
@@ -243,6 +243,7 @@ class FluidTankAnimation(AnimationBase):
 
             diagonals = [(x - 1, y + 1), (x + 1, y + 1)]
             random.shuffle(diagonals)
+            moved = False
             for nx, ny in diagonals:
                 if try_move(nx, ny):
                     moved = True
@@ -250,29 +251,43 @@ class FluidTankAnimation(AnimationBase):
             if moved:
                 continue
 
-            below_full = y + 1 >= height or new_grid[y + 1][x] == 1 or self._is_hole_cell(x, y + 1)
+            below_full = y + 1 >= height or new_grid[y + 1, x] == 1 or self._is_hole_cell(x, y + 1)
             if below_full:
                 lateral = [(x - 1, y), (x + 1, y)]
                 random.shuffle(lateral)
                 for nx, ny in lateral:
-                    if 0 <= nx < width and new_grid[ny][nx] == 0:
-                        support = ny + 1 >= height or new_grid[ny + 1][nx] == 1 or self._is_hole_cell(nx, ny + 1)
+                    if 0 <= nx < width and new_grid[ny, nx] == 0:
+                        support = ny + 1 >= height or new_grid[ny + 1, nx] == 1 or self._is_hole_cell(nx, ny + 1)
                         if support:
                             if try_move(nx, ny):
                                 break
 
         self.water = new_grid
 
-    def _collect_impacts(self, prev_water: List[List[int]]):
+    def _collect_impacts(self, prev_water: np.ndarray):
+        landed = (self.water == 1) & (prev_water == 0)
+        if not np.any(landed):
+            return
         height = self.height
-        width = self.width
-        for y in range(height):
-            for x in range(width):
-                if self.water[y][x] and prev_water[y][x] == 0:
-                    supported = y + 1 >= height or self.water[y + 1][x] == 1 or self._is_hole_cell(x, y + 1)
-                    if supported:
-                        depth_factor = 1.0 - (y / max(1, height - 1))
-                        self._queue_ripple(x, y, 0.65 + 0.6 * depth_factor)
+        supported = np.zeros_like(landed)
+        supported[height - 1, :] = landed[height - 1, :]
+        supported[:height - 1, :] = landed[:height - 1, :] & (
+            (self.water[1:, :] == 1) | self._hole_cell_mask()[:height - 1, :]
+        )
+        ys, xs = np.where(supported)
+        for y, x in zip(ys.tolist(), xs.tolist()):
+            depth_factor = 1.0 - (y / max(1, height - 1))
+            self._queue_ripple(x, y, 0.65 + 0.6 * depth_factor)
+
+    def _hole_cell_mask(self) -> np.ndarray:
+        """Return a boolean (height, width) mask of hole cells."""
+        if not self.hole_active:
+            return np.zeros((self.height, self.width), dtype=bool)
+        cx, cy = self.hole_position
+        r2 = self.hole_radius * self.hole_radius
+        ys = np.arange(self.height)[:, None]
+        xs = np.arange(self.width)[None, :]
+        return ((xs - cx) ** 2 + (ys - cy) ** 2) <= r2
 
     def _queue_ripple(self, x: int, y: int, strength: float):
         self.pending_ripples.append((x, y, strength))
@@ -285,44 +300,43 @@ class FluidTankAnimation(AnimationBase):
             for dx, dy, falloff in spread:
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < self.width and 0 <= ny < self.height:
-                    self.ripple_velocity[ny][nx] += strength * falloff
+                    self.ripple_velocity[ny, nx] += strength * falloff
         self.pending_ripples = []
 
     def _update_ripples(self, dt: float):
         damping = float(self.params.get('ripple_damping', 0.985))
         wave_speed = float(self.params.get('ripple_speed', 0.28))
-        height_prev = [row[:] for row in self.ripple_height]
-        velocity_prev = [row[:] for row in self.ripple_velocity]
+        h = self.ripple_height
+        v = self.ripple_velocity
+        water = self.water
 
-        new_height = [[0.0 for _ in range(self.width)] for _ in range(self.height)]
-        new_velocity = [[0.0 for _ in range(self.width)] for _ in range(self.height)]
+        # Compute neighbor average using shifted arrays
+        neighbor_sum = np.zeros_like(h)
+        count = np.zeros_like(h)
 
-        for y in range(self.height):
-            for x in range(self.width):
-                if self.water[y][x]:
-                    neighbor_sum = 0.0
-                    count = 0
-                    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                        nx, ny = x + dx, y + dy
-                        if 0 <= nx < self.width and 0 <= ny < self.height:
-                            neighbor_sum += height_prev[ny][nx]
-                            count += 1
-                    avg = neighbor_sum / count if count else 0.0
-                    vel = velocity_prev[y][x] + (avg - height_prev[y][x]) * wave_speed
-                    vel *= damping
-                    new_velocity[y][x] = vel
-                    new_height[y][x] = height_prev[y][x] + vel
-                else:
-                    new_velocity[y][x] = velocity_prev[y][x] * 0.85
-                    new_height[y][x] = height_prev[y][x] * 0.85
+        neighbor_sum[:, 1:] += h[:, :-1]; count[:, 1:] += 1  # left neighbor
+        neighbor_sum[:, :-1] += h[:, 1:]; count[:, :-1] += 1  # right neighbor
+        neighbor_sum[1:, :] += h[:-1, :]; count[1:, :] += 1   # top neighbor
+        neighbor_sum[:-1, :] += h[1:, :]; count[:-1, :] += 1   # bottom neighbor
 
-        self.ripple_velocity = new_velocity
-        self.ripple_height = new_height
+        avg = np.divide(neighbor_sum, count, out=np.zeros_like(h), where=count > 0)
+
+        water_mask = water.astype(bool)
+        new_v = np.where(water_mask,
+                         (v + (avg - h) * wave_speed) * damping,
+                         v * 0.85)
+        new_h = np.where(water_mask,
+                         h + new_v,
+                         h * 0.85)
+
+        self.ripple_velocity = new_v
+        self.ripple_height = new_h
 
     def _surface_y(self, x: int) -> Optional[int]:
-        for y in range(self.height):
-            if self.water[y][x]:
-                return y
+        col = self.water[:, x]
+        indices = np.nonzero(col)[0]
+        if indices.size > 0:
+            return int(indices[0])
         return None
 
     def _update_bubbles(self, dt: float, time_elapsed: float):
@@ -394,8 +408,7 @@ class FluidTankAnimation(AnimationBase):
         total = self.width * self.height
         if total <= 0:
             return 0.0
-        filled = sum(sum(row) for row in self.water)
-        return filled / total
+        return float(np.sum(self.water)) / total
 
     def _maybe_puncture_hole(self, time_elapsed: float):
         if self.hole_active or self.hole_flash_timer > 0.0 or self.hole_cooldown_timer > 0.0:
@@ -421,7 +434,7 @@ class FluidTankAnimation(AnimationBase):
         self.hole_active = True
         self.last_drain_time = time_elapsed
         self.drain_reservoir = 0.0
-        self.drain_reference_volume = max(1, sum(sum(row) for row in self.water))
+        self.drain_reference_volume = max(1, int(np.sum(self.water)))
         self.hole_open_time = time_elapsed
         self.awaiting_cycle_reset = True
         self.fill_correction_rate = 0.0
@@ -447,25 +460,25 @@ class FluidTankAnimation(AnimationBase):
             for x in range(self.width):
                 dx = x - cx
                 if dx * dx + dy * dy <= r2:
-                    if self.water[y][x]:
+                    if self.water[y, x]:
                         filled_positions.append((x, y))
-                    self.ripple_height[y][x] *= 0.55
-                    self.ripple_velocity[y][x] *= 0.55
+                    self.ripple_height[y, x] *= 0.55
+                    self.ripple_velocity[y, x] *= 0.55
 
-        total_water = sum(sum(row) for row in self.water)
+        total_water = int(np.sum(self.water))
         removed_total = 0
         if total_water > 0:
             target_time = max(0.5, float(self.params.get('target_drain_time', 3.0)))
             reference = max(total_water, self.drain_reference_volume or total_water)
-            drain_rate = reference / target_time  # cells per second
+            drain_rate = reference / target_time
             self.drain_reservoir += drain_rate * dt
             allowed = min(int(self.drain_reservoir), total_water)
             if allowed > 0:
                 self.drain_reservoir -= allowed
                 random.shuffle(filled_positions)
                 for x, y in filled_positions:
-                    if self.water[y][x] and removed_total < allowed:
-                        self.water[y][x] = 0
+                    if self.water[y, x] and removed_total < allowed:
+                        self.water[y, x] = 0
                         removed_total += 1
                 if removed_total < allowed:
                     removed_total += self._bulk_drain_water(allowed - removed_total)
@@ -508,27 +521,17 @@ class FluidTankAnimation(AnimationBase):
     def _hole_water_count(self) -> int:
         if not self.hole_active:
             return 0
-        cx, cy = self.hole_position
-        r2 = self.hole_radius * self.hole_radius
-        count = 0
-        for y in range(self.height):
-            dy = y - cy
-            if abs(dy) > self.hole_radius:
-                continue
-            for x in range(self.width):
-                dx = x - cx
-                if dx * dx + dy * dy <= r2 and self.water[y][x]:
-                    count += 1
-        return count
-    
+        mask = self._hole_cell_mask()
+        return int(np.sum(self.water[mask]))
+
     def _bulk_drain_water(self, amount: int) -> int:
         if amount <= 0:
             return 0
         removed = 0
         for y in range(self.height - 1, -1, -1):
             for x in range(self.width):
-                if self.water[y][x]:
-                    self.water[y][x] = 0
+                if self.water[y, x]:
+                    self.water[y, x] = 0
                     removed += 1
                     if removed >= amount:
                         return removed
@@ -685,124 +688,149 @@ class FluidTankAnimation(AnimationBase):
         self.last_fill_stats = stats
         return stats
 
-    def _hole_visual_intensity(self, x: int, y: int, time_elapsed: float) -> float:
-        cx, cy = self.hole_position
-        dx = x - cx
-        dy = y - cy
-        dist2 = dx * dx + dy * dy
-        r2 = self.hole_radius * self.hole_radius
-        if dist2 > r2 * 1.4:
-            return 0.0
-        if self.hole_active:
-            return 1.0 - min(1.0, dist2 / (r2 * 1.4))
-        if self.hole_flash_timer > 0.0:
-            flash_phase = (self.hole_flash_timer / max(0.0001, float(self.params.get('hole_flash_duration', 0.45)))) * math.pi * 2.0
-            flash = 0.6 + 0.4 * math.sin(flash_phase)
-            return flash * (1.0 - min(1.0, dist2 / (r2 * 1.4)))
-        return 0.0
-
-    def _is_surface_cell(self, x: int, y: int) -> bool:
-        return self.water[y][x] and (y == 0 or self.water[y - 1][x] == 0)
-
-    def _render_frame(self, time_elapsed: float) -> List[Tuple[int, int, int]]:
+    def _render_frame(self, time_elapsed: float) -> np.ndarray:
         width, height = self.width, self.height
         serpentine = bool(self.params.get('serpentine', False))
+        total_out = self.panel_leds_per_strip * self.panel_strips
 
-        bubble_cells = {}
+        # Build overlay lookup grids
+        bubble_grid = np.zeros((height, width), dtype=bool)
         for bubble in self.bubbles:
             bx = max(0, min(width - 1, int(round(bubble['x']))))
             by = max(0, min(height - 1, int(round(bubble['y']))))
-            bubble_cells[(bx, by)] = True
-        
-        spray_cells: Dict[Tuple[int, int], float] = {}
+            bubble_grid[by, bx] = True
+
+        spray_grid = np.zeros((height, width), dtype=np.float32)
         for particle in self.spray_particles:
             sx = int(round(particle['x']))
             sy = int(round(particle['y']))
             if 0 <= sx < width and 0 <= sy < height:
-                key = (sx, sy)
-                spray_cells[key] = max(spray_cells.get(key, 0.0), min(1.0, particle['life']))
-        
-        drop_glow_cells: Dict[Tuple[int, int], float] = {}
+                spray_grid[sy, sx] = max(spray_grid[sy, sx], min(1.0, particle['life']))
+
+        glow_grid = np.zeros((height, width), dtype=np.float32)
         for glow in self.drop_glow:
             gx = int(glow['x'])
             gy = int(glow['y'])
             if 0 <= gx < width and 0 <= gy < height:
-                drop_glow_cells[(gx, gy)] = max(drop_glow_cells.get((gx, gy), 0.0), glow.get('intensity', 0.0))
+                glow_grid[gy, gx] = max(glow_grid[gy, gx], glow.get('intensity', 0.0))
 
-        pixels: List[Tuple[int, int, int]] = [(0, 0, 0)] * (self.panel_leds_per_strip * self.panel_strips)
+        # Hole visual intensity grid
+        hole_intensity_grid = np.zeros((height, width), dtype=np.float32)
+        if self.hole_active or self.hole_flash_timer > 0.0:
+            cx, cy = self.hole_position
+            r2 = self.hole_radius * self.hole_radius
+            ys = np.arange(height)[:, None].astype(np.float32)
+            xs = np.arange(width)[None, :].astype(np.float32)
+            dist2 = (xs - cx) ** 2 + (ys - cy) ** 2
+            in_range = dist2 <= r2 * 1.4
+            if self.hole_active:
+                hole_intensity_grid = np.where(in_range, 1.0 - np.minimum(1.0, dist2 / (r2 * 1.4)), 0.0)
+            elif self.hole_flash_timer > 0.0:
+                flash_phase = (self.hole_flash_timer / max(0.0001, float(self.params.get('hole_flash_duration', 0.45)))) * math.pi * 2.0
+                flash = 0.6 + 0.4 * math.sin(flash_phase)
+                hole_intensity_grid = np.where(in_range, flash * (1.0 - np.minimum(1.0, dist2 / (r2 * 1.4))), 0.0)
 
-        air_color = (1, 2, 5)
-        deep_water = (6, 40, 80)
-        surface_water = (70, 160, 255)
-        foam_color = (210, 235, 255)
-        hole_flash_color = (140, 220, 255)
-        spray_color = (200, 240, 255)
-        drop_color = (180, 220, 255)
+        # Surface detection: water cell with no water above
+        surface_mask = np.zeros((height, width), dtype=bool)
+        water_bool = self.water.astype(bool)
+        surface_mask[0, :] = water_bool[0, :]
+        surface_mask[1:, :] = water_bool[1:, :] & ~water_bool[:-1, :]
+
+        # Color constants
+        air_color = np.array([1, 2, 5], dtype=np.float32)
+        deep_water = np.array([6, 40, 80], dtype=np.float32)
+        surface_water = np.array([70, 160, 255], dtype=np.float32)
+        foam_color = np.array([210, 235, 255], dtype=np.float32)
+        hole_flash_color = np.array([140, 220, 255], dtype=np.float32)
+        spray_color = np.array([200, 240, 255], dtype=np.float32)
+        drop_color = np.array([180, 220, 255], dtype=np.float32)
+        bubble_color = np.array([150, 230, 255], dtype=np.float32)
 
         shimmer = float(self.params.get('surface_shimmer', 0.35))
         foam_bias = float(self.params.get('foam_bias', 0.25))
 
-        for y in range(height):
-            depth_factor = y / max(1, height - 1)
-            base_water = self._mix_color(surface_water, deep_water, depth_factor * 0.7)
-            for x in range(width):
-                strip_index = x
-                led_index = y if not (serpentine and (strip_index % 2 == 1)) else (height - 1 - y)
-                led_index = height - 1 - led_index
-                idx = strip_index * self.panel_leds_per_strip + led_index
+        # Depth factor per row: 0 at top, 1 at bottom
+        depth_factor = np.arange(height, dtype=np.float32) / max(1, height - 1)
+        # Base water color per row: mix surface_water and deep_water
+        t = depth_factor * 0.7
+        base_water_rows = surface_water[None, :] * (1.0 - t[:, None]) + deep_water[None, :] * t[:, None]
+        # Expand to (height, width, 3)
+        base_water = np.broadcast_to(base_water_rows[:, None, :], (height, width, 3)).copy()
 
-                hole_intensity = self._hole_visual_intensity(x, y, time_elapsed)
-                if hole_intensity > 0.0:
-                    color = self._mix_color((0, 0, 0), hole_flash_color, min(1.0, hole_intensity))
-                    pixels[idx] = self.apply_brightness(color)
-                    continue
+        # Compute pixel colors for the grid
+        wave = self.ripple_height
+        brightness = 1.0 + wave * 0.9
+        brightness[surface_mask] += 0.2
+        crest_boost = shimmer * np.maximum(0.0, wave)
+        brightness += crest_boost
 
-                if self.water[y][x]:
-                    wave = self.ripple_height[y][x]
-                    surface = self._is_surface_cell(x, y)
-                    crest_boost = shimmer * max(0.0, wave)
-                    brightness = 1.0 + wave * 0.9 + (0.2 if surface else 0.0) + crest_boost
-                    color = self._scale_color(base_water, brightness)
+        # Scale water colors by brightness
+        grid_colors = base_water * brightness[:, :, None]
 
-                    if surface and abs(wave) > 0.18:
-                        foam_mix = min(1.0, foam_bias + abs(wave) * 0.8)
-                        color = self._mix_color(color, foam_color, foam_mix)
+        # Foam on surface cells with significant waves
+        foam_candidates = surface_mask & (np.abs(wave) > 0.18)
+        if np.any(foam_candidates):
+            foam_t = np.minimum(1.0, foam_bias + np.abs(wave) * 0.8)
+            foam_t_3d = foam_t[:, :, None]
+            foamed = grid_colors * (1.0 - foam_t_3d) + foam_color[None, None, :] * foam_t_3d
+            grid_colors = np.where(foam_candidates[:, :, None], foamed, grid_colors)
 
-                    if (x, y) in bubble_cells:
-                        color = self._mix_color(color, (150, 230, 255), 0.7)
-                else:
-                    color = air_color
+        # Bubble cells overlay
+        if np.any(bubble_grid):
+            bubble_mix = grid_colors * 0.3 + bubble_color[None, None, :] * 0.7
+            grid_colors = np.where(bubble_grid[:, :, None], bubble_mix, grid_colors)
 
-                spray_intensity = spray_cells.get((x, y), 0.0)
-                if spray_intensity > 0.0:
-                    color = self._mix_color(color, spray_color, min(1.0, spray_intensity * 1.4))
+        # Air cells
+        air_mask = ~water_bool
+        grid_colors[air_mask] = air_color
 
-                drop_intensity = drop_glow_cells.get((x, y), 0.0)
-                if drop_intensity > 0.0:
-                    color = self._mix_color(color, drop_color, min(1.0, drop_intensity))
+        # Spray overlay
+        spray_active = spray_grid > 0.0
+        if np.any(spray_active):
+            spray_t = np.minimum(1.0, spray_grid * 1.4)[:, :, None]
+            sprayed = grid_colors * (1.0 - spray_t) + spray_color[None, None, :] * spray_t
+            grid_colors = np.where(spray_active[:, :, None], sprayed, grid_colors)
 
-                pixels[idx] = self.apply_brightness(color)
+        # Drop glow overlay
+        glow_active = glow_grid > 0.0
+        if np.any(glow_active):
+            glow_t = np.minimum(1.0, glow_grid)[:, :, None]
+            glowed = grid_colors * (1.0 - glow_t) + drop_color[None, None, :] * glow_t
+            grid_colors = np.where(glow_active[:, :, None], glowed, grid_colors)
 
-        return pixels
+        # Hole intensity overlay (overrides everything)
+        hole_active_pixels = hole_intensity_grid > 0.0
+        if np.any(hole_active_pixels):
+            hole_t = np.minimum(1.0, hole_intensity_grid)[:, :, None]
+            hole_mixed = np.zeros_like(grid_colors)
+            hole_mixed[:] = hole_flash_color[None, None, :]
+            hole_mixed = hole_mixed * hole_t
+            grid_colors = np.where(hole_active_pixels[:, :, None], hole_mixed, grid_colors)
+
+        # Clamp and convert to uint8
+        np.clip(grid_colors, 0, 255, out=grid_colors)
+
+        # Map (y, x) grid → flat output pixel array using vectorized index math
+        xs = np.arange(width)[None, :].astype(np.int32)   # (1, W)
+        ys = np.arange(height)[:, None].astype(np.int32)  # (H, 1)
+
+        if serpentine:
+            odd_strip = (xs % 2 == 1)
+            led_index = np.where(odd_strip, height - 1 - ys, ys)
+        else:
+            led_index = np.broadcast_to(ys, (height, width)).copy()
+
+        led_index = height - 1 - led_index
+        flat_idx = xs * self.panel_leds_per_strip + led_index  # (H, W)
+
+        pixels = np.zeros((total_out, 3), dtype=np.uint8)
+        grid_u8 = grid_colors.astype(np.uint8)
+        flat_idx_1d = flat_idx.ravel()
+        grid_u8_1d = grid_u8.reshape(-1, 3)
+        pixels[flat_idx_1d] = grid_u8_1d
+
+        return self.apply_brightness_array(pixels)
     
     def get_runtime_stats(self) -> Dict[str, Any]:
         """Expose the latest fill/flow telemetry for debugging."""
         return dict(self.last_stats) if self.last_stats else {}
-
-    @staticmethod
-    def _mix_color(a: Tuple[int, int, int], b: Tuple[int, int, int], t: float) -> Tuple[int, int, int]:
-        t = max(0.0, min(1.0, t))
-        return (
-            int(a[0] * (1.0 - t) + b[0] * t),
-            int(a[1] * (1.0 - t) + b[1] * t),
-            int(a[2] * (1.0 - t) + b[2] * t)
-        )
-
-    @staticmethod
-    def _scale_color(color: Tuple[int, int, int], scale: float) -> Tuple[int, int, int]:
-        scale = max(0.0, scale)
-        return (
-            max(0, min(255, int(color[0] * scale))),
-            max(0, min(255, int(color[1] * scale))),
-            max(0, min(255, int(color[2] * scale)))
-        )

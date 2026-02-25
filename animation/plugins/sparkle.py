@@ -6,8 +6,8 @@ Keeps only the sparkle effect from the previous effects collection so it can
 stand alone as a single plugin.
 """
 
-import random
-from typing import List, Tuple, Dict, Any
+import numpy as np
+from typing import Dict, Any
 from animation import AnimationBase
 
 
@@ -35,9 +35,8 @@ class SparkleAnimation(AnimationBase):
 
         self.params = {**self.default_params, **self.config}
 
-        # Initialize sparkle state
         total_pixels = self.get_pixel_count()
-        self.sparkle_brightness = [0.0] * total_pixels
+        self.sparkle_brightness = np.zeros(total_pixels, dtype=np.float32)
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -53,45 +52,34 @@ class SparkleAnimation(AnimationBase):
         })
         return schema
 
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
-        """Generate sparkle frame"""
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
+        """Generate sparkle frame. Returns (N,3) uint8 ndarray."""
         total_pixels = self.get_pixel_count()
 
-        base_color = (
+        base = np.array([
             self.params.get('base_red', 0),
             self.params.get('base_green', 0),
             self.params.get('base_blue', 20),
-        )
+        ], dtype=np.float32)
 
-        sparkle_color = (
+        sparkle = np.array([
             self.params.get('sparkle_red', 255),
             self.params.get('sparkle_green', 255),
             self.params.get('sparkle_blue', 255),
-        )
+        ], dtype=np.float32)
 
         sparkle_prob = self.params.get('sparkle_probability', 0.02)
         fade_speed = self.params.get('fade_speed', 0.9)
 
-        # Update sparkle state
-        for i in range(total_pixels):
-            # Fade existing sparkles
-            self.sparkle_brightness[i] *= fade_speed
+        if self.sparkle_brightness.shape[0] != total_pixels:
+            self.sparkle_brightness = np.zeros(total_pixels, dtype=np.float32)
 
-            # Add new sparkles randomly
-            if random.random() < sparkle_prob:
-                self.sparkle_brightness[i] = 1.0
+        self.sparkle_brightness *= fade_speed
+        mask = np.random.random(total_pixels) < sparkle_prob
+        self.sparkle_brightness[mask] = 1.0
 
-        # Generate colors
-        pixel_colors = []
-        for i in range(total_pixels):
-            brightness = self.sparkle_brightness[i]
+        b = self.sparkle_brightness[:, np.newaxis]  # (N, 1)
+        colors = base * (1.0 - b) + sparkle * b
 
-            # Interpolate between base and sparkle color
-            r = int(base_color[0] * (1 - brightness) + sparkle_color[0] * brightness)
-            g = int(base_color[1] * (1 - brightness) + sparkle_color[1] * brightness)
-            b = int(base_color[2] * (1 - brightness) + sparkle_color[2] * brightness)
-
-            color = self.apply_brightness((r, g, b))
-            pixel_colors.append(color)
-
-        return pixel_colors
+        result = np.clip(colors, 0, 255).astype(np.uint8)
+        return self.apply_brightness_array(result)

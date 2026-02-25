@@ -9,6 +9,8 @@ import threading
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Dict, Any, Optional
 
+import numpy as np
+
 
 class AnimationBase(ABC):
     """Base class for all LED animations"""
@@ -148,6 +150,50 @@ class AnimationBase(ABC):
             int(b * brightness)
         )
     
+    @staticmethod
+    def hsv_to_rgb_array(h: np.ndarray, s: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Vectorized HSV-to-RGB for numpy arrays. Returns uint8 (N,3) array."""
+        h = np.asarray(h, dtype=np.float32).ravel() % 1.0
+        s = np.asarray(s, dtype=np.float32).ravel()
+        v = np.asarray(v, dtype=np.float32).ravel()
+
+        i = (h * 6.0).astype(np.int32)
+        f = h * 6.0 - i
+        p = v * (1.0 - s)
+        q = v * (1.0 - s * f)
+        t = v * (1.0 - s * (1.0 - f))
+
+        i_mod = i % 6
+        r = np.where(i_mod == 0, v,
+            np.where(i_mod == 1, q,
+            np.where(i_mod == 2, p,
+            np.where(i_mod == 3, p,
+            np.where(i_mod == 4, t, v)))))
+        g = np.where(i_mod == 0, t,
+            np.where(i_mod == 1, v,
+            np.where(i_mod == 2, v,
+            np.where(i_mod == 3, q,
+            np.where(i_mod == 4, p, p)))))
+        b = np.where(i_mod == 0, p,
+            np.where(i_mod == 1, p,
+            np.where(i_mod == 2, t,
+            np.where(i_mod == 3, v,
+            np.where(i_mod == 4, v, q)))))
+
+        out = np.empty((h.size, 3), dtype=np.uint8)
+        out[:, 0] = np.clip(r * 255.0, 0, 255)
+        out[:, 1] = np.clip(g * 255.0, 0, 255)
+        out[:, 2] = np.clip(b * 255.0, 0, 255)
+        return out
+
+    def apply_brightness_array(self, colors: np.ndarray) -> np.ndarray:
+        """Apply brightness parameter to an (N,3) uint8 array. Returns uint8."""
+        brightness = self.params.get('brightness', 1.0)
+        if brightness >= 1.0:
+            return colors
+        scaled = colors.astype(np.float32) * brightness
+        return np.clip(scaled, 0, 255).astype(np.uint8)
+
     def get_pixel_count(self) -> int:
         """Get total number of pixels"""
         return self.controller.total_leds

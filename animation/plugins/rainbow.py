@@ -7,7 +7,8 @@ Based on the original rainbow_animation from led_controller_spi.py
 """
 
 import math
-from typing import List, Tuple, Dict, Any
+import numpy as np
+from typing import Dict, Any
 from animation import AnimationBase
 
 
@@ -22,24 +23,20 @@ class RainbowAnimation(AnimationBase):
     def __init__(self, controller, config: Dict[str, Any] = None):
         super().__init__(controller, config)
         
-        # Animation state
         self.hue_offset = 0.0
         
-        # Override default parameters
         self.default_params.update({
             'speed': 0.3,
-            'span_ratio': 1.0,  # How much of the strip the rainbow spans (1.0 = full strip)
-            'direction': 1,     # 1 for forward, -1 for reverse
+            'span_ratio': 1.0,
+            'direction': 1,
             'brightness': 1.0,
             'color_saturation': 1.0,
             'color_value': 1.0
         })
         
-        # Merge with config
         self.params = {**self.default_params, **self.config}
     
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        """Return schema for configurable parameters"""
         schema = super().get_parameter_schema()
         schema.update({
             'span_ratio': {
@@ -59,22 +56,19 @@ class RainbowAnimation(AnimationBase):
         })
         return schema
     
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
-        """Generate rainbow frame"""
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
+        """Generate rainbow frame. Returns (N,3) uint8 ndarray."""
         strip_count, leds_per_strip = self.get_strip_info()
         total_pixels = self.get_pixel_count()
         
-        # Calculate animation parameters
         speed = self.params.get('speed', 0.3)
         span_ratio = self.params.get('span_ratio', 1.0)
         direction = self.params.get('direction', 1)
         saturation = self.params.get('color_saturation', 1.0)
         value = self.params.get('color_value', 1.0)
         
-        # Calculate span in pixels
         span_pixels = max(int(leds_per_strip * span_ratio), 1)
         
-        # Update hue offset based on time and speed
         hue_step = 0.01 * speed * direction
         self.hue_offset += hue_step
         if self.hue_offset >= 1.0:
@@ -82,23 +76,15 @@ class RainbowAnimation(AnimationBase):
         elif self.hue_offset < 0.0:
             self.hue_offset += 1.0
         
-        # Generate colors for all pixels
-        pixel_colors = []
+        led_indices = np.arange(leds_per_strip, dtype=np.float32)
+        strip_hues = (self.hue_offset + led_indices / span_pixels) % 1.0
+
+        hues = np.tile(strip_hues, strip_count)
+        sats = np.full(total_pixels, saturation, dtype=np.float32)
+        vals = np.full(total_pixels, value, dtype=np.float32)
         
-        for strip in range(strip_count):
-            for led in range(leds_per_strip):
-                # Calculate hue based on position within the span
-                hue = (self.hue_offset + (led / span_pixels)) % 1.0
-                
-                # Convert HSV to RGB
-                color = self.hsv_to_rgb(hue, saturation, value)
-                
-                # Apply brightness
-                color = self.apply_brightness(color)
-                
-                pixel_colors.append(color)
-        
-        return pixel_colors
+        result = self.hsv_to_rgb_array(hues, sats, vals)
+        return self.apply_brightness_array(result)
 
 
 class RainbowWaveAnimation(AnimationBase):
@@ -114,7 +100,7 @@ class RainbowWaveAnimation(AnimationBase):
         
         self.default_params.update({
             'speed': 1.0,
-            'wavelength': 0.5,  # Fraction of strip length for one wave
+            'wavelength': 0.5,
             'direction': 1,
             'brightness': 1.0,
             'color_saturation': 1.0,
@@ -143,9 +129,10 @@ class RainbowWaveAnimation(AnimationBase):
         })
         return schema
     
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
-        """Generate rainbow wave frame"""
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
+        """Generate rainbow wave frame. Returns (N,3) uint8 ndarray."""
         strip_count, leds_per_strip = self.get_strip_info()
+        total_pixels = strip_count * leds_per_strip
         
         speed = self.params.get('speed', 1.0)
         wavelength = self.params.get('wavelength', 0.5)
@@ -153,23 +140,16 @@ class RainbowWaveAnimation(AnimationBase):
         saturation = self.params.get('color_saturation', 1.0)
         value = self.params.get('color_value', 1.0)
         
-        # Calculate wave parameters
         wave_pixels = max(int(leds_per_strip * wavelength), 1)
-        phase_offset = time_elapsed * speed * direction * 2 * math.pi
+        phase_offset = time_elapsed * speed * direction * 2.0 * math.pi
         
-        pixel_colors = []
+        led_indices = np.arange(leds_per_strip, dtype=np.float32)
+        wave_pos = (led_indices / wave_pixels * 2.0 * math.pi + phase_offset) % (2.0 * math.pi)
+        strip_hues = (np.sin(wave_pos) + 1.0) * 0.5
+
+        hues = np.tile(strip_hues, strip_count)
+        sats = np.full(total_pixels, saturation, dtype=np.float32)
+        vals = np.full(total_pixels, value, dtype=np.float32)
         
-        for strip in range(strip_count):
-            for led in range(leds_per_strip):
-                # Calculate wave position
-                wave_pos = (led / wave_pixels * 2 * math.pi + phase_offset) % (2 * math.pi)
-                
-                # Use sine wave to determine hue
-                hue = (math.sin(wave_pos) + 1) / 2  # Normalize to 0-1
-                
-                color = self.hsv_to_rgb(hue, saturation, value)
-                color = self.apply_brightness(color)
-                
-                pixel_colors.append(color)
-        
-        return pixel_colors
+        result = self.hsv_to_rgb_array(hues, sats, vals)
+        return self.apply_brightness_array(result)

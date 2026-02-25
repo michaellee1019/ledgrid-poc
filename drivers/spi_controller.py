@@ -10,6 +10,8 @@ import argparse
 import spidev
 import sys
 
+import numpy as np
+
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 # LED Configuration defaults
@@ -277,31 +279,42 @@ class LEDController:
             print(f"✓ Configuration sent (strips={self.strip_count}, leds/strip={self.leds_per_strip})")
 
     def set_all_pixels(self, colors):
-        """Send all pixels in one SPI transaction"""
+        """Send all pixels in one SPI transaction.
+
+        Accepts a list of (r,g,b) tuples or a numpy uint8 array of shape (N,3).
+        """
         self._refresh_configuration()
         start_time = time.perf_counter()
 
         total_pixels = self.total_leds
-        base_colors = list(colors)
+        is_ndarray = isinstance(colors, np.ndarray)
 
-        if len(base_colors) < total_pixels:
-            frame_colors = base_colors + [(0, 0, 0)] * (total_pixels - len(base_colors))
-        elif len(base_colors) > total_pixels:
-            frame_colors = base_colors[:total_pixels]
+        if is_ndarray:
+            arr = colors
+            if arr.shape[0] < total_pixels:
+                arr = np.concatenate([arr, np.zeros((total_pixels - arr.shape[0], 3), dtype=np.uint8)])
+            elif arr.shape[0] > total_pixels:
+                arr = arr[:total_pixels]
+            if arr.dtype != np.uint8:
+                arr = np.clip(arr, 0, 255).astype(np.uint8)
+            rgb_bytes = arr.tobytes()
         else:
-            frame_colors = base_colors
+            rgb_bytes = None
 
         success = False
         try:
             if total_pixels <= MAX_PIXELS_SET_ALL:
                 buf = bytearray(1 + total_pixels * 3)
                 buf[0] = CMD_SET_ALL
-                idx = 1
-                for r, g, b in frame_colors:
-                    buf[idx] = int(r) & 0xFF
-                    buf[idx + 1] = int(g) & 0xFF
-                    buf[idx + 2] = int(b) & 0xFF
-                    idx += 3
+                if rgb_bytes is not None:
+                    buf[1:] = rgb_bytes
+                else:
+                    idx = 1
+                    for r, g, b in colors:
+                        buf[idx] = int(r) & 0xFF
+                        buf[idx + 1] = int(g) & 0xFF
+                        buf[idx + 2] = int(b) & 0xFF
+                        idx += 3
                 self._xfer(buf)
                 if SPI_INTER_FRAME_DELAY > 0:
                     time.sleep(SPI_INTER_FRAME_DELAY)
@@ -314,12 +327,16 @@ class LEDController:
                     buf[1] = (start >> 8) & 0xFF
                     buf[2] = start & 0xFF
                     buf[3] = count
-                    idx = 4
-                    for r, g, b in frame_colors[start:start + count]:
-                        buf[idx] = int(r) & 0xFF
-                        buf[idx + 1] = int(g) & 0xFF
-                        buf[idx + 2] = int(b) & 0xFF
-                        idx += 3
+                    if rgb_bytes is not None:
+                        offset = start * 3
+                        buf[4:] = rgb_bytes[offset:offset + count * 3]
+                    else:
+                        idx = 4
+                        for r, g, b in colors[start:start + count]:
+                            buf[idx] = int(r) & 0xFF
+                            buf[idx + 1] = int(g) & 0xFF
+                            buf[idx + 2] = int(b) & 0xFF
+                            idx += 3
                     self._xfer(buf)
                     start += count
 

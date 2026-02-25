@@ -7,7 +7,8 @@ pushes outward in hot gradients.
 """
 
 import math
-from typing import List, Tuple, Dict, Any
+import numpy as np
+from typing import Dict, Any
 from animation import AnimationBase
 
 
@@ -23,18 +24,44 @@ class FlameBurstAnimation(AnimationBase):
         super().__init__(controller, config)
 
         self.default_params.update({
-            'speed': 1.0,            # Multiplier for burst speed
-            'burst_rate': 0.9,       # Bursts per second
-            'shell_thickness': 0.22, # Width of the expanding wave (normalized 0-1)
-            'flicker': 0.35,         # Extra flicker energy
-            'afterglow': 0.35,       # How much heat lingers behind the front
-            'serpentine': False,     # Account for serpentine wiring when mapping Y
-            'visible_leds': 20,      # How many LEDs actually exist per strip (for geometry)
-            'center_offset_x': 0.0,  # Shift burst center horizontally (in strip units)
-            'center_offset_y': 0.0   # Shift burst center vertically (in LED units)
+            'speed': 1.0,
+            'burst_rate': 0.9,
+            'shell_thickness': 0.22,
+            'flicker': 0.35,
+            'afterglow': 0.35,
+            'serpentine': False,
+            'visible_leds': 20,
+            'center_offset_x': 0.0,
+            'center_offset_y': 0.0
         })
 
         self.params = {**self.default_params, **self.config}
+
+        self._cached_strip_count = None
+        self._cached_leds_per_strip = None
+        self._strip_coords = None
+        self._led_coords = None
+
+    def _build_coord_arrays(self, strip_count, leds_per_strip, visible_leds, serpentine):
+        """Pre-compute flat pixel coordinate arrays."""
+        total = strip_count * leds_per_strip
+        strips = np.repeat(np.arange(strip_count, dtype=np.float32), leds_per_strip)
+        leds = np.tile(np.arange(leds_per_strip, dtype=np.int32), strip_count)
+
+        if serpentine:
+            odd_strip = (strips.astype(np.int32) % 2 == 1)
+            y_pos = np.where(odd_strip, leds_per_strip - 1 - leds, leds).astype(np.float32)
+        else:
+            y_pos = leds.astype(np.float32)
+
+        np.clip(y_pos, 0, visible_leds - 1, out=y_pos)
+
+        self._strip_coords = strips
+        self._led_coords = y_pos
+        self._flicker_strip = strips * 0.8
+        self._flicker_led = leds.astype(np.float32) * 0.35
+        self._cached_strip_count = strip_count
+        self._cached_leds_per_strip = leds_per_strip
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -96,70 +123,55 @@ class FlameBurstAnimation(AnimationBase):
         })
         return schema
 
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
         strip_count, leds_per_strip = self.get_strip_info()
         visible_leds = max(1, min(int(self.params.get('visible_leds', leds_per_strip)), leds_per_strip))
-
-        # Grid geometry
-        center_x = (strip_count - 1) / 2.0 + self.params.get('center_offset_x', 0.0)
-        center_y = (visible_leds - 1) / 2.0 + self.params.get('center_offset_y', 0.0)
-        corners = [
-            (0.0, 0.0),
-            (strip_count - 1.0, 0.0),
-            (0.0, visible_leds - 1.0),
-            (strip_count - 1.0, visible_leds - 1.0)
-        ]
-        max_distance = max(math.hypot(center_x - x, center_y - y) for x, y in corners) or 1.0
         serpentine = bool(self.params.get('serpentine', False))
 
-        # Animation parameters
+        if self._cached_strip_count != strip_count or self._cached_leds_per_strip != leds_per_strip:
+            self._build_coord_arrays(strip_count, leds_per_strip, visible_leds, serpentine)
+
+        center_x = (strip_count - 1) / 2.0 + self.params.get('center_offset_x', 0.0)
+        center_y = (visible_leds - 1) / 2.0 + self.params.get('center_offset_y', 0.0)
+        corners = np.array([
+            [0.0, 0.0],
+            [strip_count - 1.0, 0.0],
+            [0.0, visible_leds - 1.0],
+            [strip_count - 1.0, visible_leds - 1.0]
+        ])
+        max_distance = float(np.max(np.hypot(center_x - corners[:, 0], center_y - corners[:, 1]))) or 1.0
+
         speed = self.params.get('speed', 1.0)
         burst_rate = self.params.get('burst_rate', 0.9)
         shell_thickness = max(self.params.get('shell_thickness', 0.22), 0.01)
         flicker_amount = self.params.get('flicker', 0.35)
         afterglow = self.params.get('afterglow', 0.35)
-
         saturation_boost = self.params.get('color_saturation', 1.0)
         value_boost = self.params.get('color_value', 1.0)
 
-        # Burst timing
         cycle = time_elapsed * burst_rate * speed
-        phase = cycle % 1.0                # 0 → 1 over a burst
-        radius = phase                     # Normalized radius across the grid
-        envelope = math.sin(phase * math.pi)  # Ease in/out for each burst
+        phase = cycle % 1.0
+        radius = phase
+        envelope = math.sin(phase * math.pi)
 
-        pixel_colors = []
+        dx = self._strip_coords - center_x
+        dy = self._led_coords - center_y
+        distance_norm = np.hypot(dx, dy) / max_distance
 
-        for strip in range(strip_count):
-            for led in range(leds_per_strip):
-                # Map Y to physical position if wiring snakes back and forth
-                y_pos = leds_per_strip - 1 - led if serpentine and (strip % 2 == 1) else led
-                y_pos = min(y_pos, visible_leds - 1)
+        shell = np.exp(-((distance_norm - radius) / shell_thickness) ** 2 * 2.5)
+        core = np.exp(-distance_norm * 3.2) * (0.6 + 0.4 * phase)
+        glow = np.maximum(0.0, 1.0 - distance_norm) * afterglow * phase
 
-                dx = strip - center_x
-                dy = y_pos - center_y
-                distance_norm = math.hypot(dx, dy) / max_distance
+        intensity = (shell * 1.2 + core + glow) * envelope
 
-                # Strong shell at the moving front plus a molten core and trailing heat
-                shell = math.exp(-((distance_norm - radius) / shell_thickness) ** 2 * 2.5)
-                core = math.exp(-distance_norm * 3.2) * (0.6 + 0.4 * phase)
-                glow = max(0.0, 1.0 - distance_norm) * afterglow * phase
+        flicker_phase = time_elapsed * 18.0 + self._flicker_strip + self._flicker_led
+        flicker = (np.sin(flicker_phase) + np.sin(flicker_phase * 0.7 + 3.1)) * 0.5
+        intensity += np.maximum(flicker, 0.0) * flicker_amount * (shell + 0.5 * core)
+        np.clip(intensity, 0.0, 1.0, out=intensity)
 
-                intensity = (shell * 1.2 + core + glow) * envelope
+        hue = (0.02 + 0.1 * intensity) % 1.0
+        saturation = np.minimum(1.0, (0.75 + 0.25 * intensity) * saturation_boost)
+        value = np.minimum(1.0, (0.45 + 0.55 * intensity) * value_boost)
 
-                # Add lively flicker tied to position and time
-                flicker_phase = time_elapsed * 18.0 + strip * 0.8 + led * 0.35
-                flicker = (math.sin(flicker_phase) + math.sin(flicker_phase * 0.7 + 3.1)) * 0.5
-                intensity += max(flicker, 0.0) * flicker_amount * (shell + 0.5 * core)
-                intensity = max(0.0, min(intensity, 1.0))
-
-                # Map intensity to a hot palette: deep red → amber → white-hot
-                hue = (0.02 + 0.1 * intensity) % 1.0
-                saturation = min(1.0, 0.75 + 0.25 * intensity) * saturation_boost
-                value = min(1.0, 0.45 + 0.55 * intensity) * value_boost
-
-                color = self.hsv_to_rgb(hue, min(saturation, 1.0), min(value, 1.0))
-                color = self.apply_brightness(color)
-                pixel_colors.append(color)
-
-        return pixel_colors
+        result = self.hsv_to_rgb_array(hue, saturation, value)
+        return self.apply_brightness_array(result)
