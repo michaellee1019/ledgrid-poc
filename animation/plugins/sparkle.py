@@ -23,12 +23,12 @@ class SparkleAnimation(AnimationBase):
         super().__init__(controller, config)
 
         self.default_params.update({
-            'base_red': 0,
-            'base_green': 0,
-            'base_blue': 20,
+            'base_red': 34,
+            'base_green': 22,
+            'base_blue': 8,
             'sparkle_red': 255,
-            'sparkle_green': 255,
-            'sparkle_blue': 255,
+            'sparkle_green': 200,
+            'sparkle_blue': 80,
             'sparkle_probability': 0.02,
             'fade_speed': 0.9,
         })
@@ -41,12 +41,12 @@ class SparkleAnimation(AnimationBase):
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
         schema.update({
-            'base_red': {'type': 'int', 'min': 0, 'max': 255, 'default': 0, 'description': 'Base color red'},
-            'base_green': {'type': 'int', 'min': 0, 'max': 255, 'default': 0, 'description': 'Base color green'},
-            'base_blue': {'type': 'int', 'min': 0, 'max': 255, 'default': 20, 'description': 'Base color blue'},
+            'base_red': {'type': 'int', 'min': 0, 'max': 255, 'default': 30, 'description': 'Base color red'},
+            'base_green': {'type': 'int', 'min': 0, 'max': 255, 'default': 18, 'description': 'Base color green'},
+            'base_blue': {'type': 'int', 'min': 0, 'max': 255, 'default': 4, 'description': 'Base color blue'},
             'sparkle_red': {'type': 'int', 'min': 0, 'max': 255, 'default': 255, 'description': 'Sparkle color red'},
-            'sparkle_green': {'type': 'int', 'min': 0, 'max': 255, 'default': 255, 'description': 'Sparkle color green'},
-            'sparkle_blue': {'type': 'int', 'min': 0, 'max': 255, 'default': 255, 'description': 'Sparkle color blue'},
+            'sparkle_green': {'type': 'int', 'min': 0, 'max': 255, 'default': 200, 'description': 'Sparkle color green'},
+            'sparkle_blue': {'type': 'int', 'min': 0, 'max': 255, 'default': 80, 'description': 'Sparkle color blue'},
             'sparkle_probability': {'type': 'float', 'min': 0.001, 'max': 0.1, 'default': 0.02, 'description': 'Sparkle probability'},
             'fade_speed': {'type': 'float', 'min': 0.5, 'max': 0.99, 'default': 0.9, 'description': 'Fade speed'},
         })

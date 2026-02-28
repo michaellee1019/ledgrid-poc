@@ -94,7 +94,9 @@ def run_controller_mode(args):
     print(f"  Status every: {args.status_interval}s")
     print()
 
-    last_command_id = None
+    # Seed from any existing control file so stale commands aren't re-executed on restart
+    stale_cmd = channel.read_control()
+    last_command_id = stale_cmd.get('command_id') if stale_cmd else None
     last_status_time = 0.0
 
     try:

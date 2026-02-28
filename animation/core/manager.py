@@ -111,8 +111,10 @@ class AnimationManager:
         "spiral_single",
     }
     
+    DEFAULT_ANIMATION = "sparkle"
+
     def __init__(self, controller: LEDController, plugins_dir: Optional[str] = None,
-                 animation_speed_scale: float = 1.0):
+                 animation_speed_scale: float = 1.0, default_animation: Optional[str] = None):
         """
         Initialize animation manager
         
@@ -120,11 +122,13 @@ class AnimationManager:
             controller: LED controller instance
             plugins_dir: Directory containing animation plugins
             animation_speed_scale: Multiplier applied to each animation's speed parameter at start
+            default_animation: Animation to auto-start on init (None = use DEFAULT_ANIMATION)
         """
         self.controller = controller
         self.plugin_loader = AnimationPluginLoader(
             plugins_dir, allowed_plugins=self.ALLOWED_PLUGINS
         )
+        self._default_animation = default_animation or self.DEFAULT_ANIMATION
         
         # Animation state
         self.current_animation: Optional[AnimationBase] = None
@@ -166,8 +170,13 @@ class AnimationManager:
             getattr(self.controller, 'debug', False)
         )
 
-        # Load all plugins on startup
+        # Load all plugins on startup and auto-start the default animation
         self.refresh_plugins()
+        if self._default_animation:
+            if self.start_animation(self._default_animation):
+                print(f"▶️  Auto-started default animation: {self._default_animation}")
+            else:
+                print(f"⚠️  Could not auto-start default animation: {self._default_animation}")
     
     def refresh_plugins(self) -> Dict[str, Any]:
         """Reload all animation plugins"""
