@@ -98,6 +98,7 @@ class AnimationManager:
         "rainbow",
         "emoji",
         "emoji_arranger",
+        "gif_animation",
         "sparkle",
         "fluid_tank",
         "flame_burst",

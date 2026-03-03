@@ -85,6 +85,13 @@ def run_controller_mode(args):
     )
     manager.target_fps = args.target_fps
 
+    if hasattr(controller, "set_brightness"):
+        try:
+            controller.set_brightness(args.brightness)
+            print(f"  Brightness : {args.brightness}")
+        except Exception as exc:
+            print(f"⚠️ Failed to set controller brightness to {args.brightness}: {exc}")
+
     channel = FileControlChannel(control_path=args.control_file, status_path=args.status_file)
 
     print("🎛️ Controller mode")
@@ -249,6 +256,8 @@ def main():
                         help='Enable LED controller debug output')
     parser.add_argument('--target-fps', type=int, default=150,
                         help='Target animation FPS (default: 150)')
+    parser.add_argument('--brightness', type=int, default=50,
+                        help='Global hardware brightness 0-255 (default: 50)')
     parser.add_argument('--animation-speed-scale', type=float, default=0.2,
                         help='Multiplier applied to each animation\'s speed parameter (default: 0.2)')
     parser.add_argument('--poll-interval', type=float, default=0.05,

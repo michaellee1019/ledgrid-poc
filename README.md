@@ -46,6 +46,7 @@ High-performance SPI-controlled LED grid with a web UI and hot-swappable animati
 
 - `docs/README.md` - system overview and setup details
 - `docs/ANIMATION_SYSTEM.md` - animation plugins and API
+- `docs/GIF_PIPELINE.md` - GIF asset preparation and playback plugin
 - `docs/DEPLOYMENT.md` - Raspberry Pi deployment guide
 - `docs/HARDWARE.md` - wiring and hardware notes
 - `docs/ARCHITECTURE_DIAGRAM.md` - architecture and data flow

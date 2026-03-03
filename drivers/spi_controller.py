@@ -233,6 +233,10 @@ class LEDController:
         level = int(brightness) & 0xFF
         self.current_brightness = level
         self._refresh_configuration(force=True)
+        self._xfer([CMD_SET_BRIGHTNESS, level])
+        self._last_brightness_refresh = time.time()
+        if self.debug:
+            print(f"✓ Brightness set ({level})")
     
     def show(self):
         """Update the LED display"""

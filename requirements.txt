@@ -4,4 +4,4 @@ spidev
 flask
 werkzeug>=2.0.0
 numpy
-
+pillow>=10.0.0
