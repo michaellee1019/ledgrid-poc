@@ -51,3 +51,8 @@ High-performance SPI-controlled LED grid with a web UI and hot-swappable animati
 - `docs/HARDWARE.md` - wiring and hardware notes
 - `docs/ARCHITECTURE_DIAGRAM.md` - architecture and data flow
 - `refactor.md` - refactor plan and checklist
+
+## TODO
+
+- 2026-03-30: https://github.com/pmarreck/printable-binary for frame data
+
