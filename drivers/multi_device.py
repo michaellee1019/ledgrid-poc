@@ -12,6 +12,8 @@ import numpy as np
 
 from drivers.spi_controller import LEDController, SPI_BUS, SPI_SPEED, SPI_MODE
 
+DeviceMapEntry = Tuple[int, int]
+
 
 class MultiDeviceLEDController:
     """Multi-device LED controller that manages multiple ESP32 devices"""
@@ -25,7 +27,7 @@ class MultiDeviceLEDController:
                  leds_per_strip: int = 140,
                  debug: bool = False,
                  parallel: bool = True,
-                 device_map: Optional[List[Tuple[int, int]]] = None):
+                 device_map: Optional[List[DeviceMapEntry]] = None):
         """
         Initialize multi-device LED controller
         
@@ -66,6 +68,11 @@ class MultiDeviceLEDController:
         
         # Build device map (auto-detects SPI1 fallback if needed)
         self.device_map = device_map or self._build_device_map(num_devices, bus)
+        map_parts = []
+        for idx, entry in enumerate(self.device_map):
+            bus, dev = entry
+            map_parts.append(f"dev{idx}=spidev{bus}.{dev}")
+        print(f"[LEDGRID] SPI device map ({num_devices} devices): {', '.join(map_parts)}")
         
         # Initialize individual device controllers
         self.devices: List[LEDController] = []
@@ -80,7 +87,7 @@ class MultiDeviceLEDController:
                 mode=self._resolve_mode(device_bus, mode),
                 strips=strips_per_device,
                 leds_per_strip=leds_per_strip,
-                debug=debug
+                debug=debug,
             )
             self.devices.append(device)
         
@@ -282,7 +289,30 @@ class MultiDeviceLEDController:
         """Check if a /dev/spidev device exists"""
         return os.path.exists(f"/dev/spidev{bus}.{device}")
     
-    def _build_device_map(self, num_devices: int, primary_bus: int) -> List[Tuple[int, int]]:
+    @staticmethod
+    def _parse_device_map_env() -> Optional[List[DeviceMapEntry]]:
+        """
+        Optional override via LEDGRID_DEVICE_MAP, e.g. "0:0;0:1".
+        Each entry is bus:device.
+        """
+        raw = os.environ.get("LEDGRID_DEVICE_MAP", "").strip()
+        if not raw:
+            return None
+
+        entries: List[DeviceMapEntry] = []
+        for chunk in raw.split(";"):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            parts = chunk.split(":")
+            if len(parts) != 2:
+                raise ValueError(f"Invalid LEDGRID_DEVICE_MAP entry: {chunk!r}")
+            bus = int(parts[0])
+            device = int(parts[1])
+            entries.append((bus, device))
+        return entries
+
+    def _build_device_map(self, num_devices: int, primary_bus: int) -> List[DeviceMapEntry]:
         """
         Map devices to available SPI buses.
         
@@ -296,22 +326,22 @@ class MultiDeviceLEDController:
         Returns:
             List of (bus, device_id) tuples
         """
-        # Physical left-to-right board order for 4-board wall installs:
+        # DISABLED: Physical reordering causes issues when not all devices are connected
+        # Users with 4 boards should use explicit device_map parameter if they need custom ordering
+        # Old logic: Physical left-to-right board order for 4-board wall installs:
         # SPI1-CS0, SPI1-CS1, SPI0-CS1, SPI0-CS0
-        # This keeps logical strip order aligned with how panels are mounted.
-        if (
-            num_devices == 4
-            and self._device_exists(1, 1)
-            and self._device_exists(1, 0)
-            and self._device_exists(primary_bus, 1)
-            and self._device_exists(primary_bus, 0)
-        ):
-            reordered = [(1, 0), (1, 1), (primary_bus, 1), (primary_bus, 0)]
-            if self.debug:
-                print(f"[INFO] Using physical board order map: {reordered}")
-            return reordered
+        # if (num_devices == 4 and all devices exist):
+        #     reordered = [(1, 0), (1, 1), (primary_bus, 1), (primary_bus, 0)]
 
-        map_entries: List[Tuple[int, int]] = []
+        env_map = self._parse_device_map_env()
+        if env_map is not None:
+            if len(env_map) < num_devices:
+                raise ValueError(
+                    f"LEDGRID_DEVICE_MAP defines {len(env_map)} devices, but {num_devices} were requested"
+                )
+            return env_map[:num_devices]
+
+        map_entries: List[DeviceMapEntry] = []
         
         # For 1-2 devices, just use the primary bus
         if num_devices <= 2:
@@ -322,15 +352,18 @@ class MultiDeviceLEDController:
         # For 3+ devices, check if CE2+ exist on primary bus
         # If not, fall back to SPI1 for devices 3-4
         if not self._device_exists(primary_bus, 2) and self._device_exists(1, 0):
-            # Use SPI0 for first 2 devices, SPI1 for the rest
+            # Wall left-to-right: SPI0 CE0, SPI0 CE1, SPI1 CE1, SPI1 CE0
+            # (SPI1 chip-selects are swapped so logical groups 3 and 4 match
+            # physical board order on the wall.)
+            spi1_ces = [1, 0]  # CE1 then CE0
             for idx in range(num_devices):
                 if idx < 2:
                     map_entries.append((primary_bus, idx))
                 else:
-                    map_entries.append((1, idx - 2))
-            
+                    map_entries.append((1, spi1_ces[idx - 2]))
+
             if self.debug:
-                print(f"[INFO] Using SPI1 fallback for devices {2} and {3}")
+                print(f"[INFO] Using SPI1 fallback for devices 2 and 3 (CE1, CE0)")
         else:
             # All devices on primary bus
             for device_id in range(num_devices):

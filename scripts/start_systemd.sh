@@ -12,8 +12,8 @@ fi
 source venv/bin/activate
 
 DEFAULT_STRIPS=$(python - <<'PY'
-from drivers.led_layout import DEFAULT_STRIP_COUNT
-print(DEFAULT_STRIP_COUNT)
+from drivers.led_layout import default_strip_count
+print(default_strip_count())
 PY
 )
 DEFAULT_LEDS_PER_STRIP=$(python - <<'PY'
@@ -34,8 +34,11 @@ ANIM_DIR=${ANIM_DIR:-animation/plugins}
 POLL_INTERVAL=${POLL_INTERVAL:-0.05}
 STATUS_INTERVAL=${STATUS_INTERVAL:-0.5}
 SPI_SPEED=${SPI_SPEED:-20000000}
+LEDGRID_HAT=${LEDGRID_HAT:-0}
 
 export PYTHONUNBUFFERED=1
+export LEDGRID_HAT
+export STRIPS
 
 mkdir -p "$(dirname "$CONTROL_FILE")" "$(dirname "$STATUS_FILE")"
 

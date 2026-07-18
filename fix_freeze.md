@@ -113,7 +113,7 @@ Once the test script works:
 
 ```bash
 # Copy script to new RPi (if not already there)
-scp led_controller_spi.py bedsidestreamdeck@<NEW_RPI_IP>:~/
+scp led_controller_spi.py ledgridwall@<NEW_RPI_IP>:~/
 
 # Run with debug to see progress
 sudo python3 led_controller_spi.py --debug rainbow

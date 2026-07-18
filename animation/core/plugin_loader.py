@@ -100,15 +100,21 @@ class AnimationPluginLoader:
             spec.loader.exec_module(module)
             self.plugin_modules[plugin_name] = module
             
-            # Find animation class in module
+            # Find animation class defined in this module (skip imported bases).
+            # Without the __module__ / isabstract checks, plugins that import
+            # StatefulAnimationBase would bind that abstract class instead.
             animation_class = None
             for name, obj in inspect.getmembers(module):
-                if (inspect.isclass(obj) and 
-                    issubclass(obj, AnimationBase) and 
-                    obj != AnimationBase):
+                if (
+                    inspect.isclass(obj)
+                    and issubclass(obj, AnimationBase)
+                    and obj is not AnimationBase
+                    and obj.__module__ == module.__name__
+                    and not inspect.isabstract(obj)
+                ):
                     animation_class = obj
                     break
-            
+
             if animation_class is None:
                 print(f"No animation class found in plugin: {plugin_name}")
                 return None

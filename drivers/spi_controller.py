@@ -116,6 +116,8 @@ class LEDController:
                  strips=DEFAULT_NUM_STRIPS, leds_per_strip=DEFAULT_LED_PER_STRIP,
                  debug=False):
         self.debug = debug
+        self.bus = bus
+        self.device = device
         self.spi = spidev.SpiDev()
         self.spi.open(bus, device)
         self.spi.max_speed_hz = speed

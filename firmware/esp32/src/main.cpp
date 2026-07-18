@@ -22,15 +22,16 @@ static constexpr uint16_t MAX_TOTAL_LEDS    = MAX_STRIPS * MAX_LEDS_PER_STRIP;
 static constexpr uint8_t DEFAULT_STRIPS     = 8;
 static constexpr uint16_t DEFAULT_LEDS_PER_STRIP = 140;
 
-// LED data pins - ESP32-S3 DevKitC (user-specified pins)
-static constexpr uint8_t PIN_STRIP_0 = 4;   // GPIO4
-static constexpr uint8_t PIN_STRIP_1 = 5;   // GPIO5
-static constexpr uint8_t PIN_STRIP_2 = 6;   // GPIO6
-static constexpr uint8_t PIN_STRIP_3 = 7;   // GPIO7
-static constexpr uint8_t PIN_STRIP_4 = 15;  // GPIO15
-static constexpr uint8_t PIN_STRIP_5 = 16;  // GPIO16
-static constexpr uint8_t PIN_STRIP_6 = 17;  // GPIO17
-static constexpr uint8_t PIN_STRIP_7 = 18;  // GPIO18
+// LED data pins - ESP32-S3 DevKitC (physical left-to-right = logical 0..7)
+// Pins are reversed relative to GPIO number order to match wall wiring.
+static constexpr uint8_t PIN_STRIP_0 = 18;  // GPIO18
+static constexpr uint8_t PIN_STRIP_1 = 17;  // GPIO17
+static constexpr uint8_t PIN_STRIP_2 = 16;  // GPIO16
+static constexpr uint8_t PIN_STRIP_3 = 15;  // GPIO15
+static constexpr uint8_t PIN_STRIP_4 = 7;   // GPIO7
+static constexpr uint8_t PIN_STRIP_5 = 6;   // GPIO6
+static constexpr uint8_t PIN_STRIP_6 = 5;   // GPIO5
+static constexpr uint8_t PIN_STRIP_7 = 4;   // GPIO4
 
 static constexpr uint8_t PIN_STATUS_LED = 48;  // ESP32-S3 DevKitC built-in RGB LED
 
@@ -89,6 +90,14 @@ inline uint16_t logical_to_physical(uint16_t logical) {
     offset = leds_per_strip - 1;
   }
   return strip * MAX_LEDS_PER_STRIP + offset;
+}
+
+static void run_rainbow_frame(uint8_t &hue) {
+  for (uint16_t i = 0; i < total_leds; ++i) {
+    leds[logical_to_physical(i)] = CHSV(hue + (i * 256 / total_leds), 255, 200);
+  }
+  FastLED.show();
+  hue += 2;
 }
 
 static uint16_t crc16_ccitt(const uint8_t *data, size_t length) {
@@ -300,7 +309,11 @@ void setup() {
   
   Serial.println("");
   Serial.println("========================================");
-  Serial.println("ESP32-S3 DevKitC SPI Slave LED Controller");  
+#ifdef RAINBOW_MODE
+  Serial.println("ESP32-S3 DevKitC RAINBOW Test Mode");
+#else
+  Serial.println("ESP32-S3 DevKitC SPI Slave LED Controller");
+#endif
   Serial.println("========================================");
   Serial.printf("Board: ESP32-S3 DevKitC (8MB Flash)\n");
   Serial.printf("Strips: %d x %d LEDs = %d total\n", active_strips, leds_per_strip, total_leds);
@@ -339,6 +352,12 @@ void setup() {
 
   pinMode(PIN_STATUS_LED, OUTPUT);
   digitalWrite(PIN_STATUS_LED, LOW);
+
+#ifdef RAINBOW_MODE
+  Serial.println("\n🌈 RAINBOW test mode — infinite animation, SPI disabled");
+  Serial.println("   Flash normal firmware (without RAINBOW=1) for SPI control\n");
+  return;
+#endif
 
   // Startup LED flash sequence
   for (uint16_t i = 0; i < total_leds; ++i) {
@@ -391,17 +410,12 @@ void setup() {
   Serial.println("\n✅ SPI slave ready");
   Serial.printf("Buffer size: %u bytes\n", SPI_BUFFER_SIZE);
   
-  // DEBUG: Rainbow animation for first 10 seconds to verify LED strips
-  Serial.println("\n🌈 Running rainbow animation for 10 seconds...");
+  // Brief rainbow animation to verify LED strips before SPI mode
+  Serial.println("\n🌈 Running rainbow animation for 1 second...");
   uint32_t rainbow_start = millis();
   uint8_t hue = 0;
   while (millis() - rainbow_start < 1000) {
-    for (uint16_t i = 0; i < total_leds; ++i) {
-      uint16_t physical = logical_to_physical(i);
-      leds[physical] = CHSV(hue + (i * 256 / total_leds), 255, 200);
-    }
-    FastLED.show();
-    hue += 2;
+    run_rainbow_frame(hue);
     delay(20);
   }
   
@@ -412,6 +426,13 @@ void setup() {
 }
 
 void loop() {
+#ifdef RAINBOW_MODE
+  static uint8_t hue = 0;
+  run_rainbow_frame(hue);
+  delay(20);
+  return;
+#endif
+
   memset(spi_rx_buffer, 0, sizeof(spi_rx_buffer));
 
   spi_slave_transaction_t trans = {};

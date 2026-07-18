@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PI_HOST=${PI_HOST:-bedsidestreamdeck@bedsidestreamdeck.local}
+PI_HOST=${PI_HOST:-ledgridwall@ledgridwall.local}
 DEPLOY_DIR=${DEPLOY_DIR:-ledgrid-pod}
 LOCAL_ANIM_DIR=${LOCAL_ANIM_DIR:-animation/plugins}
 REMOTE_ANIM_DIR=${REMOTE_ANIM_DIR:-animation/plugins}

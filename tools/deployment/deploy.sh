@@ -5,11 +5,11 @@
 set -euo pipefail  # Exit on any error and fail on unset vars
 
 # Configuration
-PI_HOST="bedsidestreamdeck@bedsidestreamdeck.local"
+PI_HOST="ledgridwall@ledgridwall.local"
 DEPLOY_DIR="ledgrid-pod"
 LOCAL_DIR="."
-SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
-PI_USER="${PI_HOST%@*}"
+# shellcheck source=ssh_helpers.sh
+source "$(dirname "$0")/ssh_helpers.sh"
 
 # Colors for output
 RED='\033[0;31m'
@@ -45,10 +45,12 @@ check_ssh_connection() {
         log_error "Please ensure:"
         log_error "  1. Raspberry Pi is powered on and connected to network"
         log_error "  2. SSH is enabled on the Pi"
-        log_error "  3. Passwordless SSH is configured"
-        log_error "  4. Hostname 'bedsidestreamdeck.local' resolves correctly"
+        log_error "  3. Passwordless SSH is configured (ssh-copy-id)"
+        log_error "  4. Hostname 'ledgridwall.local' resolves correctly"
         exit 1
     fi
+
+    ensure_remote_passwordless_sudo
 }
 
 # Create deployment directory on Pi
@@ -109,51 +111,15 @@ flash_esp32_firmware() {
     fi
 }
 
+# Ensure /boot/firmware/config.txt has the correct SPI overlays (idempotent).
+configure_remote_spi() {
+    log_info "Configuring Raspberry Pi SPI boot settings..."
+    ensure_remote_spi
+}
+
 # Create virtual environment and install dependencies
 setup_venv_and_dependencies() {
     log_info "Setting up Python virtual environment..."
-
-    log_info "Ensuring SPI0 is configured for 4 chip-select lines..."
-    ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
-set -euo pipefail
-CONFIG_FILES=()
-if [ -f /boot/firmware/config.txt ]; then
-  CONFIG_FILES+=("/boot/firmware/config.txt")
-fi
-if [ -f /boot/config.txt ]; then
-  CONFIG_FILES+=("/boot/config.txt")
-fi
-
-if [ ${#CONFIG_FILES[@]} -eq 0 ]; then
-  echo "[ERROR] Could not find a boot config file." >&2
-  exit 1
-fi
-
-ensure_line() {
-  local line="$1"
-  local file="$2"
-  if ! grep -qE "^\s*${line}\s*$" "$file"; then
-    echo "$line" | sudo tee -a "$file" >/dev/null
-  fi
-}
-
-for cfg in "${CONFIG_FILES[@]}"; do
-  sudo sed -i.bak '/dtoverlay=spi0-2cs/d' "$cfg"
-  sudo sed -i.bak '/dtoverlay=spi0-4cs/d' "$cfg"
-  sudo sed -i.bak '/dtoverlay=spi0-hw-cs/d' "$cfg"
-  sudo sed -i.bak '/dtoverlay=spi1-1cs/d' "$cfg"
-  sudo sed -i.bak '/dtoverlay=spi1-2cs/d' "$cfg"
-  sudo sed -i.bak '/dtoverlay=spi1-3cs/d' "$cfg"
-done
-
-TARGET_CONFIG="${CONFIG_FILES[0]}"
-ensure_line "dtparam=spi=on" "$TARGET_CONFIG"
-ensure_line "dtoverlay=spi0-4cs" "$TARGET_CONFIG"
-ensure_line "dtoverlay=spi1-2cs" "$TARGET_CONFIG"
-
-echo "[INFO] Updated ${TARGET_CONFIG}. Reboot required to expose /dev/spidev0.2 and /dev/spidev0.3."
-echo "[INFO] SPI1 (spi1-2cs) enabled as a fallback if spi0-4cs is not supported."
-EOF
 
     log_info "Ensuring Python build dependencies (spidev headers)..."
     ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
@@ -169,8 +135,14 @@ if ! sudo apt-get install -y "python${PY_VER}-dev" build-essential; then
 fi
 EOF
 
-    # Create virtual environment
-    ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && python3 -m venv venv"
+    log_info "Creating Python virtual environment..."
+    ssh $SSH_OPTS "$PI_HOST" "bash -s" <<EOF
+set -euo pipefail
+cd ~/$DEPLOY_DIR
+if [ ! -d venv ]; then
+  python3 -m venv venv
+fi
+EOF
 
     log_success "Virtual environment created"
 
@@ -185,15 +157,14 @@ EOF
 # Check if SPI is enabled
 check_spi() {
     log_info "Checking SPI configuration..."
-    
-    SPI_STATUS=$(ssh $SSH_OPTS "$PI_HOST" "ls /dev/spi* 2>/dev/null | wc -l || echo 0")
-    
-    if [ "$SPI_STATUS" -gt 0 ]; then
-        log_success "SPI devices found: $(ssh $SSH_OPTS "$PI_HOST" "ls /dev/spi*")"
+
+    if remote_spi_devices_ready >/dev/null 2>&1; then
+        log_success "SPI devices found:"
+        remote_spi_devices_ready
     else
-        log_warning "No SPI devices found"
-        log_warning "You may need to enable SPI with: sudo raspi-config"
-        log_warning "Navigate to: Interface Options > SPI > Enable"
+        log_warning "Required SPI devices are missing"
+        log_warning "Wall layout expects: /dev/spidev0.0 /dev/spidev0.1 /dev/spidev1.0 /dev/spidev1.1"
+        log_warning "Re-run deploy to configure SPI and reboot the Pi"
     fi
 }
 
@@ -243,8 +214,8 @@ echo \"Press Ctrl+C to stop\"
 echo \"\"
 
 DEFAULT_STRIPS=\$(python - <<'PY'
-from drivers.led_layout import DEFAULT_STRIP_COUNT
-print(DEFAULT_STRIP_COUNT)
+from drivers.led_layout import default_strip_count
+print(default_strip_count())
 PY
 )
 DEFAULT_LEDS_PER_STRIP=\$(python - <<'PY'
@@ -266,9 +237,11 @@ POLL_INTERVAL=\${POLL_INTERVAL:-0.05}
 STATUS_INTERVAL=\${STATUS_INTERVAL:-0.5}
 SPI_SPEED=\${SPI_SPEED:-20000000}
 LEDGRID_SPI1_MODE=\${LEDGRID_SPI1_MODE:-0}
+LEDGRID_HAT=\${LEDGRID_HAT:-0}
 PYTHONUNBUFFERED=1
 export PYTHONUNBUFFERED
 export LEDGRID_SPI1_MODE
+export LEDGRID_HAT
 
 mkdir -p \"\$(dirname \"\$CONTROL_FILE\")\" \"\$(dirname \"\$STATUS_FILE\")\"
 
@@ -342,6 +315,8 @@ Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1
 Environment=LEDGRID_SPI1_MODE=0
+Environment=LEDGRID_HAT=0
+Environment=STRIPS=32
 
 [Install]
 WantedBy=multi-user.target
@@ -438,6 +413,7 @@ main() {
     create_deploy_directory
     stop_running
     upload_files
+    configure_remote_spi
     if [ -z "${SKIP_FIRMWARE:-}" ]; then
         flash_esp32_firmware
     else

@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from animation.core.manager import AnimationManager
 from ipc.control_channel import FileControlChannel
-from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP, default_strip_count
 from drivers.frame_codec import decode_frame_data
 from web.app import create_app
 
@@ -232,8 +232,8 @@ def main():
                         help='Path to control file (default: run_state/control.json)')
     parser.add_argument('--status-file', default='run_state/status.json',
                         help='Path to status file (default: run_state/status.json)')
-    parser.add_argument('--strips', type=int, default=DEFAULT_STRIP_COUNT,
-                        help=f'Number of LED strips (default: {DEFAULT_STRIP_COUNT})')
+    parser.add_argument('--strips', type=int, default=default_strip_count(),
+                        help=f'Number of LED strips (default: {default_strip_count()})')
     parser.add_argument('--leds-per-strip', type=int, default=DEFAULT_LEDS_PER_STRIP,
                         help=f'LEDs per strip (default: {DEFAULT_LEDS_PER_STRIP})')
 

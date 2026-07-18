@@ -110,6 +110,7 @@ class AnimationManager:
         "plant_mask_highlight",
         "space_invaders",
         "spiral_single",
+        "strip_order",
     }
     
     DEFAULT_ANIMATION = "sparkle"
