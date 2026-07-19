@@ -7,6 +7,7 @@ Simple solid color animation with optional breathing effect.
 
 import math
 from typing import List, Tuple, Dict, Any
+import numpy as np
 from animation import AnimationBase
 
 
@@ -32,6 +33,8 @@ class SolidColorAnimation(AnimationBase):
         })
         
         self.params = {**self.default_params, **self.config}
+        self._last_frame_key = None
+        self._last_frame = None
     
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -86,7 +89,7 @@ class SolidColorAnimation(AnimationBase):
         })
         return schema
     
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
+    def generate_frame(self, time_elapsed: float, frame_count: int):
         """Generate solid color frame"""
         total_pixels = self.get_pixel_count()
         
@@ -113,8 +116,17 @@ class SolidColorAnimation(AnimationBase):
         # Apply global brightness
         color = self.apply_brightness((r, g, b))
         
-        # Return same color for all pixels
-        return [color] * total_pixels
+        static_key = None
+        if not self.params.get('breathing', False):
+            static_key = (color, total_pixels)
+            if static_key == self._last_frame_key and self._last_frame is not None:
+                return self.rendered_frame(self._last_frame, changed=False)
+
+        frame = self.next_frame_buffer(clear=False)
+        frame[:] = color
+        self._last_frame_key = static_key
+        self._last_frame = frame
+        return self.rendered_frame(frame)
 
 
 class GradientAnimation(AnimationBase):
@@ -141,6 +153,8 @@ class GradientAnimation(AnimationBase):
         })
         
         self.params = {**self.default_params, **self.config}
+        self._last_frame_key = None
+        self._last_frame = None
     
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -157,7 +171,7 @@ class GradientAnimation(AnimationBase):
         })
         return schema
     
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
+    def generate_frame(self, time_elapsed: float, frame_count: int):
         """Generate gradient frame"""
         strip_count, leds_per_strip = self.get_strip_info()
         
@@ -177,28 +191,36 @@ class GradientAnimation(AnimationBase):
         animated = self.params.get('animated', False)
         animation_speed = self.params.get('animation_speed', 1.0)
         
-        pixel_colors = []
-        
-        for strip in range(strip_count):
-            for led in range(leds_per_strip):
-                if direction == 'horizontal':
-                    # Gradient along strip length
-                    t = led / max(leds_per_strip - 1, 1)
-                else:
-                    # Gradient across strips
-                    t = strip / max(strip_count - 1, 1)
-                
-                # Apply animation offset if enabled
-                if animated:
-                    offset = time_elapsed * animation_speed
-                    t = (t + offset) % 1.0
-                
-                # Interpolate between colors
-                r = int(color1[0] * (1 - t) + color2[0] * t)
-                g = int(color1[1] * (1 - t) + color2[1] * t)
-                b = int(color1[2] * (1 - t) + color2[2] * t)
-                
-                color = self.apply_brightness((r, g, b))
-                pixel_colors.append(color)
-        
-        return pixel_colors
+        static_key = None
+        if not animated:
+            static_key = (
+                color1, color2, direction, strip_count, leds_per_strip,
+                float(self.params.get('brightness', 1.0)),
+            )
+            if static_key == self._last_frame_key and self._last_frame is not None:
+                return self.rendered_frame(self._last_frame, changed=False)
+
+        if direction == 'horizontal':
+            positions = np.tile(
+                np.linspace(0.0, 1.0, leds_per_strip, dtype=np.float32),
+                strip_count,
+            )
+        else:
+            positions = np.repeat(
+                np.linspace(0.0, 1.0, strip_count, dtype=np.float32),
+                leds_per_strip,
+            )
+        if animated:
+            positions = (positions + time_elapsed * animation_speed) % 1.0
+
+        first = np.asarray(color1, dtype=np.float32)
+        second = np.asarray(color2, dtype=np.float32)
+        frame = self.next_frame_buffer(clear=False)
+        mixed = first + (second - first) * positions[:, None]
+        brightness = max(0.0, min(1.0, float(self.params.get('brightness', 1.0))))
+        np.multiply(mixed, brightness, out=mixed)
+        np.clip(mixed, 0, 255, out=mixed)
+        frame[:] = mixed
+        self._last_frame_key = static_key
+        self._last_frame = frame
+        return self.rendered_frame(frame)

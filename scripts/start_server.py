@@ -151,6 +151,13 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
         if params:
             print(f"⚙️  Update params: {params}")
             manager.update_animation_parameters(params)
+    elif action == 'set_target_fps':
+        requested = data.get('target_fps')
+        try:
+            applied = manager.set_target_fps(int(requested))
+            print(f"🎚️ Target FPS: {applied}")
+        except (TypeError, ValueError):
+            print(f"⚠️ Invalid target FPS: {requested!r}")
     elif action == 'refresh_plugins':
         animation = data.get('animation')
         if animation:

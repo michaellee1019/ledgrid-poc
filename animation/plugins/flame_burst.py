@@ -173,5 +173,6 @@ class FlameBurstAnimation(AnimationBase):
         saturation = np.minimum(1.0, (0.75 + 0.25 * intensity) * saturation_boost)
         value = np.minimum(1.0, (0.45 + 0.55 * intensity) * value_boost)
 
-        result = self.hsv_to_rgb_array(hue, saturation, value)
-        return self.apply_brightness_array(result)
+        result = self.next_frame_buffer(clear=False)
+        self.hsv_to_rgb_array(hue, saturation, value, out=result)
+        return self.apply_brightness_array(result, out=result)

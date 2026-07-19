@@ -438,6 +438,8 @@ class EmojiAnimation(AnimationBase):
         })
 
         self.params = {**self.default_params, **self.config}
+        self._fitted_pattern_key = None
+        self._fitted_pattern = None
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -492,13 +494,18 @@ class EmojiAnimation(AnimationBase):
         pattern_name = str(self.params.get('emoji', 'smile')).lower()
         base_pattern = self.EMOJI_PATTERNS.get(pattern_name, self.EMOJI_PATTERNS['smile'])
 
-        pattern = self._fit_pattern_to_grid(base_pattern, strip_count, leds_per_strip)
+        pattern_key = (pattern_name, strip_count, leds_per_strip)
+        if pattern_key != self._fitted_pattern_key:
+            self._fitted_pattern = self._fit_pattern_to_grid(base_pattern, strip_count, leds_per_strip)
+            self._fitted_pattern_key = pattern_key
+        pattern = self._fitted_pattern
         pattern_height = len(pattern)
         pattern_width = len(pattern[0]) if pattern else 0
 
         # Pre-fill with the background color
         background = self.apply_brightness(self._color_from_params('background', (2, 6, 12)))
-        pixel_colors = [background] * total_pixels
+        pixel_colors = self.next_frame_buffer(clear=False)
+        pixel_colors[:] = background
 
         if not pattern:
             return pixel_colors

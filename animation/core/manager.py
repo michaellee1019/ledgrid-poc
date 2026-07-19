@@ -11,12 +11,13 @@ import time
 import threading
 import traceback
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 import numpy as np
 
-from animation.core import AnimationBase, StatefulAnimationBase, AnimationPluginLoader
+from animation.core import AnimationBase, RenderedFrame, StatefulAnimationBase, AnimationPluginLoader
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import encode_frame_data, FRAME_ENCODING_NAME
 
@@ -141,6 +142,8 @@ class AnimationManager:
         # WS2812 strip while leaving headroom for frame generation and transfer.
         self.target_fps = 200
         self.frame_count = 0
+        self.frames_presented = 0
+        self.unchanged_frames_skipped = 0
         self.start_time = 0.0
         self.animation_speed_scale = animation_speed_scale
         
@@ -264,7 +267,12 @@ class AnimationManager:
             self.is_running = True
             self.stop_event.clear()
             self.frame_count = 0
+            self.frames_presented = 0
+            self.unchanged_frames_skipped = 0
             self.frame_timestamps.clear()
+            with self.perf_lock:
+                self.perf_samples.clear()
+                self._last_perf_sample = {}
             self.start_time = time.perf_counter()
 
             # Check if this is a stateful animation
@@ -480,6 +488,8 @@ class AnimationManager:
             'painter_updated_at': self.painter_updated_at if self.painter_active else None,
             'current_animation': displayed_animation,
                 'frame_count': self.frame_count,
+                'frames_presented': self.frames_presented,
+                'unchanged_frames_skipped': self.unchanged_frames_skipped,
                 'uptime': (time.perf_counter() - self.start_time) if self.is_running else 0,
                 'target_fps': self.target_fps,
                 'animation_speed_scale': self.animation_speed_scale,
@@ -724,69 +734,106 @@ class AnimationManager:
 
     def _animation_loop(self):
         """Main animation loop running in separate thread"""
-        target_frame_time = 1.0 / max(1, int(self.target_fps) or 1)
+        inline_show = getattr(self.controller, "inline_show", False)
+        pending_present = None
 
-        while self.is_running and not self.stop_event.is_set():
-            loop_start = time.perf_counter()
-            generate_duration = 0.0
-            send_duration = 0.0
-            show_duration = 0.0
-            inline_show = getattr(self.controller, "inline_show", False)
+        # One presentation may overlap generation of the next frame. We resolve
+        # it before the animation can rotate back to the same one of its two
+        # reusable buffers, so ownership remains deterministic without copies.
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="led-present") as presenter:
+            while self.is_running and not self.stop_event.is_set():
+                loop_start = time.perf_counter()
+                generate_duration = 0.0
+                send_duration = 0.0
+                show_duration = 0.0
 
-            try:
-                if not self.current_animation:
-                    break
+                try:
+                    if not self.current_animation:
+                        break
 
-                # Generate frame
-                time_elapsed = loop_start - self.start_time
-                gen_start = time.perf_counter()
-                colors = self.current_animation.generate_frame(time_elapsed, self.frame_count)
-                frame = self._normalize_frame(colors)
-                generate_duration = time.perf_counter() - gen_start
+                    time_elapsed = loop_start - self.start_time
+                    gen_start = time.perf_counter()
+                    rendered = self.current_animation.generate_frame(time_elapsed, self.frame_count)
+                    changed = rendered.changed if isinstance(rendered, RenderedFrame) else True
+                    dirty_ranges = rendered.dirty_ranges if isinstance(rendered, RenderedFrame) else None
+                    frame = self._normalize_frame(rendered)
+                    generate_duration = time.perf_counter() - gen_start
 
-                # Store frame data for web interface
-                with self.frame_data_lock:
-                    self.current_frame_data = frame
+                    with self.frame_data_lock:
+                        self.current_frame_data = frame
 
-                # Send to LEDs
-                send_start = time.perf_counter()
-                self.controller.set_all_pixels(frame)
-                send_duration = time.perf_counter() - send_start
+                    if pending_present is not None:
+                        completed = pending_present
+                        pending_present = None
+                        send_duration, show_duration = completed.result()
 
-                # Some controllers need an explicit show; skip if controller handles it internally
-                if not inline_show and hasattr(self.controller, "show"):
-                    try:
-                        show_start = time.perf_counter()
-                        self.controller.show()
-                        show_duration = time.perf_counter() - show_start
-                    except Exception:
-                        # Controllers that embed show inside set_all_pixels will ignore this
-                        pass
+                    should_present = changed or self.frames_presented == 0
+                    if should_present:
+                        use_partial = bool(
+                            dirty_ranges
+                            and self.frames_presented > 0
+                            and hasattr(self.controller, 'set_frame')
+                        )
+                        pending_present = presenter.submit(
+                            self._present_frame,
+                            frame,
+                            dirty_ranges,
+                            use_partial,
+                            inline_show,
+                        )
+                        self.frames_presented += 1
+                    else:
+                        self.unchanged_frames_skipped += 1
 
-                self.frame_count += 1
+                    self.frame_count += 1
+                    self._update_fps_tracking(loop_start)
 
-                # Update FPS tracking
-                self._update_fps_tracking(loop_start)
+                except Exception as e:
+                    print(f"✗ Animation loop error: {e}")
+                    traceback.print_exc()
+                    time.sleep(0.05)
 
-            except Exception as e:
-                print(f"✗ Animation loop error: {e}")
-                traceback.print_exc()
-                time.sleep(0.05)
+                loop_duration = time.perf_counter() - loop_start
+                target_frame_time = 1.0 / max(1, int(self.target_fps) or 1)
+                sleep_time = max(0.0, target_frame_time - loop_duration)
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
-            # Sleep to maintain target FPS
-            loop_duration = time.perf_counter() - loop_start
-            sleep_time = max(0.0, target_frame_time - loop_duration)
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+                self._record_perf_sample({
+                    'generate': generate_duration,
+                    'send': send_duration,
+                    'show': show_duration,
+                    'process': loop_duration,
+                    'sleep': sleep_time,
+                    'frame': loop_duration + sleep_time,
+                })
 
-            self._record_perf_sample({
-                'generate': generate_duration,
-                'send': send_duration,
-                'show': show_duration,
-                'process': loop_duration,
-                'sleep': sleep_time,
-                'frame': loop_duration + sleep_time,
-            })
+            if pending_present is not None:
+                try:
+                    pending_present.result()
+                except Exception as e:
+                    print(f"✗ Final frame presentation failed: {e}")
+
+    def _present_frame(self, frame, dirty_ranges, use_partial, inline_show):
+        """Present one frame on the dedicated I/O worker and return timings."""
+        send_start = time.perf_counter()
+        if use_partial:
+            self.controller.set_frame(frame, dirty_ranges=dirty_ranges)
+        else:
+            self.controller.set_all_pixels(frame)
+        send_duration = time.perf_counter() - send_start
+
+        show_duration = 0.0
+        if not inline_show and hasattr(self.controller, "show"):
+            show_start = time.perf_counter()
+            self.controller.show()
+            show_duration = time.perf_counter() - show_start
+        return send_duration, show_duration
+
+    def set_target_fps(self, target_fps: int) -> int:
+        """Apply a live, bounded host/physical presentation-rate target."""
+        self.target_fps = max(1, min(200, int(target_fps)))
+        return self.target_fps
 
     def _normalize_frame(self, colors):
         """Ensure frame length matches the LED count.
@@ -796,15 +843,26 @@ class AnimationManager:
         """
         total_pixels = self.controller.total_leds
 
+        if isinstance(colors, RenderedFrame):
+            colors = colors.pixels
+
         if colors is None:
             return [(0, 0, 0)] * total_pixels
 
         if isinstance(colors, np.ndarray):
+            if colors.ndim != 2 or colors.shape[1] != 3:
+                raise ValueError(
+                    f"frame ndarray must have shape (N, 3), got {colors.shape}"
+                )
             if colors.shape[0] < total_pixels:
                 pad = np.zeros((total_pixels - colors.shape[0], 3), dtype=np.uint8)
                 colors = np.concatenate([colors, pad])
             elif colors.shape[0] > total_pixels:
                 colors = colors[:total_pixels]
+            if colors.dtype != np.uint8:
+                colors = np.clip(colors, 0, 255).astype(np.uint8)
+            if not colors.flags.c_contiguous:
+                colors = np.ascontiguousarray(colors)
             return colors
 
         frame = list(colors)
@@ -837,6 +895,23 @@ class AnimationManager:
     def _compute_driver_fps(self, driver_stats: Dict[str, Any]) -> float:
         """Estimate hardware-applied FPS from driver frame counters."""
         if not driver_stats or not isinstance(driver_stats, dict):
+            return self._driver_fps
+
+        aggregate = driver_stats.get('aggregate')
+        if isinstance(aggregate, dict) and aggregate.get('logical_frames_sent') is not None:
+            try:
+                frames_sent_int = int(aggregate['logical_frames_sent'])
+            except (TypeError, ValueError):
+                return self._driver_fps
+            now = time.perf_counter()
+            last_frames = self._driver_fps_last_frames
+            last_time = self._driver_fps_last_time
+            self._driver_fps_last_frames = frames_sent_int
+            self._driver_fps_last_time = now
+            if last_frames is not None and last_time is not None and now > last_time:
+                delta_frames = frames_sent_int - last_frames
+                if delta_frames >= 0:
+                    self._driver_fps = delta_frames / (now - last_time)
             return self._driver_fps
 
         devices = driver_stats.get('devices')
@@ -927,6 +1002,19 @@ class AnimationManager:
 
             for key, total in totals.items():
                 summary[f'avg_{key}_ms'] = (total / count) * 1000.0
+                ordered = sorted(sample.get(key, 0.0) for sample in self.perf_samples)
+                for label, ratio in (('p50', 0.50), ('p95', 0.95), ('p99', 0.99)):
+                    index = min(count - 1, max(0, int(round((count - 1) * ratio))))
+                    summary[f'{label}_{key}_ms'] = ordered[index] * 1000.0
+
+            deadline_misses = sum(
+                sample.get('process', 0.0) > (target_frame_ms / 1000.0)
+                for sample in self.perf_samples
+            )
+            summary['deadline_misses'] = deadline_misses
+            summary['deadline_miss_ratio'] = deadline_misses / count
+            summary['frames_presented'] = self.frames_presented
+            summary['unchanged_frames_skipped'] = self.unchanged_frames_skipped
 
             if self._last_perf_sample:
                 for key in totals.keys():

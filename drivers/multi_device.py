@@ -47,16 +47,13 @@ class MultiDeviceLEDController:
         self.leds_per_strip = leds_per_strip
         self.debug = debug
         self.parallel = parallel
-        self._executor = (
-            ThreadPoolExecutor(max_workers=num_devices, thread_name_prefix="led-spi")
-            if parallel and num_devices > 1
-            else None
-        )
+        self._executor = None
         
         # Calculate total dimensions
         self.strip_count = num_devices * strips_per_device
         self.total_leds = self.strip_count * leds_per_strip
         self.leds_per_device = strips_per_device * leds_per_strip
+        self._logical_frames_sent = 0
         
         # For compatibility with animation system
         self.inline_show = True
@@ -73,6 +70,14 @@ class MultiDeviceLEDController:
         
         # Build device map (auto-detects SPI1 fallback if needed)
         self.device_map = device_map or self._build_device_map(num_devices, bus)
+        self._devices_by_bus = {}
+        for device_id, (device_bus, _chip_select) in enumerate(self.device_map):
+            self._devices_by_bus.setdefault(device_bus, []).append(device_id)
+        if parallel and len(self._devices_by_bus) > 1:
+            self._executor = ThreadPoolExecutor(
+                max_workers=len(self._devices_by_bus),
+                thread_name_prefix="led-spi-bus",
+            )
         map_parts = []
         for idx, entry in enumerate(self.device_map):
             bus, dev = entry
@@ -150,6 +155,26 @@ class MultiDeviceLEDController:
         except Exception as e:
             if self.debug:
                 print(f"✗ Error sending to device {device_id}: {e}")
+
+    def _send_bus_frames(self, device_ids, device_frames):
+        """Serialize chip selects on one bus while independent buses overlap."""
+        for device_id in device_ids:
+            self._send_to_device(device_id, device_frames[device_id])
+
+    def _send_bus_partial(self, device_ids, device_frames, device_ranges):
+        for device_id in device_ids:
+            ranges = device_ranges.get(device_id)
+            if not ranges:
+                continue
+            try:
+                dirty_pixels = sum(end - start for start, end in ranges)
+                if dirty_pixels > self.leds_per_device * 0.35:
+                    self.devices[device_id].set_all_pixels(device_frames[device_id])
+                else:
+                    self.devices[device_id].set_partial_frame(device_frames[device_id], ranges)
+            except Exception as exc:
+                if self.debug:
+                    print(f"✗ Error partially sending to device {device_id}: {exc}")
     
     def set_all_pixels(self, colors: List[Tuple[int, int, int]]):
         """
@@ -163,8 +188,8 @@ class MultiDeviceLEDController:
         
         if self._executor is not None:
             futures = [
-                self._executor.submit(self._send_to_device, device_id, device_colors)
-                for device_id, device_colors in enumerate(device_frames)
+                self._executor.submit(self._send_bus_frames, device_ids, device_frames)
+                for device_ids in self._devices_by_bus.values()
             ]
             for future in futures:
                 future.result()
@@ -172,6 +197,48 @@ class MultiDeviceLEDController:
             # Send to devices sequentially
             for device_id, device_colors in enumerate(device_frames):
                 self._send_to_device(device_id, device_colors)
+        self._logical_frames_sent += 1
+
+    def set_frame(self, colors, dirty_ranges=None):
+        """Present a frame, using partial board updates when ranges are known."""
+        if not dirty_ranges:
+            self.set_all_pixels(colors)
+            return
+
+        device_frames = self._split_frame(colors)
+        pixels_per_device = self.leds_per_device
+        device_ranges = {}
+        for start, end in sorted(dirty_ranges):
+            start = max(0, int(start))
+            end = min(self.total_leds, int(end))
+            while start < end:
+                device_id = start // pixels_per_device
+                device_end = min(end, (device_id + 1) * pixels_per_device)
+                local_start = start - device_id * pixels_per_device
+                local_end = device_end - device_id * pixels_per_device
+                ranges = device_ranges.setdefault(device_id, [])
+                if ranges and ranges[-1][1] >= local_start:
+                    ranges[-1] = (ranges[-1][0], max(ranges[-1][1], local_end))
+                else:
+                    ranges.append((local_start, local_end))
+                start = device_end
+
+        if self._executor is not None:
+            futures = [
+                self._executor.submit(
+                    self._send_bus_partial,
+                    device_ids,
+                    device_frames,
+                    device_ranges,
+                )
+                for device_ids in self._devices_by_bus.values()
+            ]
+            for future in futures:
+                future.result()
+        else:
+            for device_ids in self._devices_by_bus.values():
+                self._send_bus_partial(device_ids, device_frames, device_ranges)
+        self._logical_frames_sent += 1
     
     def set_pixel(self, pixel: int, r: int, g: int, b: int):
         """Set a single pixel color"""
@@ -240,6 +307,20 @@ class MultiDeviceLEDController:
         bytes_sent = 0
         crc_bytes_sent = 0
         errors = 0
+        receiver_status_devices = 0
+        receiver_crc_errors = 0
+        receiver_packets = 0
+        receiver_crc_ok_packets = 0
+        receiver_frames_rendered = 0
+        receiver_frames_accepted = 0
+        receiver_frames_displayed = 0
+        receiver_frames_superseded = 0
+        receiver_publish_drops = 0
+        receiver_spi_queue_errors = 0
+        receiver_display_errors = 0
+        receiver_status_misses = 0
+        receiver_last_encode_us = 0
+        receiver_last_show_us = 0
         last_frame_ms = 0.0
         weighted_avg_total = 0.0
         weighted_avg_frames = 0
@@ -258,6 +339,27 @@ class MultiDeviceLEDController:
             bytes_sent += int(stats.get('bytes_sent', 0) or 0)
             crc_bytes_sent += int(stats.get('crc_bytes_sent', 0) or 0)
             errors += int(stats.get('errors', 0) or 0)
+            if stats.get('receiver_status_seen'):
+                receiver_status_devices += 1
+            receiver_crc_errors += int(stats.get('receiver_crc_errors', 0) or 0)
+            receiver_packets += int(stats.get('receiver_packets', 0) or 0)
+            receiver_crc_ok_packets += int(stats.get('receiver_crc_ok_packets', 0) or 0)
+            receiver_frames_rendered += int(stats.get('receiver_frames_rendered', 0) or 0)
+            receiver_frames_accepted += int(stats.get('receiver_frames_accepted', 0) or 0)
+            receiver_frames_displayed += int(stats.get('receiver_frames_displayed', 0) or 0)
+            receiver_frames_superseded += int(stats.get('receiver_frames_superseded', 0) or 0)
+            receiver_publish_drops += int(stats.get('receiver_publish_drops', 0) or 0)
+            receiver_spi_queue_errors += int(stats.get('receiver_spi_queue_errors', 0) or 0)
+            receiver_display_errors += int(stats.get('receiver_display_errors', 0) or 0)
+            receiver_status_misses += int(stats.get('receiver_status_misses', 0) or 0)
+            receiver_last_encode_us = max(
+                receiver_last_encode_us,
+                int(stats.get('receiver_last_encode_us', 0) or 0),
+            )
+            receiver_last_show_us = max(
+                receiver_last_show_us,
+                int(stats.get('receiver_last_show_us', 0) or 0),
+            )
 
             last_frame_ms = max(last_frame_ms, float(stats.get('last_frame_duration_ms', 0.0) or 0.0))
             avg_ms = float(stats.get('avg_frame_duration_ms', 0.0) or 0.0)
@@ -273,10 +375,34 @@ class MultiDeviceLEDController:
                 'num_devices': self.num_devices,
                 'total_leds': total_leds,
                 'frames_sent': max_frames_sent,
+                'logical_frames_sent': self._logical_frames_sent,
+                'spi_bus_count': len(self._devices_by_bus),
+                'device_map': [
+                    {
+                        'logical_device': logical_device,
+                        'bus': bus,
+                        'chip_select': chip_select,
+                    }
+                    for logical_device, (bus, chip_select) in enumerate(self.device_map)
+                ],
                 'spi_transfers': spi_transfers,
                 'bytes_sent': bytes_sent,
                 'crc_bytes_sent': crc_bytes_sent,
                 'errors': errors,
+                'receiver_status_devices': receiver_status_devices,
+                'receiver_crc_errors': receiver_crc_errors,
+                'receiver_packets': receiver_packets,
+                'receiver_crc_ok_packets': receiver_crc_ok_packets,
+                'receiver_frames_rendered': receiver_frames_rendered,
+                'receiver_frames_accepted': receiver_frames_accepted,
+                'receiver_frames_displayed': receiver_frames_displayed,
+                'receiver_frames_superseded': receiver_frames_superseded,
+                'receiver_publish_drops': receiver_publish_drops,
+                'receiver_spi_queue_errors': receiver_spi_queue_errors,
+                'receiver_display_errors': receiver_display_errors,
+                'receiver_status_misses': receiver_status_misses,
+                'receiver_last_encode_us': receiver_last_encode_us,
+                'receiver_last_show_us': receiver_last_show_us,
                 'last_frame_duration_ms': last_frame_ms,
                 'avg_frame_duration_ms': avg_frame_ms,
                 'spi_speed_hz': device_stats[0].get('spi_speed_hz') if device_stats else None,

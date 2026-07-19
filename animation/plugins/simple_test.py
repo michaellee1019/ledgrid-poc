@@ -6,8 +6,8 @@ Very basic animation to test LED strip connectivity.
 Lights up all LEDs in solid colors to verify which strips work.
 """
 
-import time
 from typing import List, Tuple, Dict, Any
+import numpy as np
 from animation import AnimationBase
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
@@ -43,6 +43,11 @@ class SimpleTestAnimation(AnimationBase):
         self.num_strips = getattr(controller, 'strip_count', DEFAULT_STRIP_COUNT)
         self.leds_per_strip = getattr(controller, 'leds_per_strip', DEFAULT_LEDS_PER_STRIP)
         self.total_leds = self.num_strips * self.leds_per_strip
+        self._color_frames = [
+            np.full((self.total_leds, 3), color, dtype=np.uint8)
+            for color in self.colors
+        ]
+        self._last_output_index = None
         
         print(f"🔍 Simple Test Animation initialized:")
         print(f"   Strips: {self.num_strips}")
@@ -51,23 +56,15 @@ class SimpleTestAnimation(AnimationBase):
     
     def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
         """Generate test frame"""
-        current_time = time.time()
-        
-        # Change color every few seconds
-        if current_time - self.last_change >= self.change_interval:
-            self.color_index = (self.color_index + 1) % len(self.colors)
-            self.last_change = current_time
+        color_index = int(time_elapsed / max(0.5, self.change_interval)) % len(self.colors)
+        changed = color_index != self._last_output_index
+        if changed:
+            self.color_index = color_index
             current_color = self.colors[self.color_index]
             color_name = ["Red", "Green", "Blue", "Yellow", "Magenta", "Cyan", "White"][self.color_index]
             print(f"🎨 Switching to {color_name}: RGB{current_color}")
-        
-        # Get current color
-        current_color = self.colors[self.color_index]
-        
-        # Create frame with all LEDs the same color
-        frame = [current_color] * self.total_leds
-        
-        return frame
+            self._last_output_index = color_index
+        return self.rendered_frame(self._color_frames[color_index], changed=changed)
     
     def get_parameter_schema(self) -> Dict[str, Any]:
         """Return configurable parameters"""

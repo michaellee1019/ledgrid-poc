@@ -43,7 +43,7 @@ fi
 log_info "Computing firmware source hash..."
 current_hash="$(
   cd "$FIRMWARE_DIR"
-  find platformio.ini src -type f -print0 | sort -z | xargs -0 "${HASH_TOOL[@]}" | "${HASH_TOOL[@]}" | awk '{print $1}'
+  find platformio.ini include src -type f -print0 | sort -z | xargs -0 "${HASH_TOOL[@]}" | "${HASH_TOOL[@]}" | awk '{print $1}'
 )"
 
 previous_hash=""

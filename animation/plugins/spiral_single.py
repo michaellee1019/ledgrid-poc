@@ -26,6 +26,7 @@ class SpiralSingleAnimation(AnimationBase):
             'red': 255,
             'green': 255,
             'blue': 255,
+            'pixels_per_second': 200.0,
         })
         self.params = {**self.default_params, **self.config}
 
@@ -35,14 +36,10 @@ class SpiralSingleAnimation(AnimationBase):
 
         self.spiral_indices = self._build_spiral_indices(self.num_strips, self.leds_per_strip)
         self.step_index = 0
-        # Alternate buffers so the manager can retain the current frame for the
-        # web preview while the animation prepares the next frame in place.
-        self._frame_buffers = [
-            np.zeros((self.total_pixels, 3), dtype=np.uint8),
-            np.zeros((self.total_pixels, 3), dtype=np.uint8),
-        ]
         self._buffer_pixel = [None, None]
-        self._buffer_index = 0
+        self._last_output_pixel = None
+        self._last_step_number = None
+        self._last_frame = None
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -50,20 +47,30 @@ class SpiralSingleAnimation(AnimationBase):
             'red': {'type': 'int', 'min': 0, 'max': 255, 'default': 255, 'description': 'Red component (0-255)'},
             'green': {'type': 'int', 'min': 0, 'max': 255, 'default': 255, 'description': 'Green component (0-255)'},
             'blue': {'type': 'int', 'min': 0, 'max': 255, 'default': 255, 'description': 'Blue component (0-255)'},
+            'pixels_per_second': {
+                'type': 'float', 'min': 1.0, 'max': 1000.0, 'default': 200.0,
+                'description': 'Travel speed independent of render FPS',
+            },
         })
-        schema['speed']['description'] = 'Ignored; animation always advances one pixel per frame'
+        schema.pop('speed', None)
         return schema
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
         if self.total_pixels <= 0:
             return np.empty((0, 3), dtype=np.uint8)
 
-        buffer_index = self._buffer_index
-        frame = self._frame_buffers[buffer_index]
+        pixels_per_second = max(1.0, float(self.params.get('pixels_per_second', 200.0)))
+        step_number = int(time_elapsed * pixels_per_second)
+        if step_number == self._last_step_number and self._last_frame is not None:
+            return self.rendered_frame(self._last_frame, changed=False)
+
+        buffer_index = self._frame_buffer_index
+        frame = self.next_frame_buffer(clear=False)
         previous_pixel = self._buffer_pixel[buffer_index]
         if previous_pixel is not None:
             frame[previous_pixel] = 0
 
+        self.step_index = step_number % len(self.spiral_indices)
         idx = self.spiral_indices[self.step_index]
         color = (
             int(self.params.get('red', 255)),
@@ -72,11 +79,14 @@ class SpiralSingleAnimation(AnimationBase):
         )
         frame[idx] = self.apply_brightness(color)
         self._buffer_pixel[buffer_index] = idx
-        self._buffer_index = 1 - buffer_index
-
-        self.step_index = (self.step_index + 1) % len(self.spiral_indices)
-
-        return frame
+        self._last_step_number = step_number
+        self._last_frame = frame
+        dirty_pixels = {idx}
+        if self._last_output_pixel is not None:
+            dirty_pixels.add(self._last_output_pixel)
+        self._last_output_pixel = idx
+        dirty_ranges = tuple((pixel, pixel + 1) for pixel in sorted(dirty_pixels))
+        return self.rendered_frame(frame, dirty_ranges=dirty_ranges)
 
     def _build_spiral_indices(self, width: int, height: int) -> List[int]:
         coords: List[Tuple[int, int]] = []

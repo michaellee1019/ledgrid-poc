@@ -5,6 +5,7 @@ Test Animation Plugin
 
 import math
 from typing import List, Tuple, Dict, Any
+import numpy as np
 from animation import AnimationBase
 
 
@@ -16,14 +17,10 @@ class TestAnimation(AnimationBase):
     ANIMATION_AUTHOR = "Test System"
     ANIMATION_VERSION = "1.0"
     
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
+    def __init__(self, controller, config: Dict[str, Any] = None):
+        super().__init__(controller, config)
+        self._frame = np.full((self.get_pixel_count(), 3), (255, 0, 0), dtype=np.uint8)
+
+    def generate_frame(self, time_elapsed: float, frame_count: int):
         """Generate test frame"""
-        strip_count, leds_per_strip = self.get_strip_info()
-        
-        # Simple red color
-        pixel_colors = []
-        for strip in range(strip_count):
-            for led in range(leds_per_strip):
-                pixel_colors.append((255, 0, 0))  # Red
-        
-        return pixel_colors
+        return self.rendered_frame(self._frame, changed=frame_count == 0)

@@ -7,6 +7,7 @@ capture multiple reference images for pixel-to-wall mapping.
 """
 
 from typing import Any, Dict, List, Tuple
+import numpy as np
 
 from animation import AnimationBase
 
@@ -35,8 +36,8 @@ class PlantCalibrationAnimation(AnimationBase):
         self.total_leds = self.strip_count * self.leds_per_strip
 
         self._pattern_names: List[str] = list(self.PATTERN_SEQUENCE_LABELS)
-        self._pattern_frames: List[List[Color]] = []
-        self._black_frame = [(0, 0, 0)] * self.total_leds
+        self._pattern_frames: List[np.ndarray] = []
+        self._black_frame = np.zeros((self.total_leds, 3), dtype=np.uint8)
         self._last_stage_key = ""
 
         self._rebuild_pattern_frames()
@@ -127,18 +128,20 @@ class PlantCalibrationAnimation(AnimationBase):
         manual = self._manual_pattern_index()
         if manual >= 0:
             stage_key = f"{manual}:manual"
-            if stage_key != self._last_stage_key:
+            changed = stage_key != self._last_stage_key
+            if changed:
                 print(
                     f"Manual pattern {manual + 1}/{len(self._pattern_names)}: "
                     f"{self._pattern_names[manual]}"
                 )
                 self._last_stage_key = stage_key
-            return self._pattern_frames[manual]
+            return self.rendered_frame(self._pattern_frames[manual], changed=changed)
 
         pattern_index, in_transition = self._stage_for_time(time_elapsed)
 
         stage_key = f"{pattern_index}:{'gap' if in_transition else 'pattern'}"
-        if stage_key != self._last_stage_key:
+        changed = stage_key != self._last_stage_key
+        if changed:
             if in_transition:
                 print("Transition gap")
             else:
@@ -149,9 +152,9 @@ class PlantCalibrationAnimation(AnimationBase):
             self._last_stage_key = stage_key
 
         if in_transition:
-            return self._black_frame
+            return self.rendered_frame(self._black_frame, changed=changed)
 
-        return self._pattern_frames[pattern_index]
+        return self.rendered_frame(self._pattern_frames[pattern_index], changed=changed)
 
     def get_runtime_stats(self) -> Dict[str, Any]:
         time_elapsed = 0.0
@@ -213,12 +216,16 @@ class PlantCalibrationAnimation(AnimationBase):
     # Pattern builders -----------------------------------------------------
     def _rebuild_pattern_frames(self):
         self._pattern_frames = [
-            self._build_orientation_markers(),
-            self._build_major_grid_lines(),
-            self._build_checkerboard(),
-            self._build_coordinate_gradient(),
-            self._build_full_white(),
+            np.asarray(frame, dtype=np.uint8)
+            for frame in (
+                self._build_orientation_markers(),
+                self._build_major_grid_lines(),
+                self._build_checkerboard(),
+                self._build_coordinate_gradient(),
+                self._build_full_white(),
+            )
         ]
+        self._last_stage_key = ""
 
     def _brightness(self) -> float:
         return max(0.05, min(1.0, float(self.params.get("brightness", 0.55))))

@@ -50,7 +50,8 @@ A plugin-based animation system with web interface for hot-swapping animations o
 
 ```python
 #!/usr/bin/env python3
-from typing import List, Tuple, Dict, Any
+from typing import Dict, Any
+import numpy as np
 from animation import AnimationBase
 
 class MyAnimation(AnimationBase):
@@ -59,18 +60,11 @@ class MyAnimation(AnimationBase):
     ANIMATION_AUTHOR = "Your Name"
     ANIMATION_VERSION = "1.0"
     
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
         """Generate a frame of animation"""
-        strip_count, leds_per_strip = self.get_strip_info()
-        pixel_colors = []
-        
-        for strip in range(strip_count):
-            for led in range(leds_per_strip):
-                # Your animation logic here
-                r, g, b = 255, 0, 0  # Red
-                pixel_colors.append((r, g, b))
-        
-        return pixel_colors
+        frame = self.next_frame_buffer(clear=False)
+        frame[:] = (255, 0, 0)
+        return frame
 ```
 
 ### Adding Parameters
@@ -96,7 +90,7 @@ def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
     })
     return schema
 
-def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
+def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
     speed = self.params.get('speed', 1.0)
     red = self.params.get('color', 255)
     # Use parameters in your animation...
@@ -172,10 +166,12 @@ See `HARDWARE.md` for connection details.
 
 ## Performance Tips
 
-1. **Efficient calculations** - Keep frame generation fast
-2. **Use bulk transfers** - `set_all_pixels()` is faster than individual pixels
-3. **Parameter caching** - Cache expensive calculations
-4. **Appropriate FPS** - Balance visual quality with performance
+1. **Canonical frames** - Return a C-contiguous `(total_leds, 3)` `np.uint8` array.
+2. **Reuse buffers** - Render into `next_frame_buffer()` rather than allocating per frame.
+3. **Source-rate output** - Wrap cached frames with `rendered_frame(..., changed=False)` when nothing changed.
+4. **Time-based motion** - Derive motion from `time_elapsed`, not achieved frame count.
+5. **Cache geometry** - Precompute coordinate grids, masks, palettes, and static layers.
+6. **Sparse hints** - Supply half-open `dirty_ranges` when only a small part of the frame changed.
 
 ## Troubleshooting
 

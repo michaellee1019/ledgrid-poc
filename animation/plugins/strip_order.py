@@ -7,10 +7,12 @@ ordering can be verified. Hold → pause → next strip, looping forever.
 """
 
 from typing import Dict, Any
-from animation import StatefulAnimationBase
+import numpy as np
+
+from animation import AnimationBase, RenderedFrame
 
 
-class StripOrderAnimation(StatefulAnimationBase):
+class StripOrderAnimation(AnimationBase):
     """Illuminate one strip at a time to verify strip ordering."""
 
     ANIMATION_NAME = "Strip Order Test"
@@ -29,6 +31,9 @@ class StripOrderAnimation(StatefulAnimationBase):
             'brightness': 0.5,
         })
         self.params = {**self.default_params, **(config or {})}
+        self._frame = np.zeros((controller.total_leds, 3), dtype=np.uint8)
+        self._active_strip = object()
+        self._level = None
 
         if controller and getattr(controller, 'debug', False):
             print("Strip Order Test initialized:")
@@ -38,53 +43,39 @@ class StripOrderAnimation(StatefulAnimationBase):
     def _white(self):
         brightness = float(self.params.get('brightness', 0.5))
         level = max(0, min(255, int(255 * brightness)))
-        return (level, level, level)
-
-    def _frame_for_strip(self, strip: int):
-        """Build a full frame with only the given strip illuminated."""
-        leds_per_strip = self.controller.leds_per_strip
-        frame = [(0, 0, 0)] * self.controller.total_leds
-        color = self._white()
-        start = strip * leds_per_strip
-        for i in range(start, start + leds_per_strip):
-            frame[i] = color
-        return frame
+        return level
 
     def generate_frame(self, time_elapsed: float, frame_count: int):
-        """Static preview: first strip on (stateful loop drives live playback)."""
-        return self._frame_for_strip(0)
-
-    def run_animation(self):
-        """Loop: light strip N for hold_seconds, then all-off for pause_seconds."""
+        """Advance only when the hold/pause state changes."""
         strip_count = self.controller.strip_count
-        black = [(0, 0, 0)] * self.controller.total_leds
+        hold = max(0.0, float(self.params.get('hold_seconds', 1.0)))
+        pause = max(0.0, float(self.params.get('pause_seconds', 1.0)))
+        cycle = max(0.001, hold + pause)
+        strip = int(time_elapsed / cycle) % strip_count
+        active_strip = strip if (time_elapsed % cycle) < hold else None
+        level = self._white()
 
-        print(f"Strip Order Test: cycling {strip_count} strips...")
+        if active_strip == self._active_strip and level == self._level:
+            return RenderedFrame(self._frame, changed=False)
 
-        while not self.stop_event.is_set():
-            for strip in range(strip_count):
-                if self.stop_event.is_set():
-                    break
+        dirty_ranges = []
+        leds_per_strip = self.controller.leds_per_strip
+        if isinstance(self._active_strip, int):
+            start = self._active_strip * leds_per_strip
+            self._frame[start:start + leds_per_strip] = 0
+            dirty_ranges.append((start, start + leds_per_strip))
+        if active_strip is not None:
+            start = active_strip * leds_per_strip
+            self._frame[start:start + leds_per_strip] = level
+            dirty_ranges.append((start, start + leds_per_strip))
 
-                hold = float(self.params.get('hold_seconds', 1.0))
-                pause = float(self.params.get('pause_seconds', 1.0))
-
-                print(f"Strip Order Test: strip {strip}/{strip_count - 1}")
-                self.controller.set_all_pixels(self._frame_for_strip(strip))
-
-                if self.stop_event.wait(hold):
-                    break
-
-                self.controller.set_all_pixels(black)
-
-                if self.stop_event.wait(pause):
-                    break
-
-        # Ensure clean blackout on stop
-        try:
-            self.controller.set_all_pixels(black)
-        except Exception:
-            pass
+        self._active_strip = active_strip
+        self._level = level
+        return RenderedFrame(
+            self._frame,
+            changed=True,
+            dirty_ranges=tuple(sorted(dirty_ranges)) or None,
+        )
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         return {

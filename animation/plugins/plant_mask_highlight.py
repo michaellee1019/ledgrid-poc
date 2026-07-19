@@ -9,6 +9,7 @@ import json
 import math
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
+import numpy as np
 
 from animation import AnimationBase
 
@@ -195,17 +196,20 @@ class PlantMaskHighlightAnimation(AnimationBase):
         if pulse_speed > 0.0:
             pulse = 1.0 - pulse_depth + pulse_depth * ((math.sin(time_elapsed * pulse_speed * 2.0 * math.pi) + 1.0) / 2.0)
 
-        frame: List[Tuple[int, int, int]] = [bg] * total_leds
+        frame = self.next_frame_buffer(clear=False)
+        frame[:] = bg
         if self.mask_indices:
-            for idx in self.mask_indices:
-                if 0 <= idx < total_leds:
-                    frame[idx] = (
-                        int(plant[0] * pulse),
-                        int(plant[1] * pulse),
-                        int(plant[2] * pulse),
-                    )
+            indices = np.fromiter(
+                (idx for idx in self.mask_indices if 0 <= idx < total_leds),
+                dtype=np.intp,
+            )
+            frame[indices] = (
+                int(plant[0] * pulse),
+                int(plant[1] * pulse),
+                int(plant[2] * pulse),
+            )
 
-        return [self.apply_brightness(c) for c in frame]
+        return self.apply_brightness_array(frame, out=frame)
 
     def get_runtime_stats(self) -> Dict[str, Any]:
         stats = {

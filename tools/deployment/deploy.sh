@@ -76,6 +76,7 @@ upload_files() {
     rsync -az --delete --stats \
         -e "ssh $SSH_OPTS" \
         --exclude '.git' \
+        --exclude 'whos-turn-tracker' \
         --exclude 'venv' \
         --exclude 'test_venv' \
         --exclude '__pycache__' \
@@ -130,8 +131,8 @@ print(f"{sys.version_info.major}.{sys.version_info.minor}")
 PY
 )
 sudo apt-get update
-if ! sudo apt-get install -y "python${PY_VER}-dev" build-essential; then
-  sudo apt-get install -y python3-dev build-essential
+if ! sudo apt-get install -y "python${PY_VER}-dev" build-essential git; then
+  sudo apt-get install -y python3-dev build-essential git
 fi
 EOF
 

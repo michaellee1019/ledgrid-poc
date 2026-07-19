@@ -168,7 +168,7 @@ class TetrisAnimation(AnimationBase):
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Color]:
         total_pixels = self.num_strips * self.leds_per_strip
-        frame: List[Color] = [(0, 0, 0)] * total_pixels
+        frame = self.next_frame_buffer(clear=True)
 
         delta = 0.0
         if self.last_elapsed is None:
@@ -596,9 +596,9 @@ class TetrisAnimation(AnimationBase):
         if 0 <= idx < len(frame):
             base = frame[idx]
             frame[idx] = (
-                min(255, base[0] + scaled[0]),
-                min(255, base[1] + scaled[1]),
-                min(255, base[2] + scaled[2]),
+                min(255, int(base[0]) + scaled[0]),
+                min(255, int(base[1]) + scaled[1]),
+                min(255, int(base[2]) + scaled[2]),
             )
 
     def get_runtime_stats(self) -> Dict[str, Any]:

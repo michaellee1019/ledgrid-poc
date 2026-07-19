@@ -60,8 +60,8 @@
 │  ┌────────────▼──────────┐  ┌───────────▼──────────┐          │
 │  │  LEDController (CE0)  │  │  LEDController (CE1) │          │
 │  │  - 8 strips × 140 LEDs│  │  - 8 strips × 140 LEDs│          │
-│  │  - SPI Mode 3         │  │  - SPI Mode 3        │          │
-│  │  - 10 MHz             │  │  - 10 MHz            │          │
+│  │  - SPI Mode 0         │  │  - SPI Mode 0        │          │
+│  │  - 20 MHz             │  │  - 20 MHz            │          │
 │  └────────────┬──────────┘  └───────────┬──────────┘          │
 └───────────────┼──────────────────────────┼─────────────────────┘
                 │ SPI                      │ SPI
@@ -73,13 +73,13 @@
 │  │   ESP32 Device 0       │  │   ESP32 Device 1       │        │
 │  │  ┌──────────────────┐  │  │  ┌──────────────────┐  │        │
 │  │  │  SPI Slave (DMA) │  │  │  │  SPI Slave (DMA) │  │        │
-│  │  │  - Mode 3        │  │  │  │  - Mode 3        │  │        │
+│  │  │  - Mode 0        │  │  │  │  - Mode 0        │  │        │
 │  │  │  - Command parser│  │  │  │  - Command parser│  │        │
 │  │  └────────┬─────────┘  │  │  └────────┬─────────┘  │        │
 │  │           │             │  │           │             │        │
 │  │  ┌────────▼─────────┐  │  │  ┌────────▼─────────┐  │        │
-│  │  │  FastLED Library │  │  │  │  FastLED Library │  │        │
-│  │  │  - 8 parallel out│  │  │  │  - 8 parallel out│  │        │
+│  │  │ ESP-IDF LCD/I80  │  │  │  │ ESP-IDF LCD/I80  │  │        │
+│  │  │  - 8-lane DMA    │  │  │  │  - 8-lane DMA    │  │        │
 │  │  └────────┬─────────┘  │  │  └────────┬─────────┘  │        │
 │  └───────────┼────────────┘  └───────────┼────────────┘        │
 │              │                            │                      │
@@ -157,7 +157,7 @@
 17. ESP32 parses command, updates LED buffer
     │
     ▼
-18. FastLED.show() outputs to 8 strips in parallel
+18. LCD/I80 DMA outputs to 8 strips in parallel
     │
     ▼
 19. LEDs light up! 🎉
@@ -261,8 +261,8 @@ Raspberry Pi                    ESP32
     │                             │
     │  [CMD_SHOW]                 │
     ├────────────────────────────>│
-    │                             │ FastLED.show()
-    │                             │ Output to 8 strips
+    │                             │ Queue latest complete frame
+    │                             │ LCD/I80 DMA → 8 strips
     │                             │
     │  [CMD_GET_STATS]            │
     ├────────────────────────────>│

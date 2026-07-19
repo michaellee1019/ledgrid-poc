@@ -16,7 +16,8 @@ class SpiralSingleAnimationTests(unittest.TestCase):
         animation = SpiralSingleAnimation(_Controller())
 
         for frame_count in range(8):
-            frame = animation.generate_frame(frame_count / 60.0, frame_count)
+            rendered = animation.generate_frame(frame_count / 60.0, frame_count)
+            frame = rendered.pixels
 
             self.assertIsInstance(frame, np.ndarray)
             self.assertEqual(frame.dtype, np.uint8)
@@ -26,14 +27,14 @@ class SpiralSingleAnimationTests(unittest.TestCase):
     def test_alternates_reusable_buffers_without_mutating_current_frame(self):
         animation = SpiralSingleAnimation(_Controller())
 
-        first = animation.generate_frame(0.0, 0)
+        first = animation.generate_frame(0.0, 0).pixels
         first_snapshot = first.copy()
-        second = animation.generate_frame(1.0 / 60.0, 1)
+        second = animation.generate_frame(1.0 / 60.0, 1).pixels
 
         self.assertIsNot(first, second)
         np.testing.assert_array_equal(first, first_snapshot)
 
-        third = animation.generate_frame(2.0 / 60.0, 2)
+        third = animation.generate_frame(2.0 / 60.0, 2).pixels
         self.assertIs(first, third)
         self.assertEqual(np.count_nonzero(np.any(third != 0, axis=1)), 1)
 

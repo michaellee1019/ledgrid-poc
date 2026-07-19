@@ -5,9 +5,9 @@ GIF Animation Plugin
 Loads animated GIFs from disk and plays them on the LED wall.
 """
 
-import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+import numpy as np
 
 from animation import AnimationBase
 
@@ -52,6 +52,9 @@ class GifAnimation(AnimationBase):
         self._next_frame_time = 0.0
         self._loaded_gif_path: Optional[Path] = None
         self._load_error: Optional[str] = None
+        self._adjusted_frame_cache: Dict[Tuple[int, Tuple[Any, ...]], np.ndarray] = {}
+        self._last_output_key: Optional[Tuple[int, Tuple[Any, ...]]] = None
+        self._empty_frame = np.zeros((self.get_pixel_count(), 3), dtype=np.uint8)
 
         self._load_selected_gif()
 
@@ -59,6 +62,7 @@ class GifAnimation(AnimationBase):
         super().start()
         self._current_frame_index = 0
         self._next_frame_time = 0.0
+        self._last_output_key = None
 
     def update_parameters(self, new_params: Dict[str, Any]):
         old_directory = str(self.params.get("gif_directory", ""))
@@ -67,6 +71,11 @@ class GifAnimation(AnimationBase):
         old_fit_mode = str(self.params.get("fit_mode", "stretch"))
 
         super().update_parameters(new_params)
+        if any(key in new_params for key in (
+            "brightness", "gamma", "brightness_mode", "brightness_floor"
+        )):
+            self._adjusted_frame_cache.clear()
+            self._last_output_key = None
 
         directory_changed = old_directory != str(self.params.get("gif_directory", ""))
         name_changed = old_name != str(self.params.get("gif_name", ""))
@@ -154,7 +163,7 @@ class GifAnimation(AnimationBase):
     def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Color]:
         total = self.get_pixel_count()
         if not self._frames:
-            return [(0, 0, 0)] * total
+            return self.rendered_frame(self._empty_frame, changed=frame_count == 0)
 
         now = time_elapsed
         speed = max(0.1, float(self.params.get("playback_speed", 1.0) or 1.0))
@@ -168,52 +177,62 @@ class GifAnimation(AnimationBase):
                 duration = self._durations_sec[self._current_frame_index] / speed
                 self._next_frame_time += duration
 
-        source = self._frames[self._current_frame_index]
-        return self._apply_output_adjustments(source)
+        adjustment_key = self._adjustment_key()
+        output_key = (self._current_frame_index, adjustment_key)
+        frame = self._adjusted_frame_cache.get(output_key)
+        if frame is None:
+            source = self._frames[self._current_frame_index]
+            frame = self._apply_output_adjustments(source)
+            self._adjusted_frame_cache[output_key] = frame
 
-    def _apply_output_adjustments(self, source: Sequence[Color]) -> List[Color]:
+        changed = output_key != self._last_output_key
+        self._last_output_key = output_key
+        return self.rendered_frame(frame, changed=changed)
+
+    def _adjustment_key(self) -> Tuple[Any, ...]:
+        return (
+            max(0.0, min(1.0, float(self.params.get("brightness", 1.0) or 0.0))),
+            max(0.2, float(self.params.get("gamma", 1.0) or 1.0)),
+            str(self.params.get("brightness_mode", "rgb")).strip().lower(),
+            max(0.0, min(1.0, float(self.params.get("brightness_floor", 0.0) or 0.0))),
+        )
+
+    def _apply_output_adjustments(self, source: Sequence[Color]) -> np.ndarray:
         brightness = max(0.0, min(1.0, float(self.params.get("brightness", 1.0) or 0.0)))
         gamma = max(0.2, float(self.params.get("gamma", 1.0) or 1.0))
         brightness_mode = str(self.params.get("brightness_mode", "rgb")).strip().lower()
         brightness_floor = max(0.0, min(1.0, float(self.params.get("brightness_floor", 0.0) or 0.0)))
 
         if brightness <= 0.0:
-            return [(0, 0, 0)] * len(source)
+            return np.zeros((len(source), 3), dtype=np.uint8)
 
-        out: List[Color] = []
-        for r, g, b in source:
-            if brightness_mode == "luma":
-                max_channel = max(r, g, b)
-                if max_channel <= 0:
-                    out.append((0, 0, 0))
-                    continue
-                value = max_channel / 255.0
-                value = brightness_floor + (1.0 - brightness_floor) * value
-                scale = value * brightness
-                rr = (r / max_channel) * scale
-                gg = (g / max_channel) * scale
-                bb = (b / max_channel) * scale
-                out.append((
-                    self._gamma_to_byte(rr, gamma),
-                    self._gamma_to_byte(gg, gamma),
-                    self._gamma_to_byte(bb, gamma),
-                ))
-            else:
-                out.append((
-                    self._gamma_to_byte((r / 255.0) * brightness, gamma),
-                    self._gamma_to_byte((g / 255.0) * brightness, gamma),
-                    self._gamma_to_byte((b / 255.0) * brightness, gamma),
-                ))
+        source_array = np.asarray(source, dtype=np.uint8)
+        if brightness_mode != "luma" and brightness >= 1.0 and gamma == 1.0:
+            return source_array
 
-        return out
+        normalized = source_array.astype(np.float32)
+        if brightness_mode == "luma":
+            max_channel = np.max(normalized, axis=1)
+            chroma = np.zeros_like(normalized)
+            np.divide(
+                normalized,
+                max_channel[:, None],
+                out=chroma,
+                where=max_channel[:, None] > 0,
+            )
+            value = brightness_floor + (1.0 - brightness_floor) * (max_channel / 255.0)
+            normalized = chroma * (value * brightness)[:, None]
+        else:
+            normalized *= brightness / 255.0
 
-    @staticmethod
-    def _gamma_to_byte(value_0_to_1: float, gamma: float) -> int:
-        value = max(0.0, min(1.0, value_0_to_1))
-        corrected = math.pow(value, gamma)
-        return max(0, min(255, int(round(corrected * 255.0))))
+        np.clip(normalized, 0.0, 1.0, out=normalized)
+        np.power(normalized, gamma, out=normalized)
+        normalized *= 255.0
+        return np.rint(normalized).astype(np.uint8)
 
     def _load_selected_gif(self):
+        self._adjusted_frame_cache.clear()
+        self._last_output_key = None
         self._load_error = None
         self._frames = []
         self._durations_sec = []
@@ -252,7 +271,7 @@ class GifAnimation(AnimationBase):
             self._load_error = f"Decoded GIF has no frames: {selected.name}"
             return
 
-        self._frames = frames
+        self._frames = [np.asarray(frame, dtype=np.uint8) for frame in frames]
         self._durations_sec = durations
         self._loaded_gif_path = selected
 

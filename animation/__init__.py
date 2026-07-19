@@ -1,5 +1,5 @@
 """Animation framework package."""
 
-from animation.core.base import AnimationBase, StatefulAnimationBase
+from animation.core.base import AnimationBase, FrameOutput, RenderedFrame, StatefulAnimationBase
 
-__all__ = ["AnimationBase", "StatefulAnimationBase"]
+__all__ = ["AnimationBase", "FrameOutput", "RenderedFrame", "StatefulAnimationBase"]

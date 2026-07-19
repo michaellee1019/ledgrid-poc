@@ -139,6 +139,16 @@ class FluidTankAnimation(AnimationBase):
         )
         self._caustic_cache = np.zeros((self.height, self.width), dtype=np.float32)
         self._caustic_cache_time = -1.0
+        xs = np.arange(self.width, dtype=np.int32)[None, :]
+        ys = np.arange(self.height, dtype=np.int32)[:, None]
+        normal_led = self.height - 1 - np.broadcast_to(ys, (self.height, self.width))
+        serpentine_led = self.height - 1 - np.where(
+            xs % 2 == 1,
+            self.height - 1 - ys,
+            ys,
+        )
+        self._normal_flat_idx = (xs * self.panel_leds_per_strip + normal_led).ravel()
+        self._serpentine_flat_idx = (xs * self.panel_leds_per_strip + serpentine_led).ravel()
         self._water_grid_cache = np.zeros((self.height, self.width, 3), dtype=np.float32)
         self._water_grid_cache_time = -1.0
 
@@ -512,17 +522,14 @@ class FluidTankAnimation(AnimationBase):
         return grid
 
     def _map_grid_to_pixels(self, grid: np.ndarray) -> np.ndarray:
-        xs = np.arange(self.width)[None, :].astype(np.int32)
-        ys = np.arange(self.height)[:, None].astype(np.int32)
-        if bool(self.params.get('serpentine', False)):
-            led_index = np.where(xs % 2 == 1, self.height - 1 - ys, ys)
-        else:
-            led_index = np.broadcast_to(ys, (self.height, self.width)).copy()
-        led_index = self.height - 1 - led_index
-        flat_idx = xs * self.panel_leds_per_strip + led_index
-        pixels = np.zeros((self.panel_leds_per_strip * self.panel_strips, 3), dtype=np.uint8)
-        pixels[flat_idx.ravel()] = grid.reshape(-1, 3)
-        return self.apply_brightness_array(pixels)
+        flat_idx = (
+            self._serpentine_flat_idx
+            if bool(self.params.get('serpentine', False))
+            else self._normal_flat_idx
+        )
+        pixels = self.next_frame_buffer(clear=True)
+        pixels[flat_idx] = grid.reshape(-1, 3)
+        return self.apply_brightness_array(pixels, out=pixels)
 
     def _snapshot_stats(self, now: float, dt: float, surface_y: np.ndarray):
         fill_time = max(5.0, float(self.params.get('target_fill_time', 60.0)))

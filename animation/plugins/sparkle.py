@@ -37,6 +37,7 @@ class SparkleAnimation(AnimationBase):
 
         total_pixels = self.get_pixel_count()
         self.sparkle_brightness = np.zeros(total_pixels, dtype=np.float32)
+        self._color_scratch = np.empty((total_pixels, 3), dtype=np.float32)
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -73,13 +74,16 @@ class SparkleAnimation(AnimationBase):
 
         if self.sparkle_brightness.shape[0] != total_pixels:
             self.sparkle_brightness = np.zeros(total_pixels, dtype=np.float32)
+            self._color_scratch = np.empty((total_pixels, 3), dtype=np.float32)
 
         self.sparkle_brightness *= fade_speed
         mask = np.random.random(total_pixels) < sparkle_prob
         self.sparkle_brightness[mask] = 1.0
 
-        b = self.sparkle_brightness[:, np.newaxis]  # (N, 1)
-        colors = base * (1.0 - b) + sparkle * b
-
-        result = np.clip(colors, 0, 255).astype(np.uint8)
-        return self.apply_brightness_array(result)
+        b = self.sparkle_brightness[:, np.newaxis]
+        np.multiply(sparkle - base, b, out=self._color_scratch)
+        self._color_scratch += base
+        np.clip(self._color_scratch, 0, 255, out=self._color_scratch)
+        result = self.next_frame_buffer(clear=False)
+        result[:] = self._color_scratch
+        return self.apply_brightness_array(result, out=result)

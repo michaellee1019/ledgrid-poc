@@ -1,538 +1,426 @@
 #include <Arduino.h>
-#include <FastLED.h>
-#include "driver/spi_slave.h"
-#include "driver/spi_common.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cstring>
+
 #include "driver/gpio.h"
+#include "driver/spi_common.h"
+#include "driver/spi_slave.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "ledgrid/frame_mailbox.hpp"
+#include "ledgrid/parallel_led_driver.hpp"
+#include "ledgrid/protocol.hpp"
+#include "ledgrid/ws2812_encoder.hpp"
 
-// =========================
-// SPI pin mapping (ESP32-S3 DevKitC - VSPI)
-// =========================
-static constexpr gpio_num_t PIN_SPI_MOSI = GPIO_NUM_11;
-static constexpr gpio_num_t PIN_SPI_MISO = GPIO_NUM_13;
-static constexpr gpio_num_t PIN_SPI_SCLK = GPIO_NUM_12;
-static constexpr gpio_num_t PIN_SPI_CS   = GPIO_NUM_10;
+namespace {
 
-// =========================
-// LED configuration (8 strips)
-// =========================
-static constexpr uint8_t MAX_STRIPS         = 8;
-static constexpr uint16_t MAX_LEDS_PER_STRIP = 500;
-static constexpr uint16_t MAX_TOTAL_LEDS    = MAX_STRIPS * MAX_LEDS_PER_STRIP;
+constexpr gpio_num_t kSpiMosi = GPIO_NUM_11;
+constexpr gpio_num_t kSpiMiso = GPIO_NUM_13;
+constexpr gpio_num_t kSpiClock = GPIO_NUM_12;
+constexpr gpio_num_t kSpiChipSelect = GPIO_NUM_10;
+constexpr std::uint8_t kStatusLed = 48;
 
-static constexpr uint8_t DEFAULT_STRIPS     = 8;
-static constexpr uint16_t DEFAULT_LEDS_PER_STRIP = 140;
+constexpr std::uint8_t kMaxStrips = 8;
+// The installed wall is eight fixed 140-pixel lanes. Keeping the transport,
+// mailbox, and LCD DMA allocations sized to the physical receiver avoids
+// spending internal SRAM and memory bandwidth on an unsupported geometry.
+constexpr std::uint16_t kMaxLedsPerStrip = 140;
+constexpr std::size_t kMaxTotalLeds = kMaxStrips * kMaxLedsPerStrip;
+constexpr std::size_t kMaxRgbBytes = kMaxTotalLeds * 3;
+constexpr std::uint8_t kDefaultStrips = 8;
+constexpr std::uint16_t kDefaultLedsPerStrip = 140;
+constexpr int kLedPins[kMaxStrips] = {18, 17, 16, 15, 7, 6, 5, 4};
 
-// LED data pins - ESP32-S3 DevKitC (physical left-to-right = logical 0..7)
-// Pins are reversed relative to GPIO number order to match wall wiring.
-static constexpr uint8_t PIN_STRIP_0 = 18;  // GPIO18
-static constexpr uint8_t PIN_STRIP_1 = 17;  // GPIO17
-static constexpr uint8_t PIN_STRIP_2 = 16;  // GPIO16
-static constexpr uint8_t PIN_STRIP_3 = 15;  // GPIO15
-static constexpr uint8_t PIN_STRIP_4 = 7;   // GPIO7
-static constexpr uint8_t PIN_STRIP_5 = 6;   // GPIO6
-static constexpr uint8_t PIN_STRIP_6 = 5;   // GPIO5
-static constexpr uint8_t PIN_STRIP_7 = 4;   // GPIO4
+constexpr std::uint8_t kCmdSetPixel = 0x01;
+constexpr std::uint8_t kCmdSetBrightness = 0x02;
+constexpr std::uint8_t kCmdShow = 0x03;
+constexpr std::uint8_t kCmdClear = 0x04;
+constexpr std::uint8_t kCmdSetRange = 0x05;
+constexpr std::uint8_t kCmdSetAll = 0x06;
+constexpr std::uint8_t kCmdConfig = 0x07;
+constexpr std::uint8_t kCmdPing = 0xFF;
 
-static constexpr uint8_t PIN_STATUS_LED = 48;  // ESP32-S3 DevKitC built-in RGB LED
+constexpr std::size_t kCrcBytes = 2;
+constexpr std::size_t kSpiFrameBytes = 1 + kMaxRgbBytes + kCrcBytes;
+constexpr std::size_t kSpiBufferSize =
+    ((kSpiFrameBytes + 63U) / 64U) * 64U;
+constexpr std::size_t kSpiQueueDepth = 2;
 
-static CRGB leds[MAX_TOTAL_LEDS];
-static uint8_t active_strips = DEFAULT_STRIPS;
-static uint16_t leds_per_strip = DEFAULT_LEDS_PER_STRIP;
-static uint16_t total_leds = DEFAULT_STRIPS * DEFAULT_LEDS_PER_STRIP;
-static uint8_t global_brightness = 50;
+DMA_ATTR std::uint8_t spi_rx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
+DMA_ATTR std::uint8_t spi_tx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
+spi_slave_transaction_t spi_transactions[kSpiQueueDepth] = {};
 
-// =========================
-// SPI protocol definitions
-// =========================
-static constexpr uint8_t CMD_SET_PIXEL      = 0x01;
-static constexpr uint8_t CMD_SET_BRIGHTNESS = 0x02;
-static constexpr uint8_t CMD_SHOW           = 0x03;
-static constexpr uint8_t CMD_CLEAR          = 0x04;
-static constexpr uint8_t CMD_SET_RANGE      = 0x05;
-static constexpr uint8_t CMD_SET_ALL        = 0x06;
-static constexpr uint8_t CMD_CONFIG         = 0x07;
-static constexpr uint8_t CMD_PING           = 0xFF;
+std::uint8_t working_frame[kMaxRgbBytes] = {};
+std::uint8_t mailbox_frames[ledgrid::kFrameMailboxSlots][kMaxRgbBytes] = {};
+ledgrid::LatestFrameMailbox frame_mailbox;
+portMUX_TYPE mailbox_mux = portMUX_INITIALIZER_UNLOCKED;
+TaskHandle_t display_task_handle = nullptr;
+ledgrid::ParallelLedDriver led_driver;
 
-// =========================
-// SPI buffers
-// =========================
-static constexpr size_t CRC_BYTES = 2;
-static constexpr size_t SPI_FRAME_BYTES = 1 + (MAX_TOTAL_LEDS * 3) + CRC_BYTES;
-static constexpr size_t SPI_BUFFER_SIZE = ((SPI_FRAME_BYTES + 63) / 64) * 64;
-DMA_ATTR static uint8_t spi_rx_buffer[SPI_BUFFER_SIZE];
-DMA_ATTR static uint8_t spi_tx_buffer[SPI_BUFFER_SIZE];
+std::uint8_t active_strips = kDefaultStrips;
+std::uint16_t leds_per_strip = kDefaultLedsPerStrip;
+std::uint8_t brightness = 50;
+std::uint32_t next_sequence = 1;
 
-static volatile uint32_t packets_received = 0;
-static volatile uint32_t frames_rendered = 0;
-static volatile uint32_t zero_payload_packets = 0;
-static volatile uint32_t config_commands_received = 0;
-static volatile uint32_t set_all_commands_received = 0;
-static volatile uint32_t crc_errors = 0;
-static volatile uint32_t crc_ok_packets = 0;
+std::atomic<std::uint32_t> packets_received{0};
+std::atomic<std::uint32_t> crc_errors{0};
+std::atomic<std::uint32_t> crc_ok_packets{0};
+std::atomic<std::uint32_t> spi_queue_errors{0};
+std::atomic<std::uint32_t> display_errors{0};
+std::atomic<std::uint16_t> queued_transactions{0};
+std::atomic<std::uint16_t> last_crc_us{0};
+std::atomic<std::uint16_t> last_copy_us{0};
+std::atomic<std::uint32_t> last_accepted_sequence{0};
+std::atomic<std::uint32_t> last_displayed_sequence{0};
 
-static uint32_t last_packet_millis = 0;
-static uint32_t last_show_duration = 0;
-static uint32_t last_frame_sample_time = 0;
-static uint32_t last_frame_sample_count = 0;
-static uint32_t total_bytes_received = 0;
-static uint32_t last_bytes_sample = 0;
-static uint32_t last_bytes_sample_time = 0;
-static bool debug_logging = false;
+constexpr std::uint16_t kCrc16NibbleTable[16] = {
+    0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7,
+    0x8108, 0x9129, 0xA14A, 0xB16B, 0xC18C, 0xD1AD, 0xE1CE, 0xF1EF,
+};
 
-  #define DEBUG_PRINT(...) do { if (debug_logging) { Serial.printf(__VA_ARGS__); } } while (0)
-#define DEBUG_PRINTLN(msg) do { if (debug_logging) { Serial.println(msg); } } while (0)
-
-inline uint16_t logical_to_physical(uint16_t logical) {
-  uint16_t strip = logical / leds_per_strip;
-  uint16_t offset = logical % leds_per_strip;
-  if (strip >= active_strips) {
-    strip = active_strips - 1;
-    offset = leds_per_strip - 1;
-  }
-  return strip * MAX_LEDS_PER_STRIP + offset;
+std::uint16_t duration_u16(std::uint32_t value) {
+  return value > UINT16_MAX ? UINT16_MAX : static_cast<std::uint16_t>(value);
 }
 
-static void run_rainbow_frame(uint8_t &hue) {
-  for (uint16_t i = 0; i < total_leds; ++i) {
-    leds[logical_to_physical(i)] = CHSV(hue + (i * 256 / total_leds), 255, 200);
-  }
-  FastLED.show();
-  hue += 2;
+std::size_t total_leds() {
+  return static_cast<std::size_t>(active_strips) * leds_per_strip;
 }
 
-static uint16_t crc16_ccitt(const uint8_t *data, size_t length) {
-  uint16_t crc = 0xFFFF;
-  for (size_t i = 0; i < length; ++i) {
-    crc ^= static_cast<uint16_t>(data[i]) << 8;
-    for (uint8_t bit = 0; bit < 8; ++bit) {
-      if (crc & 0x8000) {
-        crc = static_cast<uint16_t>((crc << 1) ^ 0x1021);
-      } else {
-        crc = static_cast<uint16_t>(crc << 1);
-      }
-    }
+std::size_t active_rgb_bytes() { return total_leds() * 3U; }
+
+std::uint16_t crc16_ccitt(const std::uint8_t* data, std::size_t length) {
+  std::uint16_t crc = 0xFFFF;
+  for (std::size_t i = 0; i < length; ++i) {
+    crc ^= static_cast<std::uint16_t>(data[i]) << 8;
+    crc = static_cast<std::uint16_t>(
+        (crc << 4) ^ kCrc16NibbleTable[crc >> 12]);
+    crc = static_cast<std::uint16_t>(
+        (crc << 4) ^ kCrc16NibbleTable[crc >> 12]);
   }
   return crc;
 }
 
-static void IRAM_ATTR on_spi_post_transaction(spi_slave_transaction_t *trans) {
-  packets_received++;
+ledgrid::FrameMailboxCounters mailbox_counters() {
+  portENTER_CRITICAL(&mailbox_mux);
+  const auto counters = frame_mailbox.counters();
+  portEXIT_CRITICAL(&mailbox_mux);
+  return counters;
 }
 
-static void process_command(const uint8_t *data, size_t length) {
-  if (length == 0) return;
+bool publish_working_frame() {
+  int slot = -1;
+  portENTER_CRITICAL(&mailbox_mux);
+  slot = frame_mailbox.begin_write();
+  portEXIT_CRITICAL(&mailbox_mux);
+  if (slot < 0) return false;
 
-  total_bytes_received += length;
-  const uint8_t cmd = data[0];
+  const std::size_t bytes = active_rgb_bytes();
+  const std::uint32_t copy_started =
+      static_cast<std::uint32_t>(esp_timer_get_time());
+  std::memcpy(mailbox_frames[slot], working_frame, bytes);
+  last_copy_us = duration_u16(
+      static_cast<std::uint32_t>(esp_timer_get_time()) - copy_started);
 
-  // DEBUG: Show first 10 packets to diagnose the issue
-  static uint32_t debug_packet_count = 0;
-  if (debug_packet_count < 10) {
-    Serial.printf("🔍 Pkt#%u: cmd=0x%02X len=%u bytes: ", 
-                  debug_packet_count++, cmd, length);
-    for (size_t i = 0; i < min(length, (size_t)16); i++) {
-      Serial.printf("%02X ", data[i]);
-    }
-    Serial.println();
-  }
+  ledgrid::FrameMetadata metadata{};
+  metadata.sequence = next_sequence++;
+  metadata.byte_count = bytes;
+  metadata.strip_count = active_strips;
+  metadata.leds_per_strip = leds_per_strip;
+  metadata.brightness = brightness;
 
-  if (length > 1) {
-    uint8_t payload_or = 0;
-    for (size_t i = 1; i < length; ++i) {
-      payload_or |= data[i];
-    }
-    if (payload_or == 0) {
-      zero_payload_packets++;
-      DEBUG_PRINT("⚠️ Packet cmd=0x%02X has zero payload\n", cmd);
-    }
-  }
+  portENTER_CRITICAL(&mailbox_mux);
+  const bool committed = frame_mailbox.commit_write(slot, metadata);
+  portEXIT_CRITICAL(&mailbox_mux);
+  if (!committed) return false;
 
-  switch (cmd) {
-    case CMD_PING: {
-      DEBUG_PRINTLN("📥 CMD_PING");
-      digitalWrite(PIN_STATUS_LED, !digitalRead(PIN_STATUS_LED));
-      break;
-    }
+  last_accepted_sequence = metadata.sequence;
+  if (display_task_handle != nullptr) xTaskNotifyGive(display_task_handle);
+  return true;
+}
 
-    case CMD_SET_PIXEL: {
-      if (length < 6) return;
-      const uint16_t pixel = (static_cast<uint16_t>(data[1]) << 8) | data[2];
-      const uint8_t r = data[3];
-      const uint8_t g = data[4];
-      const uint8_t b = data[5];
-      if (pixel < total_leds) {
-        leds[logical_to_physical(pixel)] = CRGB(r, g, b);
-      }
-      break;
-    }
+void display_task(void*) {
+  while (true) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    while (true) {
+      ledgrid::FrameMetadata metadata{};
+      int slot = -1;
+      portENTER_CRITICAL(&mailbox_mux);
+      slot = frame_mailbox.begin_read(&metadata);
+      portEXIT_CRITICAL(&mailbox_mux);
+      if (slot < 0) break;
 
-    case CMD_SET_BRIGHTNESS: {
-      if (length < 2) return;
-      
-      // Reject corrupted packets - legitimate brightness commands are exactly 2 bytes
-      // Packets with length > 10 are likely misaligned CMD_SET_ALL packets
-      if (length > 10) {
-        Serial.printf("⚠️ Rejecting corrupt brightness packet (length=%u, would set %u)\n", 
-                      length, data[1]);
-        return;
-      }
-      
-      uint8_t old_brightness = global_brightness;
-      global_brightness = data[1];
-      FastLED.setBrightness(global_brightness);
-      // Log brightness changes for diagnosis
-      Serial.printf("🔆 BRIGHTNESS CHANGE: %u → %u (millis=%lu, length=%u)\n", 
-                    old_brightness, global_brightness, millis(), length);
-      DEBUG_PRINT("📥 Brightness → %u\n", global_brightness);
-      break;
-    }
+      const bool submitted = led_driver.submit(
+          mailbox_frames[slot],
+          metadata.byte_count,
+          metadata.strip_count,
+          metadata.leds_per_strip,
+          metadata.brightness,
+          metadata.sequence);
+      const bool completed =
+          submitted && led_driver.wait_for_done(pdMS_TO_TICKS(100));
 
-    case CMD_SHOW: {
-      uint32_t start_us = micros();
-      FastLED.show();
-      last_show_duration = micros() - start_us;
-      // Don't increment frames_rendered here - only count SET_ALL frames
-      DEBUG_PRINTLN("📥 CMD_SHOW");
-      break;
-    }
-
-    case CMD_CLEAR: {
-      for (uint8_t strip = 0; strip < active_strips; ++strip) {
-        for (uint16_t offset = 0; offset < MAX_LEDS_PER_STRIP; ++offset) {
-          leds[strip * MAX_LEDS_PER_STRIP + offset] = CRGB::Black;
-        }
-      }
-      FastLED.show();
-      // Don't increment frames_rendered here - only count SET_ALL frames
-      DEBUG_PRINTLN("📥 CMD_CLEAR");
-      break;
-    }
-
-    case CMD_SET_RANGE: {
-      if (length < 4) return;
-      const uint16_t start = (static_cast<uint16_t>(data[1]) << 8) | data[2];
-      if (start >= total_leds) break;
-
-      uint8_t count = data[3];
-      const size_t expected = 4 + static_cast<size_t>(count) * 3;
-      if (length < expected) return;
-
-      if (start + count > total_leds) {
-        count = total_leds - start;
-      }
-
-      for (uint8_t i = 0; i < count; ++i) {
-        const uint16_t logical = start + i;
-        if (logical >= total_leds) break;
-        const size_t base = 4 + static_cast<size_t>(i) * 3;
-        leds[logical_to_physical(logical)] = CRGB(data[base], data[base + 1], data[base + 2]);
-      }
-      break;
-    }
-
-    case CMD_SET_ALL: {
-      set_all_commands_received++;
-      const size_t expected = 1 + static_cast<size_t>(total_leds) * 3;
-      if (length < expected) {
-        Serial.printf("⚠️ CMD_SET_ALL expected %u bytes, got %u\n", 
-                      static_cast<unsigned>(expected), static_cast<unsigned>(length));
-        return;
-      }
-
-      for (uint16_t logical = 0; logical < total_leds; ++logical) {
-        const size_t base = 1 + static_cast<size_t>(logical) * 3;
-        leds[logical_to_physical(logical)] = CRGB(data[base], data[base + 1], data[base + 2]);
-      }
-      
-      // Clear unused LEDs
-      for (uint8_t strip = 0; strip < active_strips; ++strip) {
-        for (uint16_t offset = leds_per_strip; offset < MAX_LEDS_PER_STRIP; ++offset) {
-          leds[strip * MAX_LEDS_PER_STRIP + offset] = CRGB::Black;
-        }
-      }
-
-      uint32_t start_us = micros();
-      FastLED.show();
-      last_show_duration = micros() - start_us;
-      frames_rendered++;
-      break;
-    }
-
-    case CMD_CONFIG: {
-      config_commands_received++;
-      if (length < 4) return;
-      uint8_t new_strips = data[1];
-      uint16_t new_len = (static_cast<uint16_t>(data[2]) << 8) | data[3];
-
-      if (new_strips == 0 || new_strips > MAX_STRIPS) return;
-      if (new_len == 0 || new_len > MAX_LEDS_PER_STRIP) return;
-
-      // Only clear LEDs if configuration actually changed
-      bool config_changed = (active_strips != new_strips) || (leds_per_strip != new_len);
-      
-      active_strips = new_strips;
-      leds_per_strip = new_len;
-      total_leds = active_strips * leds_per_strip;
-
-      if (config_changed) {
-        // Clear all LEDs only on actual config change
-        for (uint16_t i = 0; i < MAX_TOTAL_LEDS; ++i) {
-          leds[i] = CRGB::Black;
-        }
-        FastLED.show();
-        DEBUG_PRINT("📐 Config changed: strips=%u, length=%u, total=%u (cleared LEDs)\n",
-                    active_strips, leds_per_strip, total_leds);
+      portENTER_CRITICAL(&mailbox_mux);
+      if (completed) {
+        frame_mailbox.finish_read(slot);
       } else {
-        DEBUG_PRINT("📐 Config refresh: strips=%u, length=%u, total=%u (no change)\n",
-                    active_strips, leds_per_strip, total_leds);
+        frame_mailbox.cancel_read(slot);
       }
-      
-      if (length >= 5) {
-        debug_logging = data[4] != 0;
-        if (debug_logging) {
-          Serial.println("🔧 Debug logging enabled");
-        }
+      portEXIT_CRITICAL(&mailbox_mux);
+
+      if (completed) {
+        last_displayed_sequence = metadata.sequence;
+      } else {
+        ++display_errors;
+      }
+    }
+  }
+}
+
+ledgrid::ReceiverStatusV2 status_snapshot() {
+  const auto counters = mailbox_counters();
+  ledgrid::ReceiverStatusV2 status{};
+  status.flags = 0x01U | (led_driver.in_flight() ? 0x02U : 0U);
+  status.active_strips = active_strips;
+  status.leds_per_strip = leds_per_strip;
+  status.queued_transactions = queued_transactions.load(std::memory_order_relaxed);
+  status.packets = packets_received.load(std::memory_order_relaxed);
+  status.crc_errors = crc_errors.load(std::memory_order_relaxed);
+  status.crc_ok_packets = crc_ok_packets.load(std::memory_order_relaxed);
+  status.frames_accepted = counters.accepted;
+  status.frames_displayed = counters.displayed;
+  status.frames_superseded = counters.superseded;
+  status.publish_drops = counters.publish_drops;
+  status.spi_queue_errors = spi_queue_errors;
+  status.last_crc_us = last_crc_us.load(std::memory_order_relaxed);
+  status.last_copy_us = last_copy_us.load(std::memory_order_relaxed);
+  status.last_encode_us = led_driver.last_encode_us();
+  status.last_show_us = led_driver.last_show_us();
+  status.last_accepted_sequence =
+      last_accepted_sequence.load(std::memory_order_relaxed);
+  status.last_displayed_sequence =
+      last_displayed_sequence.load(std::memory_order_relaxed);
+  status.display_errors = display_errors.load(std::memory_order_relaxed);
+  return status;
+}
+
+bool queue_spi_transaction(std::size_t index) {
+  ledgrid::encode_receiver_status_v2(
+      status_snapshot(), spi_tx_buffers[index], kSpiBufferSize);
+  auto& transaction = spi_transactions[index];
+  transaction = {};
+  transaction.length = kSpiBufferSize * 8U;
+  transaction.tx_buffer = spi_tx_buffers[index];
+  transaction.rx_buffer = spi_rx_buffers[index];
+  transaction.user = reinterpret_cast<void*>(index);
+  const esp_err_t result =
+      spi_slave_queue_trans(SPI2_HOST, &transaction, pdMS_TO_TICKS(10));
+  if (result != ESP_OK) {
+    ++spi_queue_errors;
+    return false;
+  }
+  ++queued_transactions;
+  return true;
+}
+
+void process_command(const std::uint8_t* data, std::size_t length) {
+  if (data == nullptr || length == 0) return;
+
+  switch (data[0]) {
+    case kCmdPing:
+      digitalWrite(kStatusLed, !digitalRead(kStatusLed));
+      break;
+
+    case kCmdSetPixel: {
+      if (length != 6) break;
+      const std::uint16_t pixel =
+          (static_cast<std::uint16_t>(data[1]) << 8) | data[2];
+      if (pixel >= total_leds()) break;
+      const std::size_t offset = static_cast<std::size_t>(pixel) * 3U;
+      std::memcpy(working_frame + offset, data + 3, 3);
+      break;
+    }
+
+    case kCmdSetBrightness:
+      if (length == 2) {
+        brightness = data[1];
+        publish_working_frame();
+      }
+      break;
+
+    case kCmdShow:
+      if (length == 1) publish_working_frame();
+      break;
+
+    case kCmdClear:
+      if (length == 1) {
+        std::memset(working_frame, 0, active_rgb_bytes());
+        publish_working_frame();
+      }
+      break;
+
+    case kCmdSetRange: {
+      if (length < 4) break;
+      const std::uint16_t start =
+          (static_cast<std::uint16_t>(data[1]) << 8) | data[2];
+      std::uint16_t count = data[3];
+      if (start >= total_leds()) break;
+      count = std::min<std::uint16_t>(count, total_leds() - start);
+      const std::size_t expected = 4U + static_cast<std::size_t>(count) * 3U;
+      if (length != expected) break;
+      std::memcpy(
+          working_frame + static_cast<std::size_t>(start) * 3U,
+          data + 4,
+          static_cast<std::size_t>(count) * 3U);
+      break;
+    }
+
+    case kCmdSetAll: {
+      const std::size_t expected = 1U + active_rgb_bytes();
+      if (length != expected) break;
+      std::memcpy(working_frame, data + 1, active_rgb_bytes());
+      publish_working_frame();
+      break;
+    }
+
+    case kCmdConfig: {
+      if (length < 4 || length > 5) break;
+      const std::uint8_t new_strips = data[1];
+      const std::uint16_t new_leds =
+          (static_cast<std::uint16_t>(data[2]) << 8) | data[3];
+      if (new_strips != kMaxStrips || new_leds != kMaxLedsPerStrip) {
+        break;
+      }
+      if (new_strips != active_strips || new_leds != leds_per_strip) {
+        active_strips = new_strips;
+        leds_per_strip = new_leds;
+        std::memset(working_frame, 0, sizeof(working_frame));
+        publish_working_frame();
       }
       break;
     }
 
     default:
-      DEBUG_PRINT("⚠️ Unknown command 0x%02X\n", cmd);
       break;
   }
 }
 
-void setup() {
-  // Initialize Serial (UART)
-  Serial.begin(115200);
-  delay(1000);  // Give time for serial to stabilize
-  
-  Serial.println("");
-  Serial.println("========================================");
-#ifdef RAINBOW_MODE
-  Serial.println("ESP32-S3 DevKitC RAINBOW Test Mode");
-#else
-  Serial.println("ESP32-S3 DevKitC SPI Slave LED Controller");
-#endif
-  Serial.println("========================================");
-  Serial.printf("Board: ESP32-S3 DevKitC (8MB Flash)\n");
-  Serial.printf("Strips: %d x %d LEDs = %d total\n", active_strips, leds_per_strip, total_leds);
-  Serial.println("\nPin mapping:");
-  Serial.println("SPI:");
-  Serial.printf("  MOSI: GPIO %d\n", PIN_SPI_MOSI);
-  Serial.printf("  MISO: GPIO %d\n", PIN_SPI_MISO);
-  Serial.printf("  SCK:  GPIO %d\n", PIN_SPI_SCLK);
-  Serial.printf("  CS:   GPIO %d\n", PIN_SPI_CS);
-  Serial.println("LED Strips:");
-  Serial.printf("  Strip 0: GPIO %d\n", PIN_STRIP_0);
-  Serial.printf("  Strip 1: GPIO %d\n", PIN_STRIP_1);
-  Serial.printf("  Strip 2: GPIO %d\n", PIN_STRIP_2);
-  Serial.printf("  Strip 3: GPIO %d\n", PIN_STRIP_3);
-  Serial.printf("  Strip 4: GPIO %d\n", PIN_STRIP_4);
-  Serial.printf("  Strip 5: GPIO %d\n", PIN_STRIP_5);
-  Serial.printf("  Strip 6: GPIO %d\n", PIN_STRIP_6);
-  Serial.printf("  Strip 7: GPIO %d\n", PIN_STRIP_7);
-  Serial.printf("\n🔆 Initial brightness: %u/255 (~%d%%)\n", 
-                global_brightness, (global_brightness * 100) / 255);
+void initialize_spi() {
+  gpio_reset_pin(kSpiChipSelect);
+  gpio_reset_pin(kSpiClock);
+  gpio_reset_pin(kSpiMosi);
+  gpio_set_direction(kSpiChipSelect, GPIO_MODE_INPUT);
+  gpio_set_direction(kSpiClock, GPIO_MODE_INPUT);
+  gpio_set_direction(kSpiMosi, GPIO_MODE_INPUT);
+  gpio_set_pull_mode(kSpiChipSelect, GPIO_PULLUP_ONLY);
+  gpio_set_pull_mode(kSpiClock, GPIO_FLOATING);
+  gpio_set_pull_mode(kSpiMosi, GPIO_FLOATING);
 
-  // Init FastLED for all 8 strips (maximum supported)
-  // Using MAX_LEDS_PER_STRIP to allow dynamic configuration via CMD_CONFIG
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_0>(leds + (0 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_1>(leds + (1 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_2>(leds + (2 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_3>(leds + (3 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_4>(leds + (4 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_5>(leds + (5 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_6>(leds + (6 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
-  FastLED.addLeds<NEOPIXEL, PIN_STRIP_7>(leds + (7 * MAX_LEDS_PER_STRIP), MAX_LEDS_PER_STRIP);
+  spi_bus_config_t bus_config = {};
+  bus_config.mosi_io_num = kSpiMosi;
+  bus_config.miso_io_num = kSpiMiso;
+  bus_config.sclk_io_num = kSpiClock;
+  bus_config.quadwp_io_num = -1;
+  bus_config.quadhd_io_num = -1;
+  bus_config.max_transfer_sz = kSpiBufferSize;
+  bus_config.flags =
+      SPICOMMON_BUSFLAG_SCLK | SPICOMMON_BUSFLAG_MOSI | SPICOMMON_BUSFLAG_MISO;
 
-  FastLED.setBrightness(global_brightness);
-  FastLED.clear();
-  FastLED.show();
+  spi_slave_interface_config_t slave_config = {};
+  slave_config.mode = 0;
+  slave_config.spics_io_num = kSpiChipSelect;
+  slave_config.queue_size = kSpiQueueDepth;
 
-  pinMode(PIN_STATUS_LED, OUTPUT);
-  digitalWrite(PIN_STATUS_LED, LOW);
-
-#ifdef RAINBOW_MODE
-  Serial.println("\n🌈 RAINBOW test mode — infinite animation, SPI disabled");
-  Serial.println("   Flash normal firmware (without RAINBOW=1) for SPI control\n");
-  return;
-#endif
-
-  // Startup LED flash sequence
-  for (uint16_t i = 0; i < total_leds; ++i) {
-    leds[i] = CRGB(64, 64, 64);
-  }
-  FastLED.show();
-  delay(200);
-  FastLED.clear();
-  FastLED.show();
-  delay(200);
-
-  // Configure SPI pins - CRITICAL: Set all as INPUT before SPI init
-  gpio_reset_pin(PIN_SPI_CS);
-  gpio_reset_pin(PIN_SPI_SCLK);
-  gpio_reset_pin(PIN_SPI_MOSI);
-  gpio_set_direction(PIN_SPI_CS, GPIO_MODE_INPUT);
-  gpio_set_direction(PIN_SPI_SCLK, GPIO_MODE_INPUT);  // FIX: Explicitly set as input
-  gpio_set_direction(PIN_SPI_MOSI, GPIO_MODE_INPUT);  // FIX: Explicitly set as input
-  gpio_set_pull_mode(PIN_SPI_CS, GPIO_PULLUP_ONLY);
-  gpio_set_pull_mode(PIN_SPI_SCLK, GPIO_FLOATING);
-  gpio_set_pull_mode(PIN_SPI_MOSI, GPIO_FLOATING);
-
-  // Configure SPI slave
-  spi_bus_config_t bus_cfg = {};
-  bus_cfg.mosi_io_num = PIN_SPI_MOSI;
-  bus_cfg.miso_io_num = PIN_SPI_MISO;
-  bus_cfg.sclk_io_num = PIN_SPI_SCLK;
-  bus_cfg.quadwp_io_num = -1;
-  bus_cfg.quadhd_io_num = -1;
-  bus_cfg.max_transfer_sz = SPI_BUFFER_SIZE;
-  bus_cfg.flags = SPICOMMON_BUSFLAG_SCLK | SPICOMMON_BUSFLAG_MOSI | SPICOMMON_BUSFLAG_MISO;
-  bus_cfg.intr_flags = 0;
-
-  spi_slave_interface_config_t slave_cfg = {};
-  slave_cfg.mode = 0;  // CPOL=0, CPHA=0 - matches Pi SPI0 and SPI1
-  slave_cfg.spics_io_num = PIN_SPI_CS;
-  slave_cfg.queue_size = 4;
-  slave_cfg.flags = 0;
-  slave_cfg.post_setup_cb = nullptr;
-  slave_cfg.post_trans_cb = on_spi_post_transaction;
-
-  esp_err_t err = spi_slave_initialize(SPI2_HOST, &bus_cfg, &slave_cfg, SPI_DMA_CH_AUTO);
-  if (err != ESP_OK) {
-    Serial.printf("❌ spi_slave_initialize failed: %d\n", err);
+  const esp_err_t result = spi_slave_initialize(
+      SPI2_HOST, &bus_config, &slave_config, SPI_DMA_CH_AUTO);
+  if (result != ESP_OK) {
+    Serial.printf("SPI initialization failed: %d\n", result);
     while (true) delay(1000);
   }
 
-  memset(spi_tx_buffer, 0, sizeof(spi_tx_buffer));
-
-  Serial.println("\n✅ SPI slave ready");
-  Serial.printf("Buffer size: %u bytes\n", SPI_BUFFER_SIZE);
-  
-  // Brief rainbow animation to verify LED strips before SPI mode
-  Serial.println("\n🌈 Running rainbow animation for 1 second...");
-  uint32_t rainbow_start = millis();
-  uint8_t hue = 0;
-  while (millis() - rainbow_start < 1000) {
-    run_rainbow_frame(hue);
-    delay(20);
+  for (std::size_t i = 0; i < kSpiQueueDepth; ++i) {
+    if (!queue_spi_transaction(i)) {
+      Serial.printf("SPI queue initialization failed for slot %u\n",
+                    static_cast<unsigned>(i));
+      while (true) delay(1000);
+    }
   }
-  
-  // Clear after rainbow
-  FastLED.clear();
-  FastLED.show();
-  Serial.println("✅ Rainbow complete, entering SPI mode\n");
+}
+
+}  // namespace
+
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+  pinMode(kStatusLed, OUTPUT);
+  digitalWrite(kStatusLed, LOW);
+
+  Serial.println("LED Grid native ESP32-S3 parallel receiver v2");
+  if (!led_driver.begin(kLedPins, kMaxStrips, kMaxLedsPerStrip)) {
+    Serial.println("LCD/I80 parallel LED driver initialization failed");
+    while (true) delay(1000);
+  }
+
+  if (xTaskCreatePinnedToCore(
+          display_task,
+          "led-display",
+          8192,
+          nullptr,
+          3,
+          &display_task_handle,
+          0) != pdPASS) {
+    Serial.println("Display task creation failed");
+    while (true) delay(1000);
+  }
+
+  // Publish a black startup frame before accepting transport data.
+  publish_working_frame();
+  initialize_spi();
+  Serial.printf(
+      "Ready: %u strips x %u LEDs, SPI queue=%u, encoded frame=%u bytes\n",
+      active_strips,
+      leds_per_strip,
+      static_cast<unsigned>(kSpiQueueDepth),
+      static_cast<unsigned>(ledgrid::ws2812_encoded_size(leds_per_strip)));
 }
 
 void loop() {
-#ifdef RAINBOW_MODE
-  static uint8_t hue = 0;
-  run_rainbow_frame(hue);
-  delay(20);
-  return;
-#endif
-
-  memset(spi_rx_buffer, 0, sizeof(spi_rx_buffer));
-
-  spi_slave_transaction_t trans = {};
-  trans.length = SPI_BUFFER_SIZE * 8;
-  trans.tx_buffer = spi_tx_buffer;
-  trans.rx_buffer = spi_rx_buffer;
-
-  const esp_err_t err = spi_slave_transmit(SPI2_HOST, &trans, pdMS_TO_TICKS(100));
-  if (err == ESP_OK) {
-    if (trans.trans_len > 0) {
-      const size_t bytes = trans.trans_len / 8;
-      uint32_t now = millis();
-      if (last_packet_millis != 0) {
-        DEBUG_PRINT("⏱️ Interval: %lu ms\n", now - last_packet_millis);
-      }
-      last_packet_millis = now;
-
-      if (bytes < (1 + CRC_BYTES)) {
-        crc_errors++;
-        DEBUG_PRINT("⚠️ CRC error: short packet (%u bytes)\n", static_cast<unsigned>(bytes));
-      } else {
-        const size_t payload_bytes = bytes - CRC_BYTES;
-        const uint16_t received_crc = (static_cast<uint16_t>(spi_rx_buffer[bytes - 2]) << 8)
-                                      | spi_rx_buffer[bytes - 1];
-        const uint16_t computed_crc = crc16_ccitt(spi_rx_buffer, payload_bytes);
-
-        if (received_crc != computed_crc) {
-          crc_errors++;
-          DEBUG_PRINT("⚠️ CRC mismatch: recv=0x%04X calc=0x%04X len=%u\n",
-                      received_crc, computed_crc, static_cast<unsigned>(payload_bytes));
-        } else {
-          crc_ok_packets++;
-          DEBUG_PRINT("📥 %u bytes, cmd=0x%02X\n", static_cast<unsigned>(payload_bytes), spi_rx_buffer[0]);
-          process_command(spi_rx_buffer, payload_bytes);
-        }
-      }
-    }
-  } else if (err != ESP_ERR_TIMEOUT) {
-    Serial.printf("⚠️ SPI error %d\n", err);
+  spi_slave_transaction_t* completed = nullptr;
+  const esp_err_t result = spi_slave_get_trans_result(
+      SPI2_HOST, &completed, pdMS_TO_TICKS(100));
+  if (result == ESP_ERR_TIMEOUT) return;
+  if (result != ESP_OK || completed == nullptr) {
+    ++spi_queue_errors;
+    return;
   }
 
-  // Stats every 5 seconds
-  static uint32_t last_stats = 0;
-  uint32_t now_ms = millis();
-  if (now_ms - last_stats > 5000) {
-    float fps = 0.0f;
-    if (last_frame_sample_time != 0) {
-      uint32_t dt = now_ms - last_frame_sample_time;
-      uint32_t frames_delta = frames_rendered - last_frame_sample_count;
-      if (dt > 0) {
-        fps = (1000.0f * frames_delta) / static_cast<float>(dt);
-      }
-    }
-    last_frame_sample_time = now_ms;
-    last_frame_sample_count = frames_rendered;
+  if (queued_transactions > 0) --queued_transactions;
+  ++packets_received;
+  const std::size_t index = reinterpret_cast<std::size_t>(completed->user);
+  const std::size_t bytes = completed->trans_len / 8U;
+  const std::uint8_t* packet = spi_rx_buffers[index];
 
-    // Calculate throughput
-    float throughput_kbps = 0.0f;
-    if (last_bytes_sample_time != 0) {
-      uint32_t dt = now_ms - last_bytes_sample_time;
-      uint32_t bytes_delta = total_bytes_received - last_bytes_sample;
-      if (dt > 0) {
-        throughput_kbps = (bytes_delta * 8.0f) / static_cast<float>(dt);  // kbps
-      }
+  if (bytes < 1U + kCrcBytes) {
+    ++crc_errors;
+  } else {
+    const std::size_t payload_bytes = bytes - kCrcBytes;
+    const std::uint16_t received_crc =
+        (static_cast<std::uint16_t>(packet[bytes - 2]) << 8) |
+        packet[bytes - 1];
+    const std::uint32_t crc_started =
+        static_cast<std::uint32_t>(esp_timer_get_time());
+    const std::uint16_t computed_crc = crc16_ccitt(packet, payload_bytes);
+    last_crc_us = duration_u16(
+        static_cast<std::uint32_t>(esp_timer_get_time()) - crc_started);
+    if (received_crc != computed_crc) {
+      ++crc_errors;
+    } else {
+      ++crc_ok_packets;
+      process_command(packet, payload_bytes);
     }
-    last_bytes_sample = total_bytes_received;
-    last_bytes_sample_time = now_ms;
-
-    // Calculate frame success rate (successful SET_ALL commands)
-    float set_all_success_rate = 0.0f;
-    if (set_all_commands_received > 0) {
-      // Only SET_ALL increments frames_rendered, so this should be close to 100%
-      set_all_success_rate = (100.0f * frames_rendered) / static_cast<float>(set_all_commands_received);
-    }
-    
-    // Calculate packet error rate
-    float packet_error_rate = 0.0f;
-    if (packets_received > 0) {
-      packet_error_rate = (100.0f * zero_payload_packets) / static_cast<float>(packets_received);
-    }
-
-    Serial.printf("📊 Pkts=%u Frames=%u FPS=%.1f | Throughput=%.1fkb/s | Success=%.1f%% Errors=%.1f%% | CRC=%u/%u | Show=%luµs | Heap=%u\n",
-                  static_cast<unsigned>(packets_received),
-                  static_cast<unsigned>(frames_rendered),
-                  fps,
-                  throughput_kbps,
-                  set_all_success_rate,
-                  packet_error_rate,
-                  static_cast<unsigned>(crc_errors),
-                  static_cast<unsigned>(crc_ok_packets),
-                  static_cast<unsigned long>(last_show_duration),
-                  static_cast<unsigned>(ESP.getFreeHeap()));
-    Serial.printf("    Configs=%u SetAlls=%u ZeroPayload=%u | Buffer=%u/%u bytes | %ux%u LEDs\n",
-                  static_cast<unsigned>(config_commands_received),
-                  static_cast<unsigned>(set_all_commands_received),
-                  static_cast<unsigned>(zero_payload_packets),
-                  static_cast<unsigned>(SPI_FRAME_BYTES),
-                  static_cast<unsigned>(SPI_BUFFER_SIZE),
-                  active_strips,
-                  leds_per_strip);
-    last_stats = now_ms;
   }
+
+  queue_spi_transaction(index);
 }

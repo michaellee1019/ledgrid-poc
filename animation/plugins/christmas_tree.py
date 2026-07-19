@@ -4,6 +4,7 @@
 import math
 import random
 from typing import Any, Dict, List, Tuple
+import numpy as np
 
 from animation import AnimationBase
 
@@ -101,14 +102,19 @@ class ChristmasTreeAnimation(AnimationBase):
         self._build_static_elements()
 
         total_pixels = strip_count * leds_per_strip
-        pixel_colors: List[Tuple[int, int, int]] = []
-        for strip in range(strip_count):
-            for led in range(leds_per_strip):
-                altitude = 1.0 - (led / max(leds_per_strip - 1, 1))
-                base = 5 + int(10 * altitude)
-                green = 15 + int(25 * altitude)
-                blue = 30 + int(55 * altitude)
-                pixel_colors.append((base, green, blue))
+        if not hasattr(self, '_background_frame') or self._background_frame.shape[0] != total_pixels:
+            altitude = 1.0 - (
+                np.arange(leds_per_strip, dtype=np.float32)
+                / max(leds_per_strip - 1, 1)
+            )
+            strip_background = np.stack((
+                5 + (10 * altitude).astype(np.uint8),
+                15 + (25 * altitude).astype(np.uint8),
+                30 + (55 * altitude).astype(np.uint8),
+            ), axis=1).astype(np.uint8)
+            self._background_frame = np.tile(strip_background, (strip_count, 1))
+        pixel_colors = self.next_frame_buffer(clear=False)
+        np.copyto(pixel_colors, self._background_frame)
 
         delta_time = self._compute_delta(time_elapsed)
         self._update_snowflakes(delta_time, time_elapsed)
@@ -121,7 +127,7 @@ class ChristmasTreeAnimation(AnimationBase):
         self._draw_star(pixel_colors, time_elapsed)
         self._draw_falling_snow(pixel_colors, time_elapsed)
 
-        return [self.apply_brightness(self._clamp_color(color)) for color in pixel_colors]
+        return self.apply_brightness_array(pixel_colors, out=pixel_colors)
 
     def _build_static_elements(self):
         strip_count, leds_per_strip = self.get_strip_info()

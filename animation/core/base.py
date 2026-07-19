@@ -7,9 +7,27 @@ import time
 import colorsys
 import threading
 from abc import ABC, abstractmethod
-from typing import List, Tuple, Dict, Any, Optional
+from dataclasses import dataclass
+from typing import List, Tuple, Dict, Any, Optional, Union
 
 import numpy as np
+
+
+@dataclass(frozen=True)
+class RenderedFrame:
+    """Frame pixels plus presentation hints for the animation manager.
+
+    ``changed`` lets event-driven and source-rate animations avoid repeatedly
+    transmitting an identical frame. ``dirty_ranges`` is optional advisory
+    metadata for controllers that can choose a partial-update protocol.
+    """
+
+    pixels: Any
+    changed: bool = True
+    dirty_ranges: Optional[Tuple[Tuple[int, int], ...]] = None
+
+
+FrameOutput = Union[np.ndarray, RenderedFrame]
 
 
 class AnimationBase(ABC):
@@ -28,6 +46,10 @@ class AnimationBase(ABC):
         self.start_time = time.time()
         self.frame_count = 0
         self.is_running = False
+        self._frame_buffers: List[np.ndarray] = []
+        self._frame_buffer_index = 0
+        self._frame_buffer_geometry: Optional[Tuple[int, int]] = None
+        self._hsv_scratch: Dict[str, np.ndarray] = {}
         
         # Animation metadata
         self.name = getattr(self, 'ANIMATION_NAME', self.__class__.__name__)
@@ -47,7 +69,7 @@ class AnimationBase(ABC):
         self.params = {**self.default_params, **self.config}
     
     @abstractmethod
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> FrameOutput:
         """
         Generate a single frame of animation
         
@@ -56,7 +78,7 @@ class AnimationBase(ABC):
             frame_count: Number of frames rendered so far
             
         Returns:
-            List of (r, g, b) tuples for all pixels
+            Canonical uint8 NumPy frame, optionally wrapped in RenderedFrame
         """
         pass
     
@@ -150,49 +172,130 @@ class AnimationBase(ABC):
             int(b * brightness)
         )
     
-    @staticmethod
-    def hsv_to_rgb_array(h: np.ndarray, s: np.ndarray, v: np.ndarray) -> np.ndarray:
+    def hsv_to_rgb_array(
+        self,
+        h: np.ndarray,
+        s: np.ndarray,
+        v: np.ndarray,
+        out: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
         """Vectorized HSV-to-RGB for numpy arrays. Returns uint8 (N,3) array."""
-        h = np.asarray(h, dtype=np.float32).ravel() % 1.0
+        h = np.asarray(h, dtype=np.float32).ravel()
         s = np.asarray(s, dtype=np.float32).ravel()
         v = np.asarray(v, dtype=np.float32).ravel()
+        size = h.size
+        if s.size != size or v.size != size:
+            raise ValueError("HSV component arrays must have equal lengths")
 
-        i = (h * 6.0).astype(np.int32)
-        f = h * 6.0 - i
-        p = v * (1.0 - s)
-        q = v * (1.0 - s * f)
-        t = v * (1.0 - s * (1.0 - f))
+        if self._hsv_scratch.get('h6', np.empty(0)).size != size:
+            self._hsv_scratch = {
+                'h6': np.empty(size, dtype=np.float32),
+                'f': np.empty(size, dtype=np.float32),
+                'p': np.empty(size, dtype=np.float32),
+                'q': np.empty(size, dtype=np.float32),
+                't': np.empty(size, dtype=np.float32),
+                'sector': np.empty(size, dtype=np.int32),
+                'rgb': np.empty((size, 3), dtype=np.float32),
+            }
+        h6 = self._hsv_scratch['h6']
+        f = self._hsv_scratch['f']
+        p = self._hsv_scratch['p']
+        q = self._hsv_scratch['q']
+        t = self._hsv_scratch['t']
+        sector = self._hsv_scratch['sector']
+        rgb = self._hsv_scratch['rgb']
 
-        i_mod = i % 6
-        r = np.where(i_mod == 0, v,
-            np.where(i_mod == 1, q,
-            np.where(i_mod == 2, p,
-            np.where(i_mod == 3, p,
-            np.where(i_mod == 4, t, v)))))
-        g = np.where(i_mod == 0, t,
-            np.where(i_mod == 1, v,
-            np.where(i_mod == 2, v,
-            np.where(i_mod == 3, q,
-            np.where(i_mod == 4, p, p)))))
-        b = np.where(i_mod == 0, p,
-            np.where(i_mod == 1, p,
-            np.where(i_mod == 2, t,
-            np.where(i_mod == 3, v,
-            np.where(i_mod == 4, v, q)))))
+        np.remainder(h, 1.0, out=h6)
+        h6 *= 6.0
+        np.floor(h6, out=f)
+        np.copyto(sector, f, casting='unsafe')
+        np.remainder(sector, 6, out=sector)
+        np.subtract(h6, f, out=f)
 
-        out = np.empty((h.size, 3), dtype=np.uint8)
-        out[:, 0] = np.clip(r * 255.0, 0, 255)
-        out[:, 1] = np.clip(g * 255.0, 0, 255)
-        out[:, 2] = np.clip(b * 255.0, 0, 255)
+        np.subtract(1.0, s, out=p)
+        p *= v
+        np.multiply(s, f, out=q)
+        np.subtract(1.0, q, out=q)
+        q *= v
+        np.subtract(1.0, f, out=t)
+        t *= s
+        np.subtract(1.0, t, out=t)
+        t *= v
+
+        components = (
+            (v, t, p),
+            (q, v, p),
+            (p, v, t),
+            (p, q, v),
+            (t, p, v),
+            (v, p, q),
+        )
+        for index, (red, green, blue) in enumerate(components):
+            mask = sector == index
+            rgb[mask, 0] = red[mask]
+            rgb[mask, 1] = green[mask]
+            rgb[mask, 2] = blue[mask]
+
+        if out is None:
+            out = np.empty((size, 3), dtype=np.uint8)
+        elif out.shape != (size, 3) or out.dtype != np.uint8:
+            raise ValueError("HSV output buffer must be uint8 with shape (N, 3)")
+        rgb *= 255.0
+        np.clip(rgb, 0.0, 255.0, out=rgb)
+        np.copyto(out, rgb, casting='unsafe')
         return out
 
-    def apply_brightness_array(self, colors: np.ndarray) -> np.ndarray:
+    def apply_brightness_array(
+        self,
+        colors: np.ndarray,
+        out: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
         """Apply brightness parameter to an (N,3) uint8 array. Returns uint8."""
         brightness = self.params.get('brightness', 1.0)
         if brightness >= 1.0:
+            if out is not None and out is not colors:
+                np.copyto(out, colors, casting='unsafe')
+                return out
             return colors
-        scaled = colors.astype(np.float32) * brightness
-        return np.clip(scaled, 0, 255).astype(np.uint8)
+        if out is None:
+            scaled = colors.astype(np.float32) * max(0.0, brightness)
+            return np.clip(scaled, 0, 255).astype(np.uint8)
+        np.multiply(colors, max(0.0, brightness), out=out, casting='unsafe')
+        return out
+
+    def next_frame_buffer(self, *, clear: bool = True, count: int = 2) -> np.ndarray:
+        """Return the next reusable canonical frame buffer.
+
+        Two buffers are sufficient for the synchronous manager: one may be
+        retained for preview/status while the animation prepares the next.
+        Buffer ownership is centralized here so plugins do not each implement
+        subtly different double-buffering schemes.
+        """
+        total_pixels = self.get_pixel_count()
+        geometry = (total_pixels, max(2, int(count)))
+        if geometry != self._frame_buffer_geometry:
+            self._frame_buffers = [
+                np.zeros((total_pixels, 3), dtype=np.uint8)
+                for _ in range(geometry[1])
+            ]
+            self._frame_buffer_index = 0
+            self._frame_buffer_geometry = geometry
+
+        frame = self._frame_buffers[self._frame_buffer_index]
+        self._frame_buffer_index = (self._frame_buffer_index + 1) % len(self._frame_buffers)
+        if clear:
+            frame.fill(0)
+        return frame
+
+    @staticmethod
+    def rendered_frame(
+        pixels: Any,
+        *,
+        changed: bool = True,
+        dirty_ranges: Optional[Tuple[Tuple[int, int], ...]] = None,
+    ) -> RenderedFrame:
+        """Attach presentation hints to a generated frame."""
+        return RenderedFrame(pixels, changed=changed, dirty_ranges=dirty_ranges)
 
     def get_pixel_count(self) -> int:
         """Get total number of pixels"""
@@ -228,13 +331,13 @@ class StatefulAnimationBase(AnimationBase):
         """
         pass
 
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> FrameOutput:
         """
         Stateful animations don't use frame generation - they control their own timing
         This method should not be called for stateful animations.
         """
         # Return black frame - this shouldn't be used
-        return [(0, 0, 0)] * self.controller.total_leds
+        return np.zeros((self.controller.total_leds, 3), dtype=np.uint8)
 
     def start(self):
         """Start the stateful animation in its own thread"""

@@ -128,6 +128,20 @@ class AnimationWebInterface:
                 'system': {},
             })
 
+        @self.app.route('/api/config/target-fps', methods=['POST'])
+        def api_set_target_fps():
+            payload = request.get_json(silent=True) or {}
+            try:
+                target_fps = int(payload.get('target_fps'))
+            except (TypeError, ValueError):
+                return jsonify({'error': 'target_fps must be an integer'}), 400
+            if target_fps < 1 or target_fps > 200:
+                return jsonify({'error': 'target_fps must be between 1 and 200'}), 400
+            self.control_channel.send_command(
+                'set_target_fps', target_fps=target_fps
+            )
+            return jsonify({'success': True, 'target_fps': target_fps})
+
         @self.app.route('/api/hardware/stats')
         def api_get_hardware_stats():
             """API: Hardware stats for SPI devices."""

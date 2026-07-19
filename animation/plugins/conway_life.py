@@ -64,6 +64,8 @@ class ConwayLifeAnimation(AnimationBase):
         self.last_glider_time = 0.0
         self.stagnation_counter = 0
         self.previous_population = -1
+        self._render_cells: List[Tuple[int, int]] = []
+        self._last_frame = None
 
         self._initialize_grid(self.params.get("seed_cells"))
 
@@ -152,12 +154,13 @@ class ConwayLifeAnimation(AnimationBase):
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Color]:
         total_pixels = self.num_strips * self.leds_per_strip
-        frame: List[Color] = [(0, 0, 0)] * total_pixels
+        visual_changed = self._last_frame is None
 
         glider_interval = max(0.0, float(self.params.get("glider_interval", 10.0) or 0.0))
         if glider_interval > 0 and (time_elapsed - self.last_glider_time) >= glider_interval:
             self._spawn_glider(count=3)
             self.last_glider_time = time_elapsed
+            visual_changed = True
 
         if self.last_step_elapsed is None:
             self.last_step_elapsed = time_elapsed
@@ -173,14 +176,19 @@ class ConwayLifeAnimation(AnimationBase):
                 self._advance_phase()
                 self.frame_progress -= 1.0
                 steps += 1
+            visual_changed = visual_changed or steps > 0
 
-        for y in range(self.height):
-            for x in range(self.width):
-                color = self._cell_color(x, y)
-                if color:
-                    self._set_pixel(frame, x, y, color)
+        if not visual_changed and self._last_frame is not None:
+            return self.rendered_frame(self._last_frame, changed=False)
 
-        return frame
+        frame = self.next_frame_buffer(clear=True)
+        for x, y in self._render_cells:
+            color = self._cell_color(x, y)
+            if color:
+                self._set_pixel(frame, x, y, color)
+
+        self._last_frame = frame
+        return self.rendered_frame(frame)
 
     def _initialize_grid(self, seed_cells: Optional[Iterable[Any]]):
         self.grid = [[0 for _ in range(self.width)] for _ in range(self.height)]
@@ -292,13 +300,41 @@ class ConwayLifeAnimation(AnimationBase):
 
         births = 0
         deaths = 0
+        render_cells: List[Tuple[int, int]] = []
+        alive_cells = {
+            (x, y)
+            for y, row in enumerate(self.grid)
+            for x, value in enumerate(row)
+            if value > 0
+        }
+        counts: Dict[Tuple[int, int], int] = {}
+        for x, y in alive_cells:
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    nx = x + dx
+                    ny = y + dy
+                    if wrap:
+                        nx %= self.width
+                        ny %= self.height
+                    elif not (0 <= nx < self.width and 0 <= ny < self.height):
+                        continue
+                    key = (nx, ny)
+                    counts[key] = counts.get(key, 0) + 1
 
-        for y in range(self.height):
-            for x in range(self.width):
-                neighbors = 0
+        candidates = sorted(alive_cells | counts.keys(), key=lambda cell: (cell[1], cell[0]))
+        for x, y in candidates:
+            neighbors = counts.get((x, y), 0)
+            self.neighbor_counts[y][x] = neighbors
+            alive = (x, y) in alive_cells
+
+            if alive and neighbors in (2, 3):
+                self.next_grid[y][x] = min(self.grid[y][x] + 1, 20)
+                self.next_natural_grid[y][x] = self.natural_grid[y][x]
+            elif not alive and neighbors == 3:
                 color_sum = [0, 0, 0]
                 color_count = 0
-
                 for dy in (-1, 0, 1):
                     for dx in (-1, 0, 1):
                         if dx == 0 and dy == 0:
@@ -308,33 +344,26 @@ class ConwayLifeAnimation(AnimationBase):
                         if wrap:
                             nx %= self.width
                             ny %= self.height
-                        if 0 <= nx < self.width and 0 <= ny < self.height and self.grid[ny][nx] > 0:
-                            neighbors += 1
-                            neighbor_color = self.natural_grid[ny][nx]
-                            if neighbor_color is not None:
-                                color_sum[0] += neighbor_color[0]
-                                color_sum[1] += neighbor_color[1]
-                                color_sum[2] += neighbor_color[2]
-                                color_count += 1
+                        elif not (0 <= nx < self.width and 0 <= ny < self.height):
+                            continue
+                        neighbor_color = self.natural_grid[ny][nx]
+                        if self.grid[ny][nx] > 0 and neighbor_color is not None:
+                            color_sum[0] += neighbor_color[0]
+                            color_sum[1] += neighbor_color[1]
+                            color_sum[2] += neighbor_color[2]
+                            color_count += 1
+                self.next_grid[y][x] = 1
+                self.next_natural_grid[y][x] = self._blend_neighbor_colors(color_sum, color_count)
+                births += 1
+            elif alive:
+                deaths += 1
 
-                self.neighbor_counts[y][x] = neighbors
-                alive = self.grid[y][x] > 0
-
-                if alive and neighbors in (2, 3):
-                    self.next_grid[y][x] = min(self.grid[y][x] + 1, 20)
-                    self.next_natural_grid[y][x] = self.natural_grid[y][x]
-                elif (not alive) and neighbors == 3:
-                    self.next_grid[y][x] = 1
-                    self.next_natural_grid[y][x] = self._blend_neighbor_colors(color_sum, color_count)
-                    births += 1
-                else:
-                    self.next_grid[y][x] = 0
-                    self.next_natural_grid[y][x] = None
-                    if alive:
-                        deaths += 1
+            if alive or self.next_grid[y][x] > 0:
+                render_cells.append((x, y))
 
         self.births_last_generation = births
         self.deaths_last_generation = deaths
+        self._render_cells = render_cells
 
     def _cell_color(self, x: int, y: int) -> Optional[Color]:
         alive_now = self.grid[y][x] > 0

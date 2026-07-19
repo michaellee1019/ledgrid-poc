@@ -7,3 +7,5 @@ Guidelines:
 - Set ANIMATION_NAME and ANIMATION_DESCRIPTION for UI display.
 - Avoid hardware calls directly; use the provided controller.
 - Prefer deterministic output for easier debugging.
+- Render into reusable canonical NumPy buffers; avoid per-pixel Python objects.
+- Use elapsed time for motion and mark unchanged/source-rate frames explicitly.

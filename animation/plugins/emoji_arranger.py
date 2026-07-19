@@ -132,7 +132,8 @@ class EmojiArrangerAnimation(AnimationBase):
 
         # Pre-fill with background color
         background = self.apply_brightness(self._color_from_params('background', (2, 6, 12)))
-        pixel_colors = [background] * total_pixels
+        pixel_colors = self.next_frame_buffer(clear=False)
+        pixel_colors[:] = background
 
         # Calculate scroll offset
         scroll_offset = int(time_elapsed * scroll_speed * 10) if scroll_speed > 0 else 0
