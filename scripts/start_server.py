@@ -160,8 +160,15 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
             print("🔄 Refresh all plugins")
             manager.refresh_plugins()
     elif action == 'puncture_hole':
-        print("💥 Random hole requested")
-        manager.trigger_random_hole()
+        x = data.get('x')
+        y = data.get('y')
+        radius = data.get('radius')
+        if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            print(f"💥 Hole requested at ({x:.1f}, {y:.1f})")
+            manager.trigger_hole(float(x), float(y), radius)
+        else:
+            print("💥 Random hole requested")
+            manager.trigger_random_hole()
     elif action == 'dpad':
         direction = (data.get('direction') or '').lower().replace('_', '-')
         if manager.current_animation and hasattr(manager.current_animation, 'handle_input'):
@@ -254,8 +261,8 @@ def main():
                         help='SPI speed in Hz (default: 20000000)')
     parser.add_argument('--controller-debug', action='store_true',
                         help='Enable LED controller debug output')
-    parser.add_argument('--target-fps', type=int, default=150,
-                        help='Target animation FPS (default: 150)')
+    parser.add_argument('--target-fps', type=int, default=200,
+                        help='Target animation FPS (default: 200; near the practical limit for 140-pixel WS2812 strips)')
     parser.add_argument('--brightness', type=int, default=50,
                         help='Global hardware brightness 0-255 (default: 50)')
     parser.add_argument('--animation-speed-scale', type=float, default=0.2,

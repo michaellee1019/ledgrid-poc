@@ -136,9 +136,19 @@ class AnimationWebInterface:
 
         @self.app.route('/api/hole', methods=['POST'])
         def api_trigger_hole():
-            """API: Ask the running animation to punch a random hole"""
-            self.control_channel.send_command('puncture_hole')
-            return jsonify({'success': True})
+            """Punch a random hole or one at the supplied grid coordinate."""
+            payload = request.get_json(silent=True) or {}
+            data: Dict[str, float] = {}
+            for key in ('x', 'y', 'radius'):
+                value = payload.get(key)
+                if value is not None:
+                    if not isinstance(value, (int, float)):
+                        return jsonify({'error': f'{key} must be numeric'}), 400
+                    data[key] = float(value)
+            if ('x' in data) != ('y' in data):
+                return jsonify({'error': 'x and y must be provided together'}), 400
+            self.control_channel.send_command('puncture_hole', **data)
+            return jsonify({'success': True, 'positioned': 'x' in data})
 
         @self.app.route('/api/frame')
         def api_get_frame():

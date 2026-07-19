@@ -30,7 +30,7 @@
                             <canvas id="ledCanvas" width="315" height="630" class="led-preview preview-canvas" style="border: 1px solid #ddd; border-radius: 8px; cursor: pointer;"></canvas>
                             <div class="mt-2">
                                 <small class="text-muted d-block mb-1">
-                                    Canvas rotated to match the physical panel. Click to punch a random hole instantly.
+                                    Click the tank to puncture that exact location. The bolt button creates a random hole.
                                 </small>
                                 <small class="text-muted">
                                     <span id="rendererStatus">Waiting for animation...</span> |
@@ -230,7 +230,7 @@
                                 <i class="fas fa-stop"></i> Stop Animation
                             </button>
                             {% endif %}
-                            <button class="btn btn-outline-secondary" onclick="refreshPlugins()">
+                            <button class="btn btn-outline-secondary" onclick="refreshPlugins().then(() => window.location.reload())">
                                 <i class="fas fa-sync"></i> Refresh Plugins
                             </button>
                         </div>
@@ -376,12 +376,22 @@
             this.ledSize = 6;
             this.ledSpacing = 0.5;
             this.stripSpacing = 1;
-            this.canvas.addEventListener('click', () => requestRandomHole());
+            this.canvas.addEventListener('click', (event) => this.requestHoleAtEvent(event));
             this._onResize = () => this.syncDisplayWidth();
             window.addEventListener('resize', this._onResize);
 
             this.setupCanvas();
             this.initialize();
+        }
+
+        requestHoleAtEvent(event) {
+            const rect = this.canvas.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return;
+            const x = Math.max(0, Math.min(this.stripCount - 1,
+                ((event.clientX - rect.left) / rect.width) * this.stripCount));
+            const displayY = Math.max(0, Math.min(this.ledsPerStrip - 1,
+                ((event.clientY - rect.top) / rect.height) * this.ledsPerStrip));
+            requestHoleAt(x, displayY);
         }
 
         async initialize() {
@@ -804,6 +814,21 @@
                 }
             })
             .catch(error => console.error('Failed to punch hole', error));
+    }
+
+    function requestHoleAt(x, y) {
+        fetch('/api/hole', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({x, y})
+        })
+            .then(r => r.json())
+            .then(result => {
+                if (result.success && typeof showToast === 'function') {
+                    showToast(`Punched hole at (${Math.round(x)}, ${Math.round(y)})`, 'success');
+                }
+            })
+            .catch(error => console.error('Failed to punch positioned hole', error));
     }
 
     function startStatsPolling() {

@@ -90,14 +90,20 @@ class AnimationPluginLoader:
                 return None
                 
             module = importlib.util.module_from_spec(spec)
-            
-            # If module was previously loaded, reload it
-            if plugin_name in self.plugin_modules:
-                # Remove from sys.modules to force reload
-                if plugin_name in sys.modules:
-                    del sys.modules[plugin_name]
-            
-            spec.loader.exec_module(module)
+
+            # Standard imports register a module before executing it. Mirror that
+            # behavior so decorators (notably dataclasses) and runtime type
+            # resolution can look the module up while its body is executing.
+            previous_module = sys.modules.get(plugin_name)
+            sys.modules[plugin_name] = module
+            try:
+                spec.loader.exec_module(module)
+            except Exception:
+                if previous_module is None:
+                    sys.modules.pop(plugin_name, None)
+                else:
+                    sys.modules[plugin_name] = previous_module
+                raise
             self.plugin_modules[plugin_name] = module
             
             # Find animation class defined in this module (skip imported bases).

@@ -19,7 +19,7 @@ API endpoints:
 - GET /api/stats
 - GET /api/metrics
 - GET /api/hardware/stats
-- POST /api/hole
+- `POST /api/hole` — random hole with `{}`, or positioned hole with `{"x": 7.5, "y": 42, "radius": 1.5}`
 - GET /api/frame
 - GET /api/preview/<animation_name>
 - POST /api/preview/<animation_name>/with_params

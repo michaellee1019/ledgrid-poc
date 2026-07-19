@@ -137,7 +137,9 @@ class AnimationManager:
         self.current_animation_name: Optional[str] = None
         self.current_animation_hash: Optional[str] = None
         self.is_running = False
-        self.target_fps = 150
+        # 200 Hz stays below the ~235 Hz physical ceiling of a 140-pixel
+        # WS2812 strip while leaving headroom for frame generation and transfer.
+        self.target_fps = 200
         self.frame_count = 0
         self.start_time = 0.0
         self.animation_speed_scale = animation_speed_scale
@@ -527,6 +529,16 @@ class AnimationManager:
             except Exception as exc:
                 print(f"⚠️ Failed to trigger hole: {exc}")
         return False
+
+    def trigger_hole(self, x: float, y: float, radius: Optional[float] = None):
+        """Request a puncture at an exact animation-grid coordinate."""
+        if not self.current_animation or not hasattr(self.current_animation, 'trigger_hole'):
+            return False
+        try:
+            return bool(self.current_animation.trigger_hole(x, y, radius))
+        except Exception as exc:
+            print(f"⚠️ Failed to trigger positioned hole: {exc}")
+            return False
 
     def _compute_animation_hash(self, animation_name: str) -> Optional[str]:
         path = self.plugin_loader.get_plugin_file(animation_name)
