@@ -7,6 +7,7 @@ Controls multiple SCORPIO boards via SPI
 import time
 import colorsys
 import argparse
+import binascii
 import spidev
 import sys
 
@@ -77,26 +78,9 @@ def _normalize_global_args(argv):
     return front + rest
 
 
-def _build_crc16_table():
-    table = []
-    for i in range(256):
-        crc = i << 8
-        for _ in range(8):
-            if crc & 0x8000:
-                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
-            else:
-                crc = (crc << 1) & 0xFFFF
-        table.append(crc)
-    return table
-
-_CRC16_TABLE = _build_crc16_table()
-
 def _crc16_ccitt(data):
-    table = _CRC16_TABLE
-    crc = 0xFFFF
-    for byte in data:
-        crc = ((crc << 8) & 0xFFFF) ^ table[((crc >> 8) ^ byte) & 0xFF]
-    return crc
+    """CRC-16/CCITT-FALSE using CPython's native implementation."""
+    return binascii.crc_hqx(data, 0xFFFF)
 
 # Command definitions
 CMD_SET_PIXEL = 0x01

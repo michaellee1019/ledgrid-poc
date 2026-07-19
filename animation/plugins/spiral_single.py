@@ -5,6 +5,8 @@ Single pixel spiral animation.
 
 from typing import List, Tuple, Dict, Any
 
+import numpy as np
+
 from animation import AnimationBase
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
@@ -33,6 +35,14 @@ class SpiralSingleAnimation(AnimationBase):
 
         self.spiral_indices = self._build_spiral_indices(self.num_strips, self.leds_per_strip)
         self.step_index = 0
+        # Alternate buffers so the manager can retain the current frame for the
+        # web preview while the animation prepares the next frame in place.
+        self._frame_buffers = [
+            np.zeros((self.total_pixels, 3), dtype=np.uint8),
+            np.zeros((self.total_pixels, 3), dtype=np.uint8),
+        ]
+        self._buffer_pixel = [None, None]
+        self._buffer_index = 0
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -44,11 +54,15 @@ class SpiralSingleAnimation(AnimationBase):
         schema['speed']['description'] = 'Ignored; animation always advances one pixel per frame'
         return schema
 
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
         if self.total_pixels <= 0:
-            return []
+            return np.empty((0, 3), dtype=np.uint8)
 
-        frame = [(0, 0, 0)] * self.total_pixels
+        buffer_index = self._buffer_index
+        frame = self._frame_buffers[buffer_index]
+        previous_pixel = self._buffer_pixel[buffer_index]
+        if previous_pixel is not None:
+            frame[previous_pixel] = 0
 
         idx = self.spiral_indices[self.step_index]
         color = (
@@ -57,6 +71,8 @@ class SpiralSingleAnimation(AnimationBase):
             int(self.params.get('blue', 255)),
         )
         frame[idx] = self.apply_brightness(color)
+        self._buffer_pixel[buffer_index] = idx
+        self._buffer_index = 1 - buffer_index
 
         self.step_index = (self.step_index + 1) % len(self.spiral_indices)
 

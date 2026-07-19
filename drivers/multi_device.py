@@ -5,7 +5,7 @@ Controls multiple ESP32 devices via SPI with different CS pins
 """
 
 import os
-import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple, Optional
 
 import numpy as np
@@ -47,6 +47,11 @@ class MultiDeviceLEDController:
         self.leds_per_strip = leds_per_strip
         self.debug = debug
         self.parallel = parallel
+        self._executor = (
+            ThreadPoolExecutor(max_workers=num_devices, thread_name_prefix="led-spi")
+            if parallel and num_devices > 1
+            else None
+        )
         
         # Calculate total dimensions
         self.strip_count = num_devices * strips_per_device
@@ -156,21 +161,13 @@ class MultiDeviceLEDController:
         # Split frame into per-device chunks
         device_frames = self._split_frame(colors)
         
-        if self.parallel and self.num_devices > 1:
-            # Send to all devices in parallel using threads
-            threads = []
-            for device_id, device_colors in enumerate(device_frames):
-                thread = threading.Thread(
-                    target=self._send_to_device,
-                    args=(device_id, device_colors),
-                    daemon=True
-                )
-                thread.start()
-                threads.append(thread)
-            
-            # Wait for all devices to complete
-            for thread in threads:
-                thread.join(timeout=1.0)
+        if self._executor is not None:
+            futures = [
+                self._executor.submit(self._send_to_device, device_id, device_colors)
+                for device_id, device_colors in enumerate(device_frames)
+            ]
+            for future in futures:
+                future.result()
         else:
             # Send to devices sequentially
             for device_id, device_colors in enumerate(device_frames):
@@ -222,6 +219,9 @@ class MultiDeviceLEDController:
     
     def close(self):
         """Close all SPI connections"""
+        if self._executor is not None:
+            self._executor.shutdown(wait=True)
+            self._executor = None
         for device_id, device in enumerate(self.devices):
             try:
                 device.close()
