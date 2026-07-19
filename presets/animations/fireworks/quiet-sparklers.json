@@ -1,0 +1,15 @@
+{
+  "preset_id": "quiet-sparklers",
+  "name": "Quiet Sparklers",
+  "animation": "fireworks",
+  "created_at": "2026-07-18T00:00:00Z",
+  "updated_at": "2026-07-18T00:00:00Z",
+  "params": {
+    "brightness": 0.42, "speed": 0.72, "launch_rate": 0.2, "max_rockets": 1,
+    "particles_per_burst": 28, "burst_size": 0.14, "burst_style": "palm",
+    "palette": "sunset", "spark_lifetime": 2.4, "gravity": 0.22,
+    "trail_persistence": 0.965, "trail_intensity": 0.58,
+    "secondary_spark_chance": 0.04, "twinkle": 0.2,
+    "star_density": 0.032, "background_level": 0.02, "random_seed": 9
+  }
+}

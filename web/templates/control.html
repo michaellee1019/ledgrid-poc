@@ -85,8 +85,27 @@
                 <h5>Animation Parameters</h5>
                 <small class="text-muted">Adjust parameters in real-time</small>
             </div>
-            <div class="card-body" id="parametersContainer">
-                <!-- Parameters will be loaded here -->
+            <div class="card-body">
+                <div class="border-bottom pb-3 mb-3">
+                    <label class="form-label fw-semibold" for="presetSelect">Presets</label>
+                    <div class="input-group input-group-sm mb-2">
+                        <select class="form-select" id="presetSelect" aria-label="Animation preset">
+                            <option value="">No saved presets</option>
+                        </select>
+                        <button class="btn btn-outline-primary" type="button" onclick="applySelectedPreset()">Load</button>
+                        <button class="btn btn-outline-danger" type="button" onclick="deleteSelectedPreset()" title="Delete selected preset">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                    <div class="input-group input-group-sm">
+                        <input class="form-control" id="presetName" maxlength="64" placeholder="Preset name">
+                        <button class="btn btn-success" type="button" onclick="saveAnimationPreset()">
+                            <i class="fas fa-save"></i> Save current
+                        </button>
+                    </div>
+                    <small class="text-muted">Loading a preset starts this animation with its saved settings.</small>
+                </div>
+                <div id="parametersContainer"><!-- Parameters will be loaded here --></div>
             </div>
         </div>
 
@@ -249,6 +268,8 @@
 let currentAnimation = null;
 let parameterUpdateTimeout = null;
 let dpadCooldown = null;
+let currentParameterSchema = {};
+let currentParameterValues = {};
 
 function humanizeParamName(name) {
     return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -284,6 +305,7 @@ function loadAnimationParameters(name) {
             if (info.parameters) {
                 renderParameterControls(info.parameters, info.current_params);
                 document.getElementById('parametersCard').style.display = 'block';
+                loadAnimationPresets(name);
             }
         })
         .catch(console.error);
@@ -307,8 +329,12 @@ function renderParameterControls(schema, currentParams) {
     const container = document.getElementById('parametersContainer');
     container.innerHTML = '';
     
+    currentParameterSchema = schema;
+    currentParameterValues = {};
+
     Object.entries(schema).forEach(([paramName, paramInfo]) => {
-        const currentValue = currentParams[paramName] || paramInfo.default;
+        const currentValue = currentParams[paramName] ?? paramInfo.default;
+        currentParameterValues[paramName] = currentValue;
         const prettyName = humanizeParamName(paramName);
         const rangeText = (paramInfo.min !== undefined && paramInfo.max !== undefined)
             ? `Range: ${paramInfo.min} – ${paramInfo.max} (default ${paramInfo.default})`
@@ -404,6 +430,7 @@ function updateParameter(name, value, type) {
     } else if (type === 'bool') {
         convertedValue = Boolean(value);
     }
+    currentParameterValues[name] = convertedValue;
     
     // Clear existing timeout
     if (parameterUpdateTimeout) {
@@ -421,6 +448,79 @@ function updateParameter(name, value, type) {
             }
         });
     }, 100); // 100ms debounce
+}
+
+async function loadAnimationPresets(name = currentAnimation) {
+    const select = document.getElementById('presetSelect');
+    if (!select || !name) return;
+    try {
+        const response = await fetch(`/api/animations/${encodeURIComponent(name)}/presets`);
+        const payload = await response.json();
+        select.innerHTML = '';
+        const presets = Array.isArray(payload.presets) ? payload.presets : [];
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = presets.length ? 'Choose a preset…' : 'No saved presets';
+        select.appendChild(placeholder);
+        presets.forEach(preset => {
+            const option = document.createElement('option');
+            option.value = preset.preset_id;
+            option.textContent = preset.name;
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Failed to load animation presets', error);
+    }
+}
+
+async function saveAnimationPreset() {
+    const nameInput = document.getElementById('presetName');
+    const presetName = nameInput.value.trim();
+    if (!currentAnimation || !presetName) {
+        window.alert('Select an animation and enter a preset name.');
+        return;
+    }
+    const response = await fetch(`/api/animations/${encodeURIComponent(currentAnimation)}/presets`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: presetName, params: currentParameterValues})
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+        window.alert(payload.error || 'Failed to save preset.');
+        return;
+    }
+    nameInput.value = '';
+    await loadAnimationPresets();
+    document.getElementById('presetSelect').value = payload.preset.preset_id;
+}
+
+async function applySelectedPreset() {
+    const presetId = document.getElementById('presetSelect').value;
+    if (!currentAnimation || !presetId) return;
+    const response = await fetch(
+        `/api/animations/${encodeURIComponent(currentAnimation)}/presets/${encodeURIComponent(presetId)}/apply`,
+        {method: 'POST'}
+    );
+    const payload = await response.json();
+    if (!response.ok) {
+        window.alert(payload.error || 'Failed to load preset.');
+        return;
+    }
+    renderParameterControls(currentParameterSchema, payload.preset.params || {});
+}
+
+async function deleteSelectedPreset() {
+    const select = document.getElementById('presetSelect');
+    const presetId = select.value;
+    if (!currentAnimation || !presetId) return;
+    const presetName = select.options[select.selectedIndex].textContent;
+    if (!window.confirm(`Delete preset "${presetName}"?`)) return;
+    const response = await fetch(
+        `/api/animations/${encodeURIComponent(currentAnimation)}/presets/${encodeURIComponent(presetId)}`,
+        {method: 'DELETE'}
+    );
+    if (response.ok) await loadAnimationPresets();
 }
 
 // Keyboard shortcuts

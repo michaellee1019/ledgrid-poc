@@ -30,6 +30,11 @@ API endpoints:
 - GET /api/painter/presets
 - GET /api/painter/presets/<preset_id>
 - POST /api/painter/presets
+- GET /api/animations/<animation_name>/presets
+- GET /api/animations/<animation_name>/presets/<preset_id>
+- POST /api/animations/<animation_name>/presets
+- POST /api/animations/<animation_name>/presets/<preset_id>/apply
+- DELETE /api/animations/<animation_name>/presets/<preset_id>
 - POST /api/upload
 - POST /api/reload/<animation_name>
 - POST /api/refresh

@@ -3,6 +3,8 @@
 
 import random
 import threading
+from dataclasses import dataclass
+from math import sqrt
 from typing import List, Tuple, Dict, Any, Optional
 
 from animation import AnimationBase
@@ -11,6 +13,9 @@ from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 
 Color = Tuple[int, int, int]
 BoardCell = Optional[Color]
+MAX_TETROMINO_COUNT = 128
+MAX_SPAWNS_PER_UPDATE = 8
+MAX_SIMULATION_DELTA = 0.05
 
 
 BASE_SHAPES = {
@@ -77,11 +82,26 @@ TETROMINOS: Dict[str, Dict[str, Any]] = {
 }
 
 
+@dataclass(eq=False)
+class ActivePiece:
+    """All mutable state for one independently moving tetromino."""
+
+    kind: str
+    rotation: int = 0
+    x: int = 0
+    y: int = -3
+    fall_progress: float = 0.0
+    last_fall_rows: int = 0
+    action_accumulator: float = 0.0
+    plan: Optional[Dict[str, Any]] = None
+    manual_override: float = 0.0
+
+
 class TetrisAnimation(AnimationBase):
     """Classic Tetris with a simple self-playing bot."""
 
     ANIMATION_NAME = "Tetris"
-    ANIMATION_DESCRIPTION = "Autoplaying Tetris board with traditional tetrominoes"
+    ANIMATION_DESCRIPTION = "Autoplaying Tetris board with independently falling tetrominoes"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.0"
 
@@ -97,27 +117,27 @@ class TetrisAnimation(AnimationBase):
             for _ in range(self.board_height)
         ]
 
-        self.current_piece: Optional[str] = None
-        self.current_rotation = 0
-        self.piece_x = 0
-        self.piece_y = 0
-        self.fall_progress = 0.0
+        self.active_pieces: List[ActivePiece] = []
         self.last_elapsed: Optional[float] = None
-        self.last_fall_rows = 0
-        self.action_accumulator = 0.0
-        self.current_plan: Optional[Dict[str, Any]] = None
+        self.last_render_elapsed: Optional[float] = None
+        self.next_render_elapsed: Optional[float] = None
+        self.last_rendered_frame: Optional[Any] = None
         self.lines_cleared = 0
         self.random = random.Random()
         self.game_over_flash = 0.0
         self.input_queue: List[str] = []
         self.input_lock = threading.Lock()
-        self.manual_override = 0.0
+        self.input_piece_index = 0
 
         self.default_params.update({
             'speed': 3.0,
+            'tetromino_count': 5,
             'bot_imperfection': 0.18,
             'smooth_drop': True,
             'smooth_drop_strength': 0.6,
+            'smooth_drop_max_pieces': 32,
+            'render_fps': 150.0,
+            'high_density_render_fps': 150.0,
         })
         self.params = {**self.default_params, **self.config}
 
@@ -129,10 +149,21 @@ class TetrisAnimation(AnimationBase):
         self.drop_speed = self.base_drop_speed * speed
         self.action_interval = max(0.0125, 0.1 / speed)
         self.fail_rate = min(0.6, max(0.0, float(self.params.get('bot_imperfection', 0.18))))
+        self.tetromino_count = max(
+            1,
+            min(MAX_TETROMINO_COUNT, int(self.params.get('tetromino_count', 5))),
+        )
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         schema = super().get_parameter_schema()
         schema.update({
+            'tetromino_count': {
+                'type': 'int',
+                'min': 1,
+                'max': MAX_TETROMINO_COUNT,
+                'default': 5,
+                'description': 'Number of independently falling tetrominoes'
+            },
             'bot_imperfection': {
                 'type': 'float',
                 'min': 0.0,
@@ -158,6 +189,27 @@ class TetrisAnimation(AnimationBase):
                 'max': 1.0,
                 'default': 0.6,
                 'description': 'Blend intensity for smooth falling pieces'
+            },
+            'smooth_drop_max_pieces': {
+                'type': 'int',
+                'min': 0,
+                'max': MAX_TETROMINO_COUNT,
+                'default': 32,
+                'description': 'Disable costly sub-row blending above this piece count'
+            },
+            'render_fps': {
+                'type': 'float',
+                'min': 15.0,
+                'max': 200.0,
+                'default': 150.0,
+                'description': 'Maximum Tetris simulation and render rate'
+            },
+            'high_density_render_fps': {
+                'type': 'float',
+                'min': 15.0,
+                'max': 200.0,
+                'default': 150.0,
+                'description': 'Render rate used above the smooth-piece limit'
             }
         })
         return schema
@@ -165,16 +217,36 @@ class TetrisAnimation(AnimationBase):
     def update_parameters(self, params: Dict[str, Any]):
         super().update_parameters(params)
         self._refresh_runtime_params()
+        if len(self.active_pieces) > self.tetromino_count:
+            del self.active_pieces[self.tetromino_count:]
+        self.last_render_elapsed = None
+        self.next_render_elapsed = None
 
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Color]:
-        total_pixels = self.num_strips * self.leds_per_strip
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> Any:
+        render_fps = self._effective_render_fps()
+        if (
+            self.last_rendered_frame is not None
+            and self.next_render_elapsed is not None
+            and time_elapsed < self.next_render_elapsed
+        ):
+            return self.rendered_frame(self.last_rendered_frame, changed=False)
+
+        render_interval = 1.0 / render_fps
+        if self.next_render_elapsed is None or (
+            self.last_render_elapsed is not None and time_elapsed < self.last_render_elapsed
+        ):
+            self.next_render_elapsed = time_elapsed + render_interval
+        else:
+            while self.next_render_elapsed <= time_elapsed:
+                self.next_render_elapsed += render_interval
+        self.last_render_elapsed = time_elapsed
         frame = self.next_frame_buffer(clear=True)
 
         delta = 0.0
         if self.last_elapsed is None:
             self.last_elapsed = time_elapsed
         else:
-            delta = max(0.0, time_elapsed - self.last_elapsed)
+            delta = min(MAX_SIMULATION_DELTA, max(0.0, time_elapsed - self.last_elapsed))
             self.last_elapsed = time_elapsed
 
         self._update_game(delta)
@@ -198,21 +270,29 @@ class TetrisAnimation(AnimationBase):
                 if color:
                     self._set_pixel(frame, x + 1, y, color)
 
-        if self.current_piece:
-            active_color = self._active_piece_color(self.current_piece)
-            coords = self._current_shape()
-            fall_offset = max(0.0, min(1.0, self.fall_progress))
-            smooth_drop = bool(self.params.get('smooth_drop', True))
+        smooth_piece_limit = max(0, int(self.params.get('smooth_drop_max_pieces', 32)))
+        smooth_drop = (
+            bool(self.params.get('smooth_drop', True))
+            and len(self.active_pieces) <= smooth_piece_limit
+        )
+        active_colors = {
+            kind: self._active_piece_color(kind)
+            for kind in TETROMINOS
+        }
+        for piece in self.active_pieces:
+            active_color = active_colors[piece.kind]
+            coords = self._piece_shape(piece)
+            fall_offset = max(0.0, min(1.0, piece.fall_progress))
             for cx, cy in coords:
-                px = self.piece_x + cx
-                py = self.piece_y + cy
+                px = piece.x + cx
+                py = piece.y + cy
                 base_row = py
                 next_row = py + 1
                 if 0 <= px < self.board_width:
-                    if smooth_drop and self.last_fall_rows > 1:
-                        for step in range(1, self.last_fall_rows):
+                    if smooth_drop and piece.last_fall_rows > 1:
+                        for step in range(1, piece.last_fall_rows):
                             trail_row = base_row - step
-                            alpha = 1.0 - (step / self.last_fall_rows)
+                            alpha = 1.0 - (step / piece.last_fall_rows)
                             if 0 <= trail_row < self.board_height:
                                 self._set_pixel_blend(frame, px + 1, trail_row, active_color, alpha)
                     if not smooth_drop or fall_offset <= 0.0:
@@ -224,7 +304,8 @@ class TetrisAnimation(AnimationBase):
                         if 0 <= next_row < self.board_height:
                             self._set_pixel_blend(frame, px + 1, next_row, active_color, fall_offset)
 
-        return frame
+        self.last_rendered_frame = frame
+        return self.rendered_frame(frame, changed=True)
 
     def handle_input(self, action: str):
         """Handle player input from the D-pad."""
@@ -236,114 +317,132 @@ class TetrisAnimation(AnimationBase):
             return
         with self.input_lock:
             self.input_queue.append(action)
-        self.manual_override = max(self.manual_override, 2.0)
+        self.last_render_elapsed = None
+        self.next_render_elapsed = None
 
     def _update_game(self, delta: float):
         if self.board_width <= 0 or self.board_height <= 0:
             return
 
-        self.last_fall_rows = 0
         if self.game_over_flash > 0.0:
             self.game_over_flash = max(0.0, self.game_over_flash - delta)
 
-        if self.current_piece is None:
-            self._spawn_piece()
-
-        if self.current_piece is None:
-            return
-
-        if self.manual_override > 0.0:
-            self.manual_override = max(0.0, self.manual_override - delta)
+        spawn_budget = MAX_SPAWNS_PER_UPDATE
+        spawn_budget -= self._replenish_active_pieces(spawn_budget)
+        for piece in self.active_pieces:
+            piece.last_fall_rows = 0
 
         self._apply_pending_inputs()
 
-        if self.manual_override <= 0.0:
-            self.action_accumulator += delta
-            while self.action_accumulator >= self.action_interval:
-                self._run_player_step()
-                self.action_accumulator -= self.action_interval
+        for piece in list(self.active_pieces):
+            if piece.manual_override > 0.0:
+                piece.manual_override = max(0.0, piece.manual_override - delta)
+            else:
+                piece.action_accumulator += delta
+                while piece.action_accumulator >= self.action_interval:
+                    self._run_player_step(piece)
+                    piece.action_accumulator -= self.action_interval
 
-        self.fall_progress += delta * self.drop_speed
-        while self.fall_progress >= 1.0:
-            if not self._move_piece(0, 1):
-                self._lock_piece()
+        effective_drop_speed = self._effective_drop_speed()
+        for piece in list(self.active_pieces):
+            if not self.active_pieces:
                 break
-            self.fall_progress -= 1.0
-            self.last_fall_rows += 1
+            piece.fall_progress += delta * effective_drop_speed
+            while piece.fall_progress >= 1.0:
+                if not self._move_piece(piece, 0, 1):
+                    self._lock_piece(piece)
+                    break
+                piece.fall_progress -= 1.0
+                piece.last_fall_rows += 1
 
-    def _spawn_piece(self):
-        piece = self.random.choice(list(TETROMINOS.keys()))
-        self.current_piece = piece
-        self.current_rotation = 0
-        self.fall_progress = 0.0
-        self.last_fall_rows = 0
-        self.action_accumulator = 0.0
-        coords = self._current_shape()
+        self._replenish_active_pieces(spawn_budget)
+
+    def _replenish_active_pieces(self, spawn_budget: int = MAX_SPAWNS_PER_UPDATE) -> int:
+        spawned = 0
+        while len(self.active_pieces) < self.tetromino_count and spawned < spawn_budget:
+            if not self._spawn_piece():
+                break
+            spawned += 1
+        return spawned
+
+    def _effective_render_fps(self) -> float:
+        render_fps = max(15.0, min(200.0, float(self.params.get('render_fps', 150.0))))
+        smooth_piece_limit = max(0, int(self.params.get('smooth_drop_max_pieces', 32)))
+        if self.tetromino_count > smooth_piece_limit:
+            high_density_fps = max(
+                15.0,
+                min(200.0, float(self.params.get('high_density_render_fps', 150.0))),
+            )
+            render_fps = min(render_fps, high_density_fps)
+        return render_fps
+
+    def _effective_drop_speed(self) -> float:
+        # Preserve the original pace at normal density, then reduce per-piece
+        # work so total movement does not grow linearly into the hundreds.
+        density_scale = max(1.0, sqrt(self.tetromino_count / 8.0))
+        return self.drop_speed / density_scale
+
+    def _spawn_piece(self) -> bool:
+        piece = ActivePiece(kind=self.random.choice(list(TETROMINOS.keys())))
+        piece.rotation = self.random.randrange(len(TETROMINOS[piece.kind]['rotations']))
+        coords = self._piece_shape(piece)
         width = self._shape_extent(coords, axis=0)
-        self.piece_x = max(0, (self.board_width - width) // 2)
-        self.piece_y = -3
-        self.current_plan = None
-        if self._collides(self.board, coords, self.piece_x, self.piece_y):
+        piece.x = self.random.randint(0, max(0, self.board_width - width))
+        landing_y = self._find_drop_y(coords, piece.x)
+        if landing_y is None or landing_y < piece.y:
             self._handle_game_over()
-        else:
-            self._plan_move()
+            return False
+
+        # Scatter a newly created batch across every valid point in its fall
+        # path. Active pieces intentionally do not reserve space for each
+        # other, so even large counts remain independent rather than forming
+        # coordinated spawn lanes.
+        piece.y = self.random.randint(piece.y, landing_y)
+        piece.fall_progress = self.random.random()
+        piece.action_accumulator = self.random.random() * self.action_interval
+        self.active_pieces.append(piece)
+        self._plan_move(piece)
+        return True
 
     def _handle_game_over(self):
         self.board = [[None for _ in range(self.board_width)] for _ in range(self.board_height)]
-        self.current_piece = None
-        self.current_plan = None
+        self.active_pieces.clear()
         self.game_over_flash = 1.0
 
-    def _run_player_step(self):
-        if not self.current_piece:
-            return
-        if not self.current_plan or self.current_plan.get('piece') != self.current_piece:
-            self._plan_move()
-        if not self.current_plan:
+    def _run_player_step(self, piece: ActivePiece):
+        if not piece.plan or piece.plan.get('piece') != piece.kind:
+            self._plan_move(piece)
+        if not piece.plan:
             return
 
-        target_rotation = self.current_plan['rotation']
-        rotation_count = len(TETROMINOS[self.current_piece]['rotations'])
-        if rotation_count > 1 and self.current_rotation != target_rotation:
-            diff = (target_rotation - self.current_rotation) % rotation_count
+        target_rotation = piece.plan['rotation']
+        rotation_count = len(TETROMINOS[piece.kind]['rotations'])
+        if rotation_count > 1 and piece.rotation != target_rotation:
+            diff = (target_rotation - piece.rotation) % rotation_count
             direction = 1 if diff <= rotation_count / 2 else -1
-            rotated = self._rotate_piece(direction)
+            rotated = self._rotate_piece(piece, direction)
             if rotated:
                 return
 
-        target_x = self.current_plan['x']
-        if self.piece_x < target_x:
-            self._move_piece(1, 0)
-        elif self.piece_x > target_x:
-            self._move_piece(-1, 0)
+        target_x = piece.plan['x']
+        if piece.x < target_x:
+            self._move_piece(piece, 1, 0)
+        elif piece.x > target_x:
+            self._move_piece(piece, -1, 0)
         else:
             if self.random.random() < 0.35:
-                self._move_piece(0, 1)
+                self._move_piece(piece, 0, 1)
 
-    def _plan_move(self):
-        if not self.current_piece:
-            self.current_plan = None
-            return
-
-        options = self._enumerate_moves(self.current_piece)
-        if not options:
-            self.current_plan = None
-            return
-
-        weighted = []
-        for option in options:
-            noise = self.random.uniform(-4.5, 4.5)
-            weighted.append((option['score'] + noise, option))
-        weighted.sort(key=lambda item: item[0], reverse=True)
-
-        if len(weighted) > 1 and self.random.random() < self.fail_rate:
-            idx = self.random.randint(max(1, len(weighted) // 2), len(weighted) - 1)
-            chosen = weighted[idx][1]
-        else:
-            chosen = weighted[0][1]
-
-        chosen['piece'] = self.current_piece
-        self.current_plan = chosen
+    def _plan_move(self, piece: ActivePiece):
+        rotations = TETROMINOS[piece.kind]['rotations']
+        target_rotation = self.random.randrange(len(rotations))
+        width = self._shape_extent(rotations[target_rotation], axis=0)
+        max_x = max(0, self.board_width - width)
+        piece.plan = {
+            'piece': piece.kind,
+            'rotation': target_rotation,
+            'x': self.random.randint(0, max_x),
+        }
 
     def _apply_pending_inputs(self):
         with self.input_lock:
@@ -353,43 +452,26 @@ class TetrisAnimation(AnimationBase):
             self.input_queue.clear()
 
         for action in pending:
-            if not self.current_piece:
+            if not self.active_pieces:
                 return
+            piece = self.active_pieces[self.input_piece_index % len(self.active_pieces)]
+            piece.manual_override = max(piece.manual_override, 2.0)
             if action == 'left':
-                self._move_piece(-1, 0)
+                self._move_piece(piece, -1, 0)
             elif action == 'right':
-                self._move_piece(1, 0)
+                self._move_piece(piece, 1, 0)
             elif action == 'down':
-                self._move_piece(0, 1)
+                self._move_piece(piece, 0, 1)
             elif action == 'rotate-left':
-                self._rotate_piece(-1)
+                self._rotate_piece(piece, -1)
             elif action == 'rotate-right':
-                self._rotate_piece(1)
+                self._rotate_piece(piece, 1)
             elif action == 'drop':
-                while self._move_piece(0, 1):
+                while self._move_piece(piece, 0, 1):
                     pass
-                self._lock_piece()
-                return
-
-    def _enumerate_moves(self, piece: str) -> List[Dict[str, Any]]:
-        info = TETROMINOS[piece]
-        moves: List[Dict[str, Any]] = []
-        for rotation_idx, coords in enumerate(info['rotations']):
-            width = self._shape_extent(coords, axis=0)
-            max_x = self.board_width - width
-            for x in range(0, max_x + 1):
-                drop_y = self._find_drop_y(coords, x)
-                if drop_y is None:
-                    continue
-                preview_board = self._commit_preview(coords, x, drop_y)
-                score = self._evaluate_board(preview_board)
-                moves.append({
-                    'rotation': rotation_idx,
-                    'x': x,
-                    'score': score,
-                    'landing_y': drop_y,
-                })
-        return moves
+                self._lock_piece(piece)
+                if self.active_pieces:
+                    self.input_piece_index %= len(self.active_pieces)
 
     def _find_drop_y(self, coords: List[Tuple[int, int]], x_offset: int) -> Optional[int]:
         y = -4
@@ -402,114 +484,35 @@ class TetrisAnimation(AnimationBase):
             if y > self.board_height:
                 return None
 
-    def _commit_preview(self, coords: List[Tuple[int, int]], x_offset: int, y_offset: int) -> List[List[BoardCell]]:
-        preview = [row[:] for row in self.board]
-        color = (255, 255, 255)
-        for cx, cy in coords:
-            px = x_offset + cx
-            py = y_offset + cy
-            if 0 <= px < self.board_width and 0 <= py < self.board_height:
-                preview[py][px] = color
-        return preview
-
-    def _evaluate_board(self, board: List[List[BoardCell]]) -> float:
-        heights = [0] * self.board_width
-        holes = 0
-        for x in range(self.board_width):
-            column_filled = False
-            for y in range(self.board_height):
-                cell = board[y][x]
-                if cell and not column_filled:
-                    heights[x] = self.board_height - y
-                    column_filled = True
-                elif not cell and column_filled:
-                    holes += 1
-
-        aggregate_height = sum(heights)
-        max_height = max(heights, default=0)
-        bumpiness = 0
-        for x in range(self.board_width - 1):
-            bumpiness += abs(heights[x] - heights[x + 1])
-        lines = sum(1 for row in board if all(row))
-
-        well_sums = 0
-        for x in range(self.board_width):
-            left_height = heights[x - 1] if x > 0 else self.board_height
-            right_height = heights[x + 1] if x < self.board_width - 1 else self.board_height
-            min_side = min(left_height, right_height)
-            if min_side > heights[x]:
-                depth = min_side - heights[x]
-                well_sums += depth * (depth + 1) // 2
-
-        row_transitions = 0
-        for y in range(self.board_height):
-            prev_filled = True
-            row = board[y]
-            for x in range(self.board_width):
-                filled = bool(row[x])
-                if filled != prev_filled:
-                    row_transitions += 1
-                prev_filled = filled
-            if not prev_filled:
-                row_transitions += 1
-
-        col_transitions = 0
-        for x in range(self.board_width):
-            prev_filled = True
-            for y in range(self.board_height):
-                filled = bool(board[y][x])
-                if filled != prev_filled:
-                    col_transitions += 1
-                prev_filled = filled
-            if not prev_filled:
-                col_transitions += 1
-
-        score = (
-            (lines * 1.5)
-            + (lines ** 2) * 0.75
-            - (aggregate_height * 0.45)
-            - (max_height * 0.6)
-            - (holes * 1.2)
-            - (bumpiness * 0.35)
-            - (well_sums * 0.3)
-            - (row_transitions * 0.25)
-            - (col_transitions * 0.35)
-        )
-        return score
-
-    def _move_piece(self, dx: int, dy: int) -> bool:
-        if not self.current_piece:
-            return False
-        coords = self._current_shape()
-        new_x = self.piece_x + dx
-        new_y = self.piece_y + dy
+    def _move_piece(self, piece: ActivePiece, dx: int, dy: int) -> bool:
+        coords = self._piece_shape(piece)
+        new_x = piece.x + dx
+        new_y = piece.y + dy
         if self._collides(self.board, coords, new_x, new_y):
             return False
-        self.piece_x = new_x
-        self.piece_y = new_y
+        piece.x = new_x
+        piece.y = new_y
         return True
 
-    def _rotate_piece(self, direction: int) -> bool:
-        if not self.current_piece:
-            return False
-        info = TETROMINOS[self.current_piece]
+    def _rotate_piece(self, piece: ActivePiece, direction: int) -> bool:
+        info = TETROMINOS[piece.kind]
         rotations = info['rotations']
-        new_rotation = (self.current_rotation + direction) % len(rotations)
+        new_rotation = (piece.rotation + direction) % len(rotations)
         coords = rotations[new_rotation]
-        if self._collides(self.board, coords, self.piece_x, self.piece_y):
+        if self._collides(self.board, coords, piece.x, piece.y):
             return False
-        self.current_rotation = new_rotation
+        piece.rotation = new_rotation
         return True
 
-    def _lock_piece(self):
-        if not self.current_piece:
+    def _lock_piece(self, piece: ActivePiece):
+        if piece not in self.active_pieces:
             return
-        coords = self._current_shape()
-        color = TETROMINOS[self.current_piece]['color']
+        coords = self._piece_shape(piece)
+        color = TETROMINOS[piece.kind]['color']
         overflow = False
         for cx, cy in coords:
-            px = self.piece_x + cx
-            py = self.piece_y + cy
+            px = piece.x + cx
+            py = piece.y + cy
             if py < 0:
                 overflow = True
                 continue
@@ -521,8 +524,7 @@ class TetrisAnimation(AnimationBase):
         cleared = self._clear_lines()
         if cleared:
             self.lines_cleared += cleared
-        self.current_piece = None
-        self.current_plan = None
+        self.active_pieces.remove(piece)
 
     def _clear_lines(self) -> int:
         remaining: List[List[BoardCell]] = []
@@ -549,11 +551,9 @@ class TetrisAnimation(AnimationBase):
                 return True
         return False
 
-    def _current_shape(self) -> List[Tuple[int, int]]:
-        if not self.current_piece:
-            return []
-        rotations = TETROMINOS[self.current_piece]['rotations']
-        return rotations[self.current_rotation % len(rotations)]
+    def _piece_shape(self, piece: ActivePiece) -> List[Tuple[int, int]]:
+        rotations = TETROMINOS[piece.kind]['rotations']
+        return rotations[piece.rotation % len(rotations)]
 
     def _shape_extent(self, coords: List[Tuple[int, int]], axis: int) -> int:
         if axis == 0:
@@ -605,4 +605,9 @@ class TetrisAnimation(AnimationBase):
         return {
             'lines_cleared': self.lines_cleared,
             'bot_fail_rate': self.fail_rate,
+            'active_tetrominoes': len(self.active_pieces),
+            'tetromino_count': self.tetromino_count,
+            'effective_render_fps': self._effective_render_fps(),
+            'effective_drop_speed': self._effective_drop_speed(),
+            'max_spawns_per_update': MAX_SPAWNS_PER_UPDATE,
         }

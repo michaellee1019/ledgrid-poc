@@ -6,9 +6,10 @@ web_venv := ".venv-web"
 deploy:
 	./tools/deployment/deploy.sh
 
-# Deploy app + server bits without flashing ESP32 firmware.
+# Quickly sync Python sources, restart the web/controller service, and preserve
+# the active animation settings across the restart.
 deploy-no-firmware:
-	SKIP_FIRMWARE=1 ./tools/deployment/deploy.sh
+	./tools/deployment/deploy_python.sh
 
 # Create/refresh the lightweight virtualenv for serving the web controller locally.
 setup-web:

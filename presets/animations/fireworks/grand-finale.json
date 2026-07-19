@@ -1,0 +1,14 @@
+{
+  "preset_id": "grand-finale",
+  "name": "Grand Finale",
+  "animation": "fireworks",
+  "created_at": "2026-07-18T00:00:00Z",
+  "updated_at": "2026-07-18T00:00:00Z",
+  "params": {
+    "brightness": 0.9, "launch_rate": 3.2, "max_rockets": 8,
+    "particles_per_burst": 90, "burst_size": 0.34, "burst_style": "mixed",
+    "palette": "festival", "spark_lifetime": 2.1, "gravity": 0.3,
+    "trail_persistence": 0.95, "secondary_spark_chance": 0.38, "twinkle": 0.42,
+    "star_density": 0.008, "random_seed": 1776
+  }
+}

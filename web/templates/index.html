@@ -316,7 +316,28 @@
                             <h6 class="mb-0">Animation Parameters</h6>
                             <small class="text-muted">Adjust values to steer the scene in real-time.</small>
                         </div>
-                        <div class="card-body" id="controlParametersContainer"></div>
+                        <div class="card-body">
+                            <div class="border-bottom pb-3 mb-3">
+                                <label class="form-label fw-semibold" for="controlPresetSelect">Presets</label>
+                                <div class="input-group input-group-sm mb-2">
+                                    <select class="form-select" id="controlPresetSelect">
+                                        <option value="">No saved presets</option>
+                                    </select>
+                                    <button class="btn btn-outline-primary" type="button" onclick="applyControlPreset()">Load</button>
+                                    <button class="btn btn-outline-danger" type="button" onclick="deleteControlPreset()" title="Delete selected preset">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                                <div class="input-group input-group-sm">
+                                    <input class="form-control" id="controlPresetName" maxlength="64" placeholder="Preset name">
+                                    <button class="btn btn-success" type="button" onclick="saveControlPreset()">
+                                        <i class="fas fa-save"></i> Save current
+                                    </button>
+                                </div>
+                                <small class="text-muted">Presets are stored per animation and loaded from disk.</small>
+                            </div>
+                            <div id="controlParametersContainer"></div>
+                        </div>
                     </div>
                     <div class="alert alert-info mt-3" id="controlParametersPlaceholder">
                         Start or select an animation to adjust its live controls.
@@ -705,6 +726,7 @@
     let controlSelectedAnimation = null;
     let controlParameterUpdateTimeout = null;
     let controlParameterStore = {};
+    let controlParameterSchema = {};
 
     // Initialize renderer when page loads
     document.addEventListener('DOMContentLoaded', function() {
@@ -1036,6 +1058,7 @@
                 if (info && info.parameters && Object.keys(info.parameters).length) {
                     renderControlParameterControls(info.parameters, info.current_params || {});
                     hideControlPlaceholder();
+                    loadControlPresets(name);
                 } else {
                     showControlPlaceholder('This animation does not expose live controls.', {clearControls: true});
                 }
@@ -1069,6 +1092,7 @@
         const container = document.getElementById('controlParametersContainer');
         if (!container) return;
         container.innerHTML = '';
+        controlParameterSchema = schema;
         const parameterSnapshot = {};
 
         Object.entries(schema).forEach(([paramName, paramInfo]) => {
@@ -1137,6 +1161,91 @@
         if (controlSelectedAnimation) {
             controlParameterStore[controlSelectedAnimation] = parameterSnapshot;
             syncPreviewParameters(controlSelectedAnimation);
+        }
+    }
+
+    async function loadControlPresets(name = controlSelectedAnimation) {
+        const select = document.getElementById('controlPresetSelect');
+        if (!select || !name) return;
+        try {
+            const response = await fetch(`/api/animations/${encodeURIComponent(name)}/presets`);
+            const payload = await response.json();
+            const presets = Array.isArray(payload.presets) ? payload.presets : [];
+            select.innerHTML = '';
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = presets.length ? 'Choose a preset…' : 'No saved presets';
+            select.appendChild(placeholder);
+            presets.forEach(preset => {
+                const option = document.createElement('option');
+                option.value = preset.preset_id;
+                option.textContent = preset.name;
+                select.appendChild(option);
+            });
+        } catch (error) {
+            console.error('Failed to load presets', error);
+        }
+    }
+
+    async function saveControlPreset() {
+        const input = document.getElementById('controlPresetName');
+        const presetName = input.value.trim();
+        const animationName = controlSelectedAnimation;
+        if (!animationName || !presetName) {
+            showToast('Select an animation and enter a preset name.', 'info');
+            return;
+        }
+        const response = await fetch(`/api/animations/${encodeURIComponent(animationName)}/presets`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                name: presetName,
+                params: controlParameterStore[animationName] || {}
+            })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            showToast(payload.error || 'Failed to save preset.', 'error');
+            return;
+        }
+        input.value = '';
+        await loadControlPresets(animationName);
+        document.getElementById('controlPresetSelect').value = payload.preset.preset_id;
+        showToast(`Saved preset: ${payload.preset.name}`, 'success');
+    }
+
+    async function applyControlPreset() {
+        const select = document.getElementById('controlPresetSelect');
+        const presetId = select.value;
+        const animationName = controlSelectedAnimation;
+        if (!animationName || !presetId) return;
+        const response = await fetch(
+            `/api/animations/${encodeURIComponent(animationName)}/presets/${encodeURIComponent(presetId)}/apply`,
+            {method: 'POST'}
+        );
+        const payload = await response.json();
+        if (!response.ok) {
+            showToast(payload.error || 'Failed to load preset.', 'error');
+            return;
+        }
+        renderControlParameterControls(controlParameterSchema, payload.preset.params || {});
+        showToast(`Loaded preset: ${payload.preset.name}`, 'success');
+    }
+
+    async function deleteControlPreset() {
+        const select = document.getElementById('controlPresetSelect');
+        const presetId = select.value;
+        const animationName = controlSelectedAnimation;
+        if (!animationName || !presetId) return;
+        const presetName = select.options[select.selectedIndex].textContent;
+        if (!window.confirm(`Delete preset "${presetName}"?`)) return;
+        const response = await fetch(
+            `/api/animations/${encodeURIComponent(animationName)}/presets/${encodeURIComponent(presetId)}`,
+            {method: 'DELETE'}
+        );
+        if (response.ok) {
+            await loadControlPresets(animationName);
+            showToast(`Deleted preset: ${presetName}`, 'success');
         }
     }
 

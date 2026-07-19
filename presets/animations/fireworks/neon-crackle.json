@@ -1,0 +1,14 @@
+{
+  "preset_id": "neon-crackle",
+  "name": "Neon Crackle",
+  "animation": "fireworks",
+  "created_at": "2026-07-18T00:00:00Z",
+  "updated_at": "2026-07-18T00:00:00Z",
+  "params": {
+    "brightness": 0.78, "speed": 1.2, "launch_rate": 1.7, "max_rockets": 5,
+    "particles_per_burst": 46, "burst_size": 0.38, "burst_style": "chrysanthemum",
+    "palette": "cool", "hue_spread": 0.16, "spark_lifetime": 1.25,
+    "gravity": 0.48, "air_drag": 0.945, "trail_persistence": 0.88,
+    "secondary_spark_chance": 0.72, "twinkle": 0.78, "random_seed": 808
+  }
+}

@@ -47,6 +47,8 @@ class AnimationWebInterface:
         self.port = port
         self.project_root = Path(__file__).resolve().parents[1]
         self.painter_presets_dir = self.project_root / "presets" / "frame_painter"
+        self.animation_presets_dir = self.project_root / "presets" / "animations"
+        self.deployment_status_path = self.project_root / "run_state" / "deployment.json"
 
         # Create Flask app
         self.app = Flask(__name__)
@@ -59,6 +61,7 @@ class AnimationWebInterface:
         # Ensure upload directory exists
         Path(self.app.config['UPLOAD_FOLDER']).mkdir(exist_ok=True)
         self.painter_presets_dir.mkdir(parents=True, exist_ok=True)
+        self.animation_presets_dir.mkdir(parents=True, exist_ok=True)
 
         # Register routes
         self._register_routes()
@@ -86,6 +89,77 @@ class AnimationWebInterface:
             if info:
                 return jsonify(info)
             return jsonify({'error': 'Animation not found'}), 404
+
+        @self.app.route('/api/animations/<animation_name>/presets')
+        def api_list_animation_presets(animation_name: str):
+            """API: List presets for one animation, reading disk on every call."""
+            return jsonify({
+                'animation': animation_name,
+                'presets': self._list_animation_presets(animation_name),
+            })
+
+        @self.app.route('/api/animations/<animation_name>/presets/<preset_id>')
+        def api_get_animation_preset(animation_name: str, preset_id: str):
+            """API: Load an animation preset from disk."""
+            preset = self._load_animation_preset(animation_name, preset_id)
+            if not preset:
+                return jsonify({'error': 'Preset not found'}), 404
+            return jsonify(preset)
+
+        @self.app.route('/api/animations/<animation_name>/presets', methods=['POST'])
+        def api_save_animation_preset(animation_name: str):
+            """API: Save or overwrite a named set of animation parameters."""
+            if not self._animation_preset_dir(animation_name):
+                return jsonify({'error': 'Animation name is invalid'}), 400
+
+            payload = request.get_json(silent=True) or {}
+            raw_name = (payload.get('name') or '').strip()
+            params = payload.get('params')
+            if not raw_name:
+                return jsonify({'error': 'Preset name is required'}), 400
+            if not isinstance(params, dict):
+                return jsonify({'error': 'params must be a JSON object'}), 400
+
+            preset_id = self._sanitize_preset_id(raw_name)
+            if not preset_id:
+                return jsonify({'error': 'Preset name is invalid'}), 400
+
+            existing = self._load_animation_preset(animation_name, preset_id)
+            now = time.time()
+            preset_payload = {
+                'version': 1,
+                'preset_id': preset_id,
+                'name': raw_name,
+                'animation': animation_name,
+                'params': params,
+                'created_at': existing.get('created_at', now) if existing else now,
+                'updated_at': now,
+            }
+            self._write_animation_preset(animation_name, preset_id, preset_payload)
+            return jsonify({'success': True, 'preset': self._animation_preset_summary(preset_payload)})
+
+        @self.app.route('/api/animations/<animation_name>/presets/<preset_id>/apply', methods=['POST'])
+        def api_apply_animation_preset(animation_name: str, preset_id: str):
+            """API: Re-read a preset from disk and start its animation with those settings."""
+            preset = self._load_animation_preset(animation_name, preset_id)
+            if not preset:
+                return jsonify({'error': 'Preset not found'}), 404
+            self.control_channel.send_command(
+                'start', animation=animation_name, config=preset['params']
+            )
+            return jsonify({'success': True, 'preset': preset})
+
+        @self.app.route('/api/animations/<animation_name>/presets/<preset_id>', methods=['DELETE'])
+        def api_delete_animation_preset(animation_name: str, preset_id: str):
+            """API: Delete one animation preset."""
+            path = self._animation_preset_path(animation_name, preset_id)
+            if path is None or not path.is_file():
+                return jsonify({'error': 'Preset not found'}), 404
+            try:
+                path.unlink()
+            except OSError:
+                return jsonify({'error': 'Failed to delete preset'}), 500
+            return jsonify({'success': True})
         
         @self.app.route('/api/start/<animation_name>', methods=['POST'])
         def api_start_animation(animation_name):
@@ -578,6 +652,76 @@ class AnimationWebInterface:
         tmp_path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
         tmp_path.replace(path)
 
+    def _animation_preset_dir(self, animation_name: str) -> Optional[Path]:
+        """Resolve an animation name to its isolated preset directory."""
+        safe_name = self._sanitize_preset_id(animation_name)
+        if not safe_name or safe_name != animation_name:
+            return None
+        return self.animation_presets_dir / safe_name
+
+    def _animation_preset_path(self, animation_name: str, preset_id: str) -> Optional[Path]:
+        """Resolve an animation/preset pair without allowing path traversal."""
+        preset_dir = self._animation_preset_dir(animation_name)
+        safe_id = self._sanitize_preset_id(preset_id)
+        if preset_dir is None or not safe_id:
+            return None
+        return preset_dir / f"{safe_id}.json"
+
+    @staticmethod
+    def _animation_preset_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            'preset_id': payload.get('preset_id'),
+            'name': payload.get('name'),
+            'animation': payload.get('animation'),
+            'created_at': payload.get('created_at'),
+            'updated_at': payload.get('updated_at'),
+        }
+
+    def _list_animation_presets(self, animation_name: str) -> List[Dict[str, Any]]:
+        """Scan disk for the animation's presets; no in-memory cache is used."""
+        preset_dir = self._animation_preset_dir(animation_name)
+        if preset_dir is None or not preset_dir.is_dir():
+            return []
+
+        summaries: List[Dict[str, Any]] = []
+        for path in sorted(preset_dir.glob('*.json')):
+            payload = self._read_json_file(path)
+            if not payload or payload.get('animation', animation_name) != animation_name:
+                continue
+            payload.setdefault('preset_id', path.stem)
+            payload.setdefault('name', path.stem)
+            payload.setdefault('animation', animation_name)
+            summaries.append(self._animation_preset_summary(payload))
+        summaries.sort(key=lambda preset: preset.get('updated_at') or 0, reverse=True)
+        return summaries
+
+    def _load_animation_preset(self, animation_name: str, preset_id: str) -> Optional[Dict[str, Any]]:
+        """Read and validate a single animation preset directly from disk."""
+        path = self._animation_preset_path(animation_name, preset_id)
+        if path is None or not path.is_file():
+            return None
+        payload = self._read_json_file(path)
+        if not payload or not isinstance(payload.get('params'), dict):
+            return None
+        if payload.get('animation', animation_name) != animation_name:
+            return None
+        payload.setdefault('preset_id', path.stem)
+        payload.setdefault('name', path.stem)
+        payload.setdefault('animation', animation_name)
+        return payload
+
+    def _write_animation_preset(
+        self, animation_name: str, preset_id: str, payload: Dict[str, Any]
+    ):
+        """Persist an animation preset atomically."""
+        path = self._animation_preset_path(animation_name, preset_id)
+        if path is None:
+            raise ValueError("Invalid animation preset path")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix('.json.tmp')
+        tmp_path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+        tmp_path.replace(path)
+
     def _apply_preview_layout(self, led_info: Dict[str, int]):
         """Keep preview manager/controller dimensions in lock-step."""
         self.preview_manager.controller.strip_count = led_info['strip_count']
@@ -624,6 +768,7 @@ class AnimationWebInterface:
         status.setdefault('target_fps', 0)
         status.setdefault('actual_fps', 0)
         status.setdefault('uptime', 0)
+        status['deploy_timestamp'] = self._deploy_timestamp()
         timestamp = status.get('updated_at') or status.get('timestamp')
         if not timestamp:
             timestamp = time.time()
@@ -658,6 +803,17 @@ class AnimationWebInterface:
 
         return status
 
+    def _deploy_timestamp(self) -> Optional[float]:
+        """Read the most recent successful fast-deploy timestamp from disk."""
+        try:
+            payload = json.loads(self.deployment_status_path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            return None
+        deploy_timestamp = payload.get('deploy_timestamp') if isinstance(payload, dict) else None
+        if isinstance(deploy_timestamp, bool) or not isinstance(deploy_timestamp, (int, float)):
+            return None
+        return deploy_timestamp
+
     def _empty_status(self):
         """Fallback status when controller process has not written a status file yet."""
         return {
@@ -680,6 +836,7 @@ class AnimationWebInterface:
             'frame_data_encoded': '',
             'frame_data_length': 0,
             'frame_encoding': None,
+            'deploy_timestamp': self._deploy_timestamp(),
             'timestamp': time.time()
         }
 

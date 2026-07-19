@@ -9,3 +9,11 @@
 run_state
 calibration_photos/*
 config/plant_pixel_map.json
+/presets/animations/*
+!/presets/animations/fireworks/
+/presets/animations/fireworks/*
+!/presets/animations/fireworks/grand-finale.json
+!/presets/animations/fireworks/golden-willows.json
+!/presets/animations/fireworks/patriotic-salute.json
+!/presets/animations/fireworks/neon-crackle.json
+!/presets/animations/fireworks/quiet-sparklers.json
