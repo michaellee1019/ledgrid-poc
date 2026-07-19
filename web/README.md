@@ -35,6 +35,5 @@ API endpoints:
 - POST /api/animations/<animation_name>/presets
 - POST /api/animations/<animation_name>/presets/<preset_id>/apply
 - DELETE /api/animations/<animation_name>/presets/<preset_id>
-- POST /api/upload
 - POST /api/reload/<animation_name>
 - POST /api/refresh

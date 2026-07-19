@@ -1,27 +1,21 @@
 #!/usr/bin/env python3
-"""
-ASCII Drop Animation
+"""Falling 5x7 text that settles into a pile on the LED wall."""
 
-ASCII characters drop down like Tetris pieces. Characters A-Z, 0-9, and _ 
-fall from random positions at the top, with 1px buffer between characters.
-The screen clears when it fills up.
-"""
+from typing import Any, Dict, List, Optional, Tuple
 
-import random
-import math
-from typing import List, Tuple, Dict, Any, Optional
+import numpy as np
+
 from animation import AnimationBase
 
 
 class AsciiDropAnimation(AnimationBase):
-    """ASCII characters dropping like Tetris pieces"""
+    """Drop characters from a phrase down the wall under simple gravity."""
 
     ANIMATION_NAME = "ASCII Drop"
-    ANIMATION_DESCRIPTION = "ASCII characters drop down like Tetris pieces from a configurable phrase"
+    ANIMATION_DESCRIPTION = "5x7 characters fall and stack across the LED wall"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.0"
+    ANIMATION_VERSION = "2.0"
 
-    # 5x7 character bitmaps for A-Z, 0-9, and _
     CHARACTER_BITMAPS: Dict[str, List[str]] = {
         'A': [
             ".XXX.",
@@ -367,254 +361,223 @@ class AsciiDropAnimation(AnimationBase):
         ]
     }
 
-    def __init__(self, controller, config: Dict[str, Any] = None):
+    def __init__(self, controller, config: Optional[Dict[str, Any]] = None):
         super().__init__(controller, config)
-        
         self.default_params.update({
-            'phrase': 'HELLO WORLD',
-            'drop_speed': 2.0,
-            'spawn_rate': 1.5,
-            'character_color_red': 0,
-            'character_color_green': 255,
-            'character_color_blue': 100,
-            'background_red': 0,
-            'background_green': 0,
-            'background_blue': 5,
-            'serpentine': False
+            "phrase": "HELLO WORLD",
+            "drop_speed": 18.0,
+            "spawn_rate": 1.5,
+            "character_red": 0,
+            "character_green": 255,
+            "character_blue": 100,
+            "background_red": 0,
+            "background_green": 0,
+            "background_blue": 5,
+            "clear_fill_ratio": 0.72,
+            "random_seed": 0,
         })
-        
         self.params = {**self.default_params, **self.config}
-        
-        # Animation state
-        self.falling_characters: List[Dict[str, Any]] = []
-        self.last_spawn_time = 0.0
-        self.phrase_index = 0
-        self.grid_state: List[List[Optional[str]]] = []
-        self.last_time = None
-
-        self._reset_grid()
-
-    def _reset_grid(self):
-        """Reset the grid state"""
-        strip_count, leds_per_strip = self.get_strip_info()
-        self.grid_state = [[None for _ in range(leds_per_strip)] for _ in range(strip_count)]
-        self.falling_characters = []
+        for unused in ("speed", "color_saturation", "color_value"):
+            self.params.pop(unused, None)
+        self.width, self.height = self.get_strip_info()
+        self._settled = np.zeros((self.height, self.width), dtype=np.bool_)
+        self._pieces: List[Dict[str, Any]] = []
+        self._glyph_cache: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+        self._rng = np.random.default_rng(int(self.params.get("random_seed", 0)))
+        self._phrase_index = 0
+        self._next_spawn_time = 0.0
+        self._last_time: Optional[float] = None
+        self._settled_revision = 0
+        self._last_render_key = None
+        self._last_frame = None
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
+        schema.pop("speed", None)
+        schema.pop("color_saturation", None)
+        schema.pop("color_value", None)
         schema.update({
-            'phrase': {
-                'type': 'str',
-                'default': 'HELLO WORLD',
-                'description': 'Phrase to drop (A-Z, 0-9, _, space)'
+            "phrase": {
+                "type": "str",
+                "default": "HELLO WORLD",
+                "description": "Characters to drop (A-Z, 0-9, underscore, and spaces)",
             },
-            'drop_speed': {
-                'type': 'float',
-                'min': 0.5,
-                'max': 10.0,
-                'default': 2.0,
-                'description': 'Speed of falling characters'
+            "drop_speed": {
+                "type": "float",
+                "min": 1.0,
+                "max": 80.0,
+                "default": 18.0,
+                "description": "Vertical travel speed in pixels per second",
             },
-            'spawn_rate': {
-                'type': 'float',
-                'min': 0.1,
-                'max': 5.0,
-                'default': 1.5,
-                'description': 'Rate of character spawning (per second)'
+            "spawn_rate": {
+                "type": "float",
+                "min": 0.1,
+                "max": 10.0,
+                "default": 1.5,
+                "description": "Character slots processed per second",
             },
-            'character_color_red': {'type': 'int', 'min': 0, 'max': 255, 'default': 0, 'description': 'Character red'},
-            'character_color_green': {'type': 'int', 'min': 0, 'max': 255, 'default': 255, 'description': 'Character green'},
-            'character_color_blue': {'type': 'int', 'min': 0, 'max': 255, 'default': 100, 'description': 'Character blue'},
-            'background_red': {'type': 'int', 'min': 0, 'max': 255, 'default': 0, 'description': 'Background red'},
-            'background_green': {'type': 'int', 'min': 0, 'max': 255, 'default': 0, 'description': 'Background green'},
-            'background_blue': {'type': 'int', 'min': 0, 'max': 255, 'default': 5, 'description': 'Background blue'},
-            'serpentine': {
-                'type': 'bool',
-                'default': False,
-                'description': 'Flip every other strip to match serpentine wiring'
-            }
+            "character_red": {"type": "int", "min": 0, "max": 255, "default": 0, "description": "Character red"},
+            "character_green": {"type": "int", "min": 0, "max": 255, "default": 255, "description": "Character green"},
+            "character_blue": {"type": "int", "min": 0, "max": 255, "default": 100, "description": "Character blue"},
+            "background_red": {"type": "int", "min": 0, "max": 255, "default": 0, "description": "Background red"},
+            "background_green": {"type": "int", "min": 0, "max": 255, "default": 0, "description": "Background green"},
+            "background_blue": {"type": "int", "min": 0, "max": 255, "default": 5, "description": "Background blue"},
+            "clear_fill_ratio": {
+                "type": "float",
+                "min": 0.2,
+                "max": 0.95,
+                "default": 0.72,
+                "description": "Settled-pixel fraction that clears the wall",
+            },
+            "random_seed": {
+                "type": "int",
+                "min": 0,
+                "max": 1000000,
+                "default": 0,
+                "description": "Repeatable horizontal placement seed",
+            },
         })
         return schema
 
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
-        """Generate a frame of the ASCII drop animation"""
-        if self.last_time is None:
-            self.last_time = time_elapsed
+    def update_parameters(self, new_params: Dict[str, Any]):
+        old_seed = int(self.params.get("random_seed", 0))
+        super().update_parameters(new_params)
+        new_seed = int(self.params.get("random_seed", 0))
+        if new_seed != old_seed:
+            self._rng = np.random.default_rng(new_seed)
 
-        dt = time_elapsed - self.last_time
-        self.last_time = time_elapsed
+    def generate_frame(self, time_elapsed: float, frame_count: int):
+        now = max(0.0, float(time_elapsed))
+        dt = 0.0 if self._last_time is None else max(0.0, min(0.25, now - self._last_time))
+        self._last_time = now
 
-        strip_count, leds_per_strip = self.get_strip_info()
-        total_pixels = self.get_pixel_count()
+        threshold = min(0.95, max(0.2, float(self.params.get("clear_fill_ratio", 0.72))))
+        if self._settled.size and float(np.count_nonzero(self._settled)) / self._settled.size >= threshold:
+            self._reset_scene()
 
-        # Check if we need to clear the screen (when it's mostly full)
-        if self._is_screen_full():
-            self._reset_grid()
+        self._spawn_due_characters(now)
+        self._advance_pieces(dt)
 
-        # Spawn new characters
-        self._spawn_characters(time_elapsed, dt)
+        render_key = (
+            self._settled_revision,
+            tuple((piece["char"], piece["x"], piece["row"]) for piece in self._pieces),
+            self._color("character"),
+            self._color("background"),
+        )
+        if render_key == self._last_render_key and self._last_frame is not None:
+            return self.rendered_frame(self._last_frame, changed=False)
 
-        # Update falling characters
-        self._update_falling_characters(dt)
+        frame = self.next_frame_buffer(clear=False)
+        frame[:] = self._color("background")
+        wall = frame.reshape(self.width, self.height, 3)
 
-        # Render the frame
-        return self._render_frame(strip_count, leds_per_strip, total_pixels)
+        settled_y, settled_x = np.nonzero(self._settled)
+        if settled_x.size:
+            wall[settled_x, self.height - 1 - settled_y] = self._color("character")
 
-    def _is_screen_full(self) -> bool:
-        """Check if the screen is mostly full and needs clearing"""
-        strip_count, leds_per_strip = self.get_strip_info()
-        filled_pixels = 0
-        total_pixels = strip_count * leds_per_strip
+        for piece in self._pieces:
+            glyph_y, glyph_x = self._glyph(piece["char"])
+            y = glyph_y + piece["row"]
+            visible = (y >= 0) & (y < self.height) & (piece["x"] + glyph_x < self.width)
+            if np.any(visible):
+                wall[piece["x"] + glyph_x[visible], self.height - 1 - y[visible]] = self._color("character")
 
-        for strip in range(strip_count):
-            for led in range(leds_per_strip):
-                if self.grid_state[strip][led] is not None:
-                    filled_pixels += 1
+        self._last_render_key = render_key
+        self._last_frame = frame
+        return self.rendered_frame(frame)
 
-        # Clear when 80% full
-        return filled_pixels / total_pixels > 0.8
-
-    def _spawn_characters(self, time_elapsed: float, dt: float):
-        """Spawn new characters from the phrase"""
-        spawn_rate = float(self.params.get('spawn_rate', 1.5))
-
-        if time_elapsed - self.last_spawn_time >= (1.0 / spawn_rate):
-            phrase = str(self.params.get('phrase', 'HELLO WORLD')).upper()
-            if phrase and self.phrase_index < len(phrase):
-                char = phrase[self.phrase_index]
-                if char in self.CHARACTER_BITMAPS:
-                    self._add_falling_character(char)
-
-                self.phrase_index = (self.phrase_index + 1) % len(phrase)
-                self.last_spawn_time = time_elapsed
-
-    def _add_falling_character(self, char: str):
-        """Add a new falling character at a random position"""
-        strip_count, leds_per_strip = self.get_strip_info()
-        bitmap = self.CHARACTER_BITMAPS[char]
-        char_width = len(bitmap[0])
-
-        # Random starting position with 1px buffer
-        max_start_x = max(0, leds_per_strip - char_width - 1)
-        start_x = random.randint(1, max_start_x) if max_start_x > 1 else 0
-
-        character = {
-            'char': char,
-            'x': start_x,
-            'y': -len(bitmap),  # Start above the grid
-            'bitmap': bitmap
+    def get_runtime_stats(self) -> Dict[str, Any]:
+        settled_pixels = int(np.count_nonzero(self._settled))
+        return {
+            "falling_characters": len(self._pieces),
+            "settled_pixels": settled_pixels,
+            "fill_ratio": settled_pixels / max(1, self._settled.size),
+            "phrase_index": self._phrase_index,
         }
 
-        self.falling_characters.append(character)
+    def _spawn_due_characters(self, now: float):
+        interval = 1.0 / max(0.1, float(self.params.get("spawn_rate", 1.5)))
+        spawned_slots = 0
+        while now + 1e-9 >= self._next_spawn_time and spawned_slots < 4:
+            self._spawn_next_character()
+            self._next_spawn_time += interval
+            spawned_slots += 1
 
-    def _update_falling_characters(self, dt: float):
-        """Update positions of falling characters"""
-        drop_speed = float(self.params.get('drop_speed', 2.0))
-        strip_count, leds_per_strip = self.get_strip_info()
+    def _spawn_next_character(self):
+        phrase = str(self.params.get("phrase", "HELLO WORLD")).upper()
+        if not phrase:
+            return
+        char = phrase[self._phrase_index % len(phrase)]
+        self._phrase_index = (self._phrase_index + 1) % len(phrase)
+        if char == " " or char not in self.CHARACTER_BITMAPS:
+            return
 
-        active_characters = []
+        _, glyph_x = self._glyph(char)
+        glyph_width = int(glyph_x.max()) + 1 if glyph_x.size else 1
+        max_x = max(0, self.width - glyph_width)
+        x = int(self._rng.integers(0, max_x + 1)) if max_x else 0
+        self._pieces.append({"char": char, "x": x, "row": -1, "progress": 0.0})
 
-        for char_data in self.falling_characters:
-            # Move character down
-            char_data['y'] += drop_speed * dt
-
-            # Check if character has landed or gone off screen
-            bitmap = char_data['bitmap']
-            char_height = len(bitmap)
-            char_width = len(bitmap[0])
-
-            # Check for collision with bottom or existing characters
+    def _advance_pieces(self, dt: float):
+        if not self._pieces or dt <= 0.0:
+            return
+        distance = max(1.0, float(self.params.get("drop_speed", 18.0))) * dt
+        active: List[Dict[str, Any]] = []
+        for piece in self._pieces:
+            piece["progress"] += distance
             landed = False
-            bottom_y = int(char_data['y']) + char_height
+            while piece["progress"] >= 1.0:
+                candidate = piece["row"] + 1
+                if self._collides(piece["char"], piece["x"], candidate):
+                    self._settle(piece)
+                    landed = True
+                    break
+                piece["row"] = candidate
+                piece["progress"] -= 1.0
+            if not landed:
+                active.append(piece)
+        self._pieces = active
 
-            if bottom_y >= strip_count:
-                # Hit bottom
-                landed = True
-            else:
-                # Check collision with existing characters
-                for dy in range(char_height):
-                    for dx in range(char_width):
-                        if bitmap[dy][dx] == 'X':
-                            check_strip = int(char_data['y']) + dy + 1
-                            check_led = char_data['x'] + dx
+    def _collides(self, char: str, x: int, row: int) -> bool:
+        glyph_y, glyph_x = self._glyph(char)
+        y = glyph_y + row
+        inside_x = x + glyph_x < self.width
+        if np.any((y >= self.height) & inside_x):
+            return True
+        visible = (y >= 0) & inside_x
+        return bool(np.any(self._settled[y[visible], x + glyph_x[visible]]))
 
-                            if (0 <= check_strip < strip_count and
-                                0 <= check_led < leds_per_strip and
-                                self.grid_state[check_strip][check_led] is not None):
-                                landed = True
-                                break
-                    if landed:
-                        break
+    def _settle(self, piece: Dict[str, Any]):
+        glyph_y, glyph_x = self._glyph(piece["char"])
+        y = glyph_y + piece["row"]
+        visible = (y >= 0) & (y < self.height) & (piece["x"] + glyph_x < self.width)
+        if np.any(visible):
+            self._settled[y[visible], piece["x"] + glyph_x[visible]] = True
+            self._settled_revision += 1
 
-            if landed:
-                # Place character in grid
-                self._place_character_in_grid(char_data)
-            else:
-                # Keep falling
-                active_characters.append(char_data)
+    def _glyph(self, char: str) -> Tuple[np.ndarray, np.ndarray]:
+        cached = self._glyph_cache.get(char)
+        if cached is not None:
+            return cached
+        bitmap = self.CHARACTER_BITMAPS[char]
+        coords = [(y, x) for y, row in enumerate(bitmap) for x, value in enumerate(row) if value == "X"]
+        if coords:
+            glyph_y, glyph_x = (np.asarray(values, dtype=np.int16) for values in zip(*coords))
+        else:
+            glyph_y = np.empty(0, dtype=np.int16)
+            glyph_x = np.empty(0, dtype=np.int16)
+        self._glyph_cache[char] = (glyph_y, glyph_x)
+        return glyph_y, glyph_x
 
-        self.falling_characters = active_characters
-
-    def _place_character_in_grid(self, char_data: Dict[str, Any]):
-        """Place a landed character in the grid state"""
-        strip_count, leds_per_strip = self.get_strip_info()
-        bitmap = char_data['bitmap']
-        char_height = len(bitmap)
-        char_width = len(bitmap[0])
-
-        for dy in range(char_height):
-            for dx in range(char_width):
-                if bitmap[dy][dx] == 'X':
-                    grid_strip = int(char_data['y']) + dy
-                    grid_led = char_data['x'] + dx
-
-                    if (0 <= grid_strip < strip_count and
-                        0 <= grid_led < leds_per_strip):
-                        self.grid_state[grid_strip][grid_led] = char_data['char']
-
-    def _render_frame(self, strip_count: int, leds_per_strip: int, total_pixels: int) -> List[Tuple[int, int, int]]:
-        """Render the current frame"""
-        # Get colors from parameters
-        char_color = (
-            int(self.params.get('character_color_red', 0)),
-            int(self.params.get('character_color_green', 255)),
-            int(self.params.get('character_color_blue', 100))
+    def _color(self, prefix: str) -> Tuple[int, int, int]:
+        brightness = min(1.0, max(0.0, float(self.params.get("brightness", 1.0))))
+        defaults = {"character": (0, 255, 100), "background": (0, 0, 5)}[prefix]
+        return tuple(
+            max(0, min(255, int(float(self.params.get(f"{prefix}_{channel}", default)) * brightness)))
+            for channel, default in zip(("red", "green", "blue"), defaults)
         )
 
-        background_color = (
-            int(self.params.get('background_red', 0)),
-            int(self.params.get('background_green', 0)),
-            int(self.params.get('background_blue', 5))
-        )
-
-        serpentine = bool(self.params.get('serpentine', False))
-
-        # Initialize frame with background
-        pixel_colors = [self.apply_brightness(background_color)] * total_pixels
-
-        # Render placed characters in grid
-        for strip in range(strip_count):
-            for led in range(leds_per_strip):
-                if self.grid_state[strip][led] is not None:
-                    mapped_led = led if not (serpentine and strip % 2 == 1) else (leds_per_strip - 1 - led)
-                    pixel_index = strip * leds_per_strip + mapped_led
-                    pixel_colors[pixel_index] = self.apply_brightness(char_color)
-
-        # Render falling characters
-        for char_data in self.falling_characters:
-            bitmap = char_data['bitmap']
-            char_height = len(bitmap)
-            char_width = len(bitmap[0])
-
-            for dy in range(char_height):
-                for dx in range(char_width):
-                    if bitmap[dy][dx] == 'X':
-                        strip = int(char_data['y']) + dy
-                        led = char_data['x'] + dx
-
-                        if (0 <= strip < strip_count and 0 <= led < leds_per_strip):
-                            mapped_led = led if not (serpentine and strip % 2 == 1) else (leds_per_strip - 1 - led)
-                            pixel_index = strip * leds_per_strip + mapped_led
-                            pixel_colors[pixel_index] = self.apply_brightness(char_color)
-
-        return pixel_colors
+    def _reset_scene(self):
+        self._settled.fill(False)
+        self._pieces.clear()
+        self._settled_revision += 1

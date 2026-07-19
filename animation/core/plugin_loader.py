@@ -3,9 +3,7 @@
 Animation plugin loader and manager
 """
 
-import os
 import sys
-import importlib
 import importlib.util
 import inspect
 import traceback
@@ -43,7 +41,6 @@ class AnimationPluginLoader:
             sys.path.insert(0, str(self.plugins_dir.absolute()))
         
         self.loaded_plugins: Dict[str, Type[AnimationBase]] = {}
-        self.plugin_modules: Dict[str, Any] = {}
         self.plugin_files: Dict[str, Path] = {}
         
     def scan_plugins(self) -> List[str]:
@@ -54,6 +51,7 @@ class AnimationPluginLoader:
             List of plugin names found
         """
         plugin_names = []
+        self.plugin_files.clear()
         
         for file_path in self.plugins_dir.glob("*.py"):
             if file_path.name.startswith("__"):
@@ -104,8 +102,6 @@ class AnimationPluginLoader:
                 else:
                     sys.modules[plugin_name] = previous_module
                 raise
-            self.plugin_modules[plugin_name] = module
-            
             # Find animation class defined in this module (skip imported bases).
             # Without the __module__ / isabstract checks, plugins that import
             # StatefulAnimationBase would bind that abstract class instead.
@@ -142,6 +138,7 @@ class AnimationPluginLoader:
             Dict mapping plugin names to animation classes
         """
         plugin_names = self.scan_plugins()
+        self.loaded_plugins.clear()
         
         for plugin_name in plugin_names:
             self.load_plugin(plugin_name)
@@ -199,31 +196,3 @@ class AnimationPluginLoader:
                 'error': str(e),
                 'file_path': str(self.plugin_files.get(plugin_name, ''))
             }
-    
-    def save_plugin(self, plugin_name: str, plugin_code: str) -> bool:
-        """
-        Save plugin code to file
-        
-        Args:
-            plugin_name: Name for the plugin
-            plugin_code: Python code for the plugin
-            
-        Returns:
-            True if saved successfully
-        """
-        try:
-            file_path = self.plugins_dir / f"{plugin_name}.py"
-            with open(file_path, 'w') as f:
-                f.write(plugin_code)
-            
-            self.plugin_files[plugin_name] = file_path
-            print(f"✓ Saved plugin: {plugin_name}")
-            return True
-            
-        except Exception as e:
-            print(f"✗ Failed to save plugin {plugin_name}: {e}")
-            return False
-
-    def discover_plugins(self) -> Dict[str, Type[AnimationBase]]:
-        """Discover and return all available plugins"""
-        return self.load_all_plugins()

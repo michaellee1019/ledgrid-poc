@@ -1,12 +1,13 @@
 # LED Grid Animation System
 
-A plugin-based animation system with web interface for hot-swapping animations over the air.
+A plugin-based animation system with a web interface for selecting and tuning
+the animations shipped in the repository.
 
 ## Features
 
 - 🎨 **Plugin-based animations** - Easy to create and modify
 - 🌐 **Web interface** - Control animations from any device
-- 🔄 **Hot-swapping** - Upload and switch animations without restart
+- 🔄 **Hot reload** - Reload shipped animation code without restarting
 - ⚡ **Real-time parameters** - Adjust animation settings live
 - 📊 **Performance monitoring** - FPS tracking and system status
 - 🎯 **High performance** - Optimized for 50+ FPS
@@ -26,7 +27,6 @@ A plugin-based animation system with web interface for hot-swapping animations o
 3. **Open web interface:**
    - Dashboard: http://localhost:5000/
    - Control Panel: http://localhost:5000/control
-   - Upload: http://localhost:5000/upload
 
 ## Architecture
 
@@ -102,15 +102,18 @@ The system comes with several example animations:
 
 ### Rainbow (`animation/plugins/rainbow.py`)
 - **RainbowAnimation**: Classic rainbow cycle
-- **RainbowWaveAnimation**: Rainbow wave effect
 
 ### Solid Colors (`animation/plugins/solid.py`)
 - **SolidColorAnimation**: Solid color with breathing effect
-- **GradientAnimation**: Color gradients
 
-### Effects (`animation/plugins/effects.py`)
+### Rescued Effects
+- **ASCII Drop** (`ascii_drop.py`): Falling 5x7 text with collision and stacking
+- **Color Gradient** (`gradient.py`): Static or animated two-color gradients
+- **Pixel Chase** (`pixel_chase.py`): Individual-LED wall diagnostics
+- **Color Wave** (`wave.py`): Vectorized traveling sine-wave color field
+
+### Sparkle (`animation/plugins/sparkle.py`)
 - **SparkleAnimation**: Random sparkle effect
-- **WaveAnimation**: Sine wave patterns
 
 ## Web Interface
 
@@ -124,11 +127,6 @@ The system comes with several example animations:
 - Animation switching
 - Keyboard shortcuts
 
-### Upload (`/upload`)
-- Upload Python animation files
-- Create animations with code editor
-- Animation templates and guidelines
-
 ## API Endpoints
 
 - `GET /api/animations` - List available animations
@@ -136,7 +134,6 @@ The system comes with several example animations:
 - `POST /api/stop` - Stop current animation
 - `GET /api/status` - Get system status
 - `POST /api/parameters` - Update animation parameters
-- `POST /api/upload` - Upload new animation
 - `POST /api/refresh` - Refresh plugin list
 
 ## Configuration

@@ -226,7 +226,6 @@ def run_web_mode(args):
     print(f"  Dashboard: http://{args.host}:{args.port}/")
     print(f"  Control:   http://{args.host}:{args.port}/control")
     print(f"  Painter:   http://{args.host}:{args.port}/painter")
-    print(f"  Upload:    http://{args.host}:{args.port}/upload")
     print()
 
     web_interface.run(debug=args.debug)

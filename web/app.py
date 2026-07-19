@@ -2,8 +2,8 @@
 """
 Web Interface for LED Animation Management
 
-Flask-based web server for controlling animations, uploading plugins,
-and adjusting parameters in real-time.
+Flask-based web server for controlling animations and adjusting parameters in
+real time.
 """
 
 import json
@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from flask import Flask, jsonify, render_template, request
-from werkzeug.utils import secure_filename
 
 from animation.core.manager import AnimationManager, PreviewLEDController
 from ipc.control_channel import FileControlChannel
@@ -54,12 +53,6 @@ class AnimationWebInterface:
         self.app = Flask(__name__)
         self.app.secret_key = 'led-grid-secret-key-change-in-production'
 
-        # Configure upload settings
-        self.app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1MB max file size
-        self.app.config['UPLOAD_FOLDER'] = str(self.project_root / "animation" / "plugins")
-
-        # Ensure upload directory exists
-        Path(self.app.config['UPLOAD_FOLDER']).mkdir(exist_ok=True)
         self.painter_presets_dir.mkdir(parents=True, exist_ok=True)
         self.animation_presets_dir.mkdir(parents=True, exist_ok=True)
 
@@ -388,55 +381,6 @@ class AnimationWebInterface:
         def api_dpad_via_api(direction):
             return _handle_dpad(direction)
 
-        @self.app.route('/api/upload', methods=['POST'])
-        def api_upload_animation():
-            """API: Upload new animation plugin"""
-            # Handle JSON code submission
-            if request.is_json:
-                data = request.get_json()
-                if 'name' in data and 'code' in data:
-                    plugin_name = data['name']
-                    content = data['code']
-
-                    success = self.preview_manager.save_animation(plugin_name, content)
-
-                    if success:
-                        # Reload plugins
-                        self.preview_manager.refresh_plugins()
-                        # Ask controller to reload plugins
-                        self.control_channel.send_command('refresh_plugins')
-                        return jsonify({'success': True, 'plugin_name': plugin_name})
-                    else:
-                        return jsonify({'error': 'Failed to save animation'}), 500
-
-                return jsonify({'error': 'Missing name or code in request'}), 400
-
-            # Handle file upload
-            if 'file' not in request.files:
-                return jsonify({'error': 'No file provided'}), 400
-
-            file = request.files['file']
-            if file.filename == '':
-                return jsonify({'error': 'No file selected'}), 400
-
-            if file and file.filename.endswith('.py'):
-                filename = secure_filename(file.filename)
-                plugin_name = filename[:-3]  # Remove .py extension
-
-                # Save file content
-                content = file.read().decode('utf-8')
-                success = self.preview_manager.save_animation(plugin_name, content)
-
-                if success:
-                    # Reload plugins
-                    self.preview_manager.refresh_plugins()
-                    self.control_channel.send_command('refresh_plugins')
-                    return jsonify({'success': True, 'plugin_name': plugin_name})
-                else:
-                    return jsonify({'error': 'Failed to save animation'}), 500
-
-            return jsonify({'error': 'Invalid file type. Only .py files allowed'}), 400
-        
         @self.app.route('/api/reload/<animation_name>', methods=['POST'])
         def api_reload_animation(animation_name):
             """API: Reload specific animation plugin"""
@@ -451,11 +395,6 @@ class AnimationWebInterface:
             plugins = self.preview_manager.refresh_plugins()
             self.control_channel.send_command('refresh_plugins')
             return jsonify({'success': True, 'plugins': plugins})
-        
-        @self.app.route('/upload')
-        def upload_page():
-            """Upload page"""
-            return render_template('upload.html')
         
         @self.app.route('/control')
         def control_page():
@@ -483,8 +422,7 @@ class AnimationWebInterface:
         print(f"   Control:   http://{self.host}:{self.port}/control")
         print(f"   Painter:   http://{self.host}:{self.port}/painter")
         print(f"   Emoji:     http://{self.host}:{self.port}/emoji")
-        print(f"   Upload:    http://{self.host}:{self.port}/upload")
-        
+
         self.app.run(host=self.host, port=self.port, debug=debug, threaded=True)
 
     def _fallback_led_info(self) -> Dict[str, int]:

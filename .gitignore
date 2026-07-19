@@ -9,6 +9,8 @@
 run_state
 calibration_photos/*
 config/plant_pixel_map.json
+compile_commands.json
+**/compile_commands.json
 /presets/animations/*
 !/presets/animations/fireworks/
 /presets/animations/fireworks/*

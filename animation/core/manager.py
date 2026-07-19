@@ -96,10 +96,12 @@ class AnimationManager:
 
     # Only ship with a small, known-good set of animations
     ALLOWED_PLUGINS = {
+        "ascii_drop",
         "rainbow",
         "emoji",
         "emoji_arranger",
         "gif_animation",
+        "gradient",
         "sparkle",
         "fluid_tank",
         "flame_burst",
@@ -113,9 +115,11 @@ class AnimationManager:
         "plant_calibration",
         "plant_mask_highlight",
         "pixel_quest",
-        "space_invaders",
+        "pixel_chase",
+        "solid",
         "spiral_single",
         "strip_order",
+        "wave",
     }
     
     DEFAULT_ANIMATION = "sparkle"
@@ -1026,15 +1030,10 @@ class AnimationManager:
 
             return summary
     
-    def save_animation(self, name: str, code: str) -> bool:
-        """Save new animation plugin"""
-        return self.plugin_loader.save_plugin(name, code)
-    
     def reload_animation(self, name: str) -> bool:
         """Reload specific animation plugin"""
         try:
-            self.plugin_loader.reload_plugin(name)
-            return True
+            return self.plugin_loader.reload_plugin(name) is not None
         except Exception as e:
             print(f"✗ Failed to reload animation {name}: {e}")
             return False

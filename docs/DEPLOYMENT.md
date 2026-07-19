@@ -159,11 +159,6 @@ After deployment, access these URLs:
   - Animation switching
   - Live performance monitoring
 
-- **Upload**: `http://[PI_IP]:5000/upload`
-  - Upload new animation Python files
-  - Write animations directly in browser
-  - Animation templates and examples
-
 ## Troubleshooting
 
 ### Deployment Issues
