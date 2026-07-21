@@ -13,7 +13,7 @@ source "$(dirname "$0")/ssh_helpers.sh"
 echo "[INFO] Checking $PI_HOST..."
 ssh $SSH_OPTS "$PI_HOST" "test -x ~/$DEPLOY_DIR/venv/bin/python && sudo -n true"
 
-echo "[INFO] Syncing Python files..."
+echo "[INFO] Syncing application files, templates, and animation presets..."
 rsync -az \
     -e "ssh $SSH_OPTS" \
     --exclude '.git/' \
@@ -27,6 +27,8 @@ rsync -az \
     --exclude 'dist/' \
     --include '*/' \
     --include '*.py' \
+    --include '/web/templates/*.html' \
+    --include '/presets/animations/***' \
     --exclude '*' \
     "$LOCAL_DIR"/ "$PI_HOST:~/$DEPLOY_DIR/"
 

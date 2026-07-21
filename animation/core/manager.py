@@ -115,6 +115,7 @@ class AnimationManager:
         "plant_calibration",
         "plant_mask_highlight",
         "pixel_quest",
+        "living_ecosystem",
         "pixel_chase",
         "solid",
         "spiral_single",

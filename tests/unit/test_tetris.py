@@ -5,6 +5,8 @@ import unittest
 from animation import RenderedFrame
 from animation.core.manager import PreviewLEDController
 from animation.plugins.tetris import (
+    ActivePiece,
+    MAX_COORDINATED_PLANS,
     MAX_SPAWNS_PER_UPDATE,
     MAX_TETROMINO_COUNT,
     TetrisAnimation,
@@ -127,6 +129,51 @@ class TetrisAnimationTests(unittest.TestCase):
         self.assertGreater(first.manual_override, 0.0)
         self.assertEqual(second.manual_override, 0.0)
         self.assertEqual((second.x, second.y, second.rotation), second_position)
+
+    def test_multiple_pieces_reserve_complementary_line_clearing_moves(self):
+        animation = TetrisAnimation(
+            self.controller,
+            {"tetromino_count": 2, "bot_imperfection": 0.0},
+        )
+        filled = (10, 10, 10)
+        animation.board[-2] = [None] * 4 + [filled] * 7
+        animation.board[-1] = [None] * 4 + [filled] * 7
+        animation.active_pieces = [ActivePiece("O"), ActivePiece("O")]
+
+        animation._coordinate_plans()
+
+        target_columns = {piece.plan["x"] for piece in animation.active_pieces}
+        self.assertEqual(target_columns, {0, 2})
+        self.assertTrue(all(piece.plan is not None for piece in animation.active_pieces))
+
+    def test_dense_mode_bounds_shared_planning_horizon(self):
+        animation = TetrisAnimation(
+            self.controller,
+            {"tetromino_count": MAX_TETROMINO_COUNT, "bot_imperfection": 0.0},
+        )
+        animation.active_pieces = [
+            ActivePiece("I", y=-4 + index % 16)
+            for index in range(MAX_TETROMINO_COUNT)
+        ]
+
+        animation._coordinate_plans()
+
+        planned = sum(piece.plan is not None for piece in animation.active_pieces)
+        self.assertLessEqual(planned, MAX_COORDINATED_PLANS)
+        self.assertEqual(
+            animation.get_runtime_stats()["max_coordinated_plans"],
+            MAX_COORDINATED_PLANS,
+        )
+
+    def test_bot_steering_scales_for_wide_led_grids(self):
+        controller = PreviewLEDController(strips=32, leds_per_strip=140)
+        animation = TetrisAnimation(controller, {"bot_imperfection": 0.0})
+        piece = ActivePiece("O", x=0, y=0)
+
+        animation._move_toward_x(piece, 20)
+
+        self.assertGreater(piece.x, 1)
+        self.assertLessEqual(piece.x, 20)
 
 
 if __name__ == "__main__":

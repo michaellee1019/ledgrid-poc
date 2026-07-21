@@ -9,6 +9,7 @@ real time.
 import json
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -120,7 +121,7 @@ class AnimationWebInterface:
             existing = self._load_animation_preset(animation_name, preset_id)
             now = time.time()
             preset_payload = {
-                'version': 1,
+                'version': 2,
                 'preset_id': preset_id,
                 'name': raw_name,
                 'animation': animation_name,
@@ -128,6 +129,11 @@ class AnimationWebInterface:
                 'created_at': existing.get('created_at', now) if existing else now,
                 'updated_at': now,
             }
+            for field in ('category', 'description', 'tags', 'palette'):
+                if field in payload:
+                    preset_payload[field] = payload[field]
+                elif existing and field in existing:
+                    preset_payload[field] = existing[field]
             self._write_animation_preset(animation_name, preset_id, preset_payload)
             return jsonify({'success': True, 'preset': self._animation_preset_summary(preset_payload)})
 
@@ -531,6 +537,18 @@ class AnimationWebInterface:
             return None
         return payload if isinstance(payload, dict) else None
 
+    @staticmethod
+    def _preset_timestamp(value: Any) -> float:
+        """Normalize legacy numeric and v2 ISO timestamps for stable sorting."""
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+            except ValueError:
+                return 0.0
+        return 0.0
+
     def _preset_summary(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Return a concise summary shape for preset list responses."""
         return {
@@ -552,7 +570,7 @@ class AnimationWebInterface:
             payload.setdefault('preset_id', path.stem)
             payload.setdefault('name', path.stem)
             summaries.append(self._preset_summary(payload))
-        summaries.sort(key=lambda preset: preset.get('updated_at') or 0, reverse=True)
+        summaries.sort(key=lambda preset: self._preset_timestamp(preset.get('updated_at')), reverse=True)
         return summaries
 
     def _load_painter_preset(self, preset_id: str) -> Optional[Dict[str, Any]]:
@@ -608,11 +626,16 @@ class AnimationWebInterface:
     @staticmethod
     def _animation_preset_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
         return {
+            'version': payload.get('version', 1),
             'preset_id': payload.get('preset_id'),
             'name': payload.get('name'),
             'animation': payload.get('animation'),
             'created_at': payload.get('created_at'),
             'updated_at': payload.get('updated_at'),
+            'category': payload.get('category'),
+            'description': payload.get('description'),
+            'tags': payload.get('tags', []),
+            'palette': payload.get('palette'),
         }
 
     def _list_animation_presets(self, animation_name: str) -> List[Dict[str, Any]]:
@@ -630,7 +653,7 @@ class AnimationWebInterface:
             payload.setdefault('name', path.stem)
             payload.setdefault('animation', animation_name)
             summaries.append(self._animation_preset_summary(payload))
-        summaries.sort(key=lambda preset: preset.get('updated_at') or 0, reverse=True)
+        summaries.sort(key=lambda preset: self._preset_timestamp(preset.get('updated_at')), reverse=True)
         return summaries
 
     def _load_animation_preset(self, animation_name: str, preset_id: str) -> Optional[Dict[str, Any]]:

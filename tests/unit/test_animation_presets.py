@@ -114,6 +114,37 @@ class AnimationPresetTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_version_two_metadata_is_returned_in_list_summary(self):
+        response = self.client.post(
+            '/api/animations/sparkle/presets',
+            json={
+                'name': 'Gallery', 'params': {'brightness': 0.5},
+                'category': 'Installation', 'description': 'Warm gallery light',
+                'tags': ['warm'],
+                'palette': {'name': 'Amber', 'colors': ['#FFAA22']},
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        preset = self.client.get('/api/animations/sparkle/presets').get_json()['presets'][0]
+        self.assertEqual(preset['version'], 2)
+        self.assertEqual(preset['category'], 'Installation')
+        self.assertEqual(preset['palette']['colors'], ['#FFAA22'])
+
+    def test_numeric_and_iso_timestamp_presets_sort_together(self):
+        preset_dir = Path(self.temp_dir.name) / 'sparkle'
+        preset_dir.mkdir(parents=True)
+        (preset_dir / 'shipped.json').write_text(json.dumps({
+            'version': 2, 'preset_id': 'shipped', 'name': 'Shipped',
+            'animation': 'sparkle', 'updated_at': '2026-07-20T00:00:00Z',
+            'params': {'brightness': 0.4},
+        }), encoding='utf-8')
+        self.client.post('/api/animations/sparkle/presets', json={
+            'name': 'Personal', 'params': {'brightness': 0.7},
+        })
+        response = self.client.get('/api/animations/sparkle/presets')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.get_json()['presets']), 2)
+
 
 if __name__ == '__main__':
     unittest.main()
