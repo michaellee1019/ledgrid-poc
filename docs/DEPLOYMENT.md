@@ -109,6 +109,11 @@ Git-ignored after fetching; inspect them with `git ls-files --others --ignored
 preset selected for curation with `git add -f
 presets/animations/<animation>/<preset>.json`.
 
+The controller refreshes this same snapshot whenever the active animation,
+animation parameters, global tempo, or target FPS changes. On service or system
+restart, that saved animation and configuration are used as the startup default;
+Sparkle is only the fallback when no valid saved state exists.
+
 ### Start/Stop/Restart
 ```bash
 # Stop the system

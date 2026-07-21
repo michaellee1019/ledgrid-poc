@@ -19,6 +19,7 @@ from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP, default_strip_count
 from drivers.frame_codec import decode_frame_data
 from web.app import create_app
+from tools.deployment.preserve_deploy_settings import load_saved_state, save_status
 
 # Try to import the real LED controller, fall back to mock for testing
 try:
@@ -51,6 +52,13 @@ except ImportError:
 
 def run_controller_mode(args):
     """Controller process: drives LEDs and writes status/frames to disk."""
+    saved_state = None
+    try:
+        saved_state = load_saved_state(Path(args.saved_state_file))
+        print(f"💾 Restart default: {saved_state['animation']}/before-deploy")
+    except RuntimeError as exc:
+        print(f"ℹ️ No usable saved animation state: {exc}")
+
     # Determine if we're using multi-device or single-device controller
     # Multi-device controller expects total strips, single-device expects strips per device
     if hasattr(LEDController, '__name__') and 'Multi' in LEDController.__name__:
@@ -78,12 +86,18 @@ def run_controller_mode(args):
             leds_per_strip=args.leds_per_strip,
             debug=args.controller_debug,
         )
+    startup_speed_scale = (
+        saved_state.get('animation_speed_scale', args.animation_speed_scale)
+        if saved_state else args.animation_speed_scale
+    )
     manager = AnimationManager(
         controller,
         plugins_dir=args.animations_dir,
-        animation_speed_scale=args.animation_speed_scale,
+        animation_speed_scale=startup_speed_scale,
+        default_animation=saved_state.get('animation') if saved_state else None,
+        default_animation_config=saved_state.get('params') if saved_state else None,
     )
-    manager.target_fps = args.target_fps
+    manager.target_fps = int(saved_state.get('target_fps', args.target_fps)) if saved_state else args.target_fps
 
     if hasattr(controller, "set_brightness"):
         try:
@@ -113,7 +127,16 @@ def run_controller_mode(args):
                 last_command_id = cmd.get('command_id')
                 action = cmd.get('action')
                 data = cmd.get('data') or {}
-                handle_command(manager, action, data)
+                if handle_command(manager, action, data):
+                    try:
+                        save_status(
+                            manager.get_current_status(),
+                            Path(args.presets_dir),
+                            Path(args.saved_state_file),
+                        )
+                        print(f"💾 Saved restart state: {manager.current_animation_name}/before-deploy")
+                    except Exception as exc:
+                        print(f"⚠️ Failed to save restart state: {exc}")
 
             now = time.time()
             if now - last_status_time >= args.status_interval:
@@ -137,12 +160,12 @@ def run_controller_mode(args):
 
 
 def handle_command(manager: AnimationManager, action: str, data: dict):
-    """Dispatch a command to the animation manager."""
+    """Dispatch a command and report whether restart state changed."""
     if action == 'start':
         animation = data.get('animation')
         config = data.get('config') or {}
         print(f"▶️  Start requested: {animation}")
-        manager.start_animation(animation, config)
+        return manager.start_animation(animation, config)
     elif action == 'stop':
         print("⏹️  Stop requested")
         manager.stop_animation()
@@ -150,14 +173,23 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
         params = data.get('params') or {}
         if params:
             print(f"⚙️  Update params: {params}")
-            manager.update_animation_parameters(params)
+            return manager.update_animation_parameters(params)
     elif action == 'set_target_fps':
         requested = data.get('target_fps')
         try:
             applied = manager.set_target_fps(int(requested))
             print(f"🎚️ Target FPS: {applied}")
+            return True
         except (TypeError, ValueError):
             print(f"⚠️ Invalid target FPS: {requested!r}")
+    elif action == 'set_animation_speed_scale':
+        requested = data.get('animation_speed_scale')
+        try:
+            applied = manager.set_animation_speed_scale(float(requested))
+            print(f"🎚️ Animation speed scale: {applied:.3f}")
+            return True
+        except (TypeError, ValueError):
+            print(f"⚠️ Invalid animation speed scale: {requested!r}")
     elif action == 'refresh_plugins':
         animation = data.get('animation')
         if animation:
@@ -204,6 +236,7 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
         manager.clear_painter_frame()
     else:
         print(f"⚠️ Unknown action: {action}")
+    return False
 
 
 def run_web_mode(args):
@@ -245,6 +278,10 @@ def main():
                         help='Path to control file (default: run_state/control.json)')
     parser.add_argument('--status-file', default='run_state/status.json',
                         help='Path to status file (default: run_state/status.json)')
+    parser.add_argument('--presets-dir', default='presets/animations',
+                        help='Directory for restart-state animation presets')
+    parser.add_argument('--saved-state-file', default='run_state/before_deploy.json',
+                        help='Path to the persisted restart animation state')
     parser.add_argument('--strips', type=int, default=default_strip_count(),
                         help=f'Number of LED strips (default: {default_strip_count()})')
     parser.add_argument('--leds-per-strip', type=int, default=DEFAULT_LEDS_PER_STRIP,
@@ -271,8 +308,8 @@ def main():
                         help='Target animation FPS (default: 200; near the practical limit for 140-pixel WS2812 strips)')
     parser.add_argument('--brightness', type=int, default=50,
                         help='Global hardware brightness 0-255 (default: 50)')
-    parser.add_argument('--animation-speed-scale', type=float, default=0.2,
-                        help='Multiplier applied to each animation\'s speed parameter (default: 0.2)')
+    parser.add_argument('--animation-speed-scale', type=float, default=0.3,
+                        help='Multiplier applied to each animation\'s speed parameter (default: 0.3)')
     parser.add_argument('--poll-interval', type=float, default=0.05,
                         help='Seconds between control-file polls (controller mode)')
     parser.add_argument('--status-interval', type=float, default=0.5,

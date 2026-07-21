@@ -21,7 +21,7 @@ from ipc.control_channel import FileControlChannel
 
 
 PRESET_ID = "before-deploy"
-STATE_VERSION = 1
+STATE_VERSION = 2
 
 
 def _read_object(path: Path) -> dict[str, Any]:
@@ -75,8 +75,10 @@ def _preset_params(status: dict[str, Any]) -> dict[str, Any]:
     return params
 
 
-def save(status_path: Path, presets_dir: Path, state_path: Path) -> dict[str, Any]:
-    status = _read_object(status_path)
+def save_status(
+    status: dict[str, Any], presets_dir: Path, state_path: Path
+) -> dict[str, Any]:
+    """Persist a controller status snapshot as the restart default."""
     animation = _safe_animation_name(status.get("current_animation"))
     if not status.get("is_running") or not animation:
         raise RuntimeError("No running animation is available to preserve")
@@ -98,16 +100,44 @@ def save(status_path: Path, presets_dir: Path, state_path: Path) -> dict[str, An
         "updated_at": now,
     }
     _atomic_write(preset_path, preset)
-    _atomic_write(
-        state_path,
-        {
-            "version": STATE_VERSION,
-            "animation": animation,
-            "preset_path": str(preset_path),
-            "saved_at": now,
-        },
-    )
+    state = {
+        "version": STATE_VERSION,
+        "animation": animation,
+        "preset_path": str(preset_path),
+        "saved_at": now,
+    }
+    speed_scale = status.get("animation_speed_scale")
+    if isinstance(speed_scale, (int, float)) and speed_scale > 0:
+        state["animation_speed_scale"] = speed_scale
+    target_fps = status.get("target_fps")
+    if isinstance(target_fps, (int, float)) and target_fps > 0:
+        state["target_fps"] = int(target_fps)
+    _atomic_write(state_path, state)
     return preset
+
+
+def save(status_path: Path, presets_dir: Path, state_path: Path) -> dict[str, Any]:
+    return save_status(_read_object(status_path), presets_dir, state_path)
+
+
+def load_saved_state(state_path: Path) -> dict[str, Any]:
+    """Load and validate the animation and parameters used for restart."""
+    state = _read_object(state_path)
+    animation = _safe_animation_name(state.get("animation"))
+    if not animation:
+        raise RuntimeError("Saved deployment state has an invalid animation name")
+
+    preset_path = state.get("preset_path")
+    if not isinstance(preset_path, str) or not preset_path:
+        raise RuntimeError("Saved deployment state does not contain a preset path")
+    preset = _read_object(Path(preset_path))
+    if preset.get("animation") != animation or not isinstance(preset.get("params"), dict):
+        raise RuntimeError("before-deploy preset is invalid")
+
+    result = dict(state)
+    result["animation"] = animation
+    result["params"] = dict(preset["params"])
+    return result
 
 
 def _wait_for_fresh_controller(channel: FileControlChannel, started_at: float, timeout: float) -> None:
@@ -122,18 +152,12 @@ def _wait_for_fresh_controller(channel: FileControlChannel, started_at: float, t
 
 def restore(status_path: Path, control_path: Path, state_path: Path, timeout: float) -> dict[str, Any]:
     restore_started_at = time.time()
-    state = _read_object(state_path)
-    animation = _safe_animation_name(state.get("animation"))
-    if not animation:
-        raise RuntimeError("Saved deployment state has an invalid animation name")
-
-    preset = _read_object(Path(state.get("preset_path", "")))
-    if preset.get("animation") != animation or not isinstance(preset.get("params"), dict):
-        raise RuntimeError("before-deploy preset is invalid")
+    state = load_saved_state(state_path)
+    animation = state["animation"]
 
     channel = FileControlChannel(str(control_path), str(status_path))
     _wait_for_fresh_controller(channel, restore_started_at, timeout)
-    command = channel.send_command("start", animation=animation, config=preset["params"])
+    command = channel.send_command("start", animation=animation, config=state["params"])
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -143,7 +167,10 @@ def restore(status_path: Path, control_path: Path, state_path: Path, timeout: fl
             and status.get("current_animation") == animation
             and status.get("is_running")
         ):
-            return preset
+            return {
+                "animation": animation,
+                "params": state["params"],
+            }
         time.sleep(0.1)
     raise RuntimeError(f"Controller did not restore {animation!r} before timeout")
 

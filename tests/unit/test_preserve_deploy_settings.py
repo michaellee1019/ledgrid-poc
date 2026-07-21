@@ -5,7 +5,13 @@ import time
 import unittest
 from pathlib import Path
 
-from tools.deployment.preserve_deploy_settings import record_deploy, restore, save
+from tools.deployment.preserve_deploy_settings import (
+    load_saved_state,
+    record_deploy,
+    restore,
+    save,
+    save_status,
+)
 
 
 class PreserveDeploySettingsTests(unittest.TestCase):
@@ -42,6 +48,28 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             self.assertAlmostEqual(preset["params"]["speed"], 2.0)
             self.assertEqual(preset["params"]["brightness"], 0.7)
             self.assertEqual(json.loads(state_path.read_text())["animation"], "sparkle")
+
+    def test_save_status_records_runtime_config_and_loads_restart_default(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            presets_dir = root / "presets"
+            state_path = root / "state.json"
+
+            save_status({
+                "is_running": True,
+                "current_animation": "rainbow",
+                "animation_speed_scale": 0.45,
+                "target_fps": 144,
+                "animation_info": {
+                    "current_params": {"speed": 0.9, "brightness": 0.7},
+                },
+            }, presets_dir, state_path)
+
+            saved = load_saved_state(state_path)
+            self.assertEqual(saved["animation"], "rainbow")
+            self.assertEqual(saved["params"], {"speed": 2.0, "brightness": 0.7})
+            self.assertEqual(saved["animation_speed_scale"], 0.45)
+            self.assertEqual(saved["target_fps"], 144)
 
     def test_save_requires_a_running_animation(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
