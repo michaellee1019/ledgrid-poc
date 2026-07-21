@@ -542,7 +542,7 @@
         // Show loading state
         const cards = document.querySelectorAll('.animation-card');
         cards.forEach(card => card.style.opacity = '0.6');
-        
+
         return fetch(`/api/start/${name}`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -1132,7 +1132,7 @@
             });
         }, 120);
     }
-    
+
     function showToast(message, type = 'info') {
         // Simple toast notification
         const toast = document.createElement('div');
@@ -1140,7 +1140,7 @@
         toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
         toast.innerHTML = `${message} <button type="button" class="btn-close" onclick="this.parentElement.remove()"></button>`;
         document.body.appendChild(toast);
-        
+
         // Auto-remove after 3 seconds
         setTimeout(() => toast.remove(), 3000);
     }
