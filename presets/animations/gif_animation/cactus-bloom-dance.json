@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "preset_id": "cactus-bloom-dance",
+  "name": "Cactus Bloom Dance",
+  "animation": "gif_animation",
+  "category": "Nature",
+  "description": "Flower-crowned cacti wiggle beneath desert stars.",
+  "tags": [
+    "cactus",
+    "flower",
+    "cute"
+  ],
+  "palette": {
+    "name": "Cactus Bloom Dance",
+    "colors": [
+      "#040910",
+      "#52DE71",
+      "#FF69B1"
+    ]
+  },
+  "created_at": "2026-07-21T00:00:00Z",
+  "updated_at": "2026-07-21T00:00:00Z",
+  "params": {
+    "gif_directory": "assets/gifs",
+    "gif_name": "cactus-bloom-dance.gif",
+    "gif_index": 0,
+    "playback_speed": 1.0,
+    "brightness": 0.72,
+    "brightness_mode": "rgb",
+    "brightness_floor": 0.0,
+    "gamma": 1.0,
+    "flip_y": true,
+    "fit_mode": "stretch",
+    "contain_background": 0
+  }
+}
