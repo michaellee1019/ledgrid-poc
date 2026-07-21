@@ -70,6 +70,7 @@ fi
 "${PYTHON_BIN}" - <<'PY' > /tmp/ledgrid_web_params.txt
 import json
 from pathlib import Path
+from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 status_path = Path('run_state/status.json')
 strips = DEFAULT_STRIP_COUNT
@@ -82,9 +83,9 @@ if status_path.exists():
         leds = int(led_info.get('leds_per_strip', leds) or leds)
     except Exception:
         pass
-print(f"{strips} {leds}")
+print(f"{strips} {leds} {DEFAULT_ANIMATION_SPEED_SCALE}")
 PY
-read -r STRIPS LEDS < /tmp/ledgrid_web_params.txt
+read -r STRIPS LEDS ANIMATION_SPEED_SCALE < /tmp/ledgrid_web_params.txt
 nohup "${PYTHON_BIN}" scripts/start_server.py \
   --mode web \
   --control-file run_state/control.json \
@@ -92,7 +93,7 @@ nohup "${PYTHON_BIN}" scripts/start_server.py \
   --animations-dir animation/plugins \
   --strips "${STRIPS}" \
   --leds-per-strip "${LEDS}" \
-  --animation-speed-scale 0.3 \
+  --animation-speed-scale "${ANIMATION_SPEED_SCALE}" \
   --host 0.0.0.0 \
   --port "${PORT}" \
   > web.log 2>&1 &

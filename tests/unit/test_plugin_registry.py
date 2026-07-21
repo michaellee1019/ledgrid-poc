@@ -2,6 +2,7 @@ from pathlib import Path
 import unittest
 
 from animation.core.manager import AnimationManager
+from web.app import create_app
 
 
 class PluginRegistryTests(unittest.TestCase):
@@ -72,3 +73,23 @@ class PluginRegistryTests(unittest.TestCase):
         self.assertEqual(manager.current_animation.params['red'], 12)
         self.assertEqual(manager.current_animation.params['green'], 34)
         self.assertEqual(manager.current_animation.params['blue'], 56)
+
+    def test_preview_manager_can_load_plugins_without_starting_a_thread(self):
+        class _Controller:
+            strip_count = 1
+            leds_per_strip = 4
+            total_leds = 4
+            debug = False
+
+        manager = AnimationManager(_Controller(), auto_start=False)
+
+        self.assertIsNone(manager.current_animation)
+        self.assertIsNone(manager.animation_thread)
+        self.assertFalse(manager.is_running)
+
+    def test_web_factory_keeps_preview_manager_idle(self):
+        interface = create_app(strips=1, leds_per_strip=4)
+
+        self.assertIsNone(interface.preview_manager.current_animation)
+        self.assertIsNone(interface.preview_manager.animation_thread)
+        self.assertFalse(interface.preview_manager.is_running)

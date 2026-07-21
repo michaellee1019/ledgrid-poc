@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from animation.core import AnimationBase, RenderedFrame, StatefulAnimationBase, AnimationPluginLoader
+from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import encode_frame_data, FRAME_ENCODING_NAME
 
@@ -130,8 +131,10 @@ class AnimationManager:
     DEFAULT_ANIMATION = "sparkle"
 
     def __init__(self, controller: LEDController, plugins_dir: Optional[str] = None,
-                 animation_speed_scale: float = 0.3, default_animation: Optional[str] = None,
-                 default_animation_config: Optional[Dict[str, Any]] = None):
+                 animation_speed_scale: float = DEFAULT_ANIMATION_SPEED_SCALE,
+                 default_animation: Optional[str] = None,
+                 default_animation_config: Optional[Dict[str, Any]] = None,
+                 auto_start: bool = True):
         """
         Initialize animation manager
         
@@ -141,6 +144,7 @@ class AnimationManager:
             animation_speed_scale: Multiplier applied to each animation's speed parameter at start
             default_animation: Animation to auto-start on init (None = use DEFAULT_ANIMATION)
             default_animation_config: Parameters to apply to the default animation
+            auto_start: Whether to start the default animation during construction
         """
         self.controller = controller
         self.plugin_loader = AnimationPluginLoader(
@@ -195,7 +199,7 @@ class AnimationManager:
 
         # Load all plugins on startup and auto-start the default animation
         self.refresh_plugins()
-        if self._default_animation:
+        if auto_start and self._default_animation:
             if self.start_animation(self._default_animation, self._default_animation_config):
                 print(f"▶️  Auto-started default animation: {self._default_animation}")
             else:

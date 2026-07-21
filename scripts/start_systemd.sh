@@ -21,6 +21,11 @@ from drivers.led_layout import DEFAULT_LEDS_PER_STRIP
 print(DEFAULT_LEDS_PER_STRIP)
 PY
 )
+DEFAULT_ANIMATION_SPEED_SCALE=$(python - <<'PY'
+from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
+print(DEFAULT_ANIMATION_SPEED_SCALE)
+PY
+)
 
 STRIPS=${STRIPS:-$DEFAULT_STRIPS}
 LEDS_PER_STRIP=${LEDS_PER_STRIP:-$DEFAULT_LEDS_PER_STRIP}
@@ -28,7 +33,7 @@ LEDS_PER_STRIP=${LEDS_PER_STRIP:-$DEFAULT_LEDS_PER_STRIP}
 # defaults to a conservative ceiling. Use the live rate sweep to qualify a
 # higher value for the installed strips before overriding this environment.
 TARGET_FPS=${TARGET_FPS:-160}
-ANIMATION_SPEED_SCALE=${ANIMATION_SPEED_SCALE:-0.3}
+ANIMATION_SPEED_SCALE=${ANIMATION_SPEED_SCALE:-$DEFAULT_ANIMATION_SPEED_SCALE}
 HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-5000}
 CONTROL_FILE=${CONTROL_FILE:-run_state/control.json}

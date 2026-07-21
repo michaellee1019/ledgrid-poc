@@ -19,6 +19,7 @@ from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP, default_strip_count
 from drivers.frame_codec import decode_frame_data
 from web.app import create_app
+from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
 from tools.deployment.preserve_deploy_settings import load_saved_state, save_status
 
 # Try to import the real LED controller, fall back to mock for testing
@@ -50,6 +51,11 @@ except ImportError:
                 pass
 
 
+def device_count_for_strips(strip_count: int, strips_per_device: int = 8) -> int:
+    """Return enough devices to cover every configured strip."""
+    return max(1, (max(1, strip_count) + strips_per_device - 1) // strips_per_device)
+
+
 def run_controller_mode(args):
     """Controller process: drives LEDs and writes status/frames to disk."""
     saved_state = None
@@ -64,7 +70,7 @@ def run_controller_mode(args):
     if hasattr(LEDController, '__name__') and 'Multi' in LEDController.__name__:
         # Multi-device controller - calculate number of devices from strip count
         strips_per_device = 8  # ESP32-S3 DevKitC has 8 strips
-        num_devices = max(1, args.strips // strips_per_device)
+        num_devices = device_count_for_strips(args.strips, strips_per_device)
         controller = LEDController(
             num_devices=num_devices,
             bus=args.bus,
@@ -308,8 +314,8 @@ def main():
                         help='Target animation FPS (default: 200; near the practical limit for 140-pixel WS2812 strips)')
     parser.add_argument('--brightness', type=int, default=50,
                         help='Global hardware brightness 0-255 (default: 50)')
-    parser.add_argument('--animation-speed-scale', type=float, default=0.3,
-                        help='Multiplier applied to each animation\'s speed parameter (default: 0.3)')
+    parser.add_argument('--animation-speed-scale', type=float, default=DEFAULT_ANIMATION_SPEED_SCALE,
+                        help=f'Multiplier applied to animation speed parameters (default: {DEFAULT_ANIMATION_SPEED_SCALE})')
     parser.add_argument('--poll-interval', type=float, default=0.05,
                         help='Seconds between control-file polls (controller mode)')
     parser.add_argument('--status-interval', type=float, default=0.5,
