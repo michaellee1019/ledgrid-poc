@@ -1,0 +1,15 @@
+{
+  "version": 2, "preset_id": "serengeti-migration", "name": "Serengeti Migration",
+  "animation": "living_ecosystem", "category": "Realistic",
+  "description": "Zoomed-out, single-pixel herds with sparse trees, strong grouping, and predator-driven migration.",
+  "tags": ["realistic", "single-pixel", "dense"],
+  "palette": {"name": "Dry grassland", "colors": ["#2D1408", "#C25C12", "#864112", "#FFCD4A"]},
+  "created_at": "2026-07-20T00:00:00Z", "updated_at": "2026-07-20T00:00:00Z",
+  "params": {"lifecycle_minutes": 20, "day_length_seconds": 110, "creature_density": 1.8,
+    "predator_ratio": 0.18, "tree_density": 0.25, "creature_size": 0.0,
+    "mutation_rate": 0.045, "grass_regrowth": 0.65, "predation_pressure": 1.15,
+    "pack_cohesion": 1.75, "palette": "golden_hour", "night_brightness": 0.12,
+    "glow_strength": 0.0, "firefly_density": 0.0, "water_shimmer": 0.35,
+    "brightness": 0.86, "color_saturation": 0.86, "output_gamma": 1.2,
+    "render_fps": 45, "simulation_hz": 7, "seed": 22031, "show_water": true}
+}

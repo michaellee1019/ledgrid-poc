@@ -1,0 +1,15 @@
+{
+  "version": 2, "preset_id": "temperate-wetland", "name": "Temperate Wetland",
+  "animation": "living_ecosystem", "category": "Realistic",
+  "description": "Balanced fifteen-minute food web with natural color, seasonal tree turnover, and moderate predation.",
+  "tags": ["realistic", "balanced", "default"],
+  "palette": {"name": "Natural wetland", "colors": ["#0A2B16", "#1C8B2B", "#124E9B", "#DEA63C"]},
+  "created_at": "2026-07-20T00:00:00Z", "updated_at": "2026-07-20T00:00:00Z",
+  "params": {"lifecycle_minutes": 15, "day_length_seconds": 90, "creature_density": 1.0,
+    "predator_ratio": 0.25, "tree_density": 1.0, "creature_size": 1.0,
+    "mutation_rate": 0.07, "grass_regrowth": 1.0, "predation_pressure": 1.0,
+    "pack_cohesion": 1.0, "palette": "natural", "night_brightness": 0.22,
+    "glow_strength": 0.06, "firefly_density": 0.8, "water_shimmer": 0.8,
+    "brightness": 0.82, "color_saturation": 0.9, "color_value": 1.0, "output_gamma": 1.15,
+    "render_fps": 40, "simulation_hz": 8, "seed": 7319, "show_water": true}
+}
