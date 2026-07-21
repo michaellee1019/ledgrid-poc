@@ -1,10 +1,24 @@
 """Validation for the pre-rendered GIF animation asset pack."""
 
+import hashlib
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageSequence
+
+from scripts.generate_cute_gif_pack import SCENES, preset_payload, save_gif
+
+
+def _decoded_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Image.open(path) as image:
+        digest.update(str(image.info.get("loop")).encode())
+        for frame in ImageSequence.Iterator(image):
+            digest.update(frame.convert("RGB").tobytes())
+            digest.update(str(frame.info.get("duration")).encode())
+    return digest.hexdigest()
 
 
 class GifAnimationAssetTests(unittest.TestCase):
@@ -47,6 +61,23 @@ class GifAnimationAssetTests(unittest.TestCase):
                 self.assertEqual(params["fit_mode"], "stretch")
                 selected = self.root / params["gif_directory"] / params["gif_name"]
                 self.assertTrue(selected.is_file(), selected)
+
+    def test_generator_reproduces_every_decoded_loop_and_preset(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            output_dir = Path(temporary_dir)
+            for scene in SCENES:
+                with self.subTest(scene=scene.slug):
+                    generated = output_dir / f"{scene.slug}.gif"
+                    save_gif(scene, generated)
+
+                    self.assertEqual(
+                        _decoded_digest(generated),
+                        _decoded_digest(self.asset_dir / generated.name),
+                    )
+                    committed_preset = json.loads(
+                        (self.preset_dir / f"{scene.slug}.json").read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(preset_payload(scene), committed_preset)
 
 
 if __name__ == "__main__":
