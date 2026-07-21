@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "preset_id": "chill_raining_fish_tank",
+  "name": "chill raining fish tank",
+  "animation": "wave",
+  "params": {
+    "amplitude": 0.5,
+    "axis": "vertical",
+    "background_blue": 12,
+    "background_green": 0,
+    "background_red": 0,
+    "brightness": 1,
+    "direction": 1,
+    "frequency": 4.9,
+    "speed": 1.5,
+    "wave_blue": 255,
+    "wave_green": 255,
+    "wave_red": 0
+  },
+  "created_at": 1784607069.8440952,
+  "updated_at": 1784607069.8440952
+}
