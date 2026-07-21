@@ -529,7 +529,9 @@ class AsciiDropAnimation(AnimationBase):
             while piece["progress"] >= 1.0:
                 candidate = piece["row"] + 1
                 if self._collides(piece["char"], piece["x"], candidate):
-                    self._settle(piece)
+                    if not self._settle(piece):
+                        self._reset_scene()
+                        return
                     landed = True
                     break
                 piece["row"] = candidate
@@ -547,13 +549,20 @@ class AsciiDropAnimation(AnimationBase):
         visible = (y >= 0) & inside_x
         return bool(np.any(self._settled[y[visible], x + glyph_x[visible]]))
 
-    def _settle(self, piece: Dict[str, Any]):
+    def _settle(self, piece: Dict[str, Any]) -> bool:
         glyph_y, glyph_x = self._glyph(piece["char"])
         y = glyph_y + piece["row"]
         visible = (y >= 0) & (y < self.height) & (piece["x"] + glyph_x < self.width)
-        if np.any(visible):
-            self._settled[y[visible], piece["x"] + glyph_x[visible]] = True
+        if not np.any(visible):
+            return False
+
+        settled_y = y[visible]
+        settled_x = piece["x"] + glyph_x[visible]
+        changed = bool(np.any(~self._settled[settled_y, settled_x]))
+        if changed:
+            self._settled[settled_y, settled_x] = True
             self._settled_revision += 1
+        return changed
 
     def _glyph(self, char: str) -> Tuple[np.ndarray, np.ndarray]:
         cached = self._glyph_cache.get(char)

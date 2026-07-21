@@ -58,6 +58,22 @@ class AsciiDropAnimationTests(unittest.TestCase):
             animation.generate_frame(float(timestamp), index)
         self.assertGreater(animation.get_runtime_stats()["settled_pixels"], 0)
 
+    def test_clears_when_a_blocked_character_cannot_settle_any_pixels(self):
+        animation = AsciiDropAnimation(_Controller(), {
+            "phrase": "A",
+            "drop_speed": 40.0,
+            "spawn_rate": 0.1,
+            "random_seed": 1,
+        })
+        animation._settled[:6, :] = True
+        animation._settled_revision += 1
+
+        animation.generate_frame(0.0, 0)
+        animation.generate_frame(0.25, 1)
+
+        self.assertEqual(animation.get_runtime_stats()["settled_pixels"], 0)
+        self.assertEqual(animation.get_runtime_stats()["falling_characters"], 0)
+
 
 class GradientAnimationTests(unittest.TestCase):
     def test_static_vertical_gradient_maps_top_to_first_color(self):
