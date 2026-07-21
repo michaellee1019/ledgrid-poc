@@ -115,6 +115,17 @@ The system comes with several example animations:
 ### Sparkle (`animation/plugins/sparkle.py`)
 - **SparkleAnimation**: Random sparkle effect
 
+### Clock (`animation/plugins/clock.py`)
+- **ClockAnimation**: Ten practical and abstract clock faces composited with
+  eight ambient backgrounds and coordinated color palettes
+- Supports 12/24-hour display, seconds, vertical placement, glow, and fixed
+  minute offsets for displaying another timezone
+- Curated presets in `presets/animations/clock/` range from readable bedside
+  and studio clocks to orbital, binary, hourglass, and atmospheric time studies
+
+### Snake Garden (`animation/plugins/snake.py`)
+- **SnakeAnimation**: Autonomous classic, wrapping, portal, and multi-snake battle games with visual presets
+
 ## Web Interface
 
 ### Dashboard (`/`)
@@ -151,7 +162,7 @@ Key options:
 - `--leds-per-strip 140` - LEDs per strip
 - `--spi-speed 10000000` - SPI communication speed
 - `--target-fps 40` - Animation frame rate
-- `--animation-speed-scale 0.2` - Multiplier applied to animation speed parameters (lower = slower motion)
+- `--animation-speed-scale 0.3` - Baseline multiplier applied to animation speed parameters (lower = slower motion)
 
 ### Hardware Configuration
 

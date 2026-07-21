@@ -28,7 +28,7 @@ LEDS_PER_STRIP=${LEDS_PER_STRIP:-$DEFAULT_LEDS_PER_STRIP}
 # defaults to a conservative ceiling. Use the live rate sweep to qualify a
 # higher value for the installed strips before overriding this environment.
 TARGET_FPS=${TARGET_FPS:-160}
-ANIMATION_SPEED_SCALE=${ANIMATION_SPEED_SCALE:-0.2}
+ANIMATION_SPEED_SCALE=${ANIMATION_SPEED_SCALE:-0.3}
 HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-5000}
 CONTROL_FILE=${CONTROL_FILE:-run_state/control.json}

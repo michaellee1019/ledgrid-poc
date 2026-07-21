@@ -7,6 +7,7 @@ Handles animation switching, parameter updates, and frame generation.
 """
 
 import hashlib
+import math
 import time
 import threading
 import traceback
@@ -111,6 +112,7 @@ class AnimationManager:
         "pinball",
         "maze_chase",
         "christmas_tree",
+        "clock",
         "conway_life",
         "plant_calibration",
         "plant_mask_highlight",
@@ -118,6 +120,7 @@ class AnimationManager:
         "living_ecosystem",
         "pixel_chase",
         "solid",
+        "snake",
         "spiral_single",
         "strip_order",
         "wave",
@@ -127,7 +130,8 @@ class AnimationManager:
     DEFAULT_ANIMATION = "sparkle"
 
     def __init__(self, controller: LEDController, plugins_dir: Optional[str] = None,
-                 animation_speed_scale: float = 1.0, default_animation: Optional[str] = None):
+                 animation_speed_scale: float = 0.3, default_animation: Optional[str] = None,
+                 default_animation_config: Optional[Dict[str, Any]] = None):
         """
         Initialize animation manager
         
@@ -136,12 +140,14 @@ class AnimationManager:
             plugins_dir: Directory containing animation plugins
             animation_speed_scale: Multiplier applied to each animation's speed parameter at start
             default_animation: Animation to auto-start on init (None = use DEFAULT_ANIMATION)
+            default_animation_config: Parameters to apply to the default animation
         """
         self.controller = controller
         self.plugin_loader = AnimationPluginLoader(
             plugins_dir, allowed_plugins=self.ALLOWED_PLUGINS
         )
         self._default_animation = default_animation or self.DEFAULT_ANIMATION
+        self._default_animation_config = default_animation_config or {}
         
         # Animation state
         self.current_animation: Optional[AnimationBase] = None
@@ -190,7 +196,7 @@ class AnimationManager:
         # Load all plugins on startup and auto-start the default animation
         self.refresh_plugins()
         if self._default_animation:
-            if self.start_animation(self._default_animation):
+            if self.start_animation(self._default_animation, self._default_animation_config):
                 print(f"▶️  Auto-started default animation: {self._default_animation}")
             else:
                 print(f"⚠️  Could not auto-start default animation: {self._default_animation}")
@@ -220,6 +226,31 @@ class AnimationManager:
         if scaled_speed <= 0:
             scaled_speed = base_speed
         self.current_animation.update_parameters({'speed': scaled_speed})
+
+    def set_animation_speed_scale(self, speed_scale: float) -> float:
+        """Apply a live global animation speed scalar.
+
+        The active animation already contains the previously scaled value, so
+        adjust it by the ratio between the new and old scales. Preset-authored
+        speed values therefore remain independent of the dashboard tempo knob.
+        """
+        requested = float(speed_scale)
+        if not math.isfinite(requested) or requested <= 0:
+            raise ValueError("animation speed scale must be a positive finite number")
+
+        previous = self.animation_speed_scale
+        self.animation_speed_scale = requested
+        if (
+            self.current_animation
+            and hasattr(self.current_animation, "params")
+            and 'speed' in self.current_animation.params
+            and previous > 0
+        ):
+            current_speed = self.current_animation.params['speed']
+            self.current_animation.update_parameters({
+                'speed': current_speed * (requested / previous)
+            })
+        return self.animation_speed_scale
     
     def list_animations(self) -> List[Dict[str, Any]]:
         """Get list of available animations with metadata"""

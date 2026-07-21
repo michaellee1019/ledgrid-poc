@@ -3,361 +3,272 @@
 {% block title %}LED Grid Dashboard{% endblock %}
 
 {% block content %}
-<div class="row mb-4">
-    <div class="col-lg-6 mb-4 mb-lg-0 order-1 order-lg-2">
-        <div class="sticky-preview">
-            <div class="card mb-3">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="fas fa-tv"></i> Live Preview</h5>
-                    <div class="btn-group btn-group-sm" role="group">
-                        <button class="btn btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#previewCollapse" aria-expanded="true" aria-controls="previewCollapse">
-                            <i class="fas fa-chevron-up"></i>
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary" id="toggleRenderer" onclick="toggleRenderer()">
-                            <i class="fas fa-eye"></i>
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary" onclick="resetRenderer()">
-                            <i class="fas fa-sync"></i>
-                        </button>
-                        <button type="button" class="btn btn-outline-primary" id="previewToggle" onclick="togglePreviewMode()">
-                            <i class="fas fa-search"></i> <span id="previewToggleText">Preview Mode</span>
-                        </button>
-                    </div>
-                </div>
-                <div id="previewCollapse" class="collapse show">
-                    <div class="card-body" id="rendererContainer">
-                        <div id="animationRenderer" class="text-center">
-                            <canvas id="ledCanvas" width="315" height="630" class="led-preview preview-canvas" style="border: 1px solid #ddd; border-radius: 8px; cursor: pointer;"></canvas>
-                            <div class="mt-2">
-                                <small class="text-muted d-block mb-1">
-                                    Click the tank to puncture that exact location. The bolt button creates a random hole.
-                                </small>
-                                <small class="text-muted">
-                                    <span id="rendererStatus">Waiting for animation...</span> |
-                                    <span id="rendererFPS">0 FPS</span> |
-                                    <span id="rendererFrameCount">0 frames</span>
-                                </small>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+<style>
+    :root {
+        --show-ink: #17203a;
+        --show-muted: #69718a;
+        --show-panel: #ffffff;
+        --show-soft: #f4f6fb;
+        --show-accent: #6558f5;
+        --show-accent-dark: #4f43d8;
+        --show-border: #e5e8f1;
+    }
+    body { background: #f7f8fc; color: var(--show-ink); }
+    .dashboard-heading { font-weight: 750; letter-spacing: -.035em; }
+    .now-playing-bar { background: var(--show-ink); color: white; border: 0; border-radius: 18px; }
+    .now-playing-label { color: #aeb6d0; font-size: .72rem; letter-spacing: .09em; text-transform: uppercase; }
+    .speed-card { border: 0; border-radius: 16px; background: linear-gradient(135deg, #6c5ff8, #5145dc); color: white; }
+    .tempo-readout { display: flex; align-items: baseline; padding: .25rem .5rem; border: 1px solid rgba(255,255,255,.34); border-radius: 10px; background: rgba(20,13,94,.2); }
+    .speed-value-input { width: 3.7rem; padding: 0; border: 0; outline: 0; background: transparent; color: white; font-size: 1.25rem; font-weight: 800; line-height: 1; text-align: right; appearance: textfield; }
+    .speed-value-input::-webkit-inner-spin-button { appearance: none; }
+    .tempo-times { margin-left: .15rem; font-size: .9rem; font-weight: 750; opacity: .75; }
+    .tempo-scale { display: flex; justify-content: space-between; font-size: .7rem; color: rgba(255,255,255,.68); }
+    .speed-card .form-range { height: 1rem; margin-bottom: 0; }
+    .speed-card .form-range::-webkit-slider-thumb { background: white; width: 1rem; height: 1rem; }
+    .speed-card .form-range::-moz-range-thumb { background: white; width: 1rem; height: 1rem; border: 0; }
+    .speed-preset { border-color: rgba(255,255,255,.45); color: white; }
+    .speed-preset:hover, .speed-preset.active { background: white; color: var(--show-accent-dark); }
+    .section-kicker { color: var(--show-accent); font-size: .75rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+    .animation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .animation-card { border: 1px solid var(--show-border); border-radius: 18px; box-shadow: 0 8px 26px rgba(29, 39, 74, .06); cursor: default; overflow: hidden; transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+    .animation-card:hover { transform: translateY(-2px); box-shadow: 0 14px 34px rgba(29, 39, 74, .1); }
+    .animation-card.active { border-color: var(--show-accent); box-shadow: 0 0 0 3px rgba(101,88,245,.12), 0 14px 34px rgba(29,39,74,.1); }
+    .animation-icon { display: grid; place-items: center; width: 3.2rem; height: 3.2rem; border-radius: 14px; background: var(--show-soft); font-size: 1.65rem; flex: 0 0 auto; }
+    .animation-description { color: var(--show-muted); font-size: .87rem; line-height: 1.4; min-height: 2.45rem; }
+    .preset-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: flex-start; gap: .5rem; padding: .15rem 0 .35rem; }
+    .preset-chip { display: flex; align-items: center; gap: .55rem; min-width: 0; border: 1px solid #e1e3ef; background: linear-gradient(180deg, #fff, #fafaff); color: #343958; border-radius: 12px; padding: .58rem .65rem; text-align: left; transition: border-color .15s ease, background .15s ease, transform .15s ease; }
+    .preset-chip:hover { border-color: var(--show-accent); color: var(--show-accent-dark); background: #f4f2ff; transform: translateY(-1px); }
+    .preset-emoji { font-size: 1.15rem; flex: 0 0 auto; }
+    .preset-copy { min-width: 0; line-height: 1.15; }
+    .preset-name { display: block; overflow: hidden; font-size: .76rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+    .preset-category { display: block; margin-top: .18rem; color: #8a90a5; font-size: .64rem; font-weight: 650; letter-spacing: .03em; text-transform: uppercase; }
+    .preset-swatches { display: flex; margin-left: auto; padding-left: .2rem; }
+    .preset-swatch { width: .72rem; height: .72rem; margin-left: -.16rem; border: 1px solid rgba(255,255,255,.9); border-radius: 50%; box-shadow: 0 0 0 1px rgba(41,46,72,.12); }
+    .compact-preview { border: 1px solid var(--show-border); border-radius: 16px; }
+    .compact-preview .preview-canvas { max-height: 330px; width: auto !important; max-width: 100%; }
+    .utility-accordion .accordion-button { font-weight: 700; color: #4c536b; background: white; }
+    .utility-accordion .accordion-item { border-color: var(--show-border); }
+    .test-animation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+    .test-animation-btn { text-align: left; border: 1px solid var(--show-border); background: white; border-radius: 12px; padding: .7rem; }
+    .control-studio { border: 1px solid #e1e4f0; border-radius: 16px; background: linear-gradient(160deg, #fff 0%, #f9f9ff 100%); }
+    .preset-workbench { padding: 1rem; border: 1px solid #e4e6f1; border-radius: 14px; background: white; box-shadow: 0 5px 18px rgba(29,39,74,.04); }
+    .parameter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+    .parameter-control { margin: 0 !important; padding: .9rem; border: 1px solid #e6e8f2; border-radius: 14px; background: white; box-shadow: 0 4px 14px rgba(29,39,74,.035); }
+    .parameter-control-wide { grid-column: 1 / -1; }
+    .parameter-label { font-size: .82rem; font-weight: 750; }
+    .parameter-description { min-height: 2.2em; color: var(--show-muted); font-size: .7rem; line-height: 1.35; }
+    .parameter-value { min-width: 4.7rem; font-variant-numeric: tabular-nums; }
+    .color-well { width: 3.2rem; height: 3.2rem; padding: .2rem; border: 1px solid #d8dbe8; border-radius: 12px; background: white; cursor: pointer; }
+    .color-hex { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; font-weight: 700; }
+    .channel-input { padding-left: .35rem; padding-right: .35rem; text-align: center; }
+    .form-range { accent-color: var(--show-accent); }
+    .form-check-input:checked { border-color: var(--show-accent); background-color: var(--show-accent); }
+    .save-preset-button { background: linear-gradient(135deg, #16a66a, #078456); border: 0; }
+    @media (max-width: 767.98px) {
+        .animation-grid { grid-template-columns: 1fr; }
+        .preset-strip, .parameter-grid { grid-template-columns: 1fr; }
+        .dashboard-heading { font-size: 1.8rem; }
+        .speed-value-input { width: 3.7rem; font-size: 1.25rem; }
+    }
+</style>
 
-            <div class="card mb-3">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="fas fa-tint"></i> Scene Stats</h5>
-                    <div class="btn-group btn-group-sm" role="group">
-                        <button class="btn btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#statsCollapse" aria-expanded="true" aria-controls="statsCollapse">
-                            <i class="fas fa-chevron-up"></i>
-                        </button>
-                        <button class="btn btn-outline-danger" onclick="requestRandomHole()">
-                            <i class="fas fa-bolt"></i>
-                        </button>
-                    </div>
-                </div>
-                <div id="statsCollapse" class="collapse show">
-                    <div class="card-body small">
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Fill Level</span>
-                            <strong id="statFill">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Expected Level</span>
-                            <strong id="statExpected">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Hole Active</span>
-                            <strong id="statHole">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Bubbles (peak rise)</span>
-                            <strong id="statBubbles">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Spray Particles</span>
-                            <strong id="statSpray">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Spawn Allowed</span>
-                            <strong id="statSpawnAllowed">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center">
-                            <span>Animation Hash</span>
-                            <code id="statHash">--</code>
-                        </div>
-                        <small class="text-muted d-block mt-2">
-                            Stats update from <code>/api/status</code> so sims + hardware stay in sync.
-                        </small>
-                    </div>
-                </div>
-            </div>
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+    <div>
+        <div class="section-kicker">LED Grid Studio</div>
+        <h1 class="dashboard-heading mb-1">Choose the mood. Set the pace.</h1>
+        <p class="text-muted mb-0">Start with an animation or jump straight into a curated preset.</p>
+    </div>
+</div>
 
-            <div class="card mb-3">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="fas fa-gauge-high"></i> Performance Snapshot</h5>
-                    <div class="btn-group btn-group-sm" role="group">
-                        <button class="btn btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#metricsCollapse" aria-expanded="true" aria-controls="metricsCollapse">
-                            <i class="fas fa-chevron-up"></i>
-                        </button>
-                    </div>
-                </div>
-                <div id="metricsCollapse" class="collapse show">
-                    <div class="card-body small">
-                        <div class="text-uppercase text-muted fw-semibold mb-2">Animation Loop</div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Target FPS</span>
-                            <strong id="metricTargetFps">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Actual FPS</span>
-                            <strong id="metricActualFps">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Target Frame</span>
-                            <strong id="metricTargetFrame">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Avg Generate</span>
-                            <strong id="metricAvgGenerate">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Avg Send</span>
-                            <strong id="metricAvgSend">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Avg Frame</span>
-                            <strong id="metricAvgFrame">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Last Frame</span>
-                            <strong id="metricLastFrame">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Inline Show</span>
-                            <strong id="metricInlineShow">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <span>Perf Samples</span>
-                            <strong id="metricPerfSamples">--</strong>
-                        </div>
-
-                        <div class="text-uppercase text-muted fw-semibold mb-2">Driver</div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Devices</span>
-                            <strong id="metricDeviceCount">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Frames Sent</span>
-                            <strong id="metricDriverFrames">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Pipeline FPS</span>
-                            <strong id="metricDriverFps">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Bytes Sent</span>
-                            <strong id="metricDriverBytes">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Errors</span>
-                            <strong id="metricDriverErrors">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Avg Frame</span>
-                            <strong id="metricDriverAvg">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>Last Frame</span>
-                            <strong id="metricDriverLast">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>SPI Speed</span>
-                            <strong id="metricSpiSpeed">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                            <span>SPI Transfers</span>
-                            <strong id="metricSpiTransfers">--</strong>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center">
-                            <span>CRC Overhead</span>
-                            <strong id="metricCrcBytes">--</strong>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="fas fa-info-circle"></i> System Status</h5>
-                    <div class="btn-group btn-group-sm" role="group">
-                        <button class="btn btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#systemCollapse" aria-expanded="true" aria-controls="systemCollapse">
-                            <i class="fas fa-chevron-up"></i>
-                        </button>
-                    </div>
-                </div>
-                <div id="systemCollapse" class="collapse show">
-                    <div class="card-body">
-                        <div class="mb-2">
-                            <strong>Animation:</strong><br>
-                            <span class="status-indicator {{ 'status-running' if status.is_running else 'status-stopped' }}"></span>
-                            <span class="status-text">
-                                {% if status.is_running %}
-                                    Running: {{ status.current_animation }}
-                                {% else %}
-                                    Stopped
-                                {% endif %}
-                            </span>
-                        </div>
-                        <div class="mb-2">
-                            <strong>Performance:</strong><br>
-                            <span class="fps-display">{{ "%.1f"|format(status.actual_fps) }} FPS</span>
-                            <small class="text-muted">(Target: {{ status.target_fps }} FPS)</small>
-                        </div>
-                        <div class="mb-2">
-                            <strong>LED Configuration:</strong><br>
-                            {{ status.led_info.strip_count }} strips × {{ status.led_info.leds_per_strip }} LEDs
-                        </div>
-                        {% if status.is_running %}
-                        <div class="mb-2">
-                            <strong>Runtime:</strong><br>
-                            {{ "%.1f"|format(status.uptime) }}s
-                            <small class="text-muted">({{ status.frame_count }} frames)</small>
-                        </div>
-                        {% endif %}
-                        <div class="d-grid gap-2">
-                            {% if status.is_running %}
-                            <button class="btn btn-danger" onclick="stopAnimation()">
-                                <i class="fas fa-stop"></i> Stop Animation
-                            </button>
-                            {% endif %}
-                            <button class="btn btn-outline-secondary" onclick="refreshPlugins().then(() => window.location.reload())">
-                                <i class="fas fa-sync"></i> Refresh Plugins
-                            </button>
-                        </div>
-                    </div>
-                </div>
+<div class="card now-playing-bar mb-3">
+    <div class="card-body d-flex flex-wrap align-items-center justify-content-between gap-3 py-3">
+        <div class="d-flex align-items-center gap-3">
+            <span class="status-indicator {{ 'status-running' if status.is_running else 'status-stopped' }} mb-0"></span>
+            <div>
+                <div class="now-playing-label">Now playing</div>
+                <strong class="status-text fs-5">{{ status.current_animation|replace('_', ' ')|title if status.is_running else 'Nothing yet' }}</strong>
             </div>
         </div>
+        <button class="btn btn-outline-light btn-sm px-3" onclick="stopAnimation()"><i class="fas fa-stop me-1"></i> Stop</button>
     </div>
+</div>
 
-    <div class="col-lg-6 order-2 order-lg-1">
-        <div class="card">
-            <div class="card-header pb-0">
-                <ul class="nav nav-tabs card-header-tabs" id="dashboardTabs" role="tablist">
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link active" id="tab-animations-link" data-bs-toggle="tab" data-bs-target="#tab-animations" type="button" role="tab">Animations</button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="tab-controls-link" data-bs-toggle="tab" data-bs-target="#tab-controls" type="button" role="tab">Controls</button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="tab-status-link" data-bs-toggle="tab" data-bs-target="#tab-status" type="button" role="tab">Status JSON</button>
-                    </li>
-                </ul>
+<div class="row g-4 mb-4">
+    <div class="col-xl-8">
+        <div class="d-flex justify-content-between align-items-end mb-3">
+            <div>
+                <div class="section-kicker">Show-ready</div>
+                <h2 class="h4 mb-0">Animations & presets</h2>
             </div>
-            <div class="card-body tab-content">
-                <div class="tab-pane fade show active" id="tab-animations" role="tabpanel">
-                    <div class="row">
-                        {% for animation in animations %}
-                        <div class="col-md-6 mb-3">
-                            <div class="card animation-card h-100">
-                                <div class="card-body">
-                                    <h5 class="card-title">
-                                        <i class="fas fa-play-circle text-primary"></i>
-                                        {{ animation.name }}
-                                    </h5>
-                                    <p class="card-text">{{ animation.description }}</p>
-                                    <small class="text-muted">
-                                        <i class="fas fa-user"></i> {{ animation.author }}
-                                        <span class="ms-2"><i class="fas fa-tag"></i> v{{ animation.version }}</span>
-                                    </small>
-                                    <div class="mt-3 d-flex gap-2">
-                                        <button class="btn btn-outline-primary btn-sm" onclick="previewAnimation('{{ animation.plugin_name }}')">
-                                            <i class="fas fa-eye"></i> Preview
-                                        </button>
-                                        <button class="btn btn-primary btn-sm" onclick="startAnimation('{{ animation.plugin_name }}')">
-                                            <i class="fas fa-play"></i> Start
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
+            <small class="text-muted">Tap a preset to play it instantly</small>
+        </div>
+        <div class="animation-grid">
+            {% for animation in animations %}
+            <article class="card animation-card h-100" data-animation-card="{{ animation.plugin_name }}">
+                <div class="card-body p-3 d-flex flex-column">
+                    <div class="d-flex gap-3 align-items-start">
+                        <div class="animation-icon" aria-hidden="true">{{ animation.emoji }}</div>
+                        <div class="min-w-0 flex-grow-1">
+                            <h3 class="h6 fw-bold mb-1">{{ animation.name }}</h3>
+                            <p class="animation-description mb-2">{{ animation.description }}</p>
                         </div>
+                    </div>
+                    {% if animation.presets %}
+                    <div class="preset-strip mt-2" aria-label="{{ animation.name }} presets">
+                        {% for preset in animation.presets %}
+                        <button class="preset-chip" title="{{ preset.description or preset.name }}" onclick="playDashboardPreset('{{ animation.plugin_name }}', '{{ preset.preset_id }}', this)">
+                            <span class="preset-emoji" aria-hidden="true">{{ preset.emoji }}</span>
+                            <span class="preset-copy">
+                                <span class="preset-name">{{ preset.name }}</span>
+                                <span class="preset-category">{{ preset.category or 'Preset' }}</span>
+                            </span>
+                            {% if preset.swatches %}<span class="preset-swatches" aria-hidden="true">{% for color in preset.swatches %}<span class="preset-swatch" style="background: {{ color }}"></span>{% endfor %}</span>{% endif %}
+                        </button>
                         {% endfor %}
                     </div>
-                    {% if not animations %}
-                    <div class="alert alert-warning">
-                        <i class="fas fa-exclamation-triangle"></i>
-                        No shipped animations were loaded. Check the server log for plugin errors.
-                    </div>
+                    {% else %}
+                    <small class="text-muted mt-2 mb-1">No saved presets yet</small>
                     {% endif %}
+                    <div class="d-flex gap-2 mt-auto pt-2">
+                        <button class="btn btn-primary btn-sm flex-grow-1" onclick="selectControlAnimation('{{ animation.plugin_name }}')"><i class="fas fa-play me-1"></i> Play</button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="openAnimationControls('{{ animation.plugin_name }}')" title="Fine tune {{ animation.name }}"><i class="fas fa-sliders-h"></i></button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="previewAnimation('{{ animation.plugin_name }}')" title="Preview {{ animation.name }}"><i class="fas fa-eye"></i></button>
+                    </div>
                 </div>
-                <div class="tab-pane fade" id="tab-controls" role="tabpanel">
-                    <div class="mb-3">
-                        <h5 class="fw-semibold">Select Animation</h5>
-                        <div class="row">
-                            {% for animation in animations %}
-                            <div class="col-md-6 mb-2">
-                                <button class="btn btn-outline-primary w-100 control-animation-btn" 
-                                        data-animation="{{ animation.plugin_name }}"
-                                        onclick="selectControlAnimation('{{ animation.plugin_name }}')">
-                                    {{ animation.name }}
-                                </button>
-                            </div>
+            </article>
+            {% endfor %}
+        </div>
+        {% if not animations %}
+        <div class="alert alert-warning mt-3">No show-ready animations were loaded.</div>
+        {% endif %}
+
+        <div class="accordion utility-accordion mt-3" id="testAnimationAccordion">
+            <div class="accordion-item rounded-3 overflow-hidden">
+                <h2 class="accordion-header" id="testAnimationHeading">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#testAnimationCollapse" aria-expanded="false">
+                        🧪 Test & calibration animations <span class="badge bg-light text-secondary ms-2">{{ test_animations|length }}</span>
+                    </button>
+                </h2>
+                <div id="testAnimationCollapse" class="accordion-collapse collapse" data-bs-parent="#testAnimationAccordion">
+                    <div class="accordion-body bg-light">
+                        <p class="small text-muted mb-2">Hardware checks and installation tools, kept out of the everyday gallery.</p>
+                        <div class="test-animation-grid">
+                            {% for animation in test_animations %}
+                            <button class="test-animation-btn" onclick="selectControlAnimation('{{ animation.plugin_name }}')"><span class="me-1">{{ animation.emoji }}</span> <strong>{{ animation.name }}</strong></button>
                             {% endfor %}
                         </div>
-                        <div class="mt-2">
-                            <button class="btn btn-danger btn-sm" onclick="stopAnimation()">
-                                <i class="fas fa-stop"></i> Stop Animation
-                            </button>
-                        </div>
                     </div>
-                    <div class="card mt-3" id="controlParametersCard" style="display: none;">
-                        <div class="card-header">
-                            <h6 class="mb-0">Animation Parameters</h6>
-                            <small class="text-muted">Adjust values to steer the scene in real-time.</small>
-                        </div>
-                        <div class="card-body">
-                            <div class="border-bottom pb-3 mb-3">
-                                <label class="form-label fw-semibold" for="controlPresetSelect">Presets</label>
-                                <div class="input-group input-group-sm mb-2">
-                                    <select class="form-select" id="controlPresetSelect">
-                                        <option value="">No saved presets</option>
-                                    </select>
-                                    <button class="btn btn-outline-primary" type="button" onclick="applyControlPreset()">Load</button>
-                                    <button class="btn btn-outline-danger" type="button" onclick="deleteControlPreset()" title="Delete selected preset">
-                                        <i class="fas fa-trash"></i>
-                                    </button>
-                                </div>
-                                <div class="input-group input-group-sm">
-                                    <input class="form-control" id="controlPresetName" maxlength="64" placeholder="Preset name">
-                                    <button class="btn btn-success" type="button" onclick="saveControlPreset()">
-                                        <i class="fas fa-save"></i> Save current
-                                    </button>
-                                </div>
-                                <small class="text-muted">Presets are stored per animation and loaded from disk.</small>
-                            </div>
-                            <div id="controlParametersContainer"></div>
-                        </div>
-                    </div>
-                    <div class="alert alert-info mt-3" id="controlParametersPlaceholder">
-                        Start or select an animation to adjust its live controls.
-                    </div>
-                </div>
-                <div class="tab-pane fade" id="tab-status" role="tabpanel">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <div>
-                            <h6 class="mb-0">Live Status Payload</h6>
-                            <small class="text-muted">Data pulled from <code>/api/status</code></small>
-                        </div>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="copyStatusJson()">
-                            <i class="fas fa-copy"></i> Copy
-                        </button>
-                    </div>
-                    <pre id="statusJson" class="bg-dark text-white p-3 rounded" style="max-height: 400px; overflow:auto;">Loading...</pre>
                 </div>
             </div>
         </div>
+
+        <div class="accordion utility-accordion mt-3" id="controlsAccordion">
+            <div class="accordion-item rounded-3 overflow-hidden">
+                <h2 class="accordion-header" id="controlsHeading">
+                    <button class="accordion-button collapsed" id="controlsAccordionButton" type="button" data-bs-toggle="collapse" data-bs-target="#controlsCollapse" aria-expanded="false">🎛️ Fine-tune the current animation</button>
+                </h2>
+                <div id="controlsCollapse" class="accordion-collapse collapse">
+                    <div class="accordion-body p-2 p-md-3">
+                        <div class="card border-0 control-studio p-2 p-md-3" id="controlParametersCard" style="display: none;">
+                            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                                <div>
+                                    <div class="section-kicker">Live studio</div>
+                                    <h3 class="h5 mb-0" id="controlStudioTitle">Fine-tune the scene</h3>
+                                </div>
+                                <span class="badge rounded-pill bg-success bg-opacity-10 text-success px-3 py-2"><i class="fas fa-bolt me-1"></i> Changes apply live</span>
+                            </div>
+                            <div class="preset-workbench mb-3">
+                                <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                                    <label class="form-label fw-bold mb-0" for="controlPresetSelect">🎛️ Preset workbench</label>
+                                    <small class="text-muted">Load, shape, then save your version</small>
+                                </div>
+                                <div class="input-group mb-3">
+                                    <select class="form-select" id="controlPresetSelect"><option value="">Choose a starting point…</option></select>
+                                    <button class="btn btn-primary px-3" type="button" onclick="applyControlPreset()"><i class="fas fa-wand-magic-sparkles me-1"></i> Load</button>
+                                    <button class="btn btn-outline-danger" type="button" onclick="deleteControlPreset()" title="Delete selected preset"><i class="fas fa-trash"></i></button>
+                                </div>
+                                <div class="row g-2">
+                                    <div class="col-md-7"><input class="form-control" id="controlPresetName" maxlength="64" placeholder="Preset name, e.g. Sunday Aurora"></div>
+                                    <div class="col-md-5"><input class="form-control" id="controlPresetCategory" maxlength="40" placeholder="Vibe or category"></div>
+                                    <div class="col-12"><textarea class="form-control" id="controlPresetDescription" rows="2" maxlength="180" placeholder="What makes this version special?"></textarea></div>
+                                    <div class="col-12 d-grid d-md-flex justify-content-md-end"><button class="btn btn-success save-preset-button px-4" type="button" onclick="saveControlPreset()"><i class="fas fa-sparkles me-1"></i> Save this look</button></div>
+                                </div>
+                            </div>
+                            <div id="controlParametersContainer" class="parameter-grid"></div>
+                        </div>
+                        <div class="alert alert-light border mb-0" id="controlParametersPlaceholder">Play an animation to adjust its controls.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="d-none" aria-hidden="true">
+            {% for animation in animations + test_animations %}<button class="control-animation-btn" data-animation="{{ animation.plugin_name }}"></button>{% endfor %}
+        </div>
     </div>
+
+    <aside class="col-xl-4">
+        <div class="sticky-preview">
+            <div class="card compact-preview mb-3">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+                    <div><span class="me-1">👀</span><strong class="small">Preview</strong> <span class="text-muted small">(optional)</span></div>
+                    <div class="btn-group btn-group-sm">
+                        <button type="button" class="btn btn-outline-secondary" id="toggleRenderer" onclick="toggleRenderer()"><i class="fas fa-eye"></i></button>
+                        <button type="button" class="btn btn-outline-primary" id="previewToggle" onclick="togglePreviewMode()"><span id="previewToggleText">Preview Mode</span></button>
+                    </div>
+                </div>
+                <div class="card-body p-2" id="rendererContainer">
+                    <div id="animationRenderer" class="text-center">
+                        <canvas id="ledCanvas" width="180" height="360" class="led-preview preview-canvas rounded"></canvas>
+                        <small class="text-muted d-block mt-2"><span id="rendererStatus">Waiting…</span> · <span id="rendererFPS">0 FPS</span> · <span id="rendererFrameCount">0 frames</span></small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card speed-card mb-3">
+                <div class="card-body p-3">
+                    <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                        <div class="text-uppercase fw-bold small opacity-75">Global tempo</div>
+                        <label class="tempo-readout" title="Enter any positive tempo multiplier">
+                            <span class="visually-hidden">Exact global tempo</span>
+                            <input class="speed-value-input" id="globalSpeedNumber" type="number" step="any" value="1" inputmode="decimal" aria-label="Exact global tempo multiplier" oninput="previewGlobalSpeed(this.value)" onchange="setGlobalSpeed(this.value)">
+                            <span class="tempo-times">×</span>
+                        </label>
+                    </div>
+                    <input class="form-range" id="globalSpeedRange" type="range" min="0" max="100" step="1" value="50" aria-label="Global animation speed, logarithmic scale" oninput="previewGlobalSpeedFromPosition(this.value)" onchange="setGlobalSpeedFromPosition(this.value)">
+                    <div class="tempo-scale"><span>0.1×</span><span>1×</span><span>10×</span></div>
+                    <div class="d-flex flex-wrap gap-1 mt-2" aria-label="Speed presets">
+                        <button class="btn btn-sm speed-preset" onclick="setGlobalSpeedPreset(0.65)">Slow</button>
+                        <button class="btn btn-sm speed-preset active" onclick="setGlobalSpeedPreset(1)">Groove</button>
+                        <button class="btn btn-sm speed-preset" onclick="setGlobalSpeedPreset(1.5)">Lively</button>
+                        <button class="btn btn-sm speed-preset" onclick="setGlobalSpeedPreset(2.25)">Turbo</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="accordion utility-accordion" id="diagnosticsAccordion">
+                <div class="accordion-item rounded-3 overflow-hidden">
+                    <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#diagnosticsCollapse">🩺 Status & diagnostics</button></h2>
+                    <div id="diagnosticsCollapse" class="accordion-collapse collapse">
+                        <div class="accordion-body small">
+                            <div class="d-flex justify-content-between border-bottom pb-2 mb-2"><span>Actual FPS</span><strong id="metricActualFps">--</strong></div>
+                            <div class="d-flex justify-content-between border-bottom pb-2 mb-2"><span>Target FPS</span><strong id="metricTargetFps">--</strong></div>
+                            <div class="d-flex justify-content-between border-bottom pb-2 mb-2"><span>Pipeline FPS</span><strong id="metricDriverFps">--</strong></div>
+                            <div class="d-flex justify-content-between mb-3"><span>Devices</span><strong id="metricDeviceCount">--</strong></div>
+                            <details>
+                                <summary class="text-muted">Raw status JSON</summary>
+                                <pre id="statusJson" class="bg-dark text-white p-2 rounded mt-2" style="max-height:260px;overflow:auto">Loading…</pre>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="copyStatusJson()">Copy JSON</button>
+                            </details>
+                            <div class="d-none">
+                                <span id="statFill"></span><span id="statExpected"></span><span id="statHole"></span><span id="statBubbles"></span><span id="statSpray"></span><span id="statSpawnAllowed"></span><code id="statHash"></code>
+                                <span id="metricTargetFrame"></span><span id="metricAvgGenerate"></span><span id="metricAvgSend"></span><span id="metricAvgFrame"></span><span id="metricLastFrame"></span><span id="metricInlineShow"></span><span id="metricPerfSamples"></span><span id="metricDriverFrames"></span><span id="metricDriverBytes"></span><span id="metricDriverErrors"></span><span id="metricDriverAvg"></span><span id="metricDriverLast"></span><span id="metricSpiSpeed"></span><span id="metricSpiTransfers"></span><span id="metricCrcBytes"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </aside>
 </div>
 {% endblock %}
 
@@ -366,6 +277,7 @@
     const INITIAL_STRIP_COUNT = Number({{ status.led_info.strip_count }});
     const INITIAL_LEDS_PER_STRIP = Number({{ status.led_info.leds_per_strip }});
     const INITIAL_STATUS = {{ status | tojson }};
+    const SPEED_BASELINE = Number({{ speed_baseline }});
 
     // Animation Renderer
     class LEDAnimationRenderer {
@@ -733,9 +645,118 @@
         animationRenderer = new LEDAnimationRenderer('ledCanvas');
         if (INITIAL_STATUS) {
             syncControlPanel(INITIAL_STATUS);
+            syncGlobalSpeedFromStatus(INITIAL_STATUS);
         }
         startStatsPolling();
     });
+
+    function formatSpeed(value) {
+        const speed = Number(value);
+        if (!Number.isFinite(speed)) return '';
+        if (speed >= 100) return speed.toFixed(0);
+        if (speed >= 10) return speed.toFixed(1).replace(/\.0$/, '');
+        if (speed >= 1) return speed.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+        return speed.toPrecision(2).replace(/0+$/, '').replace(/\.$/, '');
+    }
+
+    function previewGlobalSpeed(value) {
+        const number = document.getElementById('globalSpeedNumber');
+        if (number && document.activeElement !== number) number.value = formatSpeed(value);
+        const range = document.getElementById('globalSpeedRange');
+        const multiplier = Number(value);
+        if (range && Number.isFinite(multiplier) && multiplier > 0) {
+            range.value = multiplierToSpeedPosition(multiplier);
+        }
+        document.querySelectorAll('.speed-preset').forEach(button => button.classList.remove('active'));
+    }
+
+    function speedPositionToMultiplier(position) {
+        return 10 ** ((Number(position) - 50) / 50);
+    }
+
+    function multiplierToSpeedPosition(multiplier) {
+        return Math.max(0, Math.min(100, 50 + 50 * Math.log10(Number(multiplier))));
+    }
+
+    function previewGlobalSpeedFromPosition(position) {
+        const multiplier = speedPositionToMultiplier(position);
+        const number = document.getElementById('globalSpeedNumber');
+        if (number) number.value = formatSpeed(multiplier);
+        document.querySelectorAll('.speed-preset').forEach(button => button.classList.remove('active'));
+    }
+
+    function setGlobalSpeedFromPosition(position) {
+        setGlobalSpeed(speedPositionToMultiplier(position));
+    }
+
+    function syncGlobalSpeedFromStatus(status) {
+        const range = document.getElementById('globalSpeedRange');
+        if (!range || !status) return;
+        const scale = Number(status.animation_speed_scale);
+        if (!Number.isFinite(scale) || scale <= 0 || !Number.isFinite(SPEED_BASELINE)) return;
+        const multiplier = scale / SPEED_BASELINE;
+        if (document.activeElement !== range) range.value = multiplierToSpeedPosition(multiplier);
+        const number = document.getElementById('globalSpeedNumber');
+        if (number && document.activeElement !== number) number.value = formatSpeed(multiplier);
+        document.querySelectorAll('.speed-preset').forEach(button => {
+            const match = (button.getAttribute('onclick') || '').match(/[\d.]+/);
+            const buttonValue = match ? Number(match[0]) : NaN;
+            button.classList.toggle('active', Math.abs(buttonValue - multiplier) < .05);
+        });
+    }
+
+    async function setGlobalSpeed(value) {
+        const multiplier = Number(value);
+        if (!Number.isFinite(multiplier) || multiplier <= 0) {
+            showToast('Tempo must be a positive number.', 'info');
+            return;
+        }
+        previewGlobalSpeed(multiplier);
+        try {
+            const response = await fetch('/api/config/animation-speed', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({multiplier})
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || 'Unable to change speed');
+            showToast(`Global tempo set to ${formatSpeed(multiplier)}×`, 'success');
+        } catch (error) {
+            showToast(error.message, 'error');
+        }
+    }
+
+    function setGlobalSpeedPreset(value) {
+        setGlobalSpeed(value);
+    }
+
+    async function playDashboardPreset(animationName, presetId, button) {
+        if (button) button.disabled = true;
+        try {
+            const response = await fetch(
+                `/api/animations/${encodeURIComponent(animationName)}/presets/${encodeURIComponent(presetId)}/apply`,
+                {method: 'POST'}
+            );
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || 'Unable to load preset');
+            controlSelectedAnimation = animationName;
+            highlightControlSelection(animationName);
+            showToast(`Playing ${payload.preset.name}`, 'success');
+        } catch (error) {
+            showToast(error.message, 'error');
+        } finally {
+            if (button) button.disabled = false;
+        }
+    }
+
+    function openAnimationControls(animationName) {
+        selectControlAnimation(animationName);
+        const collapseElement = document.getElementById('controlsCollapse');
+        if (collapseElement) {
+            bootstrap.Collapse.getOrCreateInstance(collapseElement, {toggle: false}).show();
+            setTimeout(() => collapseElement.scrollIntoView({behavior: 'smooth', block: 'start'}), 150);
+        }
+    }
 
     // Renderer control functions
     function toggleRenderer() {
@@ -870,6 +891,7 @@
             updateSceneStatsPanel(data);
             updateStatusJson(data);
             syncControlPanel(data);
+            syncGlobalSpeedFromStatus(data);
         } catch (err) {
             console.error('Failed to fetch stats', err);
         }
@@ -1004,6 +1026,9 @@
             btn.classList.toggle('btn-primary', isActive);
             btn.classList.toggle('btn-outline-primary', !isActive);
         });
+        document.querySelectorAll('[data-animation-card]').forEach(card => {
+            card.classList.toggle('active', Boolean(name && card.dataset.animationCard === name));
+        });
     }
 
     function syncPreviewParameters(animationName) {
@@ -1069,23 +1094,136 @@
             });
     }
 
-    function handleRangeInput(name, value, type, mirrorInputId) {
-        const mirror = document.getElementById(mirrorInputId);
-        if (mirror) {
-            mirror.value = value;
+    const PARAMETER_OPTIONS = {
+        axis: ['horizontal', 'vertical', 'diagonal'],
+        emoji: ['smile', 'heart'],
+        fit_mode: ['stretch', 'contain', 'cover'],
+        brightness_mode: ['rgb', 'luma'],
+        destruct_on_loop_action: ['reseed', 'restart', 'glider_storm'],
+        'living_ecosystem:palette': ['natural', 'golden_hour', 'autumn', 'moonlit', 'boreal', 'bioluminescent', 'ultraviolet', 'ember']
+    };
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, character => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+        })[character]);
+    }
+
+    function parameterOptions(name, info) {
+        if (Array.isArray(info.options) && info.options.length) return info.options;
+        return PARAMETER_OPTIONS[`${controlSelectedAnimation}:${name}`] || PARAMETER_OPTIONS[name] || null;
+    }
+
+    function numericStep(info) {
+        if (info.type === 'int') return 1;
+        const span = Number(info.max) - Number(info.min);
+        if (span <= 1) return .01;
+        if (span <= 10) return .05;
+        return .1;
+    }
+
+    function usesLogEasing(info) {
+        const minimum = Number(info.min);
+        const maximum = Number(info.max);
+        return minimum > 0 && maximum / minimum >= 20;
+    }
+
+    function parameterToSlider(value, info) {
+        const minimum = Number(info.min);
+        const maximum = Number(info.max);
+        const numeric = Number(value);
+        if (usesLogEasing(info)) {
+            return 100 * Math.log(numeric / minimum) / Math.log(maximum / minimum);
         }
+        return 100 * (numeric - minimum) / (maximum - minimum || 1);
+    }
+
+    function sliderToParameter(position, info) {
+        const minimum = Number(info.min);
+        const maximum = Number(info.max);
+        const ratio = Number(position) / 100;
+        const value = usesLogEasing(info)
+            ? minimum * ((maximum / minimum) ** ratio)
+            : minimum + (maximum - minimum) * ratio;
+        return info.type === 'int' ? Math.round(value) : Number(value.toFixed(3));
+    }
+
+    function handleParameterRangeInput(name, position, type, mirrorInputId) {
+        const value = sliderToParameter(position, controlParameterSchema[name]);
+        const mirror = document.getElementById(mirrorInputId);
+        if (mirror) mirror.value = value;
         updateControlParameter(name, value, type);
     }
 
     function handleNumberInput(name, value, type, mirrorSliderId) {
-        if (value === '' || value === null) {
-            return;
-        }
+        if (value === '' || value === null) return;
+        const converted = type === 'int' ? parseInt(value, 10) : parseFloat(value);
+        if (!Number.isFinite(converted)) return;
         const slider = document.getElementById(mirrorSliderId);
-        if (slider) {
-            slider.value = value;
+        if (slider && controlParameterSchema[name]) {
+            slider.value = Math.max(0, Math.min(100, parameterToSlider(converted, controlParameterSchema[name])));
         }
-        updateControlParameter(name, value, type);
+        updateControlParameter(name, converted, type);
+    }
+
+    function rgbToHex(red, green, blue) {
+        return '#' + [red, green, blue].map(value => Math.max(0, Math.min(255, Number(value) || 0)).toString(16).padStart(2, '0')).join('').toUpperCase();
+    }
+
+    function hexToRgb(hex) {
+        const value = String(hex).replace('#', '');
+        return {red: parseInt(value.slice(0, 2), 16), green: parseInt(value.slice(2, 4), 16), blue: parseInt(value.slice(4, 6), 16)};
+    }
+
+    function handleColorInput(prefix, hex) {
+        const rgb = hexToRgb(hex);
+        const params = {};
+        ['red', 'green', 'blue'].forEach(channel => {
+            const name = `${prefix}${channel}`;
+            params[name] = rgb[channel];
+            const input = document.getElementById(`control-${name}-value`);
+            if (input) input.value = rgb[channel];
+        });
+        const label = document.getElementById(`control-${prefix}hex`);
+        if (label) label.textContent = hex.toUpperCase();
+        updateControlParametersBatch(params);
+    }
+
+    function handleColorChannelInput(prefix, channel, value) {
+        const numeric = Math.max(0, Math.min(255, parseInt(value, 10) || 0));
+        updateControlParameter(`${prefix}${channel}`, numeric, 'int');
+        const values = ['red', 'green', 'blue'].map(name => {
+            const input = document.getElementById(`control-${prefix}${name}-value`);
+            return input ? input.value : 0;
+        });
+        const hex = rgbToHex(...values);
+        const picker = document.getElementById(`control-${prefix}color`);
+        const label = document.getElementById(`control-${prefix}hex`);
+        if (picker) picker.value = hex;
+        if (label) label.textContent = hex;
+    }
+
+    function renderColorControl(prefix, values) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'parameter-control parameter-control-wide';
+        const label = prefix ? humanizeParamName(prefix.replace(/_$/, '')) : 'Color';
+        const hex = rgbToHex(values.red, values.green, values.blue);
+        wrapper.innerHTML = `
+            <div class="d-flex align-items-center justify-content-between gap-3 mb-2">
+                <div><div class="parameter-label">${escapeHtml(label)}</div><div class="parameter-description">Choose visually or tune exact RGB channels.</div></div>
+                <div class="d-flex align-items-center gap-2"><span class="color-hex" id="control-${prefix}hex">${hex}</span><input class="color-well" id="control-${prefix}color" type="color" value="${hex}" aria-label="${escapeHtml(label)} color" oninput="handleColorInput('${prefix}', this.value)"></div>
+            </div>
+            <div class="row g-2">
+                ${['red', 'green', 'blue'].map(channel => `<div class="col-4"><label class="small text-muted text-uppercase">${channel[0]}</label><input class="form-control channel-input" id="control-${prefix}${channel}-value" type="number" min="0" max="255" step="1" value="${values[channel]}" oninput="handleColorChannelInput('${prefix}', '${channel}', this.value)"></div>`).join('')}
+            </div>`;
+        return wrapper;
+    }
+
+    function resetControlParameter(name) {
+        const info = controlParameterSchema[name];
+        if (!info) return;
+        updateControlParameter(name, info.default, info.type);
+        renderControlParameterControls(controlParameterSchema, controlParameterStore[controlSelectedAnimation] || {});
     }
 
     function renderControlParameterControls(schema, currentParams) {
@@ -1094,78 +1232,46 @@
         container.innerHTML = '';
         controlParameterSchema = schema;
         const parameterSnapshot = {};
+        Object.entries(schema).forEach(([name, info]) => {
+            parameterSnapshot[name] = currentParams[name] ?? info.default;
+        });
+
+        const title = document.getElementById('controlStudioTitle');
+        if (title) title.textContent = `Shape ${humanizeParamName(controlSelectedAnimation || 'the scene')}`;
+
+        const colorNames = new Set();
+        Object.keys(schema).filter(name => name.endsWith('red')).forEach(redName => {
+            const prefix = redName.slice(0, -3);
+            const greenName = `${prefix}green`;
+            const blueName = `${prefix}blue`;
+            if (!schema[greenName] || !schema[blueName]) return;
+            colorNames.add(redName); colorNames.add(greenName); colorNames.add(blueName);
+            container.appendChild(renderColorControl(prefix, {
+                red: parameterSnapshot[redName], green: parameterSnapshot[greenName], blue: parameterSnapshot[blueName]
+            }));
+        });
 
         Object.entries(schema).forEach(([paramName, paramInfo]) => {
-            const currentValue = currentParams[paramName] ?? paramInfo.default;
-            parameterSnapshot[paramName] = currentValue;
+            if (paramName === 'speed' || colorNames.has(paramName)) return;
+            const currentValue = parameterSnapshot[paramName];
             const prettyName = humanizeParamName(paramName);
-            const rangeText = (paramInfo.min !== undefined && paramInfo.max !== undefined)
-                ? `Range: ${paramInfo.min} – ${paramInfo.max} (default ${paramInfo.default})`
-                : `Default: ${paramInfo.default ?? '--'}`;
             const controlDiv = document.createElement('div');
-            controlDiv.className = 'parameter-control mb-3';
+            controlDiv.className = 'parameter-control';
             const inputId = `control-${paramName}`;
             const numberInputId = `${inputId}-value`;
-            let controlHtml = `
-                <label class="form-label mb-1">
-                    <strong>${prettyName}</strong>
-                    <small class="text-muted d-block">${paramInfo.description}</small>
-                    <small class="text-muted">${rangeText}</small>
-                </label>
-            `;
-            if (Array.isArray(paramInfo.options) && paramInfo.options.length) {
-                const options = paramInfo.options.map(option => {
-                    const selected = String(option) === String(currentValue) ? ' selected' : '';
-                    return `<option value="${option}"${selected}>${humanizeParamName(String(option))}</option>`;
-                }).join('');
-                controlHtml += `
-                    <select class="form-select" id="${inputId}"
-                            onchange="updateControlParameter('${paramName}', this.value, 'str')">
-                        ${options}
-                    </select>
-                `;
+            const options = parameterOptions(paramName, paramInfo);
+            let inputHtml = '';
+            if (options) {
+                inputHtml = `<select class="form-select" id="${inputId}" onchange="updateControlParameter('${paramName}', this.value, 'str')">${options.map(option => `<option value="${escapeHtml(option)}"${String(option) === String(currentValue) ? ' selected' : ''}>${humanizeParamName(String(option))}</option>`).join('')}</select>`;
             } else if (paramInfo.type === 'float' || paramInfo.type === 'int') {
-                const step = paramInfo.type === 'float' ? '0.1' : '1';
-                controlHtml += `
-                    <div class="row align-items-center">
-                        <div class="col-8">
-                            <input type="range" class="form-range"
-                                   id="${inputId}"
-                                   min="${paramInfo.min}"
-                                   max="${paramInfo.max}"
-                                   step="${step}"
-                                   value="${currentValue}"
-                                   oninput="handleRangeInput('${paramName}', this.value, '${paramInfo.type}', '${numberInputId}')">
-                        </div>
-                        <div class="col-4">
-                            <input type="number" class="form-control form-control-sm"
-                                   value="${currentValue}"
-                                   min="${paramInfo.min}"
-                                   max="${paramInfo.max}"
-                                   step="${step}"
-                                   id="${numberInputId}"
-                                   oninput="handleNumberInput('${paramName}', this.value, '${paramInfo.type}', '${inputId}')">
-                        </div>
-                    </div>
-                `;
+                const hasRange = Number.isFinite(Number(paramInfo.min)) && Number.isFinite(Number(paramInfo.max));
+                inputHtml = `${hasRange ? `<input type="range" class="form-range" id="${inputId}" min="0" max="100" step="1" value="${parameterToSlider(currentValue, paramInfo)}" oninput="handleParameterRangeInput('${paramName}', this.value, '${paramInfo.type}', '${numberInputId}')">` : ''}<div class="input-group input-group-sm"><input type="number" class="form-control parameter-value" value="${escapeHtml(currentValue)}" step="${numericStep(paramInfo)}" id="${numberInputId}" oninput="handleNumberInput('${paramName}', this.value, '${paramInfo.type}', '${inputId}')"><span class="input-group-text">${paramInfo.type === 'int' ? 'whole' : 'exact'}</span></div>`;
             } else if (paramInfo.type === 'bool') {
-                controlHtml += `
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" id="${inputId}"
-                               ${currentValue ? 'checked' : ''}
-                               onchange="updateControlParameter('${paramName}', this.checked, 'bool')">
-                        <label class="form-check-label" for="${inputId}">Enable</label>
-                    </div>
-                `;
+                inputHtml = `<div class="form-check form-switch pt-1"><input class="form-check-input" type="checkbox" role="switch" id="${inputId}" ${currentValue ? 'checked' : ''} onchange="updateControlParameter('${paramName}', this.checked, 'bool')"><label class="form-check-label fw-semibold" for="${inputId}">${currentValue ? 'On' : 'Off'}</label></div>`;
             } else {
-                controlHtml += `
-                    <input type="text" class="form-control"
-                           id="${inputId}"
-                           value="${currentValue}"
-                           onchange="updateControlParameter('${paramName}', this.value, 'str')">
-                `;
+                inputHtml = `<input type="text" class="form-control" id="${inputId}" value="${escapeHtml(currentValue)}" onchange="updateControlParameter('${paramName}', this.value, 'str')">`;
             }
-            controlDiv.innerHTML = controlHtml;
+            controlDiv.innerHTML = `<div class="d-flex justify-content-between gap-2"><div><div class="parameter-label">${escapeHtml(prettyName)}</div><div class="parameter-description">${escapeHtml(paramInfo.description || '')}</div></div><button class="btn btn-link btn-sm text-muted p-0 align-self-start" type="button" onclick="resetControlParameter('${paramName}')" title="Reset to ${escapeHtml(paramInfo.default)}"><i class="fas fa-rotate-left"></i></button></div>${inputHtml}`;
             container.appendChild(controlDiv);
         });
 
@@ -1200,6 +1306,8 @@
 
     async function saveControlPreset() {
         const input = document.getElementById('controlPresetName');
+        const categoryInput = document.getElementById('controlPresetCategory');
+        const descriptionInput = document.getElementById('controlPresetDescription');
         const presetName = input.value.trim();
         const animationName = controlSelectedAnimation;
         if (!animationName || !presetName) {
@@ -1211,6 +1319,8 @@
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 name: presetName,
+                category: categoryInput.value.trim() || 'Personal',
+                description: descriptionInput.value.trim(),
                 params: controlParameterStore[animationName] || {}
             })
         });
@@ -1220,6 +1330,8 @@
             return;
         }
         input.value = '';
+        categoryInput.value = '';
+        descriptionInput.value = '';
         await loadControlPresets(animationName);
         document.getElementById('controlPresetSelect').value = payload.preset.preset_id;
         showToast(`Saved preset: ${payload.preset.name}`, 'success');
@@ -1240,6 +1352,9 @@
             return;
         }
         renderControlParameterControls(controlParameterSchema, payload.preset.params || {});
+        document.getElementById('controlPresetName').value = payload.preset.name || '';
+        document.getElementById('controlPresetCategory').value = payload.preset.category || '';
+        document.getElementById('controlPresetDescription').value = payload.preset.description || '';
         showToast(`Loaded preset: ${payload.preset.name}`, 'success');
     }
 
@@ -1278,29 +1393,22 @@
             return;
         }
 
-        if (controlParameterUpdateTimeout) {
-            clearTimeout(controlParameterUpdateTimeout);
-        }
+        updateControlParametersBatch({[name]: convertedValue});
+    }
 
+    function updateControlParametersBatch(params) {
+        if (!params || !Object.keys(params).length) return;
+        if (controlParameterUpdateTimeout) clearTimeout(controlParameterUpdateTimeout);
         if (controlSelectedAnimation) {
-            if (!controlParameterStore[controlSelectedAnimation]) {
-                controlParameterStore[controlSelectedAnimation] = {};
-            }
-            controlParameterStore[controlSelectedAnimation][name] = convertedValue;
-            if (animationRenderer &&
-                animationRenderer.previewMode &&
-                animationRenderer.previewAnimation === controlSelectedAnimation) {
+            if (!controlParameterStore[controlSelectedAnimation]) controlParameterStore[controlSelectedAnimation] = {};
+            Object.assign(controlParameterStore[controlSelectedAnimation], params);
+            if (animationRenderer && animationRenderer.previewMode && animationRenderer.previewAnimation === controlSelectedAnimation) {
                 animationRenderer.setPreviewParams(controlParameterStore[controlSelectedAnimation]);
             }
         }
-
         controlParameterUpdateTimeout = setTimeout(() => {
-            const params = {};
-            params[name] = convertedValue;
             updateParameters(params).then(result => {
-                if (!result.success) {
-                    console.error('Failed to update parameter:', name);
-                }
+                if (!result.success) console.error('Failed to update parameters:', params);
             });
         }, 120);
     }

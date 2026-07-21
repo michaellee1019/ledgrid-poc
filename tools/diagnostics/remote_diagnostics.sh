@@ -92,7 +92,7 @@ nohup "${PYTHON_BIN}" scripts/start_server.py \
   --animations-dir animation/plugins \
   --strips "${STRIPS}" \
   --leds-per-strip "${LEDS}" \
-  --animation-speed-scale 0.2 \
+  --animation-speed-scale 0.3 \
   --host 0.0.0.0 \
   --port "${PORT}" \
   > web.log 2>&1 &

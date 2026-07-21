@@ -7,6 +7,7 @@ real time.
 """
 
 import json
+import math
 import re
 import time
 from datetime import datetime
@@ -23,6 +24,25 @@ from drivers.frame_codec import (
     encode_frame_data,
     FRAME_ENCODING_NAME,
 )
+
+DEFAULT_ANIMATION_SPEED_SCALE = 0.3
+
+ANIMATION_EMOJI = {
+    'ascii_drop': '💻', 'christmas_tree': '🎄', 'clock': '🕰️', 'conway_life': '🧬',
+    'emoji': '😄', 'emoji_arranger': '🎭', 'fireworks': '🎆',
+    'flame_burst': '🔥', 'fluid_tank': '💧', 'gif_animation': '🎬',
+    'gradient': '🌈', 'living_ecosystem': '🌿', 'maze_chase': '👾',
+    'pinball': '🎱', 'pixel_chase': '💨', 'pixel_quest': '⚔️',
+    'plant_calibration': '🎯', 'plant_mask_highlight': '🌱', 'rainbow': '🌈',
+    'simple_test': '🧪', 'solid': '🎨', 'sparkle': '✨',
+    'spiral_single': '🌀', 'strip_order': '🔢', 'tetris': '🧱',
+    'wave': '🌊', 'world_flags': '🌍',
+}
+
+TEST_ANIMATIONS = {
+    'plant_calibration', 'plant_mask_highlight', 'simple_test',
+    'spiral_single', 'strip_order',
+}
 
 
 class AnimationWebInterface:
@@ -66,14 +86,20 @@ class AnimationWebInterface:
         @self.app.route('/')
         def index():
             """Main dashboard"""
-            animations = self.preview_manager.list_animations()
+            animations = self._dashboard_animations()
             status = self._status_payload()
-            return render_template('index.html', animations=animations, status=status)
+            return render_template(
+                'index.html',
+                animations=[item for item in animations if not item['is_test']],
+                test_animations=[item for item in animations if item['is_test']],
+                status=status,
+                speed_baseline=DEFAULT_ANIMATION_SPEED_SCALE,
+            )
         
         @self.app.route('/api/animations')
         def api_list_animations():
             """API: Get list of available animations"""
-            animations = self.preview_manager.list_animations()
+            animations = self._sorted_animations()
             return jsonify(animations)
         
         @self.app.route('/api/animations/<animation_name>')
@@ -214,6 +240,25 @@ class AnimationWebInterface:
                 'set_target_fps', target_fps=target_fps
             )
             return jsonify({'success': True, 'target_fps': target_fps})
+
+        @self.app.route('/api/config/animation-speed', methods=['POST'])
+        def api_set_animation_speed():
+            payload = request.get_json(silent=True) or {}
+            try:
+                multiplier = float(payload.get('multiplier'))
+            except (TypeError, ValueError):
+                return jsonify({'error': 'multiplier must be numeric'}), 400
+            if not math.isfinite(multiplier) or multiplier <= 0:
+                return jsonify({'error': 'multiplier must be a positive finite number'}), 400
+            speed_scale = DEFAULT_ANIMATION_SPEED_SCALE * multiplier
+            self.control_channel.send_command(
+                'set_animation_speed_scale', animation_speed_scale=speed_scale
+            )
+            return jsonify({
+                'success': True,
+                'multiplier': multiplier,
+                'animation_speed_scale': speed_scale,
+            })
 
         @self.app.route('/api/hardware/stats')
         def api_get_hardware_stats():
@@ -405,7 +450,7 @@ class AnimationWebInterface:
         @self.app.route('/control')
         def control_page():
             """Animation control page"""
-            animations = self.preview_manager.list_animations()
+            animations = self._sorted_animations()
             status = self._status_payload()
             return render_template('control.html', animations=animations, status=status)
 
@@ -420,6 +465,81 @@ class AnimationWebInterface:
             """Frame painter page."""
             status = self._status_payload()
             return render_template('painter.html', status=status)
+
+    def _dashboard_animations(self) -> List[Dict[str, Any]]:
+        """Decorate plugin metadata for the dashboard's show/test galleries."""
+        catalog = []
+        for animation in self._sorted_animations():
+            item = dict(animation)
+            plugin_name = item.get('plugin_name', '')
+            item['emoji'] = ANIMATION_EMOJI.get(plugin_name, '✨')
+            item['is_test'] = plugin_name in TEST_ANIMATIONS
+            presets = self._list_animation_presets(plugin_name)
+            for preset in presets:
+                preset['emoji'] = self._preset_emoji(preset, item['emoji'])
+                full_preset = self._load_animation_preset(plugin_name, preset.get('preset_id', ''))
+                preset['swatches'] = self._preset_swatches(full_preset or preset)
+            item['presets'] = presets
+            catalog.append(item)
+        return catalog
+
+    def _sorted_animations(self) -> List[Dict[str, Any]]:
+        """Return animation metadata alphabetized by its display name."""
+        return sorted(
+            self.preview_manager.list_animations(),
+            key=lambda animation: str(
+                animation.get('name') or animation.get('plugin_name') or ''
+            ).casefold(),
+        )
+
+    @staticmethod
+    def _preset_emoji(preset: Dict[str, Any], fallback: str) -> str:
+        """Choose a discoverable icon from curated preset language."""
+        text = ' '.join([
+            str(preset.get('name', '')),
+            str(preset.get('category', '')),
+            ' '.join(map(str, preset.get('tags') or [])),
+        ]).lower()
+        choices = (
+            (('ice', 'crystal', 'frost'), '❄️'),
+            (('fire', 'ember', 'solar', 'gold'), '🔥'),
+            (('ocean', 'tide', 'water'), '🌊'),
+            (('space', 'star', 'galaxy'), '🌌'),
+            (('earth', 'garden', 'orchard'), '🌍'),
+            (('neon', 'synthwave', 'arcade'), '🎆'),
+            (('quiet', 'calm'), '🌙'),
+            (('chaos', 'storm', 'finale'), '⚡'),
+        )
+        return next((emoji for terms, emoji in choices if any(term in text for term in terms)), fallback)
+
+    @staticmethod
+    def _preset_swatches(preset: Dict[str, Any]) -> List[str]:
+        """Extract up to three representative colors from preset parameters."""
+        palette = preset.get('palette')
+        if isinstance(palette, dict) and isinstance(palette.get('colors'), list):
+            colors = [
+                color.upper() for color in palette['colors']
+                if isinstance(color, str) and re.fullmatch(r'#[0-9a-fA-F]{6}', color)
+            ]
+            if colors:
+                return colors[:3]
+
+        params = preset.get('params') or {}
+        colors = []
+        for red_name, red_value in params.items():
+            if not red_name.endswith('red'):
+                continue
+            prefix = red_name[:-3]
+            green_name, blue_name = f'{prefix}green', f'{prefix}blue'
+            if green_name not in params or blue_name not in params:
+                continue
+            try:
+                channels = [int(red_value), int(params[green_name]), int(params[blue_name])]
+            except (TypeError, ValueError):
+                continue
+            if all(0 <= channel <= 255 for channel in channels):
+                colors.append('#' + ''.join(f'{channel:02X}' for channel in channels))
+        return colors[:3]
     
     def run(self, debug=False):
         """Start the web server"""
@@ -570,7 +690,9 @@ class AnimationWebInterface:
             payload.setdefault('preset_id', path.stem)
             payload.setdefault('name', path.stem)
             summaries.append(self._preset_summary(payload))
-        summaries.sort(key=lambda preset: self._preset_timestamp(preset.get('updated_at')), reverse=True)
+        summaries.sort(
+            key=lambda preset: str(preset.get('name') or preset.get('preset_id') or '').casefold()
+        )
         return summaries
 
     def _load_painter_preset(self, preset_id: str) -> Optional[Dict[str, Any]]:
@@ -653,7 +775,9 @@ class AnimationWebInterface:
             payload.setdefault('name', path.stem)
             payload.setdefault('animation', animation_name)
             summaries.append(self._animation_preset_summary(payload))
-        summaries.sort(key=lambda preset: self._preset_timestamp(preset.get('updated_at')), reverse=True)
+        summaries.sort(
+            key=lambda preset: str(preset.get('name') or preset.get('preset_id') or '').casefold()
+        )
         return summaries
 
     def _load_animation_preset(self, animation_name: str, preset_id: str) -> Optional[Dict[str, Any]]:
@@ -727,6 +851,7 @@ class AnimationWebInterface:
         status.setdefault('painter_updated_at', None)
         status.setdefault('frame_count', 0)
         status.setdefault('target_fps', 0)
+        status.setdefault('animation_speed_scale', DEFAULT_ANIMATION_SPEED_SCALE)
         status.setdefault('actual_fps', 0)
         status.setdefault('uptime', 0)
         status['deploy_timestamp'] = self._deploy_timestamp()
@@ -786,6 +911,7 @@ class AnimationWebInterface:
             'frame_count': 0,
             'uptime': 0,
             'target_fps': 0,
+            'animation_speed_scale': DEFAULT_ANIMATION_SPEED_SCALE,
             'actual_fps': 0,
             'animation_stats': {},
             'stats': {},
@@ -808,7 +934,7 @@ def create_app(control_channel: FileControlChannel = None,
                strips: int = DEFAULT_STRIP_COUNT,
                leds_per_strip: int = DEFAULT_LEDS_PER_STRIP,
                animations_dir: str = None,
-               animation_speed_scale: float = 1.0):
+               animation_speed_scale: float = DEFAULT_ANIMATION_SPEED_SCALE):
     """Factory function to create the web application"""
     if control_channel is None:
         control_channel = FileControlChannel()
@@ -840,7 +966,7 @@ if __name__ == '__main__':
     # LED layout for previews (does not touch hardware)
     parser.add_argument('--strips', type=int, default=DEFAULT_STRIP_COUNT, help='Number of strips')
     parser.add_argument('--leds-per-strip', type=int, default=DEFAULT_LEDS_PER_STRIP, help='LEDs per strip')
-    parser.add_argument('--animation-speed-scale', type=float, default=1.0,
+    parser.add_argument('--animation-speed-scale', type=float, default=DEFAULT_ANIMATION_SPEED_SCALE,
                         help='Speed multiplier applied to preview animations')
     
     args = parser.parse_args()

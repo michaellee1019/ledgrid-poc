@@ -89,7 +89,7 @@ class AnimationPresetTests(unittest.TestCase):
             'data': {'animation': 'sparkle', 'config': {'brightness': 0.9}},
         })
 
-    def test_list_sorts_mixed_runtime_and_curated_timestamps(self):
+    def test_list_alphabetizes_presets_with_mixed_timestamp_formats(self):
         preset_dir = Path(self.temp_dir.name) / 'conway_life'
         preset_dir.mkdir()
         payloads = [
@@ -117,7 +117,7 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             [preset['preset_id'] for preset in response.get_json()['presets']],
-            ['runtime', 'curated'],
+            ['curated', 'runtime'],
         )
 
     def test_overwrite_preserves_created_time_and_delete_removes_file(self):
@@ -160,6 +160,94 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertEqual(preset['version'], 2)
         self.assertEqual(preset['category'], 'Installation')
         self.assertEqual(preset['palette']['colors'], ['#FFAA22'])
+
+    def test_global_speed_control_sends_scaled_controller_command(self):
+        response = self.client.post(
+            '/api/config/animation-speed', json={'multiplier': 1.5}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertAlmostEqual(response.get_json()['animation_speed_scale'], 0.45)
+        self.assertEqual(self.channel.commands[-1]['action'], 'set_animation_speed_scale')
+        self.assertAlmostEqual(
+            self.channel.commands[-1]['data']['animation_speed_scale'], 0.45
+        )
+
+    def test_global_speed_control_has_no_artificial_upper_limit(self):
+        response = self.client.post(
+            '/api/config/animation-speed', json={'multiplier': 25}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertAlmostEqual(
+            self.channel.commands[-1]['data']['animation_speed_scale'], 7.5
+        )
+
+    def test_global_speed_control_rejects_non_positive_values(self):
+        response = self.client.post(
+            '/api/config/animation-speed', json={'multiplier': 0}
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.channel.commands, [])
+
+    def test_dashboard_promotes_presets_and_collapses_test_animations(self):
+        self.interface.preview_manager.list_animations = lambda: [
+            {
+                'plugin_name': 'sparkle', 'name': 'Sparkle',
+                'description': 'Twinkling points', 'author': 'Test', 'version': '1',
+            },
+            {
+                'plugin_name': 'simple_test', 'name': 'Simple Test',
+                'description': 'Hardware test', 'author': 'Test', 'version': '1',
+            },
+        ]
+        self.client.post('/api/animations/sparkle/presets', json={
+            'name': 'Calm Stars',
+            'category': 'Ambient',
+            'params': {
+                'speed': 0.5,
+                'base_red': 1, 'base_green': 2, 'base_blue': 16,
+            },
+        })
+
+        response = self.client.get('/')
+
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn('Calm Stars', html)
+        self.assertIn('background: #010210', html)
+        self.assertIn('Global tempo', html)
+        self.assertIn('Test & calibration animations', html)
+        self.assertIn('id="testAnimationCollapse" class="accordion-collapse collapse"', html)
+
+    def test_dashboard_alphabetizes_animations_and_places_tempo_below_preview(self):
+        self.interface.preview_manager.list_animations = lambda: [
+            {
+                'plugin_name': 'wave', 'name': 'Wave',
+                'description': 'Rolling bands', 'author': 'Test', 'version': '1',
+            },
+            {
+                'plugin_name': 'sparkle', 'name': 'Sparkle',
+                'description': 'Twinkling points', 'author': 'Test', 'version': '1',
+            },
+        ]
+
+        html = self.client.get('/').get_data(as_text=True)
+
+        self.assertLess(html.index('data-animation-card="sparkle"'), html.index('data-animation-card="wave"'))
+        self.assertLess(html.index('id="ledCanvas"'), html.index('id="globalSpeedRange"'))
+        self.assertLess(html.index('id="globalSpeedRange"'), html.index('aria-label="Speed presets"'))
+
+    def test_animation_presets_are_alphabetized_by_display_name(self):
+        for name in ('zebra', 'Aurora', 'calm'):
+            self.client.post('/api/animations/sparkle/presets', json={
+                'name': name, 'params': {'brightness': 0.7},
+            })
+
+        presets = self.client.get('/api/animations/sparkle/presets').get_json()['presets']
+
+        self.assertEqual([preset['name'] for preset in presets], ['Aurora', 'calm', 'zebra'])
 
     def test_numeric_and_iso_timestamp_presets_sort_together(self):
         preset_dir = Path(self.temp_dir.name) / 'sparkle'
