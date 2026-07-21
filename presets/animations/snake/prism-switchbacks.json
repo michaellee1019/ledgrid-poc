@@ -3,5 +3,5 @@
   "animation": "snake", "category": "Geometric", "description": "Prismatic trails fold repeatedly around a shifting zigzag barrier.",
   "tags": ["prism", "zigzag", "trails"], "palette": {"name": "Refracted Light", "colors": ["#111229", "#31E8FF", "#A5FF38", "#FF4CCC"]},
   "created_at": "2026-07-21T00:00:00Z", "updated_at": "2026-07-21T00:00:00Z",
-  "params": {"brightness": 0.8, "speed": 0.88, "moves_per_second": 12, "snake_count": 4, "initial_length": 9, "food_count": 12, "growth_per_food": 3, "ruleset": "wrap", "wall_pattern": "zigzag", "visual_style": "prism", "background": "aurora", "trail_strength": 0.95, "trail_decay": 1.1, "glow": 0.72, "seed": 73}
+  "params": {"plant_aware":true,"brightness": 0.8, "speed": 0.88, "moves_per_second": 12, "snake_count": 4, "initial_length": 9, "food_count": 12, "growth_per_food": 3, "ruleset": "wrap", "wall_pattern": "zigzag", "visual_style": "prism", "background": "aurora", "trail_strength": 0.95, "trail_decay": 1.1, "glow": 0.72, "seed": 73}
 }

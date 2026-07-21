@@ -97,6 +97,15 @@ class FireworksAnimation(AnimationBase):
         self._sparks: List[Spark] = []
         self._trail = np.zeros((self.height, self.width, 3), dtype=np.float32)
         self._stars = np.zeros((self.height, self.width), dtype=np.float32)
+        self._plant_foliage = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_globes = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_obstacle = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_clearance = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_geometry = None
+        self._plant_active = self.plant_aware_enabled()
+        self._plant_foliage_flash = 0.0
+        self._plant_globe_flash = 0.0
+        self._plant_hits = 0
         self._last_time = None
         self._launch_accumulator = 1.0
         self._burst_count = 0
@@ -153,20 +162,37 @@ class FireworksAnimation(AnimationBase):
             self._rebuild_stars()
 
     def get_runtime_stats(self) -> Dict[str, Any]:
-        return {
+        stats = {
             "rockets": len(self._rockets),
             "sparks": len(self._sparks),
             "bursts": self._burst_count,
+            "plant_aware": self.plant_aware_enabled(),
+            "plant_hits": self._plant_hits,
         }
+        if self.plant_aware_enabled():
+            stats.update({
+                "plant_foliage_pixels": int(np.count_nonzero(self._plant_foliage)),
+                "plant_globe_pixels": int(np.count_nonzero(self._plant_globes)),
+            })
+            if self._plant_geometry is not None and self._plant_geometry.error:
+                stats["plant_mask_error"] = self._plant_geometry.error
+        return stats
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
         self._ensure_geometry()
+        self._plant_active = self.plant_aware_enabled()
+        if self._plant_active:
+            self._refresh_plant_geometry()
         if self._last_time is None or time_elapsed < self._last_time:
             dt = 1.0 / 60.0
         else:
             dt = min(0.1, max(0.0, time_elapsed - self._last_time))
         self._last_time = time_elapsed
         scaled_dt = dt * max(0.0, float(self.params.get("speed", 1.0)))
+        if self._plant_active:
+            fade = 0.80 ** (scaled_dt * 60.0)
+            self._plant_foliage_flash *= fade
+            self._plant_globe_flash *= fade
 
         persistence = min(0.9999, max(0.0, float(self.params.get("trail_persistence", 0.93))))
         self._trail *= persistence ** (scaled_dt * 60.0)
@@ -181,6 +207,9 @@ class FireworksAnimation(AnimationBase):
             shimmer = 0.65 + 0.35 * np.sin(time_elapsed * 2.2 + self._stars * 19.0)
             image += (self._stars * shimmer)[..., None] * np.array((95.0, 125.0, 190.0), dtype=np.float32)
 
+        if self._plant_active:
+            self._render_plant_silhouettes(image)
+
         np.clip(image, 0.0, 255.0, out=image)
         logical = image.astype(np.uint8)
         frame = self.next_frame_buffer(clear=False)
@@ -194,6 +223,11 @@ class FireworksAnimation(AnimationBase):
             return
         self.width, self.height = width, height
         self._trail = np.zeros((height, width, 3), dtype=np.float32)
+        self._plant_foliage = np.zeros((height, width), dtype=bool)
+        self._plant_globes = np.zeros((height, width), dtype=bool)
+        self._plant_obstacle = np.zeros((height, width), dtype=bool)
+        self._plant_clearance = np.zeros((height, width), dtype=bool)
+        self._plant_geometry = None
         self._rockets.clear()
         self._sparks.clear()
         self._rebuild_stars()
@@ -220,7 +254,13 @@ class FireworksAnimation(AnimationBase):
             low, high = sorted((max(0.05, min(0.98, low)), max(0.05, min(0.98, high))))
             target_y = 1.0 - self._rng.uniform(low, high)
             launch_speed = max(0.05, float(self.params.get("launch_speed", 0.72)))
-            self._rockets.append(Rocket(x, 1.02, self._rng.uniform(-0.025, 0.025), -launch_speed, target_y, self._choose_hue()))
+            vx = self._rng.uniform(-0.025, 0.025)
+            if self._plant_active:
+                # Favor a vertical sight line whose burst and rising trail can
+                # actually be seen instead of spending a shell behind foliage.
+                x = self._nearest_visible_launch_x(x, target_y)
+                vx = 0.0
+            self._rockets.append(Rocket(x, 1.02, vx, -launch_speed, target_y, self._choose_hue()))
 
     def _update_rockets(self, dt: float):
         gravity = max(0.0, float(self.params.get("gravity", 0.34)))
@@ -289,11 +329,17 @@ class FireworksAnimation(AnimationBase):
         children: List[Spark] = []
         for spark in self._sparks:
             spark.age += dt
+            old_x, old_y = spark.x, spark.y
             spark.x += spark.vx * dt
             spark.y += spark.vy * dt
             spark.vx *= drag
             spark.vy = spark.vy * drag + gravity * dt
             life = spark.age / spark.lifetime
+            if self._plant_active:
+                collision = self._plant_collision_point(old_x, old_y, spark.x, spark.y)
+                if collision is not None:
+                    self._record_plant_hit(*collision, max(0.15, 1.0 - life))
+                    continue
             if spark.can_split and not spark.split and life >= 0.55:
                 spark.split = True
                 for direction in (-1.0, 1.0):
@@ -310,7 +356,10 @@ class FireworksAnimation(AnimationBase):
             self._deposit(spark.x, spark.y, spark.color, fade * shimmer * spark.size * trail_intensity)
             survivors.append(spark)
         # Keep pathological live parameter combinations bounded.
-        self._sparks = (survivors + children)[-1400:]
+        # Plant collision sampling has a little extra cost, and masked sparks
+        # contribute less useful light, so retain a smaller stress-path cloud.
+        spark_cap = 1000 if self._plant_active else 1400
+        self._sparks = (survivors + children)[-spark_cap:]
 
     def _choose_hue(self) -> float:
         palette = str(self.params.get("palette", "festival")).lower().strip()
@@ -346,7 +395,91 @@ class FireworksAnimation(AnimationBase):
             for xx, wx in ((x0, 1.0 - fx), (x0 + 1, fx)):
                 weight = wx * wy
                 if 0 <= xx < self.width and weight > 0.0:
+                    if self._plant_active and self._plant_obstacle[yy, xx]:
+                        continue
                     pixel = self._trail[yy, xx]
                     pixel[0] += red * weight
                     pixel[1] += green * weight
                     pixel[2] += blue * weight
+
+    def _refresh_plant_geometry(self):
+        masks = self.get_plant_masks()
+        if masks is self._plant_geometry:
+            return
+        # Shared masks are [strip, physical LED], while this particle canvas is
+        # [top-down y, x].
+        self._plant_foliage[:] = masks.foliage.T[::-1]
+        self._plant_globes[:] = masks.globes.T[::-1]
+        self._plant_obstacle[:] = masks.obstacle.T[::-1]
+        self._plant_clearance[:] = masks.clearance.T[::-1]
+        self._plant_geometry = masks
+
+    def _nearest_visible_launch_x(self, requested_x: float, target_y: float) -> float:
+        """Choose a low-occlusion vertical route near the authored launch point."""
+        if self.width <= 1 or not np.any(self._plant_clearance):
+            return requested_x
+        target_row = min(self.height - 1, max(0, int(round(target_y * (self.height - 1)))))
+        requested_column = requested_x * (self.width - 1)
+        best_column = min(self.width - 1, max(0, int(round(requested_column))))
+        best_score = -math.inf
+        for column in range(self.width):
+            route = self._plant_clearance[target_row:, column]
+            visible_fraction = 1.0 - float(np.count_nonzero(route)) / max(1, route.size)
+            target_safe = 1.0 if not self._plant_clearance[target_row, column] else 0.0
+            distance = abs(column - requested_column) / max(1, self.width - 1)
+            score = target_safe * 3.0 + visible_fraction - distance * 0.18
+            if score > best_score:
+                best_score = score
+                best_column = column
+        return best_column / max(1, self.width - 1)
+
+    def _plant_collision(self, x: float, y: float) -> bool:
+        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+            return False
+        column = min(self.width - 1, max(0, int(round(x * (self.width - 1)))))
+        row = min(self.height - 1, max(0, int(round(y * (self.height - 1)))))
+        return bool(self._plant_obstacle[row, column])
+
+    def _plant_collision_point(
+        self, x0: float, y0: float, x1: float, y1: float
+    ):
+        """Return the first masked point crossed by a spark's bounded step."""
+        pixel_dx = abs(x1 - x0) * max(1, self.width - 1)
+        pixel_dy = abs(y1 - y0) * max(1, self.height - 1)
+        steps = max(1, int(math.ceil(max(pixel_dx, pixel_dy))))
+        for step in range(1, steps + 1):
+            amount = step / steps
+            x = x0 + (x1 - x0) * amount
+            y = y0 + (y1 - y0) * amount
+            if self._plant_collision(x, y):
+                return x, y
+        return None
+
+    def _record_plant_hit(self, x: float, y: float, energy: float):
+        column = min(self.width - 1, max(0, int(round(x * (self.width - 1)))))
+        row = min(self.height - 1, max(0, int(round(y * (self.height - 1)))))
+        if self._plant_globes[row, column]:
+            self._plant_globe_flash = min(1.0, self._plant_globe_flash + energy)
+        else:
+            self._plant_foliage_flash = min(1.0, self._plant_foliage_flash + energy)
+        self._plant_hits += 1
+
+    def _render_plant_silhouettes(self, image: np.ndarray):
+        """Reveal plants as cool foliage and warm globe silhouettes on impact."""
+        image[self._plant_obstacle] *= 0.18
+        halo = self._plant_clearance & ~self._plant_obstacle
+        if np.any(halo):
+            halo_color = np.array((5.0, 12.0, 24.0), dtype=np.float32)
+            image[halo] = np.maximum(image[halo], halo_color)
+        if np.any(self._plant_foliage):
+            foliage = np.array(
+                (7.0, 38.0 + 150.0 * self._plant_foliage_flash, 25.0 + 55.0 * self._plant_foliage_flash),
+                dtype=np.float32,
+            )
+            image[self._plant_foliage] = np.maximum(image[self._plant_foliage], foliage)
+        if np.any(self._plant_globes):
+            globes = np.array(
+                (66.0 + 180.0 * self._plant_globe_flash, 18.0 + 80.0 * self._plant_globe_flash, 82.0),
+                dtype=np.float32,
+            )
+            image[self._plant_globes] = np.maximum(image[self._plant_globes], globes)

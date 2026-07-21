@@ -64,3 +64,6 @@ compile_commands.json
 !/presets/animations/snake/
 /presets/animations/snake/*
 !/presets/animations/snake/*.json
+!/presets/animations/plant_glow/
+/presets/animations/plant_glow/*
+!/presets/animations/plant_glow/*.json

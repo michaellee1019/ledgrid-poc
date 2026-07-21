@@ -60,6 +60,7 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                 "current_animation": "rainbow",
                 "animation_speed_scale": 0.45,
                 "target_fps": 144,
+                "plant_aware": False,
                 "animation_info": {
                     "current_params": {"speed": 0.9, "brightness": 0.7},
                 },
@@ -70,6 +71,7 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             self.assertEqual(saved["params"], {"speed": 2.0, "brightness": 0.7})
             self.assertEqual(saved["animation_speed_scale"], 0.45)
             self.assertEqual(saved["target_fps"], 144)
+            self.assertFalse(saved["plant_aware"])
 
     def test_save_status_ignores_non_finite_optional_runtime_values(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -103,6 +105,12 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             state_path.write_text(json.dumps(state))
 
             with self.assertRaisesRegex(RuntimeError, "invalid target FPS"):
+                load_saved_state(state_path)
+
+            state["target_fps"] = 144
+            state["plant_aware"] = "yes"
+            state_path.write_text(json.dumps(state))
+            with self.assertRaisesRegex(RuntimeError, "invalid plant-aware state"):
                 load_saved_state(state_path)
 
     def test_save_requires_a_running_animation(self):

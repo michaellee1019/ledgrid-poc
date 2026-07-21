@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from animation.core import AnimationBase, RenderedFrame, StatefulAnimationBase, AnimationPluginLoader
-from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
+from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import encode_frame_data, FRAME_ENCODING_NAME
 
@@ -133,6 +133,7 @@ class AnimationManager:
 
     def __init__(self, controller: LEDController, plugins_dir: Optional[str] = None,
                  animation_speed_scale: float = DEFAULT_ANIMATION_SPEED_SCALE,
+                 plant_aware: bool = DEFAULT_PLANT_AWARE,
                  default_animation: Optional[str] = None,
                  default_animation_config: Optional[Dict[str, Any]] = None,
                  auto_start: bool = True):
@@ -143,6 +144,7 @@ class AnimationManager:
             controller: LED controller instance
             plugins_dir: Directory containing animation plugins
             animation_speed_scale: Multiplier applied to each animation's speed parameter at start
+            plant_aware: Global plant-aware state applied to every animation
             default_animation: Animation to auto-start on init (None = use DEFAULT_ANIMATION)
             default_animation_config: Parameters to apply to the default animation
             auto_start: Whether to start the default animation during construction
@@ -167,6 +169,7 @@ class AnimationManager:
         self.unchanged_frames_skipped = 0
         self.start_time = 0.0
         self.animation_speed_scale = animation_speed_scale
+        self.plant_aware = bool(plant_aware)
         
         # Threading
         self.animation_thread: Optional[threading.Thread] = None
@@ -256,6 +259,15 @@ class AnimationManager:
                 'speed': current_speed * (requested / previous)
             })
         return self.animation_speed_scale
+
+    def set_plant_aware(self, enabled: bool) -> bool:
+        """Apply the global plant-aware state now and to future animation starts."""
+        if not isinstance(enabled, bool):
+            raise ValueError("plant-aware state must be boolean")
+        self.plant_aware = enabled
+        if self.current_animation:
+            self.current_animation.update_parameters({'plant_aware': enabled})
+        return self.plant_aware
     
     def list_animations(self) -> List[Dict[str, Any]]:
         """Get list of available animations with metadata"""
@@ -292,7 +304,9 @@ class AnimationManager:
                 return False
             
             # Create animation instance
-            self.current_animation = animation_class(self.controller, config or {})
+            effective_config = dict(config or {})
+            effective_config['plant_aware'] = self.plant_aware
+            self.current_animation = animation_class(self.controller, effective_config)
             self.current_animation_name = animation_name
             self.current_animation_hash = self._compute_animation_hash(animation_name)
 
@@ -539,6 +553,7 @@ class AnimationManager:
                 'uptime': (time.perf_counter() - self.start_time) if self.is_running else 0,
                 'target_fps': self.target_fps,
                 'animation_speed_scale': self.animation_speed_scale,
+                'plant_aware': self.plant_aware,
                 'actual_fps': self._calculate_fps(),
                 'animation_hash': self.current_animation_hash,
                 'led_info': {

@@ -157,19 +157,28 @@ class MazeChaseAnimation(AnimationBase):
         self.params = {**self.default_params, **self.config}
         self.random = random.Random(int(self.params.get("seed", 1980)))
         self._canvas = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        self.walkable: Set[Cell] = {
+        self._base_walkable: Set[Cell] = {
             (row, col) for row, line in enumerate(MAZE)
             for col, value in enumerate(line) if value != "#"
         }
+        self.walkable: Set[Cell] = set(self._base_walkable)
+        self._plant_blocked_cells: Set[Cell] = set()
+        self._plant_occluded_cells: Set[Cell] = set()
+        self._plant_canvas_foliage = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_canvas_globes = np.zeros((self.height, self.width), dtype=bool)
+        self._configure_plant_maze()
         self.initial_pellets = {
             cell for cell in self.walkable if cell not in self.GHOST_SPAWNS
             and cell != self.PLAYER_SPAWN
+            and cell not in self._plant_occluded_cells
         }
-        self.initial_energizers = {
+        authored_energizers = {
             (row, col) for row, line in enumerate(MAZE)
             for col, value in enumerate(line) if value == "o"
         }
+        self.initial_energizers = self._place_energizers(authored_energizers)
         self.initial_pellets -= self.initial_energizers
+        self.fruit_spawn = self._nearest_visible_cell((14, 7))
         self.last_elapsed: Optional[float] = None
         self.last_render_elapsed: Optional[float] = None
         self.last_rendered_frame: Optional[np.ndarray] = None
@@ -193,6 +202,89 @@ class MazeChaseAnimation(AnimationBase):
         self._last_targets: List[Cell] = []
         self._reset_board()
         self._reset_actors()
+
+    def _configure_plant_maze(self):
+        """Project calibrated masks into maze cells without disconnecting play."""
+        self.walkable = set(self._base_walkable)
+        self._plant_blocked_cells.clear()
+        self._plant_occluded_cells.clear()
+        self._plant_canvas_foliage.fill(False)
+        self._plant_canvas_globes.fill(False)
+        if not self.plant_aware_enabled():
+            return
+
+        masks = self.get_plant_masks()
+        # Canonical masks are (strip, led); the renderer's canvas has its LED
+        # axis flipped vertically before it is transposed into that convention.
+        self._plant_canvas_foliage[:] = masks.foliage.T[::-1]
+        self._plant_canvas_globes[:] = masks.globes.T[::-1]
+        obstacle = self._plant_canvas_foliage | self._plant_canvas_globes
+        clearance = masks.clearance.T[::-1]
+        scale_x, scale_y, left, top = self._layout()
+        candidates = []
+        for cell in self._base_walkable:
+            row, col = cell
+            x0, y0 = left + col * scale_x, top + row * scale_y
+            x1, y1 = min(self.width, x0 + scale_x), min(self.height, y0 + scale_y)
+            if x0 >= x1 or y0 >= y1:
+                continue
+            cell_obstacle = obstacle[y0:y1, x0:x1]
+            cell_clearance = clearance[y0:y1, x0:x1]
+            if np.any(cell_obstacle):
+                self._plant_occluded_cells.add(cell)
+            globe_pixels = int(np.count_nonzero(self._plant_canvas_globes[y0:y1, x0:x1]))
+            clearance_ratio = float(np.count_nonzero(cell_clearance)) / cell_clearance.size
+            if globe_pixels or clearance_ratio >= 0.5:
+                candidates.append((globe_pixels > 0, clearance_ratio, cell))
+
+        protected = {self.PLAYER_SPAWN, *self.GHOST_SPAWNS,
+                     (TUNNEL_ROW, 0), (TUNNEL_ROW, MAZE_WIDTH - 1)}
+        # Remove the strongest intersections first, but retain one connected
+        # playfield so every remaining collectible stays reachable.
+        for _, _, cell in sorted(candidates, key=lambda item: (-item[0], -item[1], item[2])):
+            if cell in protected:
+                continue
+            trial = self.walkable - {cell}
+            if self._is_connected(trial):
+                self.walkable = trial
+                self._plant_blocked_cells.add(cell)
+
+    def _is_connected(self, cells: Set[Cell]) -> bool:
+        if not cells:
+            return False
+        start = next(iter(cells))
+        queue = deque([start])
+        seen = {start}
+        while queue:
+            cell = queue.popleft()
+            for direction in DIRECTIONS:
+                neighbor = self._neighbor(cell, direction)
+                if neighbor in cells and neighbor not in seen:
+                    seen.add(neighbor)
+                    queue.append(neighbor)
+        return seen == cells
+
+    def _nearest_visible_cell(self, origin: Cell, excluded: Optional[Set[Cell]] = None) -> Cell:
+        excluded = excluded or set()
+        candidates = self.walkable - self._plant_occluded_cells - excluded
+        if not candidates:
+            candidates = self.walkable - excluded
+        return min(candidates, key=lambda cell: (
+            self._bfs_distance(origin, [cell]), self._distance_sq(origin, cell), cell
+        ))
+
+    def _place_energizers(self, authored: Set[Cell]) -> Set[Cell]:
+        if not self.plant_aware_enabled():
+            return set(authored)
+        placed: Set[Cell] = set()
+        unavailable = {self.PLAYER_SPAWN, *self.GHOST_SPAWNS}
+        for origin in sorted(authored):
+            if (origin in self.walkable and origin not in self._plant_occluded_cells
+                    and origin not in placed):
+                placed.add(origin)
+            else:
+                placed.add(self._nearest_visible_cell(origin, unavailable | placed))
+        return placed
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -423,7 +515,7 @@ class MazeChaseAnimation(AnimationBase):
         for milestone in (70, 140):
             if eaten >= milestone and milestone not in self.fruit_milestones:
                 self.fruit_milestones.add(milestone)
-                self.fruit, self.fruit_timer = (14, 7), 8.0
+                self.fruit, self.fruit_timer = self.fruit_spawn, 8.0
         if remaining == 0 and self.game_state == "playing":
             self.game_state, self.state_timer = "level_clear", 1.6
 
@@ -605,6 +697,14 @@ class MazeChaseAnimation(AnimationBase):
                 elif cell in self.energizers and int(self.sim_time * 5) % 2 == 0:
                     self._cell_rect(cell, self.WHITE)
 
+        if self.plant_aware_enabled():
+            # The low light turns the physical occluders into readable landmarks;
+            # gameplay sprites are drawn afterward and remain visually dominant.
+            foliage = self._plant_canvas_foliage
+            globes = self._plant_canvas_globes
+            self._canvas[foliage] = np.maximum(self._canvas[foliage], (2, 24, 7))
+            self._canvas[globes] = np.maximum(self._canvas[globes], (48, 18, 2))
+
         if self.fruit is not None:
             self._cell_rect(self.fruit, self.FRUIT)
         if bool(self.params.get("show_ai_targets", False)):
@@ -649,4 +749,6 @@ class MazeChaseAnimation(AnimationBase):
             "pellets_remaining": len(self.pellets) + len(self.energizers),
             "ghost_chain": self.ghost_chain,
             "fruit_active": self.fruit is not None,
+            "plant_obstacle_cells": len(self._plant_blocked_cells),
+            "plant_occluded_cells": len(self._plant_occluded_cells),
         }

@@ -133,6 +133,9 @@ def save_status(
     target_fps = _positive_int(status.get("target_fps"))
     if target_fps is not None:
         state["target_fps"] = target_fps
+    plant_aware = status.get("plant_aware")
+    if isinstance(plant_aware, bool):
+        state["plant_aware"] = plant_aware
     _atomic_write(state_path, state)
     return preset
 
@@ -160,14 +163,19 @@ def load_saved_state(state_path: Path) -> dict[str, Any]:
     result["params"] = dict(preset["params"])
     speed_scale = _positive_finite_number(state.get("animation_speed_scale"))
     target_fps = _positive_int(state.get("target_fps"))
+    plant_aware = state.get("plant_aware")
     if "animation_speed_scale" in state and speed_scale is None:
         raise RuntimeError("Saved deployment state has an invalid animation speed scale")
     if "target_fps" in state and target_fps is None:
         raise RuntimeError("Saved deployment state has an invalid target FPS")
+    if "plant_aware" in state and not isinstance(plant_aware, bool):
+        raise RuntimeError("Saved deployment state has an invalid plant-aware state")
     if speed_scale is not None:
         result["animation_speed_scale"] = speed_scale
     if target_fps is not None:
         result["target_fps"] = target_fps
+    if isinstance(plant_aware, bool):
+        result["plant_aware"] = plant_aware
     return result
 
 

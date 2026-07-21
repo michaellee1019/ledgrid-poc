@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 from flask import Flask, jsonify, render_template, request
 
 from animation.core.manager import AnimationManager, PreviewLEDController
-from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
+from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import (
@@ -137,6 +137,8 @@ class AnimationWebInterface:
                 return jsonify({'error': 'Preset name is required'}), 400
             if not isinstance(params, dict):
                 return jsonify({'error': 'params must be a JSON object'}), 400
+            params = dict(params)
+            params['plant_aware'] = True
             validation_error = self._validate_animation_params(animation_name, params)
             if validation_error:
                 return jsonify({'error': validation_error}), 400
@@ -260,6 +262,15 @@ class AnimationWebInterface:
                 'multiplier': multiplier,
                 'animation_speed_scale': speed_scale,
             })
+
+        @self.app.route('/api/config/plant-aware', methods=['POST'])
+        def api_set_plant_aware():
+            payload = request.get_json(silent=True) or {}
+            enabled = payload.get('plant_aware')
+            if not isinstance(enabled, bool):
+                return jsonify({'error': 'plant_aware must be boolean'}), 400
+            self.control_channel.send_command('set_plant_aware', plant_aware=enabled)
+            return jsonify({'success': True, 'plant_aware': enabled})
 
         @self.app.route('/api/hardware/stats')
         def api_get_hardware_stats():
@@ -879,6 +890,7 @@ class AnimationWebInterface:
         status.setdefault('frame_count', 0)
         status.setdefault('target_fps', 0)
         status.setdefault('animation_speed_scale', DEFAULT_ANIMATION_SPEED_SCALE)
+        status.setdefault('plant_aware', DEFAULT_PLANT_AWARE)
         status.setdefault('actual_fps', 0)
         status.setdefault('uptime', 0)
         status['deploy_timestamp'] = self._deploy_timestamp()
@@ -939,6 +951,7 @@ class AnimationWebInterface:
             'uptime': 0,
             'target_fps': 0,
             'animation_speed_scale': DEFAULT_ANIMATION_SPEED_SCALE,
+            'plant_aware': DEFAULT_PLANT_AWARE,
             'actual_fps': 0,
             'animation_stats': {},
             'stats': {},
@@ -961,7 +974,8 @@ def create_app(control_channel: FileControlChannel = None,
                strips: int = DEFAULT_STRIP_COUNT,
                leds_per_strip: int = DEFAULT_LEDS_PER_STRIP,
                animations_dir: str = None,
-               animation_speed_scale: float = DEFAULT_ANIMATION_SPEED_SCALE):
+               animation_speed_scale: float = DEFAULT_ANIMATION_SPEED_SCALE,
+               plant_aware: bool = DEFAULT_PLANT_AWARE):
     """Factory function to create the web application"""
     if control_channel is None:
         control_channel = FileControlChannel()
@@ -974,6 +988,7 @@ def create_app(control_channel: FileControlChannel = None,
         preview_controller,
         plugins_dir=animations_dir,
         animation_speed_scale=animation_speed_scale,
+        plant_aware=plant_aware,
         auto_start=False,
     )
 

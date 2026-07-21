@@ -83,10 +83,15 @@ class WorldFlagsAnimation(AnimationBase):
         self._occluded = np.zeros(self.get_pixel_count(), dtype=bool)
         self._mapped_scratch = np.empty((self.get_pixel_count(), 3), dtype=np.float32)
         self._map_error = ""
+        self._plant_banner_overlap = 0
+        self._plant_banner_pixels = 0
+        self._plant_canvas_key = None
+        self._plant_canvas: Optional[np.ndarray] = None
         self._load_map()
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        return {
+        schema = super().get_parameter_schema()
+        schema.update({
             "display_mode": {"type": "str", "default": "parade", "description": "parade or single"},
             "country": {"type": "str", "default": "USA", "description": "ISO code used in single mode"},
             "speed": {"type": "float", "min": -40.0, "max": 40.0, "default": 7.0, "description": "Parade scroll speed in pixels per second"},
@@ -98,7 +103,8 @@ class WorldFlagsAnimation(AnimationBase):
             "map_path": {"type": "str", "default": "config/webcam_pixel_map.json", "description": "Camera-derived pixel map JSON"},
             "map_mode": {"type": "str", "default": "compensate", "description": "compensate, mask, or off"},
             "visibility_boost": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.35, "description": "Extra drive for partially obscured cells"},
-        }
+        })
+        return schema
 
     def update_parameters(self, new_params: Dict[str, Any]):
         previous_path = str(self.params.get("map_path"))
@@ -110,7 +116,11 @@ class WorldFlagsAnimation(AnimationBase):
             self._load_map()
 
     def generate_frame(self, time_elapsed: float, frame_count: int):
-        canvas = self._single_canvas() if str(self.params.get("display_mode", "parade")).lower() == "single" else self._parade_canvas(time_elapsed)
+        single = str(self.params.get("display_mode", "parade")).lower() == "single"
+        if self.plant_aware_enabled():
+            canvas = self._plant_single_canvas() if single else self._plant_parade_canvas(time_elapsed)
+        else:
+            canvas = self._single_canvas() if single else self._parade_canvas(time_elapsed)
         if bool(self.params.get("flip_horizontal", False)):
             canvas = canvas[::-1, :, :]
         if bool(self.params.get("flip_vertical", True)):
@@ -135,7 +145,18 @@ class WorldFlagsAnimation(AnimationBase):
             "mapped_pixels": int(self._visibility.size),
             "occluded_pixels": int(np.count_nonzero(self._occluded)),
             "map_mode": str(self.params.get("map_mode", "compensate")),
+            "plant_aware": self.plant_aware_enabled(),
         }
+        if self.plant_aware_enabled():
+            masks = self.get_plant_masks()
+            stats.update({
+                "plant_foliage_pixels": masks.foliage_count,
+                "plant_globe_pixels": masks.globe_count,
+                "plant_banner_overlap": self._plant_banner_overlap,
+                "plant_banner_pixels": self._plant_banner_pixels,
+            })
+            if masks.error:
+                stats["plant_mask_error"] = masks.error
         if self._map_error:
             stats["map_error"] = self._map_error
         return stats
@@ -147,6 +168,155 @@ class WorldFlagsAnimation(AnimationBase):
         canvas = np.zeros((self.strip_count, self.leds_per_strip, 3), dtype=np.uint8)
         y0 = max(0, (self.leds_per_strip - flag.shape[1]) // 2)
         canvas[:, y0:y0 + flag.shape[1]] = flag[:, : self.leds_per_strip - y0]
+        return canvas
+
+    def _plant_layout_masks(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Return masks in the pre-flip coordinate space used to compose flags."""
+        masks = self.get_plant_masks()
+        obstacle = masks.clearance
+        globes = masks.globes
+        if bool(self.params.get("flip_horizontal", False)):
+            obstacle = obstacle[::-1, :]
+            globes = globes[::-1, :]
+        if bool(self.params.get("flip_vertical", True)):
+            obstacle = obstacle[:, ::-1]
+            globes = globes[:, ::-1]
+        return obstacle, globes
+
+    @staticmethod
+    def _resize_flag(flag: np.ndarray, width: int) -> np.ndarray:
+        """Nearest-neighbor resize keeps small flag emblems and hard bands crisp."""
+        height = max(1, round(flag.shape[1] * width / max(1, flag.shape[0])))
+        xs = np.minimum(
+            flag.shape[0] - 1,
+            np.floor(np.arange(width) * flag.shape[0] / width).astype(np.intp),
+        )
+        ys = np.minimum(
+            flag.shape[1] - 1,
+            np.floor(np.arange(height) * flag.shape[1] / height).astype(np.intp),
+        )
+        return flag[xs[:, None], ys[None, :]]
+
+    def _plant_flag_candidates(self, flag: np.ndarray) -> Iterable[np.ndarray]:
+        minimum_width = min(flag.shape[0], max(16, round(flag.shape[0] * 0.62)))
+        widths = []
+        for scale in (1.0, 0.875, 0.75, 0.625):
+            width = max(minimum_width, round(flag.shape[0] * scale))
+            if width not in widths:
+                widths.append(width)
+        return tuple(flag if width == flag.shape[0] else self._resize_flag(flag, width) for width in widths)
+
+    def _place_plant_banner(
+        self,
+        canvas: np.ndarray,
+        flag: np.ndarray,
+        slot_top: int,
+        slot_height: int,
+        obstacle: np.ndarray,
+        globes: np.ndarray,
+    ) -> None:
+        """Place one recognizable banner where its visible pixels meet least foliage."""
+        best = None
+        for candidate in self._plant_flag_candidates(flag):
+            width, height = candidate.shape[:2]
+            spare_y = max(0, slot_height - height)
+            y_positions = range(slot_top, slot_top + spare_y + 1)
+            for x0 in range(0, self.strip_count - width + 1):
+                for y0 in y_positions:
+                    x1, y1 = x0 + width, y0 + height
+                    visible_y0, visible_y1 = max(0, y0), min(self.leds_per_strip, y1)
+                    if visible_y1 <= visible_y0:
+                        continue
+                    local = obstacle[x0:x1, visible_y0:visible_y1]
+                    globe_local = globes[x0:x1, visible_y0:visible_y1]
+                    visible_pixels = width * (visible_y1 - visible_y0)
+                    overlap = int(np.count_nonzero(local))
+                    globe_overlap = int(np.count_nonzero(globe_local))
+                    scale_loss = 1.0 - width / flag.shape[0]
+                    clipped = 1.0 - visible_pixels / (width * height)
+                    score = (
+                        (overlap + globe_overlap) / visible_pixels
+                        + 0.035 * scale_loss
+                        + 0.20 * clipped,
+                        overlap,
+                        -visible_pixels,
+                        abs((x0 + width / 2) - self.strip_count / 2),
+                        abs((y0 + height / 2) - (slot_top + slot_height / 2)),
+                        x0,
+                        y0,
+                    )
+                    if best is None or score < best[0]:
+                        best = (score, candidate, x0, y0, overlap, visible_pixels)
+
+        if best is None:
+            return
+        _, candidate, x0, y0, overlap, visible_pixels = best
+        source_y0 = max(0, -y0)
+        source_y1 = min(candidate.shape[1], self.leds_per_strip - y0)
+        canvas[x0:x0 + candidate.shape[0], max(0, y0):min(self.leds_per_strip, y0 + candidate.shape[1])] = candidate[:, source_y0:source_y1]
+        self._plant_banner_overlap += overlap
+        self._plant_banner_pixels += visible_pixels
+
+    def _plant_single_canvas(self) -> np.ndarray:
+        code = str(self.params.get("country", "USA")).upper()
+        index = next((i for i, item in enumerate(self.CATALOG) if item[0] == code), 0)
+        flag = self._flags[index]
+        key = (
+            "single", code, flag.shape,
+            bool(self.params.get("flip_horizontal", False)),
+            bool(self.params.get("flip_vertical", True)),
+            int(self.params.get("plant_clearance", 1)),
+            str(self.params.get("plant_mask_path", "")),
+            str(self.params.get("plant_globe_mask_path", "")),
+        )
+        if key == self._plant_canvas_key and self._plant_canvas is not None:
+            return self._plant_canvas
+        canvas = np.zeros((self.strip_count, self.leds_per_strip, 3), dtype=np.uint8)
+        obstacle, globes = self._plant_layout_masks()
+        self._plant_banner_overlap = 0
+        self._plant_banner_pixels = 0
+        # A single flag may use the whole wall as its placement slot. This is the
+        # informational mode, so keeping the emblem visible wins over centering.
+        self._place_plant_banner(canvas, flag, 0, self.leds_per_strip, obstacle, globes)
+        self._plant_canvas_key = key
+        self._plant_canvas = canvas
+        return canvas
+
+    def _plant_parade_canvas(self, time_elapsed: float) -> np.ndarray:
+        gap = max(0, int(self.params.get("gap", 3)))
+        flag_height = self._flags[0].shape[1]
+        block = flag_height + gap
+        virtual_height = block * len(self._flags)
+        speed = float(self.params.get("speed", 7.0))
+        offset = int(math.floor(time_elapsed * speed)) % virtual_height
+        key = (
+            "parade", offset, flag_height, gap,
+            bool(self.params.get("flip_horizontal", False)),
+            bool(self.params.get("flip_vertical", True)),
+            int(self.params.get("plant_clearance", 1)),
+            str(self.params.get("plant_mask_path", "")),
+            str(self.params.get("plant_globe_mask_path", "")),
+        )
+        if key == self._plant_canvas_key and self._plant_canvas is not None:
+            return self._plant_canvas
+        canvas = np.zeros((self.strip_count, self.leds_per_strip, 3), dtype=np.uint8)
+        obstacle, globes = self._plant_layout_masks()
+        self._plant_banner_overlap = 0
+        self._plant_banner_pixels = 0
+        for flag_index, flag in enumerate(self._flags):
+            virtual_top = flag_index * block
+            # At most two copies can intersect a physical viewport, but this
+            # bounded range also handles unusually short test geometries.
+            first_copy = math.floor((offset - virtual_top - block) / virtual_height)
+            last_copy = math.ceil((offset + self.leds_per_strip - virtual_top) / virtual_height)
+            for copy in range(first_copy, last_copy + 1):
+                slot_top = virtual_top - offset + copy * virtual_height
+                if slot_top < self.leds_per_strip and slot_top + block > 0:
+                    self._place_plant_banner(
+                        canvas, flag, slot_top, block, obstacle, globes
+                    )
+        self._plant_canvas_key = key
+        self._plant_canvas = canvas
         return canvas
 
     def _parade_canvas(self, time_elapsed: float) -> np.ndarray:

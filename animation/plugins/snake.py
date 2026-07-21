@@ -82,6 +82,9 @@ class SnakeAnimation(AnimationBase):
         self.food: Set[Cell] = set()
         self.walls: Set[Cell] = set()
         self.portals: Dict[Cell, Cell] = {}
+        self._plant_obstacles: Set[Cell] = set()
+        self._plant_foliage: Set[Cell] = set()
+        self._plant_globes: Set[Cell] = set()
         self.moves = 0
         self.food_eaten = 0
         self.deaths = 0
@@ -138,8 +141,15 @@ class SnakeAnimation(AnimationBase):
 
     def update_parameters(self, new_params: Dict[str, Any]):
         structural = {"snake_count", "initial_length", "ruleset", "wall_pattern", "seed"}
+        plant_geometry = {"plant_clearance", "plant_mask_path", "plant_globe_mask_path"}
+        was_plant_aware = self.plant_aware_enabled()
         needs_reset = any(key in new_params for key in structural)
         super().update_parameters(new_params)
+        needs_reset = (
+            needs_reset
+            or ("plant_aware" in new_params and self.plant_aware_enabled() != was_plant_aware)
+            or (self.plant_aware_enabled() and bool(plant_geometry & new_params.keys()))
+        )
         if needs_reset:
             self.random.seed(int(self.params.get("seed", 1976)))
             self._reset_world()
@@ -163,6 +173,11 @@ class SnakeAnimation(AnimationBase):
             "requested_moves_per_second": requested_rate,
             "effective_moves_per_second": effective_rate,
             "simulation_rate_capped": effective_rate < requested_rate,
+            **({
+                "plant_obstacle_cells": len(self._plant_obstacles),
+                "plant_foliage_cells": len(self._plant_foliage),
+                "plant_globe_cells": len(self._plant_globes),
+            } if self.plant_aware_enabled() else {}),
         }
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> Any:
@@ -216,6 +231,7 @@ class SnakeAnimation(AnimationBase):
         self._trail_hue.fill(0)
         self._build_palette()
         self._build_background()
+        self._refresh_plant_geometry()
         self._build_walls_and_portals()
         count = max(1, min(12, int(self.params.get("snake_count", 3))))
         self.snakes = [SnakeAgent(hue_offset=(index * 256 // count)) for index in range(count)]
@@ -223,6 +239,28 @@ class SnakeAnimation(AnimationBase):
             self._spawn_snake(snake)
         self.food.clear()
         self._replenish_food()
+
+    def _refresh_plant_geometry(self):
+        """Translate calibrated strip/LED masks into Snake's ``(x, y)`` cells."""
+        self._plant_obstacles.clear()
+        self._plant_foliage.clear()
+        self._plant_globes.clear()
+        if not self.plant_aware_enabled():
+            return
+        masks = self.get_plant_masks()
+        # Shared logical masks are (strip, led); the game canvas is indexed [y, x].
+        self._plant_obstacles.update(
+            (int(x), int(y)) for y, x in np.argwhere(masks.clearance.T)
+        )
+        self._plant_foliage.update(
+            (int(x), int(y)) for y, x in np.argwhere(masks.foliage.T)
+        )
+        self._plant_globes.update(
+            (int(x), int(y)) for y, x in np.argwhere(masks.globes.T)
+        )
+
+    def _terrain_blocked(self, cell: Cell) -> bool:
+        return cell in self.walls or cell in self._plant_obstacles
 
     def _build_palette(self):
         style = str(self.params.get("visual_style", "rainbow"))
@@ -290,7 +328,7 @@ class SnakeAnimation(AnimationBase):
             pairs = [((1, self.height // 4), (self.width - 2, self.height * 3 // 4)),
                      ((self.width - 2, self.height // 4), (1, self.height * 3 // 4))]
             for first, second in pairs:
-                if first not in self.walls and second not in self.walls:
+                if not self._terrain_blocked(first) and not self._terrain_blocked(second):
                     self.portals[first] = second
                     self.portals[second] = first
 
@@ -307,7 +345,7 @@ class SnakeAnimation(AnimationBase):
                 if not (0 <= cell[0] < self.width and 0 <= cell[1] < self.height):
                     valid = False
                     break
-                if cell in occupied or cell in self.walls or cell in self.portals:
+                if cell in occupied or self._terrain_blocked(cell) or cell in self.portals:
                     valid = False
                     break
                 body.append(cell)
@@ -326,7 +364,7 @@ class SnakeAnimation(AnimationBase):
 
     def _replenish_food(self):
         target = max(1, min(30, int(self.params.get("food_count", 5))))
-        blocked = self._occupied() | self.walls | set(self.portals)
+        blocked = self._occupied() | self.walls | self._plant_obstacles | set(self.portals)
         attempts = 0
         while len(self.food) < target and attempts < target * 80:
             attempts += 1
@@ -354,7 +392,7 @@ class SnakeAnimation(AnimationBase):
         best_score = -1e9
         for direction in choices:
             candidate = self._advance_cell(snake.head, direction)
-            if candidate is None or candidate in self.walls:
+            if candidate is None or self._terrain_blocked(candidate):
                 continue
             eating = candidate in self.food
             blocked = occupied
@@ -369,7 +407,7 @@ class SnakeAnimation(AnimationBase):
             exits = 0
             for next_direction in DIRECTIONS:
                 neighbor = self._advance_cell(candidate, next_direction)
-                if neighbor is not None and neighbor not in blocked and neighbor not in self.walls:
+                if neighbor is not None and neighbor not in blocked and not self._terrain_blocked(neighbor):
                     exits += 1
             straight_bonus = 0.2 if direction == snake.direction else 0.0
             jitter = self.random.random() * 0.12
@@ -406,7 +444,7 @@ class SnakeAnimation(AnimationBase):
         dead: Set[int] = set()
         for index, candidate in plans.items():
             snake = self.snakes[index]
-            if candidate is None or candidate in self.walls or head_counts[candidate] > 1:
+            if candidate is None or self._terrain_blocked(candidate) or head_counts[candidate] > 1:
                 dead.add(index)
                 continue
             eating = candidate in self.food
@@ -464,6 +502,14 @@ class SnakeAnimation(AnimationBase):
             scaled = (trail_colors.astype(np.float32)
                       * (self._trail * trail_strength)[..., None]).astype(np.uint8)
             np.maximum(self._canvas, scaled, out=self._canvas)
+
+        if self.plant_aware_enabled():
+            foliage_color = np.array((3, 36, 12), dtype=np.uint8)
+            globe_color = np.array((88, 22, 105), dtype=np.uint8)
+            for x, y in self._plant_foliage:
+                self._canvas[y, x] = np.maximum(self._canvas[y, x], foliage_color)
+            for x, y in self._plant_globes:
+                self._paint_max(x, y, globe_color, 0.18)
 
         wall_color = np.array((8, 25, 48), dtype=np.uint8)
         for x, y in self.walls:

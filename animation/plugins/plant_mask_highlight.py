@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Set, Tuple
 import numpy as np
 
 from animation import AnimationBase
-from animation.core.mask_effects import logical_mask, mask_boundary
+from animation.core.mask_effects import dilate_8, logical_mask, mask_boundary
 
 
 class PlantMaskHighlightAnimation(AnimationBase):
@@ -43,6 +43,10 @@ class PlantMaskHighlightAnimation(AnimationBase):
                 "globe_region": "all",
                 "globe_outline_only": False,
                 "globe_center_marker": False,
+                "plant_verification_view": "clearance",
+                "clearance_red": 255,
+                "clearance_green": 140,
+                "clearance_blue": 24,
                 "mask_path": "config/plant_pixel_map_32x138.json",
                 "globe_mask_path": "config/plant_globe_map_32x138.json",
             }
@@ -276,6 +280,33 @@ class PlantMaskHighlightAnimation(AnimationBase):
                     "default": False,
                     "description": "Add the selected globe's central 2x2 marker",
                 },
+                "plant_verification_view": {
+                    "type": "str",
+                    "default": "clearance",
+                    "options": ["clearance", "boundaries"],
+                    "description": "Plant-aware clearance halo or semantic boundary acceptance view",
+                },
+                "clearance_red": {
+                    "type": "int",
+                    "min": 0,
+                    "max": 255,
+                    "default": 255,
+                    "description": "Plant-aware clearance halo red channel",
+                },
+                "clearance_green": {
+                    "type": "int",
+                    "min": 0,
+                    "max": 255,
+                    "default": 140,
+                    "description": "Plant-aware clearance halo green channel",
+                },
+                "clearance_blue": {
+                    "type": "int",
+                    "min": 0,
+                    "max": 255,
+                    "default": 24,
+                    "description": "Plant-aware clearance halo blue channel",
+                },
                 "mask_path": {
                     "type": "str",
                     "default": "config/plant_pixel_map_32x138.json",
@@ -334,9 +365,80 @@ class PlantMaskHighlightAnimation(AnimationBase):
 
         frame = self.next_frame_buffer(clear=False)
         frame[:] = bg
-        if self.mask_indices and bool(self.params.get("show_foliage", True)):
+        plant_aware = self.plant_aware_enabled()
+        verification_view = str(
+            self.params.get("plant_verification_view", "clearance")
+        )
+        semantic_masks = self.get_plant_masks() if plant_aware else None
+        foliage_indices = (
+            set(np.flatnonzero(semantic_masks.foliage_flat).tolist())
+            if semantic_masks is not None
+            else self.mask_indices
+        )
+        globe_indices = (
+            set(np.flatnonzero(semantic_masks.globes_flat).tolist())
+            if semantic_masks is not None
+            else self.globe_indices
+        )
+        if plant_aware:
+            # The globe layer wins if malformed inputs overlap, matching the
+            # production Plant Glow semantic contract.
+            foliage_indices -= globe_indices
+
+        selected_region = str(self.params.get("globe_region", "all"))
+        selected_globes = (
+            globe_indices
+            if selected_region == "all"
+            else self.globe_region_indices.get(selected_region, set()) & globe_indices
+        )
+
+        if plant_aware and verification_view == "clearance":
+            visible_obstacles = selected_globes.copy()
+            if bool(self.params.get("show_foliage", True)):
+                visible_obstacles |= foliage_indices
+            clearance = logical_mask(
+                visible_obstacles,
+                self.controller.strip_count,
+                self.controller.leds_per_strip,
+            )
+            for _ in range(max(0, int(self.params.get("plant_clearance", 1)))):
+                clearance = dilate_8(clearance)
+            clearance.ravel()[np.fromiter(visible_obstacles, dtype=np.intp)] = False
+            frame[clearance.ravel()] = (
+                int(self.params.get("clearance_red", 255)),
+                int(self.params.get("clearance_green", 140)),
+                int(self.params.get("clearance_blue", 24)),
+            )
+
+        if plant_aware and verification_view == "boundaries":
+            if foliage_indices:
+                foliage_mask = logical_mask(
+                    foliage_indices,
+                    self.controller.strip_count,
+                    self.controller.leds_per_strip,
+                )
+                foliage_indices = set(
+                    np.flatnonzero(mask_boundary(foliage_mask).ravel()).tolist()
+                )
+            if selected_globes:
+                globe_mask = logical_mask(
+                    selected_globes,
+                    self.controller.strip_count,
+                    self.controller.leds_per_strip,
+                )
+                selected_globes = set(
+                    np.flatnonzero(mask_boundary(globe_mask).ravel()).tolist()
+                )
+            centers = (
+                set().union(*self.globe_region_centers.values())
+                if selected_region == "all" and self.globe_region_centers
+                else self.globe_region_centers.get(selected_region, set())
+            )
+            selected_globes |= centers & globe_indices
+
+        if foliage_indices and bool(self.params.get("show_foliage", True)):
             indices = np.fromiter(
-                (idx for idx in self.mask_indices if 0 <= idx < total_leds),
+                (idx for idx in foliage_indices if 0 <= idx < total_leds),
                 dtype=np.intp,
             )
             frame[indices] = (
@@ -344,12 +446,6 @@ class PlantMaskHighlightAnimation(AnimationBase):
                 int(plant[1] * pulse),
                 int(plant[2] * pulse),
             )
-        selected_region = str(self.params.get("globe_region", "all"))
-        selected_globes = (
-            self.globe_indices
-            if selected_region == "all"
-            else self.globe_region_indices.get(selected_region, set())
-        )
         if bool(self.params.get("globe_outline_only", False)) and selected_globes:
             mask = logical_mask(
                 selected_globes,
@@ -376,6 +472,7 @@ class PlantMaskHighlightAnimation(AnimationBase):
             "globe_pixels": len(self.globe_indices),
             "globe_regions": self.globe_region_count,
             "selected_globe_region": str(self.params.get("globe_region", "all")),
+            "plant_aware": self.plant_aware_enabled(),
             "mask_path": str(
                 self.params.get("mask_path", "config/plant_pixel_map_32x138.json")
             ),
@@ -389,4 +486,36 @@ class PlantMaskHighlightAnimation(AnimationBase):
             stats["mask_load_error"] = self.mask_load_error
         if self.globe_mask_load_error:
             stats["globe_mask_load_error"] = self.globe_mask_load_error
+        if self.plant_aware_enabled():
+            masks = self.get_plant_masks()
+            input_overlap = len(self.mask_indices & self.globe_indices)
+            geometry_valid = (
+                self.controller.strip_count == 32
+                and self.controller.leds_per_strip == 138
+            )
+            globe_semantics_valid = (
+                masks.globe_regions == 7
+                and self.globe_region_count == 7
+                and len(self.globe_region_indices) == 7
+            )
+            stats.update(
+                {
+                    "plant_verification_view": str(
+                        self.params.get("plant_verification_view", "clearance")
+                    ),
+                    "plant_foliage_pixels": masks.foliage_count,
+                    "plant_globe_pixels": masks.globe_count,
+                    "plant_globe_regions": masks.globe_regions,
+                    "plant_input_overlap_pixels": input_overlap,
+                    "plant_wall_geometry_valid": geometry_valid,
+                    "plant_globe_semantics_valid": globe_semantics_valid,
+                    "plant_semantics_ready": (
+                        geometry_valid
+                        and globe_semantics_valid
+                        and input_overlap == 0
+                        and not masks.error
+                    ),
+                    "plant_mask_error": masks.error,
+                }
+            )
         return stats

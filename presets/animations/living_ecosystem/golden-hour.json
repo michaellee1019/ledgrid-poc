@@ -5,7 +5,7 @@
   "tags": ["warm", "ambient", "bright"],
   "palette": {"name": "Golden hour", "colors": ["#2D1408", "#C25C12", "#244B8B", "#FFA726"]},
   "created_at": "2026-07-20T00:00:00Z", "updated_at": "2026-07-20T00:00:00Z",
-  "params": {"lifecycle_minutes": 12, "day_length_seconds": 180, "creature_density": 1.15,
+  "params": {"plant_aware":true,"lifecycle_minutes": 12, "day_length_seconds": 180, "creature_density": 1.15,
     "predator_ratio": 0.2, "tree_density": 0.9, "creature_size": 1.1,
     "mutation_rate": 0.08, "grass_regrowth": 1.15, "predation_pressure": 0.8,
     "pack_cohesion": 1.15, "palette": "golden_hour", "night_brightness": 0.48,

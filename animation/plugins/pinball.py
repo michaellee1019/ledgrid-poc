@@ -59,6 +59,11 @@ class PinballAnimation(AnimationBase):
 
         self._static = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self._canvas = np.zeros_like(self._static)
+        self._plant_foliage = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_globes = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_clearance = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_geometry_identity: Optional[int] = None
+        self._plant_hits = 0
         hues = np.linspace(0.0, 1.0, 256, endpoint=False, dtype=np.float32)
         saturation = np.full(256, 0.94, dtype=np.float32)
         values = (0.10 + 0.20 * (np.sin(hues * math.tau * 3.0) * 0.5 + 0.5)).astype(np.float32)
@@ -92,6 +97,11 @@ class PinballAnimation(AnimationBase):
         self._failure_flash = 0.0
         self._success_flash = 0.0
         self._sim_time = 0.0
+        if self.plant_aware_enabled():
+            self._prepare_plant_table()
+            self.ball_x, self.ball_y = self._nearest_plant_safe_point(
+                self.ball_x, self.ball_y
+            )
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -224,6 +234,91 @@ class PinballAnimation(AnimationBase):
     def _bumper_radius(self) -> int:
         return 1 if self.width < 24 else 2
 
+    def _prepare_plant_table(self):
+        """Project calibrated strip/LED masks into playfield coordinates."""
+        if not self.plant_aware_enabled():
+            return
+        masks = self.get_plant_masks()
+        if self._plant_geometry_identity == id(masks):
+            return
+        # Frames are rendered bottom-to-top into canonical (strip, LED) order.
+        self._plant_foliage[:] = masks.foliage.T[::-1]
+        self._plant_globes[:] = masks.globes.T[::-1]
+        self._plant_clearance[:] = masks.clearance.T[::-1]
+        self._plant_geometry_identity = id(masks)
+
+    def _nearest_plant_safe_point(self, x: float, y: float) -> Tuple[float, float]:
+        """Find a deterministic nearby launch/collision point outside clearance."""
+        self._prepare_plant_table()
+        origin_x = min(self.width - 1, max(0, int(round(x))))
+        origin_y = min(self.height - 1, max(0, int(round(y))))
+        max_radius = max(self.width, self.height)
+        for radius in range(max_radius + 1):
+            candidates = []
+            top, bottom = origin_y - radius, origin_y + radius
+            left, right = origin_x - radius, origin_x + radius
+            perimeter = []
+            if 0 <= top < self.height:
+                perimeter.extend((xx, top) for xx in range(max(0, left), min(self.width, right + 1)))
+            if radius and 0 <= bottom < self.height:
+                perimeter.extend((xx, bottom) for xx in range(max(0, left), min(self.width, right + 1)))
+            for yy in range(max(0, top + 1), min(self.height, bottom)):
+                if 0 <= left < self.width:
+                    perimeter.append((left, yy))
+                if radius and right != left and 0 <= right < self.width:
+                    perimeter.append((right, yy))
+            for xx, yy in perimeter:
+                if 2 <= xx <= self.width - 3 and not self._plant_clearance[yy, xx]:
+                    candidates.append((abs(yy - y) + abs(xx - x), yy, xx))
+            if candidates:
+                _, safe_y, safe_x = min(candidates)
+                return float(safe_x), float(safe_y)
+        return x, y
+
+    def _collide_with_plants(self, previous_x: float, previous_y: float):
+        """Treat masked plants as swept, scoring pinball deflectors."""
+        if not self.plant_aware_enabled():
+            return
+        self._prepare_plant_table()
+        distance = math.hypot(self.ball_x - previous_x, self.ball_y - previous_y)
+        steps = max(1, int(math.ceil(distance * 2.0)))
+        collision = None
+        for step in range(1, steps + 1):
+            fraction = step / steps
+            x = previous_x + (self.ball_x - previous_x) * fraction
+            y = previous_y + (self.ball_y - previous_y) * fraction
+            px, py = int(round(x)), int(round(y))
+            if (0 <= px < self.width and 0 <= py < self.height
+                    and self._plant_clearance[py, px]):
+                collision = (px, py)
+                break
+        if collision is None:
+            return
+
+        px, py = collision
+        # Clearance is itself collidable, so attribute its outer edge to a
+        # nearby globe when appropriate instead of downgrading it to foliage.
+        attribution_radius = max(0, int(self.params.get("plant_clearance", 1))) + 1
+        x0, x1 = max(0, px - attribution_radius), min(self.width, px + attribution_radius + 1)
+        y0, y1 = max(0, py - attribution_radius), min(self.height, py + attribution_radius + 1)
+        is_globe = bool(np.any(self._plant_globes[y0:y1, x0:x1]))
+        self.ball_x, self.ball_y = self._nearest_plant_safe_point(previous_x, previous_y)
+        # A full reversal is stable even inside dense foliage. Globes kick
+        # harder, while foliage behaves like a rubberized routing rail.
+        kick = 1.08 if is_globe else 0.88
+        self.ball_vx = -self.ball_vx * kick
+        self.ball_vy = -self.ball_vy * kick
+        if abs(self.ball_vx) < 5.0:
+            self.ball_vx = 5.0 if self.ball_x < px else -5.0
+        if abs(self.ball_vy) < 8.0:
+            self.ball_vy = -8.0 if self.ball_y >= py else 8.0
+        if self._event_cooldown <= 0.0:
+            color = self.YELLOW if is_globe else self.GREEN
+            self._award(2500 if is_globe else 600, "", color)
+            self.bursts.append(Burst(px, py, color, life=0.45))
+            self._event_cooldown = 0.10
+            self._plant_hits += 1
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> Any:
         fps = max(24.0, min(120.0, float(self.params.get("render_fps", 100.0))))
         if (self.last_rendered_frame is not None and self.last_render_elapsed is not None
@@ -279,6 +374,7 @@ class PinballAnimation(AnimationBase):
         # Small, stable pinball simulation. The table is narrow, so velocities
         # are deliberately biased upward to keep action distributed vertically.
         gravity = 31.0
+        previous_x, previous_y = self.ball_x, self.ball_y
         self.ball_vy += gravity * dt
         self.ball_x += self.ball_vx * dt
         self.ball_y += self.ball_vy * dt
@@ -297,6 +393,8 @@ class PinballAnimation(AnimationBase):
             self.ball_y = table_top
             self.ball_vy = abs(self.ball_vy) + 8.0
             self._award(750, "750", self.CYAN)
+
+        self._collide_with_plants(previous_x, previous_y)
 
         radius = self._bumper_radius() + 1.2
         for bx, by in self._bumper_positions():
@@ -386,6 +484,10 @@ class PinballAnimation(AnimationBase):
     def _launch_ball(self):
         self.ball_x = self.width - 4.0
         self.ball_y = self.height - 18.0
+        if self.plant_aware_enabled():
+            self.ball_x, self.ball_y = self._nearest_plant_safe_point(
+                self.ball_x, self.ball_y
+            )
         self.ball_vx = -self.random.uniform(4.0, 12.0)
         self.ball_vy = -self.random.uniform(82.0, 105.0)
 
@@ -459,6 +561,19 @@ class PinballAnimation(AnimationBase):
             self._pixel(canvas, int(burst.x), int(burst.y) + spark, color, True)
             self._pixel(canvas, int(burst.x), int(burst.y) - spark, color, True)
 
+        if self.plant_aware_enabled():
+            self._prepare_plant_table()
+            # Foliage reads as a cool translucent rubber rail; globes are
+            # unmistakable gold scoring landmarks without hiding the ball.
+            canvas[self._plant_foliage] = np.maximum(
+                canvas[self._plant_foliage], np.array((8, 72, 24), dtype=np.uint8)
+            )
+            globe_pulse = 125 + int(55 * (0.5 + 0.5 * math.sin(phase * 5.0)))
+            canvas[self._plant_globes] = np.maximum(
+                canvas[self._plant_globes],
+                np.array((globe_pulse, globe_pulse // 2, 8), dtype=np.uint8),
+            )
+
         # Flippers alternate rapidly with layered neon edges.
         flip = int(phase * 9.0) % 2
         fy = self.height - 16
@@ -513,4 +628,5 @@ class PinballAnimation(AnimationBase):
             "balls": self.balls,
             "minigame": self.mode,
             "active_effects": len(self.bursts),
+            "plant_hits": self._plant_hits,
         }

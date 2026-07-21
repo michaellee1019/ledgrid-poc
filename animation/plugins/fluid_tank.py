@@ -60,6 +60,7 @@ class FluidTankAnimation(AnimationBase):
             'hole_cooldown': 2.0,
             'target_drain_time': 3.0,
             'serpentine': False,
+            'plant_flow_deflection': 1.0,
         })
         self.params = {**self.default_params, **self.config}
         self.panel_strips = getattr(controller, 'strip_count', DEFAULT_STRIP_COUNT)
@@ -99,8 +100,18 @@ class FluidTankAnimation(AnimationBase):
             'hole_cooldown': {'type': 'float', 'min': 0.5, 'max': 10.0, 'default': 2.0, 'description': 'Delay before another automatic puncture.'},
             'target_drain_time': {'type': 'float', 'min': 0.5, 'max': 15.0, 'default': 3.0, 'description': 'Calibration: full tank drain time for one floor hole.'},
             'serpentine': {'type': 'bool', 'default': False, 'description': 'Flip every other strip for serpentine wiring.'},
+            'plant_flow_deflection': {'type': 'float', 'min': 0.0, 'max': 2.0, 'default': 1.0, 'description': 'How strongly calibrated plant structure steers droplets and bubbles when plant-aware mode is enabled.'},
         })
         return schema
+
+    def update_parameters(self, new_params: Dict[str, Any]):
+        super().update_parameters(new_params)
+        if {
+            'plant_aware', 'plant_clearance', 'plant_mask_path',
+            'plant_globe_mask_path', 'plant_flow_deflection',
+        } & new_params.keys():
+            self._plant_geometry_identity = None
+            self._water_grid_cache_time = -1.0
 
     @property
     def capacity_cells(self) -> float:
@@ -151,8 +162,16 @@ class FluidTankAnimation(AnimationBase):
         self._serpentine_flat_idx = (xs * self.panel_leds_per_strip + serpentine_led).ravel()
         self._water_grid_cache = np.zeros((self.height, self.width, 3), dtype=np.float32)
         self._water_grid_cache_time = -1.0
+        self._plant_foliage = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_globes = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_clearance = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_geometry_identity = None
+        self._plant_mask_error = ''
+        self._plant_flow_deflections = 0
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
+        if self.plant_aware_enabled():
+            self._refresh_plant_geometry()
         if self.last_time is None:
             dt_real = 1.0 / 30.0
         else:
@@ -179,6 +198,40 @@ class FluidTankAnimation(AnimationBase):
         self._snapshot_stats(time_elapsed, dt_real, surface_y)
         return self._render_frame(time_elapsed, coverage, surface_y)
 
+    def _refresh_plant_geometry(self):
+        """Project physical mask coordinates into the tank's top-down canvas."""
+        masks = self.get_plant_masks()
+        if self._plant_geometry_identity == id(masks):
+            return
+        self._plant_foliage[:] = masks.foliage.T[::-1]
+        self._plant_globes[:] = masks.globes.T[::-1]
+        self._plant_clearance[:] = masks.clearance.T[::-1]
+        self._plant_geometry_identity = id(masks)
+        self._plant_mask_error = masks.error
+        self._water_grid_cache_time = -1.0
+
+    def _nearest_clear_x(self, x: float, y: float) -> float:
+        """Keep a moving landmark visible by shifting it to the nearest clear cell."""
+        if not self.plant_aware_enabled():
+            return x
+        row = max(0, min(self.height - 1, int(round(y))))
+        origin = max(0, min(self.width - 1, int(round(x))))
+        if not self._plant_clearance[row, origin]:
+            return x
+        strength = max(0.0, float(self.params.get('plant_flow_deflection', 1.0)))
+        if strength <= 0.0:
+            return x
+        for distance in range(1, self.width):
+            # Prefer the side the particle was already closest to, then remain
+            # deterministic when it is exactly centered on a diffuser cell.
+            candidates = (origin - distance, origin + distance)
+            for candidate in candidates:
+                if 0 <= candidate < self.width and not self._plant_clearance[row, candidate]:
+                    self._plant_flow_deflections += 1
+                    target = float(candidate)
+                    return x + (target - x) * min(1.0, strength)
+        return x
+
     def _queue_inflow(self, dt: float):
         """Create conserved airborne water packets; do not fill until impact."""
         fill_time = max(5.0, float(self.params.get('target_fill_time', 60.0)))
@@ -198,6 +251,8 @@ class FluidTankAnimation(AnimationBase):
         while self.inlet_reservoir_cells + 1e-9 >= packet_volume and len(self.inlet_particles) < 512:
             self.inlet_reservoir_cells -= packet_volume
             x = random.uniform(self.width * 0.25, self.width * 0.75)
+            if self.plant_aware_enabled():
+                x = self._nearest_clear_x(x, 0.0)
             self.inlet_particles.append({
                 'x': x, 'y': -random.uniform(0.0, 1.5),
                 'vy': random.uniform(0.0, 0.35),
@@ -264,6 +319,8 @@ class FluidTankAnimation(AnimationBase):
         for p in self.inlet_particles:
             p['vy'] = min(terminal_cells_s, p['vy'] + gravity_cells_s2 * dt)
             p['y'] += p['vy'] * dt
+            if self.plant_aware_enabled():
+                p['x'] = self._nearest_clear_x(p['x'], p['y'])
             p['life'] -= dt
             surface = self._surface_at(p['x'], surface_values)
             if p['y'] >= surface:
@@ -287,6 +344,8 @@ class FluidTankAnimation(AnimationBase):
         while self.bubble_accumulator >= interval:
             self.bubble_accumulator -= interval
             x = random.uniform(1.0, max(1.0, self.width - 2.0))
+            if self.plant_aware_enabled():
+                x = self._nearest_clear_x(x, self.height - 1.0)
             radius = random.uniform(0.55, 1.35)
             self.bubbles.append({
                 'x': x, 'origin_y': self.height - 0.5, 'y': self.height - 0.5,
@@ -302,6 +361,11 @@ class FluidTankAnimation(AnimationBase):
             bubble['x'] += math.sin(bubble['phase']) * 0.45 * dt
             bubble['x'] = max(0.5, min(self.width - 1.5, bubble['x']))
             bubble['y'] += bubble['vy'] * dt
+            if self.plant_aware_enabled():
+                routed_x = self._nearest_clear_x(bubble['x'], bubble['y'])
+                if routed_x != bubble['x']:
+                    bubble['phase'] += math.pi
+                    bubble['x'] = max(0.5, min(self.width - 1.5, routed_x))
             bubble['radius'] = min(1.8, bubble['radius'] + 0.018 * dt)
             surface = self._surface_at(bubble['x'], surface_values)
             rise = bubble['origin_y'] - bubble['y']
@@ -322,11 +386,16 @@ class FluidTankAnimation(AnimationBase):
         radius = float(self.params.get('hole_radius', 1.5))
         margin = min(max(radius + 0.5, 1.0), max(1.0, self.width / 2.0))
         x = random.uniform(margin, max(margin, self.width - 1.0 - margin))
+        if self.plant_aware_enabled():
+            x = self._nearest_clear_x(x, self.height - 1.0)
         self._activate_hole(now, x, self.height - 0.5, radius, manual=False)
 
     def _activate_hole(self, now: float, x: float, y: float, radius: float, manual: bool) -> bool:
         x = max(0.0, min(self.width - 1.0, float(x)))
         y = max(0.0, min(self.height - 0.5, float(y)))
+        if self.plant_aware_enabled():
+            self._refresh_plant_geometry()
+            x = self._nearest_clear_x(x, y)
         radius = max(0.6, min(5.0, float(radius)))
         self.holes.append(Hole(x=x, y=y, radius=radius, opened_at=now, manual=manual))
         self._impulse(x, 2.2)
@@ -515,6 +584,26 @@ class FluidTankAnimation(AnimationBase):
 
         grid = air[None, None, :] * (1.0 - coverage[:, :, None]) + water_color * coverage[:, :, None]
 
+        if self.plant_aware_enabled():
+            # Foliage is porous submerged structure: it absorbs some blue body
+            # light but catches moving green caustics. Rooting globes read as
+            # solid warm glass landmarks. Simulation landmarks are rendered
+            # afterward, so bubbles, drops, holes, and spray remain legible.
+            foliage = self._plant_foliage
+            if np.any(foliage):
+                foliage_light = np.clip(
+                    0.55 + 0.45 * self._caustic_cache, 0.15, 1.0
+                )[:, :, None]
+                foliage_color = np.array([5.0, 84.0, 38.0]) * foliage_light
+                grid[foliage] = grid[foliage] * 0.38 + foliage_color[foliage] * 0.62
+            globes = self._plant_globes
+            if np.any(globes):
+                globe_color = np.empty_like(grid)
+                globe_color[:, :, 0] = 118.0 + 34.0 * np.clip(self._caustic_cache, -1.0, 1.0)
+                globe_color[:, :, 1] = 82.0 + 18.0 * np.clip(self._caustic_cache, -1.0, 1.0)
+                globe_color[:, :, 2] = 38.0
+                grid[globes] = grid[globes] * 0.22 + globe_color[globes] * 0.78
+
         wave_energy = np.abs(self.surface_velocity)[None, :]
         foam = (surface_band > 0.42) & (wave_energy > (1.4 - float(self.params.get('foam_bias', 0.25)))) & (coverage > 0.05)
         if np.any(foam):
@@ -567,6 +656,15 @@ class FluidTankAnimation(AnimationBase):
                 {'x': round(b['x'], 2), 'y': round(b['y'], 2), 'radius': round(b['radius'], 2), 'vy': round(b['vy'], 2)}
                 for b in self.bubbles[:4]
             ]
+        if self.plant_aware_enabled():
+            self.last_stats.update({
+                'plant_aware': True,
+                'plant_foliage_pixels': int(np.count_nonzero(self._plant_foliage)),
+                'plant_globe_pixels': int(np.count_nonzero(self._plant_globes)),
+                'plant_flow_deflections': self._plant_flow_deflections,
+            })
+            if self._plant_mask_error:
+                self.last_stats['plant_mask_error'] = self._plant_mask_error
 
     def get_runtime_stats(self) -> Dict[str, Any]:
         return dict(self.last_stats)

@@ -39,6 +39,9 @@ PIECE_COLORS: Dict[str, Color] = {
     "Z": (255, 60, 60),
 }
 
+PLANT_FOLIAGE_COLOR: Color = (10, 52, 22)
+PLANT_GLOBE_COLOR: Color = (78, 16, 70)
+
 
 def _normalize(coords: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
     min_x = min(x for x, _ in coords)
@@ -131,6 +134,7 @@ class TetrisAnimation(AnimationBase):
         self.input_lock = threading.Lock()
         self.input_piece_index = 0
         self.plans_dirty = False
+        self._tetris_plant_masks = None
 
         self.default_params.update({
             'speed': 3.0,
@@ -220,6 +224,12 @@ class TetrisAnimation(AnimationBase):
     def update_parameters(self, params: Dict[str, Any]):
         super().update_parameters(params)
         self._refresh_runtime_params()
+        if {
+            'plant_aware', 'plant_clearance', 'plant_mask_path',
+            'plant_globe_mask_path',
+        } & params.keys():
+            self.plans_dirty = True
+            self._tetris_plant_masks = None
         if len(self.active_pieces) > self.tetromino_count:
             del self.active_pieces[self.tetromino_count:]
         self.last_render_elapsed = None
@@ -253,6 +263,9 @@ class TetrisAnimation(AnimationBase):
             self.last_elapsed = time_elapsed
 
         self._update_game(delta)
+
+        if self.plant_aware_enabled():
+            self._render_plant_landmarks(frame)
 
         if self.game_over_flash > 0.0:
             flash_strength = int(80 * min(1.0, self.game_over_flash))
@@ -658,7 +671,35 @@ class TetrisAnimation(AnimationBase):
             - aggregate_height * 0.45
             - bumpiness * 0.35
             - max_height * 0.8
+            - self._plant_placement_penalty(coords, x_offset, y_offset)
         )
+
+    def _plant_placement_penalty(
+        self,
+        coords: List[Tuple[int, int]],
+        x_offset: int,
+        y_offset: int,
+    ) -> float:
+        """Discourage bot landings that the calibrated plants would obscure."""
+        if not self.plant_aware_enabled():
+            return 0.0
+
+        masks = self._plant_geometry()
+        penalty = 0.0
+        for cx, cy in coords:
+            board_x = x_offset + cx
+            board_y = y_offset + cy
+            if not (0 <= board_x < self.board_width and 0 <= board_y < self.board_height):
+                continue
+            strip = board_x + 1
+            physical_led = (self.leds_per_strip - 1) - board_y
+            if masks.globes[strip, physical_led]:
+                penalty += 80.0
+            elif masks.foliage[strip, physical_led]:
+                penalty += 24.0
+            elif masks.clearance[strip, physical_led]:
+                penalty += 7.0
+        return penalty
 
     def _apply_pending_inputs(self):
         with self.input_lock:
@@ -780,6 +821,22 @@ class TetrisAnimation(AnimationBase):
         base = TETROMINOS[piece]['color']
         return tuple(min(255, int(c * 1.15) + 10) for c in base)
 
+    def _render_plant_landmarks(self, frame: Any):
+        """Keep calibrated plant cores legible underneath the Tetris board."""
+        masks = self._plant_geometry()
+        frame[masks.foliage_flat] = self.apply_brightness(PLANT_FOLIAGE_COLOR)
+        frame[masks.globes_flat] = self.apply_brightness(PLANT_GLOBE_COLOR)
+
+    def _plant_geometry(self):
+        if self._tetris_plant_masks is None:
+            self._tetris_plant_masks = self.get_plant_masks()
+        return self._tetris_plant_masks
+
+    def _plant_occludes_index(self, index: int) -> bool:
+        if not self.plant_aware_enabled():
+            return False
+        return bool(self._plant_geometry().obstacle_flat[index])
+
     def _set_pixel(self, frame: List[Color], strip: int, led: int, color: Color):
         if strip < 0 or strip >= self.num_strips:
             return
@@ -788,6 +845,8 @@ class TetrisAnimation(AnimationBase):
         phys_led = (self.leds_per_strip - 1) - led
         idx = strip * self.leds_per_strip + phys_led
         if 0 <= idx < len(frame):
+            if self._plant_occludes_index(idx):
+                return
             frame[idx] = self.apply_brightness(color)
 
     def _set_pixel_blend(self, frame: List[Color], strip: int, led: int, color: Color, alpha: float):
@@ -810,6 +869,8 @@ class TetrisAnimation(AnimationBase):
         phys_led = (self.leds_per_strip - 1) - led
         idx = strip * self.leds_per_strip + phys_led
         if 0 <= idx < len(frame):
+            if self._plant_occludes_index(idx):
+                return
             base = frame[idx]
             frame[idx] = (
                 min(255, int(base[0]) + scaled[0]),
@@ -818,7 +879,7 @@ class TetrisAnimation(AnimationBase):
             )
 
     def get_runtime_stats(self) -> Dict[str, Any]:
-        return {
+        stats = {
             'lines_cleared': self.lines_cleared,
             'bot_fail_rate': self.fail_rate,
             'active_tetrominoes': len(self.active_pieces),
@@ -828,3 +889,11 @@ class TetrisAnimation(AnimationBase):
             'max_spawns_per_update': MAX_SPAWNS_PER_UPDATE,
             'max_coordinated_plans': MAX_COORDINATED_PLANS,
         }
+        if self.plant_aware_enabled():
+            masks = self._plant_geometry()
+            stats.update({
+                'plant_foliage_pixels': masks.foliage_count,
+                'plant_globe_pixels': masks.globe_count,
+                'plant_mask_error': masks.error,
+            })
+        return stats

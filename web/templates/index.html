@@ -178,6 +178,19 @@
                 </div>
             </div>
 
+            <div class="card plant-aware-card mb-3">
+                <div class="card-body p-3 d-flex align-items-center justify-content-between gap-3">
+                    <div>
+                        <div class="text-uppercase fw-bold small opacity-75">Plant-aware wall</div>
+                        <div class="small opacity-75">Route scenes around foliage and globes</div>
+                    </div>
+                    <div class="form-check form-switch plant-aware-switch mb-0">
+                        <input class="form-check-input" type="checkbox" role="switch" id="globalPlantAwareToggle" aria-label="Global plant-aware mode" onchange="setGlobalPlantAware(this.checked)" {% if status.plant_aware %}checked{% endif %}>
+                        <label class="form-check-label fw-bold" id="globalPlantAwareLabel" for="globalPlantAwareToggle">{{ 'On' if status.plant_aware else 'Off' }}</label>
+                    </div>
+                </div>
+            </div>
+
             <div class="accordion utility-accordion" id="diagnosticsAccordion">
                 <div class="accordion-item rounded-3 overflow-hidden">
                     <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#diagnosticsCollapse">🩺 Status & diagnostics</button></h2>

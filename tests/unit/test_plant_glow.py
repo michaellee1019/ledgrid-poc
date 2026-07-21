@@ -45,6 +45,50 @@ class PlantGlowAnimationTests(unittest.TestCase):
         animation.update_parameters({"glow_radius": 3})
         self.assertGreater(np.count_nonzero(animation._foliage_halo), one_ring)
 
+    def test_schema_exposes_conway_and_pinball_backgrounds(self):
+        schema = PlantGlowAnimation(_Controller()).get_parameter_schema()
+        self.assertEqual(
+            schema["background_source"]["options"], ["color", "conway", "pinball"]
+        )
+        self.assertIn("earth", schema["background_style"]["options"])
+        self.assertIn("arcade", schema["background_style"]["options"])
+
+    def test_borrowed_backgrounds_render_beneath_mask_cores(self):
+        common = {
+            "brightness": 1.0,
+            "breath_depth": 0.0,
+            "shimmer": 0.0,
+            "glow_strength": 0.0,
+            "background_strength": 0.5,
+        }
+        conway = PlantGlowAnimation(
+            _Controller(), {**common, "background_source": "conway", "background_style": "earth"}
+        )
+        pinball = PlantGlowAnimation(
+            _Controller(), {**common, "background_source": "pinball", "background_seed": 42}
+        )
+
+        conway_frame = conway.generate_frame(0.0, 0)
+        pinball_frame = pinball.generate_frame(0.0, 0)
+        outside = ~(conway._foliage_core | conway._globe_core)
+
+        self.assertGreater(np.count_nonzero(conway_frame[outside]), 100)
+        self.assertGreater(np.count_nonzero(pinball_frame[outside]), 100)
+        self.assertFalse(np.array_equal(conway_frame[outside], pinball_frame[outside]))
+        np.testing.assert_array_equal(
+            conway_frame[conway._foliage_core][0], np.array([54, 255, 132], dtype=np.uint8)
+        )
+
+    def test_live_background_change_rebuilds_borrowed_animation(self):
+        animation = PlantGlowAnimation(
+            _Controller(), {"background_source": "conway", "background_style": "aurora"}
+        )
+        animation.generate_frame(0.0, 0)
+        original = animation._background_animation
+        animation.update_parameters({"background_style": "starfield"})
+        animation.generate_frame(0.1, 1)
+        self.assertIsNot(animation._background_animation, original)
+
 
 if __name__ == "__main__":
     unittest.main()

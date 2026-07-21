@@ -9,6 +9,7 @@ Based on the original rainbow_animation from led_controller_spi.py
 import numpy as np
 from typing import Dict, Any
 from animation import AnimationBase
+from animation.core.mask_effects import build_halo_weights
 
 
 class RainbowAnimation(AnimationBase):
@@ -41,6 +42,10 @@ class RainbowAnimation(AnimationBase):
         self._indices = None
         self._color_lut = None
         self._color_lut_key = None
+        self._plant_field_key = None
+        self._plant_phase_offsets = None
+        self._plant_foliage = None
+        self._plant_globes = None
 
     def _ensure_arrays(self, strip_count: int, leds_per_strip: int, span_pixels: int):
         key = (strip_count, leds_per_strip, span_pixels)
@@ -67,6 +72,40 @@ class RainbowAnimation(AnimationBase):
         self.hsv_to_rgb_array(hues, sats, vals, out=self._color_lut)
         self.apply_brightness_array(self._color_lut, out=self._color_lut)
         self._color_lut_key = key
+
+    def _ensure_plant_field(self, masks):
+        """Cache a phase field whose contours part around calibrated plants."""
+        radius = max(2, int(self.params.get('plant_clearance', 1)) + 2)
+        key = (id(masks), radius)
+        if key == self._plant_field_key:
+            return
+
+        strip_count, leds_per_strip = self.get_strip_info()
+        foliage_indices = np.flatnonzero(masks.foliage_flat)
+        globe_indices = np.flatnonzero(masks.globes_flat)
+        _, foliage_halo = build_halo_weights(
+            foliage_indices, strip_count, leds_per_strip, radius, 1.25
+        )
+        _, globe_halo = build_halo_weights(
+            globe_indices, strip_count, leds_per_strip, radius, 1.1
+        )
+
+        # Opposing phase bends keep the two semantic layers readable: rainbow
+        # bands bow forward around foliage and backward around glass globes.
+        phase = foliage_halo * np.float32(0.16 * self._COLOR_LUT_SIZE)
+        phase -= globe_halo * np.float32(0.22 * self._COLOR_LUT_SIZE)
+        self._plant_phase_offsets = np.rint(phase).astype(np.int32)
+        self._plant_foliage = masks.foliage_flat
+        self._plant_globes = masks.globes_flat
+        self._plant_field_key = key
+
+    def _accent_plant_cores(self, frame, value: float, brightness: float):
+        """Turn occluded cores into subdued leaf and glass landmarks."""
+        intensity = np.clip(float(value) * float(brightness), 0.0, 1.0)
+        foliage = np.rint(np.asarray((22, 150, 65)) * intensity).astype(np.uint8)
+        globe = np.rint(np.asarray((220, 55, 190)) * intensity).astype(np.uint8)
+        frame[self._plant_foliage] = foliage
+        frame[self._plant_globes] = globe
     
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -111,7 +150,26 @@ class RainbowAnimation(AnimationBase):
         self._ensure_color_lut(saturation, value, brightness)
         offset = int(self.hue_offset * self._COLOR_LUT_SIZE)
         np.add(self._base_indices, offset, out=self._indices)
+        plant_aware = self.plant_aware_enabled()
+        if plant_aware:
+            masks = self.get_plant_masks()
+            self._ensure_plant_field(masks)
+            np.add(self._indices, self._plant_phase_offsets, out=self._indices)
         np.remainder(self._indices, self._COLOR_LUT_SIZE, out=self._indices)
         result = self.next_frame_buffer(clear=False)
         np.take(self._color_lut, self._indices, axis=0, out=result)
+        if plant_aware:
+            self._accent_plant_cores(result, value, brightness)
         return result
+
+    def get_runtime_stats(self) -> Dict[str, Any]:
+        if not self.plant_aware_enabled():
+            return {'plant_aware': False}
+        masks = self.get_plant_masks()
+        return {
+            'plant_aware': True,
+            'plant_foliage_pixels': masks.foliage_count,
+            'plant_globe_pixels': masks.globe_count,
+            'plant_globe_regions': masks.globe_regions,
+            'plant_mask_error': masks.error,
+        }

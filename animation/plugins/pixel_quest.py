@@ -85,6 +85,8 @@ class PixelQuestAnimation(AnimationBase):
     HEALTH = (255, 38, 68)
     MANA = (35, 125, 255)
     HIT = (255, 250, 225)
+    PLANT_FOLIAGE = (15, 104, 50)
+    PLANT_GLOBE = (126, 42, 156)
 
     def __init__(self, controller, config: Dict[str, Any] = None):
         super().__init__(controller, config)
@@ -228,6 +230,13 @@ class PixelQuestAnimation(AnimationBase):
             max_hp = int((16 + level * 6) * difficulty)
         facing = -1 if self.hero_x > (self.width - 1) / 2 else 1
         monster_x = max(4.0, min(self.width - 5.0, self.hero_x + facing * (8 if boss else 7)))
+        if self.plant_aware_enabled():
+            hero_y = self._hero_y()
+            monster_x = self._nearest_clear_x(
+                monster_x, hero_y + (10 if boss else 8),
+                half_width=4 if boss else 3,
+                half_height=6 if boss else 4,
+            )
         self.current_monster = Monster(kind, level, max_hp, max_hp, boss, monster_x)
         self.encounter_index += 1
         self.hero_attack_timer = .28
@@ -396,10 +405,61 @@ class PixelQuestAnimation(AnimationBase):
         eased = progress * progress * (3.0 - 2.0 * progress)
         ratio = self.stage_start_ratio + (self.stage_end_ratio - self.stage_start_ratio) * eased
         ratio += math.sin(progress * math.tau * self.stage_bends + self.stage_seed * .001) * .105
-        return self._screen_x(ratio)
+        x = self._screen_x(ratio)
+        if self.plant_aware_enabled():
+            x = self._nearest_clear_x(x, self._hero_y(), half_width=3, half_height=4)
+        return x
 
     def _screen_x(self, ratio: float) -> float:
         return max(3.0, min(self.width - 4.0, (self.width - 1) * ratio))
+
+    def _hero_y(self) -> int:
+        return max(16, min(self.height - 13, int(self.height * .58)))
+
+    def _plant_canvas_layers(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return calibrated masks in the canvas' top-to-bottom coordinates."""
+        masks = self.get_plant_masks()
+        return (
+            masks.foliage[:, ::-1].T,
+            masks.globes[:, ::-1].T,
+            masks.clearance[:, ::-1].T,
+        )
+
+    def _nearest_clear_x(
+        self, preferred: float, y: int, half_width: int, half_height: int
+    ) -> float:
+        """Choose the closest lane whose sprite footprint avoids plant terrain."""
+        if not self.plant_aware_enabled():
+            return preferred
+        _, _, blocked = self._plant_canvas_layers()
+        low, high = 3, max(3, self.width - 4)
+        preferred_i = max(low, min(high, int(round(preferred))))
+        y0, y1 = max(0, y - half_height), min(self.height, y + half_height + 1)
+        best_x, best_score = preferred_i, None
+        for x in range(low, high + 1):
+            x0, x1 = max(0, x - half_width), min(self.width, x + half_width + 1)
+            overlap = int(np.count_nonzero(blocked[y0:y1, x0:x1]))
+            score = (overlap, abs(x - preferred_i), x)
+            if best_score is None or score < best_score:
+                best_x, best_score = x, score
+        return float(best_x)
+
+    def _least_occluded_hud_y(self) -> int:
+        if not self.plant_aware_enabled() or self.height <= 9:
+            return 0
+        _, _, blocked = self._plant_canvas_layers()
+        return min(
+            range(self.height - 8),
+            key=lambda y: (int(np.count_nonzero(blocked[y:y + 9])), y),
+        )
+
+    def _plant_landmarks(self):
+        """Keep physical foliage/globes readable as overworld landmarks."""
+        if not self.plant_aware_enabled():
+            return
+        foliage, globes, _ = self._plant_canvas_layers()
+        self._canvas[foliage] = self.PLANT_FOLIAGE
+        self._canvas[globes] = self.PLANT_GLOBE
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> Any:
         fps = max(15.0, min(90.0, float(self.params.get("render_fps", 45.0))))
@@ -519,7 +579,10 @@ class PixelQuestAnimation(AnimationBase):
             x += math.sin(self.mode_time * 5.2) * (2.0 if self.attack_effect == "dodge" else .75)
         elif self.mode == "reward" and self.powerup is not None:
             x += (self.powerup.x - x) * min(1.0, self.mode_time / .75)
-        return int(round(max(3, min(self.width - 4, x))))
+        x = max(3, min(self.width - 4, x))
+        if self.plant_aware_enabled():
+            x = self._nearest_clear_x(x, self._hero_y(), half_width=3, half_height=4)
+        return int(round(x))
 
     def _hero(self, x: int, y: int, facing: int):
         bob = int(self.run_time * 8) & 1
@@ -617,19 +680,21 @@ class PixelQuestAnimation(AnimationBase):
     def _hud(self):
         if not bool(self.params.get("show_hud", True)):
             return
-        self._canvas[:9, :] = self.NIGHT
+        top = self._least_occluded_hud_y()
+        self._canvas[top:top + 9, :] = self.NIGHT
         bar_width = max(5, self.width // 2 - 3)
-        self._pixel(1, 1, self.HEALTH)
-        self._bar(3, 1, bar_width, self.hero_hp, self.hero_max_hp, self.HEALTH)
-        self._pixel(1, 3, self.MANA)
-        self._bar(3, 3, bar_width, self.hero_mp, self.hero_max_mp, self.MANA)
-        self._pixel(1, 5, self.GOLD)
-        self._bar(3, 5, bar_width, self.hero_xp, self.hero_xp_next, self.GOLD)
+        self._pixel(1, top + 1, self.HEALTH)
+        self._bar(3, top + 1, bar_width, self.hero_hp, self.hero_max_hp, self.HEALTH)
+        self._pixel(1, top + 3, self.MANA)
+        self._bar(3, top + 3, bar_width, self.hero_mp, self.hero_max_mp, self.MANA)
+        self._pixel(1, top + 5, self.GOLD)
+        self._bar(3, top + 5, bar_width, self.hero_xp, self.hero_xp_next, self.GOLD)
         for index in range(min(8, self.hero_level)):
-            self._pixel(self.width - 2 - (index % 4) * 2, 1 + (index // 4) * 2, self.HERO_CYAN)
+            self._pixel(self.width - 2 - (index % 4) * 2,
+                        top + 1 + (index // 4) * 2, self.HERO_CYAN)
         if self.current_monster is not None:
             color = self.GOLD if self.current_monster.boss else (255, 90, 45)
-            self._bar(self.width // 2, 7, self.width - self.width // 2 - 1,
+            self._bar(self.width // 2, top + 7, self.width - self.width // 2 - 1,
                       self.current_monster.hp, self.current_monster.max_hp, color)
 
     def _title_card(self):
@@ -644,7 +709,7 @@ class PixelQuestAnimation(AnimationBase):
         self._pixel(cx, cy - 8, self.WHITE)
 
     def _render(self):
-        hero_y = max(16, min(self.height - 13, int(self.height * .58)))
+        hero_y = self._hero_y()
         camera_y = self._world_scroll()
         hero_world_y = camera_y + hero_y
         self._terrain(camera_y)
@@ -680,6 +745,7 @@ class PixelQuestAnimation(AnimationBase):
             self._canvas[:, 0] = self.HEALTH
             self._canvas[:, -1] = self.HEALTH
         self._hud()
+        self._plant_landmarks()
 
     def logical_state(self) -> Tuple[Any, ...]:
         monster = self.current_monster
@@ -711,4 +777,5 @@ class PixelQuestAnimation(AnimationBase):
             "bosses_defeated": self.session_bosses,
             "powerups_collected": self.session_powerups,
             "level_ups": self.session_level_ups,
+            "plant_aware": self.plant_aware_enabled(),
         }

@@ -381,6 +381,10 @@ class AsciiDropAnimation(AnimationBase):
             self.params.pop(unused, None)
         self.width, self.height = self.get_strip_info()
         self._settled = np.zeros((self.height, self.width), dtype=np.bool_)
+        self._plant_clearance = np.zeros_like(self._settled)
+        self._plant_foliage = np.zeros_like(self._settled)
+        self._plant_globes = np.zeros_like(self._settled)
+        self._plant_mask_error = ""
         self._pieces: List[Dict[str, Any]] = []
         self._glyph_cache: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
         self._rng = np.random.default_rng(int(self.params.get("random_seed", 0)))
@@ -390,6 +394,7 @@ class AsciiDropAnimation(AnimationBase):
         self._settled_revision = 0
         self._last_render_key = None
         self._last_frame = None
+        self._refresh_plant_geometry()
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -436,15 +441,30 @@ class AsciiDropAnimation(AnimationBase):
                 "default": 0,
                 "description": "Repeatable horizontal placement seed",
             },
+            "plant_landmark_brightness": {
+                "type": "float",
+                "min": 0.0,
+                "max": 1.0,
+                "default": 0.45,
+                "description": "Brightness of foliage and globe landmarks in plant-aware mode",
+            },
         })
         return schema
 
     def update_parameters(self, new_params: Dict[str, Any]):
         old_seed = int(self.params.get("random_seed", 0))
+        was_plant_aware = self.plant_aware_enabled()
         super().update_parameters(new_params)
         new_seed = int(self.params.get("random_seed", 0))
         if new_seed != old_seed:
             self._rng = np.random.default_rng(new_seed)
+        plant_geometry = {"plant_clearance", "plant_mask_path", "plant_globe_mask_path"}
+        if (
+            self.plant_aware_enabled() != was_plant_aware
+            or (self.plant_aware_enabled() and bool(plant_geometry & new_params.keys()))
+        ):
+            self._refresh_plant_geometry()
+            self._last_render_key = None
 
     def generate_frame(self, time_elapsed: float, frame_count: int):
         now = max(0.0, float(time_elapsed))
@@ -463,6 +483,7 @@ class AsciiDropAnimation(AnimationBase):
             tuple((piece["char"], piece["x"], piece["row"]) for piece in self._pieces),
             self._color("character"),
             self._color("background"),
+            self._plant_render_key(),
         )
         if render_key == self._last_render_key and self._last_frame is not None:
             return self.rendered_frame(self._last_frame, changed=False)
@@ -479,8 +500,16 @@ class AsciiDropAnimation(AnimationBase):
             glyph_y, glyph_x = self._glyph(piece["char"])
             y = glyph_y + piece["row"]
             visible = (y >= 0) & (y < self.height) & (piece["x"] + glyph_x < self.width)
+            if self.plant_aware_enabled() and np.any(visible):
+                visible &= ~self._plant_clearance[y.clip(0, self.height - 1), piece["x"] + glyph_x]
             if np.any(visible):
                 wall[piece["x"] + glyph_x[visible], self.height - 1 - y[visible]] = self._color("character")
+
+        if self.plant_aware_enabled():
+            strength = min(1.0, max(0.0, float(self.params.get("plant_landmark_brightness", 0.45))))
+            if strength > 0.0:
+                wall[self._plant_foliage[::-1].T] = self._landmark_color((20, 150, 42), strength)
+                wall[self._plant_globes[::-1].T] = self._landmark_color((180, 72, 230), strength)
 
         self._last_render_key = render_key
         self._last_frame = frame
@@ -488,12 +517,22 @@ class AsciiDropAnimation(AnimationBase):
 
     def get_runtime_stats(self) -> Dict[str, Any]:
         settled_pixels = int(np.count_nonzero(self._settled))
-        return {
+        stats = {
             "falling_characters": len(self._pieces),
             "settled_pixels": settled_pixels,
             "fill_ratio": settled_pixels / max(1, self._settled.size),
             "phrase_index": self._phrase_index,
+            "plant_aware": self.plant_aware_enabled(),
         }
+        if self.plant_aware_enabled():
+            stats.update({
+                "plant_foliage_pixels": int(np.count_nonzero(self._plant_foliage)),
+                "plant_globe_pixels": int(np.count_nonzero(self._plant_globes)),
+                "plant_clearance_pixels": int(np.count_nonzero(self._plant_clearance)),
+            })
+            if self._plant_mask_error:
+                stats["plant_mask_error"] = self._plant_mask_error
+        return stats
 
     def _spawn_due_characters(self, now: float):
         interval = 1.0 / max(0.1, float(self.params.get("spawn_rate", 1.5)))
@@ -516,6 +555,8 @@ class AsciiDropAnimation(AnimationBase):
         glyph_width = int(glyph_x.max()) + 1 if glyph_x.size else 1
         max_x = max(0, self.width - glyph_width)
         x = int(self._rng.integers(0, max_x + 1)) if max_x else 0
+        if self.plant_aware_enabled() and max_x:
+            x = self._least_occluded_lane(glyph_x, x, max_x)
         self._pieces.append({"char": char, "x": x, "row": -1, "progress": 0.0})
 
     def _advance_pieces(self, dt: float):
@@ -547,12 +588,19 @@ class AsciiDropAnimation(AnimationBase):
         if np.any((y >= self.height) & inside_x):
             return True
         visible = (y >= 0) & inside_x
-        return bool(np.any(self._settled[y[visible], x + glyph_x[visible]]))
+        if np.any(self._settled[y[visible], x + glyph_x[visible]]):
+            return True
+        return bool(
+            self.plant_aware_enabled()
+            and np.any(self._plant_clearance[y[visible], x + glyph_x[visible]])
+        )
 
     def _settle(self, piece: Dict[str, Any]) -> bool:
         glyph_y, glyph_x = self._glyph(piece["char"])
         y = glyph_y + piece["row"]
         visible = (y >= 0) & (y < self.height) & (piece["x"] + glyph_x < self.width)
+        if self.plant_aware_enabled() and np.any(visible):
+            visible &= ~self._plant_clearance[y.clip(0, self.height - 1), piece["x"] + glyph_x]
         if not np.any(visible):
             return False
 
@@ -585,6 +633,44 @@ class AsciiDropAnimation(AnimationBase):
             max(0, min(255, int(float(self.params.get(f"{prefix}_{channel}", default)) * brightness)))
             for channel, default in zip(("red", "green", "blue"), defaults)
         )
+
+    def _refresh_plant_geometry(self):
+        self._plant_clearance.fill(False)
+        self._plant_foliage.fill(False)
+        self._plant_globes.fill(False)
+        self._plant_mask_error = ""
+        if not self.plant_aware_enabled():
+            return
+        masks = self.get_plant_masks()
+        # Shared masks are [strip, physical LED]. Falling rows are top-down.
+        self._plant_clearance[:] = masks.clearance.T[::-1]
+        self._plant_foliage[:] = masks.foliage.T[::-1]
+        self._plant_globes[:] = masks.globes.T[::-1]
+        self._plant_mask_error = masks.error
+
+    def _least_occluded_lane(self, glyph_x: np.ndarray, preferred: int, max_x: int) -> int:
+        """Keep whole falling text lanes away from calibrated plant terrain."""
+        scores = []
+        unique_columns = np.unique(glyph_x)
+        for candidate in range(max_x + 1):
+            score = int(np.count_nonzero(self._plant_clearance[:, candidate + unique_columns]))
+            scores.append(score)
+        best = min(scores)
+        candidates = [candidate for candidate, score in enumerate(scores) if score == best]
+        return min(candidates, key=lambda candidate: (abs(candidate - preferred), candidate))
+
+    def _plant_render_key(self):
+        if not self.plant_aware_enabled():
+            return None
+        return (
+            int(np.count_nonzero(self._plant_foliage)),
+            int(np.count_nonzero(self._plant_globes)),
+            float(self.params.get("plant_landmark_brightness", 0.45)),
+        )
+
+    def _landmark_color(self, color: Tuple[int, int, int], strength: float) -> Tuple[int, int, int]:
+        brightness = min(1.0, max(0.0, float(self.params.get("brightness", 1.0))))
+        return tuple(int(channel * brightness * strength) for channel in color)
 
     def _reset_scene(self):
         self._settled.fill(False)

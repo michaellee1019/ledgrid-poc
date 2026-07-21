@@ -139,6 +139,10 @@ class LivingEcosystemAnimation(AnimationBase):
         })
         self.params = {**self.default_params, **self.config}
         self._canvas = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        self._plant_canvas_foliage = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_canvas_globes = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_canvas_clearance = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_mask_error = ""
         self._last_frame: Optional[np.ndarray] = None
         self._last_render_elapsed: Optional[float] = None
         self._sim_time = 0.0
@@ -197,8 +201,15 @@ class LivingEcosystemAnimation(AnimationBase):
 
     def update_parameters(self, new_params: Dict[str, Any]):
         structural = {"seed", "creature_density", "predator_ratio", "tree_density", "show_water"}
-        should_reset = bool(structural.intersection(new_params))
+        plant_geometry = {"plant_clearance", "plant_mask_path", "plant_globe_mask_path"}
+        was_plant_aware = self.plant_aware_enabled()
         super().update_parameters(new_params)
+        is_plant_aware = self.plant_aware_enabled()
+        should_reset = (
+            bool(structural.intersection(new_params))
+            or ("plant_aware" in new_params and was_plant_aware != is_plant_aware)
+            or (is_plant_aware and bool(plant_geometry.intersection(new_params)))
+        )
         if should_reset:
             self._reset_world(self._cycle)
         self._last_render_elapsed = None
@@ -213,6 +224,7 @@ class LivingEcosystemAnimation(AnimationBase):
     def _reset_world(self, cycle: int):
         seed = int(self.params.get("seed", 7319))
         self.rng = np.random.default_rng(seed)
+        self._refresh_plant_habitat()
         self._cycle = cycle
         self._sim_time = 0.0
         self._kills = 0
@@ -259,8 +271,20 @@ class LivingEcosystemAnimation(AnimationBase):
             y = self.rng.uniform(1, max(1.1, self.height - 2))
             if (not bool(self.params.get("show_water", True))
                     or not self.water[min(self.height - 1, int(y)), min(self.width - 1, int(x))]):
-                if not edge_bias or x < self.width * .35 or x > self.width * .68:
+                if ((not self.plant_aware_enabled() or not self._plant_blocked(x, y))
+                        and (not edge_bias or x < self.width * .35 or x > self.width * .68)):
                     return x, y
+        if self.plant_aware_enabled():
+            safe = ~self._plant_canvas_clearance
+            if bool(self.params.get("show_water", True)):
+                safe = safe & ~self.water
+            if edge_bias:
+                x_coords = np.arange(self.width)[None, :]
+                safe = safe & ((x_coords < self.width * .35) | (x_coords > self.width * .68))
+            safe_y, safe_x = np.nonzero(safe)
+            if safe_x.size:
+                index = int(self.rng.integers(0, safe_x.size))
+                return float(safe_x[index]), float(safe_y[index])
         return 1.0, 1.0
 
     def _founder(self, species: int, pack: int, cx: float, cy: float) -> Creature:
@@ -269,6 +293,8 @@ class LivingEcosystemAnimation(AnimationBase):
         base[4] += self.rng.normal(0, .04)
         x = float(np.clip(cx + self.rng.normal(0, 3), 1, self.width - 2))
         y = float(np.clip(cy + self.rng.normal(0, 7), 1, self.height - 2))
+        if self.plant_aware_enabled() and self._plant_blocked(x, y):
+            x, y = self._land_position()
         angle = self.rng.uniform(0, math.tau)
         return Creature(species, pack, x, y, math.cos(angle), math.sin(angle),
                         65.0 if species == 0 else 90.0, self.rng.uniform(0, 20), base)
@@ -397,7 +423,30 @@ class LivingEcosystemAnimation(AnimationBase):
         c.vx, c.vy = c.vx / length * speed, c.vy / length * speed
         nx = float(np.clip(c.x + c.vx * dt, .5, self.width - 1.5))
         ny = float(np.clip(c.y + c.vy * dt, .5, self.height - 1.5))
-        if bool(self.params.get("show_water", True)) and self.water[int(ny), int(nx)]:
+        if self.plant_aware_enabled() and self._plant_blocked(nx, ny):
+            # Dense calibrated habitat is a routing constraint.  Preserve the
+            # unblocked movement axis when possible so animals slide around a
+            # plant edge instead of jittering against it.
+            horizontal = (nx, c.y)
+            vertical = (c.x, ny)
+            candidates = (horizontal, vertical) if abs(c.vx) >= abs(c.vy) else (vertical, horizontal)
+            for px, py in candidates:
+                on_water = (
+                    bool(self.params.get("show_water", True))
+                    and self.water[int(py), int(px)]
+                )
+                if not self._plant_blocked(px, py) and not on_water:
+                    moved_horizontally = py == c.y
+                    c.x, c.y = px, py
+                    if moved_horizontally:
+                        c.vy *= -.35
+                    else:
+                        c.vx *= -.35
+                    break
+            else:
+                c.vx *= -.65
+                c.vy *= -.65
+        elif bool(self.params.get("show_water", True)) and self.water[int(ny), int(nx)]:
             c.vx *= -.65
             c.vy += self.rng.choice((-1, 1)) * speed * .25
         else:
@@ -426,6 +475,8 @@ class LivingEcosystemAnimation(AnimationBase):
                 child = Creature(species, first.pack, (first.x+second.x)/2, (first.y+second.y)/2,
                                  first.vx*.3, first.vy*.3, 48.0, 0.0, genes,
                                  max(first.generation, second.generation)+1, 18.0)
+                if self.plant_aware_enabled() and self._plant_blocked(child.x, child.y):
+                    child.x, child.y = self._land_position()
                 cost = 21 if species == 0 else 25
                 first.energy -= cost
                 second.energy -= cost
@@ -457,7 +508,8 @@ class LivingEcosystemAnimation(AnimationBase):
                 parent = self.trees[int(self.rng.integers(0, len(self.trees)))]
                 x = float(np.clip(parent.x + self.rng.normal(0, 4), 1, self.width - 2))
                 y = float(np.clip(parent.y + self.rng.normal(0, 9), 1, self.height - 2))
-                if bool(self.params.get("show_water", True)) and self.water[int(y), int(x)]:
+                if ((bool(self.params.get("show_water", True)) and self.water[int(y), int(x)])
+                        or (self.plant_aware_enabled() and self._plant_blocked(x, y))):
                     x, y = self._land_position(edge_bias=True)
                 self.trees[index] = Tree(x, y, 0.0, self.rng.uniform(165, 280),
                                          float(np.clip(parent.size_gene+self.rng.normal(0,.08),.55,1.5)),
@@ -473,6 +525,26 @@ class LivingEcosystemAnimation(AnimationBase):
         wall_day = float(np.clip(self.params.get("day_length_seconds", 90.0), 15.0, 300.0))
         canonical_day = max(5.0, wall_day * 15.0 / lifecycle)
         return float(np.clip(.5 + .5 * math.sin(t * math.tau / canonical_day - math.pi/2), 0, 1))
+
+    def _refresh_plant_habitat(self):
+        self._plant_canvas_foliage.fill(False)
+        self._plant_canvas_globes.fill(False)
+        self._plant_canvas_clearance.fill(False)
+        self._plant_mask_error = ""
+        if not self.plant_aware_enabled():
+            return
+        masks = self.get_plant_masks()
+        # Shared masks use [strip, physical LED]; the ecosystem canvas has its
+        # origin at the opposite vertical edge.
+        self._plant_canvas_foliage[:] = masks.foliage.T[::-1]
+        self._plant_canvas_globes[:] = masks.globes.T[::-1]
+        self._plant_canvas_clearance[:] = masks.clearance.T[::-1]
+        self._plant_mask_error = masks.error
+
+    def _plant_blocked(self, x: float, y: float) -> bool:
+        ix = min(self.width - 1, max(0, int(x)))
+        iy = min(self.height - 1, max(0, int(y)))
+        return bool(self._plant_canvas_clearance[iy, ix])
 
     def _palette(self) -> Dict[str, Tuple[int, int, int]]:
         return self.PALETTES.get(str(self.params.get("palette", "natural")).lower(),
@@ -517,6 +589,15 @@ class LivingEcosystemAnimation(AnimationBase):
             self._draw_tree(tree, light, palette)
         for creature in sorted(self.creatures, key=lambda item: item.y):
             self._draw_creature(creature, daylight, palette)
+        if self.plant_aware_enabled():
+            # Living foliage reads as a cool refuge while rooting globes act
+            # as warm, unmistakable watering landmarks.
+            self._canvas[self._plant_canvas_foliage] = np.maximum(
+                self._canvas[self._plant_canvas_foliage], (8, 72, 34)
+            )
+            self._canvas[self._plant_canvas_globes] = np.maximum(
+                self._canvas[self._plant_canvas_globes], (94, 28, 112)
+            )
         self._finish_color()
 
     def _draw_tree(self, tree: Tree, light: float, palette: Dict[str, Tuple[int, int, int]]):
@@ -608,7 +689,7 @@ class LivingEcosystemAnimation(AnimationBase):
     def get_runtime_stats(self) -> Dict[str, Any]:
         grazers = [c for c in self.creatures if c.species == 0]
         hunters = [c for c in self.creatures if c.species == 1]
-        return {
+        stats = {
             "ecosystem_seconds": round(self._sim_time, 1),
             "lifecycle_minutes": float(self.params.get("lifecycle_minutes", 15.0)),
             "lifecycle_progress": round(self._sim_time / self.LOOP_SECONDS, 3),
@@ -626,3 +707,13 @@ class LivingEcosystemAnimation(AnimationBase):
             "creature_size": float(self.params.get("creature_size", 1.0)),
             "simulation_hz": float(self.params.get("simulation_hz", self.SIM_HZ)),
         }
+        if self.plant_aware_enabled():
+            stats.update({
+                "plant_aware": True,
+                "plant_foliage_pixels": int(np.count_nonzero(self._plant_canvas_foliage)),
+                "plant_globe_pixels": int(np.count_nonzero(self._plant_canvas_globes)),
+                "plant_clearance_pixels": int(np.count_nonzero(self._plant_canvas_clearance)),
+            })
+            if self._plant_mask_error:
+                stats["plant_mask_error"] = self._plant_mask_error
+        return stats

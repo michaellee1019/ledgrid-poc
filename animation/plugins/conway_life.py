@@ -9,6 +9,7 @@ from typing import Any, Deque, Dict, Iterable, List, Optional, Tuple
 import numpy as np
 
 from animation import AnimationBase
+from animation.core.mask_effects import dilate_8
 from animation.core.palette_field import AnimatedPaletteField
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
@@ -112,6 +113,7 @@ class ConwayLifeAnimation(AnimationBase):
                 "background_fps": 12.0,
                 "evolution_color_strength": 0.85,
                 "random_seed": 0,
+                "plant_nursery": True,
             }
         )
         self.params = {**self.default_params, **self.config}
@@ -177,11 +179,20 @@ class ConwayLifeAnimation(AnimationBase):
         self._next_state_fingerprint: Tuple[int, int] = (0, 0)
         self._tile_ids: Optional[List[List[int]]] = None
         self._tile_regions: List[Tuple[int, int, int, int]] = []
+        self._plant_blocked = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_fertile = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_fertile_flat = np.zeros(self.width * self.height, dtype=bool)
+        self._plant_foliage_flat = np.zeros(self.width * self.height, dtype=bool)
+        self._plant_globes_flat = np.zeros(self.width * self.height, dtype=bool)
+        self._plant_foliage_count = 0
+        self._plant_globe_count = 0
+        self._plant_mask_error = ""
         self.destruct_on_loop_recoveries = 0
         self.last_detected_loop_period = 0
         self.last_detected_loop_generation = -1
         self.last_destruct_on_loop_action = ""
 
+        self._refresh_plant_habitat()
         self._initialize_grid(self.params.get("seed_cells"))
 
     def get_parameter_schema(self) -> Dict[str, Any]:
@@ -344,6 +355,11 @@ class ConwayLifeAnimation(AnimationBase):
                     "default": 0,
                     "description": "Repeatable visual and seed variation (0 chooses a fresh run)",
                 },
+                "plant_nursery": {
+                    "type": "bool",
+                    "default": True,
+                    "description": "Let globe-edge habitat grow Life with two neighbors instead of three",
+                },
             }
         )
         return schema
@@ -355,6 +371,15 @@ class ConwayLifeAnimation(AnimationBase):
 
         super().update_parameters(params)
         self._last_frame = None
+
+        plant_geometry_keys = {
+            "plant_aware", "plant_clearance", "plant_mask_path",
+            "plant_globe_mask_path", "plant_nursery",
+        }
+        if plant_geometry_keys & params.keys():
+            self._refresh_plant_habitat()
+            self._initialize_grid(self.params.get("seed_cells"))
+            return
 
         if "seed_cells" in params:
             self._initialize_grid(params.get("seed_cells"))
@@ -384,7 +409,7 @@ class ConwayLifeAnimation(AnimationBase):
             self._spawn_glider(count=int(self.params.get("glider_count", 3) or 3))
 
     def get_runtime_stats(self) -> Dict[str, Any]:
-        return {
+        stats = {
             "generation": self.generation,
             "alive_cells": self.alive_cells,
             "population_ratio": self.alive_cells / max(1, self.width * self.height),
@@ -402,6 +427,17 @@ class ConwayLifeAnimation(AnimationBase):
             "tile_installation": self._tile_ids is not None,
             "tile_regions": len(self._tile_regions),
         }
+        if self.plant_aware_enabled():
+            stats.update(
+                {
+                    "plant_aware": True,
+                    "plant_foliage_pixels": self._plant_foliage_count,
+                    "plant_globe_pixels": self._plant_globe_count,
+                    "plant_nursery_pixels": int(np.count_nonzero(self._plant_fertile)),
+                    "plant_mask_error": self._plant_mask_error,
+                }
+            )
+        return stats
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Color]:
         total_pixels = self.num_strips * self.leds_per_strip
@@ -476,6 +512,8 @@ class ConwayLifeAnimation(AnimationBase):
                 )
                 self._background_cache_key = background_key
                 self._background_cache = frame.copy()
+        if self.plant_aware_enabled():
+            self._render_plant_habitat(frame)
         for x, y in self._render_cells:
             color = self._cell_color(x, y)
             if color:
@@ -640,6 +678,8 @@ class ConwayLifeAnimation(AnimationBase):
                         continue
                     if self._tile_ids is not None and self._tile_ids[ny][nx] != source_tile:
                         continue
+                    if self.plant_aware_enabled() and self._plant_blocked[ny, nx]:
+                        continue
                     key = (nx, ny)
                     counts[key] = counts.get(key, 0) + 1
 
@@ -652,7 +692,15 @@ class ConwayLifeAnimation(AnimationBase):
             if alive and neighbors in (2, 3):
                 self.next_grid[y][x] = min(self.grid[y][x] + 1, 20)
                 self.next_natural_grid[y][x] = self.natural_grid[y][x]
-            elif not alive and neighbors == 3:
+            elif not alive and (
+                neighbors == 3
+                or (
+                    self.plant_aware_enabled()
+                    and bool(self.params.get("plant_nursery", True))
+                    and self._plant_fertile[y, x]
+                    and neighbors == 2
+                )
+            ):
                 color_sum = [0, 0, 0]
                 color_count = 0
                 for dy in (-1, 0, 1):
@@ -675,7 +723,10 @@ class ConwayLifeAnimation(AnimationBase):
                             color_sum[2] += neighbor_color[2]
                             color_count += 1
                 self.next_grid[y][x] = 1
-                self.next_natural_grid[y][x] = self._blend_neighbor_colors(color_sum, color_count)
+                if self.plant_aware_enabled() and self._plant_fertile[y, x] and neighbors == 2:
+                    self.next_natural_grid[y][x] = (255, 176, 48)
+                else:
+                    self.next_natural_grid[y][x] = self._blend_neighbor_colors(color_sum, color_count)
                 births += 1
             elif alive:
                 deaths += 1
@@ -1085,7 +1136,54 @@ class ConwayLifeAnimation(AnimationBase):
     def _cell_is_active(self, x: int, y: int) -> bool:
         if not (0 <= x < self.width and 0 <= y < self.height):
             return False
-        return self._tile_ids is None or self._tile_ids[y][x] >= 0
+        if self._tile_ids is not None and self._tile_ids[y][x] < 0:
+            return False
+        return not (self.plant_aware_enabled() and self._plant_blocked[y, x])
+
+    def _refresh_plant_habitat(self):
+        """Map calibrated physical masks into Conway's top-down Life canvas."""
+        self._plant_blocked.fill(False)
+        self._plant_fertile.fill(False)
+        self._plant_fertile_flat.fill(False)
+        self._plant_foliage_flat.fill(False)
+        self._plant_globes_flat.fill(False)
+        self._plant_foliage_count = 0
+        self._plant_globe_count = 0
+        self._plant_mask_error = ""
+        if not self.plant_aware_enabled():
+            return
+
+        masks = self.get_plant_masks()
+        self._plant_blocked[:] = masks.clearance.T[::-1]
+        self._plant_foliage_flat[:] = masks.foliage_flat
+        self._plant_globes_flat[:] = masks.globes_flat
+        self._plant_foliage_count = masks.foliage_count
+        self._plant_globe_count = masks.globe_count
+        self._plant_mask_error = masks.error
+
+        # The first safe ring beyond configured clearance is a fertile shoreline
+        # around each globe. It modifies Life without placing cells behind glass.
+        globe_reach = masks.globes.copy()
+        for _ in range(max(0, int(self.params.get("plant_clearance", 1))) + 1):
+            globe_reach = dilate_8(globe_reach)
+        fertile_physical = globe_reach & ~masks.clearance
+        self._plant_fertile[:] = fertile_physical.T[::-1]
+        self._plant_fertile_flat[:] = fertile_physical.ravel()
+
+    def _render_plant_habitat(self, frame: np.ndarray):
+        """Render foliage, globes, and globe nurseries as distinct landmarks."""
+        if np.any(self._plant_fertile_flat):
+            frame[self._plant_fertile_flat] = np.maximum(
+                frame[self._plant_fertile_flat], self.apply_brightness((34, 12, 2))
+            )
+        if np.any(self._plant_foliage_flat):
+            frame[self._plant_foliage_flat] = np.maximum(
+                frame[self._plant_foliage_flat], self.apply_brightness((3, 38, 10))
+            )
+        if np.any(self._plant_globes_flat):
+            frame[self._plant_globes_flat] = np.maximum(
+                frame[self._plant_globes_flat], self.apply_brightness((92, 18, 112))
+            )
 
     def _seed_pattern_in_region(
         self,
@@ -1135,7 +1233,9 @@ class ConwayLifeAnimation(AnimationBase):
         color = self._random_natural_color()
         for dx, dy in pattern:
             x, y = origin_x + dx, origin_y + dy
-            if 0 <= x < self.width and 0 <= y < self.height:
+            if 0 <= x < self.width and 0 <= y < self.height and (
+                not self.plant_aware_enabled() or self._cell_is_active(x, y)
+            ):
                 self.grid[y][x] = 1
                 self.natural_grid[y][x] = color
 
@@ -1174,8 +1274,14 @@ class ConwayLifeAnimation(AnimationBase):
             if (origin_x, origin_y) in used_origins:
                 continue
 
-            used_origins.add((origin_x, origin_y))
             glider = self.random.choice(gliders)
+            if self.plant_aware_enabled() and any(
+                not self._cell_is_active(origin_x + dx, origin_y + dy)
+                for dx, dy in glider
+            ):
+                continue
+
+            used_origins.add((origin_x, origin_y))
             glider_color = self._random_natural_color()
             for dx, dy in glider:
                 x = origin_x + dx

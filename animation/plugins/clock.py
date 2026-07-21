@@ -80,9 +80,10 @@ class ClockAnimation(AnimationBase):
         self._canvas = np.zeros((self.width, self.height, 3), dtype=np.float32)
         self._last_render_key = None
         self._last_frame = None
+        self._plant_layout_offset = (0, 0)
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        return {
+        schema = {
             "face": {"type": "str", "default": "digital", "options": list(self.FACE_OPTIONS), "description": "Clock face geometry"},
             "background": {"type": "str", "default": "gradient", "options": list(self.BACKGROUND_OPTIONS), "description": "Ambient background treatment"},
             "palette": {"type": "str", "default": "amber", "options": list(self.PALETTES), "description": "Coordinated color palette"},
@@ -97,6 +98,11 @@ class ClockAnimation(AnimationBase):
             "speed": {"type": "float", "min": 0.1, "max": 4.0, "default": 1.0, "description": "Ambient motion speed"},
             "brightness": {"type": "float", "min": 0.05, "max": 1.0, "default": 1.0, "description": "Overall brightness"},
         }
+        schema.update({
+            key: value for key, value in super().get_parameter_schema().items()
+            if key.startswith("plant_")
+        })
+        return schema
 
     def generate_frame(self, time_elapsed: float, frame_count: int):
         now = self._clock_now()
@@ -120,6 +126,10 @@ class ClockAnimation(AnimationBase):
         }[face]
         marks = np.zeros((self.width, self.height, 3), dtype=np.float32)
         draw(marks, now, palette, time_elapsed)
+        if self.plant_aware_enabled():
+            marks = self._place_away_from_plants(marks)
+        else:
+            self._plant_layout_offset = (0, 0)
         self._composite_glow(marks, float(self.params.get("glow", 0.45)))
 
         frame = self.next_frame_buffer(clear=False)
@@ -134,6 +144,68 @@ class ClockAnimation(AnimationBase):
         return datetime.now().astimezone() + timedelta(
             minutes=int(self.params.get("clock_offset_minutes", 0))
         )
+
+    def _place_away_from_plants(self, marks: np.ndarray) -> np.ndarray:
+        """Translate the complete clock face to its clearest visible location.
+
+        Keeping the face together preserves the relationship between hands,
+        digits, and seconds while treating foliage and globes as calibrated HUD
+        exclusion zones.  Candidate translations never clip a lit face pixel.
+        """
+        occupied = np.any(marks > 0, axis=2)
+        coordinates = np.argwhere(occupied)
+        if coordinates.size == 0:
+            self._plant_layout_offset = (0, 0)
+            return marks
+
+        masks = self.get_plant_masks()
+        min_x, min_y = coordinates.min(axis=0)
+        max_x, max_y = coordinates.max(axis=0)
+        dx_values = np.arange(-int(min_x), self.width - int(max_x), dtype=np.intp)
+        dy_values = np.arange(-int(min_y), self.height - int(max_y), dtype=np.intp)
+        shifted_x = coordinates[:, 0, None, None] + dx_values[None, :, None]
+        shifted_y = coordinates[:, 1, None, None] + dy_values[None, None, :]
+        globe_counts = np.count_nonzero(masks.globes[shifted_x, shifted_y], axis=0)
+        foliage_counts = np.count_nonzero(masks.foliage[shifted_x, shifted_y], axis=0)
+        clearance_counts = np.count_nonzero(
+            masks.clearance[shifted_x, shifted_y], axis=0
+        )
+        # Directly obscured marks dominate the score; clearance then keeps glow
+        # and fine strokes from visually merging into leaves.  Lexicographic
+        # selection also makes the nearest equally-clear location deterministic.
+        weighted = globe_counts * 12 + foliage_counts * 4 + clearance_counts
+        direct = globe_counts + foliage_counts
+        distance = np.abs(dx_values)[:, None] + np.abs(dy_values)[None, :]
+        order = np.lexsort((
+            np.broadcast_to(np.abs(dx_values)[:, None], weighted.shape).ravel(),
+            np.broadcast_to(np.abs(dy_values)[None, :], weighted.shape).ravel(),
+            distance.ravel(),
+            direct.ravel(),
+            weighted.ravel(),
+        ))
+        dx_index, dy_index = np.unravel_index(int(order[0]), weighted.shape)
+        best_offset = (int(dx_values[dx_index]), int(dy_values[dy_index]))
+
+        dx, dy = best_offset
+        self._plant_layout_offset = best_offset
+        if best_offset == (0, 0):
+            return marks
+        placed = np.zeros_like(marks)
+        placed[coordinates[:, 0] + dx, coordinates[:, 1] + dy] = marks[
+            coordinates[:, 0], coordinates[:, 1]
+        ]
+        return placed
+
+    def get_runtime_stats(self) -> Dict[str, Any]:
+        if not self.plant_aware_enabled():
+            return {}
+        masks = self.get_plant_masks()
+        return {
+            "plant_layout_offset": self._plant_layout_offset,
+            "plant_foliage_pixels": masks.foliage_count,
+            "plant_globe_pixels": masks.globe_count,
+            "plant_mask_error": masks.error,
+        }
 
     def _choice(self, key: str, options: Sequence[str], fallback: str) -> str:
         value = str(self.params.get(key, fallback)).lower()

@@ -43,6 +43,11 @@ class GifAnimation(AnimationBase):
             "flip_y": True,
             "fit_mode": "stretch",  # "stretch", "contain", "cover"
             "contain_background": 0,
+            # Plant-aware composition stays completely outside the legacy path.
+            "plant_gif_offset_radius": 4,
+            "plant_foliage_dim": 0.32,
+            "plant_globe_dim": 0.18,
+            "plant_accent_strength": 0.16,
         })
         self.params = {**self.default_params, **self.config}
 
@@ -54,6 +59,8 @@ class GifAnimation(AnimationBase):
         self._load_error: Optional[str] = None
         self._adjusted_frame_cache: Dict[Tuple[int, Tuple[Any, ...]], np.ndarray] = {}
         self._last_output_key: Optional[Tuple[int, Tuple[Any, ...]]] = None
+        self._plant_offset_key: Optional[Tuple[Any, ...]] = None
+        self._plant_offset = (0, 0)
         self._empty_frame = np.zeros((self.get_pixel_count(), 3), dtype=np.uint8)
 
         self._load_selected_gif()
@@ -71,11 +78,16 @@ class GifAnimation(AnimationBase):
         old_fit_mode = str(self.params.get("fit_mode", "stretch"))
 
         super().update_parameters(new_params)
-        if any(key in new_params for key in (
-            "brightness", "gamma", "brightness_mode", "brightness_floor"
-        )):
+        adjustment_keys = {
+            "brightness", "gamma", "brightness_mode", "brightness_floor",
+            "plant_aware", "plant_clearance", "plant_mask_path",
+            "plant_globe_mask_path", "plant_gif_offset_radius",
+            "plant_foliage_dim", "plant_globe_dim", "plant_accent_strength",
+        }
+        if adjustment_keys & new_params.keys():
             self._adjusted_frame_cache.clear()
             self._last_output_key = None
+            self._plant_offset_key = None
 
         directory_changed = old_directory != str(self.params.get("gif_directory", ""))
         name_changed = old_name != str(self.params.get("gif_name", ""))
@@ -147,6 +159,22 @@ class GifAnimation(AnimationBase):
                 "default": 0,
                 "description": "Background level used by contain fit mode.",
             },
+            "plant_gif_offset_radius": {
+                "type": "int", "min": 0, "max": 8, "default": 4,
+                "description": "Maximum translation used to keep salient GIF content off plants.",
+            },
+            "plant_foliage_dim": {
+                "type": "float", "min": 0.0, "max": 1.0, "default": 0.32,
+                "description": "Occlusion dimming applied where GIF content still crosses foliage.",
+            },
+            "plant_globe_dim": {
+                "type": "float", "min": 0.0, "max": 1.0, "default": 0.18,
+                "description": "Occlusion dimming applied where GIF content still crosses globes.",
+            },
+            "plant_accent_strength": {
+                "type": "float", "min": 0.0, "max": 1.0, "default": 0.16,
+                "description": "Green/magenta landmark tint mixed into foliage/globe pixels.",
+            },
         })
         return schema
 
@@ -158,6 +186,8 @@ class GifAnimation(AnimationBase):
             "frame_count": len(self._frames),
             "current_frame_index": self._current_frame_index,
             "load_error": self._load_error,
+            "plant_aware": self.plant_aware_enabled(),
+            "plant_content_offset": self._plant_offset if self.plant_aware_enabled() else (0, 0),
         }
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Color]:
@@ -190,11 +220,23 @@ class GifAnimation(AnimationBase):
         return self.rendered_frame(frame, changed=changed)
 
     def _adjustment_key(self) -> Tuple[Any, ...]:
-        return (
+        key = (
             max(0.0, min(1.0, float(self.params.get("brightness", 1.0) or 0.0))),
             max(0.2, float(self.params.get("gamma", 1.0) or 1.0)),
             str(self.params.get("brightness_mode", "rgb")).strip().lower(),
             max(0.0, min(1.0, float(self.params.get("brightness_floor", 0.0) or 0.0))),
+        )
+        if not self.plant_aware_enabled():
+            return key
+        return key + (
+            True,
+            max(0, min(8, int(self.params.get("plant_gif_offset_radius", 4) or 0))),
+            max(0.0, min(1.0, float(self.params.get("plant_foliage_dim", 0.32) or 0.0))),
+            max(0.0, min(1.0, float(self.params.get("plant_globe_dim", 0.18) or 0.0))),
+            max(0.0, min(1.0, float(self.params.get("plant_accent_strength", 0.16) or 0.0))),
+            int(self.params.get("plant_clearance", 1) or 0),
+            str(self.params.get("plant_mask_path", "")),
+            str(self.params.get("plant_globe_mask_path", "")),
         )
 
     def _apply_output_adjustments(self, source: Sequence[Color]) -> np.ndarray:
@@ -207,6 +249,8 @@ class GifAnimation(AnimationBase):
             return np.zeros((len(source), 3), dtype=np.uint8)
 
         source_array = np.asarray(source, dtype=np.uint8)
+        if self.plant_aware_enabled():
+            source_array = self._apply_plant_composition(source_array)
         if brightness_mode != "luma" and brightness >= 1.0 and gamma == 1.0:
             return source_array
 
@@ -230,6 +274,88 @@ class GifAnimation(AnimationBase):
         normalized *= 255.0
         return np.rint(normalized).astype(np.uint8)
 
+    def _plant_content_offset(self) -> Tuple[int, int]:
+        """Choose one stable translation for the whole loop, avoiding frame jitter."""
+        radius = max(0, min(8, int(self.params.get("plant_gif_offset_radius", 4) or 0)))
+        masks = self.get_plant_masks()
+        key = (radius, id(masks), id(self._frames))
+        if key == self._plant_offset_key:
+            return self._plant_offset
+
+        width, height = self.get_strip_info()
+        if radius == 0 or not self._frames or not np.any(masks.clearance):
+            self._plant_offset_key, self._plant_offset = key, (0, 0)
+            return self._plant_offset
+
+        # Bright, saturated, or locally contrasted pixels are more likely to be
+        # the useful subject than a flat backdrop. Average the loop so motion
+        # cannot make the selected placement wobble from frame to frame.
+        energy = np.zeros((width, height), dtype=np.float32)
+        sample_step = max(1, len(self._frames) // 12)
+        sampled = self._frames[::sample_step]
+        for frame in sampled:
+            rgb = np.asarray(frame, dtype=np.float32).reshape(width, height, 3)
+            high = np.max(rgb, axis=2)
+            low = np.min(rgb, axis=2)
+            luma = rgb[..., 0] * 0.2126 + rgb[..., 1] * 0.7152 + rgb[..., 2] * 0.0722
+            detail = np.zeros_like(luma)
+            detail[1:] += np.abs(luma[1:] - luma[:-1])
+            detail[:, 1:] += np.abs(luma[:, 1:] - luma[:, :-1])
+            energy += luma * (0.2 + 0.8 * (high - low) / 255.0) + detail
+        energy /= float(len(sampled))
+
+        total = float(np.sum(energy))
+        best = (float(np.sum(energy[masks.clearance])), 0, 0, 0)
+        best_offset = (0, 0)
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                shifted = self._translate_grid(energy, dx, dy)
+                visible = float(np.sum(shifted))
+                occluded = float(np.sum(shifted[masks.clearance]))
+                # Cropping is allowed only when its benefit outweighs lost subject.
+                score = occluded + max(0.0, total - visible) * 0.65
+                rank = (score, abs(dx) + abs(dy), abs(dy), abs(dx))
+                if rank < best:
+                    best, best_offset = rank, (dx, dy)
+        self._plant_offset_key, self._plant_offset = key, best_offset
+        return best_offset
+
+    @staticmethod
+    def _translate_grid(grid: np.ndarray, dx: int, dy: int) -> np.ndarray:
+        """Translate strip/LED data without wrapping content around an edge."""
+        shifted = np.zeros_like(grid)
+        width, height = grid.shape[:2]
+        src_x0, src_x1 = max(0, -dx), min(width, width - dx)
+        src_y0, src_y1 = max(0, -dy), min(height, height - dy)
+        if src_x1 > src_x0 and src_y1 > src_y0:
+            shifted[src_x0 + dx:src_x1 + dx, src_y0 + dy:src_y1 + dy] = \
+                grid[src_x0:src_x1, src_y0:src_y1]
+        return shifted
+
+    def _apply_plant_composition(self, source: np.ndarray) -> np.ndarray:
+        width, height = self.get_strip_info()
+        masks = self.get_plant_masks()
+        dx, dy = self._plant_content_offset()
+        composed = self._translate_grid(source.reshape(width, height, 3), dx, dy)
+        working = composed.astype(np.float32)
+        foliage_dim = max(0.0, min(1.0, float(self.params.get("plant_foliage_dim", 0.32))))
+        globe_dim = max(0.0, min(1.0, float(self.params.get("plant_globe_dim", 0.18))))
+        accent = max(0.0, min(1.0, float(self.params.get("plant_accent_strength", 0.16))))
+
+        working[masks.foliage] *= 1.0 - foliage_dim
+        working[masks.globes] *= 1.0 - globe_dim
+        if accent > 0.0:
+            # Low-level semantic landmarks remain visible even over dark media.
+            foliage_color = np.asarray((18.0, 74.0, 34.0), dtype=np.float32)
+            globe_color = np.asarray((82.0, 20.0, 76.0), dtype=np.float32)
+            working[masks.foliage] = (
+                working[masks.foliage] * (1.0 - accent) + foliage_color * accent
+            )
+            working[masks.globes] = (
+                working[masks.globes] * (1.0 - accent) + globe_color * accent
+            )
+        return np.rint(np.clip(working, 0.0, 255.0)).astype(np.uint8).reshape(-1, 3)
+
     def _load_selected_gif(self):
         self._adjusted_frame_cache.clear()
         self._last_output_key = None
@@ -239,6 +365,7 @@ class GifAnimation(AnimationBase):
         self._current_frame_index = 0
         self._next_frame_time = 0.0
         self._loaded_gif_path = None
+        self._plant_offset_key = None
 
         if Image is None or ImageSequence is None:
             self._load_error = "Pillow is not installed; GIF animation plugin unavailable."

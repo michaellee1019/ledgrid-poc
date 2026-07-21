@@ -12,6 +12,8 @@ from typing import List, Tuple, Dict, Any, Optional, Union
 
 import numpy as np
 
+from animation.core.plant_awareness import PlantMaskCache, PlantMaskGeometry, plant_parameter_schema
+
 
 @dataclass(frozen=True)
 class RenderedFrame:
@@ -50,6 +52,7 @@ class AnimationBase(ABC):
         self._frame_buffer_index = 0
         self._frame_buffer_geometry: Optional[Tuple[int, int]] = None
         self._hsv_scratch: Dict[str, np.ndarray] = {}
+        self._plant_mask_cache = PlantMaskCache(self)
         
         # Animation metadata
         self.name = getattr(self, 'ANIMATION_NAME', self.__class__.__name__)
@@ -62,7 +65,11 @@ class AnimationBase(ABC):
             'speed': 1.0,
             'brightness': 1.0,
             'color_saturation': 1.0,
-            'color_value': 1.0
+            'color_value': 1.0,
+            'plant_aware': False,
+            'plant_clearance': 1,
+            'plant_mask_path': 'config/plant_pixel_map_32x138.json',
+            'plant_globe_mask_path': 'config/plant_globe_map_32x138.json',
         }
         
         # Merge default params with config
@@ -89,7 +96,7 @@ class AnimationBase(ABC):
         Returns:
             Dict with parameter definitions including type, range, description
         """
-        return {
+        schema = {
             'speed': {
                 'type': 'float',
                 'min': 0.1,
@@ -119,10 +126,24 @@ class AnimationBase(ABC):
                 'description': 'Color value/brightness (0.0 - 1.0)'
             }
         }
+        schema.update(plant_parameter_schema())
+        return schema
     
     def update_parameters(self, new_params: Dict[str, Any]):
         """Update animation parameters in real-time"""
         self.params.update(new_params)
+        if {
+            'plant_clearance', 'plant_mask_path', 'plant_globe_mask_path'
+        } & new_params.keys():
+            self._plant_mask_cache.invalidate()
+
+    def plant_aware_enabled(self) -> bool:
+        """Return whether the animation's opt-in semantic mask behavior is active."""
+        return bool(self.params.get('plant_aware', False))
+
+    def get_plant_masks(self, clearance: Optional[int] = None) -> PlantMaskGeometry:
+        """Load and cache calibrated foliage/globe geometry on first use."""
+        return self._plant_mask_cache.get(clearance)
     
     def get_info(self) -> Dict[str, Any]:
         """Get animation metadata"""

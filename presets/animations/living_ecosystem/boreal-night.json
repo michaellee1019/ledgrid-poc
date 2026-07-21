@@ -5,7 +5,7 @@
   "tags": ["realistic", "forest", "calm"],
   "palette": {"name": "Boreal", "colors": ["#071B19", "#1D5B41", "#1F5C80", "#BEB68B"]},
   "created_at": "2026-07-20T00:00:00Z", "updated_at": "2026-07-20T00:00:00Z",
-  "params": {"lifecycle_minutes": 30, "day_length_seconds": 150, "creature_density": 0.65,
+  "params": {"plant_aware":true,"lifecycle_minutes": 30, "day_length_seconds": 150, "creature_density": 0.65,
     "predator_ratio": 0.32, "tree_density": 1.8, "creature_size": 0.8,
     "mutation_rate": 0.035, "grass_regrowth": 0.55, "predation_pressure": 0.8,
     "pack_cohesion": 1.2, "palette": "boreal", "night_brightness": 0.1,

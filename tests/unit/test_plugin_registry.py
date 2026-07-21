@@ -64,6 +64,23 @@ class PluginRegistryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             manager.set_animation_speed_scale(float('inf'))
 
+    def test_global_plant_aware_updates_live_and_rejects_non_boolean_values(self):
+        class _Animation:
+            def __init__(self):
+                self.params = {'plant_aware': True}
+
+            def update_parameters(self, params):
+                self.params.update(params)
+
+        manager = AnimationManager.__new__(AnimationManager)
+        manager.plant_aware = True
+        manager.current_animation = _Animation()
+
+        self.assertFalse(manager.set_plant_aware(False))
+        self.assertFalse(manager.current_animation.params['plant_aware'])
+        with self.assertRaises(ValueError):
+            manager.set_plant_aware('yes')
+
     def test_default_animation_starts_with_saved_parameters(self):
         class _Controller:
             strip_count = 1
@@ -96,6 +113,12 @@ class PluginRegistryTests(unittest.TestCase):
         self.assertEqual(manager.current_animation.params['red'], 12)
         self.assertEqual(manager.current_animation.params['green'], 34)
         self.assertEqual(manager.current_animation.params['blue'], 56)
+        self.assertTrue(manager.current_animation.params['plant_aware'])
+
+        manager.set_plant_aware(False)
+        self.assertTrue(manager.start_animation('solid', {'plant_aware': True, 'red': 9}))
+        self.assertFalse(manager.current_animation.params['plant_aware'])
+        self.assertEqual(manager.current_animation.params['red'], 9)
 
     def test_preview_manager_can_load_plugins_without_starting_a_thread(self):
         class _Controller:

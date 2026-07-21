@@ -6,7 +6,10 @@ Cycles through static calibration patterns with transition gaps so a camera can
 capture multiple reference images for pixel-to-wall mapping.
 """
 
+import json
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
+
 import numpy as np
 
 from animation import AnimationBase
@@ -21,7 +24,9 @@ class PlantCalibrationAnimation(AnimationBase):
     ANIMATION_NAME = "Plant Calibration"
     ANIMATION_DESCRIPTION = "Static reference patterns for wall photo calibration"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.2"
+    ANIMATION_VERSION = "1.3"
+    PLANT_WALL_GEOMETRY = (32, 138)
+    EXPECTED_GLOBE_REGIONS = 7
     PATTERN_SEQUENCE_LABELS: List[str] = [
         "orientation_markers",
         "major_grid_lines",
@@ -29,6 +34,11 @@ class PlantCalibrationAnimation(AnimationBase):
         "coordinate_gradient",
         "full_white",
         "dimension_probe",
+    ]
+    PLANT_PATTERN_LABELS: List[str] = [
+        "foliage_verification",
+        "globe_verification",
+        "combined_plant_clearance",
     ]
 
     def __init__(self, controller, config: Dict[str, Any] = None):
@@ -58,7 +68,8 @@ class PlantCalibrationAnimation(AnimationBase):
         print(f"   Total cycle length: {self._cycle_duration():.1f}s")
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        return {
+        schema = super().get_parameter_schema()
+        schema.update({
             "pattern_hold_seconds": {
                 "type": "float",
                 "min": 2.0,
@@ -115,7 +126,8 @@ class PlantCalibrationAnimation(AnimationBase):
                 "default": 2,
                 "description": "Checkerboard tile height in pixels",
             },
-        }
+        })
+        return schema
 
     def update_parameters(self, new_params: Dict[str, Any]):
         super().update_parameters(new_params)
@@ -170,7 +182,7 @@ class PlantCalibrationAnimation(AnimationBase):
             in_transition = False
         else:
             pattern_index, in_transition = self._stage_for_time(time_elapsed)
-        return {
+        stats = {
             "current_pattern_index": int(pattern_index),
             "current_pattern_name": self._pattern_names[pattern_index],
             "in_transition_gap": bool(in_transition),
@@ -179,7 +191,53 @@ class PlantCalibrationAnimation(AnimationBase):
             "transition_seconds": self._transition_seconds(),
             "cycle_duration_seconds": self._cycle_duration(),
             "pattern_names": self._pattern_names,
+            "plant_aware": self.plant_aware_enabled(),
         }
+        if self.plant_aware_enabled():
+            masks = self.get_plant_masks()
+            geometry_valid = self.get_strip_info() == self.PLANT_WALL_GEOMETRY
+            globe_semantics_valid = (
+                masks.globe_regions == self.EXPECTED_GLOBE_REGIONS
+                and self._globe_regions_are_fixed_8x8()
+                and 0 < masks.globe_count <= self.EXPECTED_GLOBE_REGIONS * 52
+            )
+            stats.update(
+                {
+                    "plant_wall_geometry_valid": geometry_valid,
+                    "plant_foliage_pixels": masks.foliage_count,
+                    "plant_globe_pixels": masks.globe_count,
+                    "plant_globe_regions": masks.globe_regions,
+                    "plant_globe_semantics_valid": globe_semantics_valid,
+                    "plant_semantics_ready": bool(
+                        geometry_valid and globe_semantics_valid and not masks.error
+                    ),
+                    "plant_mask_error": masks.error,
+                }
+            )
+        return stats
+
+    def _globe_regions_are_fixed_8x8(self) -> bool:
+        """Validate the measured region boxes without changing their positions."""
+        configured = Path(str(self.params.get("plant_globe_mask_path", "")))
+        if not configured.is_absolute():
+            configured = (Path(__file__).resolve().parents[2] / configured).resolve()
+        try:
+            payload = json.loads(configured.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        regions = payload.get("regions")
+        if not isinstance(regions, list) or len(regions) != self.EXPECTED_GLOBE_REGIONS:
+            return False
+        ids = [region.get("id") for region in regions if isinstance(region, dict)]
+        return (
+            len(ids) == self.EXPECTED_GLOBE_REGIONS
+            and all(isinstance(region_id, str) and region_id for region_id in ids)
+            and len(set(ids)) == self.EXPECTED_GLOBE_REGIONS
+            and all(
+                region.get("width") == 8 and region.get("height") == 8
+                for region in regions
+            )
+        )
 
     # Pattern timing -------------------------------------------------------
     def _pattern_hold_seconds(self) -> float:
@@ -216,7 +274,8 @@ class PlantCalibrationAnimation(AnimationBase):
 
     # Pattern builders -----------------------------------------------------
     def _rebuild_pattern_frames(self):
-        self._pattern_frames = [
+        self._pattern_names = list(self.PATTERN_SEQUENCE_LABELS)
+        frames = [
             np.asarray(frame, dtype=np.uint8)
             for frame in (
                 self._build_orientation_markers(),
@@ -227,7 +286,35 @@ class PlantCalibrationAnimation(AnimationBase):
                 self._build_dimension_probe(),
             )
         ]
+        if self.plant_aware_enabled():
+            masks = self.get_plant_masks()
+            self._pattern_names.extend(self.PLANT_PATTERN_LABELS)
+            frames.extend(self._build_plant_verification_frames(masks))
+        self._pattern_frames = frames
         self._last_stage_key = ""
+
+    def _build_plant_verification_frames(self, masks) -> List[np.ndarray]:
+        """Build photo-friendly views of both calibrated semantic layers.
+
+        These stages are appended only in the opt-in workflow.  The first two
+        isolate foliage and rooting globes for photographed alignment checks;
+        the combined stage shows the requested keep-clear area around both.
+        """
+        foliage_frame = np.zeros((self.total_leds, 3), dtype=np.uint8)
+        globe_frame = np.zeros_like(foliage_frame)
+        combined_frame = np.zeros_like(foliage_frame)
+
+        foliage_color = self._scale((40, 255, 90))
+        globe_color = self._scale((255, 48, 220))
+        clearance_color = self._scale((255, 140, 24))
+
+        foliage_frame[masks.foliage_flat] = foliage_color
+        globe_frame[masks.globes_flat] = globe_color
+        clearance_only = masks.clearance_flat & ~masks.obstacle_flat
+        combined_frame[clearance_only] = clearance_color
+        combined_frame[masks.foliage_flat] = foliage_color
+        combined_frame[masks.globes_flat] = globe_color
+        return [foliage_frame, globe_frame, combined_frame]
 
     def _brightness(self) -> float:
         return max(0.05, min(1.0, float(self.params.get("brightness", 0.55))))

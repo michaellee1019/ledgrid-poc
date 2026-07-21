@@ -46,6 +46,33 @@ the animations shipped in the repository.
 
 ## Creating Animations
 
+### Plant-aware mode
+
+Every shipped animation exposes the same calibrated-mask controls. The
+controller's global plant-aware switch defaults to on, is shown beside Global
+Tempo on the dashboard, and overrides individual animation or preset values for
+both the current scene and future starts.
+
+- `plant_aware` opts into animation-specific foliage/globe behavior. The plugin
+  schema fallback remains `false` for direct/headless construction, while every
+  curated or newly saved preset stores `true` and the controller applies the
+  global switch as the final authority.
+- `plant_clearance` expands the routing/placement exclusion zone by 0–4 logical
+  pixels.
+- `plant_mask_path` and `plant_globe_mask_path` select the foliage and globe JSON
+  artifacts. The production defaults are the 32×138 maps in `config/`.
+
+Plugins load these masks lazily through `get_plant_masks()`. The returned
+geometry keeps foliage, globes, their union, and the clearance-dilated obstacle
+map separate in both logical 2-D and canonical flat-index forms. Interactive
+animations should use the geometry for routing, spawning, collisions, or
+information placement. Purely visual effects should preserve the subject as
+much as possible, then use the foliage and globe layers as distinct accents.
+
+Plant-aware logic must always be guarded by `plant_aware_enabled()`. A plugin
+constructed directly without the option, or globally switched off, must retain
+its original simulation and pixels.
+
 ### Basic Animation Structure
 
 ```python

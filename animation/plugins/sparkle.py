@@ -9,6 +9,7 @@ stand alone as a single plugin.
 import numpy as np
 from typing import Dict, Any
 from animation import AnimationBase
+from animation.core.mask_effects import build_halo_weights
 
 
 class SparkleAnimation(AnimationBase):
@@ -17,7 +18,7 @@ class SparkleAnimation(AnimationBase):
     ANIMATION_NAME = "Sparkle"
     ANIMATION_DESCRIPTION = "Random sparkling lights effect"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.1"
+    ANIMATION_VERSION = "1.2"
 
     def __init__(self, controller, config: Dict[str, Any] = None):
         super().__init__(controller, config)
@@ -38,6 +39,55 @@ class SparkleAnimation(AnimationBase):
         total_pixels = self.get_pixel_count()
         self.sparkle_brightness = np.zeros(total_pixels, dtype=np.float32)
         self._color_scratch = np.empty((total_pixels, 3), dtype=np.float32)
+        self._plant_field_masks = None
+        self._plant_spawn_multiplier = None
+        self._plant_foliage = None
+        self._plant_globes = None
+
+    def _ensure_plant_field(self, masks):
+        """Cache plant-aware spawn weights for the current calibrated maps."""
+        if self._plant_field_masks is masks:
+            return
+
+        strip_count, leds_per_strip = self.get_strip_info()
+        radius = max(2, int(self.params.get('plant_clearance', 1)) + 2)
+        _, foliage_halo = build_halo_weights(
+            np.flatnonzero(masks.foliage_flat),
+            strip_count,
+            leds_per_strip,
+            radius,
+            1.2,
+        )
+        _, globe_halo = build_halo_weights(
+            np.flatnonzero(masks.globes_flat),
+            strip_count,
+            leds_per_strip,
+            radius,
+            1.05,
+        )
+
+        # Leaves repel new points of light while glass globes gather a bright
+        # rim.  The clearance zone remains usable at low probability so a
+        # large mask cannot make a small installation go completely static.
+        multiplier = np.ones(self.get_pixel_count(), dtype=np.float32)
+        multiplier *= 1.0 - np.float32(0.85) * foliage_halo
+        multiplier *= 1.0 + np.float32(2.25) * globe_halo
+        multiplier[masks.clearance_flat] *= np.float32(0.12)
+        multiplier[masks.obstacle_flat] = 0.0
+        np.clip(multiplier, 0.0, 3.0, out=multiplier)
+
+        self._plant_spawn_multiplier = multiplier
+        self._plant_foliage = masks.foliage_flat
+        self._plant_globes = masks.globes_flat
+        self._plant_field_masks = masks
+
+    def _accent_plant_cores(self, frame):
+        """Render distinct, subdued leaf and glass landmarks."""
+        brightness = float(self.params.get('brightness', 1.0))
+        foliage = np.rint(np.asarray((18, 112, 38)) * brightness).astype(np.uint8)
+        globe = np.rint(np.asarray((176, 48, 150)) * brightness).astype(np.uint8)
+        frame[self._plant_foliage] = foliage
+        frame[self._plant_globes] = globe
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -77,7 +127,18 @@ class SparkleAnimation(AnimationBase):
             self._color_scratch = np.empty((total_pixels, 3), dtype=np.float32)
 
         self.sparkle_brightness *= fade_speed
-        mask = np.random.random(total_pixels) < sparkle_prob
+        random_values = np.random.random(total_pixels)
+        plant_aware = self.plant_aware_enabled()
+        if plant_aware:
+            masks = self.get_plant_masks()
+            self._ensure_plant_field(masks)
+            mask = random_values < sparkle_prob * self._plant_spawn_multiplier
+            # A sparkle already present when the option is enabled should not
+            # continue shining through an occluded core.
+            self.sparkle_brightness[masks.obstacle_flat] = 0.0
+        else:
+            # Keep the legacy comparison and RNG call exactly as before.
+            mask = random_values < sparkle_prob
         self.sparkle_brightness[mask] = 1.0
 
         b = self.sparkle_brightness[:, np.newaxis]
@@ -86,4 +147,19 @@ class SparkleAnimation(AnimationBase):
         np.clip(self._color_scratch, 0, 255, out=self._color_scratch)
         result = self.next_frame_buffer(clear=False)
         result[:] = self._color_scratch
-        return self.apply_brightness_array(result, out=result)
+        self.apply_brightness_array(result, out=result)
+        if plant_aware:
+            self._accent_plant_cores(result)
+        return result
+
+    def get_runtime_stats(self) -> Dict[str, Any]:
+        if not self.plant_aware_enabled():
+            return {'plant_aware': False}
+        masks = self.get_plant_masks()
+        return {
+            'plant_aware': True,
+            'plant_foliage_pixels': masks.foliage_count,
+            'plant_globe_pixels': masks.globe_count,
+            'plant_globe_regions': masks.globe_regions,
+            'plant_mask_error': masks.error,
+        }

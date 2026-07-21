@@ -7,9 +7,12 @@ Supports all emojis, letters A-Z, and numbers 0-9 from the emoji animation patte
 """
 
 import math
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
 
 from animation import AnimationBase
+from animation.core.plant_awareness import PlantMaskGeometry
 
 
 class EmojiArrangerAnimation(AnimationBase):
@@ -19,6 +22,10 @@ class EmojiArrangerAnimation(AnimationBase):
     ANIMATION_DESCRIPTION = "Arrange strings of emojis and characters on the grid with wrapping"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.0"
+
+    PLANT_FOLIAGE_COLOR = (8, 46, 14)
+    PLANT_GLOBE_COLOR = (28, 42, 92)
+    _IMPORTANT_PATTERN_CELLS = frozenset(("E", "M", "H"))
 
     def __init__(self, controller, config: Dict[str, Any] = None):
         super().__init__(controller, config)
@@ -48,6 +55,8 @@ class EmojiArrangerAnimation(AnimationBase):
         })
 
         self.params = {**self.default_params, **self.config}
+        self._plant_layout_key = None
+        self._plant_layout_origins: Tuple[Tuple[int, int], ...] = ()
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -146,15 +155,47 @@ class EmojiArrangerAnimation(AnimationBase):
         
         # Render each character
         palette = self._build_palette(time_elapsed)
+
+        plant_masks: Optional[PlantMaskGeometry] = None
+        plant_origins: Sequence[Tuple[int, int]] = ()
+        if self.plant_aware_enabled():
+            plant_masks = self.get_plant_masks()
+            pixel_colors[plant_masks.foliage_flat] = self.apply_brightness(
+                self.PLANT_FOLIAGE_COLOR
+            )
+            pixel_colors[plant_masks.globes_flat] = self.apply_brightness(
+                self.PLANT_GLOBE_COLOR
+            )
+            plant_origins = self._plant_aware_layout(
+                arranged_chars,
+                x_offset - scroll_offset,
+                y_offset,
+                char_spacing,
+                line_spacing,
+                strip_count,
+                leds_per_strip,
+                plant_masks,
+            )
         
         current_y = y_offset
-        for line in arranged_chars:
+        for line_index, line in enumerate(arranged_chars):
             current_x = x_offset - scroll_offset
+            render_y = current_y
+            if plant_masks is not None:
+                current_x, render_y = plant_origins[line_index]
             
             for char in line:
                 if char in self.emoji_patterns:
-                    self._render_character(char, current_x, current_y, palette, 
-                                         strip_count, leds_per_strip, pixel_colors)
+                    self._render_character(
+                        char,
+                        current_x,
+                        render_y,
+                        palette,
+                        strip_count,
+                        leds_per_strip,
+                        pixel_colors,
+                        blocked=plant_masks.clearance if plant_masks is not None else None,
+                    )
                 
                 # Move to next character position
                 char_width = self._get_character_width(char)
@@ -168,6 +209,142 @@ class EmojiArrangerAnimation(AnimationBase):
                 break
 
         return pixel_colors
+
+    def _plant_aware_layout(
+        self,
+        lines: Sequence[Sequence[str]],
+        preferred_x: int,
+        preferred_y: int,
+        char_spacing: int,
+        line_spacing: int,
+        strip_count: int,
+        leds_per_strip: int,
+        masks: PlantMaskGeometry,
+    ) -> Tuple[Tuple[int, int], ...]:
+        """Route wrapped lines around calibrated plant terrain.
+
+        Glyph features (eyes, mouths, and highlights) receive extra weight when
+        a completely clear fit is unavailable.  Previously placed lines are
+        reserved so rerouting cannot pile several lines into the same opening.
+        """
+        key = (
+            tuple(tuple(line) for line in lines),
+            preferred_x,
+            preferred_y,
+            char_spacing,
+            line_spacing,
+            strip_count,
+            leds_per_strip,
+            int(self.params.get("plant_clearance", 1)),
+            str(self.params.get("plant_mask_path", "")),
+            str(self.params.get("plant_globe_mask_path", "")),
+        )
+        if key == self._plant_layout_key:
+            return self._plant_layout_origins
+
+        reserved = np.zeros((strip_count, leds_per_strip), dtype=bool)
+        origins = []
+        line_y = preferred_y
+        for line in lines:
+            cells, width, height = self._line_pattern_cells(line, char_spacing)
+            origin = self._nearest_plant_safe_origin(
+                cells,
+                width,
+                height,
+                preferred_x,
+                line_y,
+                strip_count,
+                leds_per_strip,
+                masks,
+                reserved,
+            )
+            origins.append(origin)
+            origin_x, origin_y = origin
+            for row, column, _ in cells:
+                strip = origin_y + row
+                led = origin_x + column
+                if (
+                    0 <= strip < strip_count
+                    and 0 <= led < leds_per_strip
+                    and not masks.clearance[strip, led]
+                ):
+                    reserved[strip, led] = True
+            line_y += 7 + line_spacing
+
+        self._plant_layout_key = key
+        self._plant_layout_origins = tuple(origins)
+        return self._plant_layout_origins
+
+    def _line_pattern_cells(
+        self, line: Sequence[str], char_spacing: int
+    ) -> Tuple[List[Tuple[int, int, str]], int, int]:
+        cells: List[Tuple[int, int, str]] = []
+        cursor = 0
+        height = 0
+        for char in line:
+            pattern = self.emoji_patterns.get(char, ())
+            height = max(height, len(pattern))
+            for row, pattern_row in enumerate(pattern):
+                cells.extend(
+                    (row, cursor + column, cell)
+                    for column, cell in enumerate(pattern_row)
+                    if cell != "."
+                )
+            cursor += self._get_character_width(char) + char_spacing
+        width = max(0, cursor - (char_spacing if line else 0))
+        return cells, width, height
+
+    def _nearest_plant_safe_origin(
+        self,
+        cells: Sequence[Tuple[int, int, str]],
+        width: int,
+        height: int,
+        preferred_x: int,
+        preferred_y: int,
+        strip_count: int,
+        leds_per_strip: int,
+        masks: PlantMaskGeometry,
+        reserved: np.ndarray,
+    ) -> Tuple[int, int]:
+        def score(origin: Tuple[int, int]) -> Tuple[int, int, int, int, int]:
+            x, y = origin
+            reserved_hits = 0
+            plant_cost = 0
+            plant_hits = 0
+            offscreen_hits = 0
+            for row, column, cell in cells:
+                strip = y + row
+                led = x + column
+                if not (0 <= strip < strip_count and 0 <= led < leds_per_strip):
+                    offscreen_hits += 1
+                    continue
+                importance = 4 if cell in self._IMPORTANT_PATTERN_CELLS else 1
+                if reserved[strip, led]:
+                    reserved_hits += importance
+                if masks.globes[strip, led]:
+                    plant_cost += 12 * importance
+                    plant_hits += 1
+                elif masks.foliage[strip, led]:
+                    plant_cost += 8 * importance
+                    plant_hits += 1
+                elif masks.clearance[strip, led]:
+                    plant_cost += 2 * importance
+                    plant_hits += 1
+            distance = abs(x - preferred_x) + abs(y - preferred_y)
+            return reserved_hits, plant_cost, plant_hits, offscreen_hits, distance
+
+        preferred = (preferred_x, preferred_y)
+        if score(preferred)[:4] == (0, 0, 0, 0):
+            return preferred
+
+        max_x = max(0, leds_per_strip - max(1, width))
+        max_y = max(0, strip_count - max(1, height))
+        candidates = (
+            (x, y)
+            for y in range(max_y + 1)
+            for x in range(max_x + 1)
+        )
+        return min(candidates, key=lambda origin: (*score(origin), origin[1], origin[0]))
 
     def _arrange_text_with_wrapping(self, text: str, max_width: int, char_spacing: int) -> List[List[str]]:
         """Arrange text into lines with proper character wrapping"""
@@ -214,7 +391,8 @@ class EmojiArrangerAnimation(AnimationBase):
         return 0
 
     def _render_character(self, char: str, start_x: int, start_y: int, palette: Dict[str, Tuple[int, int, int]],
-                         strip_count: int, leds_per_strip: int, pixel_colors: List[Tuple[int, int, int]]):
+                         strip_count: int, leds_per_strip: int, pixel_colors: List[Tuple[int, int, int]],
+                         blocked: Optional[np.ndarray] = None):
         """Render a single character at the specified position"""
         if char not in self.emoji_patterns:
             return
@@ -231,6 +409,8 @@ class EmojiArrangerAnimation(AnimationBase):
             for col_idx, cell in enumerate(row):
                 led = start_x + col_idx
                 if led < 0 or led >= leds_per_strip:
+                    continue
+                if blocked is not None and blocked[strip, led]:
                     continue
 
                 color = palette.get(cell)

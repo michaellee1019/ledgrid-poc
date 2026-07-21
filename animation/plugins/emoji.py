@@ -7,6 +7,9 @@ Renders a pixel-art emoji centered on the LED grid with a gentle pulse.
 
 import math
 from typing import List, Tuple, Dict, Any
+
+import numpy as np
+
 from animation import AnimationBase
 
 
@@ -440,6 +443,9 @@ class EmojiAnimation(AnimationBase):
         self.params = {**self.default_params, **self.config}
         self._fitted_pattern_key = None
         self._fitted_pattern = None
+        self._plant_layout_key = None
+        self._plant_layout_origin = None
+        self._plant_layout_avoided_pixels = 0
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -518,6 +524,10 @@ class EmojiAnimation(AnimationBase):
 
         start_strip = max(0, min(strip_count - pattern_height, (strip_count - pattern_height) // 2 + y_offset))
         start_led = max(0, min(leds_per_strip - pattern_width, (leds_per_strip - pattern_width) // 2 + x_offset))
+        if self.plant_aware_enabled():
+            start_strip, start_led = self._plant_aware_origin(
+                pattern, start_strip, start_led, serpentine
+            )
 
         for row_idx, row in enumerate(pattern):
             strip = start_strip + row_idx
@@ -537,7 +547,148 @@ class EmojiAnimation(AnimationBase):
                 pixel_index = strip * leds_per_strip + mapped_led
                 pixel_colors[pixel_index] = self.apply_brightness(color)
 
+        if self.plant_aware_enabled():
+            self._render_plant_accents(pixel_colors, time_elapsed)
+
         return pixel_colors
+
+    def _plant_aware_origin(
+        self,
+        pattern: List[str],
+        preferred_strip: int,
+        preferred_led: int,
+        serpentine: bool,
+    ) -> Tuple[int, int]:
+        """Place expressive pixels in the clearest nearby part of the wall.
+
+        Eyes and mouths carry more weight than face fill, so constrained masks
+        preserve the emoji's expression before its decorative silhouette.
+        """
+        masks = self.get_plant_masks()
+        strip_count, leds_per_strip = self.get_strip_info()
+        height = len(pattern)
+        width = len(pattern[0]) if pattern else 0
+        key = (
+            id(masks), tuple(pattern), preferred_strip, preferred_led, serpentine,
+            strip_count, leds_per_strip,
+        )
+        if key == self._plant_layout_key and self._plant_layout_origin is not None:
+            return self._plant_layout_origin
+
+        glyph = [
+            (row, col, 12 if cell == 'E' else 10 if cell == 'M' else 3)
+            for row, line in enumerate(pattern)
+            for col, cell in enumerate(line)
+            if cell != '.'
+        ]
+        preferred_cost = self._plant_overlap_cost(
+            glyph, preferred_strip, preferred_led, serpentine, masks
+        )
+        max_strip = max(0, strip_count - height)
+        max_led = max(0, leds_per_strip - width)
+        if serpentine:
+            best_score = None
+            best_origin = (preferred_strip, preferred_led)
+            for start_strip in range(max_strip + 1):
+                for start_led in range(max_led + 1):
+                    obstacle_cost, clearance_cost = self._plant_overlap_cost(
+                        glyph, start_strip, start_led, True, masks
+                    )
+                    distance = (
+                        (start_strip - preferred_strip) ** 2
+                        + (start_led - preferred_led) ** 2
+                    )
+                    score = (
+                        obstacle_cost, clearance_cost, distance,
+                        start_strip, start_led,
+                    )
+                    if best_score is None or score < best_score:
+                        best_score = score
+                        best_origin = (start_strip, start_led)
+        else:
+            # Accumulate every candidate placement at once. This keeps the
+            # one-time layout decision comfortably within the frame budget.
+            candidate_shape = (max_strip + 1, max_led + 1)
+            obstacle_scores = np.zeros(candidate_shape, dtype=np.int32)
+            clearance_scores = np.zeros(candidate_shape, dtype=np.int32)
+            for row, col, weight in glyph:
+                obstacle_scores += (
+                    masks.obstacle[
+                        row:row + candidate_shape[0],
+                        col:col + candidate_shape[1],
+                    ] * weight
+                )
+                clearance_scores += (
+                    masks.clearance[
+                        row:row + candidate_shape[0],
+                        col:col + candidate_shape[1],
+                    ] * weight
+                )
+            strip_grid, led_grid = np.indices(candidate_shape)
+            distance = (
+                (strip_grid - preferred_strip) ** 2
+                + (led_grid - preferred_led) ** 2
+            )
+            best_flat = np.lexsort((
+                led_grid.ravel(), strip_grid.ravel(), distance.ravel(),
+                clearance_scores.ravel(), obstacle_scores.ravel(),
+            ))[0]
+            best_origin = tuple(int(value) for value in np.unravel_index(
+                best_flat, candidate_shape
+            ))
+
+        best_cost = self._plant_overlap_cost(
+            glyph, best_origin[0], best_origin[1], serpentine, masks
+        )
+        self._plant_layout_avoided_pixels = max(
+            0, preferred_cost[1] - best_cost[1]
+        )
+        self._plant_layout_key = key
+        self._plant_layout_origin = best_origin
+        return best_origin
+
+    @staticmethod
+    def _plant_overlap_cost(glyph, start_strip, start_led, serpentine, masks):
+        obstacle_cost = 0
+        clearance_cost = 0
+        leds_per_strip = masks.obstacle.shape[1]
+        for row, col, weight in glyph:
+            strip = start_strip + row
+            logical_led = start_led + col
+            led = (
+                leds_per_strip - 1 - logical_led
+                if serpentine and strip % 2 == 1
+                else logical_led
+            )
+            if masks.obstacle[strip, led]:
+                obstacle_cost += weight
+            if masks.clearance[strip, led]:
+                clearance_cost += weight
+        return obstacle_cost, clearance_cost
+
+    def _render_plant_accents(self, frame, time_elapsed: float):
+        """Keep foliage and rooting globes readable as separate scene layers."""
+        masks = self.get_plant_masks()
+        pulse = (math.sin(time_elapsed * math.pi * 0.7) + 1.0) / 2.0
+        foliage = self.apply_brightness((3, int(24 + 14 * pulse), 8))
+        globes = self.apply_brightness((int(34 + 18 * pulse), 12, 48))
+        frame[masks.foliage_flat] = foliage
+        frame[masks.globes_flat] = globes
+
+    def get_runtime_stats(self) -> Dict[str, Any]:
+        stats = {
+            'plant_aware': self.plant_aware_enabled(),
+            'plant_layout_origin': self._plant_layout_origin,
+            'plant_avoided_weight': self._plant_layout_avoided_pixels,
+        }
+        if self.plant_aware_enabled():
+            masks = self.get_plant_masks()
+            stats.update({
+                'plant_foliage_pixels': masks.foliage_count,
+                'plant_globe_pixels': masks.globe_count,
+                'plant_mask_error': masks.error,
+            })
+        return stats
 
     def _build_palette(self, time_elapsed: float, emoji_name: str) -> Dict[str, Tuple[int, int, int]]:
         pulse_speed = max(0.0, float(self.params.get('pulse_speed', 0.8)))

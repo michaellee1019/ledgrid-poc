@@ -3,7 +3,7 @@
   "preset_id": "she_cute",
   "name": "she cute",
   "animation": "fluid_tank",
-  "params": {
+  "params": {"plant_aware":true,
     "auto_hole": true,
     "brightness": 1,
     "bubble_interval": 0.3,

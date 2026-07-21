@@ -33,6 +33,7 @@ class _PreviewManager:
                 'base_blue': {'type': 'int', 'min': 0, 'max': 255},
                 'mode': {'type': 'str', 'options': ['calm', 'active']},
                 'enabled': {'type': 'bool'},
+                'plant_aware': {'type': 'bool'},
             },
         }
 
@@ -79,6 +80,8 @@ class AnimationPresetTests(unittest.TestCase):
             self.client.get('/api/animations/rainbow/presets').get_json()['presets'],
             [],
         )
+        preset_path = Path(self.temp_dir.name) / 'sparkle' / 'calm.json'
+        self.assertIs(json.loads(preset_path.read_text())['params']['plant_aware'], True)
 
     def test_apply_rereads_modified_json_from_disk(self):
         response = self.client.post(
@@ -98,7 +101,7 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.channel.commands[-1], {
             'action': 'start',
-            'data': {'animation': 'sparkle', 'config': {'brightness': 0.9}},
+            'data': {'animation': 'sparkle', 'config': {'brightness': 0.9, 'plant_aware': True}},
         })
 
     def test_list_alphabetizes_presets_with_mixed_timestamp_formats(self):
@@ -246,6 +249,16 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.channel.commands, [])
 
+    def test_global_plant_aware_control_requires_boolean(self):
+        response = self.client.post('/api/config/plant-aware', json={'plant_aware': False})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.channel.commands[-1], {
+            'action': 'set_plant_aware', 'data': {'plant_aware': False},
+        })
+
+        response = self.client.post('/api/config/plant-aware', json={'plant_aware': 'yes'})
+        self.assertEqual(response.status_code, 400)
+
     def test_dashboard_promotes_presets_and_collapses_test_animations(self):
         self.interface.preview_manager.list_animations = lambda: [
             {
@@ -303,6 +316,7 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertLess(html.index('data-animation-card="sparkle"'), html.index('data-animation-card="wave"'))
         self.assertLess(html.index('id="ledCanvas"'), html.index('id="globalSpeedRange"'))
         self.assertLess(html.index('id="globalSpeedRange"'), html.index('aria-label="Speed presets"'))
+        self.assertLess(html.index('id="globalSpeedRange"'), html.index('id="globalPlantAwareToggle"'))
 
     def test_animation_presets_are_alphabetized_by_display_name(self):
         for name in ('zebra', 'Aurora', 'calm'):

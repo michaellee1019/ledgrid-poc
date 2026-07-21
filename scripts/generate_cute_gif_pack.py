@@ -304,6 +304,7 @@ def preset_payload(scene: Scene) -> dict:
         "created_at": CREATED_AT,
         "updated_at": CREATED_AT,
         "params": {
+            "plant_aware": True,
             "gif_directory": "assets/gifs",
             "gif_name": f"{scene.slug}.gif",
             "gif_index": 0,

@@ -3,7 +3,7 @@
   "preset_id": "chill_raining_fish_tank",
   "name": "chill raining fish tank",
   "animation": "wave",
-  "params": {
+  "params": {"plant_aware":true,
     "amplitude": 0.5,
     "axis": "vertical",
     "background_blue": 12,

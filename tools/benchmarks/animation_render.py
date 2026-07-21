@@ -44,6 +44,24 @@ STRESS_SCENARIOS = {
             "moves_per_second": 30.0, "speed": 4.0, "render_fps": 90.0,
         },
     },
+    "plant-glow-conway": {
+        "plugin": "plant_glow",
+        "fps": 100.0,
+        "config": {
+            "background_source": "conway", "background_style": "arcade",
+            "background_strength": 0.7, "background_speed": 3.0,
+            "glow_radius": 5, "glow_strength": 2.0, "shimmer": 0.5,
+        },
+    },
+    "plant-glow-pinball": {
+        "plugin": "plant_glow",
+        "fps": 100.0,
+        "config": {
+            "background_source": "pinball", "background_strength": 0.7,
+            "background_speed": 3.0, "glow_radius": 5,
+            "glow_strength": 2.0, "shimmer": 0.5,
+        },
+    },
 }
 
 

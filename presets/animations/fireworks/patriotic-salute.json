@@ -4,7 +4,7 @@
   "animation": "fireworks",
   "created_at": "2026-07-18T00:00:00Z",
   "updated_at": "2026-07-18T00:00:00Z",
-  "params": {
+  "params": {"plant_aware":true,
     "brightness": 0.85, "launch_rate": 1.15, "particles_per_burst": 64,
     "burst_size": 0.3, "burst_style": "ring", "palette": "patriotic",
     "hue_spread": 0.015, "spark_lifetime": 1.65, "gravity": 0.36,

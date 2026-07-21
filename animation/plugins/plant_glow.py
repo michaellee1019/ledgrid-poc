@@ -4,21 +4,23 @@
 import json
 import math
 from pathlib import Path
-from typing import Any, Dict, Set
+from typing import Any, Dict, Optional, Set
 
 import numpy as np
 
-from animation import AnimationBase
+from animation import AnimationBase, RenderedFrame
 from animation.core.mask_effects import build_halo_weights, indices_from_payload
+from animation.plugins.conway_life import ConwayLifeAnimation
+from animation.plugins.pinball import PinballAnimation
 
 
 class PlantGlowAnimation(AnimationBase):
     """Render distinct foliage and globe cores with soft logical-pixel halos."""
 
     ANIMATION_NAME = "Plant Glow"
-    ANIMATION_DESCRIPTION = "Breathing foliage and globe masks with an ethereal edge glow"
+    ANIMATION_DESCRIPTION = "Breathing foliage and globe masks over color, Conway, or pinball worlds"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.0"
+    ANIMATION_VERSION = "1.1"
 
     def __init__(self, controller, config: Dict[str, Any] = None):
         super().__init__(controller, config)
@@ -28,6 +30,11 @@ class PlantGlowAnimation(AnimationBase):
                 "background_red": 0,
                 "background_green": 0,
                 "background_blue": 3,
+                "background_source": "color",
+                "background_style": "aurora",
+                "background_strength": 0.32,
+                "background_speed": 1.0,
+                "background_seed": 95,
                 "foliage_red": 54,
                 "foliage_green": 255,
                 "foliage_blue": 132,
@@ -64,6 +71,8 @@ class PlantGlowAnimation(AnimationBase):
         self._globe_core = np.zeros(self.get_pixel_count(), dtype=bool)
         self._foliage_halo = np.zeros(self.get_pixel_count(), dtype=np.float32)
         self._globe_halo = np.zeros(self.get_pixel_count(), dtype=np.float32)
+        self._background_animation: Optional[AnimationBase] = None
+        self._background_key = None
         self._load_masks()
 
     @staticmethod
@@ -137,6 +146,28 @@ class PlantGlowAnimation(AnimationBase):
                     "type": "int", "min": 0, "max": 5, "default": 2,
                     "description": "Exterior halo radius in logical pixels",
                 },
+                "background_source": {
+                    "type": "str", "default": "color",
+                    "options": ["color", "conway", "pinball"],
+                    "description": "Backdrop renderer beneath the calibrated plant masks",
+                },
+                "background_style": {
+                    "type": "str", "default": "aurora",
+                    "options": list(ConwayLifeAnimation.BACKGROUNDS),
+                    "description": "Conway atmosphere used when background source is conway",
+                },
+                "background_strength": {
+                    "type": "float", "min": 0.0, "max": 1.0, "default": 0.32,
+                    "description": "Intensity of a borrowed Conway or pinball backdrop",
+                },
+                "background_speed": {
+                    "type": "float", "min": 0.1, "max": 3.0, "default": 1.0,
+                    "description": "Motion speed of the borrowed backdrop",
+                },
+                "background_seed": {
+                    "type": "int", "min": 0, "max": 9999, "default": 95,
+                    "description": "Repeatable pinball table action seed",
+                },
                 "glow_strength": {
                     "type": "float", "min": 0.0, "max": 2.0, "default": 0.72,
                     "description": "Halo intensity relative to the mask core",
@@ -174,6 +205,13 @@ class PlantGlowAnimation(AnimationBase):
         needs_reload = bool({"mask_path", "globe_mask_path"} & new_params.keys())
         needs_geometry = bool(geometry_keys & new_params.keys())
         super().update_parameters(new_params)
+        background_keys = {
+            "background_source", "background_style", "background_speed", "background_seed",
+            "plant_aware", "plant_clearance", "plant_mask_path",
+            "plant_globe_mask_path",
+        }
+        if background_keys & new_params.keys():
+            self._clear_background_animation()
         if needs_reload:
             self._load_masks()
         elif needs_geometry:
@@ -184,6 +222,92 @@ class PlantGlowAnimation(AnimationBase):
             [self.params[f"{prefix}_red"], self.params[f"{prefix}_green"], self.params[f"{prefix}_blue"]],
             dtype=np.float32,
         )
+
+    def _clear_background_animation(self):
+        if self._background_animation is not None:
+            self._background_animation.cleanup()
+        self._background_animation = None
+        self._background_key = None
+
+    def cleanup(self):
+        self._clear_background_animation()
+        super().cleanup()
+
+    def _borrowed_background(
+        self, time_elapsed: float, frame_count: int
+    ) -> Optional[np.ndarray]:
+        source = str(self.params.get("background_source", "color"))
+        if source == "color":
+            return None
+
+        style = str(self.params.get("background_style", "aurora"))
+        speed = float(self.params.get("background_speed", 1.0))
+        seed = int(self.params.get("background_seed", 95))
+        plant_config = self._borrowed_plant_config()
+        key = (
+            source,
+            style,
+            speed,
+            seed,
+            tuple(sorted(plant_config.items())),
+        )
+        if self._background_animation is None or self._background_key != key:
+            if source == "conway":
+                conway_config = {
+                    "brightness": 1.0,
+                    "speed": 0.1,
+                    "random_density": 0.0,
+                    "seed_cells": [],
+                    "glider_interval": 0.0,
+                    "stagnation_generations": 0,
+                    "destruct_on_loop": False,
+                    "background": style,
+                    "background_brightness": 0.6,
+                    "background_speed": speed,
+                    "background_fps": 30.0,
+                }
+                if plant_config:
+                    # In plant-aware mode the borrowed world becomes actual Life,
+                    # with foliage/globes acting as blocked habitat and globe
+                    # shores retaining Conway's nursery semantics.
+                    conway_config.update(
+                        {
+                            "random_density": 0.12,
+                            "seed_cells": None,
+                            "random_seed": seed,
+                        }
+                    )
+                    conway_config.update(plant_config)
+                self._background_animation = ConwayLifeAnimation(
+                    self.controller,
+                    conway_config,
+                )
+            else:
+                self._background_animation = PinballAnimation(
+                    self.controller,
+                    {
+                        "brightness": 1.0,
+                        "speed": speed,
+                        "render_fps": 120.0,
+                        "seed": seed,
+                        **plant_config,
+                    },
+                )
+            self._background_key = key
+
+        rendered = self._background_animation.generate_frame(time_elapsed, frame_count)
+        return rendered.pixels if isinstance(rendered, RenderedFrame) else rendered
+
+    def _borrowed_plant_config(self) -> Dict[str, Any]:
+        """Forward the common opt-in mask contract into borrowed simulations."""
+        if not self.plant_aware_enabled():
+            return {}
+        return {
+            "plant_aware": True,
+            "plant_clearance": int(self.params.get("plant_clearance", 1)),
+            "plant_mask_path": str(self.params.get("plant_mask_path")),
+            "plant_globe_mask_path": str(self.params.get("plant_globe_mask_path")),
+        }
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
         speed = float(self.params.get("speed", 1.0))
@@ -196,7 +320,16 @@ class PlantGlowAnimation(AnimationBase):
         globe_breath = 1.0 - breath_depth + breath_depth * (0.5 + 0.5 * math.sin(phase + 1.7))
 
         linear = self._linear_frame
-        linear[:] = self._color("background")
+        background = self._borrowed_background(time_elapsed, frame_count)
+        if background is None:
+            linear[:] = self._color("background")
+        else:
+            np.multiply(
+                background,
+                float(np.clip(self.params.get("background_strength", 0.32), 0.0, 1.0)),
+                out=linear,
+                casting="unsafe",
+            )
         shimmer = 1.0 + shimmer_depth * np.sin(self._phase + phase * 1.9)
         foliage_level = self._foliage_halo * shimmer * glow_strength * foliage_breath
         globe_level = self._globe_halo * shimmer * glow_strength * globe_breath
@@ -218,6 +351,13 @@ class PlantGlowAnimation(AnimationBase):
             "foliage_halo_pixels": int(np.count_nonzero(self._foliage_halo)),
             "globe_halo_pixels": int(np.count_nonzero(self._globe_halo)),
             "glow_radius": int(self.params.get("glow_radius", 2)),
+            "background_source": str(self.params.get("background_source", "color")),
+            "background_style": str(self.params.get("background_style", "aurora")),
+            "plant_aware": self.plant_aware_enabled(),
+            "background_plant_routing": bool(
+                self.plant_aware_enabled()
+                and self.params.get("background_source") in {"conway", "pinball"}
+            ),
             "mask_path": str(self.params.get("mask_path")),
             "globe_mask_path": str(self.params.get("globe_mask_path")),
         }

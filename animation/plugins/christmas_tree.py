@@ -91,9 +91,14 @@ class ChristmasTreeAnimation(AnimationBase):
         self._snow_start_y = max(0, self.height - self._snow_depth)
         self._snow_contact_y = max(0, self._snow_start_y - 1)
         self._tree_center = self.width // 2
+        self._plant_foliage = np.zeros((self.width, self.height), dtype=bool)
+        self._plant_globes = np.zeros((self.width, self.height), dtype=bool)
+        self._plant_obstacle = np.zeros((self.width, self.height), dtype=bool)
+        self._plant_clearance = np.zeros((self.width, self.height), dtype=bool)
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
-        return {
+        schema = super().get_parameter_schema()
+        schema.update({
             "speed": {"type": "float", "min": 0.1, "max": 4.0, "default": 1.0, "description": "Snowfall and atmosphere speed"},
             "brightness": {"type": "float", "min": 0.05, "max": 1.0, "default": 1.0, "description": "Overall brightness"},
             "color_saturation": {"type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "description": "Compatibility color control"},
@@ -108,7 +113,16 @@ class ChristmasTreeAnimation(AnimationBase):
             "show_garland": {"type": "bool", "default": True, "description": "Drape a garland across the branches"},
             "show_presents": {"type": "bool", "default": True, "description": "Place wrapped gifts beneath the tree"},
             "seed": {"type": "int", "min": 0, "max": 999999, "default": 1225, "description": "Repeatable snow and ornament arrangement"},
-        }
+        })
+        return schema
+
+    def update_parameters(self, new_params: Dict[str, Any]):
+        super().update_parameters(new_params)
+        if {
+            "plant_aware", "plant_clearance", "plant_mask_path",
+            "plant_globe_mask_path",
+        } & new_params.keys():
+            self._layout_cache_key = ()
 
     def generate_frame(self, time_elapsed: float, frame_count: int):
         self._build_static_elements()
@@ -128,6 +142,8 @@ class ChristmasTreeAnimation(AnimationBase):
         self._draw_lights(time_elapsed)
         self._draw_star(time_elapsed)
         self._draw_falling_snow(time_elapsed)
+        if self.plant_aware_enabled():
+            self._draw_plant_landmarks(time_elapsed)
 
         # Logical y=0 is the visual top. Physical LED 0 is mounted at the
         # visual bottom, so flip once here after the entire scene is composed.
@@ -146,7 +162,16 @@ class ChristmasTreeAnimation(AnimationBase):
         light_count = max(6, int(self.params.get("light_count", 34)))
         seed = int(self.params.get("seed", 1225))
         palette_name = self._choice("tree_palette", self.TREE_PALETTES, "classic")
-        key = (self.width, self.height, snow_depth, requested_height, light_count, seed, palette_name)
+        plant_key = (
+            self.plant_aware_enabled(),
+            int(self.params.get("plant_clearance", 1)),
+            str(self.params.get("plant_mask_path", "")),
+            str(self.params.get("plant_globe_mask_path", "")),
+        )
+        key = (
+            self.width, self.height, snow_depth, requested_height, light_count,
+            seed, palette_name, plant_key,
+        )
         if key == self._layout_cache_key and self._tree_pixels:
             return
 
@@ -156,6 +181,7 @@ class ChristmasTreeAnimation(AnimationBase):
         self._snow_depth = snow_depth
         self._snow_start_y = self.height - snow_depth
         self._snow_contact_y = max(0, self._snow_start_y - 1)
+        self._prepare_plant_layers()
         self._tree_center = self.width // 2
 
         max_height = max(8, self._snow_contact_y - 4)
@@ -166,6 +192,10 @@ class ChristmasTreeAnimation(AnimationBase):
         foliage_top = max(3, foliage_bottom - foliage_height + 1)
         foliage_height = foliage_bottom - foliage_top + 1
         base_half_width = max(2, min((self.width - 3) // 2, round(foliage_height * 0.31)))
+        if self.plant_aware_enabled():
+            self._tree_center = self._choose_plant_aware_center(
+                foliage_top, foliage_bottom, foliage_height, base_half_width,
+            )
 
         self._tree_pixels = []
         self._trunk_pixels = []
@@ -210,7 +240,11 @@ class ChristmasTreeAnimation(AnimationBase):
                 "size": size, "color": color, "trim": trim,
             })
 
-        positions = [(x, y) for x, y, progress in self._tree_pixels if .12 < progress < .96]
+        positions = [
+            (x, y) for x, y, progress in self._tree_pixels
+            if .12 < progress < .96
+            and (not self.plant_aware_enabled() or not self._plant_clearance[x, y])
+        ]
         self._light_nodes = []
         for x, y in self.random.sample(positions, min(light_count, len(positions))):
             self._light_nodes.append({
@@ -234,6 +268,75 @@ class ChristmasTreeAnimation(AnimationBase):
         ]
         self._ground_noise = [self.random.random() * math.tau for _ in range(self.width)]
         self._background_cache_key = ()
+
+    def _prepare_plant_layers(self) -> None:
+        self._plant_foliage.fill(False)
+        self._plant_globes.fill(False)
+        self._plant_obstacle.fill(False)
+        self._plant_clearance.fill(False)
+        if not self.plant_aware_enabled():
+            return
+        masks = self.get_plant_masks()
+        # Shared masks use physical LED coordinates; the scene uses visual y=0
+        # at the top, hence the same vertical flip used for the final frame.
+        self._plant_foliage[:] = masks.foliage[:, ::-1]
+        self._plant_globes[:] = masks.globes[:, ::-1]
+        self._plant_obstacle[:] = masks.obstacle[:, ::-1]
+        self._plant_clearance[:] = masks.clearance[:, ::-1]
+
+    def _choose_plant_aware_center(
+        self,
+        foliage_top: int,
+        foliage_bottom: int,
+        foliage_height: int,
+        base_half_width: int,
+    ) -> int:
+        """Fit the authored tree around plants without hiding its identity.
+
+        Foliage/globes inside the broad canopy are useful (the physical plants
+        become branches and ornaments), but clearance over the outer silhouette
+        and especially the star is expensive.  The deterministic score retains
+        the closest-to-center placement when candidates are otherwise equal.
+        """
+        nominal = self.width // 2
+        left = max(1, base_half_width)
+        right = min(self.width - 2, self.width - 1 - base_half_width)
+        if left > right:
+            return nominal
+
+        tier_count = max(4, min(7, foliage_height // 7))
+        scored: List[Tuple[Tuple[int, int, int, int], int]] = []
+        for center in range(left, right + 1):
+            canopy: List[Tuple[int, int]] = []
+            outline: List[Tuple[int, int]] = []
+            for y in range(foliage_top, foliage_bottom + 1):
+                progress = (y - foliage_top) / max(foliage_height - 1, 1)
+                tier_position = progress * tier_count
+                tier = min(tier_count - 1, int(tier_position))
+                local = tier_position - tier
+                envelope = (tier + 1) / tier_count
+                half_width = round(base_half_width * envelope * (.58 + .42 * local))
+                half_width = max(0 if y == foliage_top else 1, min(base_half_width, half_width))
+                row = [(x, y) for x in range(center - half_width, center + half_width + 1)]
+                canopy.extend(row)
+                if row:
+                    outline.extend((row[0], row[-1]))
+
+            star_y = foliage_top - 2
+            star = [
+                (center + dx, star_y + dy)
+                for dx, dy in ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1))
+                if 0 <= center + dx < self.width and 0 <= star_y + dy < self.height
+            ]
+            star_hits = sum(bool(self._plant_clearance[x, y]) for x, y in star)
+            outline_hits = sum(bool(self._plant_clearance[x, y]) for x, y in outline)
+            integrated = sum(
+                1 + 2 * int(self._plant_globes[x, y])
+                for x, y in canopy if self._plant_obstacle[x, y]
+            )
+            score = (star_hits, outline_hits, -integrated, abs(center - nominal))
+            scored.append((score, center))
+        return min(scored)[1]
 
     def _render_background(self, time_elapsed: float) -> None:
         style = self._choice("scene_style", self.SCENE_STYLES, "midnight")
@@ -341,17 +444,21 @@ class ChristmasTreeAnimation(AnimationBase):
         bright = palette["tree"]
         dark = palette["tree_dark"]
         for x, y, progress in self._tree_pixels:
+            if self.plant_aware_enabled() and self._plant_obstacle[x, y]:
+                continue
             wave = .08 * math.sin(x * 1.3 + y * .27)
             mix = max(.18, min(1.0, .42 + progress * .45 + wave))
             color = tuple(round(dark[i] + (bright[i] - dark[i]) * mix) for i in range(3))
             self._paint(x, y, color)
         if self._choice("tree_palette", self.TREE_PALETTES, "classic") == "frost":
             for x, y in self._snow_cap_pixels:
+                if self.plant_aware_enabled() and self._plant_obstacle[x, y]:
+                    continue
                 self._paint(x, y, (178, 224, 232))
 
     def _draw_trunk(self) -> None:
         for x, y in self._trunk_pixels:
-            self._paint(x, y, (91, 50, 25))
+            self._paint_if_plant_clear(x, y, (91, 50, 25))
 
     def _draw_garland(self, time_elapsed: float) -> None:
         palette = self.PALETTES[self._choice("tree_palette", self.TREE_PALETTES, "classic")]
@@ -359,14 +466,14 @@ class ChristmasTreeAnimation(AnimationBase):
         pulse = .78 + .12 * math.sin(time_elapsed * .8)
         color = tuple(round(component * pulse) for component in base)
         for x, y, _ in self._garland_pixels:
-            self._paint(x, y, color)
+            self._paint_if_plant_clear(x, y, color)
 
     def _draw_presents(self) -> None:
         for block in self._present_blocks:
             for dx in range(block["size"]):
                 for dy in range(block["size"]):
                     color = block["trim"] if dx == block["size"] // 2 or dy == 1 else block["color"]
-                    self._paint(block["left"] + dx, block["top"] + dy, color)
+                    self._paint_if_plant_clear(block["left"] + dx, block["top"] + dy, color)
 
     def _draw_lights(self, time_elapsed: float) -> None:
         palette = self.PALETTES[self._choice("tree_palette", self.TREE_PALETTES, "classic")]["lights"]
@@ -374,18 +481,69 @@ class ChristmasTreeAnimation(AnimationBase):
         for light in self._light_nodes:
             intensity = .56 + .44 * (math.sin(light["phase"] + time_elapsed * speed * light["speed"] * math.tau) + 1) * .5
             source = palette[light["color_index"] % len(palette)]
-            self._paint(light["x"], light["y"], tuple(round(c * intensity) for c in source))
+            self._paint_if_plant_clear(
+                light["x"], light["y"], tuple(round(c * intensity) for c in source),
+            )
 
     def _draw_star(self, time_elapsed: float) -> None:
         pulse = .88 + .12 * math.sin(time_elapsed * 2.2)
         for x, y, glow in self._star_pixels:
-            self._paint(x, y, (round(255 * pulse * glow), round(226 * pulse * glow), round(92 * pulse * glow)))
+            self._paint_if_plant_clear(
+                x, y,
+                (round(255 * pulse * glow), round(226 * pulse * glow), round(92 * pulse * glow)),
+            )
 
     def _draw_falling_snow(self, time_elapsed: float) -> None:
         for flake in self.snowflakes:
             shimmer = .72 + .28 * math.sin(time_elapsed * 4.0 + flake["phase"]) ** 2
             value = round(225 * shimmer)
-            self._paint(round(flake["x"]) % self.width, round(flake["y"]), (value, value, min(255, value + 25)))
+            self._paint_if_plant_clear(
+                round(flake["x"]) % self.width, round(flake["y"]),
+                (value, value, min(255, value + 25)),
+            )
+
+    def _draw_plant_landmarks(self, time_elapsed: float) -> None:
+        """Turn the physical plant wall into a second, living tree layer."""
+        foliage_pulse = .78 + .12 * math.sin(time_elapsed * .7)
+        foliage = np.asarray(
+            (round(8 * foliage_pulse), round(83 * foliage_pulse), round(27 * foliage_pulse)),
+            dtype=np.uint8,
+        )
+        self._logical[self._plant_foliage] = np.maximum(
+            self._logical[self._plant_foliage], foliage,
+        )
+
+        # Rooting globes read as large glass ornaments. Their magenta shimmer
+        # distinguishes them from the evergreen foliage.
+        globe_pulse = .82 + .18 * np.sin(time_elapsed * 1.15 + self._x * .55)
+        globe_color = np.empty_like(self._logical)
+        globe_color[..., 0] = np.rint(145 * globe_pulse).astype(np.uint8)
+        globe_color[..., 1] = np.rint(53 * globe_pulse).astype(np.uint8)
+        globe_color[..., 2] = np.rint(188 * globe_pulse).astype(np.uint8)
+        self._logical[self._plant_globes] = np.maximum(
+            self._logical[self._plant_globes], globe_color[self._plant_globes],
+        )
+
+    def _paint_if_plant_clear(self, x: int, y: int, color: Color) -> None:
+        if (
+            self.plant_aware_enabled()
+            and 0 <= x < self.width and 0 <= y < self.height
+            and self._plant_clearance[x, y]
+        ):
+            return
+        self._paint(x, y, color)
+
+    def get_runtime_stats(self) -> Dict[str, Any]:
+        if not self.plant_aware_enabled():
+            return {"plant_aware": False}
+        masks = self.get_plant_masks()
+        return {
+            "plant_aware": True,
+            "plant_foliage_pixels": masks.foliage_count,
+            "plant_globe_pixels": masks.globe_count,
+            "plant_globe_regions": masks.globe_regions,
+            "plant_tree_center": self._tree_center,
+        }
 
     def _paint(self, x: int, y: int, color: Color) -> None:
         if 0 <= x < self.width and 0 <= y < self.height:

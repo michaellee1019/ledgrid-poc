@@ -19,7 +19,7 @@ from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP, default_strip_count
 from drivers.frame_codec import decode_frame_data
 from web.app import create_app
-from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
+from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from tools.deployment.preserve_deploy_settings import load_saved_state, save_status
 
 # Try to import the real LED controller, fall back to mock for testing
@@ -96,10 +96,15 @@ def run_controller_mode(args):
         saved_state.get('animation_speed_scale', args.animation_speed_scale)
         if saved_state else args.animation_speed_scale
     )
+    startup_plant_aware = (
+        saved_state.get('plant_aware', DEFAULT_PLANT_AWARE)
+        if saved_state else DEFAULT_PLANT_AWARE
+    )
     manager = AnimationManager(
         controller,
         plugins_dir=args.animations_dir,
         animation_speed_scale=startup_speed_scale,
+        plant_aware=startup_plant_aware,
         default_animation=saved_state.get('animation') if saved_state else None,
         default_animation_config=saved_state.get('params') if saved_state else None,
     )
@@ -196,6 +201,14 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
             return True
         except (TypeError, ValueError):
             print(f"⚠️ Invalid animation speed scale: {requested!r}")
+    elif action == 'set_plant_aware':
+        requested = data.get('plant_aware')
+        try:
+            applied = manager.set_plant_aware(requested)
+            print(f"🌿 Plant-aware mode: {'on' if applied else 'off'}")
+            return True
+        except (TypeError, ValueError):
+            print(f"⚠️ Invalid plant-aware state: {requested!r}")
     elif action == 'refresh_plugins':
         animation = data.get('animation')
         if animation:

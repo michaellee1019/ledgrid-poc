@@ -359,6 +359,7 @@
     let controlParameterUpdateTimeout = null;
     let controlParameterStore = {};
     let controlParameterSchema = {};
+    let globalPlantAware = Boolean(INITIAL_STATUS?.plant_aware ?? true);
 
     // Initialize renderer when page loads
     document.addEventListener('DOMContentLoaded', function() {
@@ -366,6 +367,7 @@
         if (INITIAL_STATUS) {
             syncControlPanel(INITIAL_STATUS);
             syncGlobalSpeedFromStatus(INITIAL_STATUS);
+            syncGlobalPlantAwareFromStatus(INITIAL_STATUS);
         }
         startStatsPolling();
     });
@@ -448,6 +450,44 @@
 
     function setGlobalSpeedPreset(value) {
         setGlobalSpeed(value);
+    }
+
+    function syncGlobalPlantAwareFromStatus(status) {
+        if (!status || typeof status.plant_aware !== 'boolean') return;
+        globalPlantAware = status.plant_aware;
+        const toggle = document.getElementById('globalPlantAwareToggle');
+        if (toggle && document.activeElement !== toggle) toggle.checked = globalPlantAware;
+        const label = document.getElementById('globalPlantAwareLabel');
+        if (label) label.textContent = globalPlantAware ? 'On' : 'Off';
+    }
+
+    async function setGlobalPlantAware(enabled) {
+        globalPlantAware = Boolean(enabled);
+        const label = document.getElementById('globalPlantAwareLabel');
+        if (label) label.textContent = globalPlantAware ? 'On' : 'Off';
+        Object.values(controlParameterStore).forEach(params => {
+            params.plant_aware = globalPlantAware;
+        });
+        if (controlSelectedAnimation) syncPreviewParameters(controlSelectedAnimation);
+        try {
+            const response = await fetch('/api/config/plant-aware', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({plant_aware: globalPlantAware})
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || 'Unable to change plant-aware mode');
+            showToast(`Plant-aware mode ${globalPlantAware ? 'enabled' : 'disabled'}`, 'success');
+        } catch (error) {
+            globalPlantAware = !globalPlantAware;
+            Object.values(controlParameterStore).forEach(params => {
+                params.plant_aware = globalPlantAware;
+            });
+            const toggle = document.getElementById('globalPlantAwareToggle');
+            if (toggle) toggle.checked = globalPlantAware;
+            if (label) label.textContent = globalPlantAware ? 'On' : 'Off';
+            showToast(error.message, 'error');
+        }
     }
 
     async function playDashboardPreset(animationName, presetId, button) {
@@ -612,6 +652,7 @@
             updateStatusJson(data);
             syncControlPanel(data);
             syncGlobalSpeedFromStatus(data);
+            syncGlobalPlantAwareFromStatus(data);
         } catch (err) {
             console.error('Failed to fetch stats', err);
         }
@@ -953,7 +994,9 @@
         controlParameterSchema = schema;
         const parameterSnapshot = {};
         Object.entries(schema).forEach(([name, info]) => {
-            parameterSnapshot[name] = currentParams[name] ?? info.default;
+            parameterSnapshot[name] = name === 'plant_aware'
+                ? globalPlantAware
+                : (currentParams[name] ?? info.default);
         });
 
         const title = document.getElementById('controlStudioTitle');
@@ -972,7 +1015,7 @@
         });
 
         Object.entries(schema).forEach(([paramName, paramInfo]) => {
-            if (paramName === 'speed' || colorNames.has(paramName)) return;
+            if (paramName === 'speed' || paramName === 'plant_aware' || colorNames.has(paramName)) return;
             const currentValue = parameterSnapshot[paramName];
             const prettyName = humanizeParamName(paramName);
             const controlDiv = document.createElement('div');

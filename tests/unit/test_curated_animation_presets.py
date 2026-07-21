@@ -34,6 +34,7 @@ class CuratedAnimationPresetTests(unittest.TestCase):
                 self.assertEqual(payload["preset_id"], path.stem)
                 self.assertEqual(animation_name, path.parent.name)
                 self.assertIsInstance(payload.get("params"), dict)
+                self.assertIs(payload["params"].get("plant_aware"), True)
                 self.assertIn(animation_name, self.plugins)
 
                 animation = self.plugins[animation_name](controller, payload["params"])
