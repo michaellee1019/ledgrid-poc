@@ -120,6 +120,7 @@ class AnimationManager:
         "spiral_single",
         "strip_order",
         "wave",
+        "world_flags",
     }
     
     DEFAULT_ANIMATION = "sparkle"
