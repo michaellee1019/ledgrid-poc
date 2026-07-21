@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "preset_id": "last-light-horizon",
+  "name": "Last Light Horizon",
+  "animation": "clock",
+  "category": "Atmospheric",
+  "description": "A minimal time line hangs over a slowly breathing sunset horizon.",
+  "tags": ["sunset", "horizon", "minimal", "calm"],
+  "palette": {"name": "Sunset", "colors": ["#0A010A", "#FF5041", "#FFCD5F", "#480A42"]},
+  "created_at": "2026-07-21T00:00:00Z",
+  "updated_at": "2026-07-21T00:00:00Z",
+  "params": {
+    "face": "minimal",
+    "background": "horizon",
+    "palette": "sunset",
+    "format_24h": true,
+    "show_seconds": true,
+    "clock_offset_minutes": 0,
+    "position_y": 0.42,
+    "scale": 1,
+    "glow": 0.52,
+    "motion": 0.22,
+    "density": 0.48,
+    "speed": 0.38,
+    "brightness": 0.63
+  }
+}

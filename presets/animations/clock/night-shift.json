@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "preset_id": "night-shift",
+  "name": "Night Shift",
+  "animation": "clock",
+  "category": "Practical",
+  "description": "A subdued violet 24-hour clock with seconds hidden for quiet late-night workspaces.",
+  "tags": ["night", "office", "low-light", "24-hour"],
+  "palette": {"name": "Violet", "colors": ["#04000E", "#9650FF", "#F5AFFF", "#230850"]},
+  "created_at": "2026-07-21T00:00:00Z",
+  "updated_at": "2026-07-21T00:00:00Z",
+  "params": {
+    "face": "digital", "background": "radial", "palette": "violet",
+    "format_24h": true, "show_seconds": false, "clock_offset_minutes": 0,
+    "position_y": 0.52, "scale": 1, "glow": 0.14,
+    "motion": 0.0, "density": 0.15, "speed": 0.5, "brightness": 0.34
+  }
+}

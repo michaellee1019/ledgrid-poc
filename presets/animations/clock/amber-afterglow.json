@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "preset_id": "amber-afterglow",
+  "name": "Amber Afterglow",
+  "animation": "clock",
+  "category": "Atmospheric",
+  "description": "Rising time columns catch the warm afterglow of a low amber sun.",
+  "tags": ["amber", "horizon", "segments", "warm"],
+  "palette": {"name": "Amber", "colors": ["#040100", "#FF7E14", "#FFE080", "#5A1602"]},
+  "created_at": "2026-07-21T00:00:00Z",
+  "updated_at": "2026-07-21T00:00:00Z",
+  "params": {
+    "face": "segments",
+    "background": "horizon",
+    "palette": "amber",
+    "format_24h": true,
+    "show_seconds": true,
+    "clock_offset_minutes": 0,
+    "position_y": 0.56,
+    "scale": 1,
+    "glow": 0.7,
+    "motion": 0.36,
+    "density": 0.66,
+    "speed": 0.48,
+    "brightness": 0.64
+  }
+}

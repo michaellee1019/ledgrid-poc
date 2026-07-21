@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "preset_id": "calendar-glance",
+  "name": "Calendar Glance",
+  "animation": "clock",
+  "category": "Practical",
+  "description": "Time, weekday, and month-day arranged as a warm information panel for a quick daily glance.",
+  "tags": ["calendar", "date", "weekday", "readable"],
+  "palette": {"name": "Paper", "colors": ["#120D08", "#EBCD96", "#FFF4CD", "#46301C"]},
+  "created_at": "2026-07-21T00:00:00Z",
+  "updated_at": "2026-07-21T00:00:00Z",
+  "params": {
+    "face": "calendar", "background": "gradient", "palette": "paper",
+    "format_24h": false, "show_seconds": false, "clock_offset_minutes": 0,
+    "position_y": 0.5, "scale": 1, "glow": 0.16,
+    "motion": 0.0, "density": 0.2, "speed": 0.5, "brightness": 0.58
+  }
+}
