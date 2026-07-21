@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 from animation.core.base import RenderedFrame, StatefulAnimationBase
 from animation.core.manager import AnimationManager
 from animation.core.plugin_loader import AnimationPluginLoader
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 
 STRESS_SCENARIOS = {
@@ -161,8 +162,8 @@ def benchmark(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--strips", type=int, default=32)
-    parser.add_argument("--leds-per-strip", type=int, default=140)
+    parser.add_argument("--strips", type=int, default=DEFAULT_STRIP_COUNT)
+    parser.add_argument("--leds-per-strip", type=int, default=DEFAULT_LEDS_PER_STRIP)
     parser.add_argument("--fps", type=float, default=200.0)
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--frames", type=int, default=200)

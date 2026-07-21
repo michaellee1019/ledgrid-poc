@@ -17,7 +17,7 @@ A high-performance SPI-controlled LED system using four ESP32-S3-N16R8 controlle
   - MOSI: GPIO 11
   - CS: GPIO 10
 - **LED Strips**: GPIO 18,17,16,15,7,6,5,4
-- **Default Configuration**: 8 strips × 140 LEDs = 1120 total LEDs per receiver
+- **Default Configuration**: 8 strips × 138 LEDs = 1104 total LEDs per receiver
 
 ### Wiring (ESP32-S3 to Raspberry Pi)
 | ESP32-S3 | Raspberry Pi |
@@ -108,7 +108,7 @@ The firmware supports the following commands:
 
 ### Firmware (`firmware/esp32/src/main.cpp`)
 - `DEFAULT_STRIPS`: Number of LED strips (default: 8)
-- `DEFAULT_LEDS_PER_STRIP`: LEDs per strip (default: 140)
+- `DEFAULT_LEDS_PER_STRIP`: LEDs per strip (default: 138)
 - `MAX_STRIPS`: Maximum strips supported (default: 8)
 - `MAX_LEDS_PER_STRIP`: Maximum LEDs per strip (default: 500)
 - SPI pins: GPIO 12 (SCK), GPIO 13 (MISO), GPIO 11 (MOSI), GPIO 10 (CS)
@@ -116,7 +116,7 @@ The firmware supports the following commands:
 
 ### Python (`drivers/led_layout.py`)
 - `DEFAULT_STRIP_COUNT`: Total number of strips (default: 32)
-- `DEFAULT_LEDS_PER_STRIP`: LEDs per strip (default: 140)
+- `DEFAULT_LEDS_PER_STRIP`: LEDs per strip (default: 138)
 
 ## The ESP32-S3 receiver
 

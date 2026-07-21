@@ -7,10 +7,16 @@ import argparse
 import json
 import math
 from pathlib import Path
+import sys
 from typing import Sequence, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw
+
+# Ensure repo root is importable when this file is executed directly.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 
 Point = Tuple[float, float]
@@ -52,8 +58,8 @@ def extrapolate_full_panel(
     image, their vertical pitch is proportional to the panel width at the same
     row. Integrating ``32 / width(y)`` along the fitted side edges gives the
     number of logical LED rows visible over an image interval. We solve that
-    integral for exactly 140 rows instead of incorrectly treating image y=0 as
-    the top of the panel.
+    integral for exactly ``leds_per_strip`` rows instead of incorrectly
+    treating image y=0 as the top of the panel.
     """
     rgb = np.asarray(image.convert("RGB"), dtype=np.float32)
     height, width = rgb.shape[:2]
@@ -167,8 +173,15 @@ def build_map(
     strips: int,
     leds_per_strip: int,
     visibility_threshold: float,
+    off_image: Image.Image | None = None,
+    flip_y: bool = False,
 ) -> dict:
     rgb = np.asarray(image.convert("RGB"), dtype=np.float32)
+    if off_image is not None:
+        off_rgb = np.asarray(off_image.convert("RGB"), dtype=np.float32)
+        if off_rgb.shape != rgb.shape:
+            raise ValueError("full-white and wall-off images must have matching dimensions")
+        rgb = np.clip(rgb - off_rgb, 0.0, 255.0)
     gray = np.max(rgb, axis=2) / 255.0
     homography = _homography(corners, strips, leds_per_strip)
 
@@ -177,7 +190,8 @@ def build_map(
     observed = np.zeros((strips, leds_per_strip), dtype=bool)
     for strip in range(strips):
         for led in range(leds_per_strip):
-            x, y = project(homography, strip + 0.5, led + 0.5)
+            logical_y = leds_per_strip - led - 0.5 if flip_y else led + 0.5
+            x, y = project(homography, strip + 0.5, logical_y)
             coordinates[strip, led] = (x, y)
             observed[strip, led] = 0 <= x < image.width and 0 <= y < image.height
             samples[strip, led] = sample_luminance(gray, x, y) if observed[strip, led] else np.nan
@@ -227,6 +241,7 @@ def build_map(
             "leds_per_strip": leds_per_strip,
             "total_leds": strips * leds_per_strip,
             "index_formula": "strip * leds_per_strip + led",
+            "camera_y_flipped": bool(flip_y),
         },
         "camera": {
             "image_width": image.width,
@@ -240,6 +255,9 @@ def build_map(
         "observed_count": int(np.count_nonzero(observed)),
         "occluded_count": len(occluded_indices),
         "occluded_indices": occluded_indices,
+        # Compatibility with PlantMaskHighlightAnimation and calibrate.py.
+        "covered_count": len(occluded_indices),
+        "covered_indices": occluded_indices,
         "pixels": pixels,
     }
 
@@ -264,6 +282,16 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", help="Full-white webcam photograph")
     parser.add_argument(
+        "--config",
+        default="config/webcam_wall_calibration.json",
+        help="Calibration config supplying panel_corners when explicit corners are omitted",
+    )
+    parser.add_argument(
+        "--off-image",
+        default=None,
+        help="Optional wall-off reference; positive image difference isolates LED illumination",
+    )
+    parser.add_argument(
         "--corners",
         type=parse_corners,
         default=None,
@@ -275,9 +303,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="blx,bly,brx,bry; visible side edges are CV-fit and the missing top is extrapolated",
     )
-    parser.add_argument("--strips", type=int, default=32)
-    parser.add_argument("--leds-per-strip", type=int, default=140)
+    parser.add_argument("--strips", type=int, default=DEFAULT_STRIP_COUNT)
+    parser.add_argument("--leds-per-strip", type=int, default=DEFAULT_LEDS_PER_STRIP)
     parser.add_argument("--visibility-threshold", type=float, default=0.52)
+    parser.add_argument(
+        "--flip-y",
+        action="store_true",
+        help="Map physical LED 0 to the bottom of the camera quadrilateral",
+    )
     parser.add_argument("--output", default="config/webcam_pixel_map.json")
     parser.add_argument("--overlay", default="calibration_photos/webcam-pixel-map-overlay.jpg")
     return parser.parse_args()
@@ -287,6 +320,7 @@ def main() -> None:
     args = parse_args()
     image_path = Path(args.image)
     image = Image.open(image_path)
+    off_image = Image.open(args.off_image) if args.off_image else None
     if args.corners is not None:
         corners = args.corners
         extrapolation = {"method": "manual_full_corners"}
@@ -295,15 +329,33 @@ def main() -> None:
             image, args.bottom_corners, args.strips, args.leds_per_strip
         )
     else:
-        raise SystemExit("provide --bottom-corners for CV extrapolation or --corners for a fully visible panel")
+        config_path = Path(args.config)
+        if not config_path.is_file():
+            raise SystemExit(
+                "provide --corners/--bottom-corners or a config containing panel_corners"
+            )
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        raw = config.get("panel_corners", {})
+        try:
+            corners = tuple(tuple(float(v) for v in raw[name]) for name in ("tl", "tr", "br", "bl"))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SystemExit(f"invalid panel_corners in {config_path}: {exc}") from exc
+        extrapolation = {"method": "calibration_config", "config": str(config_path)}
     payload = build_map(
         image,
         corners,
         args.strips,
         args.leds_per_strip,
         args.visibility_threshold,
+        off_image=off_image,
+        flip_y=args.flip_y,
     )
     payload["source_image"] = str(image_path)
+    if args.off_image:
+        payload["off_image"] = str(args.off_image)
+        payload["visibility_source"] = "positive_full_white_minus_wall_off"
+    else:
+        payload["visibility_source"] = "full_white_luminance"
     payload["camera"]["extrapolation"] = extrapolation
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

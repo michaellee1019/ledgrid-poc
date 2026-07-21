@@ -31,7 +31,7 @@ ANIMATION_EMOJI = {
     'flame_burst': '🔥', 'fluid_tank': '💧', 'gif_animation': '🎬',
     'gradient': '🌈', 'living_ecosystem': '🌿', 'maze_chase': '👾',
     'pinball': '🎱', 'pixel_chase': '💨', 'pixel_quest': '⚔️',
-    'plant_calibration': '🎯', 'plant_mask_highlight': '🌱', 'rainbow': '🌈',
+    'plant_calibration': '🎯', 'plant_glow': '🪴', 'plant_mask_highlight': '🌱', 'rainbow': '🌈',
     'simple_test': '🧪', 'solid': '🎨', 'sparkle': '✨',
     'spiral_single': '🌀', 'strip_order': '🔢', 'tetris': '🧱',
     'wave': '🌊', 'world_flags': '🌍',

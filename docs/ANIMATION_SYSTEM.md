@@ -159,7 +159,7 @@ Key options:
 - `--host 0.0.0.0` - Bind to all interfaces
 - `--port 5000` - Web server port
 - `--strips 8` - Number of LED strips
-- `--leds-per-strip 140` - LEDs per strip
+- `--leds-per-strip 138` - LEDs per strip
 - `--spi-speed 10000000` - SPI communication speed
 - `--target-fps 40` - Animation frame rate
 - `--animation-speed-scale 0.3` - Baseline multiplier applied to animation speed parameters (lower = slower motion)

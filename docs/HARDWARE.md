@@ -210,7 +210,7 @@ The system uses a dual-bus configuration since most Raspberry Pi OS versions onl
 
 4. **Power supply sizing:**
    - Test setup (4 strips × 20 LEDs = 80 LEDs): 2A @ 5V is adequate for low brightness
-   - Production setup (32 strips × 140 LEDs = 4,480 LEDs): Requires 20-30A minimum for typical use, up to 200A+ for full white at maximum brightness
+   - Production setup (32 strips × 138 LEDs = 4,416 LEDs): Requires 20-30A minimum for typical use, up to 200A+ for full white at maximum brightness
    - The provided 600A @ 5V power supply is appropriately sized for the full installation
 
 ### Wiring Table for Boards 3–4 (SPI1):

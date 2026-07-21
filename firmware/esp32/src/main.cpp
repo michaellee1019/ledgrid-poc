@@ -24,14 +24,13 @@ constexpr gpio_num_t kSpiChipSelect = GPIO_NUM_10;
 constexpr std::uint8_t kStatusLed = 48;
 
 constexpr std::uint8_t kMaxStrips = 8;
-// The installed wall is eight fixed 140-pixel lanes. Keeping the transport,
-// mailbox, and LCD DMA allocations sized to the physical receiver avoids
-// spending internal SRAM and memory bandwidth on an unsupported geometry.
+// Keep capacity at 140 for transport/mailbox/DMA buffers while allowing the
+// host to configure the camera-verified installed length (currently 138).
 constexpr std::uint16_t kMaxLedsPerStrip = 140;
 constexpr std::size_t kMaxTotalLeds = kMaxStrips * kMaxLedsPerStrip;
 constexpr std::size_t kMaxRgbBytes = kMaxTotalLeds * 3;
 constexpr std::uint8_t kDefaultStrips = 8;
-constexpr std::uint16_t kDefaultLedsPerStrip = 140;
+constexpr std::uint16_t kDefaultLedsPerStrip = 138;
 constexpr int kLedPins[kMaxStrips] = {18, 17, 16, 15, 7, 6, 5, 4};
 
 constexpr std::uint8_t kCmdSetPixel = 0x01;
@@ -290,7 +289,7 @@ void process_command(const std::uint8_t* data, std::size_t length) {
       const std::uint8_t new_strips = data[1];
       const std::uint16_t new_leds =
           (static_cast<std::uint16_t>(data[2]) << 8) | data[3];
-      if (new_strips != kMaxStrips || new_leds != kMaxLedsPerStrip) {
+      if (new_strips != kMaxStrips || new_leds == 0 || new_leds > kMaxLedsPerStrip) {
         break;
       }
       if (new_strips != active_strips || new_leds != leds_per_strip) {

@@ -8,10 +8,11 @@ from animation.core.manager import AnimationManager
 from animation.core.plugin_loader import AnimationPluginLoader
 from tools.diagnostics.fluid_tank_simulation import SimulationConfig, run_simulation
 from web.app import AnimationWebInterface
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 
 class _Controller:
-    def __init__(self, strips=32, leds_per_strip=140):
+    def __init__(self, strips=DEFAULT_STRIP_COUNT, leds_per_strip=DEFAULT_LEDS_PER_STRIP):
         self.strip_count = strips
         self.leds_per_strip = leds_per_strip
         self.total_leds = strips * leds_per_strip
@@ -87,7 +88,10 @@ class FluidTankSimulationTests(unittest.TestCase):
         ))
         stats = samples[-1]['stats']
         self.assertEqual(stats['cc_per_cell'], 5.0)
-        self.assertEqual(stats['capacity_cc'], 32 * 140 * 5.0)
+        self.assertEqual(
+            stats['capacity_cc'],
+            DEFAULT_STRIP_COUNT * DEFAULT_LEDS_PER_STRIP * 5.0,
+        )
         self.assertAlmostEqual(stats['volume_cc'], stats['volume_cells'] * 5.0)
         represented_ratio = (
             stats['volume_cells']

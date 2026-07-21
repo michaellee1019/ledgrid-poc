@@ -22,8 +22,8 @@ At 2.4 MHz, each WS2812 data bit is represented by three parallel samples:
 - zero: `100`
 - one: `110`
 
-For 140 RGB pixels per lane, wire time is 4.2 ms plus a 300 us low reset period,
-for a nominal 4.5 ms display transaction.
+For 138 RGB pixels per lane, wire time is 4.14 ms plus a 300 us low reset period,
+for a nominal 4.44 ms display transaction.
 
 ## Automated acceptance gates
 
@@ -36,7 +36,7 @@ All of these must pass before a hardware flash:
   device-to-bus/chip-select map.
 - Every active frame-based animation returns a canonical contiguous `uint8`
   frame without errors and renders at or below 4.0 ms p95 for the installed
-  32 x 140 geometry in the headless benchmark.
+  32 x 138 geometry in the headless benchmark.
 - Native firmware tests prove:
   - GRB channel order for all eight lanes;
   - exact `100` and `110` waveform samples;

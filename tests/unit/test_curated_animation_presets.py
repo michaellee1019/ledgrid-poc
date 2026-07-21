@@ -9,6 +9,7 @@ import numpy as np
 from animation.core.base import RenderedFrame
 from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.plugin_loader import AnimationPluginLoader
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 
 class CuratedAnimationPresetTests(unittest.TestCase):
@@ -22,7 +23,10 @@ class CuratedAnimationPresetTests(unittest.TestCase):
         paths = sorted((self.root / "presets" / "animations").glob("*/*.json"))
         self.assertGreaterEqual(len(paths), 70)
 
-        controller = PreviewLEDController(strips=32, leds_per_strip=140)
+        controller = PreviewLEDController(
+            strips=DEFAULT_STRIP_COUNT,
+            leds_per_strip=DEFAULT_LEDS_PER_STRIP,
+        )
         for path in paths:
             with self.subTest(preset=str(path.relative_to(self.root))):
                 payload = json.loads(path.read_text(encoding="utf-8"))
@@ -48,7 +52,10 @@ class CuratedAnimationPresetTests(unittest.TestCase):
                 rendered = animation.generate_frame(0.0, 0)
                 pixels = rendered.pixels if isinstance(rendered, RenderedFrame) else rendered
                 self.assertIsInstance(pixels, np.ndarray)
-                self.assertEqual(pixels.shape, (4480, 3))
+                self.assertEqual(
+                    pixels.shape,
+                    (DEFAULT_STRIP_COUNT * DEFAULT_LEDS_PER_STRIP, 3),
+                )
                 self.assertEqual(pixels.dtype, np.uint8)
 
 

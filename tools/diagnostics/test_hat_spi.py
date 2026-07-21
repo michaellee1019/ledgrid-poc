@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from drivers.spi_controller import CMD_PING, LEDController
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP
 
 ACTIVE_SPI_ON = re.compile(r"^\s*dtparam=spi=on\s*$", re.MULTILINE)
 
@@ -62,7 +63,7 @@ def ping_device(label: str, bus: int, device: int) -> bool:
             bus=bus,
             device=device,
             strips=8,
-            leds_per_strip=140,
+            leds_per_strip=DEFAULT_LEDS_PER_STRIP,
             debug=True,
         )
         controller._xfer([CMD_PING])

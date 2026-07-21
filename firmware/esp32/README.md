@@ -8,8 +8,8 @@ over 20 MHz SPI and drives eight WS2812 lanes in parallel.
 - Board: ESP32-S3-DevKitC-1-N16R8V
 - Flash: 16 MB
 - PSRAM: 8 MB
-- Default geometry: 8 strips × 140 LEDs
-- Maximum geometry: 8 strips × 500 LEDs
+- Installed default geometry: 8 strips × 138 LEDs
+- Maximum buffer geometry: 8 strips × 140 LEDs
 
 | Function | GPIO |
 |---|---:|

@@ -44,7 +44,7 @@ High-performance SPI-controlled LED grid with a web UI and an allowlisted animat
 
 ## Webcam Pixel Map + World Flags
 
-Build a logical 32 x 140 pixel map from a full-white USB-webcam capture:
+Build a logical 32 x 138 pixel map from a full-white USB-webcam capture:
 
 ```bash
 python3 scripts/build_webcam_pixel_map.py calibration_photos/webcam-full-white.jpg \
@@ -53,7 +53,7 @@ python3 scripts/build_webcam_pixel_map.py calibration_photos/webcam-full-white.j
 
 The generated `config/webcam_pixel_map.json` records the camera coordinate and
 estimated plant visibility of every LED. The mapper fits the two visible panel
-sides and uses the known 32 x 140 square-cell geometry to extrapolate rows above
+sides and uses the known 32 x 138 square-cell geometry to extrapolate rows above
 the webcam frame; those off-camera LEDs are recorded as unobserved instead of
 being misclassified as blocked. Start `World Flags` in the web UI to
 show the camera-mapped scrolling flag parade. Set `display_mode=single` and
@@ -63,6 +63,7 @@ choose an ISO code such as `JPN`, `BRA`, or `USA` to hold one flag.
 
 - `docs/README.md` - system overview and setup details
 - `docs/ANIMATION_SYSTEM.md` - animation plugins and API
+- `docs/PLANT_WALL_CALIBRATION.md` - repeatable webcam foliage/globe recalibration
 - `docs/GIF_PIPELINE.md` - GIF asset preparation and playback plugin
 - `docs/DEPLOYMENT.md` - Raspberry Pi deployment guide
 - `docs/HARDWARE.md` - wiring and hardware notes

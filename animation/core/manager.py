@@ -116,6 +116,7 @@ class AnimationManager:
         "clock",
         "conway_life",
         "plant_calibration",
+        "plant_glow",
         "plant_mask_highlight",
         "pixel_quest",
         "living_ecosystem",
@@ -158,7 +159,7 @@ class AnimationManager:
         self.current_animation_name: Optional[str] = None
         self.current_animation_hash: Optional[str] = None
         self.is_running = False
-        # 200 Hz stays below the ~235 Hz physical ceiling of a 140-pixel
+        # 200 Hz stays below the physical ceiling of a 138-pixel
         # WS2812 strip while leaving headroom for frame generation and transfer.
         self.target_fps = 200
         self.frame_count = 0

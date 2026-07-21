@@ -311,7 +311,7 @@ def main():
     parser.add_argument('--controller-debug', action='store_true',
                         help='Enable LED controller debug output')
     parser.add_argument('--target-fps', type=int, default=200,
-                        help='Target animation FPS (default: 200; near the practical limit for 140-pixel WS2812 strips)')
+                        help=f'Target animation FPS (default: 200; tuned for {DEFAULT_LEDS_PER_STRIP}-pixel WS2812 strips)')
     parser.add_argument('--brightness', type=int, default=50,
                         help='Global hardware brightness 0-255 (default: 50)')
     parser.add_argument('--animation-speed-scale', type=float, default=DEFAULT_ANIMATION_SPEED_SCALE,

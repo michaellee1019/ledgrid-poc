@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "camera": {
+    "name": "Anker PowerConf C200",
+    "avfoundation_input": "0:none",
+    "image_width": 1920,
+    "image_height": 1080
+  },
+  "panel_corners": {
+    "tl": [1076.0, 24.0],
+    "tr": [1291.0, 20.0],
+    "br": [1276.0, 960.0],
+    "bl": [1053.0, 948.0]
+  },
+  "rectified_output": {
+    "width": 256,
+    "height": 1104
+  },
+  "controller_claim": {
+    "strip_count": 32,
+    "leds_per_strip": 140,
+    "verification_status": "unverified",
+    "note": "Do not treat these dimensions as measured. The 2026-07-21 dimension probe shows that configured rows 138 and 139 are not physically present."
+  },
+  "measured_layout": {
+    "strip_count": 32,
+    "leds_per_strip": 138,
+    "verification_status": "camera_verified",
+    "evidence": "At minimum brightness, the physical top ends with logical row 137 (magenta) above row 136 (cyan); logical rows 138 (orange) and 139 (white) are absent. The first four rows are visible at the opposite edge.",
+    "capture": "calibration_photos/webcam-20260721-lights-off-dimension-min.jpg"
+  }
+}

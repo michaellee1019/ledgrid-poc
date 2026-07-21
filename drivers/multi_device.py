@@ -11,6 +11,7 @@ from typing import List, Tuple, Optional
 import numpy as np
 
 from drivers.spi_controller import LEDController, SPI_BUS, SPI_SPEED, SPI_MODE
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP
 
 DeviceMapEntry = Tuple[int, int]
 
@@ -24,7 +25,7 @@ class MultiDeviceLEDController:
                  speed: int = SPI_SPEED,
                  mode: int = SPI_MODE,
                  strips_per_device: int = 8,
-                 leds_per_strip: int = 140,
+                 leds_per_strip: int = DEFAULT_LEDS_PER_STRIP,
                  debug: bool = False,
                  parallel: bool = True,
                  device_map: Optional[List[DeviceMapEntry]] = None):
@@ -37,7 +38,7 @@ class MultiDeviceLEDController:
             speed: SPI speed in Hz (default: 8MHz)
             mode: SPI mode (default: 3)
             strips_per_device: LED strips per device (default: 8 for ESP32-S3 DevKitC)
-            leds_per_strip: LEDs per strip (default: 140)
+            leds_per_strip: LEDs per strip (installed default: 138)
             debug: Enable debug output
             parallel: Send data to devices in parallel using threads
             device_map: Optional list of (bus, device) tuples for each device

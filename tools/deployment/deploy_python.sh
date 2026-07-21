@@ -29,6 +29,9 @@ rsync -az \
     --include '*.py' \
     --include '*.html' \
     --include 'config/webcam_pixel_map.json' \
+    --include 'config/plant_pixel_map.json' \
+    --include 'config/plant_pixel_map_32x138.json' \
+    --include 'config/plant_globe_map_32x138.json' \
     --exclude '*' \
     "$LOCAL_DIR"/ "$PI_HOST:~/$DEPLOY_DIR/"
 

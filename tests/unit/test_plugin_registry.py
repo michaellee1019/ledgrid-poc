@@ -1,7 +1,12 @@
 from pathlib import Path
 import unittest
 
-from animation.core.manager import AnimationManager
+import numpy as np
+
+from animation.core.base import RenderedFrame
+from animation.core.manager import AnimationManager, PreviewLEDController
+from animation.core.plugin_loader import AnimationPluginLoader
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 from web.app import create_app
 
 
@@ -15,6 +20,24 @@ class PluginRegistryTests(unittest.TestCase):
         }
 
         self.assertSetEqual(AnimationManager.ALLOWED_PLUGINS, shipped_plugins)
+
+    def test_all_plugins_render_the_installed_32_by_138_geometry(self):
+        controller = PreviewLEDController(
+            strips=DEFAULT_STRIP_COUNT,
+            leds_per_strip=DEFAULT_LEDS_PER_STRIP,
+        )
+        plugins = AnimationPluginLoader(
+            allowed_plugins=AnimationManager.ALLOWED_PLUGINS,
+        ).load_all_plugins()
+
+        self.assertEqual(DEFAULT_LEDS_PER_STRIP, 138)
+        for name, plugin_class in sorted(plugins.items()):
+            with self.subTest(plugin=name):
+                rendered = plugin_class(controller).generate_frame(0.0, 0)
+                pixels = rendered.pixels if isinstance(rendered, RenderedFrame) else rendered
+                self.assertIsInstance(pixels, np.ndarray)
+                self.assertEqual(pixels.shape, (DEFAULT_STRIP_COUNT * 138, 3))
+                self.assertEqual(pixels.dtype, np.uint8)
 
     def test_live_global_speed_scale_preserves_relative_animation_speed(self):
         class _Animation:

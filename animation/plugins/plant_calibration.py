@@ -21,13 +21,14 @@ class PlantCalibrationAnimation(AnimationBase):
     ANIMATION_NAME = "Plant Calibration"
     ANIMATION_DESCRIPTION = "Static reference patterns for wall photo calibration"
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.1"
+    ANIMATION_VERSION = "1.2"
     PATTERN_SEQUENCE_LABELS: List[str] = [
         "orientation_markers",
         "major_grid_lines",
         "checkerboard",
         "coordinate_gradient",
         "full_white",
+        "dimension_probe",
     ]
 
     def __init__(self, controller, config: Dict[str, Any] = None):
@@ -223,6 +224,7 @@ class PlantCalibrationAnimation(AnimationBase):
                 self._build_checkerboard(),
                 self._build_coordinate_gradient(),
                 self._build_full_white(),
+                self._build_dimension_probe(),
             )
         ]
         self._last_stage_key = ""
@@ -359,6 +361,43 @@ class PlantCalibrationAnimation(AnimationBase):
 
     def _build_full_white(self) -> List[Color]:
         return [self._scale((255, 255, 255))] * self.total_leds
+
+    def _build_dimension_probe(self) -> List[Color]:
+        """Mark claimed logical edges so camera captures can expose layout errors.
+
+        The first/last four LED positions use distinct colors. If a receiver,
+        strip length, or logical-to-physical mapping drops an edge position, the
+        missing color is visible without assuming the configured height is true.
+        Dim decade rows and four-column guides make counting the interior easier.
+        """
+        frame = [(0, 0, 0)] * self.total_leds
+
+        guide = self._scale((38, 38, 38))
+        for led in range(0, self.leds_per_strip, 10):
+            for strip in range(self.strip_count):
+                self._set_pixel(frame, strip, led, guide)
+        for strip in range(0, self.strip_count, 4):
+            for led in range(self.leds_per_strip):
+                self._set_pixel(frame, strip, led, guide)
+
+        edge_palette = [
+            (255, 36, 36),
+            (36, 255, 36),
+            (36, 80, 255),
+            (255, 210, 36),
+            (36, 255, 230),
+            (230, 36, 255),
+            (255, 110, 24),
+            (255, 255, 255),
+        ]
+        edge_leds = list(range(min(4, self.leds_per_strip)))
+        edge_leds += list(range(max(4, self.leds_per_strip - 4), self.leds_per_strip))
+        for led, color in zip(edge_leds, edge_palette):
+            scaled = self._scale(color)
+            for strip in range(self.strip_count):
+                self._set_pixel(frame, strip, led, scaled)
+
+        return frame
 
     def _fill_rect(
         self,

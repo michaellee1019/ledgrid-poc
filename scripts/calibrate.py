@@ -14,7 +14,7 @@ Assumptions:
 - Camera framing is stable across the 5 photos (same viewpoint).
 - Input photos may contain EXIF rotation metadata; this script always applies
   EXIF transpose before analysis.
-- Logical layout defaults to 32 strips x 140 LEDs per strip.
+- Logical layout defaults to 32 strips x 138 LEDs per strip.
 
 Coordinate conventions:
 - Logical `(strip, led)` uses row-major flattening:
@@ -47,6 +47,7 @@ from PIL import Image, ImageDraw, ImageOps
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from animation.plugins.plant_calibration import PlantCalibrationAnimation
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 
 Point = Tuple[float, float]
@@ -169,8 +170,8 @@ def parse_args() -> argparse.Namespace:
         default="config/plant_pixel_map.json",
         help="Mask map JSON used to interpret --mask-pattern-file expected lit pixels",
     )
-    parser.add_argument("--strips", type=int, default=32, help="Strip count")
-    parser.add_argument("--leds-per-strip", type=int, default=140, help="LEDs per strip")
+    parser.add_argument("--strips", type=int, default=DEFAULT_STRIP_COUNT, help="Strip count")
+    parser.add_argument("--leds-per-strip", type=int, default=DEFAULT_LEDS_PER_STRIP, help="LEDs per strip")
     parser.add_argument(
         "--corners",
         default="",
