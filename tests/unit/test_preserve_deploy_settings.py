@@ -71,6 +71,40 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             self.assertEqual(saved["animation_speed_scale"], 0.45)
             self.assertEqual(saved["target_fps"], 144)
 
+    def test_save_status_ignores_non_finite_optional_runtime_values(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            state_path = root / "state.json"
+
+            save_status({
+                "is_running": True,
+                "current_animation": "rainbow",
+                "animation_speed_scale": float("inf"),
+                "target_fps": 0.5,
+                "animation_info": {"current_params": {"speed": 0.9}},
+            }, root / "presets", state_path)
+
+            state = json.loads(state_path.read_text())
+            self.assertNotIn("animation_speed_scale", state)
+            self.assertNotIn("target_fps", state)
+
+    def test_load_saved_state_rejects_invalid_optional_runtime_values(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            presets_dir = root / "presets"
+            state_path = root / "state.json"
+            save_status({
+                "is_running": True,
+                "current_animation": "rainbow",
+                "animation_info": {"current_params": {"speed": 0.9}},
+            }, presets_dir, state_path)
+            state = json.loads(state_path.read_text())
+            state["target_fps"] = "fast"
+            state_path.write_text(json.dumps(state))
+
+            with self.assertRaisesRegex(RuntimeError, "invalid target FPS"):
+                load_saved_state(state_path)
+
     def test_save_requires_a_running_animation(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -22,6 +23,24 @@ from ipc.control_channel import FileControlChannel
 
 PRESET_ID = "before-deploy"
 STATE_VERSION = 2
+
+
+def _positive_finite_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def _positive_int(value: Any) -> int | None:
+    number = _positive_finite_number(value)
+    if number is None or not number.is_integer():
+        return None
+    integer = int(number)
+    return integer if integer > 0 else None
 
 
 def _read_object(path: Path) -> dict[str, Any]:
@@ -70,8 +89,10 @@ def _preset_params(status: dict[str, Any]) -> dict[str, Any]:
     params = dict(params)
     speed_scale = status.get("animation_speed_scale")
     speed = params.get("speed")
-    if isinstance(speed, (int, float)) and isinstance(speed_scale, (int, float)) and speed_scale > 0:
-        params["speed"] = speed / speed_scale
+    valid_speed = _positive_finite_number(speed)
+    valid_speed_scale = _positive_finite_number(speed_scale)
+    if valid_speed is not None and valid_speed_scale is not None:
+        params["speed"] = valid_speed / valid_speed_scale
     return params
 
 
@@ -106,12 +127,12 @@ def save_status(
         "preset_path": str(preset_path),
         "saved_at": now,
     }
-    speed_scale = status.get("animation_speed_scale")
-    if isinstance(speed_scale, (int, float)) and speed_scale > 0:
+    speed_scale = _positive_finite_number(status.get("animation_speed_scale"))
+    if speed_scale is not None:
         state["animation_speed_scale"] = speed_scale
-    target_fps = status.get("target_fps")
-    if isinstance(target_fps, (int, float)) and target_fps > 0:
-        state["target_fps"] = int(target_fps)
+    target_fps = _positive_int(status.get("target_fps"))
+    if target_fps is not None:
+        state["target_fps"] = target_fps
     _atomic_write(state_path, state)
     return preset
 
@@ -137,6 +158,16 @@ def load_saved_state(state_path: Path) -> dict[str, Any]:
     result = dict(state)
     result["animation"] = animation
     result["params"] = dict(preset["params"])
+    speed_scale = _positive_finite_number(state.get("animation_speed_scale"))
+    target_fps = _positive_int(state.get("target_fps"))
+    if "animation_speed_scale" in state and speed_scale is None:
+        raise RuntimeError("Saved deployment state has an invalid animation speed scale")
+    if "target_fps" in state and target_fps is None:
+        raise RuntimeError("Saved deployment state has an invalid target FPS")
+    if speed_scale is not None:
+        result["animation_speed_scale"] = speed_scale
+    if target_fps is not None:
+        result["target_fps"] = target_fps
     return result
 
 
