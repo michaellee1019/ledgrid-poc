@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate original, native-resolution pixel-art GIFs for the LED wall.
 
-The output is deliberately authored at 32x140.  That avoids interpolation in
+The output is deliberately authored at 32x138.  That avoids interpolation in
 the GIF plugin and keeps every square pixel crisp on the physical installation.
 """
 
@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw
 
 
 WIDTH = 32
-HEIGHT = 140
+HEIGHT = 138
 FRAME_COUNT = 8
 DURATION_MS = 140
 CREATED_AT = "2026-07-21T00:00:00Z"

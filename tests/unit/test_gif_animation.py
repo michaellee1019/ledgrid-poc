@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageSequence
 
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 from scripts.generate_cute_gif_pack import SCENES, preset_payload, save_gif
 
 
@@ -38,10 +39,14 @@ class GifAnimationAssetTests(unittest.TestCase):
         self.assertEqual(len(presets), len(self.pack_gifs))
         self.assertEqual({path.stem for path in presets}, {path.stem for path in self.pack_gifs})
 
-    def test_every_gif_is_native_resolution_animated_and_infinite(self):
+    def test_every_gif_uses_the_installed_native_resolution(self):
+        for path in sorted(self.asset_dir.glob("*.gif")):
+            with self.subTest(gif=path.name), Image.open(path) as image:
+                self.assertEqual(image.size, (DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP))
+
+    def test_every_pack_gif_is_animated_and_infinite(self):
         for path in self.pack_gifs:
             with self.subTest(gif=path.name), Image.open(path) as image:
-                self.assertEqual(image.size, (32, 140))
                 self.assertEqual(image.info.get("loop"), 0)
                 frames = [frame.convert("RGB") for frame in ImageSequence.Iterator(image)]
                 self.assertEqual(len(frames), 8)

@@ -8,7 +8,13 @@ new GIF files into an output directory used by GifAnimation.
 
 import argparse
 from pathlib import Path
+import sys
 from typing import Iterable, List
+
+# Ensure repo root is importable when this file is executed directly.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 try:
     from PIL import Image, ImageSequence
@@ -20,8 +26,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare GIF assets for LED wall playback")
     parser.add_argument("--input-dir", required=True, help="Directory containing source GIF files")
     parser.add_argument("--output-dir", default="assets/gifs", help="Directory to write normalized GIF files")
-    parser.add_argument("--width", type=int, default=32, help="Target wall width in pixels")
-    parser.add_argument("--height", type=int, default=140, help="Target wall height in pixels")
+    parser.add_argument("--width", type=int, default=DEFAULT_STRIP_COUNT, help="Target wall width in pixels")
+    parser.add_argument("--height", type=int, default=DEFAULT_LEDS_PER_STRIP, help="Target wall height in pixels")
     parser.add_argument(
         "--fit-mode",
         choices=["stretch", "contain", "cover"],

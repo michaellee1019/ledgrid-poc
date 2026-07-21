@@ -111,7 +111,7 @@ class EmojiArrangerAnimation(AnimationBase):
             'active_columns': {
                 'type': 'int',
                 'min': 1,
-                'max': 140,
+                'max': self.get_strip_info()[0],
                 'default': 8,
                 'description': 'Number of active columns (hardware limitation)'
             }
@@ -163,7 +163,7 @@ class EmojiArrangerAnimation(AnimationBase):
             # Move to next line
             current_y += 7 + line_spacing  # Character height is 7
 
-            # Stop if we're below the display (140 pixels tall)
+            # Stop if we're below the configured display height.
             if current_y >= leds_per_strip:
                 break
 

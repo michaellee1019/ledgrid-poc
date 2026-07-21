@@ -1,7 +1,7 @@
 # Cute Pixel GIF Pack
 
 This directory contains 32 original procedural pixel-art loops authored for the
-wall's native `32x140` portrait canvas, plus the earlier
+wall's native `32x138` portrait canvas, plus the earlier
 `penguin_top_center.gif` sample.
 
 The cute pack is intentionally small and LED-friendly:

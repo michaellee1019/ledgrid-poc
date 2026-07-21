@@ -4,14 +4,14 @@
 Play animated GIF files as LED wall animations using the `gif_animation` plugin.
 
 ## 1) Prepare assets
-Normalize source GIFs to the wall layout (default `32x140`) and place outputs in `assets/gifs`:
+Normalize source GIFs to the wall layout (default `32x138`) and place outputs in `assets/gifs`:
 
 ```bash
 python3 scripts/prepare_gif_assets.py \
   --input-dir /path/to/source-gifs \
   --output-dir assets/gifs \
   --width 32 \
-  --height 140 \
+  --height 138 \
   --fit-mode stretch \
   --overwrite
 ```
