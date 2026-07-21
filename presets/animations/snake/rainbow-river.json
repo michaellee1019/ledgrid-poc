@@ -1,0 +1,7 @@
+{
+  "version": 2, "preset_id": "rainbow-river", "name": "Rainbow River",
+  "animation": "snake", "category": "Ambient", "description": "A long spectrum snake flows continuously through wrapped edges.",
+  "tags": ["rainbow", "flow", "colorful"], "palette": {"name": "Full Spectrum", "colors": ["#FF3040", "#FFE830", "#35FF80", "#35A0FF", "#C840FF"]},
+  "created_at": "2026-07-21T00:00:00Z", "updated_at": "2026-07-21T00:00:00Z",
+  "params": {"brightness": 0.82, "speed": 0.9, "moves_per_second": 12, "snake_count": 1, "initial_length": 18, "max_length": 420, "food_count": 7, "growth_per_food": 6, "ruleset": "wrap", "wall_pattern": "none", "visual_style": "rainbow", "background": "void", "trail_strength": 0.8, "trail_decay": 1.5, "glow": 0.65, "seed": 101}
+}

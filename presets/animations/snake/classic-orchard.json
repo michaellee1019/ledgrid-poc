@@ -1,0 +1,7 @@
+{
+  "version": 2, "preset_id": "classic-orchard", "name": "Classic Orchard",
+  "animation": "snake", "category": "Arcade", "description": "One green snake, crisp edges, and the original no-wall-crossing rules.",
+  "tags": ["classic", "arcade", "calm"], "palette": {"name": "Apple Green", "colors": ["#071008", "#35FF55", "#FF4040"]},
+  "created_at": "2026-07-21T00:00:00Z", "updated_at": "2026-07-21T00:00:00Z",
+  "params": {"brightness": 0.75, "speed": 0.82, "moves_per_second": 9, "snake_count": 1, "initial_length": 8, "food_count": 3, "growth_per_food": 3, "ruleset": "classic", "wall_pattern": "none", "visual_style": "classic", "background": "void", "trail_strength": 0.25, "trail_decay": 4.5, "glow": 0.25, "seed": 1976}
+}

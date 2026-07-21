@@ -1,0 +1,7 @@
+{
+  "version": 2, "preset_id": "koi-at-midnight", "name": "Koi at Midnight",
+  "animation": "snake", "category": "Ambient", "description": "Two slow sunset-colored snakes drift like koi beneath a star field.",
+  "tags": ["slow", "sunset", "meditative"], "palette": {"name": "Koi Pond", "colors": ["#030716", "#FF5578", "#FFB44A", "#D45CFF"]},
+  "created_at": "2026-07-21T00:00:00Z", "updated_at": "2026-07-21T00:00:00Z",
+  "params": {"brightness": 0.62, "speed": 0.42, "moves_per_second": 7, "snake_count": 2, "initial_length": 14, "max_length": 300, "food_count": 5, "growth_per_food": 5, "ruleset": "wrap", "wall_pattern": "none", "visual_style": "sunset", "background": "stars", "trail_strength": 0.82, "trail_decay": 0.65, "glow": 0.6, "seed": 808}
+}
