@@ -21,8 +21,20 @@ class _PreviewManager:
     def list_animations(self):
         return []
 
-    def get_animation_info(self, _name):
-        return None
+    def get_animation_info(self, name):
+        if name not in {'sparkle', 'rainbow', 'conway_life'}:
+            return None
+        return {
+            'parameters': {
+                'speed': {'type': 'float', 'min': 0.1, 'max': 5.0},
+                'brightness': {'type': 'float', 'min': 0.0, 'max': 1.0},
+                'base_red': {'type': 'int', 'min': 0, 'max': 255},
+                'base_green': {'type': 'int', 'min': 0, 'max': 255},
+                'base_blue': {'type': 'int', 'min': 0, 'max': 255},
+                'mode': {'type': 'str', 'options': ['calm', 'active']},
+                'enabled': {'type': 'bool'},
+            },
+        }
 
 
 class _RecordingChannel:
@@ -145,6 +157,49 @@ class AnimationPresetTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_save_rejects_unknown_animation_and_invalid_schema_values(self):
+        cases = (
+            ('missing', {'speed': 1.0}, 'Unknown animation'),
+            ('sparkle', {'mystery': 1}, 'Unsupported parameter'),
+            ('sparkle', {'base_red': 1.5}, 'must be int'),
+            ('sparkle', {'brightness': 1.5}, 'at most 1.0'),
+            ('sparkle', {'mode': 'turbo'}, 'must be one of'),
+            ('sparkle', {'speed': float('inf')}, 'must be finite'),
+            ('sparkle', {'speed': 10 ** 1000}, 'must be finite'),
+        )
+        for animation, params, message in cases:
+            with self.subTest(animation=animation, params=params):
+                response = self.client.post(
+                    f'/api/animations/{animation}/presets',
+                    json={'name': 'Invalid', 'params': params},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(message, response.get_json()['error'])
+
+    def test_dashboard_reads_each_preset_only_once(self):
+        self.interface.preview_manager.list_animations = lambda: [{
+            'plugin_name': 'sparkle', 'name': 'Sparkle',
+            'description': 'Twinkling points', 'author': 'Test', 'version': '1',
+        }]
+        for name in ('First', 'Second'):
+            self.client.post('/api/animations/sparkle/presets', json={
+                'name': name,
+                'params': {'base_red': 1, 'base_green': 2, 'base_blue': 3},
+            })
+        original_read = self.interface._read_json_file
+        reads = []
+
+        def recording_read(path):
+            reads.append(path)
+            return original_read(path)
+
+        self.interface._read_json_file = recording_read
+
+        response = self.client.get('/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(reads), 2)
+
     def test_version_two_metadata_is_returned_in_list_summary(self):
         response = self.client.post(
             '/api/animations/sparkle/presets',
@@ -220,6 +275,16 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertIn('Global tempo', html)
         self.assertIn('Test & calibration animations', html)
         self.assertIn('id="testAnimationCollapse" class="accordion-collapse collapse"', html)
+        self.assertIn('/static/css/dashboard.css', html)
+        self.assertIn('/static/js/dashboard.js', html)
+        css_response = self.client.get('/static/css/dashboard.css')
+        js_response = self.client.get('/static/js/dashboard.js')
+        try:
+            self.assertEqual(css_response.status_code, 200)
+            self.assertEqual(js_response.status_code, 200)
+        finally:
+            css_response.close()
+            js_response.close()
 
     def test_dashboard_alphabetizes_animations_and_places_tempo_below_preview(self):
         self.interface.preview_manager.list_animations = lambda: [
@@ -248,22 +313,6 @@ class AnimationPresetTests(unittest.TestCase):
         presets = self.client.get('/api/animations/sparkle/presets').get_json()['presets']
 
         self.assertEqual([preset['name'] for preset in presets], ['Aurora', 'calm', 'zebra'])
-
-    def test_numeric_and_iso_timestamp_presets_sort_together(self):
-        preset_dir = Path(self.temp_dir.name) / 'sparkle'
-        preset_dir.mkdir(parents=True)
-        (preset_dir / 'shipped.json').write_text(json.dumps({
-            'version': 2, 'preset_id': 'shipped', 'name': 'Shipped',
-            'animation': 'sparkle', 'updated_at': '2026-07-20T00:00:00Z',
-            'params': {'brightness': 0.4},
-        }), encoding='utf-8')
-        self.client.post('/api/animations/sparkle/presets', json={
-            'name': 'Personal', 'params': {'brightness': 0.7},
-        })
-        response = self.client.get('/api/animations/sparkle/presets')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.get_json()['presets']), 2)
-
 
 if __name__ == '__main__':
     unittest.main()

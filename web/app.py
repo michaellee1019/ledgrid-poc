@@ -10,13 +10,13 @@ import json
 import math
 import re
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from flask import Flask, jsonify, render_template, request
 
 from animation.core.manager import AnimationManager, PreviewLEDController
+from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import (
@@ -24,8 +24,6 @@ from drivers.frame_codec import (
     encode_frame_data,
     FRAME_ENCODING_NAME,
 )
-
-DEFAULT_ANIMATION_SPEED_SCALE = 0.3
 
 ANIMATION_EMOJI = {
     'ascii_drop': '💻', 'christmas_tree': '🎄', 'clock': '🕰️', 'conway_life': '🧬',
@@ -139,6 +137,9 @@ class AnimationWebInterface:
                 return jsonify({'error': 'Preset name is required'}), 400
             if not isinstance(params, dict):
                 return jsonify({'error': 'params must be a JSON object'}), 400
+            validation_error = self._validate_animation_params(animation_name, params)
+            if validation_error:
+                return jsonify({'error': validation_error}), 400
 
             preset_id = self._sanitize_preset_id(raw_name)
             if not preset_id:
@@ -477,8 +478,6 @@ class AnimationWebInterface:
             presets = self._list_animation_presets(plugin_name)
             for preset in presets:
                 preset['emoji'] = self._preset_emoji(preset, item['emoji'])
-                full_preset = self._load_animation_preset(plugin_name, preset.get('preset_id', ''))
-                preset['swatches'] = self._preset_swatches(full_preset or preset)
             item['presets'] = presets
             catalog.append(item)
         return catalog
@@ -540,6 +539,46 @@ class AnimationWebInterface:
             if all(0 <= channel <= 255 for channel in channels):
                 colors.append('#' + ''.join(f'{channel:02X}' for channel in channels))
         return colors[:3]
+
+    def _validate_animation_params(
+        self, animation_name: str, params: Dict[str, Any]
+    ) -> Optional[str]:
+        """Validate runtime preset parameters against the plugin schema."""
+        info = self.preview_manager.get_animation_info(animation_name)
+        if not info:
+            return f"Unknown animation: {animation_name}"
+        schema = info.get('parameters')
+        if not isinstance(schema, dict):
+            return f"Animation schema is unavailable: {animation_name}"
+
+        expected_types = {
+            'bool': lambda value: isinstance(value, bool),
+            'int': lambda value: isinstance(value, int) and not isinstance(value, bool),
+            'float': lambda value: isinstance(value, (int, float)) and not isinstance(value, bool),
+            'str': lambda value: isinstance(value, str),
+        }
+        for name, value in params.items():
+            definition = schema.get(name)
+            if not isinstance(definition, dict):
+                return f"Unsupported parameter for {animation_name}: {name}"
+            type_name = definition.get('type')
+            validator = expected_types.get(type_name)
+            if validator and not validator(value):
+                return f"Parameter {name} must be {type_name}"
+            if 'options' in definition and value not in definition['options']:
+                return f"Parameter {name} must be one of {definition['options']}"
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                try:
+                    finite = math.isfinite(float(value))
+                except OverflowError:
+                    finite = False
+                if not finite:
+                    return f"Parameter {name} must be finite"
+                if 'min' in definition and value < definition['min']:
+                    return f"Parameter {name} must be at least {definition['min']}"
+                if 'max' in definition and value > definition['max']:
+                    return f"Parameter {name} must be at most {definition['max']}"
+        return None
     
     def run(self, debug=False):
         """Start the web server"""
@@ -657,18 +696,6 @@ class AnimationWebInterface:
             return None
         return payload if isinstance(payload, dict) else None
 
-    @staticmethod
-    def _preset_timestamp(value: Any) -> float:
-        """Normalize legacy numeric and v2 ISO timestamps for stable sorting."""
-        if isinstance(value, (int, float)):
-            return float(value)
-        if isinstance(value, str):
-            try:
-                return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
-            except ValueError:
-                return 0.0
-        return 0.0
-
     def _preset_summary(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Return a concise summary shape for preset list responses."""
         return {
@@ -745,8 +772,7 @@ class AnimationWebInterface:
             return None
         return preset_dir / f"{safe_id}.json"
 
-    @staticmethod
-    def _animation_preset_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _animation_preset_summary(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return {
             'version': payload.get('version', 1),
             'preset_id': payload.get('preset_id'),
@@ -758,6 +784,7 @@ class AnimationWebInterface:
             'description': payload.get('description'),
             'tags': payload.get('tags', []),
             'palette': payload.get('palette'),
+            'swatches': self._preset_swatches(payload),
         }
 
     def _list_animation_presets(self, animation_name: str) -> List[Dict[str, Any]]:
@@ -947,6 +974,7 @@ def create_app(control_channel: FileControlChannel = None,
         preview_controller,
         plugins_dir=animations_dir,
         animation_speed_scale=animation_speed_scale,
+        auto_start=False,
     )
 
     # Create web interface
