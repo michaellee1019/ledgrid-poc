@@ -32,7 +32,7 @@ test:
 # Verify the rendering architecture before any ESP32 flash.
 test-rendering:
 	uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' python -m unittest tests.unit.test_frame_pipeline tests.unit.test_spi_crc tests.unit.test_spiral_single tests.unit.test_conway_life tests.test_fluid_tank_simulation
-	uv run --with numpy --with pillow tools/benchmarks/animation_render.py --frames 100 --check --max-p95-ms 4.0 --json
+	uv run --with numpy --with pillow tools/benchmarks/animation_render.py --frames 100 --stress --check --max-p95-ms 4.0 --json
 	uv run pio test -d firmware/esp32 -e native
 	uv run pio run -d firmware/esp32 -e esp32-s3-devkitc-1
 	if rg -n 'FastLED|fastled' firmware/esp32/src firmware/esp32/include firmware/esp32/platformio.ini; then exit 1; fi

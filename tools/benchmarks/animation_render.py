@@ -24,6 +24,28 @@ from animation.core.manager import AnimationManager
 from animation.core.plugin_loader import AnimationPluginLoader
 
 
+STRESS_SCENARIOS = {
+    "clock-animated": {
+        "plugin": "clock",
+        "fps": 90.0,
+        "config": {
+            "background": "aurora", "face": "hourglass", "density": 1.0,
+            "glow": 1.0, "motion": 3.0, "speed": 4.0,
+        },
+    },
+    "snake-max-density": {
+        "plugin": "snake",
+        "fps": 90.0,
+        "config": {
+            "snake_count": 12, "initial_length": 30, "max_length": 800,
+            "food_count": 30, "visual_style": "prism", "background": "aurora",
+            "trail_strength": 1.0, "glow": 1.0,
+            "moves_per_second": 30.0, "speed": 4.0, "render_fps": 90.0,
+        },
+    },
+}
+
+
 class BenchmarkController:
     debug = False
     inline_show = True
@@ -58,25 +80,40 @@ def benchmark(args):
         loader = AnimationPluginLoader(allowed_plugins=AnimationManager.ALLOWED_PLUGINS)
         plugins = loader.load_all_plugins()
 
+    work_items = [
+        (name, animation_class, "default", {}, args.fps)
+        for name, animation_class in sorted(plugins.items())
+    ]
+    if args.stress:
+        for scenario_name, scenario in STRESS_SCENARIOS.items():
+            plugin_name = scenario["plugin"]
+            work_items.append((
+                plugin_name,
+                plugins[plugin_name],
+                scenario_name,
+                scenario["config"],
+                scenario["fps"],
+            ))
+
     results = []
-    for name, animation_class in sorted(plugins.items()):
+    for name, animation_class, scenario_name, config, scenario_fps in work_items:
         if issubclass(animation_class, StatefulAnimationBase):
-            results.append({"plugin": name, "kind": "stateful"})
+            results.append({"plugin": name, "scenario": scenario_name, "kind": "stateful"})
             continue
 
         try:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                animation = animation_class(controller)
+                animation = animation_class(controller, config)
                 animation.start()
                 for frame_count in range(args.warmup):
-                    animation.generate_frame(frame_count / args.fps, frame_count)
+                    animation.generate_frame(frame_count / scenario_fps, frame_count)
 
                 timings = []
                 changed_frames = 0
                 rendered = None
                 for frame_count in range(args.warmup, args.warmup + args.frames):
                     started = time.perf_counter()
-                    rendered = animation.generate_frame(frame_count / args.fps, frame_count)
+                    rendered = animation.generate_frame(frame_count / scenario_fps, frame_count)
                     timings.append((time.perf_counter() - started) * 1000.0)
                     if not isinstance(rendered, RenderedFrame) or rendered.changed:
                         changed_frames += 1
@@ -87,7 +124,7 @@ def benchmark(args):
                 allocation_frames = min(20, args.frames)
                 for offset in range(allocation_frames):
                     frame_count = args.warmup + args.frames + offset
-                    animation.generate_frame(frame_count / args.fps, frame_count)
+                    animation.generate_frame(frame_count / scenario_fps, frame_count)
                 _current, peak = tracemalloc.get_traced_memory()
                 tracemalloc.stop()
 
@@ -100,11 +137,13 @@ def benchmark(args):
 
             results.append({
                 "plugin": name,
+                "scenario": scenario_name,
                 "kind": "frame",
                 "mean_ms": round(statistics.mean(timings), 4),
                 "p50_ms": round(percentile(timings, 0.50), 4),
                 "p95_ms": round(percentile(timings, 0.95), 4),
                 "p99_ms": round(percentile(timings, 0.99), 4),
+                "max_ms": round(max(timings), 4),
                 "peak_kib": round(peak / 1024.0, 2),
                 "changed_ratio": round(changed_frames / args.frames, 4),
             })
@@ -113,6 +152,7 @@ def benchmark(args):
                 tracemalloc.stop()
             results.append({
                 "plugin": name,
+                "scenario": scenario_name,
                 "kind": "frame",
                 "error": f"{type(exc).__name__}: {exc}",
             })
@@ -126,6 +166,10 @@ def main():
     parser.add_argument("--fps", type=float, default=200.0)
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--frames", type=int, default=200)
+    parser.add_argument(
+        "--stress", action="store_true",
+        help="also run named animated and maximum-density scenarios",
+    )
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
         "--check",
@@ -139,23 +183,27 @@ def main():
     if args.json:
         print(json.dumps(results, indent=2))
     else:
-        print("plugin\tkind\tmean_ms\tp95_ms\tpeak_kib\tchanged\terror")
+        print("plugin\tscenario\tkind\tmean_ms\tp95_ms\tmax_ms\tpeak_kib\tchanged\terror")
         for result in results:
             print("\t".join(str(result.get(key, "-")) for key in (
-                "plugin", "kind", "mean_ms", "p95_ms", "peak_kib", "changed_ratio", "error"
+                "plugin", "scenario", "kind", "mean_ms", "p95_ms", "max_ms",
+                "peak_kib", "changed_ratio", "error"
             )))
 
     if args.check:
         failures = []
         for result in results:
             if result.get("error"):
-                failures.append(f"{result['plugin']}: {result['error']}")
+                failures.append(
+                    f"{result['plugin']}[{result.get('scenario', 'default')}]: {result['error']}"
+                )
             elif (
                 result.get("kind") == "frame"
                 and float(result.get("p95_ms", 0.0)) > args.max_p95_ms
             ):
                 failures.append(
-                    f"{result['plugin']}: p95 {result['p95_ms']} ms exceeds "
+                    f"{result['plugin']}[{result.get('scenario', 'default')}]: "
+                    f"p95 {result['p95_ms']} ms exceeds "
                     f"{args.max_p95_ms} ms"
                 )
         if failures:
