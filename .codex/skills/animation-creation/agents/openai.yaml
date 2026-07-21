@@ -1,0 +1,4 @@
+interface:
+  display_name: "Animation Creation"
+  short_description: "Build testable, installation-aware animations"
+  default_prompt: "Use $animation-creation to create or improve an LED animation, calibrated-mask behavior, or pre-rendered GIF pack while protecting visual quality and frame-time performance."
