@@ -26,6 +26,17 @@ class SnakeAnimationTests(unittest.TestCase):
         self.assertEqual(animation._effective_moves_per_second(), 110.0)
         self.assertEqual(animation.get_runtime_stats()["speed_baseline"], 10.0)
 
+    def test_extreme_speed_is_capped_to_bounded_work_per_render(self):
+        animation = self.make_animation(
+            speed=4.0, moves_per_second=30.0, render_fps=90.0,
+        )
+
+        stats = animation.get_runtime_stats()
+
+        self.assertEqual(stats["requested_moves_per_second"], 1200.0)
+        self.assertEqual(stats["effective_moves_per_second"], 360.0)
+        self.assertTrue(stats["simulation_rate_capped"])
+
     def test_frame_contract_and_source_rate_cache(self):
         animation = self.make_animation(render_fps=30.0)
         first = animation.generate_frame(0.0, 0)

@@ -23,7 +23,7 @@ DOWN: Direction = (0, 1)
 LEFT: Direction = (-1, 0)
 DIRECTIONS = (UP, RIGHT, DOWN, LEFT)
 OPPOSITE = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}
-MAX_SIMULATION_STEPS = 8
+MAX_SIMULATION_STEPS = 4
 SNAKE_SPEED_BASELINE = 10.0
 
 
@@ -150,6 +150,8 @@ class SnakeAnimation(AnimationBase):
 
     def get_runtime_stats(self) -> Dict[str, Any]:
         alive = sum(bool(snake.body) for snake in self.snakes)
+        requested_rate = self._requested_moves_per_second()
+        effective_rate = self._effective_moves_per_second()
         return {
             "ruleset": str(self.params.get("ruleset", "wrap")),
             "moves": self.moves,
@@ -158,7 +160,9 @@ class SnakeAnimation(AnimationBase):
             "alive_snakes": alive,
             "longest_snake": max((len(snake.body) for snake in self.snakes), default=0),
             "speed_baseline": SNAKE_SPEED_BASELINE,
-            "effective_moves_per_second": self._effective_moves_per_second(),
+            "requested_moves_per_second": requested_rate,
+            "effective_moves_per_second": effective_rate,
+            "simulation_rate_capped": effective_rate < requested_rate,
         }
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> Any:
@@ -194,6 +198,10 @@ class SnakeAnimation(AnimationBase):
         return self.rendered_frame(frame, changed=True)
 
     def _effective_moves_per_second(self) -> float:
+        render_fps = max(15.0, min(90.0, float(self.params.get("render_fps", 60.0))))
+        return min(self._requested_moves_per_second(), render_fps * MAX_SIMULATION_STEPS)
+
+    def _requested_moves_per_second(self) -> float:
         speed = max(0.2, float(self.params.get("speed", 1.0)))
         moves_per_second = max(2.0, float(self.params.get("moves_per_second", 11.0)))
         return moves_per_second * speed * SNAKE_SPEED_BASELINE
