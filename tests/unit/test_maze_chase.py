@@ -17,6 +17,11 @@ class MazeChaseAnimationTests(unittest.TestCase):
     def test_production_manager_allows_plugin(self):
         self.assertIn("maze_chase", AnimationManager.ALLOWED_PLUGINS)
 
+    def test_default_playback_speed_is_one_and_a_half_times(self):
+        animation = self.make_animation()
+        self.assertEqual(animation.params["speed"], 1.5)
+        self.assertEqual(animation.get_parameter_schema()["speed"]["default"], 1.5)
+
     def test_maze_is_connected_including_wrap_tunnel(self):
         animation = self.make_animation()
         start = next(iter(animation.walkable))

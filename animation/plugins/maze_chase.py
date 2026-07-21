@@ -147,7 +147,7 @@ class MazeChaseAnimation(AnimationBase):
         super().__init__(controller, config)
         self.width, self.height = self.get_strip_info()
         self.default_params.update({
-            "speed": 1.0,
+            "speed": 1.5,
             "brightness": 1.0,
             "render_fps": 60.0,
             "difficulty": 0.82,
@@ -197,7 +197,7 @@ class MazeChaseAnimation(AnimationBase):
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
         schema.update({
-            "speed": {"type": "float", "min": 0.25, "max": 3.0, "default": 1.0,
+            "speed": {"type": "float", "min": 0.25, "max": 3.0, "default": 1.5,
                       "description": "Simulation speed multiplier"},
             "render_fps": {"type": "float", "min": 20.0, "max": 90.0, "default": 60.0,
                            "description": "Maximum animation render rate"},
@@ -343,7 +343,7 @@ class MazeChaseAnimation(AnimationBase):
             dt = min(0.05, max(0.0, time_elapsed - self.last_elapsed))
         self.last_elapsed = time_elapsed
         self.last_render_elapsed = time_elapsed
-        speed = max(0.1, float(self.params.get("speed", 1.0)))
+        speed = max(0.1, float(self.params.get("speed", 1.5)))
         self._update(dt * speed)
         self._render()
 
