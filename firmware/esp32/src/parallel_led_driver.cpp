@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 
+#include "driver/gpio.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "ledgrid/ws2812_encoder.hpp"
@@ -69,6 +70,16 @@ bool ParallelLedDriver::begin(
   bus_config.max_transfer_bytes = buffer_capacity_;
   bus_config.dma_burst_size = kDmaAlignment;
   if (esp_lcd_new_i80_bus(&bus_config, &bus_) != ESP_OK) return false;
+
+  // The installed wall has unequal trace/cable loading across its parallel
+  // outputs. Apply the strongest ESP32-S3 drive setting after the LCD driver
+  // claims the pins so each WS2812 input sees the fastest available edge.
+  for (std::uint8_t i = 0; i < strip_count; ++i) {
+    if (gpio_set_drive_capability(
+            static_cast<gpio_num_t>(pins[i]), GPIO_DRIVE_CAP_3) != ESP_OK) {
+      return false;
+    }
+  }
 
   esp_lcd_panel_io_i80_config_t io_config = {};
   io_config.cs_gpio_num = -1;

@@ -89,7 +89,7 @@
                 <div class="border-bottom pb-3 mb-3">
                     <label class="form-label fw-semibold" for="presetSelect">Presets</label>
                     <div class="input-group input-group-sm mb-2">
-                        <select class="form-select" id="presetSelect" aria-label="Animation preset">
+                        <select class="form-select" id="presetSelect" aria-label="Animation preset" onchange="showSelectedPresetDetails()">
                             <option value="">No saved presets</option>
                         </select>
                         <button class="btn btn-outline-primary" type="button" onclick="applySelectedPreset()">Load</button>
@@ -97,6 +97,7 @@
                             <i class="fas fa-trash"></i>
                         </button>
                     </div>
+                    <div id="presetDetails" class="small text-muted mb-2" style="display: none;"></div>
                     <div class="input-group input-group-sm">
                         <input class="form-control" id="presetName" maxlength="64" placeholder="Preset name">
                         <button class="btn btn-success" type="button" onclick="saveAnimationPreset()">
@@ -270,6 +271,7 @@ let parameterUpdateTimeout = null;
 let dpadCooldown = null;
 let currentParameterSchema = {};
 let currentParameterValues = {};
+let currentPresetCatalog = {};
 
 function humanizeParamName(name) {
     return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -469,6 +471,7 @@ async function loadAnimationPresets(name = currentAnimation) {
         const payload = await response.json();
         select.innerHTML = '';
         const presets = Array.isArray(payload.presets) ? payload.presets : [];
+        currentPresetCatalog = Object.fromEntries(presets.map(preset => [preset.preset_id, preset]));
         const placeholder = document.createElement('option');
         placeholder.value = '';
         placeholder.textContent = presets.length ? 'Choose a preset…' : 'No saved presets';
@@ -476,12 +479,44 @@ async function loadAnimationPresets(name = currentAnimation) {
         presets.forEach(preset => {
             const option = document.createElement('option');
             option.value = preset.preset_id;
-            option.textContent = preset.name;
+            option.textContent = preset.category ? `${preset.name} · ${preset.category}` : preset.name;
             select.appendChild(option);
         });
+        showSelectedPresetDetails();
     } catch (error) {
         console.error('Failed to load animation presets', error);
     }
+}
+
+function showSelectedPresetDetails() {
+    const select = document.getElementById('presetSelect');
+    const details = document.getElementById('presetDetails');
+    if (!select || !details) return;
+    const preset = currentPresetCatalog[select.value];
+    details.replaceChildren();
+    if (!preset) {
+        details.style.display = 'none';
+        return;
+    }
+    if (preset.description) {
+        const description = document.createElement('span');
+        description.textContent = preset.description;
+        details.appendChild(description);
+    }
+    const colors = preset.palette && Array.isArray(preset.palette.colors)
+        ? preset.palette.colors : [];
+    if (colors.length) {
+        const swatches = document.createElement('span');
+        swatches.className = 'ms-2';
+        colors.filter(color => /^#[0-9a-fA-F]{6}$/.test(color)).forEach(color => {
+            const dot = document.createElement('span');
+            dot.style.cssText = `display:inline-block;width:12px;height:12px;border-radius:50%;margin-left:3px;background:${color};border:1px solid rgba(255,255,255,.35)`;
+            dot.title = color;
+            swatches.appendChild(dot);
+        });
+        details.appendChild(swatches);
+    }
+    details.style.display = details.childNodes.length ? 'block' : 'none';
 }
 
 async function saveAnimationPreset() {
@@ -504,6 +539,7 @@ async function saveAnimationPreset() {
     nameInput.value = '';
     await loadAnimationPresets();
     document.getElementById('presetSelect').value = payload.preset.preset_id;
+    showSelectedPresetDetails();
 }
 
 async function applySelectedPreset() {

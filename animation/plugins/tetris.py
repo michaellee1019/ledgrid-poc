@@ -15,6 +15,7 @@ Color = Tuple[int, int, int]
 BoardCell = Optional[Color]
 MAX_TETROMINO_COUNT = 128
 MAX_SPAWNS_PER_UPDATE = 8
+MAX_COORDINATED_PLANS = 3
 MAX_SIMULATION_DELTA = 0.05
 
 
@@ -94,14 +95,15 @@ class ActivePiece:
     last_fall_rows: int = 0
     action_accumulator: float = 0.0
     plan: Optional[Dict[str, Any]] = None
+    planning_deferred: bool = False
     manual_override: float = 0.0
 
 
 class TetrisAnimation(AnimationBase):
-    """Classic Tetris with a simple self-playing bot."""
+    """Classic Tetris with a coordinated self-playing bot."""
 
     ANIMATION_NAME = "Tetris"
-    ANIMATION_DESCRIPTION = "Autoplaying Tetris board with independently falling tetrominoes"
+    ANIMATION_DESCRIPTION = "Autoplaying Tetris board with coordinated falling tetrominoes"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.0"
 
@@ -128,6 +130,7 @@ class TetrisAnimation(AnimationBase):
         self.input_queue: List[str] = []
         self.input_lock = threading.Lock()
         self.input_piece_index = 0
+        self.plans_dirty = False
 
         self.default_params.update({
             'speed': 3.0,
@@ -162,7 +165,7 @@ class TetrisAnimation(AnimationBase):
                 'min': 1,
                 'max': MAX_TETROMINO_COUNT,
                 'default': 5,
-                'description': 'Number of independently falling tetrominoes'
+                'description': 'Number of coordinated falling tetrominoes'
             },
             'bot_imperfection': {
                 'type': 'float',
@@ -329,6 +332,8 @@ class TetrisAnimation(AnimationBase):
 
         spawn_budget = MAX_SPAWNS_PER_UPDATE
         spawn_budget -= self._replenish_active_pieces(spawn_budget)
+        if self.plans_dirty:
+            self._coordinate_plans()
         for piece in self.active_pieces:
             piece.last_fall_rows = 0
 
@@ -397,20 +402,26 @@ class TetrisAnimation(AnimationBase):
         # path. Active pieces intentionally do not reserve space for each
         # other, so even large counts remain independent rather than forming
         # coordinated spawn lanes.
-        piece.y = self.random.randint(piece.y, landing_y)
+        # Leave at least one visible fall step when space allows. Besides
+        # looking better, this gives the coordinated steering loop one tick to
+        # execute before a newly spawned piece can lock.
+        piece.y = self.random.randint(piece.y, max(piece.y, landing_y - 1))
         piece.fall_progress = self.random.random()
         piece.action_accumulator = self.random.random() * self.action_interval
         self.active_pieces.append(piece)
-        self._plan_move(piece)
+        self.plans_dirty = True
         return True
 
     def _handle_game_over(self):
         self.board = [[None for _ in range(self.board_width)] for _ in range(self.board_height)]
         self.active_pieces.clear()
+        self.plans_dirty = False
         self.game_over_flash = 1.0
 
     def _run_player_step(self, piece: ActivePiece):
         if not piece.plan or piece.plan.get('piece') != piece.kind:
+            if piece.planning_deferred:
+                return
             self._plan_move(piece)
         if not piece.plan:
             return
@@ -426,23 +437,228 @@ class TetrisAnimation(AnimationBase):
 
         target_x = piece.plan['x']
         if piece.x < target_x:
-            self._move_piece(piece, 1, 0)
+            self._move_toward_x(piece, target_x)
         elif piece.x > target_x:
-            self._move_piece(piece, -1, 0)
+            self._move_toward_x(piece, target_x)
         else:
             if self.random.random() < 0.35:
                 self._move_piece(piece, 0, 1)
 
+    def _move_toward_x(self, piece: ActivePiece, target_x: int):
+        """Steer far enough per bot tick to traverse unusually wide LED grids."""
+        direction = 1 if target_x > piece.x else -1
+        max_steps = max(1, (self.board_width + 9) // 10)
+        for _ in range(min(max_steps, abs(target_x - piece.x))):
+            if not self._move_piece(piece, direction, 0):
+                break
+
     def _plan_move(self, piece: ActivePiece):
+        """Refresh the shared plan, retaining this method for bot-step callers."""
+        self.plans_dirty = True
+        self._coordinate_plans()
+
+    def _coordinate_plans(self):
+        """Reserve good landings for every active piece on one projected board.
+
+        Bottom-most pieces are expected to lock first. Each selected placement is
+        applied to a virtual board (including line clears) before the next piece
+        is evaluated, so concurrent pieces complement rather than duplicate one
+        another's moves.
+        """
+        projected_board = [row[:] for row in self.board]
+        ordered_pieces = sorted(
+            self.active_pieces,
+            key=lambda active: active.y + self._shape_extent(
+                self._piece_shape(active), axis=1
+            ),
+            reverse=True,
+        )
+
+        # A short look-ahead is enough to coordinate the pieces that can lock
+        # next. Bounding it keeps planning cost constant even at the supported
+        # 128-piece visual density; distant pieces simply fall until they enter
+        # the horizon.
+        for piece in ordered_pieces:
+            piece.plan = None
+            piece.planning_deferred = True
+        ordered_pieces = ordered_pieces[:MAX_COORDINATED_PLANS]
+
+        for piece in ordered_pieces:
+            piece.planning_deferred = False
+            placement = self._best_placement(piece, projected_board)
+            if placement is None:
+                piece.plan = None
+                continue
+            rotation, target_x, landing_y, score = placement
+            piece.plan = {
+                'piece': piece.kind,
+                'rotation': rotation,
+                'x': target_x,
+                'landing_y': landing_y,
+                'score': score,
+            }
+            projected_board, _ = self._project_placement(
+                projected_board,
+                TETROMINOS[piece.kind]['rotations'][rotation],
+                target_x,
+                landing_y,
+                TETROMINOS[piece.kind]['color'],
+            )
+        self.plans_dirty = False
+
+    def _best_placement(
+        self,
+        piece: ActivePiece,
+        board: List[List[BoardCell]],
+    ) -> Optional[Tuple[int, int, int, float]]:
+        candidates: List[Tuple[int, int, int, float]] = []
         rotations = TETROMINOS[piece.kind]['rotations']
-        target_rotation = self.random.randrange(len(rotations))
-        width = self._shape_extent(rotations[target_rotation], axis=0)
-        max_x = max(0, self.board_width - width)
-        piece.plan = {
-            'piece': piece.kind,
-            'rotation': target_rotation,
-            'x': self.random.randint(0, max_x),
-        }
+        heights, column_holes, row_fill = self._board_metrics(board)
+        for rotation, coords in enumerate(rotations):
+            width = self._shape_extent(coords, axis=0)
+            for target_x in range(max(0, self.board_width - width) + 1):
+                landing_y = self._find_drop_y_from_heights(
+                    coords, target_x, heights
+                )
+                if landing_y is None or landing_y < piece.y:
+                    continue
+                score = self._score_placement(
+                    board,
+                    coords,
+                    target_x,
+                    landing_y,
+                    heights,
+                    column_holes,
+                    row_fill,
+                )
+                candidates.append((rotation, target_x, landing_y, score))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda candidate: candidate[3], reverse=True)
+        if self.random.random() < self.fail_rate:
+            # Imperfect play still makes a plausible move instead of abandoning
+            # all board awareness.
+            return self.random.choice(candidates[:min(6, len(candidates))])
+        return candidates[0]
+
+    def _find_drop_y_from_heights(
+        self,
+        coords: List[Tuple[int, int]],
+        x_offset: int,
+        heights: List[int],
+    ) -> Optional[int]:
+        """Find a landing in O(4) from each column's top occupied cell."""
+        landing_y = min(
+            self.board_height - heights[x_offset + cx] - cy - 1
+            for cx, cy in coords
+        )
+        return None if landing_y < -4 else landing_y
+
+    def _project_placement(
+        self,
+        board: List[List[BoardCell]],
+        coords: List[Tuple[int, int]],
+        x_offset: int,
+        y_offset: int,
+        color: Color,
+    ) -> Tuple[List[List[BoardCell]], int]:
+        projected = [row[:] for row in board]
+        for cx, cy in coords:
+            px = x_offset + cx
+            py = y_offset + cy
+            if 0 <= px < self.board_width and 0 <= py < self.board_height:
+                projected[py][px] = color
+        return self._clear_lines_from(projected)
+
+    def _clear_lines_from(
+        self,
+        board: List[List[BoardCell]],
+    ) -> Tuple[List[List[BoardCell]], int]:
+        remaining = [row for row in board if not all(row)]
+        cleared = self.board_height - len(remaining)
+        empty_rows = [
+            [None for _ in range(self.board_width)]
+            for _ in range(cleared)
+        ]
+        return empty_rows + remaining, cleared
+
+    def _board_metrics(
+        self,
+        board: List[List[BoardCell]],
+    ) -> Tuple[List[int], List[int], List[int]]:
+        heights: List[int] = []
+        column_holes: List[int] = []
+        for x in range(self.board_width):
+            first_filled: Optional[int] = None
+            holes = 0
+            for y in range(self.board_height):
+                if board[y][x]:
+                    if first_filled is None:
+                        first_filled = y
+                elif first_filled is not None:
+                    holes += 1
+            heights.append(
+                0 if first_filled is None else self.board_height - first_filled
+            )
+            column_holes.append(holes)
+        row_fill = [sum(cell is not None for cell in row) for row in board]
+        return heights, column_holes, row_fill
+
+    def _score_placement(
+        self,
+        board: List[List[BoardCell]],
+        coords: List[Tuple[int, int]],
+        x_offset: int,
+        y_offset: int,
+        heights: List[int],
+        column_holes: List[int],
+        row_fill: List[int],
+    ) -> float:
+        projected_heights = heights[:]
+        projected_holes = sum(column_holes)
+        cells_by_column: Dict[int, List[int]] = {}
+        cells_by_row: Dict[int, int] = {}
+        for cx, cy in coords:
+            px = x_offset + cx
+            py = y_offset + cy
+            cells_by_column.setdefault(px, []).append(py)
+            if py >= 0:
+                cells_by_row[py] = cells_by_row.get(py, 0) + 1
+
+        for x, piece_rows in cells_by_column.items():
+            visible_rows = [y for y in piece_rows if y >= 0]
+            if not visible_rows:
+                continue
+            old_first = self.board_height - heights[x]
+            new_first = min(old_first, min(visible_rows))
+            cells_above_surface = sum(y < old_first for y in visible_rows)
+            empty_rows_exposed = max(0, old_first - new_first) - cells_above_surface
+            holes_filled = sum(
+                y >= old_first and board[y][x] is None
+                for y in visible_rows
+            )
+            projected_holes += empty_rows_exposed - holes_filled
+            projected_heights[x] = self.board_height - new_first
+
+        cleared = sum(
+            row_fill[y] + added == self.board_width
+            for y, added in cells_by_row.items()
+        )
+
+        aggregate_height = sum(projected_heights)
+        max_height = max(projected_heights, default=0)
+        bumpiness = sum(
+            abs(left - right)
+            for left, right in zip(projected_heights, projected_heights[1:])
+        )
+        return (
+            cleared * 12.0
+            - projected_holes * 8.0
+            - aggregate_height * 0.45
+            - bumpiness * 0.35
+            - max_height * 0.8
+        )
 
     def _apply_pending_inputs(self):
         with self.input_lock:
@@ -456,6 +672,8 @@ class TetrisAnimation(AnimationBase):
                 return
             piece = self.active_pieces[self.input_piece_index % len(self.active_pieces)]
             piece.manual_override = max(piece.manual_override, 2.0)
+            piece.plan = None
+            piece.planning_deferred = False
             if action == 'left':
                 self._move_piece(piece, -1, 0)
             elif action == 'right':
@@ -473,11 +691,17 @@ class TetrisAnimation(AnimationBase):
                 if self.active_pieces:
                     self.input_piece_index %= len(self.active_pieces)
 
-    def _find_drop_y(self, coords: List[Tuple[int, int]], x_offset: int) -> Optional[int]:
+    def _find_drop_y(
+        self,
+        coords: List[Tuple[int, int]],
+        x_offset: int,
+        board: Optional[List[List[BoardCell]]] = None,
+    ) -> Optional[int]:
+        target_board = self.board if board is None else board
         y = -4
         while True:
-            if self._collides(self.board, coords, x_offset, y + 1):
-                if self._collides(self.board, coords, x_offset, y):
+            if self._collides(target_board, coords, x_offset, y + 1):
+                if self._collides(target_board, coords, x_offset, y):
                     return None
                 return y
             y += 1
@@ -525,18 +749,10 @@ class TetrisAnimation(AnimationBase):
         if cleared:
             self.lines_cleared += cleared
         self.active_pieces.remove(piece)
+        self.plans_dirty = True
 
     def _clear_lines(self) -> int:
-        remaining: List[List[BoardCell]] = []
-        cleared = 0
-        for row in self.board:
-            if all(row):
-                cleared += 1
-            else:
-                remaining.append(row)
-        while len(remaining) < self.board_height:
-            remaining.insert(0, [None for _ in range(self.board_width)])
-        self.board = remaining
+        self.board, cleared = self._clear_lines_from(self.board)
         return cleared
 
     def _collides(self, board: List[List[BoardCell]], coords: List[Tuple[int, int]], x_offset: int, y_offset: int) -> bool:
@@ -610,4 +826,5 @@ class TetrisAnimation(AnimationBase):
             'effective_render_fps': self._effective_render_fps(),
             'effective_drop_speed': self._effective_drop_speed(),
             'max_spawns_per_update': MAX_SPAWNS_PER_UPDATE,
+            'max_coordinated_plans': MAX_COORDINATED_PLANS,
         }
