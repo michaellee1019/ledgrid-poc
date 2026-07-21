@@ -9,6 +9,7 @@ real time.
 import json
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -615,6 +616,21 @@ class AnimationWebInterface:
             'updated_at': payload.get('updated_at'),
         }
 
+    @staticmethod
+    def _preset_timestamp_sort_value(value: Any) -> float:
+        """Normalize runtime Unix timestamps and curated ISO-8601 timestamps."""
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                try:
+                    return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+                except ValueError:
+                    return 0.0
+        return 0.0
+
     def _list_animation_presets(self, animation_name: str) -> List[Dict[str, Any]]:
         """Scan disk for the animation's presets; no in-memory cache is used."""
         preset_dir = self._animation_preset_dir(animation_name)
@@ -630,7 +646,10 @@ class AnimationWebInterface:
             payload.setdefault('name', path.stem)
             payload.setdefault('animation', animation_name)
             summaries.append(self._animation_preset_summary(payload))
-        summaries.sort(key=lambda preset: preset.get('updated_at') or 0, reverse=True)
+        summaries.sort(
+            key=lambda preset: self._preset_timestamp_sort_value(preset.get('updated_at')),
+            reverse=True,
+        )
         return summaries
 
     def _load_animation_preset(self, animation_name: str, preset_id: str) -> Optional[Dict[str, Any]]:

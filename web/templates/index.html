@@ -1113,7 +1113,18 @@
                     <small class="text-muted">${rangeText}</small>
                 </label>
             `;
-            if (paramInfo.type === 'float' || paramInfo.type === 'int') {
+            if (Array.isArray(paramInfo.options) && paramInfo.options.length) {
+                const options = paramInfo.options.map(option => {
+                    const selected = String(option) === String(currentValue) ? ' selected' : '';
+                    return `<option value="${option}"${selected}>${humanizeParamName(String(option))}</option>`;
+                }).join('');
+                controlHtml += `
+                    <select class="form-select" id="${inputId}"
+                            onchange="updateControlParameter('${paramName}', this.value, 'str')">
+                        ${options}
+                    </select>
+                `;
+            } else if (paramInfo.type === 'float' || paramInfo.type === 'int') {
                 const step = paramInfo.type === 'float' ? '0.1' : '1';
                 controlHtml += `
                     <div class="row align-items-center">

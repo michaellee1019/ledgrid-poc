@@ -13,7 +13,7 @@ source "$(dirname "$0")/ssh_helpers.sh"
 echo "[INFO] Checking $PI_HOST..."
 ssh $SSH_OPTS "$PI_HOST" "test -x ~/$DEPLOY_DIR/venv/bin/python && sudo -n true"
 
-echo "[INFO] Syncing Python files..."
+echo "[INFO] Syncing application code and web templates..."
 rsync -az \
     -e "ssh $SSH_OPTS" \
     --exclude '.git/' \
@@ -27,8 +27,19 @@ rsync -az \
     --exclude 'dist/' \
     --include '*/' \
     --include '*.py' \
+    --include '*.html' \
+    --include 'config/webcam_pixel_map.json' \
     --exclude '*' \
     "$LOCAL_DIR"/ "$PI_HOST:~/$DEPLOY_DIR/"
+
+# Deploy only curated preset JSON that Git considers trackable. Runtime presets
+# are ignored by Git and therefore remain local to whichever host created them.
+echo "[INFO] Syncing curated animation presets..."
+git -C "$LOCAL_DIR" ls-files --cached --others --exclude-standard -z \
+    -- 'presets/animations/**/*.json' \
+    | rsync -az --from0 --files-from=- \
+        -e "ssh $SSH_OPTS" \
+        "$LOCAL_DIR"/ "$PI_HOST:~/$DEPLOY_DIR/"
 
 echo "[INFO] Saving active settings as the before-deploy preset..."
 ssh $SSH_OPTS "$PI_HOST" \
@@ -48,4 +59,4 @@ ssh $SSH_OPTS "$PI_HOST" \
 echo "[INFO] Checking web server..."
 ssh $SSH_OPTS "$PI_HOST" "for attempt in {1..40}; do curl --fail --silent --max-time 2 http://127.0.0.1:5000/api/status >/dev/null && exit 0; sleep 0.25; done; exit 1"
 
-echo "[SUCCESS] Python deployment complete; previous settings restored."
+echo "[SUCCESS] Application deployment complete; previous settings restored."

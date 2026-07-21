@@ -94,6 +94,21 @@ sudo raspi-config
 
 ## System Management
 
+### Fetch Manually Saved Presets
+
+Presets saved in the web interface live on the Raspberry Pi. Fetch newly saved
+presets without overwriting curated local files:
+
+```bash
+just fetch-presets
+```
+
+The automatic `before-deploy` snapshot is excluded. Runtime presets remain
+Git-ignored after fetching; inspect them with `git ls-files --others --ignored
+--exclude-standard 'presets/animations/**/*.json'`, then explicitly stage a
+preset selected for curation with `git add -f
+presets/animations/<animation>/<preset>.json`.
+
 ### Start/Stop/Restart
 ```bash
 # Stop the system

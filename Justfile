@@ -11,6 +11,10 @@ deploy:
 deploy-no-firmware:
 	./tools/deployment/deploy_python.sh
 
+# Fetch new Pi-saved presets without overwriting local curated files.
+fetch-presets:
+	./tools/deployment/fetch_presets.sh
+
 # Create/refresh the lightweight virtualenv for serving the web controller locally.
 setup-web:
 	if [ ! -d {{web_venv}} ]; then python3 -m venv {{web_venv}}; fi

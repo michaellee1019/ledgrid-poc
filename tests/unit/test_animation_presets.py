@@ -89,6 +89,37 @@ class AnimationPresetTests(unittest.TestCase):
             'data': {'animation': 'sparkle', 'config': {'brightness': 0.9}},
         })
 
+    def test_list_sorts_mixed_runtime_and_curated_timestamps(self):
+        preset_dir = Path(self.temp_dir.name) / 'conway_life'
+        preset_dir.mkdir()
+        payloads = [
+            {
+                'preset_id': 'runtime',
+                'name': 'Runtime',
+                'animation': 'conway_life',
+                'params': {},
+                'updated_at': 1784606199.0,
+            },
+            {
+                'preset_id': 'curated',
+                'name': 'Curated',
+                'animation': 'conway_life',
+                'params': {},
+                'updated_at': '2026-07-20T00:00:00Z',
+            },
+        ]
+        for payload in payloads:
+            path = preset_dir / f"{payload['preset_id']}.json"
+            path.write_text(json.dumps(payload), encoding='utf-8')
+
+        response = self.client.get('/api/animations/conway_life/presets')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [preset['preset_id'] for preset in response.get_json()['presets']],
+            ['runtime', 'curated'],
+        )
+
     def test_overwrite_preserves_created_time_and_delete_removes_file(self):
         first = self.client.post(
             '/api/animations/rainbow/presets',
