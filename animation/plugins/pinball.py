@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from animation import AnimationBase
+from animation.core.palette_field import AnimatedPaletteField
 
 
 Color = Tuple[int, int, int]
@@ -58,15 +59,13 @@ class PinballAnimation(AnimationBase):
 
         self._static = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self._canvas = np.zeros_like(self._static)
-        grid_y, grid_x = np.indices((self.height, self.width), dtype=np.float32)
-        radial = np.hypot(grid_x - self.width * 0.5, (grid_y - self.height * 0.52) * 0.22)
-        self._psy_phase = np.remainder(grid_x * 13.0 + grid_y * 3.7 + radial * 17.0, 256.0).astype(np.uint16)
-        self._psy_indices = np.empty((self.height, self.width), dtype=np.uint16)
-        self._psy_layer = np.empty_like(self._static)
         hues = np.linspace(0.0, 1.0, 256, endpoint=False, dtype=np.float32)
         saturation = np.full(256, 0.94, dtype=np.float32)
         values = (0.10 + 0.20 * (np.sin(hues * math.tau * 3.0) * 0.5 + 0.5)).astype(np.float32)
         self._psy_palette = self.hsv_to_rgb_array(hues, saturation, values)
+        self._background_field = AnimatedPaletteField(
+            self.width, self.height, self._psy_palette
+        )
         self._build_table()
 
         self.ball_x = self.width - 4.0
@@ -406,11 +405,7 @@ class PinballAnimation(AnimationBase):
 
         # A dark rainbow interference field moves underneath the table art.
         # Palette lookup is much cheaper than per-pixel HSV/trigonometry at 100 Hz.
-        tick = int(phase * 100.0) & 255
-        np.add(self._psy_phase, tick, out=self._psy_indices)
-        np.bitwise_and(self._psy_indices, 255, out=self._psy_indices)
-        np.take(self._psy_palette, self._psy_indices, axis=0, out=self._psy_layer)
-        np.maximum(canvas, self._psy_layer, out=canvas)
+        np.maximum(canvas, self._background_field.render(phase), out=canvas)
 
         # Animated border chase lights, exactly on the physical outer columns.
         chase = int(phase * 18.0)
