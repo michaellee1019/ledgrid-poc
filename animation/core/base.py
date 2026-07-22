@@ -79,6 +79,7 @@ class AnimationBase(ABC):
         
         # Merge default params with config
         self.params = {**self.default_params, **self.config}
+        self._plant_modifier_state = self._resolve_plant_modifier_state()
     
     @abstractmethod
     def generate_frame(self, time_elapsed: float, frame_count: int) -> FrameOutput:
@@ -142,6 +143,8 @@ class AnimationBase(ABC):
                 new_params['plant_modifiers']
             ).to_dict()
         self.params.update(new_params)
+        if {'plant_aware', 'plant_modifiers'} & new_params.keys():
+            self._plant_modifier_state = self._resolve_plant_modifier_state()
         if {
             'plant_clearance', 'plant_mask_path', 'plant_globe_mask_path'
         } & new_params.keys():
@@ -152,7 +155,11 @@ class AnimationBase(ABC):
         return bool(self.params.get('plant_aware', False)) or bool(self.plant_modifier_state().active)
 
     def plant_modifier_state(self) -> PlantModifierState:
-        """Return canonical state, translating legacy direct construction."""
+        """Return the cached canonical state for hot render and simulation paths."""
+        return self._plant_modifier_state
+
+    def _resolve_plant_modifier_state(self) -> PlantModifierState:
+        """Validate configured state and translate the legacy boolean bridge."""
         state = PlantModifierState.from_payload(self.params.get('plant_modifiers'))
         if state.active or not self.params.get('plant_aware', False):
             return state

@@ -188,14 +188,18 @@ Completed showcase work:
 
 ### Acceptance evidence
 
-- The full Python suite passes: **354 tests**.
-- The focused showcase/regression suite passes: **89 tests**.
+- The full Python suite passes: **356 tests**.
+- The focused showcase/regression suite passes: **91 tests**.
 - A labeled **31-tile** contact sheet covers every modifier and representative
   compatible stacks at the installed 32×138 aspect ratio. Mechanical
   fingerprint checks and visual inspection found no modifier tile identical to
   its off state or another tile.
 - The canonical repository-wide desktop render gate passes at less than 4 ms
   plugin p95.
+- The previously failing Snake maximum-density scenario now passes unchanged at
+  **3.30 ms p95** (100 sampled frames). Caching canonical modifier state at the
+  parameter-update boundary reduced it from roughly 6.5 ms p95 without lowering
+  its 12-snake density, 90 Hz render rate, four-step work cap, or the gate.
 - The following maximum-strength modifier scenarios were measured on the
   development Mac at 32×138, 200 manager calls per second, and 200 sampled
   frames after warmup. These are desktop measurements, not Raspberry Pi data.
@@ -226,6 +230,10 @@ Completed showcase work:
 - Emitters belong to semantic update boundaries, not rendered frames. This keeps
   their rate independent of manager FPS and prevents cached/background frames
   from duplicating events.
+- Validated modifier payloads are runtime state, not a hot-path parsing task.
+  Caching the immutable canonical state at construction/live-update boundaries
+  removed more than 100,000 redundant validations from the Snake density run;
+  focused live-update tests protect against stale controls.
 - Benchmarks must use the real manager call cadence as well as the plugin's
   source cadence. Conway meets the p95 gate at 200 Hz, but its existing
   generation-boundary computation still creates large p99 spikes; a passing p95
@@ -247,8 +255,6 @@ Completed showcase work:
   bridge after the compatibility window.
 - Optimize Conway's generation-boundary p99 spikes. They predate modifiers but
   reach roughly 39–42 ms in the habitat/emitter scenario despite a passing p95.
-- Revisit the existing Snake maximum-density benchmark, whose p95 remains above
-  4 ms independently of the new default-density modifier scenarios.
 - Exercise the grouped dashboard controls in the live browser and on the wall,
   including support changes while switching animations and recovery after an
   API validation error.

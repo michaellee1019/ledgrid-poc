@@ -64,6 +64,29 @@ class PlantModifierStateTests(unittest.TestCase):
         self.assertEqual(animation.plant_modifier_strength("emitter"), 0.0)
         self.assertEqual(animation.get_info()["unsupported_plant_modifiers"], ["emitter"])
 
+    def test_live_updates_refresh_cached_modifier_state(self):
+        animation = _Animation(_Controller())
+
+        animation.update_parameters({"plant_modifiers": {
+            "active": ["illuminate"], "strengths": {"illuminate": 0.75},
+        }})
+        self.assertTrue(animation.plant_modifier_enabled("illuminate"))
+        self.assertEqual(animation.plant_modifier_strength("illuminate"), 0.75)
+
+        animation.update_parameters({"plant_modifiers": {"active": []}})
+        self.assertFalse(animation.plant_modifier_enabled("illuminate"))
+
+    def test_live_updates_refresh_legacy_plant_aware_bridge(self):
+        animation = _Animation(_Controller())
+
+        animation.update_parameters({"plant_aware": True})
+        self.assertEqual(
+            animation.plant_modifier_state().active, ("illuminate", "obstacle")
+        )
+
+        animation.update_parameters({"plant_aware": False})
+        self.assertFalse(animation.plant_modifier_state().active)
+
     def test_missing_companion_mask_returns_wholly_empty_geometry(self):
         with tempfile.TemporaryDirectory() as directory:
             foliage = Path(directory) / "foliage.json"

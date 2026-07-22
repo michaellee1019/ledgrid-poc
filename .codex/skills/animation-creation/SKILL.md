@@ -247,6 +247,13 @@ the next background tick changes pixels while logical state remains identical.
 
 Avoid per-pixel Python object allocation, unbounded catch-up loops, planning all maximum-density entities together, and lowering FPS as the first response to inefficient code.
 
+Treat validated configuration as state, not work to repeat inside a hot loop.
+Parse and canonicalize structured payloads at construction or the live-update
+boundary, cache the resulting immutable value, and invalidate it only when a
+relevant parameter changes. Collision, steering, particle, and per-pixel paths
+should query that cached value rather than re-validating mappings. Add live
+update tests so this optimization cannot make runtime controls stale.
+
 If a visual parameter increases work, benchmark both its normal default and maximum supported value. Expose performance caps in runtime stats when that helps operators understand behavior.
 
 ## Validate behavior and visuals
