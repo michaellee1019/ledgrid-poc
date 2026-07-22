@@ -40,14 +40,14 @@ def main() -> None:
         action="store_true",
         help=(
             "Seed from the newly regenerated full-white pixel map instead of the "
-            "previous foliage output; prevents stale masks accumulating after moves"
+            "existing foliage output; prevents stale masks accumulating after moves"
         ),
     )
     parser.add_argument(
         "--retain-existing-below-camera-y",
         type=float,
         default=250.0,
-        help="Retain legacy foliage at or below this image row even if color is brown",
+        help="Retain baseline foliage at or below this image row even if color is brown",
     )
     args = parser.parse_args()
 

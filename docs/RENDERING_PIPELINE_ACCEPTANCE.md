@@ -14,8 +14,8 @@ independent stages:
 3. A display task encodes and submits the newest frame to the ESP32-S3 LCD/I80
    peripheral, which drives eight WS2812 lanes in parallel using DMA.
 
-FastLED is removed from the receiver. The firmware uses the public ESP-IDF LCD/I80
-API directly so buffering, completion, timing, and overload behavior are explicit.
+The receiver has no FastLED dependency. It uses the public ESP-IDF LCD/I80 API
+directly so buffering, completion, timing, and overload behavior are explicit.
 
 At 2.4 MHz, each WS2812 data bit is represented by three parallel samples:
 

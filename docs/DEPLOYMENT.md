@@ -1,315 +1,151 @@
-# 🚀 LED Grid Animation System - Deployment Guide
+# Deployment
 
-## Quick Deployment
+Deployment targets `ledgridwall@ledgridwall.local` and `~/ledgrid-pod` by
+default. Override `PI_HOST` or `DEPLOY_DIR` for another installation.
 
-### 0. Prepare Deploy Target (once)
+## Command surface
+
+Use `just` recipes rather than invoking deployment helpers directly:
+
+| Recipe | Purpose |
+| --- | --- |
+| `just setup-web` | Create the local web/preview environment |
+| `just setup` | Prepare SSH, Pi permissions, SPI, and firmware tooling |
+| `just test-unit` | Run Python unit and plugin tests |
+| `just test-rendering` | Run frame-contract and render-performance checks |
+| `just test-firmware` | Run native firmware tests and build production firmware |
+| `just test-deployment` | Test deployment state and file selection logic |
+| `just test` | Run every required local gate |
+| `just preflight` | Alias for the full test gate |
+| `just deploy-precheck` | Full test gate used by deployment |
+| `just deploy` | Precheck, sync the application, provision, flash changed firmware, and restart |
+| `just deploy-python` | Sync application files and restart without provisioning or firmware flash |
+| `just fetch-presets` | Fetch Pi-saved runtime presets for review |
+
+`deploy-no-firmware` is retained as a compatibility alias for
+`deploy-python`; use the canonical name in new automation and documentation.
+
+## First deployment
+
+Prerequisites:
+
+- Raspberry Pi OS with SSH enabled
+- passwordless SSH for `ledgridwall@ledgridwall.local`
+- the deploy user able to obtain passwordless sudo after setup
+- all expected ESP32 USB serial devices attached when firmware must be flashed
+- a reboot window if SPI device-tree settings need to change
+
+Run:
+
 ```bash
 just setup
+just deploy
 ```
 
-This will:
-- ✅ Ensure PlatformIO is installed on the Pi
-- ✅ Add the deploy user to the serial group (dialout)
-- ✅ Verify the ESP32 devices are visible
-Note: adding to `dialout` may require a logout/login on the Pi.
+Setup installs PlatformIO in a dedicated environment on the Pi and verifies
+serial permissions. The full deployment applies the supported SPI boot
+configuration and reports whether a reboot is required. After that reboot,
+confirm the expected `/dev/spidev0.0`, `0.1`, `1.0`, and `1.1` nodes and rerun
+the full deployment.
 
-### 1. Deploy to Raspberry Pi
-```bash
-./tools/deployment/deploy.sh
-```
+## What is deployed
 
-This single command will:
-- ✅ Upload all animation system files
-- ✅ Create Python virtual environment
-- ✅ Install Python dependencies in venv
-- ✅ Create startup scripts
-- ✅ Start the animation system
-- ✅ Display the web URL to access
-- ✅ Flash ESP32 firmware when firmware sources change
+The sync set is derived from Git-tracked files in the working tree. This keeps
+untracked caches, editor state, calibration photos, and local experiments off
+the controller while still deploying intentional uncommitted edits to tracked
+files.
 
-### 2. Access Web Interface
-After deployment, open your browser to the URL shown:
-```
-🌐 http://[PI_IP_ADDRESS]:5000/
-```
+A full sync removes stale managed files but preserves target-owned state:
 
-## Prerequisites
+- `run_state/`
+- `presets/animations/`
+- Python and PlatformIO environments/build caches
+- runtime logs
 
-### Raspberry Pi Setup
-- ✅ Raspberry Pi with Raspberry Pi OS
-- ✅ SSH enabled (`sudo systemctl enable ssh`)
-- ✅ Passwordless SSH configured to `ledgridwall@ledgridwall.local` (`ssh-copy-id`)
-- ✅ First deploy/setup prompts once for your Pi password to enable passwordless sudo
-- ✅ Python 3 installed (default on Raspberry Pi OS)
-- ✅ Network connectivity
+Built-in plugin code, manifests, curated presets, tests needed by acceptance,
+and owned assets deploy from `animation/plugins/<plugin_id>/`. The runtime
+preset overlay is never the source of curated content.
 
-### SSH Key Setup (if not done)
-```bash
-# Generate SSH key (if you don't have one)
-ssh-keygen -t rsa -b 4096
+## Full and Python-only flows
 
-# Copy key to Pi
-ssh-copy-id ledgridwall@ledgridwall.local
+`just deploy` always runs `deploy-precheck`. It then syncs the tracked source,
+ensures the Pi environment and SPI configuration are usable, flashes receiver
+firmware only when its source hash changed, installs application dependencies,
+and restarts the service.
 
-# Test connection
-ssh ledgridwall@ledgridwall.local "echo 'SSH working'"
-```
+`just deploy-python` is for changes that do not affect firmware, Pi packages,
+permissions, or boot configuration. It verifies the existing target environment,
+syncs the application subset, preserves the active animation settings, restarts
+the service, restores those settings, and checks `/api/status`.
 
-### SPI Configuration (for LED hardware)
-Enable SPI on the Raspberry Pi:
-```bash
-sudo raspi-config
-# Navigate to: Interface Options > SPI > Enable
-```
+Do not use the Python-only flow after changing any of:
 
-## Deployment Process
+- `firmware/esp32/`
+- dependency or environment setup
+- SPI boot configuration
+- systemd/startup behavior
 
-### What `tools/deployment/deploy.sh` Does
+## Runtime presets
 
-1. **Connection Test** - Verifies SSH connectivity
-2. **Directory Setup** - Creates `~/ledgrid-pod/` on Pi
-3. **File Upload** - Transfers all animation system files
-4. **Virtual Environment** - Creates isolated Python environment
-5. **Dependencies** - Installs Flask and other Python packages in venv
-6. **SPI Check** - Verifies SPI devices are available
-7. **Startup Script** - Creates `start.sh` for easy system management
-8. **System Start** - Launches the animation server
-9. **URL Display** - Shows web interface URLs
-10. **ESP32 Flash** - Builds and flashes firmware when sources change
-
-### Files Deployed
-```
-~/ledgrid-pod/
-├── venv/                     # Python virtual environment
-├── animation/core/          # Core plugin system
-├── animation/plugins/               # Example animation plugins
-├── web/templates/                # Web interface templates
-├── animation/core/manager.py      # Animation coordination
-├── web/app.py         # Flask web server
-├── scripts/start_server.py # Main startup script
-├── requirements.txt         # Python dependencies
-├── start.sh                 # Convenience startup script
-└── animation_system.log     # Runtime log file
-```
-
-## System Management
-
-### Fetch Manually Saved Presets
-
-Presets saved in the web interface live on the Raspberry Pi. Fetch newly saved
-presets without overwriting curated local files:
+Presets saved in the web UI belong to the deployment host. Retrieve them without
+overwriting curated plugin presets:
 
 ```bash
 just fetch-presets
 ```
 
-The automatic `before-deploy` snapshot is excluded. Runtime presets remain
-Git-ignored after fetching; inspect them with `git ls-files --others --ignored
---exclude-standard 'presets/animations/**/*.json'`, then explicitly stage a
-preset selected for curation with `git add -f
-presets/animations/<animation>/<preset>.json`.
+Fetched files remain ignored under `presets/animations/<plugin_id>/`. Review a
+candidate, normalize it, move it into
+`animation/plugins/<plugin_id>/presets/`, and run the plugin preset tests before
+committing it. The automatic deployment-state snapshot is operational state and
+must not be curated.
 
-The controller refreshes this same snapshot whenever the active animation,
-animation parameters, global tempo, or target FPS changes. On service or system
-restart, that saved animation and configuration are used as the startup default;
-Sparkle is only the fallback when no valid saved state exists.
+## Verification after deployment
 
-### Start/Stop/Restart
+1. Confirm `http://ledgridwall.local:5000/api/status` is current and the UI
+   lists the expected manifest-backed plugins.
+2. Check `driver_stats.device_map`, geometry, and receiver integrity counters.
+3. For transport or firmware changes, run:
+
+   ```bash
+   just receiver-acceptance
+   just live-animation-sweep
+   just output-rate-sweep
+   ```
+
+4. Visually inspect every controller and lane. Clean CRC/DMA counters cannot
+   detect faults after the receiver output peripheral.
+
+Use the thresholds and rollback procedure in
+[Rendering acceptance](RENDERING_PIPELINE_ACCEPTANCE.md).
+
+## Operations and diagnostics
+
 ```bash
-# Stop the system
-./tools/deployment/stop_remote.sh stop
-
-# Check status
-./tools/deployment/stop_remote.sh status
-
-# Restart the system
-./tools/deployment/stop_remote.sh restart
+just diagnose-remote
+just diagnose-remote-restart
 ```
 
-### Virtual Environment Management
+The first collects API, service, process, and log evidence. The second may also
+clear a stale port binding and restart the web service. Output is written to the
+ignored `diagnostics/remote_diagnostics.out` file.
+
+For manual service operations, use the deployment service helper:
+
 ```bash
-# Check virtual environment status
-./tools/deployment/manage_venv.sh status
-
-# Recreate virtual environment (if broken)
-./tools/deployment/manage_venv.sh recreate
-
-# Install additional packages
-./tools/deployment/manage_venv.sh install numpy
-
-# Update all packages
-./tools/deployment/manage_venv.sh update
-
-# Open interactive shell with venv activated
-./tools/deployment/manage_venv.sh shell
+tools/deployment/stop_remote.sh status
+tools/deployment/stop_remote.sh restart
+tools/deployment/stop_remote.sh stop
 ```
 
-### Manual Control on Pi
-```bash
-# SSH to Pi
-ssh ledgridwall@ledgridwall.local
+## Failure handling
 
-# Navigate to deployment
-cd ledgrid-pod
-
-# Start system (uses virtual environment)
-./start.sh
-
-# Activate virtual environment manually
-source venv/bin/activate
-
-# View logs
-tail -f animation_system.log
-
-# Stop system (Ctrl+C or)
-pkill -f scripts/start_server.py
-```
-
-## Web Interface URLs
-
-After deployment, access these URLs:
-
-- **Dashboard**: `http://[PI_IP]:5000/`
-  - View available animations
-  - Start animations with one click
-  - System status and performance
-
-- **Control Panel**: `http://[PI_IP]:5000/control`
-  - Real-time parameter adjustment
-  - Animation switching
-  - Live performance monitoring
-
-## Troubleshooting
-
-### Deployment Issues
-
-**SSH Connection Failed**
-```bash
-# Check Pi is reachable
-ping ledgridwall.local
-
-# Test SSH manually
-ssh ledgridwall@ledgridwall.local
-
-# Check SSH key
-ssh-copy-id ledgridwall@ledgridwall.local
-```
-
-**SPI Not Available**
-```bash
-# Enable SPI on Pi
-sudo raspi-config
-# Interface Options > SPI > Enable > Reboot
-
-# Check SPI devices
-ls /dev/spi*
-```
-
-**Dependencies Failed**
-```bash
-# SSH to Pi and recreate virtual environment
-./tools/deployment/manage_venv.sh recreate
-
-# Or manually:
-ssh ledgridwall@ledgridwall.local
-cd ledgrid-pod
-rm -rf venv
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-**Virtual Environment Issues**
-```bash
-# Check virtual environment status
-./tools/deployment/manage_venv.sh status
-
-# Recreate if broken
-./tools/deployment/manage_venv.sh recreate
-
-# Get detailed info
-./tools/deployment/manage_venv.sh info
-```
-
-### Runtime Issues
-
-**Web Interface Not Accessible**
-```bash
-# Check if system is running
-./tools/deployment/stop_remote.sh status
-
-# Check Pi's IP address
-ssh ledgridwall@ledgridwall.local "hostname -I"
-
-# Check firewall (if enabled)
-ssh ledgridwall@ledgridwall.local "sudo ufw status"
-```
-
-**Animation Not Working**
-```bash
-# Check logs
-ssh ledgridwall@ledgridwall.local "cd ledgrid-pod && tail -f animation_system.log"
-
-# Restart system
-./tools/deployment/stop_remote.sh restart
-```
-
-**Low Performance**
-- Check SPI speed settings in `scripts/start_server.py`
-- Reduce animation complexity
-- Lower target FPS
-
-## Hardware Integration
-
-### LED Controller Setup
-Ensure your `drivers/spi_controller.py` is compatible:
-```python
-class LEDController:
-    def __init__(self, bus=0, device=0, speed=10000000, **kwargs):
-        # SPI setup
-        
-    def set_all_pixels(self, pixel_data):
-        # Bulk pixel update
-        
-    def show(self):
-        # Display frame
-```
-
-### Wiring
-See `HARDWARE.md` for ESP32/SCORPIO connection details.
-
-## Security Notes
-
-- Web interface runs on port 5000 (HTTP, not HTTPS)
-- No authentication by default
-- Suitable for local network use
-- For internet access, consider adding authentication
-
-## Performance Optimization
-
-### System Settings
-```bash
-# Increase SPI buffer size (optional)
-echo 'dtparam=spi=on' | sudo tee -a /boot/config.txt
-echo 'dtoverlay=spi0-hw-cs' | sudo tee -a /boot/config.txt
-
-# GPU memory split (if needed)
-sudo raspi-config
-# Advanced Options > Memory Split > 16
-```
-
-### Animation Tips
-- Use efficient algorithms
-- Cache expensive calculations
-- Minimize memory allocations in frame loops
-- Test with `tools/dev/demo_animation_system.py` first
-
-## Next Steps
-
-1. **Deploy**: Run `./tools/deployment/deploy.sh`
-2. **Test**: Open web interface and try animations
-3. **Create**: Upload your own animation plugins
-4. **Customize**: Modify parameters and create new effects
-5. **Scale**: Add more LED strips or controllers
-
-🎉 **Your LED grid animation system is now ready for action!**
+- If precheck fails, fix the local failure; do not bypass it.
+- If setup changes boot configuration, reboot and verify device nodes before
+  continuing.
+- If firmware flash fails, the source hash is not recorded, so the next full
+  deployment retries it.
+- If the service health check fails, run remote diagnostics before another
+  deployment.
+- If electronic gates or visual acceptance fail, restore the last validated
+  application/firmware pair before continuing experiments.

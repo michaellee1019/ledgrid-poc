@@ -105,7 +105,7 @@ python3 scripts/refine_foliage_from_ambient.py \
 
 `--fresh-baseline` seeds brown/dark foliage from the new full-white occlusion
 map and unions it with fresh ambient green detection. It does not union the
-previous final map, which would accumulate stale pixels over repeated runs.
+existing output map, which would accumulate stale pixels over repeated runs.
 The globe mask is always subtracted from foliage.
 
 Inspect the overlay for long wall seams, isolated room/hardware pixels, and
@@ -159,12 +159,11 @@ Accept only when:
 Save corner, foliage, globe, and Plant Glow overlays/reports together. Images
 are calibration evidence; JSON files are the production source of truth.
 
-## What reduced human iteration
+## Calibration rules
 
-The late corrections were not caused by image resolution. Combined,
-high-brightness feedback made bloom look like object geometry. The reliable
-process is fresh paired references, fully visible camera corners, fixed known
-object dimensions, dim one-object feedback, integer centroid translation, and
-a photographed acceptance loop. Stable region IDs also prevent ambiguous
-instructions such as "the fifth globe." These checks now happen during the
-workflow instead of as last-minute judgment calls.
+- Use fresh paired references with all four wall corners visible.
+- Treat the known wall and globe dimensions as constraints; do not fit geometry
+  to light bloom.
+- Illuminate one semantic region at low brightness when measuring its centroid.
+- Apply whole-LED translations and rerun the photographed acceptance loop.
+- Refer to globes by stable region ID, never by a changing visual ordering.

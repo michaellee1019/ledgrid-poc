@@ -1,251 +1,128 @@
-# SPI Wiring Guide: Raspberry Pi to ESP32 XIAO S3
+# Hardware and wiring
 
-## Connection Table
+The installed wall uses a Raspberry Pi and four ESP32-S3-DevKitC-1-N16R8
+receivers. Each receiver drives eight WS2812 lanes of 138 LEDs. Firmware keeps a
+140-LED-per-lane buffer ceiling, but the installed host geometry is 32 x 138.
 
-| Signal | Raspberry Pi GPIO | **RPi Physical Pin** | ESP32 XIAO S3 Pin | Notes |
-|--------|------------------|---------------------|-------------------|-------|
-| **SCLK** | **GPIO 11** | **🔴 Pin 23** | **GPIO 7** | **CLOCK - Most common issue!** |
-| **MOSI** | **GPIO 10** | **🔴 Pin 19** | **GPIO 9** | **Data from Pi to ESP32** |
-| CS/CE0 | GPIO 8 | **Pin 24** | **GPIO 44** | Chip Select (active LOW) |
-| MISO | GPIO 9 | Pin 21 | **GPIO 8** | Data from ESP32 to Pi (optional) |
-| GND | GND | Pin 6, 9, 14, 20, 25, 30, 34, or 39 | **GND** | **CRITICAL: Common ground** |
+## Receiver pins
 
-### Quick Reference - Raspberry Pi Physical Pins:
-```
-        3.3V [ 1] [ 2] 5V
-       GPIO2 [ 3] [ 4] 5V
-       GPIO3 [ 5] [ 6] GND      ← Any GND works
-       GPIO4 [ 7] [ 8] GPIO14
-         GND [ 9] [10] GPIO15
-      GPIO17 [11] [12] GPIO18
-      GPIO27 [13] [14] GND
-      GPIO22 [15] [16] GPIO23
-        3.3V [17] [18] GPIO24
-🔴 GPIO10 MOSI [19] [20] GND
-      GPIO9 MISO [21] [22] GPIO25
-🔴 GPIO11 SCLK [23] [24] GPIO8 CE0  ← Use this for CS
-         GND [25] [26] GPIO7 CE1
-```
+All four receivers run the same firmware.
 
-### ESP32 XIAO S3 Pin Layout:
-- **D0-D6**: GPIO1-6, GPIO43 (LED strip outputs)
-- **SPI Pins**: GPIO7 (SCK), GPIO8 (MISO), GPIO9 (MOSI), GPIO44 (CS)
-- **Power**: 5V, 3.3V, GND
+| Function | ESP32-S3 GPIO |
+| --- | ---: |
+| SPI MOSI | 11 |
+| SPI MISO | 13 |
+| SPI SCLK | 12 |
+| SPI CS | 10 |
+| LED lanes 0-7 | 18, 17, 16, 15, 7, 6, 5, 4 |
+| Status LED | 48 |
 
-## Physical Setup
+The board target is `esp32-s3-devkitc1-n16r8` with 16 MB flash and 8 MB PSRAM.
+See [receiver firmware](../firmware/esp32/README.md) for build and protocol
+details.
 
-1. **Power the ESP32 XIAO S3** - Connect USB-C cable to XIAO S3 for power and debugging
-2. **Connect SPI wires** - Use female-to-female jumper wires
-3. **Connect GND** - Mandatory for signal reference
-4. **Verify connections** - Double-check each wire before powering on
+## Raspberry Pi buses
 
-## Verification Steps
+Boards on the same bus share clock, MOSI, and optional MISO; each board has its
+own chip select. All grounds must be common.
 
-### On Raspberry Pi:
-```bash
-# 1. Check SPI is enabled
-ls -l /dev/spidev*
-# Should see: /dev/spidev0.0 and /dev/spidev0.1
+| Bus signal | Pi GPIO | Physical pin |
+| --- | ---: | ---: |
+| SPI0 MOSI | 10 | 19 |
+| SPI0 MISO | 9 | 21 |
+| SPI0 SCLK | 11 | 23 |
+| SPI0 CE0 | 8 | 24 |
+| SPI0 CE1 | 7 | 26 |
+| SPI1 MOSI | 20 | 38 |
+| SPI1 MISO | 19 | 35 |
+| SPI1 SCLK | 21 | 40 |
+| SPI1 CE0 | 18 | 12 |
+| SPI1 CE1 | 17 | 11 |
 
-# 2. Enable SPI if not found
-sudo raspi-config
-# Interface Options -> SPI -> Enable -> Reboot
+The four-device layout expects:
 
-# 3. Test SPI master
-python3 -c "import spidev; spi=spidev.SpiDev(); spi.open(0,0); print('SPI OK')"
-
-# 4. Run LED controller
-python3 -m drivers.spi_controller rainbow
+```text
+/dev/spidev0.0
+/dev/spidev0.1
+/dev/spidev1.0
+/dev/spidev1.1
 ```
 
-### On ESP32 XIAO S3 (via Serial Monitor):
-You should see:
-```
-========================================
-ESP32 XIAO S3 SPI Slave LED Controller
-========================================
-Board: ESP32-S3FN8
-Strips: 7 x 140 LEDs = 980 total
+The host may enumerate the two SPI1 receivers in an installation-specific
+order; use the live `device_map` metric as the authoritative logical mapping.
+The full deployment configures `dtparam=spi=on` and `dtoverlay=spi1-2cs`
+idempotently. A boot-config change requires a Pi reboot before all four device
+nodes appear.
 
-Pin mapping:
-SPI:
-  MOSI: GPIO 9
-  MISO: GPIO 8
-  SCK:  GPIO 7
-  CS:   GPIO 44
-LED Strips (D0-D6):
-  Strip 0 (D0): GPIO 1
-  Strip 1 (D1): GPIO 2
-  Strip 2 (D2): GPIO 3
-  Strip 3 (D3): GPIO 4
-  Strip 4 (D4): GPIO 5
-  Strip 5 (D5): GPIO 6
-  Strip 6 (D6): GPIO 43
+## Power and signal integrity
 
-✅ SPI slave ready
-```
+Do not power the wall from the ESP32 USB or Pi header. Supply the LED strips from
+a separately fused 5 V distribution system sized for the installation, and join
+the Pi, receivers, level shifters, and LED supply grounds.
 
-## Troubleshooting
+WS2812 data is nominally 5 V logic. Use a 3.3-to-5 V logic buffer such as a
+74AHCT125 near each receiver and keep data/ground pairs short. Long unpaired
+wires, missing ground reference, or marginal connectors can produce visible
+flashes even when SPI CRC and receiver counters are clean.
 
-### Problem: "SCK never toggled! Check SCK wire (GPIO 7)" (MOST COMMON)
-**This is the most common wiring issue!**
+Never use maximum-white current as an ordinary operating condition. Apply both
+hardware current protection and conservative software brightness limits.
 
-The ESP32 XIAO S3 detects CS assertions but never sees clock pulses.
+## Bring-up
 
-**Solution:**
-1. **Verify physical connection:**
-   - Raspberry Pi **Physical Pin 23** (GPIO 11) → ESP32 XIAO S3 **GPIO 7** (SCK)
-   - This is Pin 23 on the Pi (bottom row, 12th pin from the left)
-   - Double-check you're counting correctly on the Pi header
-   
-2. **Test with verification script:**
+1. With LED power off, continuity-check common ground, every chip select, and
+   both bus clock/data pairs.
+2. Power and flash one receiver over USB:
+
    ```bash
-   python3 verify_pi_wiring.py
+   uv run --with platformio pio run -d firmware/esp32 -e esp32-s3-devkitc-1
+   uv run --with platformio pio run -d firmware/esp32 -e esp32-s3-devkitc-1 -t upload
    ```
-   This will toggle each pin so you can verify with a multimeter
 
-3. **Common mistakes:**
-   - Using Pin 22 instead of Pin 23 (easy to miscount)
-   - Wire connected to wrong header pin
-   - Loose connection
-   - ESP32 side connected to wrong GPIO
+3. On the Pi, verify the expected device nodes:
 
-### Problem: CS detected but no data after SCK toggles
-**Solution:**
-- **Most likely:** MOSI (GPIO 10 → GPIO 9) not connected
-- **Check:** Raspberry Pi **Physical Pin 19** (GPIO 10) → ESP32 XIAO S3 **GPIO 9** (MOSI)
-- **Verify:** Use multimeter in continuity mode
+   ```bash
+   ls -l /dev/spidev*
+   ```
 
-### Problem: No CS activity detected
-**Solution:**
-- **Most likely:** CS (GPIO 8 → GPIO 44) not connected
-- **Check:** Raspberry Pi **Physical Pin 24** (GPIO 8) → ESP32 XIAO S3 **GPIO 44** (CS)
-
-### Problem: Device not detected or erratic behavior
-- **Most likely:** No common ground
-- **Fix:** Connect any GND pin from Pi to GND on ESP32 XIAO S3
-- **Critical:** GND MUST be connected for any signals to work
-
-## Notes on ESP32 XIAO S3 GPIO Pins
-
-The ESP32 XIAO S3 uses specific pins for different functions:
-- **D0-D6 (GPIO 1-6, 43)**: NeoPixel LED outputs (7 strips total)
-- **SPI Pins**: GPIO 7, 8, 9, 44
-  - GPIO 7: **SCK** (SPI Clock)
-  - GPIO 8: **MISO** (SPI Master In, Slave Out)
-  - GPIO 9: **MOSI** (SPI Master Out, Slave In - receives data from Pi)
-  - GPIO 44: **CS** (Chip Select)
-- **GPIO 21**: Built-in LED (used for status indication)
-- **Other pins**: Available for future expansion
-
-**CRITICAL:** 
-1. Do not use GPIO 7, 8, 9, 44 for LED strips - they are reserved for SPI communication
-2. The XIAO S3 has limited GPIO pins, so we use 7 strips instead of 8
-3. GPIO 43 (D6) is used for the 7th LED strip
-
-## Multi-Device Setup (4 ESP32 Boards)
-
-The system supports multiple ESP32 XIAO S3 boards for more LED strips.
-
-### Configuration for 4 Boards (SPI0 + SPI1):
-
-The system uses a dual-bus configuration since most Raspberry Pi OS versions only expose 2 CS lines per bus:
-- **Board 1:** `/dev/spidev0.0` (SPI0 CE0)
-- **Board 2:** `/dev/spidev0.1` (SPI0 CE1)
-- **Board 3:** `/dev/spidev1.0` (SPI1 CE0)
-- **Board 4:** `/dev/spidev1.1` (SPI1 CE1)
-
-> Note: The deployment script automatically configures `dtoverlay=spi0-4cs` and `dtoverlay=spi1-2cs` in `/boot/firmware/config.txt`.
-
-### Wiring Table for Boards 1–2 (SPI0):
-
-| Signal | Pi GPIO | Pi Pin | ESP32 #1 | ESP32 #2 | Notes |
-|--------|---------|--------|----------|----------|-------|
-| MOSI | GPIO 10 | Pin 19 | GPIO 9 | GPIO 9 | SPI0 MOSI |
-| SCLK | GPIO 11 | Pin 23 | GPIO 7 | GPIO 7 | SPI0 SCLK |
-| MISO | GPIO 9 | Pin 21 | GPIO 8 | GPIO 8 | SPI0 MISO (optional) |
-| CE0 | GPIO 8 | Pin 24 | GPIO 44 | - | Board 1 CS |
-| CE1 | GPIO 7 | Pin 26 | - | GPIO 44 | Board 2 CS |
-| GND | GND | Multiple | GND | GND | **Must be common!** |
+4. Run the receiver acceptance gate against one controller before connecting
+   the full wall.
+5. Connect and verify one LED lane at a time, then run the full-wall animation
+   and output-rate sweeps.
 
 ## Troubleshooting
 
-### Brightness Flickering / Random Brightness Changes
+### Missing `/dev/spidev*`
 
-**Symptoms:** LEDs randomly get brighter or dimmer, especially during periods of activity.
+Run `just deploy`, inspect the reported boot configuration, reboot if requested,
+and rerun the deployment. Do not add competing SPI overlays by hand.
 
-**Root Cause:** SPI packet corruption can cause the ESP32 to misinterpret data bytes as brightness commands. When `CMD_SET_ALL` packets are corrupted or truncated, data bytes (which can be any value 0-255) may be accidentally interpreted as `CMD_SET_BRIGHTNESS` commands.
+### Receiver accepts no packets
 
-**Diagnosis:**
-1. Monitor ESP32 serial output for warnings like:
-   ```
-   ⚠️ CMD_SET_ALL expected 3361 bytes, got 2333
-   ```
-2. Measure current draw during flickering - should remain stable if it's a software issue
-3. Measure 5V rail voltage - should remain stable at ~4.7-5.0V
+- Verify Pi SCLK to ESP32 GPIO 12, Pi MOSI to GPIO 11, selected CE to GPIO 10,
+  and a common ground.
+- Check that the host and firmware use SPI mode 0 and the configured bus/device.
+- Inspect receiver serial output and host `driver_stats`.
 
-**Solutions:**
+### CRC or queue errors increase
 
-1. **Software mitigation (implemented):**
-   - Disabled periodic brightness refresh commands in `spi_controller.py` to reduce opportunities for corruption
-   - Brightness is now only set at initialization, not refreshed every 30 seconds
+- Shorten or pair SPI signal and ground wiring.
+- Check CS isolation and ground reference.
+- Reduce the configured SPI rate only as a diagnostic; retain a lower production
+  value only after rerunning acceptance at that rate.
 
-2. **Firmware fix (implemented):**
-   - Added packet validation to reject corrupted brightness commands (length > 10 bytes)
-   - Legitimate brightness commands are exactly 2 bytes; longer packets are rejected
-   - Check ESP32 serial logs for `⚠️ Rejecting corrupt brightness packet` messages
+### Clean metrics but visible flashes
 
-3. **Improved SPI reliability (implemented):**
-   - **Default SPI speed lowered to 2 MHz** in deployment scripts
-   - To adjust SPI speed, set the `SPI_SPEED` environment variable before deploying:
-     ```bash
-     SPI_SPEED=1000000 just deploy  # 1 MHz (very conservative)
-     SPI_SPEED=2000000 just deploy  # 2 MHz (default)
-     SPI_SPEED=4000000 just deploy  # 4 MHz (if cables are good)
-     ```
-   - Or manually when running: `python scripts/start_server.py --mode controller --spi-speed 2000000`
-   - Use shorter, high-quality SPI cables (under 20cm)
-   - Ensure common ground connection between all devices
-   - Add pull-up/pull-down resistors on CS lines if needed
+The fault is downstream of receiver telemetry. Check the level shifter, LED data
+connector, power injection, supply transients, and shared ground. Run
+`just output-rate-sweep` while watching the affected lane and retain the highest
+visually clean target.
 
-4. **Power supply sizing:**
-   - Test setup (4 strips × 20 LEDs = 80 LEDs): 2A @ 5V is adequate for low brightness
-   - Production setup (32 strips × 138 LEDs = 4,416 LEDs): Requires 20-30A minimum for typical use, up to 200A+ for full white at maximum brightness
-   - The provided 600A @ 5V power supply is appropriately sized for the full installation
+### Wrong lane order or wall orientation
 
-### Wiring Table for Boards 3–4 (SPI1):
+Use the strip-order and calibration plugins rather than editing frame transforms
+blindly. Confirm the logical device map and one lane at a time before changing
+host layout code.
 
-| Signal | Pi GPIO | Pi Pin | ESP32 #3 | ESP32 #4 | Notes |
-|--------|---------|--------|----------|----------|-------|
-| MOSI | GPIO 20 | Pin 38 | GPIO 9 | GPIO 9 | SPI1 MOSI |
-| SCLK | GPIO 21 | Pin 40 | GPIO 7 | GPIO 7 | SPI1 SCLK |
-| MISO | GPIO 19 | Pin 35 | GPIO 8 | GPIO 8 | SPI1 MISO (optional) |
-| CE0 | GPIO 17 | Pin 11 | GPIO 44 | - | SPI1 CE0 |
-| CE1 | GPIO 18 | Pin 12 | - | GPIO 44 | SPI1 CE1 |
-| GND | GND | Multiple | GND | GND | **Must be common!** |
-
-### Key Points:
-- ✅ MOSI, SCLK, MISO are **wired to all boards in parallel**
-- ✅ Each board has its own CS (Chip Select) wire
-- ✅ All boards run the **same firmware**
-- ✅ GND **must be common** across all devices
-- ✅ System automatically manages which board to talk to
-
-### Testing 4 Boards:
-Run the SPI verification steps and confirm `/dev/spidev0.0` through `/dev/spidev0.3` respond.
-
-## LED Strip Connections
-
-Connect your WS2812B/NeoPixel LED strips to the following pins on the ESP32 XIAO S3:
-- **Strip 0** → D0 (GPIO 1)
-- **Strip 1** → D1 (GPIO 2)
-- **Strip 2** → D2 (GPIO 3)
-- **Strip 3** → D3 (GPIO 4)
-- **Strip 4** → D4 (GPIO 5)
-- **Strip 5** → D5 (GPIO 6)
-- **Strip 6** → D6 (GPIO 43)
-
-Each strip should also have:
-- **Power**: Connect 5V and GND to your LED power supply
-- **Data**: Connect to the corresponding GPIO pin above
-- **Ground**: Ensure all grounds are connected together (Pi, ESP32, LED power supply)
+The full timing and rollback criteria are in
+[Rendering acceptance](RENDERING_PIPELINE_ACCEPTANCE.md).

@@ -1,286 +1,118 @@
-# LED Grid System Architecture
+# System architecture
 
-**Visual reference for system layers and data flow**
+The Raspberry Pi owns animation simulation, frame scheduling, user state, and
+SPI transport. Four ESP32-S3 receivers validate frame packets and drive the
+physical strips. The receivers do not run animation logic.
 
----
-
-## System Overview
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         USER INTERFACE                          │
-│                    (Browser / Mobile Device)                    │
-└────────────────────────────┬────────────────────────────────────┘
-                             │ HTTP/REST
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                         WEB LAYER                               │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
-│  │   Flask App  │  │   REST API   │  │  Templates   │         │
-│  │  web/app.py  │  │   Endpoints  │  │   (HTML)     │         │
-│  └──────────────┘  └──────────────┘  └──────────────┘         │
-└────────────────────────────┬────────────────────────────────────┘
-                             │ File-based IPC
-                             │ (control.json / status.json)
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      ANIMATION FRAMEWORK                        │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │              Animation Manager                           │  │
-│  │  - Plugin loading & lifecycle                            │  │
-│  │  - Frame generation loop (40 FPS)                        │  │
-│  │  - Parameter management                                  │  │
-│  └────────────────────┬─────────────────────────────────────┘  │
-│                       │                                         │
-│  ┌────────────────────┴─────────────────────────────────────┐  │
-│  │              Plugin Loader                               │  │
-│  │  - Hot-reload animations                                 │  │
-│  │  - Discover & validate plugins                           │  │
-│  └────────────────────┬─────────────────────────────────────┘  │
-│                       │                                         │
-│  ┌────────────────────┴─────────────────────────────────────┐  │
-│  │         Animation Plugins (10+ animations)               │  │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │  │
-│  │  │ Rainbow  │ │ Sparkle  │ │  Emoji   │ │FluidTank │   │  │
-│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘   │  │
-│  │  Each implements: generate_frame() → List[(r,g,b)]      │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└────────────────────────────┬────────────────────────────────────┘
-                             │ set_all_pixels(colors)
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        DRIVER LAYER                             │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │         MultiDeviceLEDController                         │  │
-│  │  - Splits frame across 2 ESP32 devices                   │  │
-│  │  - Parallel writes (threaded)                            │  │
-│  │  - Aggregates statistics                                 │  │
-│  └────────────┬──────────────────────────┬──────────────────┘  │
-│               │                          │                      │
-│  ┌────────────▼──────────┐  ┌───────────▼──────────┐          │
-│  │  LEDController (CE0)  │  │  LEDController (CE1) │          │
-│  │  - 8 strips × 138 LEDs│  │  - 8 strips × 138 LEDs│          │
-│  │  - SPI Mode 0         │  │  - SPI Mode 0        │          │
-│  │  - 20 MHz             │  │  - 20 MHz            │          │
-│  └────────────┬──────────┘  └───────────┬──────────┘          │
-└───────────────┼──────────────────────────┼─────────────────────┘
-                │ SPI                      │ SPI
-                │ /dev/spidev0.0           │ /dev/spidev0.1
-                ▼                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      HARDWARE LAYER                             │
-│  ┌────────────────────────┐  ┌────────────────────────┐        │
-│  │   ESP32 Device 0       │  │   ESP32 Device 1       │        │
-│  │  ┌──────────────────┐  │  │  ┌──────────────────┐  │        │
-│  │  │  SPI Slave (DMA) │  │  │  │  SPI Slave (DMA) │  │        │
-│  │  │  - Mode 0        │  │  │  │  - Mode 0        │  │        │
-│  │  │  - Command parser│  │  │  │  - Command parser│  │        │
-│  │  └────────┬─────────┘  │  │  └────────┬─────────┘  │        │
-│  │           │             │  │           │             │        │
-│  │  ┌────────▼─────────┐  │  │  ┌────────▼─────────┐  │        │
-│  │  │ ESP-IDF LCD/I80  │  │  │  │ ESP-IDF LCD/I80  │  │        │
-│  │  │  - 8-lane DMA    │  │  │  │  - 8-lane DMA    │  │        │
-│  │  └────────┬─────────┘  │  │  └────────┬─────────┘  │        │
-│  └───────────┼────────────┘  └───────────┼────────────┘        │
-│              │                            │                      │
-│  ┌───────────▼────────────┐  ┌───────────▼────────────┐        │
-│  │  8 LED Strips          │  │  8 LED Strips          │        │
-│  │  (138 LEDs each)       │  │  (138 LEDs each)       │        │
-│  │  = 1,104 LEDs          │  │  = 1,104 LEDs          │        │
-│  └────────────────────────┘  └────────────────────────┘        │
-│                                                                  │
-│              Total: 16 strips × 138 LEDs = 2,208 LEDs          │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Data Flow: User Click → LED Update
-
-```
-1. User clicks "Start Rainbow" in browser
-   │
+```text
+browser
+   │ HTTP
    ▼
-2. Browser sends POST /api/animation/start {"name": "rainbow"}
-   │
-   ▼
-3. Flask app (web/app.py) receives request
-   │
-   ▼
-4. Flask writes to ipc/control_channel.py
-   │
-   ▼
-5. control_channel writes run_state/control.json
-   {
-     "command_id": 123456789.0,
-     "action": "start_animation",
-     "data": {"animation_name": "rainbow"}
-   }
-   │
-   ▼
-6. Controller process polls control.json (every 0.1s)
-   │
-   ▼
-7. AnimationManager reads command
-   │
-   ▼
-8. PluginLoader loads rainbow.py
-   │
-   ▼
-9. RainbowAnimation instance created
-   │
-   ▼
-10. Animation loop starts (40 FPS target)
-    │
-    ▼
-11. Every 25ms: RainbowAnimation.generate_frame()
-    │  Returns: [(r,g,b), (r,g,b), ...] × 2,208 LEDs
-    ▼
-12. AnimationManager calls controller.set_all_pixels(colors)
-    │
-    ▼
-13. MultiDeviceLEDController splits frame:
-    │  - Device 0: LEDs 0-1119
-    │  - Device 1: LEDs 1120-2239
-    ▼
-14. Parallel threads send to both devices:
-    │  Thread 1 → LEDController(CE0)
-    │  Thread 2 → LEDController(CE1)
-    ▼
-15. Each LEDController sends SPI command:
-    │  [CMD_SET_ALL, r0, g0, b0, r1, g1, b1, ...]
-    │  [CMD_SHOW]
-    ▼
-16. ESP32 SPI slave receives via DMA
-    │
-    ▼
-17. ESP32 parses command, updates LED buffer
-    │
-    ▼
-18. LCD/I80 DMA outputs to 8 strips in parallel
-    │
-    ▼
-19. LEDs light up! 🎉
-    │
-    ▼
-20. Controller writes status to run_state/status.json
-    {
-      "is_running": true,
-      "current_animation": "rainbow",
-      "fps": 42.5,
-      "frame_data_encoded": "..."
-    }
-    │
-    ▼
-21. Web UI polls status.json (every 0.5s)
-    │
-    ▼
-22. Browser updates preview canvas
+web process (Flask) ── control/status files ── controller process
+                                                │
+                             animation registry ├─ plugin package
+                             animation manager  ├─ frame scheduler
+                             host driver         └─ metrics
+                                                │ two SPI buses
+                         ┌──────────────────────┴──────────────────────┐
+                         ▼                                             ▼
+                   ESP32-S3 x2                                    ESP32-S3 x2
+                   on SPI0                                        on SPI1
+                         │                                             │
+                         └──────────── 32 WS2812 lanes total ──────────┘
 ```
 
-**Total Latency:** ~50-100ms (UI click → LED update)
+## Processes and ownership
 
----
+The deployed service starts two Python processes:
 
-## Process Architecture
+- The controller process loads allowlisted plugins, owns the active animation,
+  renders frames, sends them to hardware, and writes status.
+- The web process serves the UI and API, writes commands, and reads controller
+  status. It does not own hardware or live animation state.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Raspberry Pi                             │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  Process 1: Web Server (scripts/start_server.py)   │  │
-│  │  - Flask app on port 5000                            │  │
-│  │  - Serves HTML/CSS/JS                                │  │
-│  │  - REST API endpoints                                │  │
-│  │  - Preview rendering                                 │  │
-│  │  - Writes: run_state/control.json                    │  │
-│  │  - Reads:  run_state/status.json                     │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                           │                                 │
-│                           │ File-based IPC                  │
-│                           │                                 │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  Process 2: Controller (scripts/start_server.py)   │  │
-│  │  - Animation loop (40 FPS)                           │  │
-│  │  - Plugin management                                 │  │
-│  │  - SPI communication                                 │  │
-│  │  - Reads:  run_state/control.json                    │  │
-│  │  - Writes: run_state/status.json                     │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                           │                                 │
-│                           │ SPI                             │
-│                           ▼                                 │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  /dev/spidev0.0  ←→  ESP32 Device 0                  │  │
-│  │  /dev/spidev0.1  ←→  ESP32 Device 1                  │  │
-│  └──────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+`ipc/control_channel.py` is the boundary between them:
+
+```text
+run_state/control.json   web -> controller commands
+run_state/status.json    controller -> web status and preview data
 ```
 
-**Why Two Processes?**
-- Web UI can crash without affecting LED control
-- Hardware control runs with real-time priority
-- Easier to develop/debug web UI separately
-- Can restart web UI without interrupting animations
+Both files are runtime artifacts and are not versioned. Atomic replacement in
+the channel prevents readers from observing a partially written JSON document.
 
----
+## Plugin registry
 
-## File System Layout
+Built-in plugins are packages under `animation/plugins/<plugin_id>/`. Their
+manifest, implementation, curated presets, focused tests, and owned assets move
+together. `animation/core/` contains framework and lifecycle contracts;
+`animation/libraries/` contains reusable rendering or simulation primitives.
 
-```
-run_state/
-├── control.json       # Commands: web → controller
-├── status.json        # Status: controller → web
-├── web.pid            # Web process ID
-└── controller.pid     # Controller process ID
+The allowlist is an exposure boundary: discovery alone does not make a package
+available to the UI. The loader validates package and manifest identity before
+the manager registers a plugin.
 
-Web writes control.json:
-  {"action": "start_animation", "data": {...}}
+See [Animation plugins](ANIMATION_SYSTEM.md) for the package and frame contracts.
 
-Controller reads control.json, executes command
+## Frame path
 
-Controller writes status.json:
-  {"is_running": true, "fps": 42.5, "frame_data": "..."}
+1. The animation manager asks the active plugin for a canonical RGB frame.
+2. The manager applies scheduling and presentation hints, then passes the frame
+   to `MultiDeviceLEDController`.
+3. The controller divides the logical strip-major frame into four receiver
+   chunks.
+4. Devices sharing an SPI bus are sent serially; SPI0 and SPI1 transfers can
+   overlap.
+5. Each receiver validates CRC-16, publishes the newest complete RGB frame to a
+   three-slot mailbox, and accounts for superseded frames.
+6. A separate receiver task converts RGB into an eight-lane WS2812 waveform and
+   submits it through the ESP-IDF LCD/I80 DMA peripheral.
 
-Web reads status.json, updates UI
-```
+The installed geometry is 32 strips x 138 LEDs. Each receiver owns eight strips
+and retains firmware capacity for up to 140 LEDs per strip.
 
----
+## Receiver protocol
 
-## SPI Protocol
+Commands are CRC-protected and defined by the host driver and firmware protocol
+implementation. Bulk `SET_ALL` is the normal frame path; `SET_PIXEL`,
+`SET_RANGE`, `SHOW`, `CLEAR`, `SET_BRIGHTNESS`, and `CONFIG` support incremental
+or control operations.
 
-```
-Raspberry Pi                    ESP32
-    │                             │
-    │  [CMD_SET_ALL, r0,g0,b0,    │
-    │   r1,g1,b1, ... × 1120]     │
-    ├────────────────────────────>│
-    │                             │ Parse command
-    │                             │ Update LED buffer
-    │                             │
-    │  [CMD_SHOW]                 │
-    ├────────────────────────────>│
-    │                             │ Queue latest complete frame
-    │                             │ LCD/I80 DMA → 8 strips
-    │                             │
-    │  [CMD_GET_STATS]            │
-    ├────────────────────────────>│
-    │                             │
-    │  <stats data>               │
-    │<────────────────────────────┤
-```
+The receiver returns an `LGS2` status snapshot over MISO with packet, CRC,
+mailbox, frame, and display timing counters. These counters cover the path only
+through ESP32 output DMA. WS2812 lanes have no return channel, so visual output
+still requires physical acceptance.
 
-**Commands:**
-- `0x01` SET_PIXEL - Set single pixel
-- `0x02` SET_BRIGHTNESS - Global brightness
-- `0x03` SHOW - Update display
-- `0x04` CLEAR - Clear all LEDs
-- `0x05` SET_RANGE - Set pixel range
-- `0x06` SET_ALL - Set all pixels (most efficient)
-- `0x07` CONFIG - Configure strips/LEDs
-- `0xFF` PING - Test connection
+## State and presets
 
----
+The controller persists the current animation and applied settings so a service
+restart can restore the last valid state. This deployment snapshot is operational
+state, not a curated preset.
 
-**Last Updated:** 2025-12-25
+Curated presets live inside plugin packages. Presets saved through the UI live
+under `presets/animations/<plugin_id>/` on the deployment host and remain
+untracked unless deliberately promoted into the owning plugin.
+
+## Configuration boundaries
+
+- `drivers/led_layout.py`: installed host geometry
+- `animation/core/`: plugin lifecycle and manager contracts
+- `animation/libraries/`: cross-plugin rendering and simulation primitives
+- `firmware/esp32/`: receiver capacity, pins, waveform, and protocol
+- `config/`: calibrated wall projection and plant/globe masks
+- environment variables and CLI flags: deployment-specific addresses, rates,
+  brightness, and optional HAT layout
+
+Do not duplicate these constants in documentation or plugin code when a runtime
+source already exists.
+
+## Verification boundaries
+
+- Unit and plugin tests verify registry, simulation, transforms, and protocol.
+- Headless rendering benchmarks verify frame contract and generation budget.
+- Native firmware tests verify encoding, bounds, mailbox behavior, and status.
+- Receiver acceptance verifies live SPI and DMA counters.
+- The full-wall sweep verifies every exposed plugin and visually qualifies the
+  physical signal path.
+
+See [Rendering acceptance](RENDERING_PIPELINE_ACCEPTANCE.md) for thresholds.

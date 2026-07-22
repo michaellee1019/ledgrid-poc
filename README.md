@@ -1,74 +1,78 @@
 # LED Grid Control System
 
-High-performance SPI-controlled LED grid with a web UI and an allowlisted animation plugin system.
+Controller, web UI, animation plugins, and ESP32-S3 firmware for a 32 x 138
+(4,416-pixel) plant-wall installation. A Raspberry Pi renders frames and sends
+them over two SPI buses to four receivers; each receiver drives eight WS2812
+lanes in parallel.
 
-## Quick Start
+## Local development
 
-1. Install dependencies:
-   ```bash
-   python3 -m venv .venv
-   . .venv/bin/activate
-   pip install -r requirements.txt
-   ```
-
-2. Start the controller process (hardware):
-   ```bash
-   python3 scripts/start_server.py --mode controller
-   ```
-
-3. Start the web UI (in a second terminal):
-   ```bash
-   python3 scripts/start_server.py --mode web
-   ```
-
-4. Open the UI:
-   - http://localhost:5000/
-
-## Guided Calibration
-
-1. In the web UI, start `Plant Calibration`.
-2. No-tripod flow (default): set `manual_pattern_index=-1` so patterns auto-cycle while you shoot.
-3. Recommended handsfree capture settings in the animation:
-   - `pattern_hold_seconds=8`
-   - `transition_seconds=1`
-4. Run the guided workflow:
-   ```bash
-   .venv-web/bin/python scripts/calibrate.py --guided-capture --capture-mode handsfree --pattern-files auto --image-dir calibration_photos
-   ```
-5. Optional manual flow (if you can interact during capture):
-   - set `manual_pattern_index` to `0..4` and use `--capture-mode manual`
-6. If you only want the camera/capture checklist:
-   ```bash
-   .venv-web/bin/python scripts/calibrate.py --capture-guide-only --capture-mode handsfree --image-dir calibration_photos
-   ```
-
-## Webcam Pixel Map + World Flags
-
-Build a logical 32 x 138 pixel map from a full-white USB-webcam capture:
+The repository uses `just` as its command entry point and `uv` for isolated
+test dependencies.
 
 ```bash
-python3 scripts/build_webcam_pixel_map.py calibration_photos/webcam-full-white.jpg \
-  --bottom-corners 795,764,1068,795
+just setup-web
+just test
+just start
 ```
 
-The generated `config/webcam_pixel_map.json` records the camera coordinate and
-estimated plant visibility of every LED. The mapper fits the two visible panel
-sides and uses the known 32 x 138 square-cell geometry to extrapolate rows above
-the webcam frame; those off-camera LEDs are recorded as unobserved instead of
-being misclassified as blocked. Start `World Flags` in the web UI to
-show the camera-mapped scrolling flag parade. Set `display_mode=single` and
-choose an ISO code such as `JPN`, `BRA`, or `USA` to hold one flag.
+`just start` runs the web/preview process at <http://127.0.0.1:5000>. Hardware
+output runs as a separate controller process on the Raspberry Pi.
+
+## Repository layout
+
+- `animation/core/`: plugin framework, manager, and lifecycle contracts
+- `animation/libraries/`: reusable rendering and simulation primitives shared by
+  multiple plugins, with colocated tests
+- `animation/plugins/<plugin_id>/`: one self-contained package per animation,
+  including its manifest, curated presets, tests, and owned assets
+- `drivers/`: host-side frame transport and LED layout
+- `firmware/esp32/`: ESP32-S3 receiver firmware and native tests
+- `ipc/`: file-based web/controller communication
+- `scripts/`: runtime and calibration entry points
+- `tools/`: deployment, diagnostics, and acceptance utilities
+- `web/`: Flask application and templates
+- `config/`: production plant-wall geometry and semantic masks
+
+The root `presets/animations/` tree is a runtime/user-writable overlay. Curated
+presets belong to the plugin that owns them.
+
+## Hardware deployment
+
+```bash
+just setup             # prepare the Pi and local web environment
+just deploy-precheck   # local validation without changing the Pi
+just deploy            # full application and firmware deployment
+```
+
+Use `just deploy-python` when firmware and boot configuration are unchanged.
+The deployment target defaults to `ledgridwall@ledgridwall.local`.
+
+## Required checks
+
+Before merging or deploying a change:
+
+1. `just test` passes.
+2. Every discovered plugin has a valid manifest and its focused tests and
+   curated presets live inside the plugin package.
+3. `just deploy-precheck` reports no missing source, configuration, or runtime
+   asset.
+4. Rendering or transport changes also pass `just test-rendering`.
+5. Firmware changes pass the receiver and full-wall gates in
+   [Rendering acceptance](docs/RENDERING_PIPELINE_ACCEPTANCE.md).
+6. Calibration changes satisfy the photographed checks in
+   [Plant-wall calibration](docs/PLANT_WALL_CALIBRATION.md).
 
 ## Documentation
 
-- `docs/README.md` - system overview and setup details
-- `docs/ANIMATION_SYSTEM.md` - animation plugins and API
-- `docs/PLANT_WALL_CALIBRATION.md` - repeatable webcam foliage/globe recalibration
-- `docs/GIF_PIPELINE.md` - GIF asset preparation and playback plugin
-- `docs/DEPLOYMENT.md` - Raspberry Pi deployment guide
-- `docs/HARDWARE.md` - wiring and hardware notes
-- `docs/ARCHITECTURE_DIAGRAM.md` - architecture and data flow
+- [Animation plugins](docs/ANIMATION_SYSTEM.md)
+- [Architecture](docs/ARCHITECTURE_DIAGRAM.md)
+- [Deployment](docs/DEPLOYMENT.md)
+- [Hardware and wiring](docs/HARDWARE.md)
+- [Debugging](docs/DEBUGGING.md)
+- [Metrics](docs/METRICS.md)
+- [GIF asset pipeline](docs/GIF_PIPELINE.md)
+- [Plant-wall calibration](docs/PLANT_WALL_CALIBRATION.md)
 
-## TODO
-
-- 2026-03-30: https://github.com/pmarreck/printable-binary for frame data
+Repository documentation describes the current supported system. Use Git
+history for change history and abandoned approaches.

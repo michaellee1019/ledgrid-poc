@@ -1,237 +1,159 @@
-# LED Grid Animation System
+# Animation plugins
 
-A plugin-based animation system with a web interface for selecting and tuning
-the animations shipped in the repository.
+Animations are allowlisted, self-contained Python packages discovered by the
+animation manager. The web UI reads the same registry for names, descriptions,
+parameters, presets, previews, and reload operations.
 
-## Features
+## Package contract
 
-- 🎨 **Plugin-based animations** - Easy to create and modify
-- 🌐 **Web interface** - Control animations from any device
-- 🔄 **Hot reload** - Reload shipped animation code without restarting
-- ⚡ **Real-time parameters** - Adjust animation settings live
-- 📊 **Performance monitoring** - FPS tracking and system status
-- 🎯 **High performance** - Optimized for 50+ FPS
+Each built-in animation owns one directory:
 
-## Quick Start
-
-1. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Start the animation server:**
-   ```bash
-   python scripts/start_server.py
-   ```
-
-3. **Open web interface:**
-   - Dashboard: http://localhost:5000/
-   - Control Panel: http://localhost:5000/control
-
-## Architecture
-
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Web Interface │    │   Animation      │    │   LED           │
-│   (Flask)       │───▶│   Manager        │───▶│   Controller    │
-│                 │    │                  │    │   (SPI)         │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-        │                        │                        │
-        ▼                        ▼                        ▼
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Plugin        │    │   Animation      │    │   ESP32/SCORPIO │
-│   Loader        │    │   Plugins        │    │   Hardware      │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
+```text
+animation/plugins/<plugin_id>/
+├── __init__.py       # AnimationBase subclass and plugin-specific code
+├── manifest.json     # stable registry metadata
+├── presets/          # curated JSON presets
+├── tests/            # focused unit and behavior tests
+└── assets/           # optional files used only by this plugin
 ```
 
-## Creating Animations
+Only `__init__.py` and `manifest.json` are required. Framework and lifecycle
+contracts live in `animation/core/` with tests under `animation/core/tests/`.
+Reusable rendering or simulation primitives used by multiple plugins belong in
+`animation/libraries/` with tests under `animation/libraries/tests/`.
 
-### Plant-aware mode
+The package directory and manifest `plugin_id` must agree, and the manifest's
+`class` must name the package's one concrete animation class. `icon` is required;
+`gallery` is either `show` or `test`. Built-in packages are discovered in sorted
+`plugin_id` order. Flat `.py` plugins remain supported only for explicitly
+configured external plugin directories.
 
-Every shipped animation exposes the same calibrated-mask controls. The
-controller's global plant-aware switch defaults to on, is shown beside Global
-Tempo on the dashboard, and overrides individual animation or preset values for
-both the current scene and future starts.
+Root `presets/animations/<plugin_id>/` is a user-writable runtime overlay.
+Do not place curated source presets there.
 
-- `plant_aware` opts into animation-specific foliage/globe behavior. The plugin
-  schema fallback remains `false` for direct/headless construction, while every
-  curated or newly saved preset stores `true` and the controller applies the
-  global switch as the final authority.
-- `plant_clearance` expands the routing/placement exclusion zone by 0–4 logical
-  pixels.
-- `plant_mask_path` and `plant_globe_mask_path` select the foliage and globe JSON
-  artifacts. The production defaults are the 32×138 maps in `config/`.
+## Minimal plugin
 
-Plugins load these masks lazily through `get_plant_masks()`. The returned
-geometry keeps foliage, globes, their union, and the clearance-dilated obstacle
-map separate in both logical 2-D and canonical flat-index forms. Interactive
-animations should use the geometry for routing, spawning, collisions, or
-information placement. Purely visual effects should preserve the subject as
-much as possible, then use the foliage and globe layers as distinct accents.
-
-Plant-aware logic must always be guarded by `plant_aware_enabled()`. A plugin
-constructed directly without the option, or globally switched off, must retain
-its original simulation and pixels.
-
-### Basic Animation Structure
+`animation/plugins/example/__init__.py`:
 
 ```python
-#!/usr/bin/env python3
-from typing import Dict, Any
 import numpy as np
-from animation import AnimationBase
 
-class MyAnimation(AnimationBase):
-    ANIMATION_NAME = "My Animation"
-    ANIMATION_DESCRIPTION = "What this animation does"
-    ANIMATION_AUTHOR = "Your Name"
+from animation.core.base import AnimationBase
+
+
+class ExampleAnimation(AnimationBase):
+    ANIMATION_NAME = "Example"
+    ANIMATION_DESCRIPTION = "A static red frame."
+    ANIMATION_AUTHOR = "LED Grid"
     ANIMATION_VERSION = "1.0"
-    
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
-        """Generate a frame of animation"""
         frame = self.next_frame_buffer(clear=False)
         frame[:] = (255, 0, 0)
         return frame
 ```
 
-### Adding Parameters
+`animation/plugins/example/manifest.json`:
+
+```json
+{
+  "plugin_id": "example",
+  "class": "ExampleAnimation",
+  "icon": "💡",
+  "gallery": "show"
+}
+```
+
+Checked-in manifests are the built-in allowlist. A directory without a valid
+manifest is not loaded or exposed by the web API.
+
+## Frame contract
+
+`generate_frame(time_elapsed, frame_count)` returns either:
+
+- a C-contiguous `numpy.uint8` array shaped `(controller.total_leds, 3)`; or
+- `RenderedFrame(pixels, changed, dirty_ranges)` with presentation hints.
+
+Use `next_frame_buffer()` instead of allocating a fresh full-wall array on each
+frame. Source-rate or event-driven plugins should return `changed=False` while
+their image is unchanged. `dirty_ranges` may identify canonical flat-index
+ranges for a controller that supports partial transfer.
+
+Simulation state belongs to the plugin instance. Use elapsed time or a bounded
+fixed timestep for motion; do not make behavior depend on web request timing.
+Plugins must not call SPI or the web layer directly.
+
+## Parameters
+
+Extend the base schema and read applied values from `self.params`:
 
 ```python
-def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+def get_parameter_schema(self):
     schema = super().get_parameter_schema()
-    schema.update({
-        'speed': {
-            'type': 'float',
-            'min': 0.1,
-            'max': 5.0,
-            'default': 1.0,
-            'description': 'Animation speed'
-        },
-        'color': {
-            'type': 'int',
-            'min': 0,
-            'max': 255,
-            'default': 255,
-            'description': 'Red component'
-        }
-    })
+    schema["density"] = {
+        "type": "float",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.25,
+        "description": "Fraction of active pixels",
+    }
     return schema
-
-def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
-    speed = self.params.get('speed', 1.0)
-    red = self.params.get('color', 255)
-    # Use parameters in your animation...
 ```
 
-## Example Animations
+Defaults must render a useful, bounded scene without network, sensor, or user
+input. Keep parameter names stable because saved runtime presets refer to them.
 
-The system comes with several example animations:
+## Plant-aware rendering
 
-### Rainbow (`animation/plugins/rainbow.py`)
-- **RainbowAnimation**: Classic rainbow cycle
+The base schema supplies `plant_aware`, `plant_clearance`, `plant_mask_path`,
+and `plant_globe_mask_path`. Plugins load calibrated masks lazily through
+`get_plant_masks()` and guard all mask-specific behavior with
+`plant_aware_enabled()`.
 
-### Solid Colors (`animation/plugins/solid.py`)
-- **SolidColorAnimation**: Solid color with breathing effect
+Keep foliage, globes, their union, and clearance-expanded obstacles semantically
+separate. Interactive simulations can use them for collision and routing;
+visual effects can use them as masks or accent layers. Turning plant awareness
+off must restore ordinary plugin behavior.
 
-### Rescued Effects
-- **ASCII Drop** (`ascii_drop.py`): Falling 5x7 text with collision and stacking
-- **Color Gradient** (`gradient.py`): Static or animated two-color gradients
-- **Pixel Chase** (`pixel_chase.py`): Individual-LED wall diagnostics
-- **Color Wave** (`wave.py`): Vectorized traveling sine-wave color field
+Shared mask geometry belongs in `animation/libraries/`, not in individual
+plugins.
 
-### Sparkle (`animation/plugins/sparkle.py`)
-- **SparkleAnimation**: Random sparkle effect
+## Presets and assets
 
-### Clock (`animation/plugins/clock.py`)
-- **ClockAnimation**: Ten practical and abstract clock faces composited with
-  eight ambient backgrounds and coordinated color palettes
-- Supports 12/24-hour display, seconds, vertical placement, glow, and fixed
-  minute offsets for displaying another timezone
-- Curated presets in `presets/animations/clock/` range from readable bedside
-  and studio clocks to orbital, binary, hourglass, and atmospheric time studies
+Curated presets live at `animation/plugins/<plugin_id>/presets/*.json` and are
+versioned with the code they configure. The registry merges them with runtime
+presets from `presets/animations/<plugin_id>/`, with runtime files remaining
+ignored until intentionally promoted into the plugin package.
 
-### Snake Garden (`animation/plugins/snake.py`)
-- **SnakeAnimation**: Autonomous classic, wrapping, portal, and multi-snake battle games with visual presets
+An asset used by one plugin belongs in that plugin's `assets/` directory. An
+asset used by several plugins may live under root `assets/` with a documented
+owner and format.
 
-## Web Interface
+## Tests and acceptance
 
-### Dashboard (`/`)
-- View available animations
-- System status and performance
-- Quick animation start
+Focused tests live beside the plugin. They should cover:
 
-### Control Panel (`/control`)
-- Real-time parameter adjustment
-- Animation switching
-- Keyboard shortcuts
+- manifest discovery and import;
+- frame shape, dtype, contiguity, and bounds;
+- deterministic state transitions for seeded simulations;
+- meaningful parameter extremes;
+- ordinary and plant-aware behavior when applicable;
+- every curated preset loading and rendering successfully.
 
-## API Endpoints
-
-- `GET /api/animations` - List available animations
-- `POST /api/start/<name>` - Start animation
-- `POST /api/stop` - Stop current animation
-- `GET /api/status` - Get system status
-- `POST /api/parameters` - Update animation parameters
-- `POST /api/refresh` - Refresh plugin list
-
-## Configuration
-
-### Command Line Options
+Run the repository checks before exposing a plugin:
 
 ```bash
-python scripts/start_server.py --help
+just test
+just test-rendering
 ```
 
-Key options:
-- `--host 0.0.0.0` - Bind to all interfaces
-- `--port 5000` - Web server port
-- `--strips 8` - Number of LED strips
-- `--leds-per-strip 138` - LEDs per strip
-- `--spi-speed 10000000` - SPI communication speed
-- `--target-fps 40` - Animation frame rate
-- `--animation-speed-scale 0.3` - Baseline multiplier applied to animation speed parameters (lower = slower motion)
+The rendering benchmark is the authoritative performance gate for the installed
+32 x 138 geometry.
 
-### Hardware Configuration
+## Runtime boundaries
 
-The system supports:
-- **ESP32-S3** via SPI (recommended for high performance)
-- **RP2040 SCORPIO** via SPI (8 parallel outputs)
-
-See `HARDWARE.md` for connection details.
-
-## Performance Tips
-
-1. **Canonical frames** - Return a C-contiguous `(total_leds, 3)` `np.uint8` array.
-2. **Reuse buffers** - Render into `next_frame_buffer()` rather than allocating per frame.
-3. **Source-rate output** - Wrap cached frames with `rendered_frame(..., changed=False)` when nothing changed.
-4. **Time-based motion** - Derive motion from `time_elapsed`, not achieved frame count.
-5. **Cache geometry** - Precompute coordinate grids, masks, palettes, and static layers.
-6. **Sparse hints** - Supply half-open `dirty_ranges` when only a small part of the frame changed.
-
-## Troubleshooting
-
-### Common Issues
-
-1. **No animations showing**
-   - Check `animation/plugins/` directory exists
-   - Verify Python syntax in animation files
-   - Check web console for errors
-
-2. **Low FPS**
-   - Reduce animation complexity
-   - Lower target FPS
-   - Check SPI speed settings
-
-3. **Parameter updates not working**
-   - Ensure animation implements `get_parameter_schema()`
-   - Check parameter types match schema
-   - Verify real-time updates in `generate_frame()`
-
-### Debug Mode
-
-Enable debug output:
-```bash
-python scripts/start_server.py --debug --controller-debug
-```
-
-This provides detailed logging for troubleshooting.
+The controller process owns plugin instances and hardware presentation. The web
+process writes commands through `ipc/control_channel.py` and reads status and
+preview frames from the same channel. Hot reload is suitable for local plugin
+iteration, but production changes should go through the normal deploy and
+acceptance flow.
