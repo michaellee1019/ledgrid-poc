@@ -332,6 +332,13 @@ class ConwayLifeAnimation(AnimationBase):
                     "min": 0.0,
                     "max": 3.0,
                     "default": 1.0,
+                    "presets": {
+                        "frozen": 0.0,
+                        "gentle": 0.5,
+                        "normal": 1.0,
+                        "lively": 2.0,
+                        "turbo": 3.0,
+                    },
                     "description": "Backdrop motion speed (0 freezes the current atmosphere)",
                 },
                 "background_fps": {

@@ -367,6 +367,22 @@ function renderParameterControls(schema, currentParams) {
         } else if (paramInfo.type === 'float' || paramInfo.type === 'int') {
             const step = paramInfo.type === 'float' ? '0.1' : '1';
             const numberInputId = `${paramName}-value`;
+            const presets = paramInfo.presets && !Array.isArray(paramInfo.presets)
+                ? Object.entries(paramInfo.presets)
+                : [];
+            if (presets.length) {
+                const presetOptions = presets.map(([name, value]) => {
+                    const selected = Number(value) === Number(currentValue) ? ' selected' : '';
+                    return `<option value="${value}"${selected}>${humanizeParamName(name)} (${value})</option>`;
+                }).join('');
+                controlHtml += `
+                    <select class="form-select form-select-sm mb-2" id="${paramName}-preset"
+                            onchange="handleNamedPreset('${paramName}', this.value, '${paramInfo.type}', '${numberInputId}')">
+                        <option value="">Custom</option>
+                        ${presetOptions}
+                    </select>
+                `;
+            }
             controlHtml += `
                 <div class="row">
                     <div class="col-8">
@@ -418,6 +434,7 @@ function handleRangeInput(name, value, type, mirrorInputId) {
     if (mirror) {
         mirror.value = value;
     }
+    syncNamedPreset(name, value);
     updateParameter(name, value, type);
 }
 
@@ -429,6 +446,25 @@ function handleNumberInput(name, value, type, mirrorSliderId) {
     if (slider) {
         slider.value = value;
     }
+    syncNamedPreset(name, value);
+    updateParameter(name, value, type);
+}
+
+function syncNamedPreset(name, value) {
+    const preset = document.getElementById(`${name}-preset`);
+    if (!preset) return;
+    const matchingOption = Array.from(preset.options).find(option => (
+        option.value !== '' && Number(option.value) === Number(value)
+    ));
+    preset.value = matchingOption ? matchingOption.value : '';
+}
+
+function handleNamedPreset(name, value, type, numberInputId) {
+    if (value === '') return;
+    const numberInput = document.getElementById(numberInputId);
+    const slider = document.getElementById(name);
+    if (numberInput) numberInput.value = value;
+    if (slider) slider.value = value;
     updateParameter(name, value, type);
 }
 

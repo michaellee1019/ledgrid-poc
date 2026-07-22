@@ -106,6 +106,16 @@ class ConwayLifeAnimationTests(unittest.TestCase):
         self.assertIn("bioluminescent", schema["palette"]["options"])
         self.assertIn("background_animation", schema)
         self.assertEqual(schema["background_fps"]["max"], 30.0)
+        self.assertEqual(
+            schema["background_speed"]["presets"],
+            {
+                "frozen": 0.0,
+                "gentle": 0.5,
+                "normal": 1.0,
+                "lively": 2.0,
+                "turbo": 3.0,
+            },
+        )
         self.assertIn("tile_installation", schema)
         self.assertEqual(schema["tile_rows"]["max"], 16)
 

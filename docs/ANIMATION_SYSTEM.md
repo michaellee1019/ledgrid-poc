@@ -103,6 +103,22 @@ def get_parameter_schema(self):
 Defaults must render a useful, bounded scene without network, sensor, or user
 input. Keep parameter names stable because saved runtime presets refer to them.
 
+Numeric controls may also declare named values with an optional `presets`
+mapping. The names are presentation metadata: the selected value sent to the
+animation and stored in an animation preset remains numeric, and operators can
+still choose any value allowed by the control's range.
+
+```python
+schema["background_speed"] = {
+    "type": "float",
+    "min": 0.0,
+    "max": 3.0,
+    "default": 1.0,
+    "presets": {"frozen": 0.0, "normal": 1.0, "lively": 2.0},
+    "description": "Backdrop motion speed",
+}
+```
+
 ## Plant-aware rendering
 
 The base schema supplies `plant_aware`, `plant_clearance`, `plant_mask_path`,

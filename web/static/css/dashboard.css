@@ -56,6 +56,7 @@
     .parameter-control-wide { grid-column: 1 / -1; }
     .parameter-label { font-size: .82rem; font-weight: 750; }
     .parameter-description { min-height: 2.2em; color: var(--show-muted); font-size: .7rem; line-height: 1.35; }
+    .parameter-preset { margin: .65rem 0 .35rem; font-weight: 650; }
     .parameter-value { min-width: 4.7rem; font-variant-numeric: tabular-nums; }
     .color-well { width: 3.2rem; height: 3.2rem; padding: .2rem; border: 1px solid #d8dbe8; border-radius: 12px; background: white; cursor: pointer; }
     .color-hex { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; font-weight: 700; }

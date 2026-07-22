@@ -883,6 +883,24 @@
         return .1;
     }
 
+    function parameterPresets(info) {
+        if (!info || !info.presets || Array.isArray(info.presets) || typeof info.presets !== 'object') {
+            return [];
+        }
+        return Object.entries(info.presets).filter(([, value]) => {
+            if (info.type === 'int') return Number.isInteger(value);
+            return info.type === 'float' && Number.isFinite(value);
+        });
+    }
+
+    function matchingParameterPreset(value, info) {
+        const numericValue = Number(value);
+        const match = parameterPresets(info).find(([, presetValue]) => (
+            Math.abs(Number(presetValue) - numericValue) < 1e-9
+        ));
+        return match ? match[0] : '';
+    }
+
     function usesLogEasing(info) {
         const minimum = Number(info.min);
         const maximum = Number(info.max);
@@ -913,6 +931,7 @@
         const value = sliderToParameter(position, controlParameterSchema[name]);
         const mirror = document.getElementById(mirrorInputId);
         if (mirror) mirror.value = value;
+        syncParameterPreset(name, value);
         updateControlParameter(name, value, type);
     }
 
@@ -924,7 +943,26 @@
         if (slider && controlParameterSchema[name]) {
             slider.value = Math.max(0, Math.min(100, parameterToSlider(converted, controlParameterSchema[name])));
         }
+        syncParameterPreset(name, converted);
         updateControlParameter(name, converted, type);
+    }
+
+    function syncParameterPreset(name, value) {
+        const select = document.getElementById(`control-${name}-preset`);
+        if (select && controlParameterSchema[name]) {
+            select.value = matchingParameterPreset(value, controlParameterSchema[name]);
+        }
+    }
+
+    function applyParameterPreset(name, presetName, type, sliderId, numberInputId) {
+        const info = controlParameterSchema[name];
+        if (!info || !Object.prototype.hasOwnProperty.call(info.presets || {}, presetName)) return;
+        const value = info.presets[presetName];
+        const slider = document.getElementById(sliderId);
+        const numberInput = document.getElementById(numberInputId);
+        if (slider) slider.value = Math.max(0, Math.min(100, parameterToSlider(value, info)));
+        if (numberInput) numberInput.value = value;
+        updateControlParameter(name, value, type);
     }
 
     function rgbToHex(red, green, blue) {
@@ -1028,7 +1066,9 @@
                 inputHtml = `<select class="form-select" id="${inputId}" onchange="updateControlParameter('${paramName}', this.value, 'str')">${options.map(option => `<option value="${escapeHtml(option)}"${String(option) === String(currentValue) ? ' selected' : ''}>${humanizeParamName(String(option))}</option>`).join('')}</select>`;
             } else if (paramInfo.type === 'float' || paramInfo.type === 'int') {
                 const hasRange = Number.isFinite(Number(paramInfo.min)) && Number.isFinite(Number(paramInfo.max));
-                inputHtml = `${hasRange ? `<input type="range" class="form-range" id="${inputId}" min="0" max="100" step="1" value="${parameterToSlider(currentValue, paramInfo)}" oninput="handleParameterRangeInput('${paramName}', this.value, '${paramInfo.type}', '${numberInputId}')">` : ''}<div class="input-group input-group-sm"><input type="number" class="form-control parameter-value" value="${escapeHtml(currentValue)}" step="${numericStep(paramInfo)}" id="${numberInputId}" oninput="handleNumberInput('${paramName}', this.value, '${paramInfo.type}', '${inputId}')"><span class="input-group-text">${paramInfo.type === 'int' ? 'whole' : 'exact'}</span></div>`;
+                const presets = parameterPresets(paramInfo);
+                const presetSelect = presets.length ? `<select class="form-select form-select-sm parameter-preset" id="${inputId}-preset" aria-label="${escapeHtml(prettyName)} preset" onchange="applyParameterPreset('${paramName}', this.value, '${paramInfo.type}', '${inputId}', '${numberInputId}')"><option value="">Custom</option>${presets.map(([name, value]) => `<option value="${escapeHtml(name)}"${name === matchingParameterPreset(currentValue, paramInfo) ? ' selected' : ''}>${escapeHtml(humanizeParamName(name))} (${escapeHtml(value)})</option>`).join('')}</select>` : '';
+                inputHtml = `${presetSelect}${hasRange ? `<input type="range" class="form-range" id="${inputId}" min="0" max="100" step="1" value="${parameterToSlider(currentValue, paramInfo)}" oninput="handleParameterRangeInput('${paramName}', this.value, '${paramInfo.type}', '${numberInputId}')">` : ''}<div class="input-group input-group-sm"><input type="number" class="form-control parameter-value" value="${escapeHtml(currentValue)}" step="${numericStep(paramInfo)}" id="${numberInputId}" oninput="handleNumberInput('${paramName}', this.value, '${paramInfo.type}', '${inputId}')"><span class="input-group-text">${paramInfo.type === 'int' ? 'whole' : 'exact'}</span></div>`;
             } else if (paramInfo.type === 'bool') {
                 inputHtml = `<div class="form-check form-switch pt-1"><input class="form-check-input" type="checkbox" role="switch" id="${inputId}" ${currentValue ? 'checked' : ''} onchange="updateControlParameter('${paramName}', this.checked, 'bool')"><label class="form-check-label fw-semibold" for="${inputId}">${currentValue ? 'On' : 'Off'}</label></div>`;
             } else {

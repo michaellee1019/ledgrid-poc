@@ -295,6 +295,9 @@ class AnimationPresetTests(unittest.TestCase):
         try:
             self.assertEqual(css_response.status_code, 200)
             self.assertEqual(js_response.status_code, 200)
+            javascript = js_response.get_data(as_text=True)
+            self.assertIn('function parameterPresets(info)', javascript)
+            self.assertIn('applyParameterPreset', javascript)
         finally:
             css_response.close()
             js_response.close()
