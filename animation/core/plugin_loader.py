@@ -1,198 +1,261 @@
 #!/usr/bin/env python3
-"""
-Animation plugin loader and manager
-"""
+"""Discovery and loading for self-contained animation plugins."""
 
-import sys
+from __future__ import annotations
+
 import importlib.util
 import inspect
+import json
+import re
+import sys
 import traceback
-from typing import Dict, List, Type, Optional, Any, Iterable
 from pathlib import Path
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Type
 
-from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 from .base import AnimationBase
 
 
 class AnimationPluginLoader:
-    """Loads and manages animation plugins"""
-    
-    def __init__(self, plugins_dir: Optional[str] = None, allowed_plugins: Optional[Iterable[str]] = None):
-        """
-        Initialize plugin loader
-        
-        Args:
-            plugins_dir: Directory containing animation plugins
-            allowed_plugins: Optional iterable of plugin stems to load (others are ignored)
-        """
-        if plugins_dir is None:
-            plugins_dir = str(Path(__file__).resolve().parents[1] / "plugins")
-        self.plugins_dir = Path(plugins_dir)
-        self.plugins_dir.mkdir(exist_ok=True)
+    """Load animation packages and external flat plugin files.
 
-        self.allowed_plugins = set(allowed_plugins) if allowed_plugins else None
-        
-        # Ensure repo root and plugins directory are in Python path
+    Shipped plugins are packages with a validated ``manifest.json``. A package
+    owns its implementation, tests, curated presets, and assets. Flat ``.py``
+    files remain supported for external plugin directories so existing local
+    extensions do not need to migrate in lock-step with the repository.
+    """
+
+    MANIFEST_FILENAME = "manifest.json"
+    DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parents[1] / "plugins"
+
+    def __init__(
+        self,
+        plugins_dir: Optional[str] = None,
+        allowed_plugins: Optional[Iterable[str]] = None,
+    ):
+        self.plugins_dir = Path(plugins_dir or self.DEFAULT_PLUGINS_DIR).resolve()
+        self.allowed_plugins = (
+            set(allowed_plugins) if allowed_plugins is not None else None
+        )
+
         repo_root = self.plugins_dir.parent.parent
         if (repo_root / "drivers").exists() and str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
-        if str(self.plugins_dir.absolute()) not in sys.path:
-            sys.path.insert(0, str(self.plugins_dir.absolute()))
-        
+        if str(self.plugins_dir) not in sys.path:
+            sys.path.insert(0, str(self.plugins_dir))
+
         self.loaded_plugins: Dict[str, Type[AnimationBase]] = {}
         self.plugin_files: Dict[str, Path] = {}
-        
+        self.plugin_manifests: Dict[str, Dict[str, Any]] = {}
+
+    @classmethod
+    def shipped_plugin_ids(cls) -> List[str]:
+        """Return validated shipped package IDs in deterministic order."""
+        return cls().scan_plugins()
+
+    @staticmethod
+    def _validate_manifest(
+        manifest_path: Path, plugin_name: str
+    ) -> Dict[str, Any]:
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"invalid manifest {manifest_path}: {exc}") from exc
+
+        if not isinstance(payload, dict):
+            raise ValueError(f"manifest must contain an object: {manifest_path}")
+        if re.fullmatch(r"[a-z][a-z0-9_]*", plugin_name) is None:
+            raise ValueError(f"invalid plugin package ID {plugin_name!r}: {manifest_path}")
+        if payload.get("plugin_id") != plugin_name:
+            raise ValueError(
+                f"manifest plugin_id must match package directory {plugin_name!r}: "
+                f"{manifest_path}"
+            )
+        if not isinstance(payload.get("class"), str) or not payload["class"].strip():
+            raise ValueError(f"manifest class must be a non-empty string: {manifest_path}")
+        if not isinstance(payload.get("icon"), str) or not payload["icon"].strip():
+            raise ValueError(f"manifest icon must be a non-empty string: {manifest_path}")
+        if payload.get("gallery", "show") not in {"show", "test"}:
+            raise ValueError(f"manifest gallery must be 'show' or 'test': {manifest_path}")
+        return payload
+
     def scan_plugins(self) -> List[str]:
-        """
-        Scan plugins directory for animation files
-        
-        Returns:
-            List of plugin names found
-        """
-        plugin_names = []
+        """Scan package and external flat plugins in deterministic ID order."""
         self.plugin_files.clear()
-        
-        for file_path in self.plugins_dir.glob("*.py"):
-            if file_path.name.startswith("__"):
+        self.plugin_manifests.clear()
+        if not self.plugins_dir.is_dir():
+            return []
+
+        candidates: Dict[str, Path] = {}
+        manifests: Dict[str, Dict[str, Any]] = {}
+
+        for path in sorted(self.plugins_dir.iterdir(), key=lambda item: item.name):
+            if path.name.startswith("__"):
                 continue
-                
-            plugin_name = file_path.stem
-            if self.allowed_plugins and plugin_name not in self.allowed_plugins:
+            if path.is_file() and path.suffix == ".py":
+                if path.stem in candidates:
+                    raise ValueError(f"duplicate flat and package plugin ID: {path.stem}")
+                candidates[path.stem] = path
                 continue
-            plugin_names.append(plugin_name)
-            self.plugin_files[plugin_name] = file_path
-            
-        return plugin_names
-    
+            init_path = path / "__init__.py"
+            manifest_path = path / self.MANIFEST_FILENAME
+            if path.is_dir() and init_path.is_file():
+                if not manifest_path.is_file():
+                    raise ValueError(f"plugin package is missing manifest: {path}")
+                plugin_name = path.name
+                if plugin_name in candidates:
+                    raise ValueError(f"duplicate flat and package plugin ID: {plugin_name}")
+                manifests[plugin_name] = self._validate_manifest(manifest_path, plugin_name)
+                candidates[plugin_name] = init_path
+
+        for plugin_name in sorted(candidates):
+            if self.allowed_plugins is not None and plugin_name not in self.allowed_plugins:
+                continue
+            self.plugin_files[plugin_name] = candidates[plugin_name]
+            if plugin_name in manifests:
+                self.plugin_manifests[plugin_name] = manifests[plugin_name]
+        return list(self.plugin_files)
+
+    def _module_name(self, plugin_name: str, file_path: Path) -> str:
+        if (
+            self.plugins_dir == self.DEFAULT_PLUGINS_DIR.resolve()
+            and file_path.name == "__init__.py"
+        ):
+            return f"animation.plugins.{plugin_name}"
+        if file_path.name != "__init__.py":
+            return plugin_name
+        return f"_ledgrid_animation_plugin_{plugin_name}"
+
     def load_plugin(self, plugin_name: str) -> Optional[Type[AnimationBase]]:
-        """
-        Load a single animation plugin
-        
-        Args:
-            plugin_name: Name of the plugin to load
-            
-        Returns:
-            Animation class if successful, None if failed
-        """
+        """Load one scanned plugin, returning ``None`` after a reported failure."""
         try:
             file_path = self.plugin_files.get(plugin_name)
             if not file_path or not file_path.exists():
                 print(f"Plugin file not found: {plugin_name}")
                 return None
-            
-            # Load module from file
-            spec = importlib.util.spec_from_file_location(plugin_name, file_path)
+
+            module_name = self._module_name(plugin_name, file_path)
+            package_locations = [str(file_path.parent)] if file_path.name == "__init__.py" else None
+            spec = importlib.util.spec_from_file_location(
+                module_name,
+                file_path,
+                submodule_search_locations=package_locations,
+            )
             if spec is None or spec.loader is None:
                 print(f"Could not create spec for plugin: {plugin_name}")
                 return None
-                
-            module = importlib.util.module_from_spec(spec)
 
-            # Standard imports register a module before executing it. Mirror that
-            # behavior so decorators (notably dataclasses) and runtime type
-            # resolution can look the module up while its body is executing.
-            previous_module = sys.modules.get(plugin_name)
-            sys.modules[plugin_name] = module
+            module = importlib.util.module_from_spec(spec)
+            previous_module = sys.modules.get(module_name)
+            sys.modules[module_name] = module
             try:
                 spec.loader.exec_module(module)
             except Exception:
                 if previous_module is None:
-                    sys.modules.pop(plugin_name, None)
+                    sys.modules.pop(module_name, None)
                 else:
-                    sys.modules[plugin_name] = previous_module
+                    sys.modules[module_name] = previous_module
                 raise
-            # Find animation class defined in this module (skip imported bases).
-            # Without the __module__ / isabstract checks, plugins that import
-            # StatefulAnimationBase would bind that abstract class instead.
-            animation_class = None
-            for name, obj in inspect.getmembers(module):
+
+            animation_classes = [
+                obj
+                for _, obj in inspect.getmembers(module)
                 if (
                     inspect.isclass(obj)
                     and issubclass(obj, AnimationBase)
                     and obj is not AnimationBase
                     and obj.__module__ == module.__name__
                     and not inspect.isabstract(obj)
-                ):
-                    animation_class = obj
-                    break
+                )
+            ]
+            if len(animation_classes) != 1:
+                raise ValueError(
+                    f"expected exactly one concrete animation class in {plugin_name}; "
+                    f"found {len(animation_classes)}"
+                )
+            animation_class = animation_classes[0]
 
-            if animation_class is None:
-                print(f"No animation class found in plugin: {plugin_name}")
-                return None
-            
+            manifest = self.plugin_manifests.get(plugin_name)
+            if manifest and manifest["class"] != animation_class.__name__:
+                raise ValueError(
+                    f"manifest class {manifest['class']!r} does not match "
+                    f"{animation_class.__name__!r} in plugin {plugin_name}"
+                )
+
             self.loaded_plugins[plugin_name] = animation_class
             print(f"✓ Loaded plugin: {plugin_name} -> {animation_class.__name__}")
             return animation_class
-            
-        except Exception as e:
-            print(f"✗ Failed to load plugin {plugin_name}: {e}")
+        except Exception as exc:
+            print(f"✗ Failed to load plugin {plugin_name}: {exc}")
             traceback.print_exc()
             return None
-    
+
     def load_all_plugins(self) -> Dict[str, Type[AnimationBase]]:
-        """
-        Load all plugins from the plugins directory
-        
-        Returns:
-            Dict mapping plugin names to animation classes
-        """
         plugin_names = self.scan_plugins()
         self.loaded_plugins.clear()
-        
         for plugin_name in plugin_names:
             self.load_plugin(plugin_name)
-        
         return self.loaded_plugins.copy()
-    
+
     def reload_plugin(self, plugin_name: str) -> Optional[Type[AnimationBase]]:
-        """
-        Reload a specific plugin (hot reload)
-        
-        Args:
-            plugin_name: Name of plugin to reload
-            
-        Returns:
-            Reloaded animation class if successful
-        """
         print(f"🔄 Reloading plugin: {plugin_name}")
         return self.load_plugin(plugin_name)
-    
+
     def get_plugin(self, plugin_name: str) -> Optional[Type[AnimationBase]]:
-        """Get a loaded plugin by name"""
         return self.loaded_plugins.get(plugin_name)
-    
+
     def get_plugin_file(self, plugin_name: str) -> Optional[Path]:
-        """Get the backing file path for a loaded plugin"""
         return self.plugin_files.get(plugin_name)
-    
+
+    def get_plugin_dir(self, plugin_name: str) -> Optional[Path]:
+        """Return the owning directory for a scanned plugin."""
+        path = self.get_plugin_file(plugin_name)
+        if path is None:
+            return None
+        return path.parent
+
+    def iter_curated_preset_files(self, plugin_name: Optional[str] = None) -> Iterator[Path]:
+        """Enumerate shipped, plugin-owned presets in stable path order."""
+        names = [plugin_name] if plugin_name is not None else self.scan_plugins()
+        for name in names:
+            if name not in self.plugin_files:
+                self.scan_plugins()
+            plugin_file = self.plugin_files.get(name)
+            if plugin_file is None or plugin_file.name != "__init__.py":
+                continue
+            yield from sorted((plugin_file.parent / "presets").glob("*.json"))
+
     def list_plugins(self) -> List[str]:
-        """Get list of loaded plugin names"""
-        return list(self.loaded_plugins.keys())
-    
+        return list(self.loaded_plugins)
+
     def get_plugin_info(self, plugin_name: str) -> Optional[Dict[str, Any]]:
-        """Get metadata about a plugin"""
         plugin_class = self.get_plugin(plugin_name)
         if plugin_class is None:
             return None
 
-        # Build a lightweight controller so plugins that inspect dimensions don't crash
         class _InfoController:
             strip_count = DEFAULT_STRIP_COUNT
             leds_per_strip = DEFAULT_LEDS_PER_STRIP
             total_leds = strip_count * leds_per_strip
             debug = False
 
+        manifest = self.plugin_manifests.get(plugin_name, {})
+        manifest_info = {
+            "emoji": manifest.get("icon", "✨"),
+            "is_test": manifest.get("gallery") == "test",
+        }
         try:
-            temp_instance = plugin_class(_InfoController())
-            info = temp_instance.get_info()
-            info['plugin_name'] = plugin_name
-            info['file_path'] = str(self.plugin_files.get(plugin_name, ''))
+            info = plugin_class(_InfoController()).get_info()
+            info.update(manifest_info)
+            info["plugin_name"] = plugin_name
+            info["file_path"] = str(self.plugin_files.get(plugin_name, ""))
             return info
-        except Exception as e:
+        except Exception as exc:
             return {
-                'plugin_name': plugin_name,
-                'name': plugin_class.__name__,
-                'error': str(e),
-                'file_path': str(self.plugin_files.get(plugin_name, ''))
+                **manifest_info,
+                "plugin_name": plugin_name,
+                "name": plugin_class.__name__,
+                "error": str(exc),
+                "file_path": str(self.plugin_files.get(plugin_name, "")),
             }

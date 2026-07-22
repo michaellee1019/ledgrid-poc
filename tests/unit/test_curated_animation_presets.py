@@ -2,8 +2,6 @@
 
 import json
 import unittest
-from pathlib import Path
-
 import numpy as np
 
 from animation.core.base import RenderedFrame
@@ -15,12 +13,11 @@ from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 class CuratedAnimationPresetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.root = Path(__file__).resolve().parents[2]
-        loader = AnimationPluginLoader(allowed_plugins=AnimationManager.ALLOWED_PLUGINS)
-        cls.plugins = loader.load_all_plugins()
+        cls.loader = AnimationPluginLoader(allowed_plugins=AnimationManager.ALLOWED_PLUGINS)
+        cls.plugins = cls.loader.load_all_plugins()
 
     def test_all_present_presets_match_plugin_schemas_and_render(self):
-        paths = sorted((self.root / "presets" / "animations").glob("*/*.json"))
+        paths = list(self.loader.iter_curated_preset_files())
         self.assertGreaterEqual(len(paths), 70)
 
         controller = PreviewLEDController(
@@ -28,11 +25,11 @@ class CuratedAnimationPresetTests(unittest.TestCase):
             leds_per_strip=DEFAULT_LEDS_PER_STRIP,
         )
         for path in paths:
-            with self.subTest(preset=str(path.relative_to(self.root))):
+            with self.subTest(preset=str(path)):
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 animation_name = payload["animation"]
                 self.assertEqual(payload["preset_id"], path.stem)
-                self.assertEqual(animation_name, path.parent.name)
+                self.assertEqual(animation_name, path.parents[1].name)
                 self.assertIsInstance(payload.get("params"), dict)
                 self.assertIs(payload["params"].get("plant_aware"), True)
                 self.assertIn(animation_name, self.plugins)

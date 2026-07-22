@@ -1,14 +1,17 @@
-# Animation Core
+# Animation core
 
-Purpose: shared animation framework pieces used by all plugins.
+The core owns framework and lifecycle contracts used by every plugin.
 
-Key files:
-- base.py: AnimationBase, RenderedFrame, reusable frame buffers, and StatefulAnimationBase
-- manager.py: AnimationManager lifecycle and timing loop
-- plugin_loader.py: Discovery and hot-reload of plugins
+- `base.py`: `AnimationBase`, `RenderedFrame`, reusable frame buffers, and
+  `StatefulAnimationBase`.
+- `manager.py`: animation lifecycle, timing, previews, painter state, and frame
+  presentation.
+- `plugin_loader.py`: manifest validation, built-in package discovery, external
+  plugin loading, and curated-preset enumeration.
+- `plant_awareness.py`: cached installation geometry and plant-aware parameters.
+- `tests/`: focused tests for these runtime contracts.
 
-Plugin expectations:
-- Implement generate_frame(time_elapsed, frame_count).
-- Return a C-contiguous uint8 NumPy frame shaped `(controller.total_leds, 3)`.
-- Use `next_frame_buffer()` for dynamic output and `RenderedFrame` hints for unchanged or sparse frames.
-- Keep plugin-specific state inside the class instance.
+Reusable color, mask, palette, pixel-art, or spatial primitives belong in
+`animation/libraries/`, with their tests colocated under
+`animation/libraries/tests/`. Plugin-specific simulation and rendering remain
+inside the owning plugin package.

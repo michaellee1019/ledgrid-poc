@@ -13,8 +13,6 @@ import math
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
-
 from PIL import Image, ImageDraw
 
 
@@ -77,8 +75,14 @@ SCENES = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", type=Path, default=Path("assets/gifs"))
-    parser.add_argument("--preset-dir", type=Path, default=Path("presets/animations/gif_animation"))
+    parser.add_argument(
+        "--output-dir", type=Path,
+        default=Path("animation/plugins/gif_animation/assets"),
+    )
+    parser.add_argument(
+        "--preset-dir", type=Path,
+        default=Path("animation/plugins/gif_animation/presets"),
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -305,7 +309,7 @@ def preset_payload(scene: Scene) -> dict:
         "updated_at": CREATED_AT,
         "params": {
             "plant_aware": True,
-            "gif_directory": "assets/gifs",
+            "gif_directory": "animation/plugins/gif_animation/assets",
             "gif_name": f"{scene.slug}.gif",
             "gif_index": 0,
             "playback_speed": 1.0,

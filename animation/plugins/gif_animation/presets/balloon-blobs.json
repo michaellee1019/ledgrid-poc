@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "preset_id": "balloon-blobs",
+  "name": "Balloon Blobs",
+  "animation": "gif_animation",
+  "category": "Party",
+  "description": "Happy blobs float under bobbing balloons.",
+  "tags": [
+    "balloon",
+    "party",
+    "pink"
+  ],
+  "palette": {
+    "name": "Balloon Blobs",
+    "colors": [
+      "#070719",
+      "#FF7DB5",
+      "#FFE15E"
+    ]
+  },
+  "created_at": "2026-07-21T00:00:00Z",
+  "updated_at": "2026-07-21T00:00:00Z",
+  "params": {"plant_aware":true,
+    "gif_directory": "animation/plugins/gif_animation/assets",
+    "gif_name": "balloon-blobs.gif",
+    "gif_index": 0,
+    "playback_speed": 1.0,
+    "brightness": 0.72,
+    "brightness_mode": "rgb",
+    "brightness_floor": 0.0,
+    "gamma": 1.0,
+    "flip_y": true,
+    "fit_mode": "stretch",
+    "contain_background": 0
+  }
+}

@@ -14,7 +14,6 @@ import traceback
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any, List
-from pathlib import Path
 
 import numpy as np
 
@@ -96,38 +95,10 @@ class PreviewLEDController:
 class AnimationManager:
     """Manages animation playback and plugin system"""
 
-    # Only ship with a small, known-good set of animations
-    ALLOWED_PLUGINS = {
-        "ascii_drop",
-        "rainbow",
-        "emoji",
-        "emoji_arranger",
-        "gif_animation",
-        "gradient",
-        "sparkle",
-        "fluid_tank",
-        "flame_burst",
-        "fireworks",
-        "simple_test",
-        "tetris",
-        "pinball",
-        "maze_chase",
-        "christmas_tree",
-        "clock",
-        "conway_life",
-        "plant_calibration",
-        "plant_glow",
-        "plant_mask_highlight",
-        "pixel_quest",
-        "living_ecosystem",
-        "pixel_chase",
-        "solid",
-        "snake",
-        "spiral_single",
-        "strip_order",
-        "wave",
-        "world_flags",
-    }
+    # The checked-in package manifests are the single source of truth. Keeping
+    # this public set preserves callers that inspect the allowlist without
+    # duplicating a second registry in manager.py.
+    ALLOWED_PLUGINS = set(AnimationPluginLoader.shipped_plugin_ids())
     
     DEFAULT_ANIMATION = "sparkle"
 

@@ -15,7 +15,7 @@ from typing import Any, Mapping, Optional, Tuple
 
 import numpy as np
 
-from animation.core.mask_effects import dilate_8, indices_from_payload, logical_mask
+from animation.libraries.mask_effects import dilate_8, indices_from_payload, logical_mask
 
 
 DEFAULT_FOLIAGE_MASK = "config/plant_pixel_map_32x138.json"

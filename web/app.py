@@ -25,24 +25,6 @@ from drivers.frame_codec import (
     FRAME_ENCODING_NAME,
 )
 
-ANIMATION_EMOJI = {
-    'ascii_drop': '💻', 'christmas_tree': '🎄', 'clock': '🕰️', 'conway_life': '🧬',
-    'emoji': '😄', 'emoji_arranger': '🎭', 'fireworks': '🎆',
-    'flame_burst': '🔥', 'fluid_tank': '💧', 'gif_animation': '🎬',
-    'gradient': '🌈', 'living_ecosystem': '🌿', 'maze_chase': '👾',
-    'pinball': '🎱', 'pixel_chase': '💨', 'pixel_quest': '⚔️',
-    'plant_calibration': '🎯', 'plant_glow': '🪴', 'plant_mask_highlight': '🌱', 'rainbow': '🌈',
-    'simple_test': '🧪', 'solid': '🎨', 'sparkle': '✨',
-    'spiral_single': '🌀', 'strip_order': '🔢', 'tetris': '🧱',
-    'wave': '🌊', 'world_flags': '🌍',
-}
-
-TEST_ANIMATIONS = {
-    'plant_calibration', 'plant_mask_highlight', 'simple_test',
-    'spiral_single', 'strip_order',
-}
-
-
 class AnimationWebInterface:
     """Web interface for animation management"""
 
@@ -484,8 +466,8 @@ class AnimationWebInterface:
         for animation in self._sorted_animations():
             item = dict(animation)
             plugin_name = item.get('plugin_name', '')
-            item['emoji'] = ANIMATION_EMOJI.get(plugin_name, '✨')
-            item['is_test'] = plugin_name in TEST_ANIMATIONS
+            item.setdefault('emoji', '✨')
+            item.setdefault('is_test', False)
             presets = self._list_animation_presets(plugin_name)
             for preset in presets:
                 preset['emoji'] = self._preset_emoji(preset, item['emoji'])
@@ -769,11 +751,22 @@ class AnimationWebInterface:
         tmp_path.replace(path)
 
     def _animation_preset_dir(self, animation_name: str) -> Optional[Path]:
-        """Resolve an animation name to its isolated preset directory."""
+        """Resolve the writable runtime-preset directory for an animation."""
         safe_name = self._sanitize_preset_id(animation_name)
         if not safe_name or safe_name != animation_name:
             return None
         return self.animation_presets_dir / safe_name
+
+    def _curated_animation_preset_dir(self, animation_name: str) -> Optional[Path]:
+        """Resolve the read-only preset directory owned by a plugin package."""
+        safe_name = self._sanitize_preset_id(animation_name)
+        if not safe_name or safe_name != animation_name:
+            return None
+        loader = getattr(self.preview_manager, 'plugin_loader', None)
+        plugin_dir = loader.get_plugin_dir(animation_name) if loader is not None else None
+        if plugin_dir is None:
+            return None
+        return plugin_dir / 'presets'
 
     def _animation_preset_path(self, animation_name: str, preset_id: str) -> Optional[Path]:
         """Resolve an animation/preset pair without allowing path traversal."""
@@ -799,29 +792,35 @@ class AnimationWebInterface:
         }
 
     def _list_animation_presets(self, animation_name: str) -> List[Dict[str, Any]]:
-        """Scan disk for the animation's presets; no in-memory cache is used."""
-        preset_dir = self._animation_preset_dir(animation_name)
-        if preset_dir is None or not preset_dir.is_dir():
-            return []
+        """List curated and runtime presets, with runtime files overriding IDs."""
+        paths: Dict[str, Path] = {}
+        curated_dir = self._curated_animation_preset_dir(animation_name)
+        runtime_dir = self._animation_preset_dir(animation_name)
+        for preset_dir in (curated_dir, runtime_dir):
+            if preset_dir is not None and preset_dir.is_dir():
+                paths.update({path.stem: path for path in sorted(preset_dir.glob('*.json'))})
 
         summaries: List[Dict[str, Any]] = []
-        for path in sorted(preset_dir.glob('*.json')):
+        for path in paths.values():
             payload = self._read_json_file(path)
-            if not payload or payload.get('animation', animation_name) != animation_name:
-                continue
-            payload.setdefault('preset_id', path.stem)
-            payload.setdefault('name', path.stem)
-            payload.setdefault('animation', animation_name)
-            summaries.append(self._animation_preset_summary(payload))
+            if payload and payload.get('animation', animation_name) == animation_name:
+                payload.setdefault('preset_id', path.stem)
+                payload.setdefault('name', path.stem)
+                summaries.append(self._animation_preset_summary(payload))
         summaries.sort(
             key=lambda preset: str(preset.get('name') or preset.get('preset_id') or '').casefold()
         )
         return summaries
 
     def _load_animation_preset(self, animation_name: str, preset_id: str) -> Optional[Dict[str, Any]]:
-        """Read and validate a single animation preset directly from disk."""
+        """Read a runtime preset or fall back to its curated package preset."""
         path = self._animation_preset_path(animation_name, preset_id)
-        if path is None or not path.is_file():
+        if path is None:
+            return None
+        if not path.is_file():
+            curated_dir = self._curated_animation_preset_dir(animation_name)
+            path = curated_dir / path.name if curated_dir is not None else path
+        if not path.is_file():
             return None
         payload = self._read_json_file(path)
         if not payload or not isinstance(payload.get('params'), dict):

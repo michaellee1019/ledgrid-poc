@@ -61,7 +61,7 @@ class MultiDeviceLEDController:
         self.current_brightness = None
         
         if self.debug:
-            print(f"Multi-Device LED Controller")
+            print("Multi-Device LED Controller")
             print(f"  Devices: {num_devices}")
             print(f"  Strips per device: {strips_per_device}")
             print(f"  LEDs per strip: {leds_per_strip}")
@@ -453,13 +453,6 @@ class MultiDeviceLEDController:
         Returns:
             List of (bus, device_id) tuples
         """
-        # DISABLED: Physical reordering causes issues when not all devices are connected
-        # Users with 4 boards should use explicit device_map parameter if they need custom ordering
-        # Old logic: Physical left-to-right board order for 4-board wall installs:
-        # SPI1-CS0, SPI1-CS1, SPI0-CS1, SPI0-CS0
-        # if (num_devices == 4 and all devices exist):
-        #     reordered = [(1, 0), (1, 1), (primary_bus, 1), (primary_bus, 0)]
-
         env_map = self._parse_device_map_env()
         if env_map is not None:
             if len(env_map) < num_devices:
@@ -490,7 +483,7 @@ class MultiDeviceLEDController:
                     map_entries.append((1, spi1_ces[idx - 2]))
 
             if self.debug:
-                print(f"[INFO] Using SPI1 fallback for devices 2 and 3 (CE1, CE0)")
+                print("[INFO] Using SPI1 fallback for devices 2 and 3 (CE1, CE0)")
         else:
             # All devices on primary bus
             for device_id in range(num_devices):
