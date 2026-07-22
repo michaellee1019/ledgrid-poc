@@ -65,6 +65,28 @@ class ClockAnimationTests(unittest.TestCase):
 
         self.assertEqual(len(fingerprints), len(ClockAnimation.BACKGROUND_OPTIONS))
 
+    def test_digital_face_is_upright_in_wall_coordinates(self):
+        animation = _FixedClock(_Controller(), {
+            "face": "digital", "background": "solid", "palette": "mono",
+            "format_24h": True, "show_seconds": False, "glow": 0.0,
+        })
+        rendered = animation.generate_frame(0.0, 0)
+        physical = rendered.pixels.reshape(
+            _Controller.strip_count, _Controller.leds_per_strip, 3
+        )
+        visual = physical[:, ::-1, :]
+
+        text = "13:47"
+        x = (_Controller.strip_count - animation._text_width(text)) // 2
+        y = animation._center_y() - 3
+        lit = np.any(visual > 0, axis=2)
+
+        # The first glyph is 1: its top row has only the center pixel, while
+        # its bottom row is a three-pixel base. Reversing the wall geometry
+        # makes this assertion fail even though the frame remains non-empty.
+        np.testing.assert_array_equal(lit[x:x + 3, y], (False, True, False))
+        np.testing.assert_array_equal(lit[x:x + 3, y + 4], (True, True, True))
+
     def test_non_animated_clock_reuses_frame_inside_same_second(self):
         animation = _FixedClock(_Controller(), {
             "face": "digital", "background": "solid", "show_seconds": True,

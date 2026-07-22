@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
 import numpy as np
 
 from animation import AnimationBase
+from animation.core.plant_awareness import PLANT_MODIFIER_IDS
 
 
 Color = Tuple[int, int, int]
@@ -20,6 +21,10 @@ class ClockAnimation(AnimationBase):
     ANIMATION_DESCRIPTION = "Useful and atmospheric clocks with composable faces, palettes, and backgrounds"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.0"
+    # Every global plant mode protects the informational HUD. The semantic
+    # meaning of the selected mode may vary by animation, but physical foliage
+    # and globes can obscure a clock under any of them.
+    PLANT_MODIFIER_SUPPORT = frozenset(PLANT_MODIFIER_IDS)
 
     FACE_OPTIONS = (
         "digital", "analog", "binary", "orbit", "linear",
@@ -81,6 +86,8 @@ class ClockAnimation(AnimationBase):
         self._last_render_key = None
         self._last_frame = None
         self._plant_layout_offset = (0, 0)
+        self._plant_obstacle_overlap = 0
+        self._plant_clearance_overlap = 0
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = {
@@ -126,15 +133,21 @@ class ClockAnimation(AnimationBase):
         }[face]
         marks = np.zeros((self.width, self.height, 3), dtype=np.float32)
         draw(marks, now, palette, time_elapsed)
-        if self.plant_aware_enabled():
+        if self._plant_placement_enabled():
             marks = self._place_away_from_plants(marks)
         else:
             self._plant_layout_offset = (0, 0)
+            self._plant_obstacle_overlap = 0
+            self._plant_clearance_overlap = 0
         self._composite_glow(marks, float(self.params.get("glow", 0.45)))
 
         frame = self.next_frame_buffer(clear=False)
         np.clip(self._canvas, 0, 255, out=self._canvas)
-        frame[:] = self._canvas.reshape((-1, 3))
+        # Drawing uses conventional screen coordinates where y=0 is the visual
+        # top. Physical LED 0 is mounted at the visual bottom, so convert once
+        # at the render boundary. Keeping this transform out of the individual
+        # faces ensures text is upright and analog hands advance clockwise.
+        frame[:] = self._canvas[:, ::-1, :].reshape((-1, 3))
         self.apply_brightness_array(frame, out=frame)
         self._last_render_key, self._last_frame = render_key, frame
         return self.rendered_frame(frame)
@@ -143,6 +156,15 @@ class ClockAnimation(AnimationBase):
         """Return wall time for the face; isolated so render tests stay deterministic."""
         return datetime.now().astimezone() + timedelta(
             minutes=int(self.params.get("clock_offset_minutes", 0))
+        )
+
+    def _plant_placement_enabled(self) -> bool:
+        """Protect the clock for legacy mode or any non-zero global mode."""
+        if bool(self.params.get("plant_aware", False)):
+            return True
+        return any(
+            self.plant_modifier_strength(modifier) > 0.0
+            for modifier in self.PLANT_MODIFIER_SUPPORT
         )
 
     def _place_away_from_plants(self, marks: np.ndarray) -> np.ndarray:
@@ -156,6 +178,8 @@ class ClockAnimation(AnimationBase):
         coordinates = np.argwhere(occupied)
         if coordinates.size == 0:
             self._plant_layout_offset = (0, 0)
+            self._plant_obstacle_overlap = 0
+            self._plant_clearance_overlap = 0
             return marks
 
         masks = self.get_plant_masks()
@@ -165,10 +189,15 @@ class ClockAnimation(AnimationBase):
         dy_values = np.arange(-int(min_y), self.height - int(max_y), dtype=np.intp)
         shifted_x = coordinates[:, 0, None, None] + dx_values[None, :, None]
         shifted_y = coordinates[:, 1, None, None] + dy_values[None, None, :]
-        globe_counts = np.count_nonzero(masks.globes[shifted_x, shifted_y], axis=0)
-        foliage_counts = np.count_nonzero(masks.foliage[shifted_x, shifted_y], axis=0)
+        # Plant masks use canonical physical LED coordinates, while clock marks
+        # use visual top-to-bottom coordinates.
+        globes = masks.globes[:, ::-1]
+        foliage = masks.foliage[:, ::-1]
+        clearance = masks.clearance[:, ::-1]
+        globe_counts = np.count_nonzero(globes[shifted_x, shifted_y], axis=0)
+        foliage_counts = np.count_nonzero(foliage[shifted_x, shifted_y], axis=0)
         clearance_counts = np.count_nonzero(
-            masks.clearance[shifted_x, shifted_y], axis=0
+            clearance[shifted_x, shifted_y], axis=0
         )
         # Directly obscured marks dominate the score; clearance then keeps glow
         # and fine strokes from visually merging into leaves.  Lexicographic
@@ -188,6 +217,8 @@ class ClockAnimation(AnimationBase):
 
         dx, dy = best_offset
         self._plant_layout_offset = best_offset
+        self._plant_obstacle_overlap = int(direct[dx_index, dy_index])
+        self._plant_clearance_overlap = int(clearance_counts[dx_index, dy_index])
         if best_offset == (0, 0):
             return marks
         placed = np.zeros_like(marks)
@@ -197,11 +228,13 @@ class ClockAnimation(AnimationBase):
         return placed
 
     def get_runtime_stats(self) -> Dict[str, Any]:
-        if not self.plant_aware_enabled():
+        if not self._plant_placement_enabled():
             return {}
         masks = self.get_plant_masks()
         return {
             "plant_layout_offset": self._plant_layout_offset,
+            "plant_face_obstacle_overlap": self._plant_obstacle_overlap,
+            "plant_face_clearance_overlap": self._plant_clearance_overlap,
             "plant_foliage_pixels": masks.foliage_count,
             "plant_globe_pixels": masks.globe_count,
             "plant_mask_error": masks.error,
