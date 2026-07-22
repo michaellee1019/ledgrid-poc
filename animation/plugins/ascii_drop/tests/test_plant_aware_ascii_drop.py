@@ -38,13 +38,25 @@ class PlantAwareAsciiDropTests(unittest.TestCase):
     def test_disabled_mode_preserves_seeded_simulation_and_pixels(self):
         implicit = self.make_animation()
         explicit = self.make_animation(plant_aware=False)
+        zero_strength = self.make_animation(
+            plant_aware=True,
+            plant_modifiers={
+                "version": 1,
+                "active": ["illuminate"],
+                "strengths": {"illuminate": 0.0},
+            },
+        )
 
         for frame_count, elapsed in enumerate((0.0, 0.1, 0.25, 0.5, 0.75)):
             left = implicit.generate_frame(elapsed, frame_count).pixels.copy()
             right = explicit.generate_frame(elapsed, frame_count).pixels.copy()
+            zero = zero_strength.generate_frame(elapsed, frame_count).pixels.copy()
             np.testing.assert_array_equal(left, right)
+            np.testing.assert_array_equal(left, zero)
             self.assertEqual(implicit._pieces, explicit._pieces)
+            self.assertEqual(implicit._pieces, zero_strength._pieces)
             np.testing.assert_array_equal(implicit._settled, explicit._settled)
+            np.testing.assert_array_equal(implicit._settled, zero_strength._settled)
 
     def test_enabled_mode_selects_the_least_occluded_falling_lane(self):
         # Cover the full height of the left half. A five-pixel glyph fits at x=5.
@@ -83,6 +95,38 @@ class PlantAwareAsciiDropTests(unittest.TestCase):
         self.assertGreater(int(globe[2]), int(globe[1]))
         self.assertFalse(np.array_equal(foliage, globe))
         self.assertTrue(animation.get_runtime_stats()["plant_aware"])
+
+    def test_illuminate_only_recommends_landmarks_without_obstacle_routing(self):
+        covered = [x * 14 + led for x in range(5) for led in range(14)]
+        self.foliage_path.write_text(json.dumps({"covered_indices": covered}))
+        baseline = self.make_animation()
+        illuminated = self.make_animation(
+            plant_aware=True,
+            plant_modifiers={
+                "version": 1,
+                "active": ["illuminate"],
+                "strengths": {"illuminate": 0.7},
+            },
+        )
+
+        baseline._spawn_next_character()
+        illuminated._spawn_next_character()
+
+        self.assertEqual(illuminated._pieces[0]["x"], baseline._pieces[0]["x"])
+        self.assertFalse(illuminated._plant_obstacles_enabled())
+        self.assertTrue(illuminated._plant_landmarks_enabled())
+        self.assertGreater(np.count_nonzero(illuminated._plant_foliage), 0)
+
+    def test_curated_presets_explicitly_recommend_no_obstacle_modifier(self):
+        preset_dir = Path(__file__).resolve().parents[1] / "presets"
+        paths = sorted(preset_dir.glob("*.json"))
+        self.assertTrue(paths)
+        for path in paths:
+            with self.subTest(preset=path.name):
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                modifiers = payload["params"]["plant_modifiers"]
+                self.assertIn("illuminate", modifiers["active"])
+                self.assertNotIn("obstacle", modifiers["active"])
 
 
 if __name__ == "__main__":

@@ -15,7 +15,14 @@ MOODS = {
     "ember": ((12, 2, 2), (139, 31, 9), (255, 153, 37)),
     "reef": ((2, 5, 17), (20, 91, 111), (213, 65, 129)),
     "violet": ((5, 2, 18), (64, 32, 118), (186, 122, 255)),
+    "daylight": ((28, 48, 72), (105, 178, 222), (244, 251, 255)),
+    "pastel": ((35, 24, 58), (174, 128, 205), (255, 214, 226)),
+    "synthwave": ((18, 5, 45), (193, 35, 151), (45, 224, 255)),
+    "candlelight": ((30, 9, 2), (178, 74, 18), (255, 218, 128)),
+    "aurora": ((3, 18, 29), (27, 154, 134), (168, 255, 221)),
 }
+
+BACKGROUND_LEVELS = {"none": 0.0, "soft": 0.35, "luminous": 0.7, "radiant": 1.0}
 
 
 class ProceduralLivingBase(AnimationBase):
@@ -33,6 +40,8 @@ class ProceduralLivingBase(AnimationBase):
             "density": 1.0,
             "mood": "moon",
             "brightness": 0.42,
+            "background": "soft",
+            "background_level": 0.16,
             "simulation_hz": self.SIM_HZ,
             "render_fps": self.RENDER_FPS,
         })
@@ -57,8 +66,12 @@ class ProceduralLivingBase(AnimationBase):
                         "description": "Bounded population or pattern density"},
             "mood": {"type": "str", "default": "moon", "options": list(MOODS),
                      "description": "Presentation-only color family"},
-            "brightness": {"type": "float", "min": 0.0, "max": 0.75, "default": 0.42,
+            "brightness": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.42,
                            "description": "Conservative overall LED brightness"},
+            "background": {"type": "str", "options": list(BACKGROUND_LEVELS), "default": "soft",
+                           "description": "Ambient light behind the living system"},
+            "background_level": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.16,
+                                 "description": "Strength of the ambient background"},
             "simulation_hz": {"type": "float", "min": 5.0, "max": 20.0,
                               "default": self.SIM_HZ, "description": "Fixed semantic updates per second"},
             "render_fps": {"type": "float", "min": 20.0, "max": 40.0,
@@ -118,9 +131,17 @@ class ProceduralLivingBase(AnimationBase):
 
     def _finish_canvas(self, canvas: np.ndarray):
         """Apply global brightness and map logical (height,width) to flat strips."""
+        style = str(self.params.get("background", "soft"))
+        level = float(np.clip(self.params.get("background_level", .16), 0.0, 1.0))
+        strength = BACKGROUND_LEVELS.get(style, BACKGROUND_LEVELS["soft"]) * level
+        if strength > 0.0:
+            _, mid, high = (np.asarray(color, dtype=np.float32) for color in self._palette())
+            color = mid * (1.0 - .38 * strength) + high * (.18 + .38 * strength)
+            floor = np.clip(color * (.34 * strength), 0.0, 255.0).astype(np.uint8)
+            np.maximum(canvas, floor, out=canvas)
         frame = self.next_frame_buffer(clear=False)
         flat = canvas.transpose(1, 0, 2).reshape(-1, 3)
-        brightness = float(np.clip(self.params.get("brightness", .42), 0.0, .75))
+        brightness = float(np.clip(self.params.get("brightness", .42), 0.0, 1.0))
         np.multiply(flat, brightness, out=frame, casting="unsafe")
         return frame
 
@@ -130,4 +151,3 @@ class ProceduralLivingBase(AnimationBase):
     def logical_state(self):
         """Stable semantic snapshot used by deterministic and presentation tests."""
         raise NotImplementedError
-

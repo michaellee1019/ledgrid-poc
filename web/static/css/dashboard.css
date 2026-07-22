@@ -67,6 +67,15 @@
     .form-range { accent-color: var(--show-accent); }
     .form-check-input:checked { border-color: var(--show-accent); background-color: var(--show-accent); }
     .save-preset-button { background: linear-gradient(135deg, #16a66a, #078456); border: 0; }
+    @media (min-width: 1200px) {
+        .dashboard-sidebar-scroll {
+            max-height: calc(100vh - 2rem);
+            overflow-y: auto;
+            overscroll-behavior-y: contain;
+            padding-right: .25rem;
+            scrollbar-gutter: stable;
+        }
+    }
     @media (max-width: 767.98px) {
         .animation-grid { grid-template-columns: 1fr; }
         .preset-strip, .parameter-grid { grid-template-columns: 1fr; }

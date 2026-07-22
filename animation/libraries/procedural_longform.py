@@ -18,7 +18,14 @@ PALETTES = {
     "natural": ((2, 6, 17), (52, 102, 151), (242, 178, 104)),
     "ember": ((5, 4, 12), (56, 39, 72), (237, 132, 63)),
     "sleeper": ((1, 3, 9), (13, 28, 47), (111, 79, 53)),
+    "daylight": ((28, 48, 72), (105, 178, 222), (244, 251, 255)),
+    "pastel": ((35, 24, 58), (174, 128, 205), (255, 214, 226)),
+    "synthwave": ((18, 5, 45), (193, 35, 151), (45, 224, 255)),
+    "candlelight": ((30, 9, 2), (178, 74, 18), (255, 218, 128)),
+    "aurora": ((3, 18, 29), (27, 154, 134), (168, 255, 221)),
 }
+
+BACKGROUND_LEVELS = {"none": 0.0, "soft": 0.35, "luminous": 0.7, "radiant": 1.0}
 
 
 class LongformSceneBase(AnimationBase):
@@ -34,6 +41,8 @@ class LongformSceneBase(AnimationBase):
         self.default_params.update({
             "speed": 1.0,
             "brightness": 0.42,
+            "background": "soft",
+            "background_level": 0.18,
             "motion": 0.35,
             "density": 0.5,
             "mood": self.DEFAULT_MOOD,
@@ -61,14 +70,19 @@ class LongformSceneBase(AnimationBase):
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
         schema["speed"].update({"min": 0.0, "max": 3.0, "default": 1.0})
-        schema["brightness"].update({"default": 0.42})
+        schema["brightness"].update({"default": 0.42, "max": 1.0})
         schema.update({
             "motion": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.35,
                        "description": "Macro motion intensity without changing scene density"},
             "density": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.5,
                         "description": "Amount of scene detail without changing motion"},
-            "mood": {"type": "str", "default": self.DEFAULT_MOOD, "options": list(self.MOODS),
+            "mood": {"type": "str", "default": self.DEFAULT_MOOD,
+                     "options": list(dict.fromkeys((*self.MOODS, "daylight", "pastel", "synthwave", "candlelight", "aurora"))),
                      "description": "Luminance-capped color family"},
+            "background": {"type": "str", "default": "soft", "options": list(BACKGROUND_LEVELS),
+                           "description": "Ambient light behind the primary scene"},
+            "background_level": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.18,
+                                 "description": "Strength of the ambient background"},
             "render_fps": {"type": "int", "min": 5, "max": 40, "default": 24,
                            "description": "Source render cadence"},
             "seed": {"type": "int", "min": 0, "max": 2147483647, "default": 1729,
@@ -99,6 +113,7 @@ class LongformSceneBase(AnimationBase):
         motion = min(1.0, max(0.0, float(self.params.get("motion", 0.35))))
         density = min(1.0, max(0.0, float(self.params.get("density", 0.5))))
         self.render_scene(t, motion, density)
+        self._apply_background()
         self._apply_plant_presentation(t)
         brightness = min(1.0, max(0.0, float(self.params.get("brightness", 0.42))))
         self._rgb *= brightness
@@ -117,6 +132,8 @@ class LongformSceneBase(AnimationBase):
             float(self.params.get("motion", 0.35)),
             float(self.params.get("density", 0.5)),
             str(self.params.get("mood", self.DEFAULT_MOOD)),
+            str(self.params.get("background", "soft")),
+            float(self.params.get("background_level", .18)),
             int(self.params.get("render_fps", 24)),
             state,
         ) + self.scene_key()
@@ -137,6 +154,17 @@ class LongformSceneBase(AnimationBase):
         self._rgb += (high - mid) * second
         if accent is not None:
             self._rgb += np.clip(accent, 0.0, 1.0)[..., None] * high * 0.35
+
+    def _apply_background(self):
+        style = str(self.params.get("background", "soft"))
+        level = float(np.clip(self.params.get("background_level", .18), 0.0, 1.0))
+        strength = BACKGROUND_LEVELS.get(style, BACKGROUND_LEVELS["soft"]) * level
+        if strength <= 0.0:
+            return
+        low, mid, high = self.palette()
+        color = mid * (1.0 - .38 * strength) + high * (.18 + .38 * strength)
+        vertical = (.62 + .38 * (1.0 - self._y))[..., None]
+        self._rgb += color * vertical * (.16 * strength)
 
     def render_scene(self, t: float, motion: float, density: float):
         if self.SCENE == "fog":

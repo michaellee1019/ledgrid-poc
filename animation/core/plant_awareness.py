@@ -23,9 +23,11 @@ DEFAULT_FOLIAGE_MASK = "config/plant_pixel_map_32x138.json"
 DEFAULT_GLOBE_MASK = "config/plant_globe_map_32x138.json"
 
 PLANT_MODIFIER_IDS = (
-    "illuminate", "shadow", "refract", "attractor", "repulsor", "slow_zone",
-    "obstacle", "portal", "bumper", "hazard", "habitat", "emitter",
+    "illuminate", "shadow", "refract", "hue_shift", "liquid_glass",
+    "attractor", "repulsor", "slow_zone", "obstacle", "portal", "bumper",
+    "hazard", "habitat", "emitter",
 )
+FRAMEWORK_VISUAL_MODIFIERS = frozenset(("hue_shift", "liquid_glass"))
 FIELD_MODIFIERS = frozenset(("attractor", "repulsor", "slow_zone"))
 SURFACE_MODIFIERS = frozenset(("obstacle", "portal", "bumper", "hazard", "habitat"))
 GLOBE_REGION_ORDER = (

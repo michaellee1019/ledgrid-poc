@@ -85,8 +85,11 @@ class ProceduralAtmosphereTests(unittest.TestCase):
         for plugin_class in self.plugins.values():
             animation = plugin_class(self.controller, {"seed": 17})
             schema = animation.get_parameter_schema()
-            for key in ("motion", "density", "mood", "brightness", "source_fps", "seed"):
+            for key in ("motion", "density", "mood", "background", "background_level",
+                        "brightness", "source_fps", "seed"):
                 self.assertIn(key, schema)
+            self.assertEqual(schema["background"]["options"],
+                             ["none", "soft", "luminous", "radiant"])
             before = self.pixels(animation.generate_frame(0.0, 0)).copy()
             animation.update_parameters({"mood": "ember", "density": .94})
             after = self.pixels(animation.generate_frame(0.0, 1))
@@ -116,10 +119,12 @@ class ProceduralAtmosphereTests(unittest.TestCase):
                 self.assertEqual(empty.get_runtime_stats()["simulation_time"],
                                  zero.get_runtime_stats()["simulation_time"])
 
-    def test_three_curated_presets_per_plugin_are_valid_and_distinct(self):
+    def test_curated_presets_per_plugin_are_valid_and_distinct(self):
         for plugin_id, plugin_class in self.plugins.items():
             paths = list(self.loader.iter_curated_preset_files(plugin_id))
-            self.assertEqual([path.stem for path in paths], ["night", "quiet", "showcase"])
+            stems = {path.stem for path in paths}
+            self.assertGreaterEqual(len(paths), 3)
+            self.assertTrue({"night", "quiet", "showcase"}.issubset(stems))
             frames = []
             for path in paths:
                 payload = json.loads(path.read_text(encoding="utf-8"))
@@ -129,7 +134,18 @@ class ProceduralAtmosphereTests(unittest.TestCase):
                 schema = animation.get_parameter_schema()
                 self.assertTrue(set(payload["params"]).issubset(schema))
                 frames.append(self.pixels(animation.generate_frame(0.0, 0)).copy())
-            self.assertEqual(len({frame.tobytes() for frame in frames}), 3)
+            self.assertEqual(len({frame.tobytes() for frame in frames}), len(paths))
+
+    def test_radiant_daylight_materially_lifts_a_warmed_scene(self):
+        plugin_class = self.plugins["aurora_curtains"]
+        common = {"seed": 991, "mood": "daylight", "brightness": .85,
+                  "motion": .5, "density": .7, "background_level": .9}
+        dark = plugin_class(self.controller, {**common, "background": "none"})
+        bright = plugin_class(self.controller, {**common, "background": "radiant"})
+        for index, elapsed in enumerate((0.0, .06, .13, .21)):
+            dark_frame = self.pixels(dark.generate_frame(elapsed, index))
+            bright_frame = self.pixels(bright.generate_frame(elapsed, index))
+        self.assertGreater(float(bright_frame.mean()), float(dark_frame.mean()) + 2.0)
 
     def test_key_scene_semantics(self):
         tidal = self.plugins["tidal_bioluminescence"](self.controller, {"density": .7})

@@ -26,6 +26,8 @@ class PlantAwarePixelChaseTests(unittest.TestCase):
         )
         return PixelChaseAnimation(_Controller(), {
             "pixels_per_second": 10.0,
+            "pixel_count": 1,
+            "tail_style": "none",
             "red": 200,
             "green": 100,
             "blue": 50,

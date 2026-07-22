@@ -127,9 +127,12 @@ future animation start and preview. Plugins declare supported semantics through
 `PLANT_MODIFIER_SUPPORT`, then use `plant_modifier_enabled()` and
 `plant_modifier_strength()`; unsupported active IDs are observable no-ops.
 
-The twelve stable IDs are `illuminate`, `shadow`, `refract`, `attractor`,
-`repulsor`, `slow_zone`, `obstacle`, `portal`, `bumper`, `hazard`, `habitat`,
-and `emitter`. At most one field modifier and one surface modifier may be active.
+The fourteen stable IDs are `illuminate`, `shadow`, `refract`, `hue_shift`,
+`liquid_glass`, `attractor`, `repulsor`, `slow_zone`, `obstacle`, `portal`,
+`bumper`, `hazard`, `habitat`, and `emitter`. Hue Shift and Liquid Glass are
+universal presentation modifiers applied by the framework after plugin rendering;
+all other modifiers require explicit plugin support. At most one field modifier
+and one surface modifier may be active.
 The old `plant_aware` boolean remains only as a compatibility input and migrates
 to Illuminate plus Obstacle; newly persisted global state uses the composable
 shape.

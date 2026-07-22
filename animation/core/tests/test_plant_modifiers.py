@@ -29,7 +29,9 @@ class _Animation(AnimationBase):
 
 class PlantModifierStateTests(unittest.TestCase):
     def test_catalog_and_canonical_defaults(self):
-        self.assertEqual(len(PLANT_MODIFIER_IDS), 12)
+        self.assertEqual(len(PLANT_MODIFIER_IDS), 14)
+        self.assertIn("hue_shift", PLANT_MODIFIER_IDS)
+        self.assertIn("liquid_glass", PLANT_MODIFIER_IDS)
         state = PlantModifierState.from_payload({
             "active": ["obstacle", "illuminate"], "strengths": {}
         })
@@ -63,6 +65,63 @@ class PlantModifierStateTests(unittest.TestCase):
         self.assertFalse(animation.plant_modifier_enabled("emitter"))
         self.assertEqual(animation.plant_modifier_strength("emitter"), 0.0)
         self.assertEqual(animation.get_info()["unsupported_plant_modifiers"], ["emitter"])
+
+    def test_framework_visual_modifiers_are_universally_supported(self):
+        animation = _Animation(_Controller(), {"plant_modifiers": {
+            "active": ["hue_shift", "liquid_glass"],
+            "strengths": {"hue_shift": 0.75, "liquid_glass": 0.6},
+        }})
+        self.assertTrue(animation.plant_modifier_enabled("hue_shift"))
+        self.assertTrue(animation.plant_modifier_enabled("liquid_glass"))
+        self.assertIn("hue_shift", animation.get_info()["plant_modifier_support"])
+        self.assertIn("liquid_glass", animation.get_info()["plant_modifier_support"])
+        self.assertFalse(animation.get_info()["unsupported_plant_modifiers"])
+
+    def test_framework_visual_modifier_postprocess_and_zero_strength_noop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            foliage = Path(directory) / "foliage.json"
+            globes = Path(directory) / "globes.json"
+            foliage.write_text(json.dumps({"covered_indices": [25, 26, 37]}))
+            globes.write_text(json.dumps({"globe_indices": [50]}))
+            paths = {
+                "plant_mask_path": str(foliage),
+                "plant_globe_mask_path": str(globes),
+            }
+            source = np.zeros((_Controller.total_leds, 3), dtype=np.uint8)
+            source[:, 0] = np.arange(_Controller.total_leds, dtype=np.uint8) + 80
+            source[:, 1] = 45
+            source[:, 2] = 15
+
+            zero = _Animation(_Controller(), {**paths, "plant_modifiers": {
+                "active": ["hue_shift", "liquid_glass"],
+                "strengths": {"hue_shift": 0.0, "liquid_glass": 0.0},
+            }})
+            self.assertIs(zero.apply_framework_plant_modifiers(source), source)
+
+            hue = _Animation(_Controller(), {**paths, "plant_modifiers": {
+                "active": ["hue_shift"], "strengths": {"hue_shift": 0.8},
+            }})
+            hue_frame = hue.apply_framework_plant_modifiers(source)
+            self.assertFalse(np.array_equal(hue_frame[25], source[25]))
+            np.testing.assert_array_equal(hue_frame[0], source[0])
+            self.assertFalse(np.shares_memory(hue_frame, source))
+
+            glass = _Animation(_Controller(), {**paths, "plant_modifiers": {
+                "active": ["liquid_glass"], "strengths": {"liquid_glass": 0.9},
+            }})
+            glass_frame = glass.apply_framework_plant_modifiers(source)
+            self.assertFalse(np.array_equal(glass_frame, source))
+            self.assertIs(
+                glass.apply_framework_plant_modifiers(source, changed=False),
+                glass_frame,
+            )
+            glass.update_parameters({"plant_modifiers": {
+                "active": ["liquid_glass"], "strengths": {"liquid_glass": 0.2},
+            }})
+            self.assertTrue(glass.framework_plant_modifier_refresh_pending())
+            refreshed = glass.apply_framework_plant_modifiers(source, changed=False)
+            self.assertFalse(np.array_equal(refreshed, glass_frame))
+            self.assertFalse(glass.framework_plant_modifier_refresh_pending())
 
     def test_live_updates_refresh_cached_modifier_state(self):
         animation = _Animation(_Controller())

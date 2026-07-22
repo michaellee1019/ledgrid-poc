@@ -700,6 +700,7 @@ class AnimationManager:
                     frame_data = temp_animation.get_current_colors()
 
             frame_data = self._normalize_frame(frame_data)
+            frame_data = temp_animation.apply_framework_plant_modifiers(frame_data)
 
             return {
                 'frame_data': frame_data,
@@ -770,6 +771,7 @@ class AnimationManager:
                     frame_data = temp_animation.get_current_colors()
 
             frame_data = self._normalize_frame(frame_data)
+            frame_data = temp_animation.apply_framework_plant_modifiers(frame_data)
 
             return {
                 'frame_data': frame_data,
@@ -830,6 +832,28 @@ class AnimationManager:
                     changed = rendered.changed if isinstance(rendered, RenderedFrame) else True
                     dirty_ranges = rendered.dirty_ranges if isinstance(rendered, RenderedFrame) else None
                     frame = self._normalize_frame(rendered)
+                    refresh_pending = getattr(
+                        self.current_animation,
+                        'framework_plant_modifier_refresh_pending',
+                        None,
+                    )
+                    apply_framework = getattr(
+                        self.current_animation, 'apply_framework_plant_modifiers', None
+                    )
+                    framework_active = getattr(
+                        self.current_animation, 'framework_plant_modifiers_active', None
+                    )
+                    framework_refresh = bool(
+                        refresh_pending() if callable(refresh_pending) else False
+                    )
+                    if callable(apply_framework):
+                        frame = apply_framework(frame, changed=changed)
+                    if callable(framework_active) and framework_active():
+                        changed = changed or framework_refresh
+                        # Optical displacement can make a source pixel affect a
+                        # neighboring plant-region pixel, so plugin dirty ranges
+                        # are no longer a complete presentation description.
+                        dirty_ranges = None
                     generate_duration = time.perf_counter() - gen_start
 
                     with self.frame_data_lock:

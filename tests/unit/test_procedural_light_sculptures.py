@@ -50,8 +50,11 @@ class ProceduralLightSculptureTests(unittest.TestCase):
                 for t in (0.0, .2, .8):
                     np.testing.assert_array_equal(self.pixels(a.generate_frame(t, 0)), self.pixels(b.generate_frame(t, 0)))
                 schema = a.get_parameter_schema()
-                for key in ("motion", "density", "mood", "brightness", "seed"):
+                for key in ("motion", "density", "mood", "background", "background_level",
+                            "brightness", "seed"):
                     self.assertIn(key, schema)
+                self.assertEqual(schema["background"]["options"],
+                                 ["none", "soft", "luminous", "radiant"])
                 before = self.pixels(a.generate_frame(1.0, 0)).copy()
                 a.update_parameters({"mood": "showcase"})
                 after = self.pixels(a.generate_frame(1.0, 0))
@@ -106,12 +109,13 @@ class ProceduralLightSculptureTests(unittest.TestCase):
             self.assertEqual(row.shape,(32,))
         self.assertTrue(np.any(ca.history[0] != ca.history[1]))
 
-    def test_each_plugin_has_three_distinct_schema_valid_curated_presets(self):
+    def test_each_plugin_has_distinct_schema_valid_curated_presets(self):
         root=Path(__file__).resolve().parents[2]/"animation"/"plugins"
         for plugin_id,cls in zip(IDS,CLASSES):
             frames=[]
             paths=sorted((root/plugin_id/"presets").glob("*.json"))
-            self.assertEqual({p.stem for p in paths},{"quiet","showcase","night"})
+            self.assertGreaterEqual(len(paths),3)
+            self.assertTrue({"quiet","showcase","night"}.issubset({p.stem for p in paths}))
             for path in paths:
                 payload=json.loads(path.read_text()); self.assertIs(payload["params"]["plant_aware"],True)
                 animation=cls(self.controller,payload["params"]); schema=animation.get_parameter_schema()
@@ -119,7 +123,17 @@ class ProceduralLightSculptureTests(unittest.TestCase):
                     self.assertIn(key,schema)
                     if "options" in schema[key]: self.assertIn(value,schema[key]["options"])
                 frames.append(self.pixels(animation.generate_frame(.8,0)).copy())
-            self.assertEqual(len({frame.tobytes() for frame in frames}),3)
+            self.assertEqual(len({frame.tobytes() for frame in frames}),len(paths))
+
+    def test_radiant_bright_background_materially_lifts_a_warmed_scene(self):
+        common={"seed":929,"mood":"bright","brightness":.85,"motion":.5,
+                "density":.72,"background_level":.9}
+        dark=QuasicrystalBloomAnimation(self.controller,{**common,"background":"none"})
+        bright=QuasicrystalBloomAnimation(self.controller,{**common,"background":"radiant"})
+        for index,elapsed in enumerate((0.0,.1,.25,.5)):
+            dark_frame=self.pixels(dark.generate_frame(elapsed,index))
+            bright_frame=self.pixels(bright.generate_frame(elapsed,index))
+        self.assertGreater(float(bright_frame.mean()),float(dark_frame.mean())+2.0)
 
 
 if __name__ == "__main__": unittest.main()

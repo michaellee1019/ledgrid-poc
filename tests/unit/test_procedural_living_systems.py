@@ -74,8 +74,11 @@ class ProceduralLivingSystemsTests(unittest.TestCase):
             with self.subTest(plugin=plugin):
                 item = animation(plugin)
                 schema = item.get_parameter_schema()
-                for key in ("motion", "density", "mood", "brightness", "seed", "simulation_hz", "render_fps", "plant_aware"):
+                for key in ("motion", "density", "mood", "background", "background_level",
+                            "brightness", "seed", "simulation_hz", "render_fps", "plant_aware"):
                     self.assertIn(key, schema)
+                self.assertEqual(schema["background"]["options"],
+                                 ["none", "soft", "luminous", "radiant"])
                 item.generate_frame(0, 0)
                 before = item.logical_state()
                 item.update_parameters({"mood": "ember", "brightness": .2})
@@ -139,14 +142,17 @@ class ProceduralLivingSystemsTests(unittest.TestCase):
         self.assertGreater(np.count_nonzero(reef.state != before), 30)
         self.assertLessEqual(reef.gx.size, 40)
 
-    def test_three_curated_presets_are_schema_valid_and_distinct(self):
+    def test_curated_presets_are_schema_valid_and_distinct(self):
         for plugin in PLUGINS:
             with self.subTest(plugin=plugin):
                 fingerprints = set()
-                for preset_id in ("quiet", "showcase", "night"):
-                    path = Path(f"animation/plugins/{plugin}/presets/{preset_id}.json")
+                paths = sorted(Path(f"animation/plugins/{plugin}/presets").glob("*.json"))
+                self.assertGreaterEqual(len(paths), 3)
+                self.assertTrue({"quiet", "showcase", "night"}.issubset(
+                    {path.stem for path in paths}))
+                for path in paths:
                     payload = json.loads(path.read_text())
-                    self.assertEqual(payload["preset_id"], preset_id)
+                    self.assertEqual(payload["preset_id"], path.stem)
                     self.assertEqual(payload["animation"], plugin)
                     self.assertIs(payload["params"]["plant_aware"], True)
                     item = animation(plugin, payload["params"])
@@ -156,7 +162,18 @@ class ProceduralLivingSystemsTests(unittest.TestCase):
                     item.generate_frame(.2, 1)
                     frame = pixels(item.generate_frame(.4, 2))
                     fingerprints.add(hash(frame.tobytes()))
-                self.assertEqual(len(fingerprints), 3)
+                self.assertEqual(len(fingerprints), len(paths))
+
+    def test_radiant_aurora_materially_lifts_a_warmed_scene(self):
+        common = {"seed": 919, "mood": "aurora", "brightness": .85,
+                  "motion": .8, "density": 1.1, "background_level": .9}
+        dark = animation("reaction_diffusion_garden", {**common, "background": "none"})
+        bright = animation("reaction_diffusion_garden", {**common, "background": "radiant"})
+        for index in range(18):
+            elapsed = index * .08
+            dark_frame = pixels(dark.generate_frame(elapsed, index))
+            bright_frame = pixels(bright.generate_frame(elapsed, index))
+        self.assertGreater(float(bright_frame.mean()), float(dark_frame.mean()) + 2.0)
 
 
 if __name__ == "__main__":

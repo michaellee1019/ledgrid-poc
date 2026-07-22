@@ -15,6 +15,7 @@ class AsciiDropAnimation(AnimationBase):
     ANIMATION_DESCRIPTION = "5x7 characters fall and stack across the LED wall"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "2.0"
+    PLANT_MODIFIER_SUPPORT = frozenset(("illuminate", "obstacle"))
 
     CHARACTER_BITMAPS: Dict[str, List[str]] = {
         'A': [
@@ -453,15 +454,15 @@ class AsciiDropAnimation(AnimationBase):
 
     def update_parameters(self, new_params: Dict[str, Any]):
         old_seed = int(self.params.get("random_seed", 0))
-        was_plant_aware = self.plant_aware_enabled()
+        old_plant_semantics = self._plant_semantics()
         super().update_parameters(new_params)
         new_seed = int(self.params.get("random_seed", 0))
         if new_seed != old_seed:
             self._rng = np.random.default_rng(new_seed)
         plant_geometry = {"plant_clearance", "plant_mask_path", "plant_globe_mask_path"}
         if (
-            self.plant_aware_enabled() != was_plant_aware
-            or (self.plant_aware_enabled() and bool(plant_geometry & new_params.keys()))
+            self._plant_semantics() != old_plant_semantics
+            or (any(self._plant_semantics()) and bool(plant_geometry & new_params.keys()))
         ):
             self._refresh_plant_geometry()
             self._last_render_key = None
@@ -500,13 +501,15 @@ class AsciiDropAnimation(AnimationBase):
             glyph_y, glyph_x = self._glyph(piece["char"])
             y = glyph_y + piece["row"]
             visible = (y >= 0) & (y < self.height) & (piece["x"] + glyph_x < self.width)
-            if self.plant_aware_enabled() and np.any(visible):
+            if self._plant_obstacles_enabled() and np.any(visible):
                 visible &= ~self._plant_clearance[y.clip(0, self.height - 1), piece["x"] + glyph_x]
             if np.any(visible):
                 wall[piece["x"] + glyph_x[visible], self.height - 1 - y[visible]] = self._color("character")
 
-        if self.plant_aware_enabled():
+        if self._plant_landmarks_enabled():
             strength = min(1.0, max(0.0, float(self.params.get("plant_landmark_brightness", 0.45))))
+            if not self._legacy_plant_aware():
+                strength *= self.plant_modifier_strength("illuminate")
             if strength > 0.0:
                 wall[self._plant_foliage[::-1].T] = self._landmark_color((20, 150, 42), strength)
                 wall[self._plant_globes[::-1].T] = self._landmark_color((180, 72, 230), strength)
@@ -522,10 +525,14 @@ class AsciiDropAnimation(AnimationBase):
             "settled_pixels": settled_pixels,
             "fill_ratio": settled_pixels / max(1, self._settled.size),
             "phrase_index": self._phrase_index,
-            "plant_aware": self.plant_aware_enabled(),
+            "plant_aware": any(self._plant_semantics()),
         }
-        if self.plant_aware_enabled():
+        if any(self._plant_semantics()):
             stats.update({
+                "plant_modifiers": [
+                    modifier for modifier in self.plant_modifier_state().active
+                    if modifier in self.PLANT_MODIFIER_SUPPORT
+                ],
                 "plant_foliage_pixels": int(np.count_nonzero(self._plant_foliage)),
                 "plant_globe_pixels": int(np.count_nonzero(self._plant_globes)),
                 "plant_clearance_pixels": int(np.count_nonzero(self._plant_clearance)),
@@ -555,7 +562,7 @@ class AsciiDropAnimation(AnimationBase):
         glyph_width = int(glyph_x.max()) + 1 if glyph_x.size else 1
         max_x = max(0, self.width - glyph_width)
         x = int(self._rng.integers(0, max_x + 1)) if max_x else 0
-        if self.plant_aware_enabled() and max_x:
+        if self._plant_obstacles_enabled() and max_x:
             x = self._least_occluded_lane(glyph_x, x, max_x)
         self._pieces.append({"char": char, "x": x, "row": -1, "progress": 0.0})
 
@@ -591,7 +598,7 @@ class AsciiDropAnimation(AnimationBase):
         if np.any(self._settled[y[visible], x + glyph_x[visible]]):
             return True
         return bool(
-            self.plant_aware_enabled()
+            self._plant_obstacles_enabled()
             and np.any(self._plant_clearance[y[visible], x + glyph_x[visible]])
         )
 
@@ -599,7 +606,7 @@ class AsciiDropAnimation(AnimationBase):
         glyph_y, glyph_x = self._glyph(piece["char"])
         y = glyph_y + piece["row"]
         visible = (y >= 0) & (y < self.height) & (piece["x"] + glyph_x < self.width)
-        if self.plant_aware_enabled() and np.any(visible):
+        if self._plant_obstacles_enabled() and np.any(visible):
             visible &= ~self._plant_clearance[y.clip(0, self.height - 1), piece["x"] + glyph_x]
         if not np.any(visible):
             return False
@@ -639,7 +646,7 @@ class AsciiDropAnimation(AnimationBase):
         self._plant_foliage.fill(False)
         self._plant_globes.fill(False)
         self._plant_mask_error = ""
-        if not self.plant_aware_enabled():
+        if not any(self._plant_semantics()):
             return
         masks = self.get_plant_masks()
         # Shared masks are [strip, physical LED]. Falling rows are top-down.
@@ -660,13 +667,33 @@ class AsciiDropAnimation(AnimationBase):
         return min(candidates, key=lambda candidate: (abs(candidate - preferred), candidate))
 
     def _plant_render_key(self):
-        if not self.plant_aware_enabled():
+        obstacle, illuminate = self._plant_semantics()
+        if not obstacle and not illuminate:
             return None
         return (
+            obstacle,
+            illuminate,
+            self.plant_modifier_strength("obstacle"),
+            self.plant_modifier_strength("illuminate"),
             int(np.count_nonzero(self._plant_foliage)),
             int(np.count_nonzero(self._plant_globes)),
             float(self.params.get("plant_landmark_brightness", 0.45)),
         )
+
+    def _legacy_plant_aware(self) -> bool:
+        """Recognize direct legacy construction while keeping explicit state authoritative."""
+        payload = self.params.get("plant_modifiers")
+        active = payload.get("active", ()) if isinstance(payload, dict) else ()
+        return bool(self.params.get("plant_aware", False)) and not active
+
+    def _plant_obstacles_enabled(self) -> bool:
+        return self.plant_modifier_strength("obstacle") > 0.0
+
+    def _plant_landmarks_enabled(self) -> bool:
+        return self.plant_modifier_strength("illuminate") > 0.0
+
+    def _plant_semantics(self) -> Tuple[bool, bool]:
+        return self._plant_obstacles_enabled(), self._plant_landmarks_enabled()
 
     def _landmark_color(self, color: Tuple[int, int, int], strength: float) -> Tuple[int, int, int]:
         brightness = min(1.0, max(0.0, float(self.params.get("brightness", 1.0))))

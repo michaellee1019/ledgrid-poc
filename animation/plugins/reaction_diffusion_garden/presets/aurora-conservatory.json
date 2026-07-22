@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "preset_id": "aurora-conservatory",
+  "name": "Aurora Conservatory",
+  "animation": "reaction_diffusion_garden",
+  "category": "Luminous Biology",
+  "description": "Aurora-colored coral fronts grow at a relaxed pace over a radiant conservatory floor.",
+  "tags": ["aurora", "reaction-diffusion", "coral"],
+  "palette": {"name": "Conservatory Aurora", "colors": ["#03121D", "#1B9A86", "#A8FFDD"]},
+  "created_at": "2026-07-22T00:00:00Z",
+  "updated_at": "2026-07-22T00:00:00Z",
+  "params": {
+    "plant_aware": true,
+    "seed": 9107,
+    "brightness": 0.93,
+    "motion": 0.72,
+    "density": 1.18,
+    "mood": "aurora",
+    "background": "radiant",
+    "background_level": 0.9,
+    "simulation_hz": 12.0,
+    "render_fps": 30.0,
+    "morphology": "coral",
+    "growth_rate": 0.82,
+    "seeding_mode": "column",
+    "edge_glow": 1.3,
+    "color_by_age": 0.72,
+    "perturbation_interval": 32.0,
+    "plant_modifiers": {
+      "version": 1,
+      "active": ["habitat", "illuminate", "hue_shift", "liquid_glass"],
+      "strengths": {"habitat": 0.62, "illuminate": 0.48, "hue_shift": 0.3, "liquid_glass": 0.36}
+    }
+  }
+}

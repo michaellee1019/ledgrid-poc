@@ -10,6 +10,9 @@ import numpy as np
 from animation import AnimationBase
 
 
+BACKGROUND_LEVELS = {"none": 0.0, "soft": 0.35, "luminous": 0.7, "radiant": 1.0}
+
+
 class CadencedSculpture(AnimationBase, ABC):
     """Abstract base providing deterministic source ticks and logical canvases."""
 
@@ -19,7 +22,8 @@ class CadencedSculpture(AnimationBase, ABC):
         super().__init__(controller, config)
         self.default_params.update({
             "brightness": 0.32, "motion": 0.45, "density": 0.5,
-            "mood": "quiet", "seed": 1729,
+            "mood": "quiet", "seed": 1729, "background": "soft",
+            "background_level": 0.16,
         })
         self.params = {**self.default_params, **(config or {})}
         self._revision = 0
@@ -41,8 +45,12 @@ class CadencedSculpture(AnimationBase, ABC):
                        "description": "Structural motion and evolution rate"},
             "density": {"type": "float", "min": 0.05, "max": 1.0, "default": 0.5,
                         "description": "Amount of visual structure"},
-            "mood": {"type": "str", "options": ["quiet", "showcase", "night"],
+            "mood": {"type": "str", "options": ["quiet", "showcase", "night", "bright", "pastel", "synthwave", "candlelight", "aurora"],
                      "default": "quiet", "description": "Curated color and contrast family"},
+            "background": {"type": "str", "options": list(BACKGROUND_LEVELS), "default": "soft",
+                           "description": "Ambient light behind the sculpture"},
+            "background_level": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.16,
+                                 "description": "Strength of the ambient background"},
             "seed": {"type": "int", "min": 0, "max": 999999, "default": 1729,
                      "description": "Deterministic sculpture seed"},
         })
@@ -72,6 +80,13 @@ class CadencedSculpture(AnimationBase, ABC):
 
     def finish_frame(self, tick: int, logical_rgb: np.ndarray):
         frame = self.next_frame_buffer(clear=False)
+        style = str(self.params.get("background", "soft"))
+        level = float(np.clip(self.params.get("background_level", .16), 0.0, 1.0))
+        strength = BACKGROUND_LEVELS.get(style, BACKGROUND_LEVELS["soft"]) * level
+        if strength > 0.0:
+            palette = self.palette(str(self.params.get("mood", "quiet")))
+            color = palette[1] * (1.0 - .38 * strength) + palette[2] * (.18 + .38 * strength)
+            logical_rgb += color * (.14 * strength)
         np.clip(logical_rgb, 0.0, 255.0, out=logical_rgb)
         np.multiply(logical_rgb,
                     max(0.0, float(self.params.get("brightness", 0.32))),
@@ -96,6 +111,11 @@ class CadencedSculpture(AnimationBase, ABC):
             "quiet": np.array([[8, 18, 30], [50, 125, 170], [185, 225, 220]], np.float32),
             "showcase": np.array([[18, 5, 35], [35, 185, 220], [245, 125, 190]], np.float32),
             "night": np.array([[1, 2, 8], [18, 38, 78], [85, 125, 155]], np.float32),
+            "bright": np.array([[28, 48, 72], [105, 178, 222], [244, 251, 255]], np.float32),
+            "pastel": np.array([[35, 24, 58], [174, 128, 205], [255, 214, 226]], np.float32),
+            "synthwave": np.array([[18, 5, 45], [193, 35, 151], [45, 224, 255]], np.float32),
+            "candlelight": np.array([[30, 9, 2], [178, 74, 18], [255, 218, 128]], np.float32),
+            "aurora": np.array([[3, 18, 29], [27, 154, 134], [168, 255, 221]], np.float32),
         }[mood]
 
     def colorize(self, value: np.ndarray, accent: np.ndarray | None = None):

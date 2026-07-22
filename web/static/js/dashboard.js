@@ -366,7 +366,8 @@
     let controlParameterSchema = {};
     const PLANT_MODIFIERS = [
         ['Visual', 'illuminate', 'Illuminate'], ['Visual', 'shadow', 'Shadow'],
-        ['Visual', 'refract', 'Refract'], ['Field', 'attractor', 'Attractor'],
+        ['Visual', 'refract', 'Refract'], ['Visual', 'hue_shift', 'Hue shift'],
+        ['Visual', 'liquid_glass', 'Liquid glass'], ['Field', 'attractor', 'Attractor'],
         ['Field', 'repulsor', 'Repulsor'], ['Field', 'slow_zone', 'Slow zone'],
         ['Surface', 'obstacle', 'Obstacle'], ['Surface', 'portal', 'Portal'],
         ['Surface', 'bumper', 'Bumper'], ['Surface', 'hazard', 'Hazard / lava'],

@@ -15,7 +15,14 @@ MOOD_PALETTES: Mapping[str, Mapping[str, tuple[float, float, float]]] = {
     "violet": {"low": (6, 2, 18), "mid": (48, 17, 80), "high": (191, 94, 219)},
     "ember": {"low": (12, 3, 1), "mid": (91, 28, 8), "high": (238, 126, 42)},
     "garden": {"low": (2, 8, 9), "mid": (16, 45, 31), "high": (129, 176, 116)},
+    "daylight": {"low": (28, 48, 72), "mid": (105, 178, 222), "high": (244, 251, 255)},
+    "pastel": {"low": (35, 24, 58), "mid": (174, 128, 205), "high": (255, 214, 226)},
+    "synthwave": {"low": (18, 5, 45), "mid": (193, 35, 151), "high": (45, 224, 255)},
+    "candlelight": {"low": (30, 9, 2), "mid": (178, 74, 18), "high": (255, 218, 128)},
+    "aurora": {"low": (3, 18, 29), "mid": (27, 154, 134), "high": (168, 255, 221)},
 }
+
+BACKGROUND_LEVELS = {"none": 0.0, "soft": 0.35, "luminous": 0.7, "radiant": 1.0}
 
 
 class ProceduralAtmosphereBase(AnimationBase):
@@ -34,6 +41,8 @@ class ProceduralAtmosphereBase(AnimationBase):
             "density": 0.46,
             "mood": self.DEFAULT_MOOD,
             "brightness": 0.46,
+            "background": "soft",
+            "background_level": 0.18,
             "source_fps": 30.0,
             "seed": self.DEFAULT_SEED,
         })
@@ -61,7 +70,7 @@ class ProceduralAtmosphereBase(AnimationBase):
         schema = super().get_parameter_schema()
         schema.pop("color_saturation", None)
         schema.pop("color_value", None)
-        schema["brightness"].update({"default": 0.46, "max": 0.8,
+        schema["brightness"].update({"default": 0.46, "max": 1.0,
                                       "description": "Conservative installation luminance"})
         schema.update({
             "motion": {"type": "float", "min": 0.0, "max": 2.0, "default": 0.42,
@@ -70,6 +79,10 @@ class ProceduralAtmosphereBase(AnimationBase):
                         "description": "Scene coverage or event population"},
             "mood": {"type": "str", "options": list(MOOD_PALETTES), "default": self.DEFAULT_MOOD,
                      "description": "Color and light atmosphere"},
+            "background": {"type": "str", "options": list(BACKGROUND_LEVELS), "default": "soft",
+                           "description": "Ambient light behind the primary scene"},
+            "background_level": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.18,
+                                 "description": "Strength of the ambient background"},
             "source_fps": {"type": "float", "min": 20.0, "max": 40.0, "default": 30.0,
                            "description": "Bounded source redraw cadence"},
             "seed": {"type": "int", "min": 0, "max": 999999, "default": self.DEFAULT_SEED,
@@ -98,8 +111,9 @@ class ProceduralAtmosphereBase(AnimationBase):
         self._last_elapsed = elapsed
         self._last_source_tick = tick
         self._render_scene(self._simulation_time)
+        self._apply_background()
         self._apply_plant_modifiers()
-        self._rgb *= float(np.clip(self.params.get("brightness", .46), 0.0, .8))
+        self._rgb *= float(np.clip(self.params.get("brightness", .46), 0.0, 1.0))
         np.clip(self._rgb, 0.0, 255.0, out=self._rgb)
         frame = self.next_frame_buffer(clear=False)
         np.copyto(frame, self._rgb.reshape((-1, 3)), casting="unsafe")
@@ -119,6 +133,17 @@ class ProceduralAtmosphereBase(AnimationBase):
         self._rgb[:] = low + (mid - low) * lower + (high - mid) * upper
         if accent is not None:
             self._rgb += np.maximum(accent, 0.0)[..., None] * high * 0.55
+
+    def _apply_background(self) -> None:
+        style = str(self.params.get("background", "soft"))
+        level = float(np.clip(self.params.get("background_level", .18), 0.0, 1.0))
+        strength = BACKGROUND_LEVELS.get(style, BACKGROUND_LEVELS["soft"]) * level
+        if strength <= 0.0:
+            return
+        low, mid, high = self._palette()
+        color = mid * (1.0 - .38 * strength) + high * (.18 + .38 * strength)
+        vertical = (.62 + .38 * (1.0 - self._y))[..., None]
+        self._rgb += color * vertical * (.16 * strength)
 
     def _render_scene(self, t: float) -> None:
         density = float(np.clip(self.params.get("density", .46), 0.0, 1.0))

@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "preset_id": "candlelight-mosaic",
+  "name": "Candlelight Mosaic",
+  "animation": "living_stained_glass",
+  "category": "Warm Glass",
+  "description": "Amber and cream panes breathe slowly like a wall lit by many candles.",
+  "tags": ["candlelight", "stained-glass", "amber"],
+  "palette": {"name": "Mosaic Candlelight", "colors": ["#1E0902", "#B24A12", "#FFDA80"]},
+  "created_at": "2026-07-22T00:00:00Z",
+  "updated_at": "2026-07-22T00:00:00Z",
+  "params": {
+    "plant_aware": true,
+    "brightness": 0.91,
+    "motion": 0.12,
+    "density": 0.64,
+    "mood": "candlelight",
+    "background": "luminous",
+    "background_level": 0.92,
+    "lead_width": 0.28,
+    "light_direction": 0.7,
+    "seed": 2210,
+    "plant_modifiers": {
+      "version": 1,
+      "active": ["illuminate", "hue_shift"],
+      "strengths": {"illuminate": 0.66, "hue_shift": 0.14}
+    }
+  }
+}

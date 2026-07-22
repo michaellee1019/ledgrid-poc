@@ -1,6 +1,7 @@
-"""Individual-pixel diagnostic chase for validating the complete wall."""
+"""Sparse multi-pixel chase for validating and decorating the complete wall."""
 
-from typing import Any, Dict, Optional
+import colorsys
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 import numpy as np
 
@@ -9,7 +10,7 @@ from animation import AnimationBase
 
 class PixelChaseAnimation(AnimationBase):
     ANIMATION_NAME = "Pixel Chase"
-    ANIMATION_DESCRIPTION = "Walks every physical LED to identify dead or misordered pixels"
+    ANIMATION_DESCRIPTION = "Chases configurable pixels and tails through every physical LED"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "2.0"
 
@@ -22,6 +23,11 @@ class PixelChaseAnimation(AnimationBase):
         super().__init__(controller, config)
         self.default_params.update({
             "pixels_per_second": 120.0,
+            "pixel_count": 3,
+            "color_mode": "fixed",
+            "color_cycle_speed": 0.2,
+            "tail_style": "fade",
+            "tail_length": 4,
             "red": 255, "green": 255, "blue": 255,
             "plant_foliage_red": 24,
             "plant_foliage_green": 255,
@@ -42,7 +48,9 @@ class PixelChaseAnimation(AnimationBase):
         self._path = self._physical_path
         self._path_kind = np.full(self._path.size, self._CLEAR, dtype=np.uint8)
         self._rebuild_path()
-        self._buffer_pixel = [None, None]
+        self._buffer_pixels = [np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32)]
+        self._last_output_pixels = np.empty(0, dtype=np.int32)
+        self._last_head_pixels = np.empty(0, dtype=np.int32)
         self._last_output_pixel = None
         self._last_step = None
         self._last_frame = None
@@ -55,6 +63,26 @@ class PixelChaseAnimation(AnimationBase):
             "pixels_per_second": {
                 "type": "float", "min": 0.5, "max": 1000.0, "default": 120.0,
                 "description": "Number of physical LEDs visited per second",
+            },
+            "pixel_count": {
+                "type": "int", "min": 1, "max": 32, "default": 3,
+                "description": "Evenly spaced chase heads active at once",
+            },
+            "color_mode": {
+                "type": "str", "options": ["fixed", "rainbow"], "default": "fixed",
+                "description": "Use the configured RGB color or cycle each chase head through hues",
+            },
+            "color_cycle_speed": {
+                "type": "float", "min": 0.0, "max": 4.0, "default": 0.2,
+                "description": "Rainbow color cycles per second",
+            },
+            "tail_style": {
+                "type": "str", "options": ["none", "solid", "fade"], "default": "fade",
+                "description": "Disable tails or render solid/fading trails behind each head",
+            },
+            "tail_length": {
+                "type": "int", "min": 0, "max": 32, "default": 4,
+                "description": "Maximum trail pixels behind each chase head",
             },
             "red": {"type": "int", "min": 0, "max": 255, "default": 255, "description": "Pixel red"},
             "green": {"type": "int", "min": 0, "max": 255, "default": 255, "description": "Pixel green"},
@@ -102,18 +130,24 @@ class PixelChaseAnimation(AnimationBase):
     def update_parameters(self, new_params: Dict[str, Any]):
         super().update_parameters(new_params)
         if {
-            "plant_aware", "plant_clearance", "plant_mask_path",
+            "plant_aware", "plant_modifiers", "plant_clearance", "plant_mask_path",
             "plant_globe_mask_path",
         } & new_params.keys():
             self._rebuild_path()
             for frame in self._frame_buffers:
                 frame.fill(0)
-            self._buffer_pixel = [None, None]
+            self._buffer_pixels = [
+                np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32)
+            ]
+            self._last_output_pixels = np.empty(0, dtype=np.int32)
+            self._last_head_pixels = np.empty(0, dtype=np.int32)
             self._last_output_pixel = None
-            self._last_step = None
-            self._last_frame = None
+        # Every exposed parameter affects presentation. Invalidate the source-
+        # rate key so a live update is visible without waiting for another step.
+        self._last_step = None
+        self._last_frame = None
 
-    def _pixel_color(self, path_index: int):
+    def _pixel_color(self, path_index: int, head_index: int, step: int, rate: float):
         prefix = ""
         if self.plant_aware_enabled():
             kind = int(self._path_kind[path_index])
@@ -122,10 +156,38 @@ class PixelChaseAnimation(AnimationBase):
             elif kind == self._GLOBE:
                 prefix = "plant_globe_"
         brightness = min(1.0, max(0.0, float(self.params.get("brightness", 1.0))))
+        if str(self.params.get("color_mode", "fixed")) == "rainbow" and not prefix:
+            count = self._resolved_pixel_count()
+            cycle_speed = min(
+                4.0, max(0.0, float(self.params.get("color_cycle_speed", 0.2)))
+            )
+            hue = ((step / rate) * cycle_speed + head_index / count) % 1.0
+            rgb = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+            return tuple(int(channel * 255.0 * brightness) for channel in rgb)
         return tuple(
             int(max(0, min(255, int(self.params.get(f"{prefix}{channel}", 255)))) * brightness)
             for channel in ("red", "green", "blue")
         )
+
+    def _resolved_pixel_count(self) -> int:
+        return min(self._path.size, max(1, min(32, int(self.params.get("pixel_count", 3)))))
+
+    def _resolved_tail(self) -> Tuple[str, int]:
+        style = str(self.params.get("tail_style", "fade"))
+        if style not in {"none", "solid", "fade"}:
+            style = "fade"
+        length = min(32, max(0, int(self.params.get("tail_length", 4))))
+        return style, 0 if style == "none" else length
+
+    @staticmethod
+    def _dirty_ranges(indices: Iterable[int]) -> Tuple[Tuple[int, int], ...]:
+        """Compress sparse physical indices into controller-friendly ranges."""
+        ordered = np.unique(np.fromiter(indices, dtype=np.int32))
+        if ordered.size == 0:
+            return ()
+        starts = np.r_[ordered[0], ordered[1:][np.diff(ordered) > 1]]
+        ends = np.r_[ordered[:-1][np.diff(ordered) > 1] + 1, ordered[-1] + 1]
+        return tuple((int(start), int(end)) for start, end in zip(starts, ends))
 
     def generate_frame(self, time_elapsed: float, frame_count: int):
         if self._path.size == 0:
@@ -137,22 +199,46 @@ class PixelChaseAnimation(AnimationBase):
 
         buffer_index = self._frame_buffer_index
         frame = self.next_frame_buffer(clear=False)
-        previous = self._buffer_pixel[buffer_index]
-        if previous is not None:
+        previous = self._buffer_pixels[buffer_index]
+        if previous.size:
             frame[previous] = 0
-        path_index = step % self._path.size
-        pixel = int(self._path[path_index])
-        frame[pixel] = self._pixel_color(path_index)
-        self._buffer_pixel[buffer_index] = pixel
+
+        count = self._resolved_pixel_count()
+        style, tail_length = self._resolved_tail()
+        offsets = (np.arange(count, dtype=np.int64) * self._path.size) // count
+        painted = []
+        heads = []
+        # Paint oldest tail pixels first so every head remains full intensity.
+        for depth in range(tail_length, -1, -1):
+            intensity = (
+                (tail_length - depth + 1) / (tail_length + 1)
+                if style == "fade" and depth > 0
+                else 1.0
+            )
+            for head_index, offset in enumerate(offsets):
+                path_index = int((step + int(offset) - depth) % self._path.size)
+                pixel = int(self._path[path_index])
+                color = self._pixel_color(path_index, head_index, step, rate)
+                if intensity < 1.0:
+                    color = tuple(int(channel * intensity) for channel in color)
+                frame[pixel] = color
+                painted.append(pixel)
+                if depth == 0:
+                    heads.append(pixel)
+
+        output_pixels = np.unique(np.asarray(painted, dtype=np.int32))
+        self._buffer_pixels[buffer_index] = output_pixels
+        self._last_head_pixels = np.asarray(heads, dtype=np.int32)
+        self._last_output_pixel = int(heads[0]) if heads else None
         self._last_step, self._last_frame = step, frame
 
-        dirty = {pixel}
-        if self._last_output_pixel is not None:
-            dirty.add(self._last_output_pixel)
-        self._last_output_pixel = pixel
+        dirty = self._dirty_ranges(
+            np.concatenate((self._last_output_pixels, output_pixels)).tolist()
+        )
+        self._last_output_pixels = output_pixels
         return self.rendered_frame(
             frame,
-            dirty_ranges=tuple((index, index + 1) for index in sorted(dirty)),
+            dirty_ranges=dirty,
         )
 
     def get_runtime_stats(self) -> Dict[str, Any]:
@@ -162,6 +248,9 @@ class PixelChaseAnimation(AnimationBase):
         physical_led = self._last_output_pixel % height
         stats = {
             "pixel_index": self._last_output_pixel,
+            "pixel_indices": self._last_head_pixels.tolist(),
+            "pixel_count": len(self._last_head_pixels),
+            "lit_pixels": int(self._last_output_pixels.size),
             "strip": self._last_output_pixel // height,
             "led": physical_led,
             "display_row": height - 1 - physical_led,

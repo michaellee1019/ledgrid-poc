@@ -84,6 +84,10 @@ class ProceduralLongformTests(unittest.TestCase):
                 schema = animation.get_parameter_schema()
                 self.assertIn("motion", schema)
                 self.assertIn("density", schema)
+                self.assertIn("background", schema)
+                self.assertIn("background_level", schema)
+                self.assertEqual(schema["background"]["options"],
+                                 ["none", "soft", "luminous", "radiant"])
                 self.assertGreaterEqual(len(schema["mood"]["options"]), 3)
                 low = pixels(animation_class(Controller(), {"seed": 7, "density": 0.1}).generate_frame(7.0, 0)).copy()
                 high = pixels(animation_class(Controller(), {"seed": 7, "density": 0.9}).generate_frame(7.0, 0)).copy()
@@ -95,11 +99,11 @@ class ProceduralLongformTests(unittest.TestCase):
         noon = pixels(cls(Controller(), {"hour": 12.0, "time_scale": 0.0}).generate_frame(0.0, 0)).copy()
         self.assertGreater(float(noon.mean()), float(midnight.mean()) * 2.0)
 
-    def test_three_curated_presets_per_plugin_are_valid_and_distinct(self):
+    def test_curated_presets_per_plugin_are_valid_and_distinct(self):
         for plugin_id, animation_class in self.plugins.items():
             paths = sorted((ROOT / "animation" / "plugins" / plugin_id / "presets").glob("*.json"))
             with self.subTest(plugin=plugin_id):
-                self.assertEqual(len(paths), 3)
+                self.assertGreaterEqual(len(paths), 3)
                 fingerprints = set()
                 for path in paths:
                     payload = json.loads(path.read_text())
@@ -110,7 +114,18 @@ class ProceduralLongformTests(unittest.TestCase):
                         config["hour"] = 12.0
                     frame = pixels(animation_class(Controller(), config).generate_frame(3.0, 0))
                     fingerprints.add(frame.tobytes())
-                self.assertEqual(len(fingerprints), 3)
+                self.assertEqual(len(fingerprints), len(paths))
+
+    def test_radiant_daylight_materially_lifts_a_warmed_scene(self):
+        cls = self.plugins["moonlit_fog_banks"]
+        common = {"seed": 717, "mood": "daylight", "brightness": .85,
+                  "motion": .45, "density": .7, "background_level": .9}
+        dark = cls(Controller(), {**common, "background": "none"})
+        bright = cls(Controller(), {**common, "background": "radiant"})
+        for index, elapsed in enumerate((0.0, .08, .17, .27)):
+            dark_frame = pixels(dark.generate_frame(elapsed, index))
+            bright_frame = pixels(bright.generate_frame(elapsed, index))
+        self.assertGreater(float(bright_frame.mean()), float(dark_frame.mean()) + 2.0)
 
 
 if __name__ == "__main__":

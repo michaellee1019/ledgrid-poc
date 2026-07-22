@@ -247,8 +247,14 @@ class PreviewRenderer:
             self._pause_if_needed()
             elapsed = frame_count / simulation_fps
             rendered = animation.generate_frame(elapsed, frame_count)
+            changed = rendered.changed if isinstance(rendered, RenderedFrame) else True
+            canonical = rendered.pixels if isinstance(rendered, RenderedFrame) else rendered
+            canonical = np.asarray(canonical, dtype=np.uint8)
+            canonical = animation.apply_framework_plant_modifiers(
+                canonical, changed=changed
+            )
             while capture_index < len(captures) and elapsed + 1e-9 >= captures[capture_index]:
-                frames.append(self._normalize_frame(rendered))
+                frames.append(self._normalize_frame(canonical))
                 capture_index += 1
             if self.throttle_seconds:
                 time.sleep(self.throttle_seconds)

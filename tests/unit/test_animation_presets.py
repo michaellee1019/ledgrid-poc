@@ -349,6 +349,19 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertLess(html.index('id="globalSpeedRange"'), html.index('aria-label="Speed presets"'))
         self.assertLess(html.index('id="globalSpeedRange"'), html.index('id="plantModifierControls"'))
 
+    def test_dashboard_sidebar_scrolls_independently_on_desktop(self):
+        html = self.client.get('/').get_data(as_text=True)
+        css_response = self.client.get('/static/css/dashboard.css')
+        try:
+            css = css_response.get_data(as_text=True)
+        finally:
+            css_response.close()
+
+        self.assertIn('class="sticky-preview dashboard-sidebar-scroll"', html)
+        self.assertIn('@media (min-width: 1200px)', css)
+        self.assertIn('max-height: calc(100vh - 2rem)', css)
+        self.assertIn('overflow-y: auto', css)
+
     def test_animation_presets_are_alphabetized_by_display_name(self):
         for name in ('zebra', 'Aurora', 'calm'):
             self.client.post('/api/animations/sparkle/presets', json={
