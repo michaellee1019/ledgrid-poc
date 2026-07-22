@@ -5,11 +5,13 @@
 set -euo pipefail  # Exit on any error and fail on unset vars
 
 # Configuration
-PI_HOST="ledgridwall@ledgridwall.local"
-DEPLOY_DIR="ledgrid-pod"
-LOCAL_DIR="."
+PI_HOST="${PI_HOST:-ledgridwall@ledgridwall.local}"
+DEPLOY_DIR="${DEPLOY_DIR:-ledgrid-pod}"
+LOCAL_DIR="${LOCAL_DIR:-.}"
 # shellcheck source=ssh_helpers.sh
 source "$(dirname "$0")/ssh_helpers.sh"
+# shellcheck source=sync_files.sh
+source "$(dirname "$0")/sync_files.sh"
 
 # Colors for output
 RED='\033[0;31m'
@@ -63,53 +65,24 @@ create_deploy_directory() {
 # Stop any running instances on the Pi
 stop_running() {
     log_info "Stopping any running animation server on the Pi..."
-    if ! ssh $SSH_OPTS "$PI_HOST" "sudo systemctl stop ledgrid.service 2>/dev/null || true; pkill -f start_server.py || true; pkill -f start.sh || true"; then
+    if ! ssh $SSH_OPTS "$PI_HOST" "sudo systemctl stop ledgrid.service 2>/dev/null || true; pkill -f start_server.py || true; pkill -f start_systemd.sh || true"; then
         log_warning "Stop step failed (likely nothing running); continuing..."
     fi
 }
 
-# Upload files to Pi (aggressive sync)
+# Upload tracked files to Pi while preserving target-owned state.
 upload_files() {
-    log_info "Uploading animation system files (full sync with delete)..."
-
-    # Use rsync to mirror repo minus local-only artifacts
-    rsync -az --delete --stats \
-        -e "ssh $SSH_OPTS" \
-        --exclude '.git' \
-        --exclude 'whos-turn-tracker' \
-        --exclude 'venv' \
-        --exclude 'test_venv' \
-        --exclude '__pycache__' \
-        --exclude '*.pyc' \
-        --exclude '.DS_Store' \
-        --exclude 'animation_system.log' \
-        --exclude '.pio' \
-        --exclude '.pio/**' \
-        --exclude 'build' \
-        --exclude 'build/**' \
-        --exclude '*/build' \
-        --exclude '*/build/**' \
-        --exclude 'dist' \
-        --exclude 'dist/**' \
-        --exclude '*/dist' \
-        --exclude '*/dist/**' \
-        --exclude 'out' \
-        --exclude 'out/**' \
-        --exclude '*/out' \
-        --exclude '*/out/**' \
-        "$LOCAL_DIR"/ "$PI_HOST:~/$DEPLOY_DIR/"
+    log_info "Uploading tracked files (full sync with protected runtime state)..."
+    sync_full_deployment
 
     log_success "File upload completed"
 }
 
-# Flash ESP32 firmware if sources changed (non-fatal on failure).
+# Flash ESP32 firmware if sources changed.
 flash_esp32_firmware() {
     log_info "Checking ESP32 firmware..."
-    if ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && DEPLOY_DIR=~/$DEPLOY_DIR DEBUG=${DEBUG:-0} bash tools/deployment/flash_esp32.sh"; then
-        log_success "ESP32 firmware check complete"
-    else
-        log_warning "ESP32 flash failed; continuing deployment"
-    fi
+    ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && DEPLOY_DIR=~/$DEPLOY_DIR DEBUG=${DEBUG:-0} bash tools/deployment/flash_esp32.sh"
+    log_success "ESP32 firmware check complete"
 }
 
 # Ensure /boot/firmware/config.txt has the correct SPI overlays (idempotent).
@@ -169,143 +142,10 @@ check_spi() {
     fi
 }
 
-# Create startup script
-create_startup_script() {
-    log_info "Creating startup script..."
-
-    ssh $SSH_OPTS "$PI_HOST" "cat > ~/$DEPLOY_DIR/start.sh << 'EOF'
-#!/bin/bash
-# LED Grid Animation System Startup Script
-
-cd \$(dirname \$0)
-
-echo \"🎨 Starting LED Grid Animation System...\"
-echo \"📁 Working directory: \$(pwd)\"
-
-# Check if virtual environment exists
-if [ ! -d \"venv\" ]; then
-    echo \"❌ Virtual environment not found!\"
-    echo \"   Please run the deployment script again\"
-    exit 1
-fi
-
-# Activate virtual environment
-echo \"🐍 Activating virtual environment...\"
-source venv/bin/activate
-
-# Check if LED controller exists
-if [ ! -f \"drivers/spi_controller.py\" ]; then
-    echo \"⚠️  Warning: drivers/spi_controller.py not found\"
-    echo \"   The system will run in demo mode\"
-fi
-
-# Get Pi's IP address for display
-PI_IP=\$(hostname -I | awk '{print \$1}')
-
-echo \"🌐 Starting web server...\"
-echo \"   Local URL:  http://localhost:5000\"
-echo \"   Network URL: http://\$PI_IP:5000\"
-echo \"\"
-echo \"🎮 Web Interface:\"
-echo \"   Dashboard:    http://\$PI_IP:5000/\"
-echo \"   Control Panel: http://\$PI_IP:5000/control\"
-echo \"\"
-echo \"Press Ctrl+C to stop\"
-echo \"\"
-
-DEFAULT_STRIPS=\$(python - <<'PY'
-from drivers.led_layout import default_strip_count
-print(default_strip_count())
-PY
-)
-DEFAULT_LEDS_PER_STRIP=\$(python - <<'PY'
-from drivers.led_layout import DEFAULT_LEDS_PER_STRIP
-print(DEFAULT_LEDS_PER_STRIP)
-PY
-)
-DEFAULT_ANIMATION_SPEED_SCALE=\$(python - <<'PY'
-from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
-print(DEFAULT_ANIMATION_SPEED_SCALE)
-PY
-)
-
-STRIPS=\${STRIPS:-\$DEFAULT_STRIPS}
-LEDS_PER_STRIP=\${LEDS_PER_STRIP:-\$DEFAULT_LEDS_PER_STRIP}
-TARGET_FPS=\${TARGET_FPS:-200}
-ANIMATION_SPEED_SCALE=\${ANIMATION_SPEED_SCALE:-\$DEFAULT_ANIMATION_SPEED_SCALE}
-HOST=\${HOST:-0.0.0.0}
-PORT=\${PORT:-5000}
-CONTROL_FILE=\${CONTROL_FILE:-run_state/control.json}
-STATUS_FILE=\${STATUS_FILE:-run_state/status.json}
-ANIM_DIR=\${ANIM_DIR:-animation/plugins}
-POLL_INTERVAL=\${POLL_INTERVAL:-0.05}
-STATUS_INTERVAL=\${STATUS_INTERVAL:-0.5}
-SPI_SPEED=\${SPI_SPEED:-20000000}
-LEDGRID_SPI1_MODE=\${LEDGRID_SPI1_MODE:-0}
-LEDGRID_HAT=\${LEDGRID_HAT:-0}
-PYTHONUNBUFFERED=1
-export PYTHONUNBUFFERED
-export LEDGRID_SPI1_MODE
-export LEDGRID_HAT
-
-mkdir -p \"\$(dirname \"\$CONTROL_FILE\")\" \"\$(dirname \"\$STATUS_FILE\")\"
-
-echo \"🧭 Using control file: \$CONTROL_FILE\"
-echo \"🧭 Using status file : \$STATUS_FILE\"
-echo \"🧭 Animations dir   : \$ANIM_DIR\"
-echo \"\"
-
-# Start controller process
-echo \"▶️  Starting controller (hardware) process...\"
-echo \"    SPI Speed: \$(echo \"scale=1; \$SPI_SPEED / 1000000\" | bc) MHz\"
-nohup python scripts/start_server.py \\
-    --mode controller \\
-    --control-file \"\$CONTROL_FILE\" \\
-    --status-file \"\$STATUS_FILE\" \\
-    --animations-dir \"\$ANIM_DIR\" \\
-    --strips \"\$STRIPS\" \\
-    --leds-per-strip \"\$LEDS_PER_STRIP\" \\
-    --target-fps \"\$TARGET_FPS\" \\
-    --animation-speed-scale \"\$ANIMATION_SPEED_SCALE\" \\
-    --poll-interval \"\$POLL_INTERVAL\" \\
-    --status-interval \"\$STATUS_INTERVAL\" \\
-    --spi-speed \"\$SPI_SPEED\" \\
-    > controller.log 2>&1 &
-echo \$! > run_state/controller.pid
-echo \"    Controller PID: \$(cat run_state/controller.pid)\"
-
-# Start web/preview process (same host/port as before; same-origin so no CORS issues)
-echo \"🌐 Starting web/preview process...\"
-nohup python scripts/start_server.py \\
-    --mode web \\
-    --control-file \"\$CONTROL_FILE\" \\
-    --status-file \"\$STATUS_FILE\" \\
-    --animations-dir \"\$ANIM_DIR\" \\
-    --strips \"\$STRIPS\" \\
-    --leds-per-strip \"\$LEDS_PER_STRIP\" \\
-    --animation-speed-scale \"\$ANIMATION_SPEED_SCALE\" \\
-    --host \"\$HOST\" \\
-    --port \"\$PORT\" \\
-    > web.log 2>&1 &
-echo \$! > run_state/web.pid
-echo \"    Web PID: \$(cat run_state/web.pid)\"
-
-echo \"\"
-echo \"Logs:\"
-echo \"  Controller: controller.log\"
-echo \"  Web UI    : web.log\"
-EOF"
-
-    # Make startup script executable
-    ssh $SSH_OPTS "$PI_HOST" "chmod +x ~/$DEPLOY_DIR/start.sh"
-
-    log_success "Startup script created"
-}
-
 create_systemd_service() {
     log_info "Installing systemd service..."
 
-    if ssh $SSH_OPTS "$PI_HOST" "cat > /tmp/ledgrid.service << 'EOF'
+    ssh $SSH_OPTS "$PI_HOST" "cat > /tmp/ledgrid.service << 'EOF'
 [Unit]
 Description=LED Grid Animation System
 After=network-online.target
@@ -328,82 +168,28 @@ WantedBy=multi-user.target
 EOF
 sudo mv /tmp/ledgrid.service /etc/systemd/system/ledgrid.service
 sudo systemctl daemon-reload
-sudo systemctl enable ledgrid.service"; then
-        log_success "systemd service installed"
-    else
-        log_warning "systemd service install failed (check sudo permissions)"
-    fi
+sudo systemctl enable ledgrid.service"
+    log_success "systemd service installed"
 }
 
 # Start the animation system
 start_system() {
-    log_info "Starting LED Grid Animation System..."
-
-    # Get Pi's IP address
-    PI_IP=$(ssh $SSH_OPTS "$PI_HOST" "hostname -I | awk '{print \$1}'")
-    
-    log_success "🎉 Deployment completed successfully!"
-    echo ""
-    echo "🌐 LED Grid Animation System is now running at:"
-    echo ""
-    echo -e "${GREEN}   Dashboard:     http://$PI_IP:5000/${NC}"
-    echo -e "${GREEN}   Control Panel: http://$PI_IP:5000/control${NC}"
-    echo ""
-    echo "🎮 You can now:"
-    echo "   • View and start animations from the dashboard"
-    echo "   • Control animations in real-time"
-    echo ""
-    
-    # Start the system via systemd when available.
     log_info "Restarting systemd service..."
     if ssh $SSH_OPTS "$PI_HOST" "sudo systemctl restart ledgrid.service"; then
         log_success "systemd restart issued"
     else
-        log_warning "systemd restart failed; falling back to manual start.sh"
-        ssh -f -n $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && nohup ./start.sh > animation_system.log 2>&1 </dev/null &"
-    fi
-
-    # Wait a moment for startup
-    sleep 2
-    
-    # Check if it's running (non-fatal)
-    if ssh $SSH_OPTS "$PI_HOST" "pgrep -f 'start_server.py' > /dev/null"; then
-        log_success "Animation system is running!"
-        echo ""
-        echo -e "${BLUE}📊 System Status:${NC}"
-        echo "   ✅ Animation server: Running"
-        echo "   ✅ Web interface: Available"
-        echo "   ✅ Plugin system: Ready"
-        echo ""
-        echo -e "${YELLOW}🚀 Open your browser and go to: http://$PI_IP:5000/${NC}"
-    else
-        log_warning "System may still be starting up..."
-        echo "Check the log with: ssh $PI_HOST 'cd $DEPLOY_DIR && tail -f animation_system.log'"
+        log_warning "systemd restart failed; falling back to the tracked startup script"
+        ssh -f -n $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && nohup ./scripts/start_systemd.sh > animation_system.log 2>&1 </dev/null &"
     fi
 }
 
-# Tail logs to monitor startup
-tail_logs() {
-    echo ""
-    echo -e "${BLUE}📋 Monitoring logs (Ctrl+C to exit)...${NC}"
-    echo "========================================"
-    echo ""
-    
-    # Give processes a moment to start writing logs
-    sleep 1
-    
-    # Show initial log state
-    echo -e "${GREEN}=== Web Server Log (last 10 lines) ===${NC}"
-    ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && tail -10 web.log 2>/dev/null || echo 'No web.log yet'"
-    echo ""
-    echo -e "${GREEN}=== Controller Log (last 10 lines) ===${NC}"
-    ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && tail -10 controller.log 2>/dev/null || echo 'No controller.log yet'"
-    echo ""
-    echo -e "${BLUE}=== Following logs (press Ctrl+C to stop) ===${NC}"
-    echo ""
-    
-    # Tail both logs simultaneously
-    ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && tail -f web.log controller.log"
+# Verify the web process reached a usable state instead of leaving deploy
+# attached to an unbounded log tail.
+check_web_server() {
+    log_info "Checking web server..."
+    ssh $SSH_OPTS "$PI_HOST" \
+        "for attempt in {1..40}; do curl --fail --silent --max-time 2 http://127.0.0.1:5000/api/status >/dev/null && exit 0; sleep 0.25; done; exit 1"
+    log_success "Web server is responding"
 }
 
 # Main deployment process
@@ -424,10 +210,10 @@ main() {
     fi
     setup_venv_and_dependencies
     check_spi
-    create_startup_script
     create_systemd_service
     start_system
-    tail_logs
+    check_web_server
+    log_success "Deployment complete: http://${PI_HOST#*@}:5000/"
 }
 
 # Run main function

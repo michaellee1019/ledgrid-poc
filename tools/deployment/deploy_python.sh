@@ -9,40 +9,14 @@ LOCAL_DIR="${LOCAL_DIR:-.}"
 
 # shellcheck source=ssh_helpers.sh
 source "$(dirname "$0")/ssh_helpers.sh"
+# shellcheck source=sync_files.sh
+source "$(dirname "$0")/sync_files.sh"
 
 echo "[INFO] Checking $PI_HOST..."
 ssh $SSH_OPTS "$PI_HOST" "test -x ~/$DEPLOY_DIR/venv/bin/python && sudo -n true"
 
-echo "[INFO] Syncing application code and web templates..."
-rsync -az \
-    -e "ssh $SSH_OPTS" \
-    --exclude '.git/' \
-    --exclude 'venv/' \
-    --exclude '.venv*/' \
-    --exclude 'test_venv/' \
-    --exclude 'whos-turn-tracker/' \
-    --exclude '__pycache__/' \
-    --exclude '.pio/' \
-    --exclude 'build/' \
-    --exclude 'dist/' \
-    --include '*/' \
-    --include '*.py' \
-    --include '*.html' \
-    --include 'config/webcam_pixel_map.json' \
-    --include 'config/plant_pixel_map.json' \
-    --include 'config/plant_pixel_map_32x138.json' \
-    --include 'config/plant_globe_map_32x138.json' \
-    --exclude '*' \
-    "$LOCAL_DIR"/ "$PI_HOST:~/$DEPLOY_DIR/"
-
-# Deploy only curated preset JSON that Git considers trackable. Runtime presets
-# are ignored by Git and therefore remain local to whichever host created them.
-echo "[INFO] Syncing curated animation presets..."
-git -C "$LOCAL_DIR" ls-files --cached --others --exclude-standard -z \
-    -- 'presets/animations/**/*.json' \
-    | rsync -az --from0 --files-from=- \
-        -e "ssh $SSH_OPTS" \
-        "$LOCAL_DIR"/ "$PI_HOST:~/$DEPLOY_DIR/"
+echo "[INFO] Syncing tracked application code, web templates, and plugin assets..."
+sync_fast_deployment
 
 echo "[INFO] Saving active settings as the before-deploy preset..."
 ssh $SSH_OPTS "$PI_HOST" \
