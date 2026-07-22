@@ -59,6 +59,16 @@ Read this reference only when working in the `ledgrid-poc` repository.
   animation has a documented reason to reinterpret them. Route, place, or reserve
   against clearance geometry when possible; use intentional edge/highlight
   treatment when meaningful routing is impossible.
+- `PlantMaskGeometry` arrays use canonical strip-major `(width, height)` layout.
+  Image-style simulation canvases often use `(height, width)`; expose or cache an
+  explicitly named transposed view and test modifier-on paths after a semantic
+  tick instead of assuming NumPy boolean indexing will reveal the mismatch at
+  construction time.
+- A preset may temporarily retain `plant_aware: true` for the curated-preset
+  compatibility contract while also carrying an explicit non-empty
+  `plant_modifiers` recommendation. The explicit state wins over the legacy
+  illuminate-plus-obstacle translation; do not implement new behavior behind
+  the boolean.
 
 ## Preset-family workflow
 
@@ -70,7 +80,9 @@ For an animation with many presets:
 3. If preset work is delegated, give contributors disjoint outcome categories
    and filenames, and prohibit plugin/schema edits after delegation begins.
 4. Render all finished presets into a labeled contact sheet at the wall's true
-   tall aspect ratio and inspect it.
+   tall aspect ratio and inspect it. Warm fixed-step scenes through sequential
+   source or semantic ticks before capture; a single late-time call is an invalid
+   sample for simulations that correctly cap first-call catch-up.
 5. Run `tests.unit.test_curated_animation_presets`, the focused plugin test,
    the full suite, and both default and animated/stress benchmarks.
 

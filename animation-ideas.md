@@ -323,6 +323,21 @@ checklist for the follow-on work.
 
 ## Best first builds
 
+### Status — 19 of 38 implemented July 22, 2026
+
+The first half of this catalog now ships as nineteen standalone, manifest-driven
+plugins with quiet, showcase, and nighttime presets: Rain on Glass, Aurora
+Curtains, Cloud Canyon, Waterfall Veil, Tidal Bioluminescence, Wind in the Reeds,
+Moonlit Fog Banks, Desert Wind, Reaction-Diffusion Garden, Physarum Network,
+Firefly Synchrony, Cyclic Reef, Frostwork, Flow-Field Silk, Living Stained Glass,
+Quasicrystal Bloom, Cellular Tapestry, Circadian Window, and Night Train Windows.
+
+They share family-level timing/render helpers without collapsing their semantic
+simulations into one plugin. All use bounded source cadence, deterministic seeds,
+the 32×138 geometry, explicit plant-modifier support, and package-owned curated
+presets. The remaining nineteen numbered ideas are still candidates for later
+implementation.
+
 The per-idea notes below name the strongest modifier directions rather than a
 required bundle. Modifiers from the same exclusive group are alternate preset
 concepts; compatible visual, field, surface, and lifecycle choices may stack

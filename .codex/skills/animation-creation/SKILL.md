@@ -247,6 +247,34 @@ the next background tick changes pixels while logical state remains identical.
 
 Avoid per-pixel Python object allocation, unbounded catch-up loops, planning all maximum-density entities together, and lowering FPS as the first response to inefficient code.
 
+For large procedural-plugin sprints:
+
+- Stabilize one family contract before parallel work: plugin-owned manifests,
+  parameter axes, source cadence, preset tiers, test ownership, and non-overlapping
+  helper modules. When discovery derives its allowlist from shipped manifests,
+  new packages should not also edit a central registry.
+- Analytic seeded phase fields are a strong fit for dense ambient atmospheres:
+  they provide long, non-obvious evolution without mutable particle catch-up.
+  Quantize presentation to source ticks and keep any semantic clock bounded.
+- A fixed-step simulation's first call at a late elapsed time must not replay an
+  unbounded backlog. Initialize at that time or cap catch-up, and advance through
+  sequential semantic ticks in behavior tests and visual warmups.
+- At a 200 Hz manager rate, a 30 Hz source should change about 15 percent of
+  calls and a 40 Hz source about 20 percent. Report the observed changed ratio
+  alongside latency so a fast benchmark cannot conceal an accidentally frozen
+  animation or a missing cache.
+- Keep logical geometry orientation explicit. Plant masks in `ledgrid-poc` are
+  strip-major `(width, height)`, while image-style canvases are commonly
+  `(height, width)`. Cache a named canvas-oriented view or transpose once at a
+  documented boundary, then exercise modifier-on frames after a semantic tick.
+- Apply brightness and other in-place transforms before flattening transposed or
+  sliced arrays. Reshaping a non-contiguous view can return a copy and silently
+  discard later in-place work.
+- Presentation-only modifier branches must acquire the geometry they use rather
+  than relying on another modifier branch to initialize a local variable.
+  Guard geometry and RNG work on resolved strength greater than zero so active
+  zero-strength modifiers retain exact parity cheaply.
+
 Treat validated configuration as state, not work to repeat inside a hot loop.
 Parse and canonicalize structured payloads at construction or the live-update
 boundary, cache the resulting immutable value, and invalidate it only when a
@@ -274,6 +302,9 @@ Cover as applicable:
 - Every declared style/background option renders a visible canonical frame.
 - Orthogonal options produce distinct frame fingerprints, not accidental duplicates.
 - Every curated preset uses supported keys/options/bounds and renders successfully.
+- Modifier-on curated presets render after at least one semantic update; a
+  `t=0` smoke frame alone can miss orientation, emitter, and simulation-path
+  failures.
 - Known loops are detected from semantic state, recovery resets monitoring, and
   intentional loop presets remain untouched.
 - Tiled simulations cannot exchange neighbors across region boundaries and dead
