@@ -33,11 +33,14 @@
     .animation-card:hover { transform: translateY(-2px); box-shadow: 0 14px 34px rgba(29, 39, 74, .1); }
     .animation-card.active { border-color: var(--show-accent); box-shadow: 0 0 0 3px rgba(101,88,245,.12), 0 14px 34px rgba(29,39,74,.1); }
     .animation-icon { display: grid; place-items: center; width: 3.2rem; height: 3.2rem; border-radius: 14px; background: var(--show-soft); font-size: 1.65rem; flex: 0 0 auto; }
+    .generated-preview { display: block; flex: 0 0 auto; border: 1px solid rgba(28,32,52,.18); background: #07080d; image-rendering: pixelated; object-fit: contain; }
+    .animation-preview { width: 3.25rem; height: 8.75rem; border-radius: 11px; box-shadow: 0 5px 16px rgba(18,22,39,.16); }
     .animation-description { color: var(--show-muted); font-size: .87rem; line-height: 1.4; min-height: 2.45rem; }
     .preset-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: flex-start; gap: .5rem; padding: .15rem 0 .35rem; }
     .preset-chip { display: flex; align-items: center; gap: .55rem; min-width: 0; border: 1px solid #e1e3ef; background: linear-gradient(180deg, #fff, #fafaff); color: #343958; border-radius: 12px; padding: .58rem .65rem; text-align: left; transition: border-color .15s ease, background .15s ease, transform .15s ease; }
     .preset-chip:hover { border-color: var(--show-accent); color: var(--show-accent-dark); background: #f4f2ff; transform: translateY(-1px); }
     .preset-emoji { font-size: 1.15rem; flex: 0 0 auto; }
+    .preset-preview { width: 1.3rem; height: 3.7rem; margin: -.35rem 0; border-radius: 5px; }
     .preset-copy { min-width: 0; line-height: 1.15; }
     .preset-name { display: block; overflow: hidden; font-size: .76rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
     .preset-category { display: block; margin-top: .18rem; color: #8a90a5; font-size: .64rem; font-weight: 650; letter-spacing: .03em; text-transform: uppercase; }

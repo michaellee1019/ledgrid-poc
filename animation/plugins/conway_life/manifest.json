@@ -1,1 +1,1 @@
-{"plugin_id":"conway_life","class":"ConwayLifeAnimation","icon":"🧬","gallery":"show"}
+{"plugin_id":"conway_life","class":"ConwayLifeAnimation","icon":"🧬","gallery":"show","preview":{"capture_seconds":[0,0.25,0.5,1,2,4,7,10],"simulation_fps":30}}

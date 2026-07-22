@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import json
+import math
 import re
 import sys
 import traceback
@@ -78,6 +79,46 @@ class AnimationPluginLoader:
             raise ValueError(f"manifest icon must be a non-empty string: {manifest_path}")
         if payload.get("gallery", "show") not in {"show", "test"}:
             raise ValueError(f"manifest gallery must be 'show' or 'test': {manifest_path}")
+        preview = payload.get("preview")
+        if preview is not None:
+            if not isinstance(preview, dict):
+                raise ValueError(f"manifest preview must be an object: {manifest_path}")
+            unknown = set(preview) - {"capture_seconds", "simulation_fps"}
+            if unknown:
+                raise ValueError(
+                    f"manifest preview has unsupported keys {sorted(unknown)}: {manifest_path}"
+                )
+            capture_seconds = preview.get("capture_seconds")
+            if capture_seconds is not None:
+                if (
+                    not isinstance(capture_seconds, list)
+                    or not 1 <= len(capture_seconds) <= 16
+                    or any(
+                        not isinstance(value, (int, float))
+                        or isinstance(value, bool)
+                        or not math.isfinite(float(value))
+                        or value < 0
+                        for value in capture_seconds
+                    )
+                    or any(
+                        float(left) >= float(right)
+                        for left, right in zip(capture_seconds, capture_seconds[1:])
+                    )
+                ):
+                    raise ValueError(
+                        "manifest preview.capture_seconds must be 1-16 strictly "
+                        f"increasing non-negative numbers: {manifest_path}"
+                    )
+            simulation_fps = preview.get("simulation_fps")
+            if simulation_fps is not None and (
+                not isinstance(simulation_fps, int)
+                or isinstance(simulation_fps, bool)
+                or not 1 <= simulation_fps <= 120
+            ):
+                raise ValueError(
+                    "manifest preview.simulation_fps must be an integer from 1 to 120: "
+                    f"{manifest_path}"
+                )
         return payload
 
     def scan_plugins(self) -> List[str]:

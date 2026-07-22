@@ -95,37 +95,41 @@ configure_remote_spi() {
 setup_venv_and_dependencies() {
     log_info "Setting up Python virtual environment..."
 
-    log_info "Ensuring Python build dependencies (spidev headers)..."
+    log_info "Checking Python build dependencies..."
     ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
 set -euo pipefail
-PY_VER=$(python3 - <<'PY'
-import sys
-print(f"{sys.version_info.major}.{sys.version_info.minor}")
-PY
-)
-sudo apt-get update
-if ! sudo apt-get install -y "python${PY_VER}-dev" build-essential git; then
-  sudo apt-get install -y python3-dev build-essential git
+missing=()
+for package in python3-dev build-essential git; do
+  dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'ok installed' || missing+=("$package")
+done
+if [ "${#missing[@]}" -gt 0 ]; then
+  sudo apt-get update
+  sudo apt-get install -y "${missing[@]}"
 fi
 EOF
 
-    log_info "Creating Python virtual environment..."
-    ssh $SSH_OPTS "$PI_HOST" "bash -s" <<EOF
+    log_info "Checking Python virtual environment and dependency hash..."
+    ssh $SSH_OPTS "$PI_HOST" "bash -s -- '$DEPLOY_DIR'" <<'EOF'
 set -euo pipefail
-cd ~/$DEPLOY_DIR
-if [ ! -d venv ]; then
+deploy_dir=$1
+cd ~/"$deploy_dir"
+created=0
+if [ ! -x venv/bin/python ]; then
   python3 -m venv venv
+  created=1
+fi
+requirements_hash=$(sha256sum requirements.txt | awk '{print $1}')
+installed_hash=$(cat venv/.ledgrid_requirements_sha256 2>/dev/null || true)
+if [ "$created" = 1 ] || [ "$requirements_hash" != "$installed_hash" ]; then
+  if [ "$created" = 1 ]; then venv/bin/python -m pip install --upgrade pip; fi
+  venv/bin/python -m pip install -r requirements.txt
+  printf '%s\n' "$requirements_hash" > venv/.ledgrid_requirements_sha256
+else
+  echo "[INFO] Python dependencies unchanged; skipping pip install"
 fi
 EOF
 
-    log_success "Virtual environment created"
-
-    log_info "Installing Python dependencies in venv..."
-
-    # Install dependencies in virtual environment
-    ssh $SSH_OPTS "$PI_HOST" "cd ~/$DEPLOY_DIR && source venv/bin/activate && pip install --upgrade pip && pip install -r requirements.txt"
-
-    log_success "Dependencies installed in virtual environment"
+    log_success "Python environment is ready"
 }
 
 # Check if SPI is enabled
@@ -187,8 +191,13 @@ start_system() {
 # attached to an unbounded log tail.
 check_web_server() {
     log_info "Checking web server..."
-    ssh $SSH_OPTS "$PI_HOST" \
-        "for attempt in {1..40}; do curl --fail --silent --max-time 2 http://127.0.0.1:5000/api/status >/dev/null && exit 0; sleep 0.25; done; exit 1"
+    if ! ssh $SSH_OPTS "$PI_HOST" \
+        "for attempt in {1..120}; do curl --fail --silent --max-time 2 http://127.0.0.1:5000/api/status >/dev/null && exit 0; sleep 0.25; done; exit 1"; then
+        log_error "Web server did not become healthy; collecting startup logs"
+        ssh $SSH_OPTS "$PI_HOST" \
+            "sudo systemctl status ledgrid.service --no-pager -l || true; tail -80 ~/$DEPLOY_DIR/web.log 2>/dev/null || true; tail -80 ~/$DEPLOY_DIR/controller.log 2>/dev/null || true"
+        return 1
+    fi
     log_success "Web server is responding"
 }
 

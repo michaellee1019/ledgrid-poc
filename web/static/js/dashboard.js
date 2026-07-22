@@ -373,6 +373,7 @@
     // Initialize renderer when page loads
     document.addEventListener('DOMContentLoaded', function() {
         animationRenderer = new LEDAnimationRenderer('ledCanvas');
+        initializeGeneratedPreviews();
         if (INITIAL_STATUS) {
             syncControlPanel(INITIAL_STATUS);
             syncGlobalSpeedFromStatus(INITIAL_STATUS);
@@ -380,6 +381,55 @@
         }
         startStatsPolling();
     });
+
+    function initializeGeneratedPreviews() {
+        const previews = document.querySelectorAll('img.generated-preview[data-loop-src]');
+        if (!('IntersectionObserver' in window)) {
+            previews.forEach(image => { image.src = image.dataset.loopSrc; });
+            return;
+        }
+        const observer = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                const image = entry.target;
+                const desired = entry.isIntersecting
+                    ? image.dataset.loopSrc
+                    : image.dataset.posterSrc;
+                if (desired && image.getAttribute('src') !== desired) image.src = desired;
+            });
+        }, {rootMargin: '160px 0px', threshold: 0.01});
+        previews.forEach(image => observer.observe(image));
+        refreshPendingGeneratedPreviews(observer);
+    }
+
+    async function refreshPendingGeneratedPreviews(observer) {
+        const pending = Array.from(document.querySelectorAll(
+            'img.preset-preview[data-preview-status="pending"]'
+        ));
+        if (!pending.length) return;
+        const animationNames = [...new Set(pending.map(image => image.dataset.animation))];
+        await Promise.all(animationNames.map(async animationName => {
+            try {
+                const response = await fetch(`/api/animations/${encodeURIComponent(animationName)}/presets`);
+                if (!response.ok) return;
+                const payload = await response.json();
+                const byId = Object.fromEntries((payload.presets || []).map(preset => [preset.preset_id, preset]));
+                pending.filter(image => image.dataset.animation === animationName).forEach(image => {
+                    const preview = byId[image.dataset.presetId]?.preview;
+                    if (!preview || preview.status !== 'ready') return;
+                    image.dataset.posterSrc = preview.poster_url;
+                    image.dataset.loopSrc = preview.loop_url;
+                    image.dataset.previewStatus = 'ready';
+                    image.src = preview.loop_url;
+                    observer.observe(image);
+                });
+            } catch (error) {
+                console.warn('Failed to refresh generated previews', error);
+            }
+        }));
+        if (document.querySelector('img.preset-preview[data-preview-status="pending"]')) {
+            window.setTimeout(() => refreshPendingGeneratedPreviews(observer), 5000);
+        }
+    }
 
     function formatSpeed(value) {
         const speed = Number(value);

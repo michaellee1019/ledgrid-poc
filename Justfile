@@ -4,11 +4,14 @@ web_venv := ".venv-web"
 python_env := "uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' --with opencv-python-headless"
 
 # Run the complete local gate before a provision/firmware deployment.
-deploy: deploy-precheck
+# Set TEST=false for an explicitly requested fast deployment.
+deploy:
+	case "${TEST:-true}" in false|FALSE|0|no|NO) echo "[INFO] Skipping tests (TEST=$TEST)" ;; *) just deploy-precheck ;; esac
 	./tools/deployment/deploy.sh
 
 # Sync tracked application/plugin files without provisioning or flashing firmware.
-deploy-python: test-unit test-rendering test-deployment
+deploy-python:
+	case "${TEST:-true}" in false|FALSE|0|no|NO) echo "[INFO] Skipping tests (TEST=$TEST)" ;; *) just test-unit test-rendering test-deployment ;; esac
 	./tools/deployment/deploy_python.sh
 
 # Compatibility name for the fast Python deployment.
@@ -17,6 +20,10 @@ deploy-no-firmware: deploy-python
 # Fetch new Pi-saved presets without overwriting local curated files.
 fetch-presets:
 	./tools/deployment/fetch_presets.sh
+
+# Refresh the ignored, content-addressed dashboard preview catalog locally.
+generate-previews:
+	{{python_env}} python tools/generate_animation_previews.py --tracked-only
 
 # Create/refresh the lightweight virtualenv for serving the web controller locally.
 setup-web:

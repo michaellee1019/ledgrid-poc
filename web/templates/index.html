@@ -40,6 +40,15 @@
             <article class="card animation-card h-100" data-animation-card="{{ animation.plugin_name }}">
                 <div class="card-body p-3 d-flex flex-column">
                     <div class="d-flex gap-3 align-items-start">
+                        {% if animation.preview and animation.preview.poster_url and animation.preview.loop_url %}
+                        <img class="generated-preview animation-preview"
+                             src="{{ animation.preview.poster_url }}"
+                             data-poster-src="{{ animation.preview.poster_url }}"
+                             data-loop-src="{{ animation.preview.loop_url }}"
+                             loading="lazy" decoding="async" width="32" height="138"
+                             alt="Pre-rendered preview of {{ animation.name }}"
+                             onerror="this.hidden=true">
+                        {% endif %}
                         <div class="animation-icon" aria-hidden="true">{{ animation.emoji }}</div>
                         <div class="min-w-0 flex-grow-1">
                             <h3 class="h6 fw-bold mb-1">{{ animation.name }}</h3>
@@ -50,6 +59,17 @@
                     <div class="preset-strip mt-2" aria-label="{{ animation.name }} presets">
                         {% for preset in animation.presets %}
                         <button class="preset-chip" title="{{ preset.description or preset.name }}" onclick="playDashboardPreset('{{ animation.plugin_name }}', '{{ preset.preset_id }}', this)">
+                            {% if preset.preview and preset.preview.poster_url and preset.preview.loop_url %}
+                            <img class="generated-preview preset-preview"
+                                 src="{{ preset.preview.poster_url }}"
+                                 data-poster-src="{{ preset.preview.poster_url }}"
+                                 data-loop-src="{{ preset.preview.loop_url }}"
+                                 data-preview-status="{{ preset.preview.status }}"
+                                 data-animation="{{ animation.plugin_name }}"
+                                 data-preset-id="{{ preset.preset_id }}"
+                                 loading="lazy" decoding="async" width="32" height="138"
+                                 alt="" aria-hidden="true" onerror="this.hidden=true">
+                            {% endif %}
                             <span class="preset-emoji" aria-hidden="true">{{ preset.emoji }}</span>
                             <span class="preset-copy">
                                 <span class="preset-name">{{ preset.name }}</span>

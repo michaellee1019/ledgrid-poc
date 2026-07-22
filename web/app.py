@@ -8,16 +8,18 @@ real time.
 
 import json
 import math
+import os
 import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.plant_awareness import PlantModifierState
+from animation.core.preview_assets import load_catalog, merge_catalogs
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import (
@@ -25,6 +27,7 @@ from drivers.frame_codec import (
     encode_frame_data,
     FRAME_ENCODING_NAME,
 )
+from web.preview_worker import RuntimePreviewWorker
 
 class AnimationWebInterface:
     """Web interface for animation management"""
@@ -50,6 +53,18 @@ class AnimationWebInterface:
         self.painter_presets_dir = self.project_root / "presets" / "frame_painter"
         self.animation_presets_dir = self.project_root / "presets" / "animations"
         self.deployment_status_path = self.project_root / "run_state" / "deployment.json"
+        self.generated_preview_dir = (
+            self.project_root / "web" / "static" / "generated" / "animation-previews"
+        )
+        self.runtime_preview_dir = self.project_root / "run_state" / "animation_previews"
+        loader = getattr(self.preview_manager, 'plugin_loader', None)
+        self.runtime_preview_worker = None
+        if loader is not None and os.environ.get("LEDGRID_DISABLE_PREVIEW_WORKER") != "1":
+            self.runtime_preview_worker = RuntimePreviewWorker(
+                self.project_root,
+                strips=self.preview_manager.controller.strip_count,
+                leds_per_strip=self.preview_manager.controller.leds_per_strip,
+            )
 
         # Create Flask app
         self.app = Flask(__name__)
@@ -82,6 +97,20 @@ class AnimationWebInterface:
             """API: Get list of available animations"""
             animations = self._sorted_animations()
             return jsonify(animations)
+
+        @self.app.route('/preview-assets/runtime/<path:filename>')
+        def runtime_preview_asset(filename: str):
+            """Serve protected Pi-generated previews with immutable caching."""
+            return send_from_directory(
+                self.runtime_preview_dir, filename, max_age=31536000, conditional=True
+            )
+
+        @self.app.route('/preview-assets/generated/<path:filename>')
+        def generated_preview_asset(filename: str):
+            """Serve content-addressed deploy previews with immutable caching."""
+            return send_from_directory(
+                self.generated_preview_dir, filename, max_age=31536000, conditional=True
+            )
         
         @self.app.route('/api/animations/<animation_name>')
         def api_get_animation(animation_name):
@@ -146,6 +175,13 @@ class AnimationWebInterface:
                 elif existing and field in existing:
                     preset_payload[field] = existing[field]
             self._write_animation_preset(animation_name, preset_id, preset_payload)
+            if self.runtime_preview_worker is not None:
+                fallback = self._preview_metadata(animation_name) or {}
+                preset_path = self._animation_preset_path(animation_name, preset_id)
+                if preset_path is not None:
+                    self.runtime_preview_worker.queue(
+                        animation_name, preset_id, preset_path, fallback
+                    )
             return jsonify({'success': True, 'preset': self._animation_preset_summary(preset_payload)})
 
         @self.app.route('/api/animations/<animation_name>/presets/<preset_id>/apply', methods=['POST'])
@@ -169,6 +205,8 @@ class AnimationWebInterface:
                 path.unlink()
             except OSError:
                 return jsonify({'error': 'Failed to delete preset'}), 500
+            if self.runtime_preview_worker is not None:
+                self.runtime_preview_worker.delete(animation_name, preset_id)
             return jsonify({'success': True})
         
         @self.app.route('/api/start/<animation_name>', methods=['POST'])
@@ -485,12 +523,38 @@ class AnimationWebInterface:
             plugin_name = item.get('plugin_name', '')
             item.setdefault('emoji', '✨')
             item.setdefault('is_test', False)
+            item['preview'] = self._preview_metadata(plugin_name)
             presets = self._list_animation_presets(plugin_name)
             for preset in presets:
                 preset['emoji'] = self._preset_emoji(preset, item['emoji'])
             item['presets'] = presets
             catalog.append(item)
         return catalog
+
+    def _preview_catalog(self) -> Dict[str, Any]:
+        """Merge deploy-generated previews with target-owned runtime previews."""
+        return merge_catalogs(
+            load_catalog(self.generated_preview_dir / "catalog.json"),
+            load_catalog(self.runtime_preview_dir / "catalog.json"),
+        )
+
+    def _preview_metadata(
+        self, animation_name: str, preset_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        catalog = self._preview_catalog()
+        animation_preview = catalog.get('animations', {}).get(animation_name)
+        if preset_id is None:
+            return dict(animation_preview) if isinstance(animation_preview, dict) else None
+        preset_preview = (
+            catalog.get('presets', {}).get(animation_name, {}).get(preset_id)
+        )
+        if isinstance(preset_preview, dict):
+            return dict(preset_preview)
+        if isinstance(animation_preview, dict):
+            fallback = dict(animation_preview)
+            fallback['status'] = 'pending'
+            return fallback
+        return None
 
     def _sorted_animations(self) -> List[Dict[str, Any]]:
         """Return animation metadata alphabetized by its display name."""
@@ -794,7 +858,7 @@ class AnimationWebInterface:
         return preset_dir / f"{safe_id}.json"
 
     def _animation_preset_summary(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return {
+        summary = {
             'version': payload.get('version', 1),
             'preset_id': payload.get('preset_id'),
             'name': payload.get('name'),
@@ -807,6 +871,11 @@ class AnimationWebInterface:
             'palette': payload.get('palette'),
             'swatches': self._preset_swatches(payload),
         }
+        animation_name = payload.get('animation')
+        preset_id = payload.get('preset_id')
+        if isinstance(animation_name, str) and isinstance(preset_id, str):
+            summary['preview'] = self._preview_metadata(animation_name, preset_id)
+        return summary
 
     def _list_animation_presets(self, animation_name: str) -> List[Dict[str, Any]]:
         """List curated and runtime presets, with runtime files overriding IDs."""

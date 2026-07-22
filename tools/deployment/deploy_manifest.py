@@ -18,6 +18,9 @@ FAST_CONFIG_FILES = {
     PurePosixPath("config/plant_pixel_map_32x138.json"),
     PurePosixPath("config/webcam_pixel_map.json"),
 }
+UNTRACKED_DEPLOY_ROOTS = {
+    "animation", "drivers", "firmware", "ipc", "scripts", "tools", "web",
+}
 
 
 def _is_beneath(path: PurePosixPath, parent: PurePosixPath) -> bool:
@@ -49,6 +52,30 @@ def _git_tracked_paths(root: Path) -> list[PurePosixPath]:
     return paths
 
 
+def _git_deployable_untracked_paths(root: Path) -> list[PurePosixPath]:
+    """Return non-ignored new application files, excluding workstation miscellany."""
+    result = subprocess.run(
+        ["git", "-C", os.fspath(root), "ls-files", "--others", "--exclude-standard", "-z"],
+        check=True,
+        capture_output=True,
+    )
+    paths: list[PurePosixPath] = []
+    for raw_path in result.stdout.split(b"\0"):
+        if not raw_path:
+            continue
+        path = PurePosixPath(os.fsdecode(raw_path))
+        if path.is_absolute() or ".." in path.parts:
+            raise RuntimeError(f"Git returned unsafe deployment path: {path}")
+        if (
+            path.parts
+            and path.parts[0] in UNTRACKED_DEPLOY_ROOTS
+            and not _is_beneath(path, RUNTIME_PRESETS)
+            and (root / path.as_posix()).is_file()
+        ):
+            paths.append(path)
+    return paths
+
+
 def _include_fast(path: PurePosixPath) -> bool:
     if _is_beneath(path, RUNTIME_PRESETS):
         return False
@@ -63,8 +90,8 @@ def _include_fast(path: PurePosixPath) -> bool:
 
 
 def tracked_paths(root: Path, scope: str) -> list[PurePosixPath]:
-    """Return sorted tracked paths for a full or fast application sync."""
-    paths = _git_tracked_paths(root)
+    """Return sorted tracked plus safe, non-ignored new application paths."""
+    paths = _git_tracked_paths(root) + _git_deployable_untracked_paths(root)
     if scope == "full":
         selected = [path for path in paths if not _is_beneath(path, RUNTIME_PRESETS)]
     elif scope == "fast":

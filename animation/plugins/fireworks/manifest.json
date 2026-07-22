@@ -1,1 +1,1 @@
-{"plugin_id":"fireworks","class":"FireworksAnimation","icon":"🎆","gallery":"show"}
+{"plugin_id":"fireworks","class":"FireworksAnimation","icon":"🎆","gallery":"show","preview":{"capture_seconds":[0,0.25,0.5,1,1.5,2.5,4,6],"simulation_fps":30}}
