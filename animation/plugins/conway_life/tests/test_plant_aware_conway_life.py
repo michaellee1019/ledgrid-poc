@@ -59,6 +59,113 @@ class PlantAwareConwayLifeTests(unittest.TestCase):
             },
         )
 
+    @staticmethod
+    def _modifiers(*active, **strengths):
+        return {"version": 1, "active": list(active), "strengths": strengths}
+
+    def test_declares_exact_sprint_support(self):
+        self.assertEqual(
+            ConwayLifeAnimation.PLANT_MODIFIER_SUPPORT,
+            frozenset(("obstacle", "habitat", "hazard", "emitter")),
+        )
+
+    def test_explicit_empty_modifier_state_has_full_parity(self):
+        common = {
+            "seed_cells": [(2, 3), (3, 3), (4, 3)],
+            "palette": "aurora",
+            "background": "void",
+        }
+        baseline = self._animation(**common)
+        empty = self._animation(
+            **common, plant_modifiers=self._modifiers()
+        )
+        for _ in range(5):
+            baseline._advance_phase()
+            empty._advance_phase()
+        self.assertEqual(baseline.grid, empty.grid)
+        self.assertEqual(baseline.random.getstate(), empty.random.getstate())
+        np.testing.assert_array_equal(
+            baseline.generate_frame(1.0, 1).pixels,
+            empty.generate_frame(1.0, 1).pixels,
+        )
+
+    def test_modifier_only_live_change_preserves_world_phase_and_rng(self):
+        foliage_path, globe_path = self._write_masks(foliage=((3, 3),))
+        animation = self._animation(
+            seed_cells=[(2, 3), (3, 3), (4, 3)],
+            plant_mask_path=foliage_path,
+            plant_globe_mask_path=globe_path,
+        )
+        before = (
+            [row[:] for row in animation.grid], animation.generation,
+            animation.phase, animation.phase_frame, animation.random.getstate(),
+        )
+        animation.update_parameters({
+            "plant_modifiers": self._modifiers("obstacle", obstacle=1.0)
+        })
+        after = (
+            animation.grid, animation.generation, animation.phase,
+            animation.phase_frame, animation.random.getstate(),
+        )
+        self.assertEqual(before, after)
+
+    def test_constructed_obstacle_habitat_and_hazard_rules(self):
+        foliage_path, globe_path = self._write_masks(foliage=((4, 4),))
+        paths = {
+            "plant_clearance": 0,
+            "plant_mask_path": foliage_path,
+            "plant_globe_mask_path": globe_path,
+        }
+        obstacle = self._animation(
+            **paths, seed_cells=[(4, 4), (2, 3), (3, 3), (4, 3)],
+            plant_modifiers=self._modifiers("obstacle", obstacle=1.0),
+        )
+        self.assertEqual(obstacle.grid[4][4], 0)
+
+        habitat = self._animation(
+            **paths, seed_cells=[(2, 3), (3, 2)],
+            plant_modifiers=self._modifiers("habitat", habitat=1.0),
+        )
+        ordinary = self._animation(**paths, seed_cells=[(2, 3), (3, 2)])
+        self.assertTrue(habitat._plant_fertile[3, 3])
+        self.assertEqual(habitat.next_grid[3][3], 1)
+        self.assertEqual(ordinary.next_grid[3][3], 0)
+
+        hazard = self._animation(
+            **paths, seed_cells=[(3, 4), (4, 4), (5, 4)],
+            plant_modifiers=self._modifiers("hazard", hazard=1.0),
+        )
+        self.assertEqual(hazard.next_grid[4][4], 0)
+        self.assertEqual(hazard.plant_hazard_deaths, 0)
+        hazard.phase = "transition"
+        hazard.phase_frame = int(hazard.params["phase_frames"]) - 1
+        hazard._advance_phase()
+        self.assertEqual(hazard.plant_hazard_deaths, 1)
+
+    def test_emitter_is_bounded_and_only_fires_on_generation_boundaries(self):
+        foliage_path, globe_path = self._write_masks(foliage=((4, 4),))
+        animation = self._animation(
+            seed_cells=[], plant_clearance=0,
+            plant_mask_path=foliage_path,
+            plant_globe_mask_path=globe_path,
+            plant_modifiers=self._modifiers("emitter", emitter=0.5),
+        )
+        for _ in range(7):
+            animation._advance_phase()
+        self.assertEqual(animation.plant_emitter_events, 0)
+        animation.phase = "transition"
+        animation.phase_frame = int(animation.params["phase_frames"]) - 1
+        animation._advance_phase()
+        self.assertEqual(animation.plant_emitter_events, 1)
+        self.assertEqual(animation.plant_emitted_cells, 4)
+
+        for _ in range(19):
+            animation.phase = "transition"
+            animation.phase_frame = int(animation.params["phase_frames"]) - 1
+            animation._advance_phase()
+        self.assertLessEqual(animation.plant_emitted_cells, 20 * 4)
+        self.assertGreater(animation.get_runtime_stats()["plant_emitter_events"], 1)
+
     def test_disabled_mode_preserves_simulation_and_render_exactly(self):
         foliage_path, globe_path = self._write_masks(
             foliage=((3, 3),), globes=((5, 5),)

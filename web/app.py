@@ -17,6 +17,7 @@ from flask import Flask, jsonify, render_template, request
 
 from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
+from animation.core.plant_awareness import PlantModifierState
 from ipc.control_channel import FileControlChannel
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import (
@@ -120,7 +121,6 @@ class AnimationWebInterface:
             if not isinstance(params, dict):
                 return jsonify({'error': 'params must be a JSON object'}), 400
             params = dict(params)
-            params['plant_aware'] = True
             validation_error = self._validate_animation_params(animation_name, params)
             if validation_error:
                 return jsonify({'error': validation_error}), 400
@@ -251,8 +251,25 @@ class AnimationWebInterface:
             enabled = payload.get('plant_aware')
             if not isinstance(enabled, bool):
                 return jsonify({'error': 'plant_aware must be boolean'}), 400
+            if hasattr(self.preview_manager, 'set_plant_aware'):
+                self.preview_manager.set_plant_aware(enabled)
             self.control_channel.send_command('set_plant_aware', plant_aware=enabled)
             return jsonify({'success': True, 'plant_aware': enabled})
+
+        @self.app.route('/api/config/plant-modifiers', methods=['POST'])
+        def api_set_plant_modifiers():
+            payload = request.get_json(silent=True) or {}
+            try:
+                state = PlantModifierState.from_payload(payload.get('plant_modifiers'))
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+            serialized = state.to_dict()
+            if hasattr(self.preview_manager, 'set_plant_modifiers'):
+                self.preview_manager.set_plant_modifiers(serialized)
+            self.control_channel.send_command(
+                'set_plant_modifiers', plant_modifiers=serialized
+            )
+            return jsonify({'success': True, 'plant_modifiers': serialized})
 
         @self.app.route('/api/hardware/stats')
         def api_get_hardware_stats():
@@ -864,6 +881,14 @@ class AnimationWebInterface:
         status = raw_status if isinstance(raw_status, dict) else (self.control_channel.read_status() or {})
         led_info = self._normalize_led_info(status.get('led_info'))
         self._apply_preview_layout(led_info)
+        if hasattr(self.preview_manager, 'set_plant_modifiers'):
+            try:
+                if 'plant_modifiers' in status:
+                    self.preview_manager.set_plant_modifiers(status['plant_modifiers'])
+                elif isinstance(status.get('plant_aware'), bool):
+                    self.preview_manager.set_plant_aware(status['plant_aware'])
+            except ValueError:
+                pass
         return led_info
 
     def _status_payload(self, decode_frame: bool = False) -> Dict[str, Any]:
@@ -890,6 +915,15 @@ class AnimationWebInterface:
         status.setdefault('target_fps', 0)
         status.setdefault('animation_speed_scale', DEFAULT_ANIMATION_SPEED_SCALE)
         status.setdefault('plant_aware', DEFAULT_PLANT_AWARE)
+        status.setdefault(
+            'plant_modifiers',
+            PlantModifierState.from_legacy(DEFAULT_PLANT_AWARE).to_dict(),
+        )
+        if hasattr(self.preview_manager, 'set_plant_modifiers'):
+            try:
+                self.preview_manager.set_plant_modifiers(status['plant_modifiers'])
+            except ValueError:
+                pass
         status.setdefault('actual_fps', 0)
         status.setdefault('uptime', 0)
         status['deploy_timestamp'] = self._deploy_timestamp()

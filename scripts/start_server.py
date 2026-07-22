@@ -96,15 +96,13 @@ def run_controller_mode(args):
         saved_state.get('animation_speed_scale', args.animation_speed_scale)
         if saved_state else args.animation_speed_scale
     )
-    startup_plant_aware = (
-        saved_state.get('plant_aware', DEFAULT_PLANT_AWARE)
-        if saved_state else DEFAULT_PLANT_AWARE
-    )
+    startup_modifiers = saved_state.get('plant_modifiers') if saved_state else None
     manager = AnimationManager(
         controller,
         plugins_dir=args.animations_dir,
         animation_speed_scale=startup_speed_scale,
-        plant_aware=startup_plant_aware,
+        plant_aware=DEFAULT_PLANT_AWARE,
+        plant_modifiers=startup_modifiers,
         default_animation=saved_state.get('animation') if saved_state else None,
         default_animation_config=saved_state.get('params') if saved_state else None,
     )
@@ -209,6 +207,14 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
             return True
         except (TypeError, ValueError):
             print(f"⚠️ Invalid plant-aware state: {requested!r}")
+    elif action == 'set_plant_modifiers':
+        requested = data.get('plant_modifiers')
+        try:
+            applied = manager.set_plant_modifiers(requested)
+            print(f"🌿 Plant modifiers: {', '.join(applied['active']) or 'off'}")
+            return True
+        except (TypeError, ValueError):
+            print(f"⚠️ Invalid plant modifier state: {requested!r}")
     elif action == 'refresh_plugins':
         animation = data.get('animation')
         if animation:

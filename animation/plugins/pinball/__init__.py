@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from animation import AnimationBase
+from animation.core.plant_awareness import GLOBE_REGION_ORDER
 from animation.libraries.palette_field import AnimatedPaletteField
 
 
@@ -33,6 +34,7 @@ class PinballAnimation(AnimationBase):
     ANIMATION_DESCRIPTION = "Fast self-playing 90s PC pinball with scores, streaks, jackpots, and minigames"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.0"
+    PLANT_MODIFIER_SUPPORT = frozenset(("bumper", "portal", "hazard"))
 
     NAVY = (0, 3, 18)
     BLUE = (0, 34, 92)
@@ -62,8 +64,16 @@ class PinballAnimation(AnimationBase):
         self._plant_foliage = np.zeros((self.height, self.width), dtype=bool)
         self._plant_globes = np.zeros((self.height, self.width), dtype=bool)
         self._plant_clearance = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_obstacle = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_regions: Dict[str, np.ndarray] = {}
+        self._plant_region_bounds: Dict[str, Tuple[int, int, int, int]] = {}
         self._plant_geometry_identity: Optional[int] = None
         self._plant_hits = 0
+        self._plant_bumper_hits = 0
+        self._plant_teleports = 0
+        self._plant_hazards = 0
+        self._plant_portal_exit_region: Optional[str] = None
+        self._plant_portal_cooldown_updates = 0
         hues = np.linspace(0.0, 1.0, 256, endpoint=False, dtype=np.float32)
         saturation = np.full(256, 0.94, dtype=np.float32)
         values = (0.10 + 0.20 * (np.sin(hues * math.tau * 3.0) * 0.5 + 0.5)).astype(np.float32)
@@ -97,11 +107,23 @@ class PinballAnimation(AnimationBase):
         self._failure_flash = 0.0
         self._success_flash = 0.0
         self._sim_time = 0.0
-        if self.plant_aware_enabled():
+        if self._plant_effects_enabled():
             self._prepare_plant_table()
             self.ball_x, self.ball_y = self._nearest_plant_safe_point(
                 self.ball_x, self.ball_y
             )
+
+    def update_parameters(self, new_params: Dict[str, Any]):
+        geometry_keys = {"plant_clearance", "plant_mask_path", "plant_globe_mask_path"}
+        old_state = self.plant_modifier_state()
+        super().update_parameters(new_params)
+        if geometry_keys & new_params.keys() or self.plant_modifier_state() != old_state:
+            self._plant_geometry_identity = None
+            self._plant_regions.clear()
+            self._plant_region_bounds.clear()
+            if self._plant_effects_enabled():
+                self._prepare_plant_table()
+        self.last_render_elapsed = None
 
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
@@ -236,7 +258,7 @@ class PinballAnimation(AnimationBase):
 
     def _prepare_plant_table(self):
         """Project calibrated strip/LED masks into playfield coordinates."""
-        if not self.plant_aware_enabled():
+        if not self._plant_effects_enabled():
             return
         masks = self.get_plant_masks()
         if self._plant_geometry_identity == id(masks):
@@ -244,8 +266,61 @@ class PinballAnimation(AnimationBase):
         # Frames are rendered bottom-to-top into canonical (strip, LED) order.
         self._plant_foliage[:] = masks.foliage.T[::-1]
         self._plant_globes[:] = masks.globes.T[::-1]
+        self._plant_obstacle[:] = masks.obstacle.T[::-1]
         self._plant_clearance[:] = masks.clearance.T[::-1]
+        self._plant_regions.clear()
+        self._plant_region_bounds.clear()
+        for name in GLOBE_REGION_ORDER:
+            region = masks.globe_region_masks.get(name)
+            if region is None:
+                continue
+            projected = region.T[::-1].copy()
+            if not np.any(projected):
+                continue
+            self._plant_regions[name] = projected
+            ys, xs = np.nonzero(projected)
+            self._plant_region_bounds[name] = (
+                int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+            )
         self._plant_geometry_identity = id(masks)
+
+    def _legacy_plant_mode(self) -> bool:
+        return bool(self.params.get("plant_aware", False))
+
+    def _plant_effects_enabled(self) -> bool:
+        return self._legacy_plant_mode() or any(
+            self.plant_modifier_enabled(modifier)
+            for modifier in self.PLANT_MODIFIER_SUPPORT
+        )
+
+    def _region_at(self, x: int, y: int) -> Optional[str]:
+        for name in GLOBE_REGION_ORDER:
+            region = self._plant_regions.get(name)
+            if region is not None and 0 <= x < self.width and 0 <= y < self.height and region[y, x]:
+                return name
+        return None
+
+    def _next_region(self, source: str) -> Optional[str]:
+        start = GLOBE_REGION_ORDER.index(source)
+        for offset in range(1, len(GLOBE_REGION_ORDER) + 1):
+            name = GLOBE_REGION_ORDER[(start + offset) % len(GLOBE_REGION_ORDER)]
+            if name in self._plant_regions:
+                return name
+        return None
+
+    def _map_portal_offset(self, source: str, target: str, x: float, y: float) -> Tuple[float, float]:
+        sx0, sy0, sx1, sy1 = self._plant_region_bounds[source]
+        tx0, ty0, tx1, ty1 = self._plant_region_bounds[target]
+        fx = 0.5 if sx1 == sx0 else (x - sx0) / (sx1 - sx0)
+        fy = 0.5 if sy1 == sy0 else (y - sy0) / (sy1 - sy0)
+        ideal_x = tx0 + min(1.0, max(0.0, fx)) * (tx1 - tx0)
+        ideal_y = ty0 + min(1.0, max(0.0, fy)) * (ty1 - ty0)
+        ys, xs = np.nonzero(self._plant_regions[target])
+        best = min(zip(xs, ys), key=lambda point: (
+            (point[0] - ideal_x) ** 2 + (point[1] - ideal_y) ** 2,
+            int(point[1]), int(point[0]),
+        ))
+        return float(best[0]), float(best[1])
 
     def _nearest_plant_safe_point(self, x: float, y: float) -> Tuple[float, float]:
         """Find a deterministic nearby launch/collision point outside clearance."""
@@ -275,11 +350,90 @@ class PinballAnimation(AnimationBase):
                 return float(safe_x), float(safe_y)
         return x, y
 
+    def _swept_plant_contact(
+        self, previous_x: float, previous_y: float, mask: np.ndarray
+    ) -> Optional[Tuple[int, int]]:
+        distance = math.hypot(self.ball_x - previous_x, self.ball_y - previous_y)
+        steps = max(1, int(math.ceil(distance * 2.0)))
+        for step in range(1, steps + 1):
+            fraction = step / steps
+            px = int(round(previous_x + (self.ball_x - previous_x) * fraction))
+            py = int(round(previous_y + (self.ball_y - previous_y) * fraction))
+            if 0 <= px < self.width and 0 <= py < self.height and mask[py, px]:
+                return px, py
+        return None
+
     def _collide_with_plants(self, previous_x: float, previous_y: float):
-        """Treat masked plants as swept, scoring pinball deflectors."""
-        if not self.plant_aware_enabled():
+        """Resolve one explicit surface role against exact calibrated cores."""
+        if not self._plant_effects_enabled():
             return
         self._prepare_plant_table()
+        if self._legacy_plant_mode():
+            self._collide_with_legacy_plants(previous_x, previous_y)
+            return
+
+        if self.plant_modifier_enabled("portal"):
+            contact = self._swept_plant_contact(previous_x, previous_y, self._plant_globes)
+            if contact is None:
+                return
+            source = self._region_at(*contact)
+            if source is None or self._plant_portal_exit_region is not None:
+                return
+            target = self._next_region(source)
+            if target is None:
+                return
+            self.ball_x, self.ball_y = self._map_portal_offset(
+                source, target, float(contact[0]), float(contact[1])
+            )
+            speed = math.hypot(self.ball_vx, self.ball_vy)
+            impulse = 8.0 * self.plant_modifier_strength("portal")
+            if speed > 1e-6 and impulse > 0:
+                self.ball_vx += self.ball_vx / speed * impulse
+                self.ball_vy += self.ball_vy / speed * impulse
+            self._plant_portal_exit_region = target
+            self._plant_portal_cooldown_updates = 1
+            self._plant_hits += 1
+            self._plant_teleports += 1
+            self.bursts.append(Burst(self.ball_x, self.ball_y, self.MAGENTA, life=0.45))
+            return
+
+        mask = self._plant_globes if self.plant_modifier_enabled("bumper") else self._plant_obstacle
+        contact = self._swept_plant_contact(previous_x, previous_y, mask)
+        if contact is None:
+            return
+        px, py = contact
+        self._plant_hits += 1
+        if self.plant_modifier_enabled("hazard"):
+            self._plant_hazards += 1
+            severity = self.plant_modifier_strength("hazard")
+            self.score = max(0, self.score - int(round(5000 * severity)))
+            self._drain()
+            self.drain_time += 0.4 * severity
+            return
+
+        if not self.plant_modifier_enabled("bumper"):
+            return
+        nx, ny = previous_x - px, previous_y - py
+        length = math.hypot(nx, ny)
+        if length <= 1e-6:
+            speed = math.hypot(self.ball_vx, self.ball_vy) or 1.0
+            nx, ny, length = -self.ball_vx / speed, -self.ball_vy / speed, 1.0
+        nx, ny = nx / length, ny / length
+        dot = self.ball_vx * nx + self.ball_vy * ny
+        restitution = 0.70 + 0.50 * self.plant_modifier_strength("bumper")
+        if dot < 0:
+            self.ball_vx -= (1.0 + restitution) * dot * nx
+            self.ball_vy -= (1.0 + restitution) * dot * ny
+        else:
+            self.ball_vx, self.ball_vy = -self.ball_vx * restitution, -self.ball_vy * restitution
+        self.ball_x, self.ball_y = previous_x, previous_y
+        self._plant_bumper_hits += 1
+        self._award(2500, "", self.YELLOW)
+        self.bursts.append(Burst(px, py, self.YELLOW, life=0.45))
+        self._event_cooldown = 0.10
+
+    def _collide_with_legacy_plants(self, previous_x: float, previous_y: float):
+        """Treat masked plants as swept, scoring pinball deflectors."""
         distance = math.hypot(self.ball_x - previous_x, self.ball_y - previous_y)
         steps = max(1, int(math.ceil(distance * 2.0)))
         collision = None
@@ -345,6 +499,15 @@ class PinballAnimation(AnimationBase):
         if dt <= 0.0:
             return
         self._sim_time += dt
+        if self._plant_portal_cooldown_updates > 0:
+            self._plant_portal_cooldown_updates -= 1
+        if (self._plant_portal_exit_region is not None
+                and self._plant_portal_cooldown_updates <= 0):
+            region = self._plant_regions.get(self._plant_portal_exit_region)
+            px, py = int(round(self.ball_x)), int(round(self.ball_y))
+            if (region is None or not (0 <= px < self.width and 0 <= py < self.height)
+                    or not region[py, px]):
+                self._plant_portal_exit_region = None
         self._event_cooldown = max(0.0, self._event_cooldown - dt)
         self._hit_flash = max(0.0, self._hit_flash - dt * 4.0)
         self._failure_flash = max(0.0, self._failure_flash - dt * 2.5)
@@ -484,7 +647,7 @@ class PinballAnimation(AnimationBase):
     def _launch_ball(self):
         self.ball_x = self.width - 4.0
         self.ball_y = self.height - 18.0
-        if self.plant_aware_enabled():
+        if self._plant_effects_enabled():
             self.ball_x, self.ball_y = self._nearest_plant_safe_point(
                 self.ball_x, self.ball_y
             )
@@ -561,17 +724,32 @@ class PinballAnimation(AnimationBase):
             self._pixel(canvas, int(burst.x), int(burst.y) + spark, color, True)
             self._pixel(canvas, int(burst.x), int(burst.y) - spark, color, True)
 
-        if self.plant_aware_enabled():
+        if self._plant_effects_enabled():
             self._prepare_plant_table()
-            # Foliage reads as a cool translucent rubber rail; globes are
-            # unmistakable gold scoring landmarks without hiding the ball.
+            hazard = self.plant_modifier_strength("hazard")
+            portal = self.plant_modifier_strength("portal")
+            bumper = self.plant_modifier_strength("bumper")
+            foliage_color = (
+                np.array((70 + int(150 * hazard), 8, 12), dtype=np.uint8)
+                if hazard > 0 else np.array((8, 72, 24), dtype=np.uint8)
+            )
             canvas[self._plant_foliage] = np.maximum(
-                canvas[self._plant_foliage], np.array((8, 72, 24), dtype=np.uint8)
+                canvas[self._plant_foliage], foliage_color
             )
             globe_pulse = 125 + int(55 * (0.5 + 0.5 * math.sin(phase * 5.0)))
+            if hazard > 0:
+                globe_color = np.array((globe_pulse, 10, 18), dtype=np.uint8)
+            elif portal > 0:
+                globe_color = np.array(
+                    (45 + int(80 * portal), 18, globe_pulse), dtype=np.uint8
+                )
+            else:
+                globe_color = np.array(
+                    (globe_pulse, int(globe_pulse * (0.35 + 0.15 * bumper)), 8),
+                    dtype=np.uint8,
+                )
             canvas[self._plant_globes] = np.maximum(
-                canvas[self._plant_globes],
-                np.array((globe_pulse, globe_pulse // 2, 8), dtype=np.uint8),
+                canvas[self._plant_globes], globe_color,
             )
 
         # Flippers alternate rapidly with layered neon edges.
@@ -629,4 +807,7 @@ class PinballAnimation(AnimationBase):
             "minigame": self.mode,
             "active_effects": len(self.bursts),
             "plant_hits": self._plant_hits,
+            "plant_bumper_hits": self._plant_bumper_hits,
+            "plant_teleports": self._plant_teleports,
+            "plant_hazards": self._plant_hazards,
         }

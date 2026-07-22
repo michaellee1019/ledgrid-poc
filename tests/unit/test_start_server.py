@@ -39,6 +39,12 @@ class _Manager:
         self.calls.append(("plant", value))
         return value
 
+    def set_plant_modifiers(self, value):
+        if not isinstance(value, dict) or "active" not in value:
+            raise ValueError("invalid")
+        self.calls.append(("modifiers", value))
+        return {"version": 1, "active": value["active"], "strengths": value.get("strengths", {})}
+
     def clear_painter_frame(self):
         self.calls.append(("clear",))
 
@@ -58,6 +64,9 @@ class StartServerTests(unittest.TestCase):
         self.assertTrue(handle_command(manager, "set_target_fps", {"target_fps": 144}))
         self.assertTrue(handle_command(manager, "set_animation_speed_scale", {"animation_speed_scale": 0.45}))
         self.assertTrue(handle_command(manager, "set_plant_aware", {"plant_aware": False}))
+        self.assertTrue(handle_command(manager, "set_plant_modifiers", {
+            "plant_modifiers": {"active": ["shadow"], "strengths": {"shadow": 0.5}}
+        }))
 
         self.assertEqual(manager.calls, [
             ("start", "solid", {"red": 4}),
@@ -65,6 +74,7 @@ class StartServerTests(unittest.TestCase):
             ("fps", 144),
             ("speed", 0.45),
             ("plant", False),
+            ("modifiers", {"active": ["shadow"], "strengths": {"shadow": 0.5}}),
         ])
 
     def test_failed_or_nonpersistent_commands_return_false(self):
@@ -74,6 +84,7 @@ class StartServerTests(unittest.TestCase):
         self.assertFalse(handle_command(manager, "set_target_fps", {"target_fps": 0}))
         self.assertFalse(handle_command(manager, "set_animation_speed_scale", {"animation_speed_scale": "bad"}))
         self.assertFalse(handle_command(manager, "set_plant_aware", {"plant_aware": "yes"}))
+        self.assertFalse(handle_command(manager, "set_plant_modifiers", {"plant_modifiers": []}))
         self.assertFalse(handle_command(manager, "stop", {}))
         self.assertFalse(handle_command(manager, "painter_clear", {}))
         self.assertFalse(handle_command(manager, "unknown", {}))

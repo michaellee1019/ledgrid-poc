@@ -12,7 +12,9 @@ from typing import List, Tuple, Dict, Any, Optional, Union
 
 import numpy as np
 
-from animation.core.plant_awareness import PlantMaskCache, PlantMaskGeometry, plant_parameter_schema
+from animation.core.plant_awareness import (
+    PlantMaskCache, PlantMaskGeometry, PlantModifierState, plant_parameter_schema,
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,8 @@ FrameOutput = Union[np.ndarray, RenderedFrame]
 
 class AnimationBase(ABC):
     """Base class for all LED animations"""
+
+    PLANT_MODIFIER_SUPPORT = frozenset()
     
     def __init__(self, controller, config: Dict[str, Any] = None):
         """
@@ -67,6 +71,7 @@ class AnimationBase(ABC):
             'color_saturation': 1.0,
             'color_value': 1.0,
             'plant_aware': False,
+            'plant_modifiers': PlantModifierState.empty().to_dict(),
             'plant_clearance': 1,
             'plant_mask_path': 'config/plant_pixel_map_32x138.json',
             'plant_globe_mask_path': 'config/plant_globe_map_32x138.json',
@@ -131,6 +136,11 @@ class AnimationBase(ABC):
     
     def update_parameters(self, new_params: Dict[str, Any]):
         """Update animation parameters in real-time"""
+        if 'plant_modifiers' in new_params:
+            new_params = dict(new_params)
+            new_params['plant_modifiers'] = PlantModifierState.from_payload(
+                new_params['plant_modifiers']
+            ).to_dict()
         self.params.update(new_params)
         if {
             'plant_clearance', 'plant_mask_path', 'plant_globe_mask_path'
@@ -139,7 +149,20 @@ class AnimationBase(ABC):
 
     def plant_aware_enabled(self) -> bool:
         """Return whether the animation's opt-in semantic mask behavior is active."""
-        return bool(self.params.get('plant_aware', False))
+        return bool(self.params.get('plant_aware', False)) or bool(self.plant_modifier_state().active)
+
+    def plant_modifier_state(self) -> PlantModifierState:
+        """Return canonical state, translating legacy direct construction."""
+        state = PlantModifierState.from_payload(self.params.get('plant_modifiers'))
+        if state.active or not self.params.get('plant_aware', False):
+            return state
+        return PlantModifierState.from_legacy(True)
+
+    def plant_modifier_enabled(self, modifier: str) -> bool:
+        return self.plant_modifier_state().enabled(modifier, self.PLANT_MODIFIER_SUPPORT)
+
+    def plant_modifier_strength(self, modifier: str) -> float:
+        return self.plant_modifier_state().strength(modifier, self.PLANT_MODIFIER_SUPPORT)
 
     def get_plant_masks(self, clearance: Optional[int] = None) -> PlantMaskGeometry:
         """Load and cache calibrated foliage/globe geometry on first use."""
@@ -147,13 +170,19 @@ class AnimationBase(ABC):
     
     def get_info(self) -> Dict[str, Any]:
         """Get animation metadata"""
+        state = self.plant_modifier_state()
+        supported = tuple(sorted(self.PLANT_MODIFIER_SUPPORT))
         return {
             'name': self.name,
             'description': self.description,
             'author': self.author,
             'version': self.version,
             'parameters': self.get_parameter_schema(),
-            'current_params': self.params
+            'current_params': self.params,
+            'plant_modifier_support': list(supported),
+            'unsupported_plant_modifiers': [
+                modifier for modifier in state.active if modifier not in self.PLANT_MODIFIER_SUPPORT
+            ],
         }
     
     def get_runtime_stats(self) -> Dict[str, Any]:

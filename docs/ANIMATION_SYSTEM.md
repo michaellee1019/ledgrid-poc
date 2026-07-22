@@ -119,17 +119,30 @@ schema["background_speed"] = {
 }
 ```
 
-## Plant-aware rendering
+## Composable plant modifiers
 
-The base schema supplies `plant_aware`, `plant_clearance`, `plant_mask_path`,
-and `plant_globe_mask_path`. Plugins load calibrated masks lazily through
-`get_plant_masks()` and guard all mask-specific behavior with
-`plant_aware_enabled()`.
+The manager owns one validated, versioned `plant_modifiers` state with active
+modifier IDs and normalized strengths. It applies that state live and to every
+future animation start and preview. Plugins declare supported semantics through
+`PLANT_MODIFIER_SUPPORT`, then use `plant_modifier_enabled()` and
+`plant_modifier_strength()`; unsupported active IDs are observable no-ops.
+
+The twelve stable IDs are `illuminate`, `shadow`, `refract`, `attractor`,
+`repulsor`, `slow_zone`, `obstacle`, `portal`, `bumper`, `hazard`, `habitat`,
+and `emitter`. At most one field modifier and one surface modifier may be active.
+The old `plant_aware` boolean remains only as a compatibility input and migrates
+to Illuminate plus Obstacle; newly persisted global state uses the composable
+shape.
+
+The base schema also supplies `plant_clearance`, `plant_mask_path`, and
+`plant_globe_mask_path`. Plugins load calibrated masks lazily through
+`get_plant_masks()`, including per-layer edges, distance/normal fields, and the
+seven ordered globe-region masks.
 
 Keep foliage, globes, their union, and clearance-expanded obstacles semantically
 separate. Interactive simulations can use them for collision and routing;
-visual effects can use them as masks or accent layers. Turning plant awareness
-off must restore ordinary plugin behavior.
+visual effects can use them as masks or accent layers. An empty active state
+must restore byte-identical pixels, semantic evolution, and RNG consumption.
 
 Shared mask geometry belongs in `animation/libraries/`, not in individual
 plugins.

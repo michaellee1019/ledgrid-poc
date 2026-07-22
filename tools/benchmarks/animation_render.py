@@ -26,6 +26,58 @@ from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 
 STRESS_SCENARIOS = {
+    "gradient-plant-visuals": {
+        "plugin": "gradient", "fps": 200.0,
+        "config": {"animated": True, "plant_modifiers": {
+            "active": ["illuminate", "shadow", "refract"],
+            "strengths": {"illuminate": 1.0, "shadow": 1.0, "refract": 1.0},
+        }},
+    },
+    "sparkle-plant-stack": {
+        "plugin": "sparkle", "fps": 200.0,
+        "config": {"sparkle_probability": 0.1, "plant_modifiers": {
+            "active": ["illuminate", "attractor", "habitat", "emitter"],
+            "strengths": {"illuminate": 1.0, "attractor": 1.0, "habitat": 1.0, "emitter": 1.0},
+        }},
+    },
+    "snake-plant-obstacle": {
+        "plugin": "snake", "fps": 200.0,
+        "config": {"snake_count": 3, "food_count": 5, "plant_modifiers": {
+            "active": ["obstacle"], "strengths": {"obstacle": 1.0},
+        }},
+    },
+    "snake-plant-portal": {
+        "plugin": "snake", "fps": 200.0,
+        "config": {"snake_count": 3, "plant_modifiers": {
+            "active": ["portal"], "strengths": {"portal": 1.0},
+        }},
+    },
+    "pinball-plant-bumper": {
+        "plugin": "pinball", "fps": 200.0,
+        "config": {"chaos": 1.0, "speed": 3.0, "plant_modifiers": {
+            "active": ["bumper"], "strengths": {"bumper": 1.0},
+        }},
+    },
+    "pinball-plant-portal": {
+        "plugin": "pinball", "fps": 200.0,
+        "config": {"chaos": 1.0, "speed": 3.0, "plant_modifiers": {
+            "active": ["portal"], "strengths": {"portal": 1.0},
+        }},
+    },
+    "conway-plant-emitter-habitat": {
+        "plugin": "conway_life", "fps": 200.0,
+        "config": {"random_density": 0.14, "generations_per_second": 5.0,
+                   "plant_modifiers": {"active": ["habitat", "emitter"],
+                   "strengths": {"habitat": 1.0, "emitter": 1.0}}},
+    },
+    "fluid-plant-stack": {
+        "plugin": "fluid_tank", "fps": 200.0,
+        "config": {"drop_rate": 1.0, "flow_steps": 2, "max_drop_rate": 240.0,
+                   "plant_modifiers": {
+            "active": ["refract", "slow_zone", "obstacle"],
+            "strengths": {"refract": 1.0, "slow_zone": 1.0, "obstacle": 1.0},
+        }},
+    },
     "clock-animated": {
         "plugin": "clock",
         "fps": 90.0,
@@ -105,6 +157,8 @@ def benchmark(args):
     ]
     if args.stress:
         for scenario_name, scenario in STRESS_SCENARIOS.items():
+            if args.scenario and scenario_name != args.scenario:
+                continue
             plugin_name = scenario["plugin"]
             work_items.append((
                 plugin_name,
@@ -113,6 +167,8 @@ def benchmark(args):
                 scenario["config"],
                 scenario["fps"],
             ))
+    if args.plugin:
+        work_items = [item for item in work_items if item[0] == args.plugin]
 
     results = []
     for name, animation_class, scenario_name, config, scenario_fps in work_items:
@@ -185,6 +241,8 @@ def main():
     parser.add_argument("--fps", type=float, default=200.0)
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--frames", type=int, default=200)
+    parser.add_argument("--plugin", help="benchmark only one plugin ID")
+    parser.add_argument("--scenario", help="benchmark only one named stress scenario")
     parser.add_argument(
         "--stress", action="store_true",
         help="also run named animated and maximum-density scenarios",

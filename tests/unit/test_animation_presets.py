@@ -81,7 +81,7 @@ class AnimationPresetTests(unittest.TestCase):
             [],
         )
         preset_path = Path(self.temp_dir.name) / 'sparkle' / 'calm.json'
-        self.assertIs(json.loads(preset_path.read_text())['params']['plant_aware'], True)
+        self.assertNotIn('plant_aware', json.loads(preset_path.read_text())['params'])
 
     def test_apply_rereads_modified_json_from_disk(self):
         response = self.client.post(
@@ -101,7 +101,7 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.channel.commands[-1], {
             'action': 'start',
-            'data': {'animation': 'sparkle', 'config': {'brightness': 0.9, 'plant_aware': True}},
+            'data': {'animation': 'sparkle', 'config': {'brightness': 0.9}},
         })
 
     def test_list_alphabetizes_presets_with_mixed_timestamp_formats(self):
@@ -259,6 +259,34 @@ class AnimationPresetTests(unittest.TestCase):
         response = self.client.post('/api/config/plant-aware', json={'plant_aware': 'yes'})
         self.assertEqual(response.status_code, 400)
 
+    def test_composable_plant_modifier_control_validates_and_sends_canonical_state(self):
+        response = self.client.post('/api/config/plant-modifiers', json={
+            'plant_modifiers': {
+                'active': ['obstacle', 'illuminate'],
+                'strengths': {'illuminate': 0.7},
+            }
+        })
+        self.assertEqual(response.status_code, 200)
+        expected = {
+            'version': 1,
+            'active': ['illuminate', 'obstacle'],
+            'strengths': {'illuminate': 0.7, 'obstacle': 1.0},
+        }
+        self.assertEqual(response.get_json()['plant_modifiers'], expected)
+        self.assertEqual(self.channel.commands[-1], {
+            'action': 'set_plant_modifiers', 'data': {'plant_modifiers': expected},
+        })
+
+        for state in (
+            {'active': ['portal', 'hazard']},
+            {'active': ['shadow', 'shadow']},
+            {'active': ['shadow'], 'strengths': {'shadow': 2.0}},
+        ):
+            response = self.client.post(
+                '/api/config/plant-modifiers', json={'plant_modifiers': state}
+            )
+            self.assertEqual(response.status_code, 400)
+
     def test_dashboard_promotes_presets_and_collapses_test_animations(self):
         self.interface.preview_manager.list_animations = lambda: [
             {
@@ -319,7 +347,7 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertLess(html.index('data-animation-card="sparkle"'), html.index('data-animation-card="wave"'))
         self.assertLess(html.index('id="ledCanvas"'), html.index('id="globalSpeedRange"'))
         self.assertLess(html.index('id="globalSpeedRange"'), html.index('aria-label="Speed presets"'))
-        self.assertLess(html.index('id="globalSpeedRange"'), html.index('id="globalPlantAwareToggle"'))
+        self.assertLess(html.index('id="globalSpeedRange"'), html.index('id="plantModifierControls"'))
 
     def test_animation_presets_are_alphabetized_by_display_name(self):
         for name in ('zebra', 'Aurora', 'calm'):

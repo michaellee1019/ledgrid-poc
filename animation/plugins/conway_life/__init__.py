@@ -24,6 +24,7 @@ class ConwayLifeAnimation(AnimationBase):
     ANIMATION_DESCRIPTION = "Classic B3/S23 Life with evolving color, atmospheric worlds, and pattern seeds"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "2.3"
+    PLANT_MODIFIER_SUPPORT = frozenset(("obstacle", "habitat", "hazard", "emitter"))
 
     PALETTES = (
         "natural",
@@ -180,6 +181,8 @@ class ConwayLifeAnimation(AnimationBase):
         self._tile_ids: Optional[List[List[int]]] = None
         self._tile_regions: List[Tuple[int, int, int, int]] = []
         self._plant_blocked = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_hazard = np.zeros((self.height, self.width), dtype=bool)
+        self._plant_warning = np.zeros((self.height, self.width), dtype=bool)
         self._plant_fertile = np.zeros((self.height, self.width), dtype=bool)
         self._plant_fertile_flat = np.zeros(self.width * self.height, dtype=bool)
         self._plant_foliage_flat = np.zeros(self.width * self.height, dtype=bool)
@@ -187,6 +190,11 @@ class ConwayLifeAnimation(AnimationBase):
         self._plant_foliage_count = 0
         self._plant_globe_count = 0
         self._plant_mask_error = ""
+        self._plant_emitter_candidates: List[Tuple[int, int]] = []
+        self.plant_hazard_deaths = 0
+        self._next_plant_hazard_deaths = 0
+        self.plant_emitted_cells = 0
+        self.plant_emitter_events = 0
         self.destruct_on_loop_recoveries = 0
         self.last_detected_loop_period = 0
         self.last_detected_loop_generation = -1
@@ -380,12 +388,15 @@ class ConwayLifeAnimation(AnimationBase):
         self._last_frame = None
 
         plant_geometry_keys = {
-            "plant_aware", "plant_clearance", "plant_mask_path",
+            "plant_aware", "plant_modifiers", "plant_clearance", "plant_mask_path",
             "plant_globe_mask_path", "plant_nursery",
         }
         if plant_geometry_keys & params.keys():
             self._refresh_plant_habitat()
-            self._initialize_grid(self.params.get("seed_cells"))
+            # A modifier-only change is not a semantic tick: retain the world,
+            # RNG stream, phase, and generation while refreshing the planned
+            # next generation under the newly selected rules.
+            self._compute_next_state()
             return
 
         if "seed_cells" in params:
@@ -433,11 +444,15 @@ class ConwayLifeAnimation(AnimationBase):
             "last_destruct_on_loop_action": self.last_destruct_on_loop_action,
             "tile_installation": self._tile_ids is not None,
             "tile_regions": len(self._tile_regions),
+            "plant_hazard_deaths": self.plant_hazard_deaths,
+            "plant_emitted_cells": self.plant_emitted_cells,
+            "plant_emitter_events": self.plant_emitter_events,
         }
-        if self.plant_aware_enabled():
+        if self._plant_effects_enabled():
             stats.update(
                 {
                     "plant_aware": True,
+                    "plant_active_modifiers": list(self.plant_modifier_state().active),
                     "plant_foliage_pixels": self._plant_foliage_count,
                     "plant_globe_pixels": self._plant_globe_count,
                     "plant_nursery_pixels": int(np.count_nonzero(self._plant_fertile)),
@@ -518,7 +533,7 @@ class ConwayLifeAnimation(AnimationBase):
                 )
                 self._background_cache_key = background_key
                 self._background_cache = frame.copy()
-        if self.plant_aware_enabled():
+        if self._plant_effects_enabled():
             self._render_plant_habitat(frame)
         for x, y in self._render_cells:
             color = self._cell_color(x, y)
@@ -626,6 +641,8 @@ class ConwayLifeAnimation(AnimationBase):
         self.grid = [row[:] for row in self.next_grid]
         self.natural_grid = [row[:] for row in self.next_natural_grid]
         self.generation += 1
+        self.plant_hazard_deaths += self._next_plant_hazard_deaths
+        self._emit_plant_cells()
         self.alive_cells = self._count_alive(self.grid)
 
         if self.alive_cells == self.previous_population:
@@ -660,6 +677,7 @@ class ConwayLifeAnimation(AnimationBase):
         births = 0
         deaths = 0
         next_population = 0
+        hazard_deaths = 0
         next_fingerprint = 14695981039346656037
         render_cells: List[Tuple[int, int]] = []
         alive_cells = {
@@ -684,7 +702,7 @@ class ConwayLifeAnimation(AnimationBase):
                         continue
                     if self._tile_ids is not None and self._tile_ids[ny][nx] != source_tile:
                         continue
-                    if self.plant_aware_enabled() and self._plant_blocked[ny, nx]:
+                    if self._obstacle_enabled() and self._plant_blocked[ny, nx]:
                         continue
                     key = (nx, ny)
                     counts[key] = counts.get(key, 0) + 1
@@ -701,7 +719,7 @@ class ConwayLifeAnimation(AnimationBase):
             elif not alive and (
                 neighbors == 3
                 or (
-                    self.plant_aware_enabled()
+                    self._habitat_enabled()
                     and bool(self.params.get("plant_nursery", True))
                     and self._plant_fertile[y, x]
                     and neighbors == 2
@@ -729,12 +747,18 @@ class ConwayLifeAnimation(AnimationBase):
                             color_sum[2] += neighbor_color[2]
                             color_count += 1
                 self.next_grid[y][x] = 1
-                if self.plant_aware_enabled() and self._plant_fertile[y, x] and neighbors == 2:
+                if self._habitat_enabled() and self._plant_fertile[y, x] and neighbors == 2:
                     self.next_natural_grid[y][x] = (255, 176, 48)
                 else:
                     self.next_natural_grid[y][x] = self._blend_neighbor_colors(color_sum, color_count)
                 births += 1
             elif alive:
+                deaths += 1
+
+            if self._hazard_applies(x, y) and self.next_grid[y][x] > 0:
+                self.next_grid[y][x] = 0
+                self.next_natural_grid[y][x] = None
+                hazard_deaths += 1
                 deaths += 1
 
             if self.next_grid[y][x] > 0:
@@ -748,6 +772,7 @@ class ConwayLifeAnimation(AnimationBase):
         self.births_last_generation = births
         self.deaths_last_generation = deaths
         self._render_cells = render_cells
+        self._next_plant_hazard_deaths = hazard_deaths
         self._next_state_fingerprint = (next_fingerprint, next_population)
 
     def _fingerprint_grid(self) -> Tuple[int, int]:
@@ -1144,11 +1169,46 @@ class ConwayLifeAnimation(AnimationBase):
             return False
         if self._tile_ids is not None and self._tile_ids[y][x] < 0:
             return False
-        return not (self.plant_aware_enabled() and self._plant_blocked[y, x])
+        return not (self._obstacle_enabled() and self._plant_blocked[y, x])
+
+    def _legacy_plant_mode(self) -> bool:
+        """The old boolean combined blocking, globe nurseries, and landmarks."""
+        raw_state = self.params.get("plant_modifiers") or {}
+        return bool(self.params.get("plant_aware", False)) and not raw_state.get("active")
+
+    def _plant_effects_enabled(self) -> bool:
+        return self._legacy_plant_mode() or any(
+            self.plant_modifier_enabled(modifier) for modifier in self.PLANT_MODIFIER_SUPPORT
+        )
+
+    def _obstacle_enabled(self) -> bool:
+        return self._legacy_plant_mode() or self.plant_modifier_enabled("obstacle")
+
+    def _habitat_enabled(self) -> bool:
+        return self._legacy_plant_mode() or self.plant_modifier_enabled("habitat")
+
+    def _hazard_enabled(self) -> bool:
+        return self.plant_modifier_enabled("hazard")
+
+    def _hazard_applies(self, x: int, y: int) -> bool:
+        if not self._hazard_enabled() or not self._plant_hazard[y, x]:
+            return False
+        strength = self.plant_modifier_strength("hazard")
+        # Strength is deterministic burn frequency, not fresh randomness.
+        sample = (
+            ((y * self.width + x + 1) * 2654435761)
+            ^ ((self.generation + 1) * 2246822519)
+        ) & 0xFFFF
+        return sample / 65535.0 < strength
+
+    def _emitter_enabled(self) -> bool:
+        return self.plant_modifier_enabled("emitter")
 
     def _refresh_plant_habitat(self):
         """Map calibrated physical masks into Conway's top-down Life canvas."""
         self._plant_blocked.fill(False)
+        self._plant_hazard.fill(False)
+        self._plant_warning.fill(False)
         self._plant_fertile.fill(False)
         self._plant_fertile_flat.fill(False)
         self._plant_foliage_flat.fill(False)
@@ -1156,39 +1216,108 @@ class ConwayLifeAnimation(AnimationBase):
         self._plant_foliage_count = 0
         self._plant_globe_count = 0
         self._plant_mask_error = ""
-        if not self.plant_aware_enabled():
+        self._plant_emitter_candidates = []
+        if not self._plant_effects_enabled():
             return
 
         masks = self.get_plant_masks()
-        self._plant_blocked[:] = masks.clearance.T[::-1]
+        if self._legacy_plant_mode():
+            blocked_physical = masks.clearance
+        else:
+            blocked_physical = masks.obstacle.copy()
+            obstacle_steps = int(round(
+                max(0, int(self.params.get("plant_clearance", 1)))
+                * self.plant_modifier_strength("obstacle")
+            ))
+            for _ in range(obstacle_steps):
+                blocked_physical = dilate_8(blocked_physical)
+        self._plant_blocked[:] = blocked_physical.T[::-1]
+        self._plant_hazard[:] = masks.obstacle.T[::-1]
+        warning_physical = dilate_8(masks.obstacle) & ~masks.obstacle
+        self._plant_warning[:] = warning_physical.T[::-1]
         self._plant_foliage_flat[:] = masks.foliage_flat
         self._plant_globes_flat[:] = masks.globes_flat
         self._plant_foliage_count = masks.foliage_count
         self._plant_globe_count = masks.globe_count
         self._plant_mask_error = masks.error
 
-        # The first safe ring beyond configured clearance is a fertile shoreline
-        # around each globe. It modifies Life without placing cells behind glass.
-        globe_reach = masks.globes.copy()
-        for _ in range(max(0, int(self.params.get("plant_clearance", 1))) + 1):
+        # Habitat belongs to foliage. Legacy boolean mode retains the prior
+        # globe nursery exactly for compatibility with saved installations.
+        habitat_core = masks.globes.copy() if self._legacy_plant_mode() else masks.foliage.copy()
+        globe_reach = habitat_core
+        habitat_steps = (
+            max(0, int(self.params.get("plant_clearance", 1))) + 1
+            if self._legacy_plant_mode()
+            else 1 + int(round(
+                (max(0, int(self.params.get("plant_clearance", 1))) + 1)
+                * self.plant_modifier_strength("habitat")
+            ))
+        )
+        for _ in range(habitat_steps):
             globe_reach = dilate_8(globe_reach)
         fertile_physical = globe_reach & ~masks.clearance
         self._plant_fertile[:] = fertile_physical.T[::-1]
         self._plant_fertile_flat[:] = fertile_physical.ravel()
 
+        emitter_physical = dilate_8(masks.obstacle) & ~masks.obstacle
+        emitter_canvas = emitter_physical.T[::-1]
+        self._plant_emitter_candidates = [
+            (x, y)
+            for y, x in np.argwhere(emitter_canvas)
+            if self._tile_ids is None or self._tile_ids[y][x] >= 0
+        ]
+
+    def _emit_plant_cells(self) -> None:
+        """Inject bounded deterministic Life seeds at generation boundaries."""
+        if not self._emitter_enabled() or not self._plant_emitter_candidates:
+            return
+        strength = self.plant_modifier_strength("emitter")
+        requested = max(1, int(math.ceil(strength * 8.0)))
+        start = (self.generation * 17) % len(self._plant_emitter_candidates)
+        emitted = 0
+        for offset in range(len(self._plant_emitter_candidates)):
+            if emitted >= requested:
+                break
+            x, y = self._plant_emitter_candidates[(start + offset) % len(self._plant_emitter_candidates)]
+            if self.grid[y][x] == 0 and self._cell_is_active(x, y):
+                self.grid[y][x] = 1
+                self.natural_grid[y][x] = (72, 236, 176)
+                emitted += 1
+        if emitted:
+            self.plant_emitter_events += 1
+            self.plant_emitted_cells += emitted
+
     def _render_plant_habitat(self, frame: np.ndarray):
-        """Render foliage, globes, and globe nurseries as distinct landmarks."""
-        if np.any(self._plant_fertile_flat):
+        """Render modifier-specific semantic landmarks without changing Life."""
+        if self._habitat_enabled() and np.any(self._plant_fertile_flat):
             frame[self._plant_fertile_flat] = np.maximum(
                 frame[self._plant_fertile_flat], self.apply_brightness((34, 12, 2))
             )
-        if np.any(self._plant_foliage_flat):
+        if (self._obstacle_enabled() or self._legacy_plant_mode()) and np.any(self._plant_foliage_flat):
             frame[self._plant_foliage_flat] = np.maximum(
                 frame[self._plant_foliage_flat], self.apply_brightness((3, 38, 10))
             )
-        if np.any(self._plant_globes_flat):
+        if (self._obstacle_enabled() or self._legacy_plant_mode()) and np.any(self._plant_globes_flat):
             frame[self._plant_globes_flat] = np.maximum(
                 frame[self._plant_globes_flat], self.apply_brightness((92, 18, 112))
+            )
+        if self._hazard_enabled():
+            hazard_flat = self._plant_hazard[::-1].T.ravel()
+            warning_flat = self._plant_warning[::-1].T.ravel()
+            frame[warning_flat] = np.maximum(
+                frame[warning_flat], self.apply_brightness((72, 18, 0))
+            )
+            hazard_level = self.plant_modifier_strength("hazard")
+            frame[hazard_flat] = np.maximum(
+                frame[hazard_flat], self.apply_brightness((int(55 + 95 * hazard_level), 5, 0))
+            )
+        if self._emitter_enabled() and self._plant_emitter_candidates:
+            emitter_flat = np.zeros(self.width * self.height, dtype=bool)
+            for x, y in self._plant_emitter_candidates:
+                physical = x * self.height + (self.height - 1 - y)
+                emitter_flat[physical] = True
+            frame[emitter_flat] = np.maximum(
+                frame[emitter_flat], self.apply_brightness((0, 30, 46))
             )
 
     def _seed_pattern_in_region(
@@ -1240,7 +1369,7 @@ class ConwayLifeAnimation(AnimationBase):
         for dx, dy in pattern:
             x, y = origin_x + dx, origin_y + dy
             if 0 <= x < self.width and 0 <= y < self.height and (
-                not self.plant_aware_enabled() or self._cell_is_active(x, y)
+                not self._obstacle_enabled() or self._cell_is_active(x, y)
             ):
                 self.grid[y][x] = 1
                 self.natural_grid[y][x] = color
@@ -1281,7 +1410,7 @@ class ConwayLifeAnimation(AnimationBase):
                 continue
 
             glider = self.random.choice(gliders)
-            if self.plant_aware_enabled() and any(
+            if self._obstacle_enabled() and any(
                 not self._cell_is_active(origin_x + dx, origin_y + dy)
                 for dx, dy in glider
             ):

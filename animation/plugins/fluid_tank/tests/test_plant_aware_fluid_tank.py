@@ -38,6 +38,112 @@ class PlantAwareFluidTankTests(unittest.TestCase):
         })
 
     @staticmethod
+    def modifiers(*active, **strengths):
+        return {"version": 1, "active": list(active), "strengths": strengths}
+
+    def test_declares_exact_sprint_support(self):
+        self.assertEqual(
+            FluidTankAnimation.PLANT_MODIFIER_SUPPORT,
+            frozenset(("obstacle", "refract", "slow_zone")),
+        )
+
+    def test_explicit_empty_state_and_live_changes_preserve_semantics_and_rng(self):
+        random.seed(912)
+        baseline = self._run(self.make_animation())
+        random.seed(912)
+        empty = self._run(self.make_animation(plant_modifiers=self.modifiers()))
+        for left, right in zip(baseline[0], empty[0]):
+            np.testing.assert_array_equal(left, right)
+        self.assertEqual(baseline[1:], empty[1:])
+
+        animation = self.make_animation()
+        animation.start()
+        animation.volume_cells = 17.5
+        animation.surface_velocity[2] = 0.75
+        before_random = random.getstate()
+        before = (
+            animation.volume_cells, animation.surface_offset.copy(),
+            animation.surface_velocity.copy(), animation.last_time,
+        )
+        animation.update_parameters({
+            "plant_modifiers": self.modifiers("refract", refract=1.0)
+        })
+        self.assertEqual(animation.volume_cells, before[0])
+        np.testing.assert_array_equal(animation.surface_offset, before[1])
+        np.testing.assert_array_equal(animation.surface_velocity, before[2])
+        self.assertEqual(animation.last_time, before[3])
+        self.assertEqual(random.getstate(), before_random)
+
+    def test_slow_zone_reduces_local_motion_without_changing_volume(self):
+        common_bubble = {
+            "x": 3.0, "origin_y": 8.5, "y": 5.0, "radius": 0.6,
+            "vy": -4.0, "phase": 0.0, "age": 0.0,
+        }
+        ordinary = self.make_animation()
+        slowed = self.make_animation(
+            plant_modifiers=self.modifiers("slow_zone", slow_zone=1.0)
+        )
+        for animation in (ordinary, slowed):
+            animation.start()
+            animation.volume_cells = animation.capacity_cells
+            animation.bubbles = [dict(common_bubble)]
+        slowed._refresh_plant_geometry()
+        ordinary._update_bubbles(0.1, 0.1)
+        slowed._update_bubbles(0.1, 0.1)
+
+        self.assertLess(ordinary.bubbles[0]["y"], slowed.bubbles[0]["y"])
+        self.assertEqual(ordinary.volume_cells, slowed.volume_cells)
+        self.assertGreater(slowed._plant_slow_zone_steps, 0)
+
+    def test_refract_changes_only_presentation(self):
+        animation = self.make_animation(
+            caustic_strength=0.4,
+            plant_modifiers=self.modifiers("refract", refract=1.0),
+        )
+        animation.start()
+        animation.volume_cells = animation.capacity_cells * 0.62
+        animation.surface_offset[:] = np.linspace(-1.0, 1.0, animation.width)
+        animation._refresh_plant_geometry()
+        coverage, surface = animation._coverage_and_surface()
+        before = (
+            animation.volume_cells, animation.surface_offset.copy(),
+            animation.surface_velocity.copy(), random.getstate(),
+        )
+        refracted = animation._render_frame(0.7, coverage, surface).copy()
+
+        animation.update_parameters({"plant_modifiers": self.modifiers()})
+        plain = animation._render_frame(0.7, coverage, surface).copy()
+        self.assertFalse(np.array_equal(refracted, plain))
+        self.assertEqual(animation.volume_cells, before[0])
+        np.testing.assert_array_equal(animation.surface_offset, before[1])
+        np.testing.assert_array_equal(animation.surface_velocity, before[2])
+        self.assertEqual(random.getstate(), before[3])
+
+    def test_combined_modifiers_conserve_supplied_water_over_long_run(self):
+        random.seed(331)
+        animation = self.make_animation(
+            target_fill_time=120.0,
+            bubble_interval=0.3,
+            plant_modifiers=self.modifiers(
+                "refract", "slow_zone", "obstacle",
+                refract=1.0, slow_zone=1.0, obstacle=1.0,
+            ),
+        )
+        animation.start()
+        for frame in range(1, 301):
+            animation.generate_frame(frame * 0.02, frame)
+
+        system_volume = (
+            animation.volume_cells
+            + animation.inlet_reservoir_cells
+            + sum(p["volume_cells"] for p in animation.inlet_particles)
+        )
+        self.assertAlmostEqual(system_volume, animation.total_inflow_cells, places=6)
+        stats = animation.get_runtime_stats()
+        self.assertGreater(stats["plant_slow_zone_steps"], 0)
+        self.assertGreater(stats["plant_refracted_pixels"], 0)
+
+    @staticmethod
     def _run(animation):
         frames = []
         animation.start()

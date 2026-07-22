@@ -98,11 +98,26 @@ appropriate to its visual or simulation model.
 - Keep the disabled path behaviorally and visually identical to the prior
   renderer. Guard simulation changes as well as paint changes behind the feature
   state, and test equality with the mode off.
-- Decide control authority explicitly. A global installation mode should be
-  applied by the manager to the active animation and every future start; presets
-  may declare the preferred value, but must not silently override an operator's
-  global switch. Validate booleans strictly and persist the global state through
-  restarts or deployments when other global controls persist.
+- For normalized effects, treat an enabled strength of zero as an exact no-op
+  unless the contract explicitly says otherwise. Test byte, logical-state, and
+  RNG parity at both the canonical off state and zero strength.
+- Gate geometry loading and behavior through the plugin's declared support, not
+  merely through the presence of global state. Unsupported active effects must
+  not fall through to a broad legacy mode or incur hidden geometry/render work.
+- Separate exact contact geometry from clearance geometry. Exact cores own
+  collisions, damage, illumination, and boundaries; dilated clearance owns
+  planning, spawn, food, HUD, and routing pressure unless the animation clearly
+  documents a different semantic model.
+- Decide control authority explicitly. A global installation state should be
+  applied by the manager to the active animation, every future start, generic
+  live parameter updates, plain and parameterized previews, and any separate
+  preview process. Presets may declare a preferred value, but must not silently
+  override the operator's global selection. Validate at the manager/API boundary
+  and persist canonical state through restarts or deployments.
+- A live installation-state change invalidates relevant caches and future plans,
+  but must not by itself reset the simulation, consume RNG, advance time, or
+  trigger a semantic event. Recompute derived next-state data from the unchanged
+  current state when rules change.
 - If the operator control is global, show it beside other global controls and
   suppress duplicate per-animation controls. Still keep the parameter in plugin
   schemas so direct/headless construction remains valid and independently
@@ -207,6 +222,10 @@ Prefer:
 - Cached board metrics or spatial indexes instead of copying/rescanning the world for every candidate.
 - O(piece cells) collision or landing calculations when column/surface data can replace full descent scans.
 - Event-driven planning, incremental work, and capped spawn/simulation work per update.
+- Schedule emitters, injections, damage ticks, and other semantic events at
+  committed simulation boundaries rather than rendered frames. Manager FPS,
+  cached-frame calls, and independently animated backgrounds must not multiply
+  event rates.
 - Cached unchanged frames with the host’s `changed=False` mechanism.
 - End-to-end vectorization for dense layers, including brightness scaling,
   masks, and logical-to-physical layout conversion. A vectorized field followed
@@ -259,11 +278,18 @@ Cover as applicable:
   obeys obstacle routing/collision rules, and remains bounded when safe space is
   scarce or masks are missing/malformed.
 - Global installation controls apply live, override preset/direct-start conflicts,
-  survive saved-state round trips, and have one visible authoritative UI control.
+  survive saved-state round trips, propagate to every preview/update path, and
+  have one visible authoritative UI control.
 
 Run deterministic multi-seed simulations long enough for the requested emergent outcome. Report concrete results such as lines cleared, resets, surviving duration, or convergence—not “looks intelligent.” A unit test for one constructed board state and a longer simulation serve different purposes; use both when the behavior is emergent.
 
-Benchmark with realistic dimensions, target FPS, normal settings, and the worst supported density. Record mean, p95, p99, maximum frame time, and behavioral output. Optimize and rerun if p95 approaches the frame budget or event spikes are excessive.
+Benchmark with realistic dimensions, the actual manager call rate, source-rate
+cadence, normal settings, and the worst supported density. Record mean, p95,
+p99, maximum frame time, changed-frame ratio, and behavioral output. A passing
+p95 can coexist with severe semantic-tick spikes, so report and investigate p99
+and maximum event frames separately rather than treating the gate as the whole
+performance story. Optimize and rerun if p95 approaches the frame budget or
+event spikes are excessive.
 
 For visual-only effects, render representative frames or short clips when tooling exists and inspect them. For a large preset family, build a labeled contact sheet covering every preset at the real aspect ratio; check legibility, clipping, blank outputs, unwanted repetition, and whether variants differ structurally. Do not substitute code review for visual verification.
 

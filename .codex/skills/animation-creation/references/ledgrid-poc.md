@@ -6,8 +6,9 @@ Read this reference only when working in the `ledgrid-poc` repository.
 
 - `animation/core/base.py`: frame buffers, brightness, `RenderedFrame`, and base parameters.
 - `animation/core/manager.py`: allowed plugins and preview controller.
-- `animation/core/plant_awareness.py`: cached foliage/globe semantic geometry,
-  clearance dilation, and shared plant-aware parameters.
+- `animation/core/plant_awareness.py`: validated `PlantModifierState`, cached
+  foliage/globe semantic geometry, clearance, edges, distance/normals, and named
+  globe-region masks.
 - `animation/plugins/`: concrete effects; `README.md` contains plugin rules.
 - `presets/animations/<plugin>/`: curated disk-backed parameter sets.
 - `tests/unit/`: focused plugin and frame-pipeline tests.
@@ -36,14 +37,24 @@ Read this reference only when working in the `ledgrid-poc` repository.
 - Keep preset parameters inside the plugin schema. The curated-preset test
   validates filenames/IDs, option values, numeric bounds, frame shape, and
   renderability across every shipped JSON file.
-- Keep plugin-level `plant_aware` defaults off so direct/headless construction is
-  backward compatible. The manager's global state is authoritative for managed
-  starts, defaults on for the installed wall, updates the active animation live,
-  and overrides conflicting preset values.
-- Use `plant_aware_enabled()` to guard both rendering and simulation changes.
-  Obtain cached logical/flat foliage, globe, obstacle, clearance, and safe masks
-  through the shared plant-awareness helper rather than re-reading calibration
-  JSON or reimplementing coordinate mapping in each plugin.
+- Direct/headless construction defaults to an empty `plant_modifiers` state.
+  The manager's global `PlantModifierState` is authoritative for managed starts,
+  generic live updates, previews, and deployment persistence, and overrides
+  conflicting preset values. The old `plant_aware` boolean is compatibility
+  input only; do not add new behavior behind it.
+- Declare exact support with `PLANT_MODIFIER_SUPPORT`; use
+  `plant_modifier_enabled()` and `plant_modifier_strength()` so unsupported
+  active modifiers remain no-ops. Obtain cached logical/flat foliage, globe,
+  obstacle, clearance, safe, edge, distance/normal, and named globe-region views
+  through the shared helper rather than re-reading calibration JSON or
+  reimplementing coordinate mapping in each plugin.
+- Keep exact cores and clearance distinct. Use exact geometry for contact and
+  hazard semantics, clearance for planning/spawn/routing, and the stable
+  `GLOBE_REGION_ORDER` for portal topology.
+- Modifier-only live updates may invalidate caches and recompute derived plans,
+  but must not reset semantic state, consume RNG, advance a tick, or emit an
+  event. A supported modifier at strength zero and an unsupported modifier both
+  require exact parity coverage.
 - Treat foliage as soft/occluding and globes as solid landmarks unless an
   animation has a documented reason to reinterpret them. Route, place, or reserve
   against clearance geometry when possible; use intentional edge/highlight
@@ -105,7 +116,11 @@ Run the standard rendering acceptance benchmark:
 uv run --with numpy --with pillow tools/benchmarks/animation_render.py --frames 100 --check --max-p95-ms 4.0 --json
 ```
 
-The benchmark’s 4 ms plugin p95 gate preserves headroom inside the 5 ms period at 200 FPS. For configuration-sensitive effects, also make a targeted benchmark using the deployed 32-strip by 138-LED geometry and maximum supported entity count.
+The benchmark’s 4 ms plugin p95 gate preserves headroom inside the 5 ms period at
+200 FPS. For configuration-sensitive effects, also make a targeted benchmark
+using the deployed 32-strip by 138-LED geometry, the actual 200 Hz manager call
+cadence, maximum effect strength, and maximum supported entity count. Retain p99
+and maximum semantic-event frames even when the p95 gate passes.
 
 Use `just live-animation-sweep` only when the live controller is intentionally in scope. Do not deploy or operate physical hardware for a code-only request without the user requesting that external state change.
 

@@ -210,6 +210,44 @@ class ExternalAnimation(AnimationBase):
         self.assertIsNone(manager.animation_thread)
         self.assertFalse(manager.is_running)
 
+    def test_composable_modifier_authority_overrides_start_and_live_params(self):
+        class _Controller:
+            strip_count = 4
+            leds_per_strip = 8
+            total_leds = 32
+            debug = False
+
+            def configure(self): pass
+            def set_all_pixels(self, _frame): pass
+            def show(self): pass
+            def clear(self): pass
+
+        state = {"active": ["shadow"], "strengths": {"shadow": 0.7}}
+        manager = AnimationManager(
+            _Controller(), plant_modifiers=state, auto_start=False
+        )
+        self.addCleanup(manager.stop_animation)
+        self.assertTrue(manager.start_animation("gradient", {
+            "plant_aware": True,
+            "plant_modifiers": {"active": ["refract"]},
+        }))
+        self.assertFalse(manager.current_animation.params["plant_aware"])
+        self.assertEqual(
+            manager.current_animation.plant_modifier_state().active, ("shadow",)
+        )
+
+        frame_count = manager.frame_count
+        manager.update_animation_parameters({
+            "plant_modifiers": {"active": ["refract"]}, "brightness": 0.4,
+        })
+        self.assertEqual(
+            manager.current_animation.plant_modifier_state().active, ("shadow",)
+        )
+        self.assertEqual(manager.frame_count, frame_count)
+        status = manager.get_current_status()
+        self.assertEqual(status["plant_modifiers"]["active"], ["shadow"])
+        self.assertIn("shadow", status["plant_modifier_support"])
+
     def test_web_factory_keeps_preview_manager_idle(self):
         interface = create_app(strips=1, leds_per_strip=4)
 

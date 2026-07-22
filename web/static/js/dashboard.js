@@ -359,7 +359,16 @@
     let controlParameterUpdateTimeout = null;
     let controlParameterStore = {};
     let controlParameterSchema = {};
-    let globalPlantAware = Boolean(INITIAL_STATUS?.plant_aware ?? true);
+    const PLANT_MODIFIERS = [
+        ['Visual', 'illuminate', 'Illuminate'], ['Visual', 'shadow', 'Shadow'],
+        ['Visual', 'refract', 'Refract'], ['Field', 'attractor', 'Attractor'],
+        ['Field', 'repulsor', 'Repulsor'], ['Field', 'slow_zone', 'Slow zone'],
+        ['Surface', 'obstacle', 'Obstacle'], ['Surface', 'portal', 'Portal'],
+        ['Surface', 'bumper', 'Bumper'], ['Surface', 'hazard', 'Hazard / lava'],
+        ['Surface', 'habitat', 'Habitat'], ['Lifecycle', 'emitter', 'Emitter'],
+    ];
+    let globalPlantModifiers = INITIAL_STATUS?.plant_modifiers || {version: 1, active: [], strengths: {}};
+    let plantModifierSupport = new Set(INITIAL_STATUS?.animation_info?.plant_modifier_support || []);
 
     // Initialize renderer when page loads
     document.addEventListener('DOMContentLoaded', function() {
@@ -367,7 +376,7 @@
         if (INITIAL_STATUS) {
             syncControlPanel(INITIAL_STATUS);
             syncGlobalSpeedFromStatus(INITIAL_STATUS);
-            syncGlobalPlantAwareFromStatus(INITIAL_STATUS);
+            syncPlantModifiersFromStatus(INITIAL_STATUS);
         }
         startStatsPolling();
     });
@@ -452,40 +461,76 @@
         setGlobalSpeed(value);
     }
 
-    function syncGlobalPlantAwareFromStatus(status) {
-        if (!status || typeof status.plant_aware !== 'boolean') return;
-        globalPlantAware = status.plant_aware;
-        const toggle = document.getElementById('globalPlantAwareToggle');
-        if (toggle && document.activeElement !== toggle) toggle.checked = globalPlantAware;
-        const label = document.getElementById('globalPlantAwareLabel');
-        if (label) label.textContent = globalPlantAware ? 'On' : 'Off';
+    function syncPlantModifiersFromStatus(status) {
+        if (!status?.plant_modifiers) return;
+        globalPlantModifiers = status.plant_modifiers;
+        plantModifierSupport = new Set(status.animation_info?.plant_modifier_support || []);
+        renderPlantModifierControls();
     }
 
-    async function setGlobalPlantAware(enabled) {
-        globalPlantAware = Boolean(enabled);
-        const label = document.getElementById('globalPlantAwareLabel');
-        if (label) label.textContent = globalPlantAware ? 'On' : 'Off';
-        Object.values(controlParameterStore).forEach(params => {
-            params.plant_aware = globalPlantAware;
+    function renderPlantModifierControls() {
+        const host = document.getElementById('plantModifierControls');
+        if (!host) return;
+        host.innerHTML = '';
+        let lastGroup = '';
+        PLANT_MODIFIERS.forEach(([group, id, label]) => {
+            if (group !== lastGroup) {
+                const heading = document.createElement('div');
+                heading.className = 'small fw-bold mt-1';
+                heading.textContent = group;
+                host.appendChild(heading);
+                lastGroup = group;
+            }
+            const active = globalPlantModifiers.active.includes(id);
+            const supported = plantModifierSupport.has(id);
+            const row = document.createElement('div');
+            row.className = `d-flex align-items-center gap-2 ${supported ? '' : 'opacity-50'}`;
+            row.innerHTML = `<input type="checkbox" id="plantModifier-${id}" ${active ? 'checked' : ''} ${supported ? '' : 'disabled'} aria-label="${label}">`
+                + `<label class="small flex-grow-1" for="plantModifier-${id}">${label}</label>`
+                + `<input type="range" min="0" max="1" step="0.05" value="${globalPlantModifiers.strengths[id] ?? (id === 'obstacle' ? 1 : .5)}" ${active && supported ? '' : 'disabled'} aria-label="${label} strength">`;
+            const [toggle, slider] = row.querySelectorAll('input');
+            toggle.addEventListener('change', () => changePlantModifier(id, toggle.checked));
+            slider.addEventListener('change', () => changePlantStrength(id, Number(slider.value)));
+            host.appendChild(row);
         });
-        if (controlSelectedAnimation) syncPreviewParameters(controlSelectedAnimation);
+        const unsupported = globalPlantModifiers.active.filter(id => !plantModifierSupport.has(id));
+        const message = document.getElementById('plantModifierUnsupported');
+        if (message) message.textContent = unsupported.length ? `Unsupported here: ${unsupported.join(', ')}` : '';
+    }
+
+    function changePlantModifier(id, enabled) {
+        const field = new Set(['attractor', 'repulsor', 'slow_zone']);
+        const surface = new Set(['obstacle', 'portal', 'bumper', 'hazard', 'habitat']);
+        let active = globalPlantModifiers.active.filter(item => item !== id);
+        if (enabled) {
+            if (field.has(id)) active = active.filter(item => !field.has(item));
+            if (surface.has(id)) active = active.filter(item => !surface.has(item));
+            active.push(id);
+        }
+        globalPlantModifiers = {...globalPlantModifiers, active};
+        sendPlantModifiers();
+    }
+
+    function changePlantStrength(id, strength) {
+        globalPlantModifiers = {...globalPlantModifiers,
+            strengths: {...globalPlantModifiers.strengths, [id]: strength}};
+        sendPlantModifiers();
+    }
+
+    async function sendPlantModifiers() {
+        renderPlantModifierControls();
         try {
-            const response = await fetch('/api/config/plant-aware', {
+            const response = await fetch('/api/config/plant-modifiers', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({plant_aware: globalPlantAware})
+                body: JSON.stringify({plant_modifiers: globalPlantModifiers})
             });
             const payload = await response.json();
-            if (!response.ok) throw new Error(payload.error || 'Unable to change plant-aware mode');
-            showToast(`Plant-aware mode ${globalPlantAware ? 'enabled' : 'disabled'}`, 'success');
+            if (!response.ok) throw new Error(payload.error || 'Unable to change plant modifiers');
+            globalPlantModifiers = payload.plant_modifiers;
+            renderPlantModifierControls();
+            showToast('Plant modifiers updated', 'success');
         } catch (error) {
-            globalPlantAware = !globalPlantAware;
-            Object.values(controlParameterStore).forEach(params => {
-                params.plant_aware = globalPlantAware;
-            });
-            const toggle = document.getElementById('globalPlantAwareToggle');
-            if (toggle) toggle.checked = globalPlantAware;
-            if (label) label.textContent = globalPlantAware ? 'On' : 'Off';
             showToast(error.message, 'error');
         }
     }
@@ -652,7 +697,7 @@
             updateStatusJson(data);
             syncControlPanel(data);
             syncGlobalSpeedFromStatus(data);
-            syncGlobalPlantAwareFromStatus(data);
+            syncPlantModifiersFromStatus(data);
         } catch (err) {
             console.error('Failed to fetch stats', err);
         }
@@ -1032,9 +1077,7 @@
         controlParameterSchema = schema;
         const parameterSnapshot = {};
         Object.entries(schema).forEach(([name, info]) => {
-            parameterSnapshot[name] = name === 'plant_aware'
-                ? globalPlantAware
-                : (currentParams[name] ?? info.default);
+            parameterSnapshot[name] = currentParams[name] ?? info.default;
         });
 
         const title = document.getElementById('controlStudioTitle');
@@ -1053,7 +1096,7 @@
         });
 
         Object.entries(schema).forEach(([paramName, paramInfo]) => {
-            if (paramName === 'speed' || paramName === 'plant_aware' || colorNames.has(paramName)) return;
+            if (paramName === 'speed' || paramName === 'plant_aware' || paramName === 'plant_modifiers' || colorNames.has(paramName)) return;
             const currentValue = parameterSnapshot[paramName];
             const prettyName = humanizeParamName(paramName);
             const controlDiv = document.createElement('div');

@@ -71,7 +71,10 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             self.assertEqual(saved["params"], {"speed": 2.0, "brightness": 0.7})
             self.assertEqual(saved["animation_speed_scale"], 0.45)
             self.assertEqual(saved["target_fps"], 144)
-            self.assertFalse(saved["plant_aware"])
+            self.assertEqual(saved["plant_modifiers"], {
+                "version": 1, "active": [], "strengths": {},
+            })
+            self.assertNotIn("plant_aware", json.loads(state_path.read_text()))
 
     def test_save_status_ignores_non_finite_optional_runtime_values(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -108,10 +111,29 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                 load_saved_state(state_path)
 
             state["target_fps"] = 144
-            state["plant_aware"] = "yes"
+            state["plant_modifiers"] = {"active": ["attractor", "repulsor"]}
             state_path.write_text(json.dumps(state))
-            with self.assertRaisesRegex(RuntimeError, "invalid plant-aware state"):
+            with self.assertRaisesRegex(RuntimeError, "invalid plant modifiers"):
                 load_saved_state(state_path)
+
+    def test_load_migrates_legacy_boolean_without_rewriting_preset(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            preset = root / "before-deploy.json"
+            preset.write_text(json.dumps({
+                "animation": "sparkle", "params": {"plant_aware": True, "speed": 1.0},
+            }))
+            original = preset.read_text()
+            state = root / "state.json"
+            state.write_text(json.dumps({
+                "animation": "sparkle", "preset_path": str(preset), "plant_aware": True,
+            }))
+
+            loaded = load_saved_state(state)
+
+            self.assertEqual(loaded["plant_modifiers"]["active"], ["illuminate", "obstacle"])
+            self.assertNotIn("plant_aware", loaded)
+            self.assertEqual(preset.read_text(), original)
 
     def test_save_requires_a_running_animation(self):
         with tempfile.TemporaryDirectory() as temporary_dir:

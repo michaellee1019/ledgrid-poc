@@ -19,6 +19,7 @@ import numpy as np
 
 from animation.core import AnimationBase, RenderedFrame, StatefulAnimationBase, AnimationPluginLoader
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
+from animation.core.plant_awareness import PlantModifierState
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import encode_frame_data, FRAME_ENCODING_NAME
 
@@ -105,6 +106,7 @@ class AnimationManager:
     def __init__(self, controller: LEDController, plugins_dir: Optional[str] = None,
                  animation_speed_scale: float = DEFAULT_ANIMATION_SPEED_SCALE,
                  plant_aware: bool = DEFAULT_PLANT_AWARE,
+                 plant_modifiers: Optional[Dict[str, Any]] = None,
                  default_animation: Optional[str] = None,
                  default_animation_config: Optional[Dict[str, Any]] = None,
                  auto_start: bool = True):
@@ -140,7 +142,13 @@ class AnimationManager:
         self.unchanged_frames_skipped = 0
         self.start_time = 0.0
         self.animation_speed_scale = animation_speed_scale
-        self.plant_aware = bool(plant_aware)
+        self.plant_modifier_state = (
+            PlantModifierState.from_payload(plant_modifiers)
+            if plant_modifiers is not None
+            else PlantModifierState.from_legacy(bool(plant_aware))
+        )
+        self._legacy_plant_aware_bridge = plant_modifiers is None
+        self.plant_aware = bool(self.plant_modifier_state.active)
         
         # Threading
         self.animation_thread: Optional[threading.Thread] = None
@@ -232,13 +240,29 @@ class AnimationManager:
         return self.animation_speed_scale
 
     def set_plant_aware(self, enabled: bool) -> bool:
-        """Apply the global plant-aware state now and to future animation starts."""
-        if not isinstance(enabled, bool):
-            raise ValueError("plant-aware state must be boolean")
-        self.plant_aware = enabled
+        """Compatibility boundary translating the old global boolean."""
+        state = PlantModifierState.from_legacy(enabled)
+        self.plant_modifier_state = state
+        self.plant_aware = bool(state.active)
+        self._legacy_plant_aware_bridge = True
         if self.current_animation:
-            self.current_animation.update_parameters({'plant_aware': enabled})
+            self.current_animation.update_parameters({
+                'plant_aware': self.plant_aware,
+                'plant_modifiers': state.to_dict(),
+            })
         return self.plant_aware
+
+    def set_plant_modifiers(self, state: Any) -> Dict[str, Any]:
+        """Validate and apply modifier authority live and to every future start."""
+        self.plant_modifier_state = PlantModifierState.from_payload(state)
+        self._legacy_plant_aware_bridge = False
+        self.plant_aware = bool(self.plant_modifier_state.active)
+        if self.current_animation:
+            self.current_animation.update_parameters({
+                'plant_aware': False,
+                'plant_modifiers': self.plant_modifier_state.to_dict(),
+            })
+        return self.plant_modifier_state.to_dict()
     
     def list_animations(self) -> List[Dict[str, Any]]:
         """Get list of available animations with metadata"""
@@ -276,7 +300,8 @@ class AnimationManager:
             
             # Create animation instance
             effective_config = dict(config or {})
-            effective_config['plant_aware'] = self.plant_aware
+            effective_config['plant_aware'] = self.plant_aware if self._legacy_plant_aware_bridge else False
+            effective_config['plant_modifiers'] = self.plant_modifier_state.to_dict()
             self.current_animation = animation_class(self.controller, effective_config)
             self.current_animation_name = animation_name
             self.current_animation_hash = self._compute_animation_hash(animation_name)
@@ -366,6 +391,9 @@ class AnimationManager:
         """Update current animation parameters in real-time"""
         if self.current_animation:
             try:
+                params = dict(params)
+                params['plant_aware'] = self.plant_aware if self._legacy_plant_aware_bridge else False
+                params['plant_modifiers'] = self.plant_modifier_state.to_dict()
                 self.current_animation.update_parameters(params)
                 print(f"✓ Updated animation parameters: {params}")
                 return True
@@ -525,6 +553,7 @@ class AnimationManager:
                 'target_fps': self.target_fps,
                 'animation_speed_scale': self.animation_speed_scale,
                 'plant_aware': self.plant_aware,
+                'plant_modifiers': self.plant_modifier_state.to_dict(),
                 'actual_fps': self._calculate_fps(),
                 'animation_hash': self.current_animation_hash,
                 'led_info': {
@@ -538,6 +567,12 @@ class AnimationManager:
         status['animation_stats'] = {}
         if self.current_animation:
             status['animation_info'] = self.current_animation.get_info()
+            status['plant_modifier_support'] = status['animation_info'].get(
+                'plant_modifier_support', []
+            )
+            status['unsupported_plant_modifiers'] = status['animation_info'].get(
+                'unsupported_plant_modifiers', []
+            )
             try:
                 stats = self.current_animation.get_runtime_stats()
                 if isinstance(stats, dict):
@@ -642,7 +677,10 @@ class AnimationManager:
 
         try:
             # Create a temporary instance of the animation
-            temp_animation = animation_class(self.preview_controller, {})
+            temp_animation = animation_class(self.preview_controller, {
+                'plant_aware': self.plant_aware if self._legacy_plant_aware_bridge else False,
+                'plant_modifiers': self.plant_modifier_state.to_dict(),
+            })
 
             # Generate a sample frame
             if hasattr(temp_animation, 'generate_frame'):
@@ -709,7 +747,10 @@ class AnimationManager:
 
         try:
             # Create a temporary instance of the animation with custom parameters
-            temp_animation = animation_class(self.preview_controller, params)
+            effective_params = dict(params)
+            effective_params['plant_aware'] = self.plant_aware if self._legacy_plant_aware_bridge else False
+            effective_params['plant_modifiers'] = self.plant_modifier_state.to_dict()
+            temp_animation = animation_class(self.preview_controller, effective_params)
 
             # Generate a sample frame
             if hasattr(temp_animation, 'generate_frame'):

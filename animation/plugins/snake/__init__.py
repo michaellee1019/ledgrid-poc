@@ -13,6 +13,7 @@ from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 import numpy as np
 
 from animation import AnimationBase
+from animation.core.plant_awareness import GLOBE_REGION_ORDER
 
 
 Cell = Tuple[int, int]
@@ -35,6 +36,8 @@ class SnakeAgent:
     hue_offset: int = 0
     score: int = 0
     respawn_ticks: int = 0
+    portal_exit_region: Optional[str] = None
+    portal_cooldown_ticks: int = 0
 
     @property
     def head(self) -> Optional[Cell]:
@@ -48,6 +51,7 @@ class SnakeAnimation(AnimationBase):
     ANIMATION_DESCRIPTION = "Autonomous growing snakes with portals, battles, labyrinths, glow trails, and curated visual styles"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.0"
+    PLANT_MODIFIER_SUPPORT = frozenset(("obstacle", "portal", "hazard"))
 
     STYLES = ("classic", "rainbow", "neon", "fire", "ice", "sunset", "prism")
     BACKGROUNDS = ("void", "stars", "grid", "aurora")
@@ -83,11 +87,17 @@ class SnakeAnimation(AnimationBase):
         self.walls: Set[Cell] = set()
         self.portals: Dict[Cell, Cell] = {}
         self._plant_obstacles: Set[Cell] = set()
+        self._plant_clearance: Set[Cell] = set()
         self._plant_foliage: Set[Cell] = set()
         self._plant_globes: Set[Cell] = set()
+        self._plant_regions: Dict[str, Set[Cell]] = {}
+        self._plant_region_bounds: Dict[str, Tuple[int, int, int, int]] = {}
         self.moves = 0
         self.food_eaten = 0
         self.deaths = 0
+        self.plant_contacts = 0
+        self.plant_teleports = 0
+        self.plant_hazard_deaths = 0
         self.last_elapsed: Optional[float] = None
         self.last_render_elapsed: Optional[float] = None
         self.last_rendered_frame: Optional[np.ndarray] = None
@@ -142,17 +152,26 @@ class SnakeAnimation(AnimationBase):
     def update_parameters(self, new_params: Dict[str, Any]):
         structural = {"snake_count", "initial_length", "ruleset", "wall_pattern", "seed"}
         plant_geometry = {"plant_clearance", "plant_mask_path", "plant_globe_mask_path"}
-        was_plant_aware = self.plant_aware_enabled()
+        old_state = self.plant_modifier_state()
+        was_plant_aware = self._plant_effects_enabled()
         needs_reset = any(key in new_params for key in structural)
         super().update_parameters(new_params)
+        modifier_changed = (
+            "plant_modifiers" in new_params and self.plant_modifier_state() != old_state
+        )
         needs_reset = (
             needs_reset
-            or ("plant_aware" in new_params and self.plant_aware_enabled() != was_plant_aware)
-            or (self.plant_aware_enabled() and bool(plant_geometry & new_params.keys()))
+            or ("plant_aware" in new_params and self._plant_effects_enabled() != was_plant_aware)
+            or (self._plant_effects_enabled() and bool(plant_geometry & new_params.keys()))
         )
         if needs_reset:
             self.random.seed(int(self.params.get("seed", 1976)))
             self._reset_world()
+        elif modifier_changed:
+            # Modifier changes invalidate geometry/plans but are not simulation
+            # ticks and therefore must not consume randomness or move entities.
+            self._refresh_plant_geometry()
+            self._build_walls_and_portals()
         elif any(key in new_params for key in ("visual_style", "background")):
             self._build_palette()
             self._build_background()
@@ -167,6 +186,9 @@ class SnakeAnimation(AnimationBase):
             "moves": self.moves,
             "food_eaten": self.food_eaten,
             "deaths": self.deaths,
+            "plant_contacts": self.plant_contacts,
+            "plant_teleports": self.plant_teleports,
+            "plant_hazard_deaths": self.plant_hazard_deaths,
             "alive_snakes": alive,
             "longest_snake": max((len(snake.body) for snake in self.snakes), default=0),
             "speed_baseline": SNAKE_SPEED_BASELINE,
@@ -175,9 +197,10 @@ class SnakeAnimation(AnimationBase):
             "simulation_rate_capped": effective_rate < requested_rate,
             **({
                 "plant_obstacle_cells": len(self._plant_obstacles),
+                "plant_clearance_cells": len(self._plant_clearance),
                 "plant_foliage_cells": len(self._plant_foliage),
                 "plant_globe_cells": len(self._plant_globes),
-            } if self.plant_aware_enabled() else {}),
+            } if self._plant_effects_enabled() else {}),
         }
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> Any:
@@ -223,6 +246,7 @@ class SnakeAnimation(AnimationBase):
 
     def _reset_world(self):
         self.moves = self.food_eaten = self.deaths = 0
+        self.plant_contacts = self.plant_teleports = self.plant_hazard_deaths = 0
         self._step_accumulator = 0.0
         self.last_elapsed = None
         self.last_render_elapsed = None
@@ -243,14 +267,24 @@ class SnakeAnimation(AnimationBase):
     def _refresh_plant_geometry(self):
         """Translate calibrated strip/LED masks into Snake's ``(x, y)`` cells."""
         self._plant_obstacles.clear()
+        self._plant_clearance.clear()
         self._plant_foliage.clear()
         self._plant_globes.clear()
-        if not self.plant_aware_enabled():
+        self._plant_regions.clear()
+        self._plant_region_bounds.clear()
+        if not self._plant_effects_enabled():
             return
         masks = self.get_plant_masks()
+        planning_masks = masks
+        if self.plant_modifier_enabled("obstacle") and not self._legacy_plant_mode():
+            configured = max(0, int(self.params.get("plant_clearance", 1)))
+            planning_masks = self.get_plant_masks(
+                int(round(configured * self.plant_modifier_strength("obstacle")))
+            )
         # Shared logical masks are (strip, led); the game canvas is indexed [y, x].
-        self._plant_obstacles.update(
-            (int(x), int(y)) for y, x in np.argwhere(masks.clearance.T)
+        self._plant_obstacles.update((int(x), int(y)) for y, x in np.argwhere(masks.obstacle.T))
+        self._plant_clearance.update(
+            (int(x), int(y)) for y, x in np.argwhere(planning_masks.clearance.T)
         )
         self._plant_foliage.update(
             (int(x), int(y)) for y, x in np.argwhere(masks.foliage.T)
@@ -258,9 +292,64 @@ class SnakeAnimation(AnimationBase):
         self._plant_globes.update(
             (int(x), int(y)) for y, x in np.argwhere(masks.globes.T)
         )
+        for name in GLOBE_REGION_ORDER:
+            region_mask = masks.globe_region_masks.get(name)
+            if region_mask is None:
+                continue
+            cells = {(int(x), int(y)) for y, x in np.argwhere(region_mask.T)}
+            if not cells:
+                continue
+            self._plant_regions[name] = cells
+            xs, ys = zip(*cells)
+            self._plant_region_bounds[name] = (min(xs), min(ys), max(xs), max(ys))
 
-    def _terrain_blocked(self, cell: Cell) -> bool:
-        return cell in self.walls or cell in self._plant_obstacles
+    def _legacy_plant_mode(self) -> bool:
+        return bool(self.params.get("plant_aware", False))
+
+    def _plant_effects_enabled(self) -> bool:
+        return self._legacy_plant_mode() or any(
+            self.plant_modifier_enabled(modifier)
+            for modifier in self.PLANT_MODIFIER_SUPPORT
+        )
+
+    def _terrain_blocked(self, cell: Cell, planning: bool = False) -> bool:
+        if cell in self.walls:
+            return True
+        if self._legacy_plant_mode():
+            return cell in self._plant_clearance
+        if not self.plant_modifier_enabled("obstacle"):
+            return False
+        return cell in (self._plant_clearance if planning else self._plant_obstacles)
+
+    def _region_for_cell(self, cell: Cell) -> Optional[str]:
+        for name in GLOBE_REGION_ORDER:
+            if cell in self._plant_regions.get(name, ()):
+                return name
+        return None
+
+    def _portal_destination(self, cell: Cell, snake: Optional[SnakeAgent] = None) -> Tuple[Cell, Optional[str]]:
+        if not self.plant_modifier_enabled("portal") or len(self._plant_regions) < 2:
+            return cell, None
+        source = self._region_for_cell(cell)
+        if source is None or (snake is not None and snake.portal_exit_region is not None):
+            return cell, None
+        source_index = GLOBE_REGION_ORDER.index(source)
+        for offset in range(1, len(GLOBE_REGION_ORDER) + 1):
+            target = GLOBE_REGION_ORDER[(source_index + offset) % len(GLOBE_REGION_ORDER)]
+            if target in self._plant_regions:
+                break
+        else:
+            return cell, None
+        sx0, sy0, sx1, sy1 = self._plant_region_bounds[source]
+        tx0, ty0, tx1, ty1 = self._plant_region_bounds[target]
+        fx = 0.5 if sx1 == sx0 else (cell[0] - sx0) / (sx1 - sx0)
+        fy = 0.5 if sy1 == sy0 else (cell[1] - sy0) / (sy1 - sy0)
+        ideal = (tx0 + fx * (tx1 - tx0), ty0 + fy * (ty1 - ty0))
+        destination = min(
+            self._plant_regions[target],
+            key=lambda point: ((point[0] - ideal[0]) ** 2 + (point[1] - ideal[1]) ** 2, point[1], point[0]),
+        )
+        return destination, target
 
     def _build_palette(self):
         style = str(self.params.get("visual_style", "rainbow"))
@@ -328,7 +417,8 @@ class SnakeAnimation(AnimationBase):
             pairs = [((1, self.height // 4), (self.width - 2, self.height * 3 // 4)),
                      ((self.width - 2, self.height // 4), (1, self.height * 3 // 4))]
             for first, second in pairs:
-                if not self._terrain_blocked(first) and not self._terrain_blocked(second):
+                if (not self._terrain_blocked(first, planning=True)
+                        and not self._terrain_blocked(second, planning=True)):
                     self.portals[first] = second
                     self.portals[second] = first
 
@@ -345,7 +435,7 @@ class SnakeAnimation(AnimationBase):
                 if not (0 <= cell[0] < self.width and 0 <= cell[1] < self.height):
                     valid = False
                     break
-                if cell in occupied or self._terrain_blocked(cell) or cell in self.portals:
+                if cell in occupied or self._terrain_blocked(cell, planning=True) or cell in self.portals:
                     valid = False
                     break
                 body.append(cell)
@@ -364,7 +454,10 @@ class SnakeAnimation(AnimationBase):
 
     def _replenish_food(self):
         target = max(1, min(30, int(self.params.get("food_count", 5))))
-        blocked = self._occupied() | self.walls | self._plant_obstacles | set(self.portals)
+        plant_blocked = self._plant_clearance if (
+            self._legacy_plant_mode() or self.plant_modifier_enabled("obstacle")
+        ) else set()
+        blocked = self._occupied() | self.walls | plant_blocked | set(self.portals)
         attempts = 0
         while len(self.food) < target and attempts < target * 80:
             attempts += 1
@@ -372,7 +465,7 @@ class SnakeAnimation(AnimationBase):
             if cell not in blocked:
                 self.food.add(cell)
 
-    def _advance_cell(self, cell: Cell, direction: Direction) -> Optional[Cell]:
+    def _raw_advance_cell(self, cell: Cell, direction: Direction) -> Optional[Cell]:
         x, y = cell[0] + direction[0], cell[1] + direction[1]
         ruleset = str(self.params.get("ruleset", "wrap"))
         if ruleset in ("wrap", "battle"):
@@ -380,8 +473,15 @@ class SnakeAnimation(AnimationBase):
             y %= self.height
         elif not (0 <= x < self.width and 0 <= y < self.height):
             return None
-        destination = (x, y)
-        return self.portals.get(destination, destination)
+        return self.portals.get((x, y), (x, y))
+
+    def _advance_cell(
+        self, cell: Cell, direction: Direction, snake: Optional[SnakeAgent] = None
+    ) -> Optional[Cell]:
+        destination = self._raw_advance_cell(cell, direction)
+        if destination is None:
+            return None
+        return self._portal_destination(destination, snake)[0]
 
     def _choose_direction(self, snake: SnakeAgent, occupied: Set[Cell]) -> Direction:
         if not snake.body:
@@ -391,8 +491,8 @@ class SnakeAnimation(AnimationBase):
         best_direction = snake.direction
         best_score = -1e9
         for direction in choices:
-            candidate = self._advance_cell(snake.head, direction)
-            if candidate is None or self._terrain_blocked(candidate):
+            candidate = self._advance_cell(snake.head, direction, snake)
+            if candidate is None or self._terrain_blocked(candidate, planning=True):
                 continue
             eating = candidate in self.food
             blocked = occupied
@@ -406,8 +506,8 @@ class SnakeAnimation(AnimationBase):
                 distance = 0
             exits = 0
             for next_direction in DIRECTIONS:
-                neighbor = self._advance_cell(candidate, next_direction)
-                if neighbor is not None and neighbor not in blocked and not self._terrain_blocked(neighbor):
+                neighbor = self._advance_cell(candidate, next_direction, snake)
+                if neighbor is not None and neighbor not in blocked and not self._terrain_blocked(neighbor, planning=True):
                     exits += 1
             straight_bonus = 0.2 if direction == snake.direction else 0.0
             jitter = self.random.random() * 0.12
@@ -427,8 +527,15 @@ class SnakeAnimation(AnimationBase):
         return dx + dy
 
     def _step_game(self):
+        for snake in self.snakes:
+            if snake.portal_cooldown_ticks > 0:
+                snake.portal_cooldown_ticks -= 1
+            if (snake.portal_exit_region is not None and snake.portal_cooldown_ticks <= 0
+                    and snake.head not in self._plant_regions.get(snake.portal_exit_region, ())):
+                snake.portal_exit_region = None
         occupied = self._occupied()
         plans: Dict[int, Optional[Cell]] = {}
+        portal_exits: Dict[int, Optional[str]] = {}
         directions: Dict[int, Direction] = {}
         for index, snake in enumerate(self.snakes):
             if not snake.body:
@@ -438,13 +545,26 @@ class SnakeAnimation(AnimationBase):
                 continue
             direction = self._choose_direction(snake, occupied)
             directions[index] = direction
-            plans[index] = self._advance_cell(snake.head, direction)
+            raw = self._raw_advance_cell(snake.head, direction)
+            if raw is None:
+                plans[index] = None
+                portal_exits[index] = None
+            else:
+                plans[index], portal_exits[index] = self._portal_destination(raw, snake)
 
         head_counts = Counter(cell for cell in plans.values() if cell is not None)
         dead: Set[int] = set()
+        hazard_dead: Set[int] = set()
         for index, candidate in plans.items():
             snake = self.snakes[index]
-            if candidate is None or self._terrain_blocked(candidate) or head_counts[candidate] > 1:
+            exact_contact = candidate in self._plant_obstacles if candidate is not None else False
+            hazard_contact = exact_contact and self.plant_modifier_enabled("hazard")
+            if hazard_contact:
+                self.plant_contacts += 1
+                self.plant_hazard_deaths += 1
+                hazard_dead.add(index)
+            if (candidate is None or self._terrain_blocked(candidate)
+                    or hazard_contact or head_counts[candidate] > 1):
                 dead.add(index)
                 continue
             eating = candidate in self.food
@@ -461,11 +581,21 @@ class SnakeAnimation(AnimationBase):
                     self._trail[y, x] = 1.0
                     self._trail_hue[y, x] = (snake.hue_offset + 32) % 256
                 snake.body.clear()
-                snake.respawn_ticks = 6 + self.random.randrange(10)
+                snake.respawn_ticks = (
+                    6 + self.random.randrange(10)
+                    + (int(round(8 * self.plant_modifier_strength("hazard")))
+                       if index in hazard_dead else 0)
+                )
                 self.deaths += 1
                 continue
             snake.direction = directions[index]
             snake.body.appendleft(candidate)
+            exit_region = portal_exits.get(index)
+            if exit_region is not None:
+                snake.portal_exit_region = exit_region
+                snake.portal_cooldown_ticks = 1
+                self.plant_contacts += 1
+                self.plant_teleports += 1
             ate = candidate in self.food
             if ate:
                 self.food.remove(candidate)
@@ -503,9 +633,21 @@ class SnakeAnimation(AnimationBase):
                       * (self._trail * trail_strength)[..., None]).astype(np.uint8)
             np.maximum(self._canvas, scaled, out=self._canvas)
 
-        if self.plant_aware_enabled():
+        if self._plant_effects_enabled():
             foliage_color = np.array((3, 36, 12), dtype=np.uint8)
-            globe_color = np.array((88, 22, 105), dtype=np.uint8)
+            portal_strength = self.plant_modifier_strength("portal")
+            hazard_strength = self.plant_modifier_strength("hazard")
+            if portal_strength > 0:
+                globe_color = np.array(
+                    (40 + int(75 * portal_strength), 20, 70 + int(120 * portal_strength)),
+                    dtype=np.uint8,
+                )
+            elif hazard_strength > 0:
+                globe_color = np.array(
+                    (80 + int(150 * hazard_strength), 12, 18), dtype=np.uint8
+                )
+            else:
+                globe_color = np.array((88, 22, 105), dtype=np.uint8)
             for x, y in self._plant_foliage:
                 self._canvas[y, x] = np.maximum(self._canvas[y, x], foliage_color)
             for x, y in self._plant_globes:

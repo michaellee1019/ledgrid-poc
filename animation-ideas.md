@@ -148,6 +148,114 @@ The first sprint establishes the shared contract and proves all twelve
 modifiers across six deliberately different existing plugins. It does not
 attempt a shallow mechanical conversion of every shipped animation.
 
+### Status — implemented July 22, 2026
+
+The framework and all six sprint showcases are implemented. The global runtime
+contract is now `PlantModifierState`; it validates IDs, strengths, and exclusive
+groups, persists through deployment restarts, overrides preset/direct-start
+conflicts, applies live, and propagates to future starts and both preview paths.
+The old `plant_aware` API remains only as a compatibility bridge and maps to
+Illuminate at `0.5` plus Obstacle at `1.0`.
+
+Completed framework work:
+
+- Added support-aware base helpers and per-plugin `PLANT_MODIFIER_SUPPORT`.
+  Unsupported active modifiers are observable no-ops.
+- Extended the shared mask cache with per-layer edges, obstacle distance and
+  normal fields, and seven named globe-region masks in stable portal order.
+  A missing companion calibration produces wholly empty geometry plus an error,
+  never a half-applied layer.
+- Added manager/API/status/persistence authority, including protection against
+  generic parameter updates bypassing the global state and synchronization of
+  the separate web preview manager.
+- Replaced the single dashboard switch with grouped modifier toggles and
+  normalized strength controls. Unsupported controls are disabled for the
+  active animation; field and surface exclusivity is enforced in the UI and at
+  the validation boundary.
+- Added a deterministic 32×138 contact-sheet tool and modifier-specific stress
+  scenarios to the standard render benchmark.
+
+Completed showcase work:
+
+| Plugin | Implemented behavior |
+| --- | --- |
+| **Gradient** | Hue-preserving Illuminate, soft-layer Shadow, distance-field Refract, modifier-aware static caching, and boundary-only Illuminate when combined with Shadow |
+| **Sparkle** | Boundary Attractor/Repulsor fields, foliage Habitat bias, bounded cadence-driven Emitter events, and presentation-only Illuminate without extra RNG draws |
+| **Snake** | Exact-core Obstacle contact with clearance planning, deterministic seven-globe Portal cycling with offset/direction preservation and cooldown, and deterministic Hazard deaths |
+| **Pinball** | Strength-scaled globe-normal Bumper reflection, offset/velocity-preserving Portal cycling and cooldown, and deterministic Hazard drains/penalties |
+| **Conway's Life** | Exact-core Obstacle rules, foliage Habitat births, deterministic Hazard burns, and bounded Emitter injection only at committed generation boundaries |
+| **Fluid Tank** | Exact-core Obstacle routing, bounded local Slow Zone motion, and presentation-only cached Refract while conserving supplied water |
+
+### Acceptance evidence
+
+- The full Python suite passes: **354 tests**.
+- The focused showcase/regression suite passes: **89 tests**.
+- A labeled **31-tile** contact sheet covers every modifier and representative
+  compatible stacks at the installed 32×138 aspect ratio. Mechanical
+  fingerprint checks and visual inspection found no modifier tile identical to
+  its off state or another tile.
+- The canonical repository-wide desktop render gate passes at less than 4 ms
+  plugin p95.
+- The following maximum-strength modifier scenarios were measured on the
+  development Mac at 32×138, 200 manager calls per second, and 200 sampled
+  frames after warmup. These are desktop measurements, not Raspberry Pi data.
+
+| Showcase stress scenario | Mean | p95 | p99 | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| Gradient visual stack | 0.273 ms | 0.290 ms | 0.306 ms | 0.307 ms |
+| Sparkle field/habitat/emitter stack | 0.218 ms | 0.232 ms | 0.243 ms | 0.258 ms |
+| Snake portal (slower of its modifier scenarios) | 0.546 ms | 2.246 ms | 2.520 ms | 2.872 ms |
+| Pinball portal (slower p95 of its modifier scenarios) | 0.445 ms | 0.954 ms | 1.078 ms | 1.104 ms |
+| Conway habitat/emitter stack | 2.254 ms | 2.982 ms | 39.192 ms | 41.559 ms |
+| Fluid obstacle/refract/slow-zone stack | 1.018 ms | 1.616 ms | 1.676 ms | 1.770 ms |
+
+### What the sprint taught us
+
+- Global authority has more entry points than animation start: live generic
+  parameter updates, parameterized previews, plain previews, the split web
+  preview process, saved deployment state, and legacy API translation all need
+  the same final overwrite.
+- `active` with strength `0.0` must be an exact no-op. Support checks must happen
+  before geometry loading or rendering; otherwise unsupported modifiers can
+  accidentally activate broad legacy `plant_aware` paths.
+- Exact contact geometry and clearance geometry are separate concepts. Exact
+  foliage/globe cores own collision and hazard semantics; clearance owns
+  planning, spawn, food, and routing pressure.
+- Modifier-only live changes must refresh cached fields and future plans without
+  resetting simulations, consuming RNG, advancing time, or firing an event.
+- Emitters belong to semantic update boundaries, not rendered frames. This keeps
+  their rate independent of manager FPS and prevents cached/background frames
+  from duplicating events.
+- Benchmarks must use the real manager call cadence as well as the plugin's
+  source cadence. Conway meets the p95 gate at 200 Hz, but its existing
+  generation-boundary computation still creates large p99 spikes; a passing p95
+  is not evidence that event frames are cheap.
+- A real-aspect contact sheet catches composition problems that frame-shape and
+  fingerprint tests cannot: boundary readability, excessive core darkness,
+  visual dominance, and whether foliage and globes remain distinct.
+
+### What remains
+
+- Perform physical-wall acceptance and tune strengths at representative
+  `0.25`, `0.5`, and `1.0` values. Confirm perceptibility, distinct foliage and
+  globe geometry, comfortable brightness, and absence of full-wall flashes.
+- Classify and migrate the remaining **23 plugins** in compatibility-driven
+  waves. Until migrated, unsupported explicit modifiers remain intentional
+  no-ops; no generic post-process should be counted as semantic support.
+- Replace curated-preset `plant_aware` booleans with modifier recommendations,
+  without rewriting user-authored runtime presets, then retire the legacy API
+  bridge after the compatibility window.
+- Optimize Conway's generation-boundary p99 spikes. They predate modifiers but
+  reach roughly 39–42 ms in the habitat/emitter scenario despite a passing p95.
+- Revisit the existing Snake maximum-density benchmark, whose p95 remains above
+  4 ms independently of the new default-density modifier scenarios.
+- Exercise the grouped dashboard controls in the live browser and on the wall,
+  including support changes while switching animations and recovery after an
+  API validation error.
+
+The sequence and gates below remain as the original sprint contract and as the
+checklist for the follow-on work.
+
 ### Showcase matrix
 
 | Plugin | Supported modifiers in sprint one | What it proves |
