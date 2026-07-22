@@ -137,6 +137,8 @@ class PreviewRenderer:
         leds_per_strip: int = DEFAULT_LEDS_PER_STRIP,
         throttle_seconds: float = 0.0,
         pause_guard: Optional[Callable[[], bool]] = None,
+        capture_fps: Optional[int] = None,
+        capture_duration: Optional[float] = None,
     ):
         self.root = root.resolve()
         self.output_dir = output_dir.resolve()
@@ -145,6 +147,8 @@ class PreviewRenderer:
         self.leds_per_strip = leds_per_strip
         self.throttle_seconds = max(0.0, float(throttle_seconds))
         self.pause_guard = pause_guard
+        self.capture_fps = capture_fps
+        self.capture_duration = capture_duration
         self.loader = AnimationPluginLoader()
         self.plugins = self.loader.load_all_plugins()
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -197,6 +201,13 @@ class PreviewRenderer:
             raise ValueError(f"plugin directory is unavailable: {animation_name}")
         manifest = self.loader.plugin_manifests.get(animation_name, {})
         captures, simulation_fps = preview_profile(manifest)
+        frame_duration_ms = FRAME_DURATION_MS
+        if self.capture_fps is not None:
+            simulation_fps = max(1, int(self.capture_fps))
+            duration = max(1.0 / simulation_fps, float(self.capture_duration or captures[-1]))
+            final_step = max(1, int(round(duration * simulation_fps)))
+            captures = tuple(step / simulation_fps for step in range(final_step))
+            frame_duration_ms = max(1, int(round(1000.0 / simulation_fps)))
         item_key = f"{animation_name}/{preset_id or '_default'}"
         effective_config = dict(config or {})
         digest = _file_digest(
@@ -207,6 +218,7 @@ class PreviewRenderer:
                 "config": effective_config,
                 "captures": captures,
                 "simulation_fps": simulation_fps,
+                "frame_duration_ms": frame_duration_ms,
                 "layout": [self.strips, self.leds_per_strip],
                 "fixed_clock": FIXED_CLOCK.isoformat(),
             },
@@ -218,7 +230,8 @@ class PreviewRenderer:
             with Image.open(loop_path) as cached_loop:
                 cached_frames = int(getattr(cached_loop, "n_frames", 1))
             return self._entry(
-                digest, poster_path, loop_path, cached_frames, cached_frames == 1
+                digest, poster_path, loop_path, cached_frames, cached_frames == 1,
+                frame_duration_ms,
             )
 
         controller = PreviewLEDController(self.strips, self.leds_per_strip)
@@ -256,12 +269,15 @@ class PreviewRenderer:
             format="WEBP",
             save_all=len(images) > 1,
             append_images=images[1:],
-            duration=FRAME_DURATION_MS,
+            duration=frame_duration_ms,
             loop=0,
             lossless=True,
             method=6,
         )
-        return self._entry(digest, poster_path, loop_path, len(images), len(images) == 1)
+        return self._entry(
+            digest, poster_path, loop_path, len(images), len(images) == 1,
+            frame_duration_ms,
+        )
 
     def _entry(
         self,
@@ -270,6 +286,7 @@ class PreviewRenderer:
         loop_path: Path,
         frame_count: int,
         static: bool,
+        frame_duration_ms: int = FRAME_DURATION_MS,
     ) -> Dict[str, Any]:
         return {
             "status": "ready",
@@ -277,7 +294,7 @@ class PreviewRenderer:
             "poster_url": f"{self.public_prefix}/{poster_path.name}",
             "loop_url": f"{self.public_prefix}/{loop_path.name}",
             "frame_count": frame_count,
-            "duration_ms": FRAME_DURATION_MS,
+            "duration_ms": frame_duration_ms,
             "static": bool(static),
         }
 

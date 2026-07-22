@@ -22,6 +22,7 @@ from animation.core.preview_assets import (
 )
 from web.preview_worker import RuntimePreviewWorker
 from web.app import AnimationWebInterface
+from web.local_control import LocalControlChannel
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -60,6 +61,17 @@ class AnimationPreviewTests(unittest.TestCase):
         reused = renderer.render("rainbow")
         self.assertEqual(entry["digest"], reused["digest"])
         self.assertEqual(before, (poster.stat().st_mtime_ns, loop.stat().st_mtime_ns))
+
+    def test_mac_renderer_authors_dense_real_time_loop(self):
+        renderer = PreviewRenderer(
+            ROOT, self.output, "/preview-test", strips=4, leds_per_strip=8,
+            capture_fps=20, capture_duration=0.5,
+        )
+        entry = renderer.render("rainbow")
+        loop = self.output / entry["loop_url"].rsplit("/", 1)[-1]
+        with Image.open(loop) as image:
+            self.assertEqual(image.n_frames, 10)
+        self.assertEqual(entry["duration_ms"], 50)
 
     def test_physical_led_zero_is_rendered_at_image_bottom(self):
         renderer = PreviewRenderer(
@@ -194,6 +206,29 @@ class AnimationPreviewTests(unittest.TestCase):
         self.assertIn('data-loop-src="/calm-loop.webp"', html)
         summary = client.get("/api/animations/rainbow/presets").get_json()["presets"][0]
         self.assertEqual(summary["preview"]["status"], "ready")
+
+    def test_local_channel_reads_live_frames_and_dispatches_commands(self):
+        class _Manager:
+            current_animation = None
+
+            @staticmethod
+            def get_current_frame():
+                return {"frame_data": [[1, 2, 3]], "frame_count": 7}
+
+            @staticmethod
+            def get_current_status():
+                return {"is_running": True, "current_animation": "rainbow"}
+
+            def stop_animation(self):
+                self.stopped = True
+
+        manager = _Manager()
+        channel = LocalControlChannel(manager)
+        status = channel.read_status()
+        self.assertEqual(status["frame_count"], 7)
+        self.assertEqual(status["current_animation"], "rainbow")
+        channel.send_command("stop")
+        self.assertTrue(manager.stopped)
 
 
 if __name__ == "__main__":

@@ -58,6 +58,8 @@ def generate_all(args: argparse.Namespace) -> int:
         args.public_prefix,
         strips=args.strips,
         leds_per_strip=args.leds_per_strip,
+        capture_fps=args.capture_fps,
+        capture_duration=args.capture_duration,
     )
     catalog = empty_catalog(args.strips, args.leds_per_strip)
     tracked = _deployable_paths(ROOT) if args.tracked_only else None
@@ -158,6 +160,14 @@ def main() -> int:
     parser.add_argument("--leds-per-strip", type=int, default=138)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--tracked-only", action="store_true")
+    parser.add_argument(
+        "--capture-fps", type=int,
+        help="Render evenly spaced frames at this real-time playback rate",
+    )
+    parser.add_argument(
+        "--capture-duration", type=float,
+        help="Seconds to capture when --capture-fps is supplied",
+    )
     parser.add_argument("--single-preset", type=Path)
     parser.add_argument("--animation")
     parser.add_argument("--status-path", type=Path, default=ROOT / "run_state" / "status.json")

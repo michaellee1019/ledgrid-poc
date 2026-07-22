@@ -35,7 +35,8 @@ class AnimationWebInterface:
     def __init__(self, control_channel: FileControlChannel,
                  preview_manager: AnimationManager,
                  host: str = '0.0.0.0',
-                 port: int = 5000):
+                 port: int = 5000,
+                 local_mode: bool = False):
         """
         Initialize web interface
 
@@ -49,6 +50,7 @@ class AnimationWebInterface:
         self.preview_manager = preview_manager
         self.host = host
         self.port = port
+        self.local_mode = bool(local_mode)
         self.project_root = Path(__file__).resolve().parents[1]
         self.painter_presets_dir = self.project_root / "presets" / "frame_painter"
         self.animation_presets_dir = self.project_root / "presets" / "animations"
@@ -57,9 +59,14 @@ class AnimationWebInterface:
             self.project_root / "web" / "static" / "generated" / "animation-previews"
         )
         self.runtime_preview_dir = self.project_root / "run_state" / "animation_previews"
+        if self.local_mode:
+            self.generated_preview_dir = (
+                self.project_root / "run_state" / "mac_animation_previews"
+            )
         loader = getattr(self.preview_manager, 'plugin_loader', None)
         self.runtime_preview_worker = None
-        if loader is not None and os.environ.get("LEDGRID_DISABLE_PREVIEW_WORKER") != "1":
+        if (not self.local_mode and loader is not None
+                and os.environ.get("LEDGRID_DISABLE_PREVIEW_WORKER") != "1"):
             self.runtime_preview_worker = RuntimePreviewWorker(
                 self.project_root,
                 strips=self.preview_manager.controller.strip_count,
@@ -90,6 +97,7 @@ class AnimationWebInterface:
                 test_animations=[item for item in animations if item['is_test']],
                 status=status,
                 speed_baseline=DEFAULT_ANIMATION_SPEED_SCALE,
+                local_mode=self.local_mode,
             )
         
         @self.app.route('/api/animations')
@@ -289,7 +297,7 @@ class AnimationWebInterface:
             enabled = payload.get('plant_aware')
             if not isinstance(enabled, bool):
                 return jsonify({'error': 'plant_aware must be boolean'}), 400
-            if hasattr(self.preview_manager, 'set_plant_aware'):
+            if not self.local_mode and hasattr(self.preview_manager, 'set_plant_aware'):
                 self.preview_manager.set_plant_aware(enabled)
             self.control_channel.send_command('set_plant_aware', plant_aware=enabled)
             return jsonify({'success': True, 'plant_aware': enabled})
@@ -302,7 +310,7 @@ class AnimationWebInterface:
             except ValueError as exc:
                 return jsonify({'error': str(exc)}), 400
             serialized = state.to_dict()
-            if hasattr(self.preview_manager, 'set_plant_modifiers'):
+            if not self.local_mode and hasattr(self.preview_manager, 'set_plant_modifiers'):
                 self.preview_manager.set_plant_modifiers(serialized)
             self.control_channel.send_command(
                 'set_plant_modifiers', plant_modifiers=serialized
@@ -533,6 +541,8 @@ class AnimationWebInterface:
 
     def _preview_catalog(self) -> Dict[str, Any]:
         """Merge deploy-generated previews with target-owned runtime previews."""
+        if self.local_mode:
+            return load_catalog(self.generated_preview_dir / "catalog.json")
         return merge_catalogs(
             load_catalog(self.generated_preview_dir / "catalog.json"),
             load_catalog(self.runtime_preview_dir / "catalog.json"),
@@ -950,7 +960,7 @@ class AnimationWebInterface:
         status = raw_status if isinstance(raw_status, dict) else (self.control_channel.read_status() or {})
         led_info = self._normalize_led_info(status.get('led_info'))
         self._apply_preview_layout(led_info)
-        if hasattr(self.preview_manager, 'set_plant_modifiers'):
+        if not self.local_mode and hasattr(self.preview_manager, 'set_plant_modifiers'):
             try:
                 if 'plant_modifiers' in status:
                     self.preview_manager.set_plant_modifiers(status['plant_modifiers'])
@@ -988,7 +998,7 @@ class AnimationWebInterface:
             'plant_modifiers',
             PlantModifierState.from_legacy(DEFAULT_PLANT_AWARE).to_dict(),
         )
-        if hasattr(self.preview_manager, 'set_plant_modifiers'):
+        if not self.local_mode and hasattr(self.preview_manager, 'set_plant_modifiers'):
             try:
                 self.preview_manager.set_plant_modifiers(status['plant_modifiers'])
             except ValueError:

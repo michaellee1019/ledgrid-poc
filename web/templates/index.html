@@ -238,6 +238,7 @@
 <script>
     const INITIAL_STRIP_COUNT = Number({{ status.led_info.strip_count }});
     const INITIAL_LEDS_PER_STRIP = Number({{ status.led_info.leds_per_strip }});
+    const IS_LOCAL_DASHBOARD = {{ 'true' if local_mode else 'false' }};
     const INITIAL_STATUS = {{ status | tojson }};
     const SPEED_BASELINE = Number({{ speed_baseline }});
 </script>

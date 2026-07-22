@@ -14,7 +14,7 @@
             this.previewAnimation = null;
             this.fpsCounter = 0;
             this.lastFpsTime = Date.now();
-            this.fetchIntervalMs = 150;   // Limit backend polling to ~6-7 FPS
+            this.fetchIntervalMs = IS_LOCAL_DASHBOARD ? 0 : 150;
             this.renderTimer = null;
             this.fetchInFlight = false;
             this.lastFrameData = null;
@@ -304,6 +304,10 @@
 
         scheduleNextFrame() {
             if (!this.isRunning) return;
+            if (IS_LOCAL_DASHBOARD) {
+                this.renderTimer = requestAnimationFrame(() => this.renderLoop());
+                return;
+            }
             if (this.renderTimer) {
                 clearTimeout(this.renderTimer);
             }
@@ -334,7 +338,8 @@
         stopRendering() {
             this.isRunning = false;
             if (this.renderTimer) {
-                clearTimeout(this.renderTimer);
+                if (IS_LOCAL_DASHBOARD) cancelAnimationFrame(this.renderTimer);
+                else clearTimeout(this.renderTimer);
                 this.renderTimer = null;
             }
             this.fetchInFlight = false;
@@ -661,6 +666,12 @@
 
     function previewAnimation(animationName) {
         if (animationRenderer) {
+            if (IS_LOCAL_DASHBOARD) {
+                if (animationRenderer.previewMode) togglePreviewMode();
+                const params = controlParameterStore[animationName] || {};
+                startAnimation(animationName, params);
+                return;
+            }
             // Enable preview mode if not already enabled
             if (!animationRenderer.previewMode) {
                 togglePreviewMode();

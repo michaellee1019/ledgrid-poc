@@ -25,6 +25,14 @@ fetch-presets:
 generate-previews:
 	{{python_env}} python tools/generate_animation_previews.py --tracked-only
 
+# Run the Mac-only software dashboard with 30 FPS contact-strip loops.
+start-mac:
+	{{python_env}} python tools/generate_animation_previews.py --tracked-only \
+		--output run_state/mac_animation_previews \
+		--public-prefix /preview-assets/generated --capture-fps 30 --capture-duration 4
+	{{python_env}} python scripts/start_mac_dashboard.py \
+		--host "${HOST:-127.0.0.1}" --port "${PORT:-5000}"
+
 # Create/refresh the lightweight virtualenv for serving the web controller locally.
 setup-web:
 	uv venv --allow-existing {{web_venv}}
