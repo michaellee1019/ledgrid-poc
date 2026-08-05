@@ -34,15 +34,18 @@ sync_full_deployment() {
         "$PREVIEW_ARTIFACT_DIR"/ \
         "$stage_dir/web/static/generated/animation-previews"/
 
-    # These paths are owned by the running target. Excluding them both prevents
-    # uploads and protects them from --delete while stale deployed code is
-    # removed.
+    # These paths are owned by the running target. Runtime presets get an
+    # explicit receiver-side protection rule as well as a sender-side exclude:
+    # even when the staging tree has no presets directory, --delete may not
+    # remove presets saved through the deployed UI.
     rsync -az --delete --stats \
         -e "ssh $SSH_OPTS" \
         --exclude 'venv/' \
         --exclude '.venv*/' \
         --exclude 'run_state/' \
-        --exclude 'presets/animations/' \
+        --filter 'protect /presets/' \
+        --filter 'protect /presets/animations/***' \
+        --exclude '/presets/animations/' \
         --exclude '.esp32_firmware_hash' \
         --exclude '*.log' \
         --exclude '.pio/' \

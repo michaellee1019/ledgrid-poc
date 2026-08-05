@@ -107,7 +107,9 @@ class DeployManifestTests(unittest.TestCase):
         for protected_path in (
             "--exclude 'venv/'",
             "--exclude 'run_state/'",
-            "--exclude 'presets/animations/'",
+            "--filter 'protect /presets/'",
+            "--filter 'protect /presets/animations/***'",
+            "--exclude '/presets/animations/'",
             "--exclude '.esp32_firmware_hash'",
             "--exclude '*.log'",
         ):
@@ -120,6 +122,38 @@ class DeployManifestTests(unittest.TestCase):
         self.assertIn('"$PREVIEW_ARTIFACT_DIR"/', fast_contract)
         self.assertIn("--delete", fast_contract)
         self.assertIn("web/static/generated/animation-previews/", fast_contract)
+
+    def test_full_sync_filter_preserves_runtime_presets_during_delete(self):
+        source = self.root / "staged"
+        target = self.root / "deployed"
+        self._write("staged/web/app.py", b"new deployment")
+        self._write("deployed/web/app.py", b"old")
+        stale_code = self._write("deployed/web/removed.py", b"stale")
+        saved_preset = self._write(
+            "deployed/presets/animations/rainbow/my-preset.json",
+            b'{"name":"My Preset"}',
+        )
+
+        subprocess.run(
+            [
+                "rsync",
+                "-a",
+                "--delete",
+                "--filter",
+                "protect /presets/",
+                "--filter",
+                "protect /presets/animations/***",
+                "--exclude",
+                "/presets/animations/",
+                f"{source}/",
+                f"{target}/",
+            ],
+            check=True,
+        )
+
+        self.assertEqual((target / "web/app.py").read_bytes(), b"new deployment")
+        self.assertFalse(stale_code.exists())
+        self.assertEqual(saved_preset.read_bytes(), b'{"name":"My Preset"}')
 
 
 if __name__ == "__main__":
