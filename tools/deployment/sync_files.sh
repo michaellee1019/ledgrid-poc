@@ -6,7 +6,8 @@ PREVIEW_ARTIFACT_DIR="$LOCAL_DIR/web/static/generated/animation-previews"
 
 generate_preview_artifacts() {
     uv run --with numpy --with pillow python \
-        "$LOCAL_DIR/tools/generate_animation_previews.py" --tracked-only
+        "$LOCAL_DIR/tools/generate_animation_previews.py" --tracked-only \
+        --workers "${PREVIEW_WORKERS:-0}"
 }
 
 deployment_manifest() {

@@ -23,6 +23,7 @@ from animation.core.preview_assets import (
 from web.preview_worker import RuntimePreviewWorker
 from web.app import AnimationWebInterface
 from web.local_control import LocalControlChannel
+from tools.generate_animation_previews import _worker_count
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +36,11 @@ class AnimationPreviewTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary_dir.cleanup()
+
+    def test_preview_generation_uses_every_available_cpu_by_default(self):
+        self.assertEqual(_worker_count(0, 300, cpu_count=14), 14)
+        self.assertEqual(_worker_count(0, 4, cpu_count=14), 4)
+        self.assertEqual(_worker_count(3, 300, cpu_count=14), 3)
 
     def test_renderer_writes_native_lossless_loop_and_reuses_digest(self):
         renderer = PreviewRenderer(

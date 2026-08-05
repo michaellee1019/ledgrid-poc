@@ -4,7 +4,12 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import redirect_stdout
+from dataclasses import dataclass
+import io
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Any, Dict
@@ -22,6 +27,59 @@ from animation.core.preview_assets import (
     write_catalog,
 )
 from tools.deployment.deploy_manifest import tracked_paths
+
+
+@dataclass(frozen=True)
+class RenderJob:
+    animation_name: str
+    preset_id: str | None = None
+    config: Dict[str, Any] | None = None
+    preset_path: Path | None = None
+
+
+_worker_renderer: PreviewRenderer | None = None
+
+
+def _initialize_render_worker(
+    output: Path,
+    public_prefix: str,
+    strips: int,
+    leds_per_strip: int,
+    capture_fps: int | None,
+    capture_duration: float | None,
+) -> None:
+    global _worker_renderer
+    if _worker_renderer is None:
+        # Spawn-based platforms must reconstruct the renderer. Fork-based
+        # workers inherit the parent's already-loaded plugin registry.
+        with redirect_stdout(io.StringIO()):
+            _worker_renderer = PreviewRenderer(
+                ROOT,
+                output,
+                public_prefix,
+                strips=strips,
+                leds_per_strip=leds_per_strip,
+                capture_fps=capture_fps,
+                capture_duration=capture_duration,
+            )
+
+
+def _render_in_worker(job: RenderJob, force: bool) -> Dict[str, Any]:
+    if _worker_renderer is None:
+        raise RuntimeError("preview render worker was not initialized")
+    return _worker_renderer.render(
+        job.animation_name,
+        preset_id=job.preset_id,
+        config=job.config,
+        preset_path=job.preset_path,
+        force=force,
+    )
+
+
+def _worker_count(requested: int, job_count: int, cpu_count: int | None = None) -> int:
+    available = cpu_count if cpu_count is not None else os.cpu_count()
+    maximum = max(1, available or 1)
+    return min(job_count, requested or maximum) if job_count else 0
 
 
 def _deployable_paths(root: Path) -> set[str]:
@@ -64,6 +122,7 @@ def generate_all(args: argparse.Namespace) -> int:
     catalog = empty_catalog(args.strips, args.leds_per_strip)
     tracked = _deployable_paths(ROOT) if args.tracked_only else None
     failures: list[str] = []
+    jobs: list[RenderJob] = []
     for animation_name in sorted(renderer.plugins):
         manifest_path = renderer.loader.get_plugin_dir(animation_name) / "manifest.json"
         relative_manifest = manifest_path.relative_to(ROOT).as_posix()
@@ -74,33 +133,61 @@ def generate_all(args: argparse.Namespace) -> int:
         manifest = renderer.loader.plugin_manifests.get(animation_name, {})
         if manifest.get("gallery", "show") != "show":
             continue
-        try:
-            catalog["animations"][animation_name] = renderer.render(
-                animation_name, force=args.force
-            )
-        except Exception as exc:
-            failures.append(f"{animation_name}: {exc}")
-            catalog["animations"][animation_name] = {
-                "status": "failed", "error": str(exc)
-            }
-            continue
+        jobs.append(RenderJob(animation_name))
         preset_entries: Dict[str, Any] = {}
         for path in renderer.loader.iter_curated_preset_files(animation_name):
             if tracked is not None and path.relative_to(ROOT).as_posix() not in tracked:
                 continue
             try:
                 preset_id, config = preset_payload(path, animation_name)
-                preset_entries[preset_id] = renderer.render(
-                    animation_name,
-                    preset_id=preset_id,
-                    config=config,
-                    preset_path=path,
-                    force=args.force,
+                jobs.append(
+                    RenderJob(animation_name, preset_id, config, path)
                 )
             except Exception as exc:
                 failures.append(f"{animation_name}/{path.stem}: {exc}")
                 preset_entries[path.stem] = {"status": "failed", "error": str(exc)}
         catalog["presets"][animation_name] = preset_entries
+
+    worker_count = _worker_count(args.workers, len(jobs))
+    if jobs:
+        global _worker_renderer
+        _worker_renderer = renderer
+        print(
+            f"rendering {len(jobs)} previews with {worker_count} Python "
+            f"process{'es' if worker_count != 1 else ''}"
+        )
+        with ProcessPoolExecutor(
+            max_workers=worker_count,
+            initializer=_initialize_render_worker,
+            initargs=(
+                args.output,
+                args.public_prefix,
+                args.strips,
+                args.leds_per_strip,
+                args.capture_fps,
+                args.capture_duration,
+            ),
+        ) as executor:
+            pending = {
+                executor.submit(_render_in_worker, job, args.force): job
+                for job in jobs
+            }
+            for future in as_completed(pending):
+                job = pending[future]
+                label = (
+                    f"{job.animation_name}/{job.preset_id}"
+                    if job.preset_id is not None
+                    else job.animation_name
+                )
+                try:
+                    entry = future.result()
+                except Exception as exc:
+                    failures.append(f"{label}: {exc}")
+                    entry = {"status": "failed", "error": str(exc)}
+                if job.preset_id is None:
+                    catalog["animations"][job.animation_name] = entry
+                else:
+                    catalog["presets"][job.animation_name][job.preset_id] = entry
     write_catalog(args.output / "catalog.json", catalog)
     clean_stale_assets(args.output, catalog)
     ready = len(catalog["animations"]) + sum(len(value) for value in catalog["presets"].values())
@@ -161,6 +248,12 @@ def main() -> int:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--tracked-only", action="store_true")
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Preview-render worker processes; 0 uses every logical CPU (default)",
+    )
+    parser.add_argument(
         "--capture-fps", type=int,
         help="Render evenly spaced frames at this real-time playback rate",
     )
@@ -173,6 +266,8 @@ def main() -> int:
     parser.add_argument("--status-path", type=Path, default=ROOT / "run_state" / "status.json")
     parser.add_argument("--throttle-seconds", type=float, default=0.02)
     args = parser.parse_args()
+    if args.workers < 0:
+        parser.error("--workers must be zero or greater")
     args.output = args.output.resolve()
     if args.single_preset:
         if not args.animation:

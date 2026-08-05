@@ -116,6 +116,7 @@ class DeployManifestTests(unittest.TestCase):
         self.assertIn("deployment_manifest full", sync_script)
         fast_contract = sync_script[sync_script.index("sync_fast_deployment"):]
         self.assertIn("generate_preview_artifacts", fast_contract)
+        self.assertIn('--workers "${PREVIEW_WORKERS:-0}"', sync_script)
         self.assertIn('"$PREVIEW_ARTIFACT_DIR"/', fast_contract)
         self.assertIn("--delete", fast_contract)
         self.assertIn("web/static/generated/animation-previews/", fast_contract)
