@@ -207,7 +207,9 @@ class AnimationPreviewTests(unittest.TestCase):
 
         client = interface.app.test_client()
         html = client.get("/").get_data(as_text=True)
-        self.assertIn('class="generated-preview animation-preview"', html)
+        self.assertIn(
+            'class="generated-preview animation-preview animation-summary-preview"', html
+        )
         self.assertIn('loading="lazy"', html)
         self.assertIn('data-loop-src="/calm-loop.webp"', html)
         summary = client.get("/api/animations/rainbow/presets").get_json()["presets"][0]

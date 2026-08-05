@@ -12,6 +12,7 @@
     .now-playing-bar { background: var(--show-ink); color: white; border: 0; border-radius: 18px; }
     .now-playing-label { color: #aeb6d0; font-size: .72rem; letter-spacing: .09em; text-transform: uppercase; }
     .speed-card { border: 0; border-radius: 16px; background: linear-gradient(135deg, #6c5ff8, #5145dc); color: white; }
+    .speed-helper { color: rgba(255,255,255,.72); font-size: .72rem; }
     .tempo-readout { display: flex; align-items: baseline; padding: .25rem .5rem; border: 1px solid rgba(255,255,255,.34); border-radius: 10px; background: rgba(20,13,94,.2); }
     .speed-value-input { width: 3.7rem; padding: 0; border: 0; outline: 0; background: transparent; color: white; font-size: 1.25rem; font-weight: 800; line-height: 1; text-align: right; appearance: textfield; }
     .speed-value-input::-webkit-inner-spin-button { appearance: none; }
@@ -20,6 +21,7 @@
     .speed-card .form-range { height: 1rem; margin-bottom: 0; }
     .speed-card .form-range::-webkit-slider-thumb { background: white; width: 1rem; height: 1rem; }
     .speed-card .form-range::-moz-range-thumb { background: white; width: 1rem; height: 1rem; border: 0; }
+    .speed-presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .3rem; }
     .speed-preset { border-color: rgba(255,255,255,.45); color: white; }
     .speed-preset:hover, .speed-preset.active { background: white; color: var(--show-accent-dark); }
     .plant-aware-card { border: 0; border-radius: 16px; background: linear-gradient(135deg, #15734b, #0b5437); color: white; }
@@ -28,14 +30,29 @@
     .plant-aware-switch .form-check-input:checked { background-color: #bdfbd8; border-color: #bdfbd8; }
     .plant-aware-switch .form-check-label { min-width: 1.8rem; cursor: pointer; }
     .section-kicker { color: var(--show-accent); font-size: .75rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-    .animation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
-    .animation-card { border: 1px solid var(--show-border); border-radius: 18px; box-shadow: 0 8px 26px rgba(29, 39, 74, .06); cursor: default; overflow: hidden; transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+    .animation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 1rem; }
+    .animation-accordion > .animation-card { border: 1px solid var(--show-border); border-radius: 18px; box-shadow: 0 8px 26px rgba(29, 39, 74, .06); cursor: default; overflow: hidden; transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
     .animation-card:hover { transform: translateY(-2px); box-shadow: 0 14px 34px rgba(29, 39, 74, .1); }
     .animation-card.active { border-color: var(--show-accent); box-shadow: 0 0 0 3px rgba(101,88,245,.12), 0 14px 34px rgba(29,39,74,.1); }
+    .animation-summary { gap: .7rem; min-height: 6.6rem; padding: .7rem .85rem; background: white; color: var(--show-ink); box-shadow: none; }
+    .animation-summary:not(.collapsed) { background: #f7f6ff; color: var(--show-accent-dark); box-shadow: inset 0 -1px 0 var(--show-border); }
+    .animation-summary:focus { border-color: transparent; box-shadow: inset 0 0 0 3px rgba(101,88,245,.18); }
+    .animation-summary::after { flex: 0 0 auto; margin-left: .15rem; }
+    .animation-summary-copy { min-width: 0; flex: 1 1 auto; }
+    .animation-name { display: block; font-size: .95rem; font-weight: 800; line-height: 1.2; }
+    .animation-summary .animation-description { display: -webkit-box; overflow: hidden; margin-top: .3rem; min-height: 0; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .animation-preset-count { flex: 0 0 auto; background: #ebe9ff; color: var(--show-accent-dark); font-size: .68rem; }
+    .animation-details { padding: .8rem; background: #fcfcff; }
+    .animation-details-description { display: none; color: var(--show-muted); font-size: .86rem; line-height: 1.45; }
     .animation-icon { display: grid; place-items: center; width: 3.2rem; height: 3.2rem; border-radius: 14px; background: var(--show-soft); font-size: 1.65rem; flex: 0 0 auto; }
     .generated-preview { display: block; flex: 0 0 auto; border: 1px solid rgba(28,32,52,.18); background: #07080d; image-rendering: pixelated; object-fit: contain; }
     .animation-preview { width: 3.25rem; height: 8.75rem; border-radius: 11px; box-shadow: 0 5px 16px rgba(18,22,39,.16); }
+    .animation-summary-preview { width: 1.75rem; height: 4.75rem; border-radius: 7px; }
     .animation-description { color: var(--show-muted); font-size: .87rem; line-height: 1.4; min-height: 2.45rem; }
+    .preset-accordion > .accordion-item { overflow: hidden; border: 1px solid #e0e3ef; border-radius: 12px; }
+    .preset-accordion-button { padding: .68rem .8rem; background: white; color: #4c536b; font-size: .82rem; font-weight: 800; }
+    .preset-accordion-button:not(.collapsed) { background: var(--show-soft); color: var(--show-accent-dark); box-shadow: inset 0 -1px 0 var(--show-border); }
+    .preset-accordion-button .badge { background: #e7e9f3; color: #596078; }
     .preset-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: flex-start; gap: .5rem; padding: .15rem 0 .35rem; }
     .preset-chip { display: flex; align-items: center; gap: .55rem; min-width: 0; border: 1px solid #e1e3ef; background: linear-gradient(180deg, #fff, #fafaff); color: #343958; border-radius: 12px; padding: .58rem .65rem; text-align: left; transition: border-color .15s ease, background .15s ease, transform .15s ease; }
     .preset-chip:hover { border-color: var(--show-accent); color: var(--show-accent-dark); background: #f4f2ff; transform: translateY(-1px); }
@@ -81,4 +98,17 @@
         .preset-strip, .parameter-grid { grid-template-columns: 1fr; }
         .dashboard-heading { font-size: 1.8rem; }
         .speed-value-input { width: 3.7rem; font-size: 1.25rem; }
+        .mobile-speed-card { box-shadow: 0 12px 28px rgba(79,67,216,.24); }
+        .mobile-speed-card .card-body { padding: 1rem !important; }
+        .mobile-speed-card .form-range { height: 1.35rem; }
+        .mobile-speed-card .form-range::-webkit-slider-thumb { width: 1.3rem; height: 1.3rem; }
+        .mobile-speed-card .form-range::-moz-range-thumb { width: 1.3rem; height: 1.3rem; }
+        .speed-presets { gap: .4rem; }
+        .speed-preset { padding: .4rem .2rem; font-weight: 700; }
+        .animation-summary { min-height: 5.25rem; padding: .55rem .7rem; }
+        .animation-summary-preview { width: 1.45rem; height: 3.9rem; }
+        .animation-icon { width: 2.65rem; height: 2.65rem; border-radius: 11px; font-size: 1.35rem; }
+        .animation-summary .animation-description { -webkit-line-clamp: 1; font-size: .78rem; }
+        .animation-preset-count { font-size: .62rem; }
+        .animation-details-description { display: block; }
     }

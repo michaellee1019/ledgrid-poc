@@ -3,6 +3,31 @@
 {% block title %}LED Grid Dashboard{% endblock %}
 
 {% block content %}
+{% macro speed_control(id_suffix='', mobile=false) %}
+<div class="card speed-card{{ ' mobile-speed-card' if mobile else '' }}">
+    <div class="card-body p-3">
+        <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+            <div>
+                <div class="text-uppercase fw-bold small opacity-75">{{ 'Animation speed' if mobile else 'Global tempo' }}</div>
+                {% if mobile %}<div class="speed-helper">Changes every animation instantly</div>{% endif %}
+            </div>
+            <label class="tempo-readout" title="Enter any positive tempo multiplier">
+                <span class="visually-hidden">Exact global tempo</span>
+                <input class="speed-value-input global-speed-number" id="globalSpeedNumber{{ id_suffix }}" type="number" step="any" value="1" inputmode="decimal" aria-label="Exact global tempo multiplier" oninput="previewGlobalSpeed(this.value)" onchange="setGlobalSpeed(this.value)">
+                <span class="tempo-times">×</span>
+            </label>
+        </div>
+        <input class="form-range global-speed-range" id="globalSpeedRange{{ id_suffix }}" type="range" min="0" max="100" step="1" value="50" aria-label="Global animation speed, logarithmic scale" oninput="previewGlobalSpeedFromPosition(this.value)" onchange="setGlobalSpeedFromPosition(this.value)">
+        <div class="tempo-scale"><span>0.1×</span><span>1×</span><span>10×</span></div>
+        <div class="speed-presets mt-2" aria-label="{{ 'Mobile speed presets' if mobile else 'Speed presets' }}">
+            <button class="btn btn-sm speed-preset" type="button" onclick="setGlobalSpeedPreset(0.65)">Slow</button>
+            <button class="btn btn-sm speed-preset active" type="button" onclick="setGlobalSpeedPreset(1)">Groove</button>
+            <button class="btn btn-sm speed-preset" type="button" onclick="setGlobalSpeedPreset(1.5)">Lively</button>
+            <button class="btn btn-sm speed-preset" type="button" onclick="setGlobalSpeedPreset(2.25)">Turbo</button>
+        </div>
+    </div>
+</div>
+{% endmacro %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
 
 <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
@@ -35,13 +60,16 @@
             </div>
             <small class="text-muted">Tap a preset to play it instantly</small>
         </div>
-        <div class="animation-grid">
+        <div class="d-xl-none mb-3" aria-label="Mobile animation speed control">
+            {{ speed_control('Mobile', true) }}
+        </div>
+        <div class="accordion animation-grid animation-accordion" id="showAnimationAccordion">
             {% for animation in animations %}
-            <article class="card animation-card h-100" data-animation-card="{{ animation.plugin_name }}">
-                <div class="card-body p-3 d-flex flex-column">
-                    <div class="d-flex gap-3 align-items-start">
+            <article class="accordion-item animation-card" data-animation-card="{{ animation.plugin_name }}">
+                <h3 class="accordion-header" id="animationHeading-{{ animation.plugin_name }}">
+                    <button class="accordion-button collapsed animation-summary" type="button" data-bs-toggle="collapse" data-bs-target="#animationCollapse-{{ animation.plugin_name }}" aria-expanded="false" aria-controls="animationCollapse-{{ animation.plugin_name }}">
                         {% if animation.preview and animation.preview.poster_url and animation.preview.loop_url %}
-                        <img class="generated-preview animation-preview"
+                        <img class="generated-preview animation-preview animation-summary-preview"
                              src="{{ animation.preview.poster_url }}"
                              data-poster-src="{{ animation.preview.poster_url }}"
                              data-loop-src="{{ animation.preview.loop_url }}"
@@ -50,42 +78,61 @@
                              onerror="this.hidden=true">
                         {% endif %}
                         <div class="animation-icon" aria-hidden="true">{{ animation.emoji }}</div>
-                        <div class="min-w-0 flex-grow-1">
-                            <h3 class="h6 fw-bold mb-1">{{ animation.name }}</h3>
-                            <p class="animation-description mb-2">{{ animation.description }}</p>
+                        <div class="animation-summary-copy">
+                            <span class="animation-name">{{ animation.name }}</span>
+                            <span class="animation-description">{{ animation.description }}</span>
                         </div>
-                    </div>
-                    {% if animation.presets %}
-                    <div class="preset-strip mt-2" aria-label="{{ animation.name }} presets">
-                        {% for preset in animation.presets %}
-                        <button class="preset-chip" title="{{ preset.description or preset.name }}" onclick="playDashboardPreset('{{ animation.plugin_name }}', '{{ preset.preset_id }}', this)">
-                            {% if preset.preview and preset.preview.poster_url and preset.preview.loop_url %}
-                            <img class="generated-preview preset-preview"
-                                 src="{{ preset.preview.poster_url }}"
-                                 data-poster-src="{{ preset.preview.poster_url }}"
-                                 data-loop-src="{{ preset.preview.loop_url }}"
-                                 data-preview-status="{{ preset.preview.status }}"
-                                 data-animation="{{ animation.plugin_name }}"
-                                 data-preset-id="{{ preset.preset_id }}"
-                                 loading="lazy" decoding="async" width="32" height="138"
-                                 alt="" aria-hidden="true" onerror="this.hidden=true">
-                            {% endif %}
-                            <span class="preset-emoji" aria-hidden="true">{{ preset.emoji }}</span>
-                            <span class="preset-copy">
-                                <span class="preset-name">{{ preset.name }}</span>
-                                <span class="preset-category">{{ preset.category or 'Preset' }}</span>
-                            </span>
-                            {% if preset.swatches %}<span class="preset-swatches" aria-hidden="true">{% for color in preset.swatches %}<span class="preset-swatch" style="background: {{ color }}"></span>{% endfor %}</span>{% endif %}
-                        </button>
-                        {% endfor %}
-                    </div>
-                    {% else %}
-                    <small class="text-muted mt-2 mb-1">No saved presets yet</small>
-                    {% endif %}
-                    <div class="d-flex gap-2 mt-auto pt-2">
-                        <button class="btn btn-primary btn-sm flex-grow-1" onclick="selectControlAnimation('{{ animation.plugin_name }}')"><i class="fas fa-play me-1"></i> Play</button>
-                        <button class="btn btn-outline-secondary btn-sm" onclick="openAnimationControls('{{ animation.plugin_name }}')" title="Fine tune {{ animation.name }}"><i class="fas fa-sliders-h"></i></button>
-                        <button class="btn btn-outline-secondary btn-sm" onclick="previewAnimation('{{ animation.plugin_name }}')" title="Preview {{ animation.name }}"><i class="fas fa-eye"></i></button>
+                        {% if animation.presets %}<span class="badge rounded-pill animation-preset-count">{{ animation.presets|length }} preset{{ '' if animation.presets|length == 1 else 's' }}</span>{% endif %}
+                    </button>
+                </h3>
+                <div id="animationCollapse-{{ animation.plugin_name }}" class="accordion-collapse collapse" aria-labelledby="animationHeading-{{ animation.plugin_name }}" data-bs-parent="#showAnimationAccordion">
+                    <div class="accordion-body animation-details">
+                        <p class="animation-details-description mb-3">{{ animation.description }}</p>
+                        {% if animation.presets %}
+                        <div class="accordion preset-accordion" id="presetAccordion-{{ animation.plugin_name }}">
+                            <div class="accordion-item">
+                                <h4 class="accordion-header" id="presetHeading-{{ animation.plugin_name }}">
+                                    <button class="accordion-button collapsed preset-accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#presetCollapse-{{ animation.plugin_name }}" aria-expanded="false" aria-controls="presetCollapse-{{ animation.plugin_name }}">
+                                        Curated presets <span class="badge rounded-pill ms-2">{{ animation.presets|length }}</span>
+                                    </button>
+                                </h4>
+                                <div id="presetCollapse-{{ animation.plugin_name }}" class="accordion-collapse collapse" aria-labelledby="presetHeading-{{ animation.plugin_name }}">
+                                    <div class="accordion-body p-2">
+                                        <div class="preset-strip" aria-label="{{ animation.name }} presets">
+                                            {% for preset in animation.presets %}
+                                            <button class="preset-chip" type="button" title="{{ preset.description or preset.name }}" onclick="playDashboardPreset('{{ animation.plugin_name }}', '{{ preset.preset_id }}', this)">
+                                                {% if preset.preview and preset.preview.poster_url and preset.preview.loop_url %}
+                                                <img class="generated-preview preset-preview"
+                                                     src="{{ preset.preview.poster_url }}"
+                                                     data-poster-src="{{ preset.preview.poster_url }}"
+                                                     data-loop-src="{{ preset.preview.loop_url }}"
+                                                     data-preview-status="{{ preset.preview.status }}"
+                                                     data-animation="{{ animation.plugin_name }}"
+                                                     data-preset-id="{{ preset.preset_id }}"
+                                                     loading="lazy" decoding="async" width="32" height="138"
+                                                     alt="" aria-hidden="true" onerror="this.hidden=true">
+                                                {% endif %}
+                                                <span class="preset-emoji" aria-hidden="true">{{ preset.emoji }}</span>
+                                                <span class="preset-copy">
+                                                    <span class="preset-name">{{ preset.name }}</span>
+                                                    <span class="preset-category">{{ preset.category or 'Preset' }}</span>
+                                                </span>
+                                                {% if preset.swatches %}<span class="preset-swatches" aria-hidden="true">{% for color in preset.swatches %}<span class="preset-swatch" style="background: {{ color }}"></span>{% endfor %}</span>{% endif %}
+                                            </button>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% else %}
+                        <small class="text-muted d-block mb-2">No saved presets yet</small>
+                        {% endif %}
+                        <div class="d-flex gap-2 pt-3">
+                            <button class="btn btn-primary btn-sm flex-grow-1" type="button" onclick="selectControlAnimation('{{ animation.plugin_name }}')"><i class="fas fa-play me-1"></i> Play</button>
+                            <button class="btn btn-outline-secondary btn-sm" type="button" onclick="openAnimationControls('{{ animation.plugin_name }}')" title="Fine tune {{ animation.name }}" aria-label="Fine tune {{ animation.name }}"><i class="fas fa-sliders-h"></i></button>
+                            <button class="btn btn-outline-secondary btn-sm" type="button" onclick="previewAnimation('{{ animation.plugin_name }}')" title="Preview {{ animation.name }}" aria-label="Preview {{ animation.name }}"><i class="fas fa-eye"></i></button>
+                        </div>
                     </div>
                 </div>
             </article>
@@ -177,25 +224,8 @@
                 </div>
             </div>
 
-            <div class="card speed-card mb-3">
-                <div class="card-body p-3">
-                    <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
-                        <div class="text-uppercase fw-bold small opacity-75">Global tempo</div>
-                        <label class="tempo-readout" title="Enter any positive tempo multiplier">
-                            <span class="visually-hidden">Exact global tempo</span>
-                            <input class="speed-value-input" id="globalSpeedNumber" type="number" step="any" value="1" inputmode="decimal" aria-label="Exact global tempo multiplier" oninput="previewGlobalSpeed(this.value)" onchange="setGlobalSpeed(this.value)">
-                            <span class="tempo-times">×</span>
-                        </label>
-                    </div>
-                    <input class="form-range" id="globalSpeedRange" type="range" min="0" max="100" step="1" value="50" aria-label="Global animation speed, logarithmic scale" oninput="previewGlobalSpeedFromPosition(this.value)" onchange="setGlobalSpeedFromPosition(this.value)">
-                    <div class="tempo-scale"><span>0.1×</span><span>1×</span><span>10×</span></div>
-                    <div class="d-flex flex-wrap gap-1 mt-2" aria-label="Speed presets">
-                        <button class="btn btn-sm speed-preset" onclick="setGlobalSpeedPreset(0.65)">Slow</button>
-                        <button class="btn btn-sm speed-preset active" onclick="setGlobalSpeedPreset(1)">Groove</button>
-                        <button class="btn btn-sm speed-preset" onclick="setGlobalSpeedPreset(1.5)">Lively</button>
-                        <button class="btn btn-sm speed-preset" onclick="setGlobalSpeedPreset(2.25)">Turbo</button>
-                    </div>
-                </div>
+            <div class="d-none d-xl-block mb-3">
+                {{ speed_control() }}
             </div>
 
             <div class="card plant-aware-card mb-3">

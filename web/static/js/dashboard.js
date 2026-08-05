@@ -447,14 +447,21 @@
     }
 
     function previewGlobalSpeed(value) {
-        const number = document.getElementById('globalSpeedNumber');
-        if (number && document.activeElement !== number) number.value = formatSpeed(value);
-        const range = document.getElementById('globalSpeedRange');
         const multiplier = Number(value);
-        if (range && Number.isFinite(multiplier) && multiplier > 0) {
-            range.value = multiplierToSpeedPosition(multiplier);
+        document.querySelectorAll('.global-speed-number').forEach(number => {
+            if (document.activeElement !== number) number.value = formatSpeed(value);
+        });
+        if (Number.isFinite(multiplier) && multiplier > 0) {
+            document.querySelectorAll('.global-speed-range').forEach(range => {
+                if (document.activeElement !== range) {
+                    range.value = multiplierToSpeedPosition(multiplier);
+                }
+            });
         }
-        document.querySelectorAll('.speed-preset').forEach(button => button.classList.remove('active'));
+        document.querySelectorAll('.speed-preset').forEach(button => {
+            button.classList.remove('active');
+            button.setAttribute('aria-pressed', 'false');
+        });
     }
 
     function speedPositionToMultiplier(position) {
@@ -467,9 +474,16 @@
 
     function previewGlobalSpeedFromPosition(position) {
         const multiplier = speedPositionToMultiplier(position);
-        const number = document.getElementById('globalSpeedNumber');
-        if (number) number.value = formatSpeed(multiplier);
-        document.querySelectorAll('.speed-preset').forEach(button => button.classList.remove('active'));
+        document.querySelectorAll('.global-speed-range').forEach(range => {
+            if (document.activeElement !== range) range.value = position;
+        });
+        document.querySelectorAll('.global-speed-number').forEach(number => {
+            if (document.activeElement !== number) number.value = formatSpeed(multiplier);
+        });
+        document.querySelectorAll('.speed-preset').forEach(button => {
+            button.classList.remove('active');
+            button.setAttribute('aria-pressed', 'false');
+        });
     }
 
     function setGlobalSpeedFromPosition(position) {
@@ -477,18 +491,23 @@
     }
 
     function syncGlobalSpeedFromStatus(status) {
-        const range = document.getElementById('globalSpeedRange');
-        if (!range || !status) return;
+        const ranges = document.querySelectorAll('.global-speed-range');
+        if (!ranges.length || !status) return;
         const scale = Number(status.animation_speed_scale);
         if (!Number.isFinite(scale) || scale <= 0 || !Number.isFinite(SPEED_BASELINE)) return;
         const multiplier = scale / SPEED_BASELINE;
-        if (document.activeElement !== range) range.value = multiplierToSpeedPosition(multiplier);
-        const number = document.getElementById('globalSpeedNumber');
-        if (number && document.activeElement !== number) number.value = formatSpeed(multiplier);
+        ranges.forEach(range => {
+            if (document.activeElement !== range) range.value = multiplierToSpeedPosition(multiplier);
+        });
+        document.querySelectorAll('.global-speed-number').forEach(number => {
+            if (document.activeElement !== number) number.value = formatSpeed(multiplier);
+        });
         document.querySelectorAll('.speed-preset').forEach(button => {
             const match = (button.getAttribute('onclick') || '').match(/[\d.]+/);
             const buttonValue = match ? Number(match[0]) : NaN;
-            button.classList.toggle('active', Math.abs(buttonValue - multiplier) < .05);
+            const active = Math.abs(buttonValue - multiplier) < .05;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', String(active));
         });
     }
 
