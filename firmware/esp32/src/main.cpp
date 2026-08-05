@@ -13,6 +13,7 @@
 #include "ledgrid/frame_mailbox.hpp"
 #include "ledgrid/parallel_led_driver.hpp"
 #include "ledgrid/protocol.hpp"
+#include "ledgrid/startup_animation.hpp"
 #include "ledgrid/ws2812_encoder.hpp"
 
 namespace {
@@ -31,6 +32,7 @@ constexpr std::size_t kMaxTotalLeds = kMaxStrips * kMaxLedsPerStrip;
 constexpr std::size_t kMaxRgbBytes = kMaxTotalLeds * 3;
 constexpr std::uint8_t kDefaultStrips = 8;
 constexpr std::uint16_t kDefaultLedsPerStrip = 138;
+constexpr std::uint8_t kDefaultBrightness = 50;
 constexpr int kLedPins[kMaxStrips] = {18, 17, 16, 15, 7, 6, 5, 4};
 
 constexpr std::uint8_t kCmdSetPixel = 0x01;
@@ -53,6 +55,7 @@ DMA_ATTR std::uint8_t spi_tx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
 spi_slave_transaction_t spi_transactions[kSpiQueueDepth] = {};
 
 std::uint8_t working_frame[kMaxRgbBytes] = {};
+std::uint8_t startup_frame[kMaxRgbBytes] = {};
 std::uint8_t mailbox_frames[ledgrid::kFrameMailboxSlots][kMaxRgbBytes] = {};
 ledgrid::LatestFrameMailbox frame_mailbox;
 portMUX_TYPE mailbox_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -61,8 +64,9 @@ ledgrid::ParallelLedDriver led_driver;
 
 std::uint8_t active_strips = kDefaultStrips;
 std::uint16_t leds_per_strip = kDefaultLedsPerStrip;
-std::uint8_t brightness = 50;
-std::uint32_t next_sequence = 1;
+std::uint8_t brightness = kDefaultBrightness;
+std::atomic<std::uint32_t> next_sequence{1};
+std::atomic<bool> pi_connected{false};
 
 std::atomic<std::uint32_t> packets_received{0};
 std::atomic<std::uint32_t> crc_errors{0};
@@ -124,7 +128,7 @@ bool publish_working_frame() {
       static_cast<std::uint32_t>(esp_timer_get_time()) - copy_started);
 
   ledgrid::FrameMetadata metadata{};
-  metadata.sequence = next_sequence++;
+  metadata.sequence = next_sequence.fetch_add(1, std::memory_order_relaxed);
   metadata.byte_count = bytes;
   metadata.strip_count = active_strips;
   metadata.leds_per_strip = leds_per_strip;
@@ -141,6 +145,37 @@ bool publish_working_frame() {
 }
 
 void display_task(void*) {
+  const std::uint64_t animation_started_us = esp_timer_get_time();
+  while (!pi_connected.load(std::memory_order_acquire)) {
+    const std::uint64_t now_us = esp_timer_get_time();
+    if (!ledgrid::render_startup_rainbow(
+            now_us - animation_started_us,
+            kDefaultStrips,
+            kDefaultLedsPerStrip,
+            startup_frame,
+            sizeof(startup_frame))) {
+      ++display_errors;
+      break;
+    }
+
+    const std::uint32_t sequence =
+        next_sequence.fetch_add(1, std::memory_order_relaxed);
+    const bool submitted = led_driver.submit(
+        startup_frame,
+        static_cast<std::size_t>(kDefaultStrips) * kDefaultLedsPerStrip * 3U,
+        kDefaultStrips,
+        kDefaultLedsPerStrip,
+        kDefaultBrightness,
+        sequence);
+    const bool completed =
+        submitted && led_driver.wait_for_done(pdMS_TO_TICKS(100));
+    if (completed) {
+      last_displayed_sequence = sequence;
+    } else {
+      ++display_errors;
+    }
+  }
+
   while (true) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     while (true) {
@@ -224,73 +259,73 @@ bool queue_spi_transaction(std::size_t index) {
   return true;
 }
 
-void process_command(const std::uint8_t* data, std::size_t length) {
-  if (data == nullptr || length == 0) return;
+bool process_command(const std::uint8_t* data, std::size_t length) {
+  if (data == nullptr || length == 0) return false;
 
   switch (data[0]) {
     case kCmdPing:
+      if (length != 1) return false;
       digitalWrite(kStatusLed, !digitalRead(kStatusLed));
-      break;
+      return true;
 
     case kCmdSetPixel: {
-      if (length != 6) break;
+      if (length != 6) return false;
       const std::uint16_t pixel =
           (static_cast<std::uint16_t>(data[1]) << 8) | data[2];
-      if (pixel >= total_leds()) break;
+      if (pixel >= total_leds()) return false;
       const std::size_t offset = static_cast<std::size_t>(pixel) * 3U;
       std::memcpy(working_frame + offset, data + 3, 3);
-      break;
+      return true;
     }
 
     case kCmdSetBrightness:
-      if (length == 2) {
-        brightness = data[1];
-        publish_working_frame();
-      }
-      break;
+      if (length != 2) return false;
+      brightness = data[1];
+      publish_working_frame();
+      return true;
 
     case kCmdShow:
-      if (length == 1) publish_working_frame();
-      break;
+      if (length != 1) return false;
+      publish_working_frame();
+      return true;
 
     case kCmdClear:
-      if (length == 1) {
-        std::memset(working_frame, 0, active_rgb_bytes());
-        publish_working_frame();
-      }
-      break;
+      if (length != 1) return false;
+      std::memset(working_frame, 0, active_rgb_bytes());
+      publish_working_frame();
+      return true;
 
     case kCmdSetRange: {
-      if (length < 4) break;
+      if (length < 4) return false;
       const std::uint16_t start =
           (static_cast<std::uint16_t>(data[1]) << 8) | data[2];
       std::uint16_t count = data[3];
-      if (start >= total_leds()) break;
+      if (start >= total_leds()) return false;
       count = std::min<std::uint16_t>(count, total_leds() - start);
       const std::size_t expected = 4U + static_cast<std::size_t>(count) * 3U;
-      if (length != expected) break;
+      if (length != expected) return false;
       std::memcpy(
           working_frame + static_cast<std::size_t>(start) * 3U,
           data + 4,
           static_cast<std::size_t>(count) * 3U);
-      break;
+      return true;
     }
 
     case kCmdSetAll: {
       const std::size_t expected = 1U + active_rgb_bytes();
-      if (length != expected) break;
+      if (length != expected) return false;
       std::memcpy(working_frame, data + 1, active_rgb_bytes());
       publish_working_frame();
-      break;
+      return true;
     }
 
     case kCmdConfig: {
-      if (length < 4 || length > 5) break;
+      if (length < 4 || length > 5) return false;
       const std::uint8_t new_strips = data[1];
       const std::uint16_t new_leds =
           (static_cast<std::uint16_t>(data[2]) << 8) | data[3];
       if (new_strips != kMaxStrips || new_leds == 0 || new_leds > kMaxLedsPerStrip) {
-        break;
+        return false;
       }
       if (new_strips != active_strips || new_leds != leds_per_strip) {
         active_strips = new_strips;
@@ -298,11 +333,11 @@ void process_command(const std::uint8_t* data, std::size_t length) {
         std::memset(working_frame, 0, sizeof(working_frame));
         publish_working_frame();
       }
-      break;
+      return true;
     }
 
     default:
-      break;
+      return false;
   }
 }
 
@@ -352,11 +387,9 @@ void initialize_spi() {
 
 void setup() {
   Serial.begin(115200);
-  delay(500);
   pinMode(kStatusLed, OUTPUT);
   digitalWrite(kStatusLed, LOW);
 
-  Serial.println("LED Grid native ESP32-S3 parallel receiver v2");
   if (!led_driver.begin(kLedPins, kMaxStrips, kMaxLedsPerStrip)) {
     Serial.println("LCD/I80 parallel LED driver initialization failed");
     while (true) delay(1000);
@@ -374,8 +407,7 @@ void setup() {
     while (true) delay(1000);
   }
 
-  // Publish a black startup frame before accepting transport data.
-  publish_working_frame();
+  Serial.println("LED Grid native ESP32-S3 parallel receiver v2");
   initialize_spi();
   Serial.printf(
       "Ready: %u strips x %u LEDs, SPI queue=%u, encoded frame=%u bytes\n",
@@ -417,7 +449,13 @@ void loop() {
       ++crc_errors;
     } else {
       ++crc_ok_packets;
-      process_command(packet, payload_bytes);
+      if (process_command(packet, payload_bytes)) {
+        const bool was_connected =
+            pi_connected.exchange(true, std::memory_order_acq_rel);
+        if (!was_connected && display_task_handle != nullptr) {
+          xTaskNotifyGive(display_task_handle);
+        }
+      }
     }
   }
 

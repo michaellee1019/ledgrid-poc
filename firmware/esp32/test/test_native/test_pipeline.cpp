@@ -6,6 +6,7 @@
 
 #include "ledgrid/frame_mailbox.hpp"
 #include "ledgrid/protocol.hpp"
+#include "ledgrid/startup_animation.hpp"
 #include "ledgrid/ws2812_encoder.hpp"
 
 namespace {
@@ -107,6 +108,69 @@ void test_encoder_appends_300us_reset_and_rejects_bad_bounds() {
       rgb, sizeof(rgb), 1, 1, 255, output.data(), output.size() - 1).ok);
 }
 
+void test_startup_rainbow_is_45_degrees_and_moves_up_right() {
+  constexpr std::uint8_t strips = 3;
+  constexpr std::uint16_t leds = 4;
+  std::array<std::uint8_t, strips * leds * 3U> initial{};
+  std::array<std::uint8_t, strips * leds * 3U> advanced{};
+  const std::uint32_t one_diagonal_step_us =
+      (2U * ledgrid::kStartupRainbowCycleUs) /
+      ledgrid::kStartupRainbowPeriodPixels;
+
+  TEST_ASSERT_TRUE(ledgrid::render_startup_rainbow(
+      0, strips, leds, initial.data(), initial.size()));
+  TEST_ASSERT_TRUE(ledgrid::render_startup_rainbow(
+      one_diagonal_step_us,
+      strips,
+      leds,
+      advanced.data(),
+      advanced.size()));
+
+  // Equal phase along x and y produces a 45-degree field. After 1/16 second,
+  // each color has moved one coordinate toward both positive axes.
+  for (std::uint8_t strip = 0; strip + 1 < strips; ++strip) {
+    for (std::uint16_t led = 0; led + 1 < leds; ++led) {
+      const std::size_t source =
+          (static_cast<std::size_t>(strip) * leds + led) * 3U;
+      const std::size_t right =
+          (static_cast<std::size_t>(strip + 1U) * leds + led) * 3U;
+      const std::size_t up =
+          (static_cast<std::size_t>(strip) * leds + led + 1U) * 3U;
+      const std::size_t up_right =
+          (static_cast<std::size_t>(strip + 1U) * leds + led + 1U) * 3U;
+      TEST_ASSERT_EQUAL_MEMORY(initial.data() + right,
+                               initial.data() + up, 3);
+      TEST_ASSERT_EQUAL_MEMORY(initial.data() + source,
+                               advanced.data() + up_right, 3);
+    }
+  }
+}
+
+void test_startup_rainbow_cycles_once_per_second_and_checks_bounds() {
+  constexpr std::uint8_t strips = 8;
+  constexpr std::uint16_t leds = 32;
+  std::array<std::uint8_t, strips * leds * 3U> initial{};
+  std::array<std::uint8_t, strips * leds * 3U> looped{};
+
+  TEST_ASSERT_TRUE(ledgrid::render_startup_rainbow(
+      0, strips, leds, initial.data(), initial.size()));
+  TEST_ASSERT_TRUE(ledgrid::render_startup_rainbow(
+      ledgrid::kStartupRainbowCycleUs,
+      strips,
+      leds,
+      looped.data(),
+      looped.size()));
+  TEST_ASSERT_EQUAL_MEMORY(initial.data(), looped.data(), initial.size());
+  TEST_ASSERT_EQUAL_HEX8(0xFF, initial[0]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, initial[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, initial[2]);
+
+  TEST_ASSERT_FALSE(ledgrid::render_startup_rainbow(
+      0, strips, leds, nullptr, initial.size()));
+  TEST_ASSERT_FALSE(ledgrid::render_startup_rainbow(
+      0, strips, leds, initial.data(), initial.size() - 1U));
+}
+
 void test_mailbox_replaces_only_unread_ready_frames() {
   ledgrid::LatestFrameMailbox mailbox;
   ledgrid::FrameMetadata metadata{};
@@ -192,6 +256,8 @@ int main(int, char**) {
   RUN_TEST(test_encoder_scales_brightness_before_bit_expansion);
   RUN_TEST(test_optimized_encoder_updates_all_eight_lanes);
   RUN_TEST(test_encoder_appends_300us_reset_and_rejects_bad_bounds);
+  RUN_TEST(test_startup_rainbow_is_45_degrees_and_moves_up_right);
+  RUN_TEST(test_startup_rainbow_cycles_once_per_second_and_checks_bounds);
   RUN_TEST(test_mailbox_replaces_only_unread_ready_frames);
   RUN_TEST(test_status_v2_layout_is_stable);
   return UNITY_END();

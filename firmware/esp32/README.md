@@ -33,13 +33,19 @@ The Raspberry Pi and ESP32 must share ground. WS2812 power is supplied separatel
 
 The receiver deliberately separates transport and display work:
 
-1. Two SPI slave DMA transactions are kept queued.
-2. The Arduino loop consumes completed packets, checks CRC-16, and updates a
+1. As soon as the parallel LED driver is ready, the display task renders a
+   firmware-resident 45-degree rainbow continuously with no software frame
+   cap. The field moves up and right and completes one spectrum cycle per
+   second.
+2. Two SPI slave DMA transactions are kept queued.
+3. The Arduino loop consumes completed packets, checks CRC-16, and updates a
    compact RGB working frame.
-3. Complete frames are published to a three-slot latest-frame-wins mailbox.
-4. A FreeRTOS display task on the other core converts RGB to an eight-bit parallel
+4. The first valid Pi command (normally the initialization PING) stops the
+   startup animation. Complete host frames are then published to a three-slot
+   latest-frame-wins mailbox.
+5. A FreeRTOS display task on the other core converts RGB to an eight-bit parallel
    WS2812 waveform.
-5. ESP-IDF LCD/I80 DMA emits all eight strips concurrently.
+6. ESP-IDF LCD/I80 DMA emits all eight strips concurrently.
 
 The firmware does not use FastLED. At 2.4 MHz, each WS2812 bit is encoded as three
 samples (`100` for zero and `110` for one). A 140-pixel frame contains 4.2 ms of
