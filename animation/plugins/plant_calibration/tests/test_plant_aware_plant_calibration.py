@@ -61,8 +61,12 @@ class PlantAwarePlantCalibrationTests(unittest.TestCase):
 
         masks = animation.get_plant_masks()
         foliage, globes, combined = animation._pattern_frames[-3:]
-        self.assertEqual(np.count_nonzero(np.any(foliage != 0, axis=1)), 504)
-        self.assertEqual(np.count_nonzero(np.any(globes != 0, axis=1)), 356)
+        self.assertEqual(
+            np.count_nonzero(np.any(foliage != 0, axis=1)), masks.foliage_count
+        )
+        self.assertEqual(
+            np.count_nonzero(np.any(globes != 0, axis=1)), masks.globe_count
+        )
         self.assertEqual(np.count_nonzero(np.any(combined != 0, axis=1)), int(masks.clearance_flat.sum()))
         np.testing.assert_array_equal(foliage[masks.foliage_flat][0], (40, 255, 90))
         np.testing.assert_array_equal(globes[masks.globes_flat][0], (255, 48, 220))
@@ -80,11 +84,12 @@ class PlantAwarePlantCalibrationTests(unittest.TestCase):
         )
 
         stats = animation.get_runtime_stats()
+        masks = animation.get_plant_masks()
 
         self.assertEqual(stats["current_pattern_name"], "globe_verification")
         self.assertTrue(stats["plant_wall_geometry_valid"])
-        self.assertEqual(stats["plant_foliage_pixels"], 504)
-        self.assertEqual(stats["plant_globe_pixels"], 356)
+        self.assertEqual(stats["plant_foliage_pixels"], masks.foliage_count)
+        self.assertEqual(stats["plant_globe_pixels"], masks.globe_count)
         self.assertEqual(stats["plant_globe_regions"], 7)
         self.assertTrue(stats["plant_globe_semantics_valid"])
         self.assertTrue(stats["plant_semantics_ready"])

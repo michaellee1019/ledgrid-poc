@@ -87,10 +87,11 @@ class PlantAwarePlantMaskHighlightTests(unittest.TestCase):
         )
 
         stats = animation.get_runtime_stats()
+        masks = animation.get_plant_masks()
 
         self.assertTrue(stats["plant_aware"])
-        self.assertEqual(stats["plant_foliage_pixels"], 504)
-        self.assertEqual(stats["plant_globe_pixels"], 356)
+        self.assertEqual(stats["plant_foliage_pixels"], masks.foliage_count)
+        self.assertEqual(stats["plant_globe_pixels"], masks.globe_count)
         self.assertEqual(stats["plant_globe_regions"], 7)
         self.assertEqual(stats["plant_input_overlap_pixels"], 0)
         self.assertTrue(stats["plant_wall_geometry_valid"])

@@ -18,7 +18,7 @@
                 planter_bowls: [255, 72, 190],
             };
             this.cellWidth = Number(document.getElementById('zoomRange').value) || 16;
-            this.cellHeight = this.scaledCellHeight();
+            this.cellHeight = this.cellWidth;
             this.cellGap = 1;
             this.activeTool = 'foliage';
             this.history = [];
@@ -33,10 +33,6 @@
             this.previewPending = false;
             this.lastPreviewSignature = '';
             this.bindEvents();
-        }
-
-        scaledCellHeight() {
-            return Math.max(6, Math.round(this.cellWidth * 0.56));
         }
 
         bindEvents() {
@@ -55,7 +51,7 @@
             const zoom = document.getElementById('zoomRange');
             zoom.addEventListener('input', () => {
                 this.cellWidth = Number(zoom.value) || 16;
-                this.cellHeight = this.scaledCellHeight();
+                this.cellHeight = this.cellWidth;
                 document.getElementById('zoomLabel').textContent = `${this.cellWidth}px`;
                 this.resizeCanvas();
                 this.render();

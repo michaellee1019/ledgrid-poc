@@ -220,6 +220,8 @@ class PainterMaskTests(unittest.TestCase):
         self.assertIn("fetch('/api/painter/masks'", script)
         self.assertIn("fetch('/api/painter/frame'", script)
         self.assertNotIn("fetch('/api/frame'", script)
+        self.assertIn("this.cellHeight = this.cellWidth", script)
+        self.assertNotIn("this.cellWidth * 0.56", script)
 
 
 if __name__ == "__main__":
