@@ -27,6 +27,8 @@ API endpoints:
 - POST /api/painter/updates
 - POST /api/painter/frame
 - POST /api/painter/clear
+- GET /api/painter/masks
+- POST /api/painter/masks
 - GET /api/painter/presets
 - GET /api/painter/presets/<preset_id>
 - POST /api/painter/presets

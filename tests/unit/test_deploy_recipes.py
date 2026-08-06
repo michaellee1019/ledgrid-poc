@@ -30,6 +30,20 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn('if [ "$restore_saved" = 1 ]', script)
         self.assertIn("for attempt in {1..120}", script)
 
+    def test_wall_data_recipe_fetches_masks_and_presets_together(self):
+        justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
+        script = (ROOT / "tools" / "deployment" / "fetch_wall_data.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("fetch-wall-data:", justfile)
+        self.assertIn("fetch-presets: fetch-wall-data", justfile)
+        self.assertIn("plant_pixel_map_32x138.json", script)
+        self.assertIn("plant_globe_map_32x138.json", script)
+        self.assertIn('remote_presets_dir="~/$DEPLOY_DIR/presets/animations"', script)
+        self.assertIn("--ignore-existing", script)
+        self.assertIn("--exclude 'before-deploy.json'", script)
+
 
 if __name__ == "__main__":
     unittest.main()

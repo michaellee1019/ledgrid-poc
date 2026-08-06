@@ -17,9 +17,12 @@ deploy-python:
 # Compatibility name for the fast Python deployment.
 deploy-no-firmware: deploy-python
 
-# Fetch new Pi-saved presets without overwriting local curated files.
-fetch-presets:
-	./tools/deployment/fetch_presets.sh
+# Refresh checked-in plant masks and fetch new Pi-saved animation presets.
+fetch-wall-data:
+	./tools/deployment/fetch_wall_data.sh
+
+# Compatibility alias; this now refreshes masks and presets together.
+fetch-presets: fetch-wall-data
 
 # Refresh the ignored, content-addressed dashboard preview catalog locally.
 generate-previews:

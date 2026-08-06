@@ -3637,5 +3637,9 @@
       "camera_y": 532.09,
       "region": "middle_right"
     }
-  ]
+  ],
+  "manual_edit": {
+    "tool": "mask_painter",
+    "updated_at": 1786032136.01905
+  }
 }

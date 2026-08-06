@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -28,6 +29,22 @@ from drivers.frame_codec import (
     FRAME_ENCODING_NAME,
 )
 from web.preview_worker import RuntimePreviewWorker
+
+
+PAINTER_MASK_TYPES = (
+    {
+        'id': 'foliage',
+        'label': 'Foliage',
+        'description': 'Leaves, vines, and other soft plant cover',
+        'color': [48, 220, 96],
+    },
+    {
+        'id': 'planter_bowls',
+        'label': 'Planter bowls',
+        'description': 'The seven solid rooting globes / planter bowls',
+        'color': [255, 72, 190],
+    },
+)
 
 class AnimationWebInterface:
     """Web interface for animation management"""
@@ -54,6 +71,8 @@ class AnimationWebInterface:
         self.project_root = Path(__file__).resolve().parents[1]
         self.painter_presets_dir = self.project_root / "presets" / "frame_painter"
         self.animation_presets_dir = self.project_root / "presets" / "animations"
+        self.foliage_mask_path = self.project_root / "config" / "plant_pixel_map_32x138.json"
+        self.planter_mask_path = self.project_root / "config" / "plant_globe_map_32x138.json"
         self.deployment_status_path = self.project_root / "run_state" / "deployment.json"
         self.generated_preview_dir = (
             self.project_root / "web" / "static" / "generated" / "animation-previews"
@@ -376,6 +395,26 @@ class AnimationWebInterface:
             """API: Clear the frame painter output to black."""
             self.control_channel.send_command('painter_clear')
             return jsonify({'success': True})
+
+        @self.app.route('/api/painter/masks')
+        def api_painter_get_masks():
+            """API: Load the two editable semantic plant-mask layers."""
+            try:
+                return jsonify(self._load_painter_masks())
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 500
+
+        @self.app.route('/api/painter/masks', methods=['POST'])
+        def api_painter_save_masks():
+            """API: Validate and atomically update the calibrated plant masks."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                saved = self._save_painter_masks(payload)
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+            except OSError as exc:
+                return jsonify({'error': f'Failed to save masks: {exc}'}), 500
+            return jsonify({'success': True, **saved})
 
         @self.app.route('/api/painter/presets')
         def api_painter_list_presets():
@@ -840,6 +879,245 @@ class AnimationWebInterface:
         tmp_path = path.with_suffix('.json.tmp')
         tmp_path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
         tmp_path.replace(path)
+
+    @staticmethod
+    def _mask_geometry(payload: Dict[str, Any]) -> Optional[Dict[str, int]]:
+        """Read a complete, internally consistent strip geometry."""
+        geometry = payload.get('geometry') if isinstance(payload, dict) else None
+        if not isinstance(geometry, dict):
+            return None
+        try:
+            strip_count = int(geometry.get('strip_count'))
+            leds_per_strip = int(geometry.get('leds_per_strip'))
+            total_leds = int(geometry.get('total_leds'))
+        except (TypeError, ValueError):
+            return None
+        if strip_count <= 0 or leds_per_strip <= 0 or total_leds != strip_count * leds_per_strip:
+            return None
+        return {
+            'strip_count': strip_count,
+            'leds_per_strip': leds_per_strip,
+            'total_leds': total_leds,
+        }
+
+    @staticmethod
+    def _mask_indices(payload: Dict[str, Any], keys: tuple, total_leds: int) -> List[int]:
+        """Return sorted, unique in-range indices from the first supported key."""
+        values: Any = []
+        for key in keys:
+            if isinstance(payload.get(key), list):
+                values = payload[key]
+                break
+        indices = set()
+        for value in values:
+            if isinstance(value, bool):
+                continue
+            try:
+                index = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= index < total_leds:
+                indices.add(index)
+        return sorted(indices)
+
+    def _load_painter_masks(self) -> Dict[str, Any]:
+        """Load mask files as the painter's compact semantic state."""
+        foliage_payload = self._read_json_file(self.foliage_mask_path)
+        planter_payload = self._read_json_file(self.planter_mask_path)
+        if foliage_payload is None:
+            raise ValueError(f'Unable to read {self.foliage_mask_path.name}')
+        if planter_payload is None:
+            raise ValueError(f'Unable to read {self.planter_mask_path.name}')
+
+        foliage_geometry = self._mask_geometry(foliage_payload)
+        planter_geometry = self._mask_geometry(planter_payload)
+        if foliage_geometry is None or planter_geometry is None:
+            raise ValueError('Mask files must contain valid geometry')
+        if foliage_geometry != planter_geometry:
+            raise ValueError('Foliage and planter mask geometry do not match')
+
+        total_leds = foliage_geometry['total_leds']
+        planter = self._mask_indices(
+            planter_payload, ('globe_indices', 'covered_indices'), total_leds
+        )
+        planter_set = set(planter)
+        foliage = [
+            index for index in self._mask_indices(
+                foliage_payload, ('covered_indices', 'occluded_indices'), total_leds
+            )
+            if index not in planter_set
+        ]
+        updated_at = max(
+            self.foliage_mask_path.stat().st_mtime,
+            self.planter_mask_path.stat().st_mtime,
+        )
+        return {
+            'version': 1,
+            'led_info': foliage_geometry,
+            'mask_types': [dict(mask_type) for mask_type in PAINTER_MASK_TYPES],
+            'masks': {
+                'foliage': foliage,
+                'planter_bowls': planter,
+            },
+            'updated_at': updated_at,
+        }
+
+    @staticmethod
+    def _validated_submitted_indices(
+        values: Any, label: str, total_leds: int
+    ) -> List[int]:
+        if not isinstance(values, list):
+            raise ValueError(f'masks.{label} must be an array')
+        indices = set()
+        for value in values:
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f'masks.{label} must contain integer pixel indices')
+            if value < 0 or value >= total_leds:
+                raise ValueError(f'masks.{label} contains out-of-range pixel {value}')
+            indices.add(value)
+        return sorted(indices)
+
+    @staticmethod
+    def _nearest_planter_region(
+        index: int, regions: List[Dict[str, Any]], leds_per_strip: int
+    ) -> Optional[str]:
+        """Assign newly painted bowl pixels to the nearest configured globe."""
+        strip = index // leds_per_strip
+        led = index % leds_per_strip
+        candidates = []
+        for position, region in enumerate(regions):
+            try:
+                name = str(region['id'])
+                strip_start = int(region['strip_start'])
+                led_start = int(region['led_start'])
+                width = int(region['width'])
+                height = int(region['height'])
+            except (KeyError, TypeError, ValueError):
+                continue
+            inside = (
+                strip_start <= strip < strip_start + width
+                and led_start <= led < led_start + height
+            )
+            center_strip = strip_start + (width - 1) / 2.0
+            center_led = led_start + (height - 1) / 2.0
+            distance = (strip - center_strip) ** 2 + (led - center_led) ** 2
+            candidates.append((0 if inside else 1, distance, position, name))
+        return min(candidates)[3] if candidates else None
+
+    @staticmethod
+    def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
+        """Write one JSON document durably before replacing its destination."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f'.{path.name}.', suffix='.tmp', dir=str(path.parent)
+        )
+        temporary_path = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+                json.dump(payload, handle, indent=2)
+                handle.write('\n')
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary_path.replace(path)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
+
+    def _save_painter_masks(self, submitted: Dict[str, Any]) -> Dict[str, Any]:
+        """Update mask indices while preserving useful calibration metadata."""
+        current = self._load_painter_masks()
+        expected_geometry = current['led_info']
+        submitted_geometry = self._normalize_led_info(submitted.get('led_info'))
+        if submitted_geometry != expected_geometry:
+            raise ValueError('Submitted geometry does not match the calibrated mask files')
+
+        masks = submitted.get('masks')
+        if not isinstance(masks, dict):
+            raise ValueError('masks must be an object')
+        total_leds = expected_geometry['total_leds']
+        foliage = self._validated_submitted_indices(
+            masks.get('foliage'), 'foliage', total_leds
+        )
+        planter = self._validated_submitted_indices(
+            masks.get('planter_bowls'), 'planter_bowls', total_leds
+        )
+        overlap = set(foliage) & set(planter)
+        if overlap:
+            raise ValueError(f'Mask layers overlap at pixel {min(overlap)}')
+
+        foliage_payload = self._read_json_file(self.foliage_mask_path)
+        planter_payload = self._read_json_file(self.planter_mask_path)
+        if foliage_payload is None or planter_payload is None:
+            raise ValueError('Mask files changed or became unreadable before save')
+
+        foliage_set = set(foliage)
+        foliage_payload['covered_indices'] = foliage
+        foliage_payload['occluded_indices'] = foliage
+        foliage_payload['covered_count'] = len(foliage)
+        foliage_payload['occluded_count'] = len(foliage)
+        if isinstance(foliage_payload.get('pixels'), list):
+            for pixel in foliage_payload['pixels']:
+                if not isinstance(pixel, dict):
+                    continue
+                try:
+                    pixel_index = int(pixel.get('index'))
+                except (TypeError, ValueError):
+                    continue
+                pixel['occluded'] = pixel_index in foliage_set
+
+        old_planter_pixels = {
+            pixel.get('index'): pixel
+            for pixel in planter_payload.get('pixels', [])
+            if isinstance(pixel, dict) and isinstance(pixel.get('index'), int)
+        }
+        regions = planter_payload.get('regions')
+        if not isinstance(regions, list):
+            regions = []
+        leds_per_strip = expected_geometry['leds_per_strip']
+        rebuilt_pixels = []
+        region_counts = {
+            str(region.get('id')): 0
+            for region in regions
+            if isinstance(region, dict) and region.get('id')
+        }
+        for index in planter:
+            old_pixel = old_planter_pixels.get(index)
+            pixel = dict(old_pixel) if old_pixel is not None else {
+                'index': index,
+                'strip': index // leds_per_strip,
+                'led': index % leds_per_strip,
+            }
+            region = pixel.get('region')
+            if region not in region_counts:
+                region = self._nearest_planter_region(index, regions, leds_per_strip)
+                if region is not None:
+                    pixel['region'] = region
+            if region in region_counts:
+                region_counts[region] += 1
+            rebuilt_pixels.append(pixel)
+
+        planter_payload['globe_indices'] = planter
+        planter_payload['covered_indices'] = planter
+        planter_payload['globe_count'] = len(planter)
+        planter_payload['covered_count'] = len(planter)
+        planter_payload['pixels'] = rebuilt_pixels
+        planter_payload['region_count'] = len(regions)
+        planter_payload['region_pixel_counts'] = region_counts
+
+        edited_at = time.time()
+        edit_metadata = {'tool': 'mask_painter', 'updated_at': edited_at}
+        foliage_payload['manual_edit'] = edit_metadata
+        planter_payload['manual_edit'] = edit_metadata
+
+        self._atomic_write_json(self.foliage_mask_path, foliage_payload)
+        self._atomic_write_json(self.planter_mask_path, planter_payload)
+        return {
+            'counts': {
+                'foliage': len(foliage),
+                'planter_bowls': len(planter),
+            },
+            'updated_at': edited_at,
+        }
 
     def _animation_preset_dir(self, animation_name: str) -> Optional[Path]:
         """Resolve the writable runtime-preset directory for an animation."""
