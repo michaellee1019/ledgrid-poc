@@ -14,8 +14,16 @@ Read this reference only when working in the `ledgrid-poc` repository.
 - `tests/unit/`: focused plugin and frame-pipeline tests.
 - `tools/benchmarks/animation_render.py`: headless latency/allocation benchmark.
 - `tools/benchmarks/live_animation_sweep.py`: live plugin integrity sweep.
+- `firmware/esp32/`: receiver startup renderer, SPI protocol, status encoding,
+  frame mailbox, parallel LED driver, native tests, and production build.
+- `drivers/spi_controller.py` and `drivers/multi_device.py`: host protocol,
+  receiver telemetry, logical device mapping, and all-board orchestration.
+- `web/` and `ipc/control_channel.py`: dashboard/API exposure and the boundary
+  between the web and hardware-owning controller processes.
 - `docs/ANIMATION_SYSTEM.md`: architecture and creation overview.
 - `docs/RENDERING_PIPELINE_ACCEPTANCE.md`: rendering acceptance details.
+- `docs/plan-native-animations.md`: approved direction for signed native modules,
+  frame-track packages, receiver caching, and dashboard control.
 - `Justfile`: canonical test, benchmark, live sweep, and deployment commands.
 
 ## Repository contracts
@@ -69,6 +77,60 @@ Read this reference only when working in the `ledgrid-poc` repository.
   `plant_modifiers` recommendation. The explicit state wins over the legacy
   illuminate-plus-obstacle translation; do not implement new behavior behind
   the boolean.
+
+## Receiver-side firmware animations
+
+The existing deployed architecture normally streams four logical 8-by-138
+frame slices from the Pi to four ESP32-S3 receivers. The compiled startup
+rainbow is the current exception. Work that makes receiver animations
+selectable or uploadable crosses the firmware, SPI driver, multi-device
+controller, manager lifecycle, IPC status, persistence, and dashboard; do not
+implement it as an isolated firmware renderer.
+
+- Preserve the compiled startup animation as a boot and recovery path. The first
+  valid host command currently transfers display ownership to the mailbox path,
+  so replace that one-way transition with an explicit display-mode state machine
+  before adding local playback.
+- Keep host-frame, receiver-animation, startup/fallback, and maintenance states
+  distinct. Brightness, configuration, status queries, and asset chunks must not
+  accidentally switch display ownership; a complete host frame should.
+- All four boards run the same firmware and each owns eight consecutive logical
+  strips. Pass or configure the logical strip offset for procedural modules and
+  select the matching pre-sliced track for frame assets.
+- The current host transfer ceiling is 4096 bytes while the receiver DMA buffer
+  is sized around one RGB frame. Reconcile both constants before defining asset
+  chunks, include CRC bytes and command headers in the bound, and exercise exact
+  maximum-size packets.
+- The installed 16 MB flash layout includes OTA application slots and roughly
+  3.4 MB of filesystem space. Treat that space as a cache, retain a free-space
+  reserve, and measure filesystem overhead rather than budgeting only payload
+  bytes.
+- Use a new status version without losing existing packet, CRC, mailbox, encode,
+  show, and sequence counters. Add capabilities, active asset digest, cache and
+  upload state, local render/decode timing, last operation result, and quarantine
+  state. Remember that an SPI response was queued before the command it
+  accompanies, so operation acknowledgements are observed on a later transfer.
+- The Pi library and package manifest are authoritative. Send filesystem paths
+  through IPC only after resolving them inside the managed library; never place
+  large binary payloads in the single JSON control file.
+- Pause or freeze host presentation while an exclusive asset transfer uses SPI,
+  keep status publication alive, and expose progress. Resume the prior mode when
+  an install-only operation finishes or fails.
+- Do not expose firmware-local playback as a fake `AnimationBase`. Extend manager
+  and persisted state with an explicit provider/mode so Python controls,
+  previews, plant modifiers, and target FPS are not applied accidentally.
+- A receiver-local animation has no live framebuffer readback. Use the package
+  preview in the dashboard and label it as a preview instead of presenting it as
+  the exact current physical frame.
+- Native modules require a baseline receiver firmware containing a loader and
+  trust anchor. Subsequent package installation is not a firmware flash, but
+  changing the loader ABI or trusted public key is.
+
+The accepted initial design is documented in `docs/plan-native-animations.md`:
+signed `.lga` packages built by a trusted local CLI, C/C++ shared objects loaded
+on ESP32-S3, GIF/WebP-derived device tracks, a Pi-authoritative library, and
+transactional all-board staging. Strict cross-board clock synchronization and
+shared v-sync are deferred; retain measured skew/drift in hardware acceptance.
 
 ## Preset-family workflow
 
@@ -135,6 +197,21 @@ cadence, maximum effect strength, and maximum supported entity count. Retain p99
 and maximum semantic-event frames even when the p95 gate passes.
 
 Use `just live-animation-sweep` only when the live controller is intentionally in scope. Do not deploy or operate physical hardware for a code-only request without the user requesting that external state change.
+
+For receiver-side firmware animation work, also run the portable firmware tests
+before any hardware request:
+
+```bash
+pio test -d firmware/esp32 -e native
+```
+
+Add focused host tests for protocol serialization/status parsing, package and
+signature validation, track encoding/decoding, IPC commands, mode persistence,
+and all-board transaction failure. Physical acceptance must cover one receiver
+before all four, switching back to streamed frames, Pi disconnect/restart,
+interrupted uploads, cache eviction, module crash fallback, and a soak at each
+payload's declared cadence. Do not flash or start the wall unless the user has
+explicitly put hardware operation in scope.
 
 ## Performance interpretation
 

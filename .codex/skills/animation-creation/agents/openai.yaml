@@ -1,4 +1,4 @@
 interface:
   display_name: "Animation Creation"
-  short_description: "Build testable, installation-aware animations"
-  default_prompt: "Use $animation-creation to create or improve an LED animation, calibrated-mask behavior, or pre-rendered GIF pack while protecting visual quality and frame-time performance."
+  short_description: "Build host and firmware LED animations"
+  default_prompt: "Use $animation-creation to create or improve a testable LED animation, including Python plugins, calibrated-mask behavior, pre-rendered packs, or signed ESP32-local playback."

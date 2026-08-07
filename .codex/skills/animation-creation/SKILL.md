@@ -1,6 +1,6 @@
 ---
 name: animation-creation
-description: Create, improve, debug, or review real-time procedural animations, autonomous visual simulations, mask-aware physical installations, and pre-rendered animation packs, especially LED-grid Python plugins, curated presets, pixel-art loops, and GIF assets. Use for new animation plugins, clocks and other time/data-driven displays, visual-behavior changes, preset or asset families, coordinated agents or particles, gameplay/autoplay logic, calibrated obstacle or occlusion masks, animation parameters, frame pacing, deterministic simulation tests, render benchmarks, or Raspberry Pi CPU optimization.
+description: Create, improve, debug, or review real-time procedural animations, autonomous visual simulations, mask-aware physical installations, pre-rendered animation packs, and receiver-side firmware animations, especially LED-grid Python plugins, signed native modules, curated presets, pixel-art loops, and GIF assets. Use for new animation plugins, clocks and other time/data-driven displays, visual-behavior changes, preset or asset families, coordinated agents or particles, gameplay/autoplay logic, calibrated obstacle or occlusion masks, animation parameters, frame pacing, deterministic simulation tests, render benchmarks, Raspberry Pi CPU optimization, or ESP32-local playback.
 ---
 
 # Animation Creation
@@ -210,6 +210,64 @@ downloads.
   jumps, excessive repetition, low contrast, and whether every motif reads at
   target resolution.
 
+## Design receiver-side firmware animations deliberately
+
+Treat a receiver-rendered animation as a separate execution backend, not as an
+ordinary host plugin that happens to avoid sending frames. Establish who owns
+simulation time, parameters, persistence, preview generation, brightness, and
+mode transitions before defining its file format or protocol.
+
+- Choose the payload model explicitly. Native modules suit compact procedural
+  renderers; device-specific frame tracks suit authored GIF/WebP-style loops.
+  Do not force both through one runtime callback when only their packaging and
+  lifecycle need to be shared.
+- Separate the one-time loader firmware from uploadable animation payloads.
+  Retain a compiled fallback that can render after boot, missing assets, invalid
+  packages, or a module crash.
+- Prefer a stable versioned C ABI for native code. Export C entrypoints even when
+  authors use C++, pass geometry and global coordinate offsets explicitly, give
+  the module a caller-owned output buffer, and keep driver/peripheral access out
+  of the supported API. Pin the target, loader, SDK, and toolchain in packages.
+- Treat native machine code as trusted but not sandboxed. Require signed
+  production packages, keep private signing keys off dashboards and receivers,
+  reject unknown keys/ABIs/imports/targets before activation, and make any
+  unsigned development mode conspicuous in runtime status.
+- Keep the host library authoritative and receiver storage disposable. Probe by
+  content digest, avoid rewriting an existing asset, reserve filesystem space,
+  and evict only inactive cache entries. A replaced or erased receiver must be
+  recoverable from the host without reconstructing the asset.
+- Make multi-receiver changes transactional: stage every target, verify size,
+  digest, signature, geometry, and device track, then activate. A partial upload
+  must not produce a mixed wall. Write temporary files and rename only after
+  verification; make chunks ordered, retryable, and idempotent.
+- Model playback mode explicitly across host animation, receiver animation,
+  painter/manual output, and idle. Define which commands stop local playback,
+  how a host frame takes control again, what continues across a Pi disconnect,
+  and what state is restored after either side restarts.
+- Preserve one control authority. Package manifests own parameter schemas and
+  defaults; the dashboard validates and persists them; receivers consume a
+  compact typed representation. Unsupported global controls must be hidden or
+  reported as unsupported rather than silently ignored.
+- Generate previews during trusted packaging. Do not execute an uploaded target
+  binary in the dashboard process merely to obtain a thumbnail. Build native
+  sources against a host preview harness and decode frame assets with the same
+  fit, timing, orientation, and quantization rules used by the packer.
+- Bound decoder and module work. Validate every count, offset, run length, frame
+  duration, and output size before touching the frame buffer. Track render/decode
+  p95, p99, maximum, missed cadence, resets, and watchdog events on the actual
+  receiver geometry.
+- Make crash recovery deterministic. Record the active content digest before
+  execution, use reset reason plus that marker to quarantine a crashing module,
+  fall back visibly, and require an explicit operator action before retrying it.
+- State synchronization scope honestly. When shared clocks, scheduled starts,
+  or common v-sync are deferred, start receivers in a deterministic order and
+  measure skew and drift for diagnosis without claiming strict synchronization.
+
+For compressed frame tracks, prefer a bounded forward decoder with periodic or
+initial keyframes and explicit frame durations. Measure package size per receiver,
+decoded working memory, flash-write frequency, and decode spikes; compression
+ratio alone is not an acceptance result.
+
 ## Protect the frame budget
 
 Treat 200 FPS as a 5 ms total frame budget, not a 5 ms allowance for one plugin. Optimize the common frame first, then bound worst-case event spikes.
@@ -311,6 +369,15 @@ Cover as applicable:
   gutters remain dead in both simulation and presentation.
 - Pre-rendered assets have the expected dimensions, timing, loop metadata, visible
   frame deltas, provenance, and matching tracked presets.
+- Firmware-animation packages reject bad signatures, hashes, ABIs, imports,
+  geometry, traversal paths, truncated tracks, and out-of-bounds runs before
+  activation; interrupted uploads resume or restart without exposing partial
+  files.
+- Receiver-local playback accepts live typed parameters, reports its actual mode
+  and active digest, survives the intended host disconnect/restart cases, falls
+  back after failure, and returns cleanly to streamed host frames.
+- Multi-receiver staging never activates a subset when another target fails;
+  cache probing, retry, eviction, deletion, and replacement remain idempotent.
 - Mask-aware mode off reproduces the original frame and semantic evolution;
   mode on keeps critical information and entities out of clearance geometry,
   obeys obstacle routing/collision rules, and remains bounded when safe space is
