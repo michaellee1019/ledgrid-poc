@@ -39,9 +39,9 @@ produced:
 
 | Recipe/check | Recorded result | What it does **not** prove |
 |---|---|---|
-| `just test-unit` | 521 pytest tests plus 791 nested/subtests passed in 20.11 s. | Installed wiring or receiver timing. |
+| `just test-unit` | 522 pytest tests plus 791 nested/subtests passed in 21.48 s. | Installed wiring or receiver timing. |
 | `just test-rendering` | 18 focused tests passed; the stress benchmark exited 0 with every reported p95 below the 4 ms desktop gate. | Raspberry Pi or ESP32 performance. |
-| `just test-native-animations` | All three catalog examples passed default and stress profiles with 320 samples/profile, target cross-compilation, required export, and zero undefined imports. Full-run worst host-preview p95 was 0.003541 ms, worst p99 was 0.009 ms, and the largest observed callback was 0.019375 ms. | These are trusted arm64 Mac host-library measurements at 8×138, **not ESP32 physical timing**. |
+| `just test-native-animations` | All three catalog examples passed default and stress profiles with 320 samples/profile, target cross-compilation, required export, and zero undefined imports. Full-run worst host-preview p95 was 0.003917 ms, worst p99 was 0.005292 ms, and the largest observed callback was 0.044708 ms. | These are trusted arm64 Mac host-library measurements at 8×138, **not ESP32 physical timing**. |
 | `just test-firmware` | Portable receiver suite passed 25/25; the production ESP32-S3 build succeeded with 505,509 flash bytes and 61,800 RAM bytes used. The most recent uncached build emitted a 505,765-byte image. | Flashing, on-device execution timing, reset behavior, or wall stability. |
 | `just test-deployment` | 24 tests plus 4 nested/subtests passed; every maintained deployment shell script passed syntax validation. | A successful live deployment. |
 | `git diff --check` | Passed. | This checks patch whitespace, not branch/worktree state; inspect `git status` separately. |
