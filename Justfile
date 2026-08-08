@@ -1,7 +1,7 @@
 set shell := ["bash", "-euxo", "pipefail", "-c"]
 
 web_venv := ".venv-web"
-python_env := "uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' --with opencv-python-headless"
+python_env := "uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' --with opencv-python-headless --with 'ecdsa>=0.19.0'"
 
 # Run the complete local gate before a provision/firmware deployment.
 # Set TEST=false for an explicitly requested fast deployment.
@@ -14,15 +14,9 @@ deploy-python:
 	case "${TEST:-true}" in false|FALSE|0|no|NO) echo "[INFO] Skipping tests (TEST=$TEST)" ;; *) just test-unit test-rendering test-deployment ;; esac
 	./tools/deployment/deploy_python.sh
 
-# Compatibility name for the fast Python deployment.
-deploy-no-firmware: deploy-python
-
 # Refresh checked-in plant masks and fetch new Pi-saved animation presets.
 fetch-wall-data:
 	./tools/deployment/fetch_wall_data.sh
-
-# Compatibility alias; this now refreshes masks and presets together.
-fetch-presets: fetch-wall-data
 
 # Refresh the ignored, content-addressed dashboard preview catalog locally.
 generate-previews:
@@ -45,8 +39,14 @@ setup-web:
 setup:
 	bash tools/deployment/setup.sh
 
-# Run every local regression gate: Python, rendering performance, and firmware.
-test: test-unit test-rendering test-firmware test-deployment
+# Create ignored production signing state and bind stable USB serial IDs to
+# logical receiver indices. The private key never leaves this workstation.
+provision-native-animations ports:
+	{{python_env}} python tools/deployment/firmware_provisioning.py init \
+		--state-dir run_state/firmware_authoring --ports "{{ports}}"
+
+# Run every local regression gate, including native examples and firmware.
+test: test-unit test-rendering test-native-animations test-firmware test-deployment
 
 # Discover unit tests in both shared code and self-contained animation plugins.
 test-unit:
@@ -56,6 +56,10 @@ test-unit:
 test-rendering:
 	{{python_env}} --with pytest pytest -q animation/core/tests/test_frame_pipeline.py tests/unit/test_spi_crc.py
 	{{python_env}} python tools/benchmarks/animation_render.py --frames 100 --stress --check --max-p95-ms 4.0 --json
+
+# Compile and benchmark every native example at exact receiver geometry.
+test-native-animations:
+	{{python_env}} --with platformio python tools/benchmarks/native_animations.py --frames 80 --warmup-frames 10 --check --max-p95-ms 4.0 --json
 
 # Run native firmware tests, build the production target, and enforce dependencies.
 test-firmware:

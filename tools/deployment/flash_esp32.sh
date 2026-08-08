@@ -1,19 +1,21 @@
 #!/bin/bash
-# Flash ESP32 firmware on the deploy target when sources change.
+# Build and flash four explicitly provisioned receiver images on the deploy target.
 
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
 DEBUG="${DEBUG:-0}"
-log_debug() { [ "$DEBUG" = "1" ] && echo "[DEBUG] $1" || true; }
-
 DEPLOY_DIR="${DEPLOY_DIR:-$HOME/ledgrid-pod}"
 FIRMWARE_DIR="$DEPLOY_DIR/firmware/esp32"
+STATE_DIR="$DEPLOY_DIR/run_state/firmware"
+CONFIG_FILE="$STATE_DIR/deploy.env"
+PUBLIC_KEY="$STATE_DIR/public.pem"
 HASH_FILE="$DEPLOY_DIR/.esp32_firmware_hash"
 
 log_info() { echo "[INFO] $1"; }
 log_success() { echo "[SUCCESS] $1"; }
 log_warning() { echo "[WARNING] $1"; }
+log_debug() { [ "$DEBUG" = "1" ] && echo "[DEBUG] $1" || true; }
 
 PIO_CMD="pio"
 if ! command -v pio >/dev/null 2>&1; then
@@ -25,145 +27,94 @@ if ! command -v pio >/dev/null 2>&1; then
 fi
 
 if ! $PIO_CMD --version >/dev/null 2>&1; then
-  log_warning "PlatformIO not available; skipping ESP32 flash"
+  log_warning "PlatformIO is required to flash receiver firmware"
   exit 1
 fi
-
 if [ ! -d "$FIRMWARE_DIR" ]; then
-  log_warning "Firmware directory not found at $FIRMWARE_DIR; skipping ESP32 flash"
+  log_warning "Firmware directory not found at $FIRMWARE_DIR"
+  exit 1
+fi
+if [ ! -f "$CONFIG_FILE" ] || [ ! -f "$PUBLIC_KEY" ]; then
+  log_warning "Signed receiver provisioning is missing from $STATE_DIR"
+  log_warning "Run the documented 'just provision-native-animations' command first"
   exit 1
 fi
 
-if command -v sha256sum >/dev/null 2>&1; then
-  HASH_TOOL=(sha256sum)
-else
-  HASH_TOOL=(shasum -a 256)
-fi
+python3 "$DEPLOY_DIR/tools/deployment/firmware_provisioning.py" check \
+  --config "$CONFIG_FILE" --public-key "$PUBLIC_KEY"
+# firmware_provisioning.py accepts only a fixed key set and shell-safe values.
+set -a
+# shellcheck disable=SC1090
+source "$CONFIG_FILE"
+set +a
 
-log_info "Computing firmware source hash..."
-current_hash="$(
-  cd "$FIRMWARE_DIR"
-  find platformio.ini include src -type f -print0 | sort -z | xargs -0 "${HASH_TOOL[@]}" | "${HASH_TOOL[@]}" | awk '{print $1}'
+ports=(
+  "$LEDGRID_RECEIVER_0_PORT"
+  "$LEDGRID_RECEIVER_1_PORT"
+  "$LEDGRID_RECEIVER_2_PORT"
+  "$LEDGRID_RECEIVER_3_PORT"
+)
+resolved_ports=()
+for logical_device in 0 1 2 3; do
+  port="${ports[$logical_device]}"
+  if [ ! -e "$port" ]; then
+    log_warning "Receiver $logical_device port is missing: $port"
+    exit 1
+  fi
+  resolved="$(readlink -f "$port")"
+  if [[ " ${resolved_ports[*]} " == *" $resolved "* ]]; then
+    log_warning "Receiver port aliases resolve to the same device: $port"
+    exit 1
+  fi
+  resolved_ports+=("$resolved")
+  log_info "Receiver $logical_device -> $port ($resolved)"
+done
+
+log_info "Computing firmware and provisioning hash..."
+source_hash="$(
+  LEDGRID_LOGICAL_DEVICE=all \
+  python3 "$DEPLOY_DIR/tools/deployment/firmware_build_hash.py" "$FIRMWARE_DIR"
 )"
-
+config_hash="$(sha256sum "$CONFIG_FILE" "$PUBLIC_KEY" | sha256sum | awk '{print $1}')"
+current_hash="$(printf '%s\n%s\n' "$source_hash" "$config_hash" | sha256sum | awk '{print $1}')"
 previous_hash=""
 if [ -f "$HASH_FILE" ]; then
-  previous_hash="$(cat "$HASH_FILE" | tr -d '\n')"
+  previous_hash="$(tr -d '\n' < "$HASH_FILE")"
 fi
-
 if [ "$current_hash" = "$previous_hash" ]; then
-  log_info "Firmware unchanged; skipping ESP32 flash"
+  log_info "Firmware and provisioning unchanged; skipping ESP32 flash"
   exit 0
 fi
 
-log_info "Discovering ESP32 devices..."
+build_root="$STATE_DIR/build"
+mkdir -p "$build_root"
+for logical_device in 0 1 2 3; do
+  environment="receiver-$logical_device"
+  device_root="$build_root/$environment"
+  project_config="$device_root/platformio.ini"
+  mkdir -p "$device_root"
+  python3 "$DEPLOY_DIR/tools/deployment/firmware_provisioning.py" \
+    platformio-config --config "$CONFIG_FILE" --public-key "$PUBLIC_KEY" \
+    --logical-device "$logical_device" --build-dir "$device_root/.pio" \
+    --output "$project_config" \
+    --sdkconfig-defaults "$FIRMWARE_DIR/sdkconfig.defaults" \
+    --sdkconfig-output "$FIRMWARE_DIR/sdkconfig.$environment"
 
-# Always show what's on the USB bus for diagnostics
-log_info "USB serial devices in /dev:"
-usb_devs="$(ls -1 /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || true)"
-if [ -n "$usb_devs" ]; then
-  echo "$usb_devs" | while read -r d; do echo "  $d"; done
-else
-  echo "  (none found)"
-fi
+  log_info "Building signed receiver image for logical device $logical_device..."
+  (cd "$FIRMWARE_DIR" && $PIO_CMD run -c "$project_config" -e "$environment")
 
-if [ "$DEBUG" = "1" ]; then
-  echo "[DEBUG] All serial devices (extended):"
-  ls -la /dev/ttyACM* /dev/ttyUSB* /dev/tty.usb* /dev/cu.usb* /dev/serial/by-id/* /dev/serial/by-path/* 2>/dev/null || echo "  (none found)"
-  echo "[DEBUG] lsusb output:"
-  lsusb 2>/dev/null || echo "  (lsusb not available)"
-  echo "[DEBUG] pio device list:"
-  $PIO_CMD device list 2>/dev/null || echo "  (pio device list failed)"
-fi
+  sdkconfig="$FIRMWARE_DIR/sdkconfig.$environment"
+  grep -Fqx "CONFIG_LEDGRID_TRUSTED_KEY_ID=\"$LEDGRID_TRUSTED_KEY_ID\"" "$sdkconfig"
+  grep -Fqx "CONFIG_LEDGRID_TRUSTED_P256_PUBLIC_KEY_HEX=\"$LEDGRID_TRUSTED_P256_PUBLIC_KEY_HEX\"" "$sdkconfig"
+  grep -Fqx "CONFIG_LEDGRID_LOGICAL_DEVICE=$logical_device" "$sdkconfig"
+  grep -Fqx "# CONFIG_LEDGRID_ALLOW_UNSIGNED_DEVELOPMENT is not set" "$sdkconfig"
 
-# Discover ports: scan /dev directly for ttyACM and ttyUSB devices,
-# then supplement with anything pio device list reports.
-ports="$(DEBUG="$DEBUG" PIO_CMD="$PIO_CMD" python3 - <<'PY'
-import glob, json, os, subprocess, sys
-
-debug = os.environ.get("DEBUG") == "1"
-found = set()
-
-# Direct /dev scan (catches devices pio may miss)
-for pattern in ("/dev/ttyACM*", "/dev/ttyUSB*"):
-    matches = glob.glob(pattern)
-    if debug and matches:
-        print(f"[DEBUG] glob {pattern}: {matches}", file=sys.stderr)
-    found.update(matches)
-
-# Also check pio device list as a fallback
-try:
-    pio = os.environ.get("PIO_CMD", "pio").split()
-    raw = subprocess.check_output(
-        pio + ["device", "list", "--json-output"],
-        timeout=10, stderr=subprocess.DEVNULL)
-    data = json.loads(raw)
-    if debug:
-        print(f"[DEBUG] pio device list returned {len(data)} entries:", file=sys.stderr)
-        for entry in data:
-            print(f"  {entry.get('path', '?')}  hwid={entry.get('hwid', '?')}  desc={entry.get('description', '?')}", file=sys.stderr)
-    for entry in data:
-        path = entry.get("path") or entry.get("port", "")
-        if path.startswith("/dev/ttyACM") or path.startswith("/dev/ttyUSB"):
-            found.add(path)
-except Exception as e:
-    if debug:
-        print(f"[DEBUG] pio device list failed: {e}", file=sys.stderr)
-
-if debug:
-    print(f"[DEBUG] Final detected ports: {sorted(found)}", file=sys.stderr)
-
-for path in sorted(found):
-    print(path)
-PY
-)"
-
-if [ -z "$ports" ]; then
-  log_warning "No ESP32 devices detected; skipping flash"
-  [ "$DEBUG" = "1" ] && echo "[DEBUG] Hint: check USB connections, try 'ls /dev/ttyACM* /dev/ttyUSB*' and 'lsusb'"
-  exit 1
-fi
-
-port_count="$(echo "$ports" | wc -l | tr -d ' ')"
-log_info "Detected $port_count ESP32 device(s)"
-while IFS= read -r p; do
-  log_info "  -> $p"
-done <<< "$ports"
-
-log_info "Building firmware..."
-(cd "$FIRMWARE_DIR" && $PIO_CMD run -e esp32-s3-devkitc-1)
-
-log_info "Flashing firmware to $port_count ESP32 device(s) in parallel..."
-pids=()
-flash_logs=()
-while IFS= read -r port; do
-  log_file=$(mktemp)
-  flash_logs+=("$port|$log_file")
-  log_info "Uploading to $port (background)"
-  (cd "$FIRMWARE_DIR" && $PIO_CMD run -e esp32-s3-devkitc-1 -t upload --upload-port "$port" > "$log_file" 2>&1) &
-  pids+=($!)
-done <<< "$ports"
-
-# Wait for all uploads and report results
-all_ok=true
-for i in "${!pids[@]}"; do
-  pid=${pids[$i]}
-  entry=${flash_logs[$i]}
-  port="${entry%%|*}"
-  log_file="${entry##*|}"
-  if wait "$pid"; then
-    log_success "Flashed $port"
-  else
-    log_warning "Flash FAILED for $port"
-    cat "$log_file"
-    all_ok=false
-  fi
-  rm -f "$log_file"
+  port="${ports[$logical_device]}"
+  log_info "Flashing logical device $logical_device via $port..."
+  (cd "$FIRMWARE_DIR" && $PIO_CMD run -c "$project_config" -e "$environment" \
+    -t upload --upload-port "$port")
+  log_success "Flashed logical device $logical_device"
 done
 
-if $all_ok; then
-  echo "$current_hash" > "$HASH_FILE"
-  log_success "All $port_count ESP32 device(s) flashed successfully"
-else
-  log_warning "Some devices failed to flash; hash NOT updated (will retry next deploy)"
-fi
+printf '%s\n' "$current_hash" > "$HASH_FILE"
+log_success "All four provisioned receiver images flashed successfully"

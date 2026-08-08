@@ -8,6 +8,7 @@ set -euo pipefail  # Exit on any error and fail on unset vars
 PI_HOST="${PI_HOST:-ledgridwall@ledgridwall.local}"
 DEPLOY_DIR="${DEPLOY_DIR:-ledgrid-pod}"
 LOCAL_DIR="${LOCAL_DIR:-.}"
+AUTHORING_DIR="$LOCAL_DIR/run_state/firmware_authoring"
 # shellcheck source=ssh_helpers.sh
 source "$(dirname "$0")/ssh_helpers.sh"
 # shellcheck source=sync_files.sh
@@ -60,6 +61,44 @@ create_deploy_directory() {
     log_info "Creating deployment directory: ~/$DEPLOY_DIR"
     ssh $SSH_OPTS "$PI_HOST" "mkdir -p ~/$DEPLOY_DIR"
     log_success "Deployment directory created"
+}
+
+prepare_native_animation_packages() {
+    log_info "Validating firmware-animation signing and receiver provisioning..."
+    if [ ! -f "$AUTHORING_DIR/deploy.env" ] || \
+       [ ! -f "$AUTHORING_DIR/public.pem" ] || \
+       [ ! -f "$AUTHORING_DIR/signing_private.pem" ]; then
+        log_error "Missing $AUTHORING_DIR provisioning state"
+        log_error "Run 'just provision-native-animations ports=\"/dev/serial/by-id/..., ...\"' first"
+        return 1
+    fi
+    uv run --with 'ecdsa>=0.19.0' python \
+        "$LOCAL_DIR/tools/deployment/firmware_provisioning.py" check \
+        --config "$AUTHORING_DIR/deploy.env" \
+        --public-key "$AUTHORING_DIR/public.pem"
+
+    log_info "Building production-signed native example packages..."
+    uv run --with pillow --with 'ecdsa>=0.19.0' --with platformio python \
+        "$LOCAL_DIR/tools/build_native_examples.py" \
+        --private-key "$AUTHORING_DIR/signing_private.pem" \
+        --public-key "$AUTHORING_DIR/public.pem" \
+        --output-dir "$AUTHORING_DIR/packages"
+}
+
+sync_firmware_provisioning() {
+    log_info "Copying public receiver provisioning (private key stays local)..."
+    ssh $SSH_OPTS "$PI_HOST" \
+        "mkdir -p ~/$DEPLOY_DIR/run_state/firmware/packages"
+    rsync -az -e "ssh $SSH_OPTS" \
+        "$AUTHORING_DIR/deploy.env" \
+        "$AUTHORING_DIR/public.pem" \
+        "$PI_HOST:~/$DEPLOY_DIR/run_state/firmware/"
+    rsync -az --delete -e "ssh $SSH_OPTS" \
+        "$AUTHORING_DIR/packages/" \
+        "$PI_HOST:~/$DEPLOY_DIR/run_state/firmware/packages/"
+    ssh $SSH_OPTS "$PI_HOST" \
+        "chmod 644 ~/$DEPLOY_DIR/run_state/firmware/deploy.env ~/$DEPLOY_DIR/run_state/firmware/public.pem"
+    log_success "Public provisioning and signed examples copied"
 }
 
 # Stop any running instances on the Pi
@@ -132,6 +171,26 @@ EOF
     log_success "Python environment is ready"
 }
 
+install_native_animation_packages() {
+    log_info "Installing signed native examples into the managed gallery..."
+    ssh $SSH_OPTS "$PI_HOST" "bash -s -- '$DEPLOY_DIR'" <<'EOF'
+set -euo pipefail
+deploy_dir=$1
+cd ~/"$deploy_dir"
+set -a
+# shellcheck disable=SC1091
+source run_state/firmware/deploy.env
+set +a
+for package in run_state/firmware/packages/*.lga; do
+  [ -f "$package" ] || { echo "No signed native example packages found" >&2; exit 1; }
+  venv/bin/python tools/firmware_animation_package.py install "$package" \
+    --library run_state/firmware_animations \
+    --trusted-key "$LEDGRID_LGA_TRUSTED_KEYS"
+done
+EOF
+    log_success "Native examples installed in the gallery"
+}
+
 # Check if SPI is enabled
 check_spi() {
     log_info "Checking SPI configuration..."
@@ -166,6 +225,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=LEDGRID_SPI1_MODE=0
 Environment=LEDGRID_HAT=0
 Environment=STRIPS=32
+EnvironmentFile=/home/$PI_USER/$DEPLOY_DIR/run_state/firmware/deploy.env
 
 [Install]
 WantedBy=multi-user.target
@@ -179,6 +239,10 @@ sudo systemctl enable ledgrid.service"
 # Start the animation system
 start_system() {
     log_info "Restarting systemd service..."
+    # The web process can initially serve the preserved pre-restart status file.
+    # Capture the target's clock before restart so receiver readiness accepts
+    # only telemetry published by this controller instance.
+    RECEIVER_READINESS_MIN_UPDATED_AT="$(ssh $SSH_OPTS "$PI_HOST" "date +%s.%N")"
     if ssh $SSH_OPTS "$PI_HOST" "sudo systemctl restart ledgrid.service"; then
         log_success "systemd restart issued"
     else
@@ -201,6 +265,20 @@ check_web_server() {
     log_success "Web server is responding"
 }
 
+check_receiver_animation_readiness() {
+    log_info "Checking signed-animation readiness on all four receivers..."
+    if [ -z "${RECEIVER_READINESS_MIN_UPDATED_AT:-}" ]; then
+        log_error "Controller restart timestamp is unavailable"
+        return 1
+    fi
+    if ! ssh $SSH_OPTS "$PI_HOST" \
+        "~/$DEPLOY_DIR/venv/bin/python ~/$DEPLOY_DIR/tools/deployment/check_receiver_readiness.py --url http://127.0.0.1:5000/api/status --wait-seconds 30 --interval-seconds 0.5 --min-updated-at $RECEIVER_READINESS_MIN_UPDATED_AT"; then
+        log_error "Receiver animation readiness check failed"
+        return 1
+    fi
+    log_success "All four receivers report signed native-animation readiness"
+}
+
 # Main deployment process
 main() {
     echo "🚀 LED Grid Animation System Deployment"
@@ -208,9 +286,11 @@ main() {
     echo ""
     
     check_ssh_connection
+    prepare_native_animation_packages
     create_deploy_directory
     stop_running
     upload_files
+    sync_firmware_provisioning
     configure_remote_spi
     if [ -z "${SKIP_FIRMWARE:-}" ]; then
         flash_esp32_firmware
@@ -218,10 +298,12 @@ main() {
         log_warning "Skipping ESP32 firmware flash (SKIP_FIRMWARE set)"
     fi
     setup_venv_and_dependencies
+    install_native_animation_packages
     check_spi
     create_systemd_service
     start_system
     check_web_server
+    check_receiver_animation_readiness
     log_success "Deployment complete: http://${PI_HOST#*@}:5000/"
 }
 

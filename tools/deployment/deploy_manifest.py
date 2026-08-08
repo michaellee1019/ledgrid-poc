@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build deterministic, Git-tracked manifests for deployment syncs."""
+"""Build deterministic working-tree manifests for deployment syncs."""
 
 from __future__ import annotations
 
@@ -19,7 +19,8 @@ FAST_CONFIG_FILES = {
     PurePosixPath("config/webcam_pixel_map.json"),
 }
 UNTRACKED_DEPLOY_ROOTS = {
-    "animation", "drivers", "firmware", "ipc", "scripts", "tools", "web",
+    "animation", "drivers", "firmware", "firmware_animations", "ipc",
+    "scripts", "tools", "web",
 }
 
 

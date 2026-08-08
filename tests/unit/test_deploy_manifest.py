@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path, PurePosixPath
@@ -91,6 +93,42 @@ class DeployManifestTests(unittest.TestCase):
                 PurePosixPath("web/preview_worker.py"),
             ],
         )
+
+    def test_untracked_top_level_package_satisfies_deployed_import_graph(self):
+        self._write(
+            "scripts/start_server.py",
+            b"from firmware_animations.errors import PackageValidationError\n",
+        )
+        self._write(
+            "firmware_animations/__init__.py",
+            b"from .errors import PackageValidationError\n",
+        )
+        self._write(
+            "firmware_animations/errors.py",
+            b"class PackageValidationError(ValueError):\n    pass\n",
+        )
+        self._track("scripts/start_server.py")
+
+        expected = {
+            PurePosixPath("scripts/start_server.py"),
+            PurePosixPath("firmware_animations/__init__.py"),
+            PurePosixPath("firmware_animations/errors.py"),
+        }
+        for scope in ("full", "fast"):
+            with self.subTest(scope=scope):
+                paths = set(tracked_paths(self.root, scope))
+                self.assertEqual(paths, expected)
+                stage = self.root / f"stage-{scope}"
+                for path in paths:
+                    destination = stage / path.as_posix()
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes((self.root / path.as_posix()).read_bytes())
+                subprocess.run(
+                    [sys.executable, "-c", "import scripts.start_server"],
+                    cwd=stage,
+                    check=True,
+                    env={"PATH": os.environ.get("PATH", "")},
+                )
 
     def test_manifest_omits_tracked_files_deleted_from_worktree(self):
         deleted = self._write("docs/removed.md")
