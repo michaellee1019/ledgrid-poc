@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}Receiver animations{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/firmware_animations.css') }}">
+
+<main id="firmwareDashboard">
+  <header class="firmware-page-header mb-4">
+    <div>
+      <div class="text-uppercase text-muted small fw-bold">Receiver package library</div>
+      <h1 class="mb-1">Receiver animations</h1>
+      <p class="text-muted mb-0">
+        These packages run on the four wall receivers without streamed frames from the controller.
+      </p>
+    </div>
+    <form id="firmwareUploadForm" class="firmware-upload" enctype="multipart/form-data">
+      <label class="form-label mb-1" for="firmwarePackage">Add a signed package</label>
+      <div class="firmware-upload-fields">
+        <input
+          class="form-control"
+          id="firmwarePackage"
+          type="file"
+          name="package"
+          accept=".lga"
+          aria-describedby="firmwarePackageHelp"
+          required
+          {{ 'disabled' if not available else '' }}
+        >
+        <button class="btn btn-primary text-nowrap" type="submit" {{ 'disabled' if not available else '' }}>
+          Add &amp; install
+        </button>
+      </div>
+      <div class="form-text" id="firmwarePackageHelp">Signed .lga package, up to 16 MiB.</div>
+    </form>
+  </header>
+
+  {% if not available %}
+    <div class="alert alert-warning" role="alert">
+      Package management is unavailable because the firmware-animation SDK did not load.
+    </div>
+  {% endif %}
+
+  <div id="firmwareNotice" class="alert d-none" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <section class="firmware-wall-state mb-3" aria-labelledby="firmwareWallHeading">
+    <div class="firmware-state-copy">
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <h2 class="h5 mb-0" id="firmwareWallHeading">Reported wall playback</h2>
+        <span class="badge bg-secondary" id="firmwareConnectionBadge">
+          {% if dashboard.controller.connected %}Controller reporting{% elif dashboard.controller.stale %}Report stale{% else %}No controller report{% endif %}
+        </span>
+      </div>
+      <p class="mb-1 mt-2" id="firmwarePhysicalState">
+        {% if dashboard.controller.stale %}
+          The controller report is stale. Receivers may still be playing their last animation, but this dashboard cannot confirm it.
+        {% elif not dashboard.controller.connected %}
+          Controller status is unavailable. Receivers may continue an earlier animation; current wall output is unknown.
+        {% elif dashboard.controller.active_package_id %}
+          Receivers report that {{ dashboard.controller.active_package_id }} is playing on the wall.
+        {% elif dashboard.controller.mode == 'python' %}
+          The wall is showing a streamed animation, not a receiver package.
+        {% elif dashboard.controller.mode == 'painter' %}
+          The wall is showing Painter output, not a receiver package.
+        {% else %}
+          No receiver animation is reported playing on the wall.
+        {% endif %}
+      </p>
+      <div class="small text-muted" id="firmwareReportedAt">
+        {% if dashboard.controller.reported_at %}Receiver state is a status report, not live framebuffer readback.{% else %}No receiver status timestamp is available.{% endif %}
+      </div>
+    </div>
+    <button
+      id="firmwareStop"
+      class="btn btn-outline-danger"
+      type="button"
+      {% if not dashboard.controller.active_package_id or dashboard.controller.stale %}disabled{% endif %}
+    >
+      Stop receiver playback
+    </button>
+  </section>
+
+  <section
+    id="firmwareOperation"
+    class="firmware-operation mb-4"
+    aria-labelledby="firmwareOperationHeading"
+    {% if dashboard.receiver_operation.state == 'idle' %}hidden{% endif %}
+  >
+    <div class="d-flex justify-content-between gap-3 align-items-start">
+      <div>
+        <h2 class="h6 mb-1" id="firmwareOperationHeading">Receiver operation status</h2>
+        <p class="small mb-0" id="firmwareOperationMessage"></p>
+      </div>
+      <span class="badge bg-secondary" id="firmwareOperationBadge">{{ dashboard.receiver_operation.state }}</span>
+    </div>
+    <div
+      class="progress mt-3"
+      id="firmwareOperationProgress"
+      role="progressbar"
+      aria-label="Receiver operation progress"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      aria-valuenow="{{ (dashboard.receiver_operation.progress * 100)|round|int }}"
+      {% if dashboard.receiver_operation.state not in ['probing', 'uploading'] %}hidden{% endif %}
+    >
+      <div class="progress-bar" style="width: {{ dashboard.receiver_operation.progress * 100 }}%">
+        {{ (dashboard.receiver_operation.progress * 100)|round|int }}%
+      </div>
+    </div>
+    <p class="small text-danger mb-0 mt-2" id="firmwareOperationError" {% if not dashboard.receiver_operation.error %}hidden{% endif %}>
+      {{ dashboard.receiver_operation.error or '' }}
+    </p>
+  </section>
+
+  <div class="d-flex justify-content-between align-items-baseline gap-3 mb-3">
+    <div>
+      <h2 class="h4 mb-1">Package library</h2>
+      <p class="text-muted small mb-0">A package can be in the host library without being the wall’s current output.</p>
+    </div>
+    <span class="text-muted small" id="firmwarePackageCount">{{ animations|length }} package{{ '' if animations|length == 1 else 's' }}</span>
+  </div>
+
+  <div class="row g-3" id="firmwareGallery">
+  {% for animation in animations %}
+    <article
+      class="col-md-6 col-xl-4 firmware-animation-card"
+      data-package-id="{{ animation.id }}"
+      data-package-name="{{ animation.name }}"
+      data-active="{{ 'true' if animation.active else 'false' }}"
+    >
+      <div class="card h-100">
+        <div class="card-body d-flex flex-column">
+          <div class="firmware-preview mb-3">
+            <img
+              src="{{ animation.preview_url }}"
+              alt="Build-time package preview of {{ animation.name }}"
+              class="firmware-preview-image"
+            >
+            <div class="firmware-preview-placeholder" role="img" aria-label="Package preview unavailable" hidden>
+              <span aria-hidden="true">{{ '🎞️' if animation.kind == 'frames' else '⚙️' }}</span>
+              <span>Preview unavailable</span>
+            </div>
+            <span class="badge bg-dark firmware-preview-label">Package preview — not live</span>
+          </div>
+
+          <div class="d-flex justify-content-between gap-2 align-items-start">
+            <div>
+              <h3 class="h5 mb-1">{{ animation.name }}</h3>
+              <div class="text-muted small">
+                {{ 'Frame track' if animation.kind == 'frames' else 'Native module' }} · v{{ animation.version }}
+              </div>
+            </div>
+            <span class="badge firmware-location {{ 'bg-success' if animation.active else 'bg-secondary' }}">
+              {{ 'Reported on wall' if animation.active else 'In host library' }}
+            </span>
+          </div>
+
+          <p class="small mt-2 mb-3">{{ animation.description or 'No package description was provided.' }}</p>
+
+          {% set parameter_count = animation.parameter_schema|length %}
+          <details class="firmware-parameter-panel" {% if animation.active %}open{% endif %}>
+            <summary>Parameters{% if parameter_count %} ({{ parameter_count }}){% endif %}</summary>
+            <div
+              class="firmware-parameters"
+              data-schema='{{ animation.parameter_schema | tojson }}'
+              data-values='{{ animation.parameter_values | tojson }}'
+            >
+              {% if not parameter_count %}<p class="small text-muted mt-3 mb-0">This package has no adjustable parameters.</p>{% endif %}
+            </div>
+          </details>
+
+          <div class="firmware-actions mt-auto pt-3">
+            <button class="btn btn-primary btn-sm firmware-play" type="button">Start on wall</button>
+            <button class="btn btn-outline-primary btn-sm firmware-live" type="button" {{ '' if animation.active else 'disabled' }}>
+              Apply to playing wall
+            </button>
+            <button class="btn btn-outline-secondary btn-sm firmware-install" type="button">Install on receivers</button>
+            <button
+              class="btn btn-outline-danger btn-sm firmware-delete"
+              type="button"
+              {{ 'disabled' if animation.active else '' }}
+              {% if animation.active %}title="Stop this receiver animation before removing it"{% endif %}
+            >
+              Remove package
+            </button>
+          </div>
+        </div>
+      </div>
+    </article>
+  {% endfor %}
+  </div>
+
+  <div id="firmwareEmpty" class="firmware-empty" {% if animations %}hidden{% endif %}>
+    <div class="firmware-empty-icon" aria-hidden="true">▦</div>
+    <h2 class="h5">No receiver packages yet</h2>
+    <p class="text-muted mb-0">Add a signed .lga package to place it in the host library and queue installation on the receivers.</p>
+  </div>
+</main>
+
+<script id="firmwareInitialState" type="application/json">{{ dashboard | tojson }}</script>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/firmware_animations.js') }}"></script>{% endblock %}

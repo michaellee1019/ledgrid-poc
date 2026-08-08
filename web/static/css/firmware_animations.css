@@ -1,0 +1,172 @@
+.firmware-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 2rem;
+}
+
+.firmware-upload {
+  flex: 0 1 34rem;
+}
+
+.firmware-upload-fields {
+  display: flex;
+  gap: .5rem;
+}
+
+.firmware-wall-state,
+.firmware-operation,
+.firmware-empty {
+  border: 1px solid var(--bs-gray-300);
+  border-radius: .75rem;
+  background: var(--bs-light);
+  padding: 1rem;
+}
+
+.firmware-wall-state {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.firmware-state-copy {
+  min-width: 0;
+}
+
+.firmware-operation[data-state="retry"],
+.firmware-operation[data-state="unsupported"] {
+  border-color: var(--bs-warning);
+  background: #fff8e1;
+}
+
+.firmware-preview {
+  min-height: 12rem;
+  position: relative;
+  display: grid;
+  place-items: center;
+  background: #111;
+  border-radius: .5rem;
+  overflow: hidden;
+}
+
+.firmware-preview-image {
+  width: 100%;
+  max-height: 18rem;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.firmware-preview-placeholder {
+  min-height: 12rem;
+  padding: 1rem;
+  color: var(--bs-gray-400);
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: .5rem;
+  text-align: center;
+}
+
+.firmware-preview-placeholder[hidden] {
+  display: none;
+}
+
+.firmware-preview-placeholder > span:first-child {
+  font-size: 3rem;
+}
+
+.firmware-preview-label {
+  position: absolute;
+  right: .5rem;
+  bottom: .5rem;
+  max-width: calc(100% - 1rem);
+  white-space: normal;
+}
+
+.firmware-location {
+  max-width: 9rem;
+  white-space: normal;
+  text-align: center;
+}
+
+.firmware-parameter-panel {
+  border-top: 1px solid var(--bs-gray-300);
+  border-bottom: 1px solid var(--bs-gray-300);
+  padding: .75rem 0;
+}
+
+.firmware-parameter-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.firmware-parameter {
+  margin-top: .85rem;
+}
+
+.firmware-parameter-description,
+.firmware-parameter-limits {
+  display: block;
+  margin-top: .25rem;
+  color: var(--bs-gray-600);
+  font-size: .8rem;
+}
+
+.firmware-boolean {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+.firmware-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .5rem;
+}
+
+.firmware-actions .btn {
+  white-space: normal;
+}
+
+.firmware-empty {
+  text-align: center;
+  padding: 2.5rem 1rem;
+}
+
+.firmware-empty-icon {
+  font-size: 2.5rem;
+  color: var(--bs-gray-500);
+}
+
+@media (max-width: 767.98px) {
+  .firmware-page-header,
+  .firmware-wall-state,
+  .firmware-upload-fields {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .firmware-upload {
+    flex-basis: auto;
+    width: 100%;
+  }
+
+  .firmware-wall-state .btn {
+    width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .firmware-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .firmware-animation-card *,
+  .firmware-operation * {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}

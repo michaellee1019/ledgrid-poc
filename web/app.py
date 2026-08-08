@@ -12,10 +12,12 @@ import os
 import re
 import tempfile
 import time
+import zipfile
+import io
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_file, send_from_directory
 
 from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
@@ -53,7 +55,8 @@ class AnimationWebInterface:
                  preview_manager: AnimationManager,
                  host: str = '0.0.0.0',
                  port: int = 5000,
-                 local_mode: bool = False):
+                 local_mode: bool = False,
+                 firmware_library: Any = None):
         """
         Initialize web interface
 
@@ -68,6 +71,7 @@ class AnimationWebInterface:
         self.host = host
         self.port = port
         self.local_mode = bool(local_mode)
+        self.firmware_library = firmware_library
         self.project_root = Path(__file__).resolve().parents[1]
         self.painter_presets_dir = self.project_root / "presets" / "frame_painter"
         self.animation_presets_dir = self.project_root / "presets" / "animations"
@@ -124,6 +128,144 @@ class AnimationWebInterface:
             """API: Get list of available animations"""
             animations = self._sorted_animations()
             return jsonify(animations)
+
+        @self.app.route('/api/firmware-animations')
+        def api_list_firmware_animations():
+            return jsonify(self._firmware_dashboard_payload())
+
+        @self.app.route('/api/firmware-animations/upload', methods=['POST'])
+        def api_upload_firmware_animation():
+            if self.firmware_library is None:
+                return jsonify({'error': 'Firmware animation SDK is unavailable'}), 503
+            upload = request.files.get('package')
+            if upload is None or not upload.filename:
+                return jsonify({'error': 'package .lga file is required'}), 400
+            if not upload.filename.lower().endswith('.lga'):
+                return jsonify({'error': 'package must be an .lga file'}), 400
+            if request.content_length and request.content_length > 16 * 1024 * 1024:
+                return jsonify({'error': 'package exceeds the 16 MiB limit'}), 413
+            descriptor, temporary_name = tempfile.mkstemp(suffix='.lga')
+            temporary_path = Path(temporary_name)
+            try:
+                with os.fdopen(descriptor, 'wb') as handle:
+                    while True:
+                        chunk = upload.stream.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        handle.write(chunk)
+                        if handle.tell() > 16 * 1024 * 1024:
+                            return jsonify({'error': 'package exceeds the 16 MiB limit'}), 413
+                installed = self.firmware_library.install(temporary_path)
+                self.control_channel.send_command(
+                    'firmware_install', package_id=installed.package_id,
+                    package_path=str(installed.package_path),
+                )
+                return jsonify({
+                    'success': True,
+                    'queued': True,
+                    'animation': self._firmware_summary(installed),
+                }), 201
+            except Exception as exc:
+                return jsonify({'error': str(exc)}), 400
+            finally:
+                temporary_path.unlink(missing_ok=True)
+
+        @self.app.route('/api/firmware-animations/<package_id>/play', methods=['POST'])
+        def api_play_firmware_animation(package_id: str):
+            if self.firmware_library is None:
+                return jsonify({'error': 'Firmware animation SDK is unavailable'}), 503
+            installed = self._get_firmware_package(package_id)
+            if installed is None:
+                return jsonify({'error': 'Firmware animation not found'}), 404
+            payload = request.get_json(silent=True) or {}
+            parameters = payload.get('parameters', {})
+            try:
+                parameters = self._validate_firmware_parameters(installed, parameters)
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+            self.control_channel.send_command(
+                'firmware_play', package_id=installed.package_id,
+                package_path=str(installed.package_path), parameters=parameters,
+            )
+            return jsonify({
+                'success': True, 'queued': True, 'parameters': parameters,
+            }), 202
+
+        @self.app.route('/api/firmware-animations/<package_id>/install', methods=['POST'])
+        def api_install_firmware_animation(package_id: str):
+            if self.firmware_library is None:
+                return jsonify({'error': 'Firmware animation SDK is unavailable'}), 503
+            installed = self._get_firmware_package(package_id)
+            if installed is None:
+                return jsonify({'error': 'Firmware animation not found'}), 404
+            self.control_channel.send_command(
+                'firmware_install', package_id=installed.package_id,
+                package_path=str(installed.package_path),
+            )
+            return jsonify({'success': True, 'queued': True}), 202
+
+        @self.app.route('/api/firmware-animations/<package_id>/preview')
+        def api_firmware_animation_preview(package_id: str):
+            if self.firmware_library is None:
+                return jsonify({'error': 'Firmware animation SDK is unavailable'}), 503
+            installed = self._get_firmware_package(package_id)
+            if installed is None:
+                return jsonify({'error': 'Firmware animation not found'}), 404
+            try:
+                with zipfile.ZipFile(installed.package_path) as archive:
+                    preview = archive.read('preview/preview.webp')
+            except (OSError, KeyError, zipfile.BadZipFile):
+                return jsonify({'error': 'Package preview is unavailable'}), 404
+            return send_file(io.BytesIO(preview), mimetype='image/webp', max_age=31536000)
+
+        @self.app.route('/api/firmware-animations/<package_id>/parameters', methods=['PATCH'])
+        def api_patch_firmware_parameters(package_id: str):
+            if self.firmware_library is None:
+                return jsonify({'error': 'Firmware animation SDK is unavailable'}), 503
+            installed = self._get_firmware_package(package_id)
+            if installed is None:
+                return jsonify({'error': 'Firmware animation not found'}), 404
+            status = self._status_payload()
+            active = status.get('firmware_animation') or {}
+            if status.get('mode') != 'firmware_animation' or active.get('package_id') != package_id:
+                return jsonify({'error': 'Firmware animation is not active'}), 409
+            payload = request.get_json(silent=True) or {}
+            parameters = payload.get('parameters')
+            try:
+                parameters = self._validate_firmware_parameters(installed, parameters)
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+            self.control_channel.send_command(
+                'firmware_parameters', package_id=package_id, parameters=parameters,
+            )
+            return jsonify({
+                'success': True, 'queued': True, 'parameters': parameters,
+            }), 202
+
+        @self.app.route('/api/firmware-animations/stop', methods=['POST'])
+        def api_stop_firmware_animation():
+            status = self._status_payload()
+            if status.get('mode') != 'firmware_animation':
+                return jsonify({'error': 'No receiver animation is currently reported active'}), 409
+            self.control_channel.send_command('stop')
+            return jsonify({'success': True, 'queued': True}), 202
+
+        @self.app.route('/api/firmware-animations/<package_id>', methods=['DELETE'])
+        def api_delete_firmware_animation(package_id: str):
+            if self.firmware_library is None:
+                return jsonify({'error': 'Firmware animation SDK is unavailable'}), 503
+            installed = self._get_firmware_package(package_id)
+            if installed is None:
+                return jsonify({'error': 'Firmware animation not found'}), 404
+            status = self._status_payload()
+            active = status.get('firmware_animation') or {}
+            if status.get('mode') == 'firmware_animation' and active.get('package_id') == package_id:
+                return jsonify({'error': 'Cannot delete the active firmware animation'}), 409
+            self.control_channel.send_command(
+                'firmware_remove', package_id=package_id,
+                package_path=str(installed.package_path),
+            )
+            return jsonify({'success': True, 'queued': True}), 202
 
         @self.app.route('/preview-assets/runtime/<path:filename>')
         def runtime_preview_asset(filename: str):
@@ -561,6 +703,147 @@ class AnimationWebInterface:
             """Frame painter page."""
             status = self._status_payload()
             return render_template('painter.html', status=status)
+
+        @self.app.route('/firmware-animations')
+        def firmware_animations_page():
+            dashboard = self._firmware_dashboard_payload()
+            return render_template(
+                'firmware_animations.html',
+                animations=dashboard['animations'],
+                available=dashboard['available'],
+                dashboard=dashboard,
+            )
+
+    def _get_firmware_package(self, package_id: str):
+        if self.firmware_library is None or not isinstance(package_id, str):
+            return None
+        try:
+            return self.firmware_library.get(package_id)
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _validate_firmware_parameters(installed, parameters):
+        if not isinstance(parameters, dict):
+            raise ValueError('parameters must be a JSON object')
+        from firmware_animations import validate_parameters
+        try:
+            schema = installed.manifest.get('parameter_schema', {})
+            return validate_parameters(schema, parameters, require_all=False)
+        except Exception as exc:
+            raise ValueError(str(exc)) from exc
+
+    @staticmethod
+    def _firmware_summary(installed, status=None) -> Dict[str, Any]:
+        manifest = installed.manifest if isinstance(installed.manifest, dict) else {}
+        active = (status or {}).get('firmware_animation') or {}
+        is_active = ((status or {}).get('mode') == 'firmware_animation'
+                     and active.get('package_id') == installed.package_id)
+        return {
+            'id': installed.package_id,
+            'name': installed.name,
+            'version': installed.version,
+            'kind': installed.kind,
+            'digest': installed.digest,
+            'installed_at': installed.installed_at,
+            'description': manifest.get('description', ''),
+            'parameter_schema': manifest.get('parameter_schema', {}),
+            'parameter_values': active.get('parameters', {}) if is_active else {},
+            'preview_url': f'/api/firmware-animations/{installed.package_id}/preview',
+            'active': is_active,
+        }
+
+    def _firmware_dashboard_payload(self) -> Dict[str, Any]:
+        """Return package-library state separately from receiver-reported state."""
+        raw_status = self.control_channel.read_status()
+        status = self._status_payload()
+        reported_at = None
+        if isinstance(raw_status, dict):
+            reported_at = raw_status.get('updated_at') or raw_status.get('timestamp')
+
+        report_age_seconds = None
+        if isinstance(reported_at, (int, float)) and not isinstance(reported_at, bool):
+            report_age_seconds = max(0.0, time.time() - float(reported_at))
+        has_report = isinstance(raw_status, dict) and bool(raw_status)
+        stale = bool(has_report and report_age_seconds is not None and report_age_seconds > 10.0)
+        active = status.get('firmware_animation') or {}
+        operation = self._firmware_operation(status)
+        animations = (
+            [self._firmware_summary(item, status) for item in self.firmware_library.list()]
+            if self.firmware_library is not None else []
+        )
+        return {
+            'available': self.firmware_library is not None,
+            'animations': animations,
+            'controller': {
+                'connected': has_report and not stale,
+                'has_report': has_report,
+                'stale': stale,
+                'reported_at': reported_at,
+                'report_age_seconds': report_age_seconds,
+                'mode': status.get('mode') if has_report else None,
+                'active_package_id': active.get('package_id') if has_report else None,
+            },
+            'receiver_operation': operation,
+        }
+
+    @staticmethod
+    def _firmware_operation(status: Dict[str, Any]) -> Dict[str, Any]:
+        driver = status.get('driver_stats') or {}
+        aggregate = driver.get('aggregate', driver) if isinstance(driver, dict) else {}
+        install = aggregate.get('firmware_install', {}) if isinstance(aggregate, dict) else {}
+        if not isinstance(install, dict):
+            install = {}
+        runtime = aggregate.get('firmware_runtime', {}) if isinstance(aggregate, dict) else {}
+        if not isinstance(runtime, dict):
+            runtime = {}
+        state = install.get('state')
+        if runtime.get('state') == 'degraded':
+            state = 'degraded'
+        if state not in {'idle', 'probing', 'uploading', 'ready', 'retry', 'unsupported', 'degraded'}:
+            state = 'idle'
+        progress = install.get('progress', 0.0)
+        if isinstance(progress, bool) or not isinstance(progress, (int, float)) or not math.isfinite(progress):
+            progress = 0.0
+        progress = min(1.0, max(0.0, float(progress)))
+        error = runtime.get('error') if state == 'degraded' else install.get('error')
+        capability_report = install.get('capability_report')
+        unsupported_devices = []
+        degraded_devices = []
+        if isinstance(capability_report, dict):
+            devices = capability_report.get('devices')
+            if isinstance(devices, list):
+                unsupported_devices = [
+                    index for index, device in enumerate(devices)
+                    if isinstance(device, dict) and device.get('supported') is False
+                ]
+        if state == 'degraded':
+            candidates = []
+            devices = runtime.get('devices')
+            if isinstance(devices, list):
+                candidates.extend(
+                    device.get('logical_device')
+                    for device in devices
+                    if isinstance(device, dict) and device.get('stopped') is False
+                )
+            command_errors = runtime.get('command_errors')
+            if isinstance(command_errors, list):
+                candidates.extend(
+                    device.get('logical_device')
+                    for device in command_errors if isinstance(device, dict)
+                )
+            degraded_devices = sorted({
+                value for value in candidates
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            })
+        return {
+            'state': state,
+            'progress': progress,
+            'error': error if isinstance(error, str) and error else None,
+            'unsupported_devices': unsupported_devices,
+            'degraded_devices': degraded_devices,
+            'operation': runtime.get('operation') if state == 'degraded' else None,
+        }
 
     def _dashboard_animations(self) -> List[Dict[str, Any]]:
         """Decorate plugin metadata for the dashboard's show/test galleries."""
@@ -1365,7 +1648,8 @@ def create_app(control_channel: FileControlChannel = None,
                leds_per_strip: int = DEFAULT_LEDS_PER_STRIP,
                animations_dir: str = None,
                animation_speed_scale: float = DEFAULT_ANIMATION_SPEED_SCALE,
-               plant_aware: bool = DEFAULT_PLANT_AWARE):
+               plant_aware: bool = DEFAULT_PLANT_AWARE,
+               firmware_library: Any = None):
     """Factory function to create the web application"""
     if control_channel is None:
         control_channel = FileControlChannel()
@@ -1383,7 +1667,10 @@ def create_app(control_channel: FileControlChannel = None,
     )
 
     # Create web interface
-    web_interface = AnimationWebInterface(control_channel, animation_manager, host=host, port=port)
+    web_interface = AnimationWebInterface(
+        control_channel, animation_manager, host=host, port=port,
+        firmware_library=firmware_library,
+    )
 
     return web_interface
 
