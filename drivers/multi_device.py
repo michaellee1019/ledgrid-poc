@@ -5,12 +5,19 @@ Controls multiple ESP32 devices via SPI with different CS pins
 """
 
 import os
+import threading
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 
 import numpy as np
 
-from drivers.spi_controller import LEDController, SPI_BUS, SPI_SPEED, SPI_MODE
+from drivers.spi_controller import (
+    LEDController, SPI_BUS, SPI_SPEED, SPI_MODE,
+    CAPABILITY_NATIVE, CAPABILITY_FRAME_TRACK, CAPABILITY_SIGNED_PACKAGES,
+    CAPABILITY_ASSET_UPLOAD, CAPABILITY_TYPED_PARAMETERS,
+    CAPABILITY_LOGICAL_DEVICE_IDENTITY,
+)
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP
 
 DeviceMapEntry = Tuple[int, int]
@@ -55,8 +62,19 @@ class MultiDeviceLEDController:
         self.total_leds = self.strip_count * leds_per_strip
         self.leds_per_device = strips_per_device * leds_per_strip
         self._logical_frames_sent = 0
+        self._transport_lock = threading.RLock()
+        self._firmware_active = False
+        self._active_payload_digests: List[str] = []
+        self._firmware_parameters: Dict[str, Any] = {}
+        self._firmware_runtime_state = 'stopped'
+        self._firmware_runtime_status: Dict[str, Any] = {
+            'state': 'stopped', 'operation': 'initialize', 'error': None,
+        }
+        self._firmware_install_status: Dict[str, Any] = {
+            'state': 'idle', 'progress': 0.0, 'error': None,
+        }
         
-        # For compatibility with animation system
+        # Animation manager output contract.
         self.inline_show = True
         self.current_brightness = None
         
@@ -104,6 +122,9 @@ class MultiDeviceLEDController:
         
         if self.debug:
             print(f"\n✓ All {num_devices} devices initialized\n")
+
+    def _operation_lock(self):
+        return self._transport_lock
     
     def _split_frame(self, colors: List[Tuple[int, int, int]]) -> List[List[Tuple[int, int, int]]]:
         """
@@ -184,21 +205,22 @@ class MultiDeviceLEDController:
         Args:
             colors: List of (r,g,b) tuples for entire grid
         """
-        # Split frame into per-device chunks
-        device_frames = self._split_frame(colors)
+        with self._operation_lock():
+            self._stop_local_for_host_frame()
+            # Split frame into per-device chunks
+            device_frames = self._split_frame(colors)
         
-        if self._executor is not None:
-            futures = [
-                self._executor.submit(self._send_bus_frames, device_ids, device_frames)
-                for device_ids in self._devices_by_bus.values()
-            ]
-            for future in futures:
-                future.result()
-        else:
-            # Send to devices sequentially
-            for device_id, device_colors in enumerate(device_frames):
-                self._send_to_device(device_id, device_colors)
-        self._logical_frames_sent += 1
+            if self._executor is not None:
+                futures = [
+                    self._executor.submit(self._send_bus_frames, device_ids, device_frames)
+                    for device_ids in self._devices_by_bus.values()
+                ]
+                for future in futures:
+                    future.result()
+            else:
+                for device_id, device_colors in enumerate(device_frames):
+                    self._send_to_device(device_id, device_colors)
+            self._logical_frames_sent += 1
 
     def set_frame(self, colors, dirty_ranges=None):
         """Present a frame, using partial board updates when ranges are known."""
@@ -206,40 +228,584 @@ class MultiDeviceLEDController:
             self.set_all_pixels(colors)
             return
 
-        device_frames = self._split_frame(colors)
-        pixels_per_device = self.leds_per_device
-        device_ranges = {}
-        for start, end in sorted(dirty_ranges):
-            start = max(0, int(start))
-            end = min(self.total_leds, int(end))
-            while start < end:
-                device_id = start // pixels_per_device
-                device_end = min(end, (device_id + 1) * pixels_per_device)
-                local_start = start - device_id * pixels_per_device
-                local_end = device_end - device_id * pixels_per_device
-                ranges = device_ranges.setdefault(device_id, [])
-                if ranges and ranges[-1][1] >= local_start:
-                    ranges[-1] = (ranges[-1][0], max(ranges[-1][1], local_end))
-                else:
-                    ranges.append((local_start, local_end))
-                start = device_end
+        with self._operation_lock():
+            self._stop_local_for_host_frame()
+            device_frames = self._split_frame(colors)
+            pixels_per_device = self.leds_per_device
+            device_ranges = {}
+            for start, end in sorted(dirty_ranges):
+                start = max(0, int(start))
+                end = min(self.total_leds, int(end))
+                while start < end:
+                    device_id = start // pixels_per_device
+                    device_end = min(end, (device_id + 1) * pixels_per_device)
+                    local_start = start - device_id * pixels_per_device
+                    local_end = device_end - device_id * pixels_per_device
+                    ranges = device_ranges.setdefault(device_id, [])
+                    if ranges and ranges[-1][1] >= local_start:
+                        ranges[-1] = (ranges[-1][0], max(ranges[-1][1], local_end))
+                    else:
+                        ranges.append((local_start, local_end))
+                    start = device_end
 
-        if self._executor is not None:
-            futures = [
-                self._executor.submit(
-                    self._send_bus_partial,
-                    device_ids,
-                    device_frames,
-                    device_ranges,
+            if self._executor is not None:
+                futures = [
+                    self._executor.submit(
+                        self._send_bus_partial,
+                        device_ids,
+                        device_frames,
+                        device_ranges,
+                    )
+                    for device_ids in self._devices_by_bus.values()
+                ]
+                for future in futures:
+                    future.result()
+            else:
+                for device_ids in self._devices_by_bus.values():
+                    self._send_bus_partial(device_ids, device_frames, device_ranges)
+            self._logical_frames_sent += 1
+
+    def _stop_local_for_host_frame(self):
+        """A complete host presentation explicitly takes ownership back."""
+        if not self._firmware_active:
+            return
+        if not self.stop_firmware_animation():
+            raise RuntimeError("could not verify that every receiver stopped local playback")
+
+    @staticmethod
+    def _payload_for_device(asset: Dict[str, Any], logical_device: int) -> Dict[str, Any]:
+        payloads = asset.get('payloads')
+        if not isinstance(payloads, list) or logical_device >= len(payloads):
+            raise ValueError(f"missing payload for logical device {logical_device}")
+        payload = payloads[logical_device]
+        if (not isinstance(payload, dict)
+                or payload.get('logical_device') != logical_device):
+            raise ValueError(f"payload {logical_device} is not in canonical order")
+        data = payload.get('data')
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise ValueError(f"payload {logical_device} data must be bytes")
+        digest = payload.get('digest')
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise ValueError(f"payload {logical_device} digest is invalid")
+        data = bytes(data)
+        if hashlib.sha256(data).hexdigest() != digest.lower():
+            raise ValueError(f"payload {logical_device} digest does not match data")
+        envelope = payload.get('envelope')
+        required = ('package_digest', 'key_id', 'kind', 'device_index', 'payload_size',
+                    'payload_digest', 'signed_index', 'signature')
+        if envelope is None or any(not hasattr(envelope, name) for name in required):
+            raise ValueError(f"payload {logical_device} has no signed verification envelope")
+        if (
+            int(envelope.device_index) != logical_device
+            or int(envelope.payload_size) != len(data)
+            or bytes(envelope.payload_digest).hex() != digest.lower()
+            or len(bytes(envelope.signed_index)) != 176
+            or len(bytes(envelope.signature)) != 64
+            or len(envelope.key_id.encode('ascii')) != 20
+        ):
+            raise ValueError(f"payload {logical_device} verification envelope is invalid")
+        return {**payload, 'data': data, 'digest': digest.lower(), 'envelope': envelope}
+
+    def _validated_asset_payloads(self, asset: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if (not isinstance(asset.get('payloads'), list)
+                or len(asset['payloads']) != self.num_devices):
+            raise ValueError(f"asset must contain exactly {self.num_devices} payloads")
+        payloads = [self._payload_for_device(asset, index) for index in range(self.num_devices)]
+        first = payloads[0]['envelope']
+        package_digest = asset.get('package_digest')
+        kind = asset.get('kind')
+        if kind not in ('native', 'frames'):
+            raise ValueError("asset kind must be native or frames")
+        if (
+            not isinstance(package_digest, str)
+            or any(payload['envelope'].package_digest != package_digest for payload in payloads)
+            or any(payload['envelope'].key_id != first.key_id for payload in payloads)
+            or any(bytes(payload['envelope'].signed_index) != bytes(first.signed_index) for payload in payloads)
+            or any(bytes(payload['envelope'].signature) != bytes(first.signature) for payload in payloads)
+            or any(payload['envelope'].kind != kind for payload in payloads)
+        ):
+            raise ValueError("receiver verification envelopes do not describe one signed package")
+        return payloads
+
+    @staticmethod
+    def _probe_present(result: Any) -> bool:
+        if not isinstance(result, dict):
+            raise RuntimeError("receiver probe returned no status")
+        result_code = int(result.get('receiver_last_result') or 0)
+        if result_code == 1:
+            return True
+        if result_code == 15:
+            return False
+        raise RuntimeError(f"receiver probe failed with result {result_code}")
+
+    @staticmethod
+    def _retry(operation, retries: int = 3):
+        last_error = None
+        for _attempt in range(max(1, retries)):
+            try:
+                return operation()
+            except Exception as exc:
+                last_error = exc
+        raise last_error
+
+    @staticmethod
+    def _require_ok(result: Any, operation: str):
+        if not isinstance(result, dict) or 'receiver_last_result' not in result:
+            raise RuntimeError(f"receiver {operation} returned no status")
+        code = int(result.get('receiver_last_result') or 0)
+        if code != 1:
+            raise RuntimeError(f"receiver {operation} failed with result {code}")
+        return result
+
+    @classmethod
+    def _require_abort_complete(cls, result: Any):
+        status = cls._require_ok(result, 'asset abort')
+        if ('receiver_upload_state' not in status
+                or 'receiver_display_mode' not in status):
+            raise RuntimeError("receiver asset abort returned incomplete status")
+        upload_state = int(status['receiver_upload_state'])
+        display_mode = int(status['receiver_display_mode'])
+        if upload_state != 0 or display_mode == 3:
+            raise RuntimeError(
+                "receiver asset abort did not leave upload idle and maintenance mode"
+            )
+        return status
+
+    def _capability_report(
+        self, asset: Dict[str, Any], *, require_parameters: bool = False
+    ) -> Dict[str, Any]:
+        kind = asset.get('kind')
+        if kind not in ('native', 'frames'):
+            raise ValueError("asset kind must be native or frames")
+        kind_capability = CAPABILITY_FRAME_TRACK if kind == 'frames' else CAPABILITY_NATIVE
+        required = CAPABILITY_SIGNED_PACKAGES | CAPABILITY_ASSET_UPLOAD | kind_capability
+        if require_parameters:
+            required |= CAPABILITY_TYPED_PARAMETERS
+        devices = []
+        supported = True
+        # Status reads use the same SPI transport as frames and commands. Keep
+        # the report atomic even when a future caller does not already hold the
+        # operation lock.
+        with self._operation_lock():
+            for index, device in enumerate(self.devices):
+                try:
+                    status = device.query_receiver_status()
+                    if not isinstance(status, dict):
+                        raise TypeError("receiver status is not an object")
+                    version = int(status.get('receiver_status_version', 0) or 0)
+                    capabilities = int(status.get('receiver_capabilities', 0) or 0)
+                    receiver_logical_device = status.get('receiver_logical_device')
+                except Exception as exc:
+                    status = {'error': str(exc)}
+                    version = 0
+                    capabilities = 0
+                    receiver_logical_device = None
+                missing = required & ~capabilities
+                identity_valid = bool(
+                    capabilities & CAPABILITY_LOGICAL_DEVICE_IDENTITY
+                    and receiver_logical_device == index
                 )
-                for device_ids in self._devices_by_bus.values()
-            ]
-            for future in futures:
-                future.result()
-        else:
-            for device_ids in self._devices_by_bus.values():
-                self._send_bus_partial(device_ids, device_frames, device_ranges)
-        self._logical_frames_sent += 1
+                device_supported = version >= 3 and missing == 0 and identity_valid
+                supported = supported and device_supported
+                devices.append({
+                    'logical_device': index,
+                    'status_version': version,
+                    'capabilities': capabilities,
+                    'required_capabilities': required,
+                    'missing_capabilities': missing,
+                    'receiver_logical_device': receiver_logical_device,
+                    'identity_valid': identity_valid,
+                    'supported': device_supported,
+                    **({'error': status['error']} if 'error' in status else {}),
+                })
+        return {'supported': supported, 'required_capabilities': required, 'devices': devices}
+
+    def _record_runtime_status(
+        self, state: str, operation: str, *, error: Optional[str] = None,
+        devices: Optional[List[Dict[str, Any]]] = None,
+        command_errors: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        status: Dict[str, Any] = {
+            'state': state, 'operation': operation, 'error': error,
+        }
+        if devices is not None:
+            status['devices'] = devices
+        if command_errors:
+            status['command_errors'] = command_errors
+        self._firmware_runtime_state = state
+        self._firmware_runtime_status = status
+        self._firmware_install_status['runtime'] = dict(status)
+
+    def _reconcile_stopped_receivers(
+        self, operation: str, expected_digests: List[str],
+        command_errors: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Clear local playback state only after all receivers prove stopped."""
+        receiver_states = []
+        unanimous = True
+        for index, device in enumerate(self.devices):
+            try:
+                status = device.query_receiver_status()
+                if not isinstance(status, dict):
+                    raise TypeError("receiver status is not an object")
+                mode = int(status.get('receiver_display_mode', -1))
+                digest = status.get('receiver_active_digest')
+                stopped = mode != 2 and digest is None
+                receiver_states.append({
+                    'logical_device': index,
+                    'display_mode': mode,
+                    'active_digest': digest,
+                    'expected_digest': (
+                        expected_digests[index]
+                        if index < len(expected_digests) else None
+                    ),
+                    'stopped': stopped,
+                })
+                unanimous = unanimous and stopped
+            except Exception as exc:
+                receiver_states.append({
+                    'logical_device': index, 'stopped': False,
+                    'error': str(exc),
+                })
+                unanimous = False
+
+        if unanimous:
+            self._firmware_active = False
+            self._active_payload_digests = []
+            self._firmware_parameters = {}
+            self._record_runtime_status(
+                'stopped', operation, devices=receiver_states,
+                command_errors=command_errors,
+            )
+            return True
+
+        # Conservatively retain the requested identity. A subsequent host frame
+        # will retry the stop instead of assuming ownership from an incomplete
+        # or contradictory status snapshot.
+        self._firmware_active = True
+        if expected_digests:
+            self._active_payload_digests = list(expected_digests)
+        self._record_runtime_status(
+            'degraded', operation,
+            error='could not prove that every receiver stopped local playback',
+            devices=receiver_states, command_errors=command_errors,
+        )
+        return False
+
+    def _require_capabilities(
+        self, asset: Dict[str, Any], *, require_parameters: bool = False
+    ) -> Dict[str, Any]:
+        report = self._capability_report(asset, require_parameters=require_parameters)
+        if not report['supported']:
+            self._firmware_install_status = {
+                'state': 'unsupported', 'progress': 0.0,
+                'error': 'one or more receivers lack required firmware-animation capabilities',
+                'capability_report': report,
+            }
+            raise RuntimeError(self._firmware_install_status['error'])
+        return report
+
+    def install_firmware_asset(self, asset: Dict[str, Any], retries: int = 3) -> Dict[str, Any]:
+        """Install every missing device payload while freezing the last frame."""
+        if not isinstance(asset, dict):
+            raise ValueError("asset descriptor must be an object")
+        payloads = self._validated_asset_payloads(asset)
+        with self._operation_lock():
+            capability_report = self._require_capabilities(asset)
+            prior_firmware = self._firmware_active
+            self._firmware_install_status = {
+                'state': 'probing', 'progress': 0.0, 'error': None,
+                'capability_report': capability_report,
+            }
+            installed = []
+            skipped = []
+            rollback_candidates = []
+            begun_candidates = []
+            try:
+                missing = []
+                for index, (device, payload) in enumerate(zip(self.devices, payloads)):
+                    probe = self._retry(lambda d=device, p=payload: d.asset_probe(p['digest']), retries)
+                    if self._probe_present(probe):
+                        skipped.append(index)
+                    else:
+                        missing.append(index)
+
+                total_bytes = sum(len(payloads[index]['data']) for index in missing)
+                sent_bytes = 0
+                self._firmware_install_status['state'] = 'uploading'
+                for index in missing:
+                    device = self.devices[index]
+                    payload = payloads[index]
+                    data = payload['data']
+                    # The begin acknowledgement can be lost after the receiver
+                    # enters maintenance, so treat it as possibly begun before
+                    # issuing the command.
+                    begun_candidates.append(index)
+                    self._require_ok(
+                        device.asset_begin(payload['envelope']), 'asset begin'
+                    )
+                    offset = 0
+                    max_chunk = int(device.MAX_ASSET_CHUNK_BYTES)
+                    max_chunk = min(4089, max(1, max_chunk))
+                    while offset < len(data):
+                        chunk = data[offset:offset + max_chunk]
+                        self._retry(
+                            lambda d=device, o=offset, c=chunk: self._require_ok(
+                                d.asset_chunk(o, c), 'asset chunk'
+                            ), retries
+                        )
+                        offset += len(chunk)
+                        sent_bytes += len(chunk)
+                        self._firmware_install_status['progress'] = (
+                            sent_bytes / total_bytes if total_bytes else 1.0
+                        )
+                    rollback_candidates.append(index)
+                    self._require_ok(device.asset_commit(payload['digest']), 'asset commit')
+                    installed.append(index)
+
+                self._firmware_install_status = {
+                    'state': 'ready', 'progress': 1.0, 'error': None,
+                    'installed_devices': installed, 'skipped_devices': skipped,
+                    'capability_report': capability_report,
+                }
+                return dict(self._firmware_install_status)
+            except Exception as exc:
+                aborted = []
+                abort_failed = []
+                for index in reversed(begun_candidates):
+                    try:
+                        self._require_abort_complete(
+                            self.devices[index].asset_abort()
+                        )
+                        aborted.append(index)
+                    except Exception as abort_exc:
+                        abort_failed.append({
+                            'logical_device': index, 'error': str(abort_exc),
+                        })
+                removed = []
+                rollback_failed = []
+                for index in reversed(rollback_candidates):
+                    try:
+                        self._require_ok(
+                            self.devices[index].asset_remove(payloads[index]['digest']),
+                            'rollback remove',
+                        )
+                        removed.append(index)
+                    except Exception as rollback_exc:
+                        rollback_failed.append({
+                            'logical_device': index, 'error': str(rollback_exc),
+                        })
+                remaining = []
+                verification_failed = []
+                # A successful remove acknowledgement is not enough to claim
+                # transactional rollback. Probe every cache entry that might
+                # have been published, including the receiver whose commit
+                # acknowledgement may have been lost.
+                for index in reversed(rollback_candidates):
+                    try:
+                        probe = self._retry(
+                            lambda i=index: self.devices[i].asset_probe(
+                                payloads[i]['digest']
+                            ),
+                            retries,
+                        )
+                        if self._probe_present(probe):
+                            remaining.append(index)
+                    except Exception as verify_exc:
+                        verification_failed.append({
+                            'logical_device': index, 'error': str(verify_exc),
+                        })
+                self._firmware_install_status.update(
+                    state='retry', error=str(exc),
+                    rollback={
+                        'abort_attempted_devices': list(reversed(begun_candidates)),
+                        'aborted_devices': aborted,
+                        'abort_failed_devices': abort_failed,
+                        'upload_abort_complete': not abort_failed,
+                        'attempted_devices': list(reversed(rollback_candidates)),
+                        'committed_devices': list(installed),
+                        'removed_devices': removed,
+                        'failed_devices': rollback_failed,
+                        'remaining_devices': remaining,
+                        'verification_failed_devices': verification_failed,
+                        'verified_absent': not remaining and not verification_failed,
+                        'partial_cache_publication': bool(
+                            remaining or verification_failed
+                        ),
+                    },
+                )
+                raise
+            finally:
+                # Maintenance commands can displace receiver-local playback.
+                # Restore it after install-only success or failure; streamed host
+                # playback resumes naturally when this lock is released.
+                if prior_firmware:
+                    for device in self.devices:
+                        try:
+                            self._require_ok(
+                                device.restart_firmware_animation(),
+                                'animation restart',
+                            )
+                        except Exception:
+                            pass
+
+    def start_firmware_animation(self, asset: Dict[str, Any], parameters=None) -> bool:
+        """Verify all caches first, then start devices in deterministic order."""
+        payloads = self._validated_asset_payloads(asset)
+        with self._operation_lock():
+            try:
+                self._require_capabilities(
+                    asset, require_parameters=bool(parameters)
+                )
+            except RuntimeError:
+                return False
+            for device, payload in zip(self.devices, payloads):
+                if not self._probe_present(device.asset_probe(payload['digest'])):
+                    return False
+            try:
+                for index, (device, payload) in enumerate(zip(self.devices, payloads)):
+                    self._require_ok(device.start_firmware_animation(
+                        payload['digest'], index * self.strips_per_device, parameters or {}
+                    ), 'animation start')
+            except Exception as exc:
+                command_errors = []
+                for index, device in enumerate(self.devices):
+                    try:
+                        self._require_ok(
+                            device.stop_firmware_animation(), 'animation stop'
+                        )
+                    except Exception as stop_exc:
+                        command_errors.append({
+                            'logical_device': index, 'error': str(stop_exc),
+                        })
+                self._active_payload_digests = [
+                    payload['digest'] for payload in payloads
+                ]
+                self._firmware_parameters = dict(parameters or {})
+                self._reconcile_stopped_receivers(
+                    'start_rollback', self._active_payload_digests,
+                    command_errors=command_errors,
+                )
+                self._firmware_runtime_status['start_error'] = str(exc)
+                self._firmware_install_status['runtime'] = dict(
+                    self._firmware_runtime_status
+                )
+                return False
+            self._active_payload_digests = [payload['digest'] for payload in payloads]
+            self._firmware_parameters = dict(parameters or {})
+            self._firmware_active = True
+            self._record_runtime_status('active', 'start')
+            return True
+
+    def adopt_firmware_animation(
+        self, asset: Dict[str, Any], parameters: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Adopt retained playback only when every receiver reports the exact asset."""
+        payloads = self._validated_asset_payloads(asset)
+        with self._operation_lock():
+            try:
+                self._require_capabilities(asset, require_parameters=bool(parameters))
+            except RuntimeError:
+                return False
+            for device, payload in zip(self.devices, payloads):
+                try:
+                    status = device.query_receiver_status()
+                except Exception:
+                    return False
+                if (
+                    not isinstance(status, dict)
+                    or int(status.get('receiver_display_mode', -1)) != 2
+                    or status.get('receiver_active_digest') != payload['digest']
+                    or int(status.get('receiver_quarantine_state', 0) or 0) != 0
+                ):
+                    return False
+            self._active_payload_digests = [payload['digest'] for payload in payloads]
+            self._firmware_parameters = dict(parameters or {})
+            self._firmware_active = True
+            self._record_runtime_status('active', 'adopt')
+            return True
+
+    def stop_firmware_animation(self) -> bool:
+        with self._operation_lock():
+            expected_digests = list(self._active_payload_digests)
+            command_errors = []
+            for index, device in enumerate(self.devices):
+                try:
+                    self._require_ok(
+                        device.stop_firmware_animation(), 'animation stop'
+                    )
+                except Exception as exc:
+                    command_errors.append({
+                        'logical_device': index, 'error': str(exc),
+                    })
+            return self._reconcile_stopped_receivers(
+                'stop', expected_digests, command_errors=command_errors,
+            )
+
+    def restart_firmware_animation(self) -> bool:
+        with self._operation_lock():
+            for device in self.devices:
+                self._require_ok(
+                    device.restart_firmware_animation(), 'animation restart'
+                )
+            self._firmware_active = True
+            self._record_runtime_status('active', 'restart')
+            return True
+
+    def update_firmware_parameters(self, parameters: Dict[str, Any]) -> bool:
+        with self._operation_lock():
+            if not self._firmware_active:
+                return False
+            previous = dict(self._firmware_parameters)
+            updated = []
+            try:
+                for device in self.devices:
+                    self._require_ok(
+                        device.update_firmware_parameters(parameters),
+                        'parameter update',
+                    )
+                    updated.append(device)
+            except Exception:
+                rollback_errors = []
+                for index in reversed(range(len(updated))):
+                    device = updated[index]
+                    try:
+                        self._require_ok(
+                            device.update_firmware_parameters(previous),
+                            'parameter rollback',
+                        )
+                    except Exception as rollback_exc:
+                        rollback_errors.append({
+                            'logical_device': index,
+                            'error': str(rollback_exc),
+                        })
+                self._firmware_parameters = previous
+                if rollback_errors:
+                    self._record_runtime_status(
+                        'degraded', 'parameter_rollback',
+                        error='one or more receivers rejected parameter rollback',
+                        command_errors=rollback_errors,
+                    )
+                else:
+                    self._record_runtime_status(
+                        'active', 'parameter_rollback',
+                        error='parameter update failed and was rolled back',
+                    )
+                return False
+            self._firmware_parameters = dict(parameters)
+            self._record_runtime_status('active', 'parameter_update')
+            return True
+
+    def remove_firmware_asset(self, asset: Dict[str, Any]) -> bool:
+        payloads = self._validated_asset_payloads(asset)
+        digests = [payload['digest'] for payload in payloads]
+        if (self._firmware_active
+                and any(d in self._active_payload_digests for d in digests)):
+            raise ValueError("cannot delete the active firmware animation")
+        with self._operation_lock():
+            for device, digest in zip(self.devices, digests):
+                self._require_ok(device.asset_remove(digest), 'asset remove')
+        return True
     
     def set_pixel(self, pixel: int, r: int, g: int, b: int):
         """Set a single pixel color"""
@@ -408,6 +974,10 @@ class MultiDeviceLEDController:
                 'avg_frame_duration_ms': avg_frame_ms,
                 'spi_speed_hz': device_stats[0].get('spi_speed_hz') if device_stats else None,
                 'spi_mode': device_stats[0].get('spi_mode') if device_stats else None,
+                'firmware_install': dict(self._firmware_install_status),
+                'firmware_active': self._firmware_active,
+                'firmware_runtime_state': self._firmware_runtime_state,
+                'firmware_runtime': dict(self._firmware_runtime_status),
             }
         }
     
