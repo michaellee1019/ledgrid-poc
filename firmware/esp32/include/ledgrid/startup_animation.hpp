@@ -10,9 +10,9 @@ namespace ledgrid {
 constexpr std::uint16_t kStartupRainbowPeriodPixels = 32;
 constexpr std::uint32_t kStartupRainbowCycleUs = 1000000;
 
-// Renders a full-saturation rainbow into the strip-major RGB frame used by the
-// receiver. Time advances the field toward increasing strip and LED indices.
-// The frame repeats exactly once per second.
+// Invokes the compiled startup-rainbow native ABI module using safe default
+// parameters. It remains independent of the asset cache and trust store, so it
+// is available as the boot, missing-asset, and quarantine fallback.
 bool render_startup_rainbow(
     std::uint64_t elapsed_us,
     std::uint8_t strip_count,

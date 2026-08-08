@@ -1,0 +1,14 @@
+[
+  {
+    "metadata": "firmware_animations/examples/startup_rainbow/metadata.json",
+    "source": "firmware/esp32/src/native_examples/startup_rainbow.cpp"
+  },
+  {
+    "metadata": "firmware_animations/examples/aurora_ribbons/metadata.json",
+    "source": "firmware/esp32/src/native_examples/aurora_ribbons.cpp"
+  },
+  {
+    "metadata": "firmware_animations/examples/meteor_shower/metadata.json",
+    "source": "firmware/esp32/src/native_examples/meteor_shower.cpp"
+  }
+]
