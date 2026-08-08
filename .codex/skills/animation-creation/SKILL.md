@@ -223,15 +223,41 @@ mode transitions before defining its file format or protocol.
   lifecycle need to be shared.
 - Separate the one-time loader firmware from uploadable animation payloads.
   Retain a compiled fallback that can render after boot, missing assets, invalid
-  packages, or a module crash.
+  packages, or a module crash. When the fallback is also an example native
+  animation, compile and invoke its ABI callback table directly from the
+  baseline image rather than duplicating its renderer or routing recovery
+  through the asset cache, dynamic loader, or trust store.
 - Prefer a stable versioned C ABI for native code. Export C entrypoints even when
   authors use C++, pass geometry and global coordinate offsets explicitly, give
   the module a caller-owned output buffer, and keep driver/peripheral access out
-  of the supported API. Pin the target, loader, SDK, and toolchain in packages.
+  of the supported API. Define callback return semantics in both authoring and
+  receiver headers (`0` success is the ledgrid v1 contract), and regression-test
+  them through the real host preview and receiver call sites. Pin the target,
+  loader, SDK, and toolchain in packages.
+- For ledgrid ABI v1, obtain bounded RNG, HSV/RGB565 conversion, and sine/cosine
+  through the passed helper table. Standalone modules must have no undefined
+  imports; keep the verifier allowlist empty unless a later ABI deliberately
+  adds and registers a named runtime symbol on both target and host preview.
+- Keep one canonical source per native example. It may expose a unique named
+  entrypoint when compiled into the baseline firmware and the standard
+  `ledgrid_animation_v1` symbol when built as a standalone module; compile both
+  forms in automated gates. Do not maintain a separate preview implementation
+  or a second copy of the startup renderer.
+- Do not infer a legacy protocol requirement for a newly introduced backend.
+  When the project explicitly chooses a clean receiver cutover, delete old
+  parser/encoder/version branches and their compatibility tests, require every
+  receiver to move together, and document the cutover as an operating
+  constraint. Compatibility work is a product decision, not a default tax.
 - Treat native machine code as trusted but not sandboxed. Require signed
   production packages, keep private signing keys off dashboards and receivers,
   reject unknown keys/ABIs/imports/targets before activation, and make any
   unsigned development mode conspicuous in runtime status.
+- Provision production receivers from stable hardware identities, not mutable
+  tty discovery. Keep the authoring private key in ignored workstation state,
+  deploy one common public key, build each logical receiver identity explicitly,
+  and require identity plus signed/upload/kind capability readback before any
+  package I/O. A successful flash command without this readback is not an
+  accepted receiver-animation deployment.
 - Keep the host library authoritative and receiver storage disposable. Probe by
   content digest, avoid rewriting an existing asset, reserve filesystem space,
   and evict only inactive cache entries. A replaced or erased receiver must be
@@ -240,6 +266,17 @@ mode transitions before defining its file format or protocol.
   digest, signature, geometry, and device track, then activate. A partial upload
   must not produce a mixed wall. Write temporary files and rename only after
   verification; make chunks ordered, retryable, and idempotent.
+- Give begun uploads an idempotent abort that deletes staging and restores the
+  pre-maintenance display mode. On a host-side failure, abort every receiver
+  whose begin may have executed before removing and re-probing possible
+  publications; require status proof of idle upload and non-maintenance display
+  before accepting an abort acknowledgement, and report abort/residue failures
+  explicitly.
+- Reconcile partial start, stop, restart, and parameter failures from fresh
+  receiver mode/digest status. Clear host identity only after unanimous stopped
+  proof; otherwise retain enough requested identity to keep later host-frame
+  takeover fail-closed and expose a degraded state instead of claiming the wall
+  is coherent.
 - Model playback mode explicitly across host animation, receiver animation,
   painter/manual output, and idle. Define which commands stop local playback,
   how a host frame takes control again, what continues across a Pi disconnect,
@@ -247,7 +284,10 @@ mode transitions before defining its file format or protocol.
 - Preserve one control authority. Package manifests own parameter schemas and
   defaults; the dashboard validates and persists them; receivers consume a
   compact typed representation. Unsupported global controls must be hidden or
-  reported as unsupported rather than silently ignored.
+  reported as unsupported rather than silently ignored. Treat
+  `scaled_elapsed_us` as already containing the global time scale; apply an
+  animation's own speed parameter once inside the module and do not multiply
+  the global tempo a second time.
 - Generate previews during trusted packaging. Do not execute an uploaded target
   binary in the dashboard process merely to obtain a thumbnail. Build native
   sources against a host preview harness and decode frame assets with the same
@@ -255,13 +295,33 @@ mode transitions before defining its file format or protocol.
 - Bound decoder and module work. Validate every count, offset, run length, frame
   duration, and output size before touching the frame buffer. Track render/decode
   p95, p99, maximum, missed cadence, resets, and watchdog events on the actual
-  receiver geometry.
+  receiver geometry. For each checked-in native example, compile a trusted host
+  library, render all four global offsets at exact 8x138 local geometry, exercise
+  default and maximum-work controls, verify motion/nonblank/distinct frame
+  fingerprints, and enforce a desktop p95 proxy. Report that proxy separately
+  from ESP32 hardware timing and keep the physical gate open until measured.
 - Make crash recovery deterministic. Record the active content digest before
   execution, use reset reason plus that marker to quarantine a crashing module,
   fall back visibly, and require an explicit operator action before retrying it.
 - State synchronization scope honestly. When shared clocks, scheduled starts,
   or common v-sync are deferred, start receivers in a deterministic order and
   measure skew and drift for diagnosis without claiming strict synchronization.
+- Keep software, provisioning, and physical readiness as separate gates. A
+  portable receiver suite and target cross-build do not prove that deployment
+  injects trust keys or device identities, and a desktop host-preview benchmark
+  does not prove receiver timing, crash recovery, or soak stability.
+- Diagnose one-way SPI behavior by direction. Ordinary streamed frames are
+  host-to-receiver MOSI traffic, while receiver identity, capabilities,
+  operation acknowledgement, and timing status return over MISO. Visible or
+  accepted streamed frames therefore do not prove that signed package control
+  can work. If responses exactly equal transmitted bytes, repeat a stopped-
+  service sweep across speeds, packet lengths, random payloads, and CS-disabled/
+  high cases, compare a known-good bus, then isolate MISO and MOSI with power
+  removed. Exact TX echo independent of CS is electrical coupling/short evidence,
+  not a reason to relax protocol parsing or readiness. Perform live sweeps or
+  GPIO remux/drive tests only when hardware operation is explicitly in scope;
+  record and restore the service state, and never drive or continuity-test a net
+  against another powered output.
 
 For compressed frame tracks, prefer a bounded forward decoder with periodic or
 initial keyframes and explicit frame durations. Measure package size per receiver,
@@ -373,6 +433,10 @@ Cover as applicable:
   geometry, traversal paths, truncated tracks, and out-of-bounds runs before
   activation; interrupted uploads resume or restart without exposing partial
   files.
+- Native examples compile in standalone host-preview form and in the production
+  Xtensa build; callbacks use the documented success code, reject bad ABI and
+  undersized buffers, preserve output canaries, render motion at every global
+  strip offset, and produce distinct default/stress fingerprints.
 - Receiver-local playback accepts live typed parameters, reports its actual mode
   and active digest, survives the intended host disconnect/restart cases, falls
   back after failure, and returns cleanly to streamed host frames.
