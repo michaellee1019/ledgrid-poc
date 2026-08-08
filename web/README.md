@@ -19,11 +19,23 @@ API endpoints:
 - GET /api/stats
 - GET /api/metrics
 - GET /api/hardware/stats
-- POST /api/hole
+- `POST /api/hole` — random hole with `{}`, or positioned hole with `{"x": 7.5, "y": 42, "radius": 1.5}`
 - GET /api/frame
 - GET /api/preview/<animation_name>
 - POST /api/preview/<animation_name>/with_params
 - POST /api/parameters
-- POST /api/upload
+- POST /api/painter/updates
+- POST /api/painter/frame
+- POST /api/painter/clear
+- GET /api/painter/masks
+- POST /api/painter/masks
+- GET /api/painter/presets
+- GET /api/painter/presets/<preset_id>
+- POST /api/painter/presets
+- GET /api/animations/<animation_name>/presets
+- GET /api/animations/<animation_name>/presets/<preset_id>
+- POST /api/animations/<animation_name>/presets
+- POST /api/animations/<animation_name>/presets/<preset_id>/apply
+- DELETE /api/animations/<animation_name>/presets/<preset_id>
 - POST /api/reload/<animation_name>
 - POST /api/refresh

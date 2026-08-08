@@ -1,8 +1,15 @@
-# Tools
+# Operational tools
 
-Purpose: operational scripts and utilities outside the runtime path.
+Tools are executable support code outside the application runtime:
 
-Subdirectories:
-- diagnostics/: hardware tests and performance checks
-- deployment/: deployment helpers
-- dev/: developer-only scripts and demos
+- `benchmarks/`: headless render, live animation, receiver, and physical output
+  acceptance checks
+- `deployment/`: Pi setup, application sync, service control, preset retrieval,
+  and firmware flashing
+- `diagnostics/`: SPI tests, remote health collection, payload inspection, and
+  offline simulation helpers
+
+Application entry points belong in `scripts/`; reusable Python code belongs in
+the package that owns it. Do not add one-off migration, rescue, or historical
+debug scripts here. If a diagnostic remains useful, give it stable CLI help and
+exercise its reusable logic from tests.

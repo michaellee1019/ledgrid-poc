@@ -7,14 +7,19 @@ Handles animation switching, parameter updates, and frame generation.
 """
 
 import hashlib
+import math
 import time
 import threading
 import traceback
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any, List
-from pathlib import Path
 
-from animation.core import AnimationBase, StatefulAnimationBase, AnimationPluginLoader
+import numpy as np
+
+from animation.core import AnimationBase, RenderedFrame, StatefulAnimationBase, AnimationPluginLoader
+from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
+from animation.core.plant_awareness import PlantModifierState
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import encode_frame_data, FRAME_ENCODING_NAME
 
@@ -91,25 +96,20 @@ class PreviewLEDController:
 class AnimationManager:
     """Manages animation playback and plugin system"""
 
-    # Only ship with a small, known-good set of animations
-    ALLOWED_PLUGINS = {
-        "rainbow",
-        "emoji",
-        "emoji_arranger",
-        "sparkle",
-        "fluid_tank",
-        "flame_burst",
-        "simple_test",
-        "tetris",
-        "christmas_tree",
-        "conway_life",
-        "space_invaders",
-        "spiral_single",
-        "dashboard",
-    }
+    # The checked-in package manifests are the single source of truth. Keeping
+    # this public set preserves callers that inspect the allowlist without
+    # duplicating a second registry in manager.py.
+    ALLOWED_PLUGINS = set(AnimationPluginLoader.shipped_plugin_ids())
     
+    DEFAULT_ANIMATION = "sparkle"
+
     def __init__(self, controller: LEDController, plugins_dir: Optional[str] = None,
-                 animation_speed_scale: float = 1.0):
+                 animation_speed_scale: float = DEFAULT_ANIMATION_SPEED_SCALE,
+                 plant_aware: bool = DEFAULT_PLANT_AWARE,
+                 plant_modifiers: Optional[Dict[str, Any]] = None,
+                 default_animation: Optional[str] = None,
+                 default_animation_config: Optional[Dict[str, Any]] = None,
+                 auto_start: bool = True):
         """
         Initialize animation manager
         
@@ -117,28 +117,45 @@ class AnimationManager:
             controller: LED controller instance
             plugins_dir: Directory containing animation plugins
             animation_speed_scale: Multiplier applied to each animation's speed parameter at start
+            plant_aware: Global plant-aware state applied to every animation
+            default_animation: Animation to auto-start on init (None = use DEFAULT_ANIMATION)
+            default_animation_config: Parameters to apply to the default animation
+            auto_start: Whether to start the default animation during construction
         """
         self.controller = controller
         self.plugin_loader = AnimationPluginLoader(
             plugins_dir, allowed_plugins=self.ALLOWED_PLUGINS
         )
+        self._default_animation = default_animation or self.DEFAULT_ANIMATION
+        self._default_animation_config = default_animation_config or {}
         
         # Animation state
         self.current_animation: Optional[AnimationBase] = None
         self.current_animation_name: Optional[str] = None
         self.current_animation_hash: Optional[str] = None
         self.is_running = False
-        self.target_fps = 150
+        # 200 Hz stays below the physical ceiling of a 138-pixel
+        # WS2812 strip while leaving headroom for frame generation and transfer.
+        self.target_fps = 200
         self.frame_count = 0
+        self.frames_presented = 0
+        self.unchanged_frames_skipped = 0
         self.start_time = 0.0
         self.animation_speed_scale = animation_speed_scale
+        self.plant_modifier_state = (
+            PlantModifierState.from_payload(plant_modifiers)
+            if plant_modifiers is not None
+            else PlantModifierState.from_legacy(bool(plant_aware))
+        )
+        self._legacy_plant_aware_bridge = plant_modifiers is None
+        self.plant_aware = bool(self.plant_modifier_state.active)
         
         # Threading
         self.animation_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
         
         # Performance tracking
-        self.frame_timestamps = deque(maxlen=240)  # ~4 seconds at 60 FPS
+        self.frame_timestamps = deque(maxlen=1000)  # 5 seconds at up to 200 FPS
         self.perf_samples = deque(maxlen=300)
         self.perf_lock = threading.Lock()
         self._last_perf_sample: Dict[str, float] = {}
@@ -151,6 +168,10 @@ class AnimationManager:
         # Current frame data for web interface
         self.current_frame_data = []
         self.frame_data_lock = threading.Lock()
+        self.painter_lock = threading.Lock()
+        self.painter_active = False
+        self.painter_frame_data = [(0, 0, 0)] * self.controller.total_leds
+        self.painter_updated_at = 0.0
 
         # Preview controller avoids hitting the real SPI device during previews
         self.preview_controller = PreviewLEDController(
@@ -159,8 +180,13 @@ class AnimationManager:
             getattr(self.controller, 'debug', False)
         )
 
-        # Load all plugins on startup
+        # Load all plugins on startup and auto-start the default animation
         self.refresh_plugins()
+        if auto_start and self._default_animation:
+            if self.start_animation(self._default_animation, self._default_animation_config):
+                print(f"▶️  Auto-started default animation: {self._default_animation}")
+            else:
+                print(f"⚠️  Could not auto-start default animation: {self._default_animation}")
     
     def refresh_plugins(self) -> Dict[str, Any]:
         """Reload all animation plugins"""
@@ -187,6 +213,56 @@ class AnimationManager:
         if scaled_speed <= 0:
             scaled_speed = base_speed
         self.current_animation.update_parameters({'speed': scaled_speed})
+
+    def set_animation_speed_scale(self, speed_scale: float) -> float:
+        """Apply a live global animation speed scalar.
+
+        The active animation already contains the previously scaled value, so
+        adjust it by the ratio between the new and old scales. Preset-authored
+        speed values therefore remain independent of the dashboard tempo knob.
+        """
+        requested = float(speed_scale)
+        if not math.isfinite(requested) or requested <= 0:
+            raise ValueError("animation speed scale must be a positive finite number")
+
+        previous = self.animation_speed_scale
+        self.animation_speed_scale = requested
+        if (
+            self.current_animation
+            and hasattr(self.current_animation, "params")
+            and 'speed' in self.current_animation.params
+            and previous > 0
+        ):
+            current_speed = self.current_animation.params['speed']
+            self.current_animation.update_parameters({
+                'speed': current_speed * (requested / previous)
+            })
+        return self.animation_speed_scale
+
+    def set_plant_aware(self, enabled: bool) -> bool:
+        """Compatibility boundary translating the old global boolean."""
+        state = PlantModifierState.from_legacy(enabled)
+        self.plant_modifier_state = state
+        self.plant_aware = bool(state.active)
+        self._legacy_plant_aware_bridge = True
+        if self.current_animation:
+            self.current_animation.update_parameters({
+                'plant_aware': self.plant_aware,
+                'plant_modifiers': state.to_dict(),
+            })
+        return self.plant_aware
+
+    def set_plant_modifiers(self, state: Any) -> Dict[str, Any]:
+        """Validate and apply modifier authority live and to every future start."""
+        self.plant_modifier_state = PlantModifierState.from_payload(state)
+        self._legacy_plant_aware_bridge = False
+        self.plant_aware = bool(self.plant_modifier_state.active)
+        if self.current_animation:
+            self.current_animation.update_parameters({
+                'plant_aware': False,
+                'plant_modifiers': self.plant_modifier_state.to_dict(),
+            })
+        return self.plant_modifier_state.to_dict()
     
     def list_animations(self) -> List[Dict[str, Any]]:
         """Get list of available animations with metadata"""
@@ -214,7 +290,7 @@ class AnimationManager:
         """
         try:
             # Stop current animation if running
-            self.stop_animation()
+            self.stop_animation(clear_leds=True)
             
             # Get animation class
             animation_class = self.plugin_loader.get_plugin(animation_name)
@@ -223,7 +299,10 @@ class AnimationManager:
                 return False
             
             # Create animation instance
-            self.current_animation = animation_class(self.controller, config or {})
+            effective_config = dict(config or {})
+            effective_config['plant_aware'] = self.plant_aware if self._legacy_plant_aware_bridge else False
+            effective_config['plant_modifiers'] = self.plant_modifier_state.to_dict()
+            self.current_animation = animation_class(self.controller, effective_config)
             self.current_animation_name = animation_name
             self.current_animation_hash = self._compute_animation_hash(animation_name)
 
@@ -244,7 +323,12 @@ class AnimationManager:
             self.is_running = True
             self.stop_event.clear()
             self.frame_count = 0
+            self.frames_presented = 0
+            self.unchanged_frames_skipped = 0
             self.frame_timestamps.clear()
+            with self.perf_lock:
+                self.perf_samples.clear()
+                self._last_perf_sample = {}
             self.start_time = time.perf_counter()
 
             # Check if this is a stateful animation
@@ -264,8 +348,10 @@ class AnimationManager:
             traceback.print_exc()
             return False
     
-    def stop_animation(self):
-        """Stop current animation"""
+    def stop_animation(self, clear_leds: bool = True):
+        """Stop current animation or painter mode output."""
+        had_output = self.is_running or self.painter_active
+
         if self.is_running:
             self.is_running = False
             self.stop_event.set()
@@ -286,17 +372,28 @@ class AnimationManager:
             with self.frame_data_lock:
                 self.current_frame_data = []
 
-            # Clear LEDs
-            self.controller.clear()
-
             print("✓ Animation stopped")
-        
+
+        if self.painter_active:
+            self.painter_active = False
+            self.current_animation_name = None
+            self.frame_timestamps.clear()
+            with self.frame_data_lock:
+                self.current_frame_data = []
+            print("✓ Painter mode stopped")
+
         self.current_animation_hash = None
+
+        if clear_leds and had_output:
+            self.controller.clear()
     
     def update_animation_parameters(self, params: Dict[str, Any]) -> bool:
         """Update current animation parameters in real-time"""
         if self.current_animation:
             try:
+                params = dict(params)
+                params['plant_aware'] = self.plant_aware if self._legacy_plant_aware_bridge else False
+                params['plant_modifiers'] = self.plant_modifier_state.to_dict()
                 self.current_animation.update_parameters(params)
                 print(f"✓ Updated animation parameters: {params}")
                 return True
@@ -304,16 +401,159 @@ class AnimationManager:
                 print(f"✗ Failed to update parameters: {e}")
                 return False
         return False
+
+    @staticmethod
+    def _clamp_channel(value: Any) -> int:
+        """Clamp an arbitrary value to an RGB channel byte."""
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(255, parsed))
+
+    def _push_frame_to_controller(self, frame: List[Any]):
+        """Send a full frame immediately to the underlying controller."""
+        self.controller.set_all_pixels(frame)
+        inline_show = getattr(self.controller, "inline_show", False)
+        if not inline_show and hasattr(self.controller, "show"):
+            try:
+                self.controller.show()
+            except Exception:
+                pass
+
+    def _ensure_painter_frame_length(self):
+        """Resize painter buffer to match active controller geometry."""
+        total_pixels = self.controller.total_leds
+        with self.painter_lock:
+            frame = list(self.painter_frame_data)
+            if len(frame) < total_pixels:
+                frame.extend([(0, 0, 0)] * (total_pixels - len(frame)))
+            elif len(frame) > total_pixels:
+                frame = frame[:total_pixels]
+            self.painter_frame_data = frame
+
+    def _parse_painter_update(self, update: Any) -> Optional[tuple]:
+        """Parse supported painter update payload formats."""
+        index: Optional[int] = None
+        color_values: Optional[List[Any]] = None
+
+        if isinstance(update, dict):
+            if 'index' in update:
+                try:
+                    index = int(update.get('index'))
+                except (TypeError, ValueError):
+                    index = None
+            elif 'strip' in update and 'led' in update:
+                try:
+                    strip = int(update.get('strip'))
+                    led = int(update.get('led'))
+                    index = strip * self.controller.leds_per_strip + led
+                except (TypeError, ValueError):
+                    index = None
+
+            if isinstance(update.get('color'), (list, tuple)) and len(update['color']) >= 3:
+                color_values = list(update['color'][:3])
+            elif {'r', 'g', 'b'}.issubset(update.keys()):
+                color_values = [update.get('r'), update.get('g'), update.get('b')]
+        elif isinstance(update, (list, tuple)) and len(update) >= 4:
+            try:
+                index = int(update[0])
+            except (TypeError, ValueError):
+                index = None
+            color_values = [update[1], update[2], update[3]]
+
+        if index is None or color_values is None:
+            return None
+
+        return (
+            index,
+            (
+                self._clamp_channel(color_values[0]),
+                self._clamp_channel(color_values[1]),
+                self._clamp_channel(color_values[2]),
+            )
+        )
+
+    def set_painter_frame(self, frame_data: Optional[List[Any]]) -> bool:
+        """Replace the full painter frame and display it immediately."""
+        if self.is_running:
+            self.stop_animation(clear_leds=False)
+
+        frame = self._normalize_frame(frame_data)
+        with self.painter_lock:
+            self.painter_frame_data = list(frame)
+            self.painter_active = True
+            self.painter_updated_at = time.time()
+        with self.frame_data_lock:
+            self.current_frame_data = list(frame)
+
+        self._push_frame_to_controller(frame)
+        return True
+
+    def apply_painter_updates(self, updates: List[Any]) -> bool:
+        """Apply sparse painter pixel updates and display the result immediately."""
+        if not isinstance(updates, list) or not updates:
+            return False
+
+        if self.is_running:
+            self.stop_animation(clear_leds=False)
+
+        self._ensure_painter_frame_length()
+        total_pixels = self.controller.total_leds
+        changed = False
+
+        with self.painter_lock:
+            frame = list(self.painter_frame_data)
+            for update in updates:
+                parsed = self._parse_painter_update(update)
+                if not parsed:
+                    continue
+                index, color = parsed
+                if index < 0 or index >= total_pixels:
+                    continue
+                if frame[index] != color:
+                    frame[index] = color
+                    changed = True
+
+            if not changed:
+                return False
+
+            self.painter_frame_data = frame
+            self.painter_active = True
+            self.painter_updated_at = time.time()
+
+        with self.frame_data_lock:
+            self.current_frame_data = list(frame)
+
+        self._push_frame_to_controller(frame)
+        return True
+
+    def clear_painter_frame(self) -> bool:
+        """Clear all painter pixels to black and display the cleared frame."""
+        black_frame = [(0, 0, 0)] * self.controller.total_leds
+        return self.set_painter_frame(black_frame)
     
     def get_current_status(self) -> Dict[str, Any]:
         """Get current animation status and performance info"""
+        mode = 'animation' if self.is_running else ('painter' if self.painter_active else 'idle')
+        displayed_animation = self.current_animation_name if self.is_running else (
+            'frame_painter' if self.painter_active else None
+        )
+
         status = {
             'is_running': self.is_running,
-            'current_animation': self.current_animation_name,
+            'mode': mode,
+            'painter_active': self.painter_active,
+            'painter_updated_at': self.painter_updated_at if self.painter_active else None,
+            'current_animation': displayed_animation,
                 'frame_count': self.frame_count,
+                'frames_presented': self.frames_presented,
+                'unchanged_frames_skipped': self.unchanged_frames_skipped,
                 'uptime': (time.perf_counter() - self.start_time) if self.is_running else 0,
                 'target_fps': self.target_fps,
                 'animation_speed_scale': self.animation_speed_scale,
+                'plant_aware': self.plant_aware,
+                'plant_modifiers': self.plant_modifier_state.to_dict(),
                 'actual_fps': self._calculate_fps(),
                 'animation_hash': self.current_animation_hash,
                 'led_info': {
@@ -327,6 +567,12 @@ class AnimationManager:
         status['animation_stats'] = {}
         if self.current_animation:
             status['animation_info'] = self.current_animation.get_info()
+            status['plant_modifier_support'] = status['animation_info'].get(
+                'plant_modifier_support', []
+            )
+            status['unsupported_plant_modifiers'] = status['animation_info'].get(
+                'unsupported_plant_modifiers', []
+            )
             try:
                 stats = self.current_animation.get_runtime_stats()
                 if isinstance(stats, dict):
@@ -361,6 +607,16 @@ class AnimationManager:
                 print(f"⚠️ Failed to trigger hole: {exc}")
         return False
 
+    def trigger_hole(self, x: float, y: float, radius: Optional[float] = None):
+        """Request a puncture at an exact animation-grid coordinate."""
+        if not self.current_animation or not hasattr(self.current_animation, 'trigger_hole'):
+            return False
+        try:
+            return bool(self.current_animation.trigger_hole(x, y, radius))
+        except Exception as exc:
+            print(f"⚠️ Failed to trigger positioned hole: {exc}")
+            return False
+
     def _compute_animation_hash(self, animation_name: str) -> Optional[str]:
         path = self.plugin_loader.get_plugin_file(animation_name)
         if not path:
@@ -378,14 +634,24 @@ class AnimationManager:
     def get_current_frame(self) -> Dict[str, Any]:
         """Get current animation frame data for web rendering"""
         with self.frame_data_lock:
-            frame_data = list(self.current_frame_data)
+            raw = self.current_frame_data
+            if isinstance(raw, np.ndarray):
+                frame_data = raw.tolist()
+            else:
+                frame_data = list(raw)
 
         encoded_frame = encode_frame_data(frame_data)
+        mode = 'animation' if self.is_running else ('painter' if self.painter_active else 'idle')
+        displayed_animation = self.current_animation_name if self.is_running else (
+            'frame_painter' if self.painter_active else None
+        )
 
         return {
             'frame_data_encoded': encoded_frame,
             'frame_data_length': len(frame_data),
             'frame_encoding': FRAME_ENCODING_NAME if encoded_frame else None,
+            'mode': mode,
+            'painter_active': self.painter_active,
             'led_info': {
                 'total_leds': self.controller.total_leds,
                 'strip_count': self.controller.strip_count,
@@ -393,7 +659,7 @@ class AnimationManager:
             },
             'is_running': self.is_running,
             'frame_count': self.frame_count,
-            'current_animation': self.current_animation_name if self.is_running else None,
+            'current_animation': displayed_animation,
             'timestamp': time.time()
         }
 
@@ -411,7 +677,10 @@ class AnimationManager:
 
         try:
             # Create a temporary instance of the animation
-            temp_animation = animation_class(self.preview_controller, {})
+            temp_animation = animation_class(self.preview_controller, {
+                'plant_aware': self.plant_aware if self._legacy_plant_aware_bridge else False,
+                'plant_modifiers': self.plant_modifier_state.to_dict(),
+            })
 
             # Generate a sample frame
             if hasattr(temp_animation, 'generate_frame'):
@@ -431,6 +700,7 @@ class AnimationManager:
                     frame_data = temp_animation.get_current_colors()
 
             frame_data = self._normalize_frame(frame_data)
+            frame_data = temp_animation.apply_framework_plant_modifiers(frame_data)
 
             return {
                 'frame_data': frame_data,
@@ -478,7 +748,10 @@ class AnimationManager:
 
         try:
             # Create a temporary instance of the animation with custom parameters
-            temp_animation = animation_class(self.preview_controller, params)
+            effective_params = dict(params)
+            effective_params['plant_aware'] = self.plant_aware if self._legacy_plant_aware_bridge else False
+            effective_params['plant_modifiers'] = self.plant_modifier_state.to_dict()
+            temp_animation = animation_class(self.preview_controller, effective_params)
 
             # Generate a sample frame
             if hasattr(temp_animation, 'generate_frame'):
@@ -498,6 +771,7 @@ class AnimationManager:
                     frame_data = temp_animation.get_current_colors()
 
             frame_data = self._normalize_frame(frame_data)
+            frame_data = temp_animation.apply_framework_plant_modifiers(frame_data)
 
             return {
                 'frame_data': frame_data,
@@ -535,76 +809,158 @@ class AnimationManager:
 
     def _animation_loop(self):
         """Main animation loop running in separate thread"""
-        target_frame_time = 1.0 / max(1, int(self.target_fps) or 1)
+        inline_show = getattr(self.controller, "inline_show", False)
+        pending_present = None
 
-        while self.is_running and not self.stop_event.is_set():
-            loop_start = time.perf_counter()
-            generate_duration = 0.0
-            send_duration = 0.0
-            show_duration = 0.0
-            inline_show = getattr(self.controller, "inline_show", False)
+        # One presentation may overlap generation of the next frame. We resolve
+        # it before the animation can rotate back to the same one of its two
+        # reusable buffers, so ownership remains deterministic without copies.
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="led-present") as presenter:
+            while self.is_running and not self.stop_event.is_set():
+                loop_start = time.perf_counter()
+                generate_duration = 0.0
+                send_duration = 0.0
+                show_duration = 0.0
 
-            try:
-                if not self.current_animation:
-                    break
+                try:
+                    if not self.current_animation:
+                        break
 
-                # Generate frame
-                time_elapsed = loop_start - self.start_time
-                gen_start = time.perf_counter()
-                colors = self.current_animation.generate_frame(time_elapsed, self.frame_count)
-                frame = self._normalize_frame(colors)
-                generate_duration = time.perf_counter() - gen_start
+                    time_elapsed = loop_start - self.start_time
+                    gen_start = time.perf_counter()
+                    rendered = self.current_animation.generate_frame(time_elapsed, self.frame_count)
+                    changed = rendered.changed if isinstance(rendered, RenderedFrame) else True
+                    dirty_ranges = rendered.dirty_ranges if isinstance(rendered, RenderedFrame) else None
+                    frame = self._normalize_frame(rendered)
+                    refresh_pending = getattr(
+                        self.current_animation,
+                        'framework_plant_modifier_refresh_pending',
+                        None,
+                    )
+                    apply_framework = getattr(
+                        self.current_animation, 'apply_framework_plant_modifiers', None
+                    )
+                    framework_active = getattr(
+                        self.current_animation, 'framework_plant_modifiers_active', None
+                    )
+                    framework_refresh = bool(
+                        refresh_pending() if callable(refresh_pending) else False
+                    )
+                    if callable(apply_framework):
+                        frame = apply_framework(frame, changed=changed)
+                    if callable(framework_active) and framework_active():
+                        changed = changed or framework_refresh
+                        # Optical displacement can make a source pixel affect a
+                        # neighboring plant-region pixel, so plugin dirty ranges
+                        # are no longer a complete presentation description.
+                        dirty_ranges = None
+                    generate_duration = time.perf_counter() - gen_start
 
-                # Store frame data for web interface
-                with self.frame_data_lock:
-                    self.current_frame_data = frame
+                    with self.frame_data_lock:
+                        self.current_frame_data = frame
 
-                # Send to LEDs
-                send_start = time.perf_counter()
-                self.controller.set_all_pixels(frame)
-                send_duration = time.perf_counter() - send_start
+                    if pending_present is not None:
+                        completed = pending_present
+                        pending_present = None
+                        send_duration, show_duration = completed.result()
 
-                # Some controllers need an explicit show; skip if controller handles it internally
-                if not inline_show and hasattr(self.controller, "show"):
-                    try:
-                        show_start = time.perf_counter()
-                        self.controller.show()
-                        show_duration = time.perf_counter() - show_start
-                    except Exception:
-                        # Controllers that embed show inside set_all_pixels will ignore this
-                        pass
+                    should_present = changed or self.frames_presented == 0
+                    if should_present:
+                        use_partial = bool(
+                            dirty_ranges
+                            and self.frames_presented > 0
+                            and hasattr(self.controller, 'set_frame')
+                        )
+                        pending_present = presenter.submit(
+                            self._present_frame,
+                            frame,
+                            dirty_ranges,
+                            use_partial,
+                            inline_show,
+                        )
+                        self.frames_presented += 1
+                    else:
+                        self.unchanged_frames_skipped += 1
 
-                self.frame_count += 1
+                    self.frame_count += 1
+                    self._update_fps_tracking(loop_start)
 
-                # Update FPS tracking
-                self._update_fps_tracking(loop_start)
+                except Exception as e:
+                    print(f"✗ Animation loop error: {e}")
+                    traceback.print_exc()
+                    time.sleep(0.05)
 
-            except Exception as e:
-                print(f"✗ Animation loop error: {e}")
-                traceback.print_exc()
-                time.sleep(0.05)
+                loop_duration = time.perf_counter() - loop_start
+                target_frame_time = 1.0 / max(1, int(self.target_fps) or 1)
+                sleep_time = max(0.0, target_frame_time - loop_duration)
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
-            # Sleep to maintain target FPS
-            loop_duration = time.perf_counter() - loop_start
-            sleep_time = max(0.0, target_frame_time - loop_duration)
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+                self._record_perf_sample({
+                    'generate': generate_duration,
+                    'send': send_duration,
+                    'show': show_duration,
+                    'process': loop_duration,
+                    'sleep': sleep_time,
+                    'frame': loop_duration + sleep_time,
+                })
 
-            self._record_perf_sample({
-                'generate': generate_duration,
-                'send': send_duration,
-                'show': show_duration,
-                'process': loop_duration,
-                'sleep': sleep_time,
-                'frame': loop_duration + sleep_time,
-            })
+            if pending_present is not None:
+                try:
+                    pending_present.result()
+                except Exception as e:
+                    print(f"✗ Final frame presentation failed: {e}")
 
-    def _normalize_frame(self, colors: Optional[List[Any]]) -> List[Any]:
-        """Ensure frame length matches the LED count and is always a list"""
+    def _present_frame(self, frame, dirty_ranges, use_partial, inline_show):
+        """Present one frame on the dedicated I/O worker and return timings."""
+        send_start = time.perf_counter()
+        if use_partial:
+            self.controller.set_frame(frame, dirty_ranges=dirty_ranges)
+        else:
+            self.controller.set_all_pixels(frame)
+        send_duration = time.perf_counter() - send_start
+
+        show_duration = 0.0
+        if not inline_show and hasattr(self.controller, "show"):
+            show_start = time.perf_counter()
+            self.controller.show()
+            show_duration = time.perf_counter() - show_start
+        return send_duration, show_duration
+
+    def set_target_fps(self, target_fps: int) -> int:
+        """Apply a live, bounded host/physical presentation-rate target."""
+        self.target_fps = max(1, min(200, int(target_fps)))
+        return self.target_fps
+
+    def _normalize_frame(self, colors):
+        """Ensure frame length matches the LED count.
+
+        Accepts either a list of tuples or a numpy uint8 array of shape (N, 3).
+        Returns the same type, padded/trimmed to total_pixels.
+        """
         total_pixels = self.controller.total_leds
+
+        if isinstance(colors, RenderedFrame):
+            colors = colors.pixels
 
         if colors is None:
             return [(0, 0, 0)] * total_pixels
+
+        if isinstance(colors, np.ndarray):
+            if colors.ndim != 2 or colors.shape[1] != 3:
+                raise ValueError(
+                    f"frame ndarray must have shape (N, 3), got {colors.shape}"
+                )
+            if colors.shape[0] < total_pixels:
+                pad = np.zeros((total_pixels - colors.shape[0], 3), dtype=np.uint8)
+                colors = np.concatenate([colors, pad])
+            elif colors.shape[0] > total_pixels:
+                colors = colors[:total_pixels]
+            if colors.dtype != np.uint8:
+                colors = np.clip(colors, 0, 255).astype(np.uint8)
+            if not colors.flags.c_contiguous:
+                colors = np.ascontiguousarray(colors)
+            return colors
 
         frame = list(colors)
 
@@ -636,6 +992,23 @@ class AnimationManager:
     def _compute_driver_fps(self, driver_stats: Dict[str, Any]) -> float:
         """Estimate hardware-applied FPS from driver frame counters."""
         if not driver_stats or not isinstance(driver_stats, dict):
+            return self._driver_fps
+
+        aggregate = driver_stats.get('aggregate')
+        if isinstance(aggregate, dict) and aggregate.get('logical_frames_sent') is not None:
+            try:
+                frames_sent_int = int(aggregate['logical_frames_sent'])
+            except (TypeError, ValueError):
+                return self._driver_fps
+            now = time.perf_counter()
+            last_frames = self._driver_fps_last_frames
+            last_time = self._driver_fps_last_time
+            self._driver_fps_last_frames = frames_sent_int
+            self._driver_fps_last_time = now
+            if last_frames is not None and last_time is not None and now > last_time:
+                delta_frames = frames_sent_int - last_frames
+                if delta_frames >= 0:
+                    self._driver_fps = delta_frames / (now - last_time)
             return self._driver_fps
 
         devices = driver_stats.get('devices')
@@ -696,17 +1069,6 @@ class AnimationManager:
         if delta_frames < 0 or delta_time <= 0:
             return self._driver_fps
 
-        device_count = driver_stats.get('device_count') or driver_stats.get('devices')
-        if isinstance(device_count, list):
-            device_count = len(device_count)
-        try:
-            device_count_int = int(device_count)
-        except (TypeError, ValueError):
-            device_count_int = 0
-
-        if device_count_int > 1:
-            delta_frames = delta_frames / device_count_int
-
         self._driver_fps = delta_frames / delta_time
         return self._driver_fps
 
@@ -737,6 +1099,19 @@ class AnimationManager:
 
             for key, total in totals.items():
                 summary[f'avg_{key}_ms'] = (total / count) * 1000.0
+                ordered = sorted(sample.get(key, 0.0) for sample in self.perf_samples)
+                for label, ratio in (('p50', 0.50), ('p95', 0.95), ('p99', 0.99)):
+                    index = min(count - 1, max(0, int(round((count - 1) * ratio))))
+                    summary[f'{label}_{key}_ms'] = ordered[index] * 1000.0
+
+            deadline_misses = sum(
+                sample.get('process', 0.0) > (target_frame_ms / 1000.0)
+                for sample in self.perf_samples
+            )
+            summary['deadline_misses'] = deadline_misses
+            summary['deadline_miss_ratio'] = deadline_misses / count
+            summary['frames_presented'] = self.frames_presented
+            summary['unchanged_frames_skipped'] = self.unchanged_frames_skipped
 
             if self._last_perf_sample:
                 for key in totals.keys():
@@ -744,15 +1119,10 @@ class AnimationManager:
 
             return summary
     
-    def save_animation(self, name: str, code: str) -> bool:
-        """Save new animation plugin"""
-        return self.plugin_loader.save_plugin(name, code)
-    
     def reload_animation(self, name: str) -> bool:
         """Reload specific animation plugin"""
         try:
-            self.plugin_loader.reload_plugin(name)
-            return True
+            return self.plugin_loader.reload_plugin(name) is not None
         except Exception as e:
             print(f"✗ Failed to reload animation {name}: {e}")
             return False

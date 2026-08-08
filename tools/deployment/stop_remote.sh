@@ -4,7 +4,7 @@
 set -e
 
 # Configuration
-PI_HOST="bedsidestreamdeck@bedsidestreamdeck.local"
+PI_HOST="ledgridwall@ledgridwall.local"
 DEPLOY_DIR="ledgrid-pod"
 
 # Colors for output

@@ -39,9 +39,8 @@ See `docs/METRICS.md` for field descriptions and API payloads.
 Current tools live in `tools/diagnostics/`:
 - `remote_diagnostics.sh`: Remote health check (processes, ports, logs, API status).
 - `extract_frame_payload.py`: Decode compressed frame payloads.
-- `led_controller_spi_test.py`: SPI smoke test (legacy).
+- `led_controller_spi_test.py`: SPI smoke test.
 - `fluid_tank_simulation.py`: Offline sim helper.
-- `legacy/`: Archived scripts kept for reference only.
 
 ## Where Metrics Are Produced
 
