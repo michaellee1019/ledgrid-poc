@@ -47,8 +47,8 @@ def evaluate_samples(samples, elapsed_seconds, min_displayed_fps=180.0):
     )
 
     failures = []
-    if any(int(sample.get("receiver_status_version", 0) or 0) != 2 for sample in samples):
-        failures.append("receiver status v2 was not present in every sample")
+    if any(int(sample.get("receiver_status_version", 0) or 0) != 3 for sample in samples):
+        failures.append("receiver status LGS3 was not present in every sample")
     for key, label in (
         ("receiver_crc_errors", "CRC errors"),
         ("receiver_publish_drops", "mailbox publish drops"),

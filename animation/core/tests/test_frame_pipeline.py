@@ -7,6 +7,7 @@ import time
 import types
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from unittest import mock
 
 import numpy as np
 
@@ -23,7 +24,6 @@ from animation.plugins.solid import SolidColorAnimation
 from drivers.multi_device import MultiDeviceLEDController
 from drivers.spi_controller import CRC_BYTES, LEDController
 from drivers.spi_controller import RECEIVER_STATUS_BYTES
-from drivers.spi_controller import RECEIVER_STATUS_BYTES_V2
 from tools.benchmarks.receiver_acceptance import evaluate_samples
 from tools.benchmarks.live_animation_sweep import receiver_failures
 
@@ -40,6 +40,18 @@ class _Animation(AnimationBase):
 
 
 class FrameContractTests(unittest.TestCase):
+    def test_manager_loop_does_not_start_workers_during_interpreter_finalization(self):
+        manager = AnimationManager.__new__(AnimationManager)
+        manager.controller = _Controller()
+        manager.is_running = True
+        manager.stop_event = threading.Event()
+
+        with mock.patch("animation.core.manager.sys.is_finalizing", return_value=True), \
+             mock.patch("animation.core.manager.ThreadPoolExecutor") as executor:
+            manager._animation_loop()
+
+        executor.assert_not_called()
+
     def test_manager_bounds_live_target_fps(self):
         manager = AnimationManager.__new__(AnimationManager)
         self.assertEqual(manager.set_target_fps(160), 160)
@@ -244,34 +256,11 @@ class DriverBufferTests(unittest.TestCase):
                 binascii.crc_hqx(payload, 0xFFFF),
             )
 
-    def test_receiver_status_is_parsed_from_miso(self):
+    def test_receiver_status_exposes_pipeline_accounting(self):
         driver = self._driver()
         response = [0] * RECEIVER_STATUS_BYTES
-        response[:4] = b"LGS1"
-        response[4:8] = (123).to_bytes(4, "big")
-        response[8:12] = (2).to_bytes(4, "big")
-        response[12:16] = (121).to_bytes(4, "big")
-        response[16:20] = (99).to_bytes(4, "big")
-        response[20:22] = (41).to_bytes(2, "big")
-        response[22:24] = (52).to_bytes(2, "big")
-        response[24:26] = (4321).to_bytes(2, "big")
-        response[26] = 8
-        response[27:29] = (140).to_bytes(2, "big")
-
-        driver._update_receiver_status(response)
-
-        self.assertTrue(driver._receiver_status_seen)
-        self.assertEqual(driver._receiver_packets, 123)
-        self.assertEqual(driver._receiver_crc_errors, 2)
-        self.assertEqual(driver._receiver_frames_rendered, 99)
-        self.assertEqual(driver._receiver_last_show_us, 4321)
-        self.assertEqual(driver._receiver_leds_per_strip, 140)
-
-    def test_receiver_status_v2_exposes_pipeline_accounting(self):
-        driver = self._driver()
-        response = [0] * RECEIVER_STATUS_BYTES_V2
-        response[:4] = b"LGS2"
-        response[4] = 2
+        response[:4] = b"LGS3"
+        response[4] = 3
         response[5] = 3
         response[6] = 8
         response[8:10] = (140).to_bytes(2, "big")
@@ -294,7 +283,7 @@ class DriverBufferTests(unittest.TestCase):
 
         driver._update_receiver_status(response)
 
-        self.assertEqual(driver._receiver_status_version, 2)
+        self.assertEqual(driver._receiver_status_version, 3)
         self.assertEqual(driver._receiver_queued_transactions, 2)
         self.assertEqual(driver._receiver_frames_accepted, 900)
         self.assertEqual(driver._receiver_frames_displayed, 890)
@@ -303,7 +292,7 @@ class DriverBufferTests(unittest.TestCase):
         self.assertEqual(driver._receiver_last_show_us, 4500)
         self.assertEqual(driver._receiver_last_displayed_sequence, 891)
 
-        driver._update_receiver_status([0] * RECEIVER_STATUS_BYTES_V2)
+        driver._update_receiver_status([0] * RECEIVER_STATUS_BYTES)
         self.assertEqual(driver._receiver_status_misses, 1)
 
         driver._update_receiver_status([0] * 5)
@@ -347,6 +336,9 @@ class MultiDevicePartialTests(unittest.TestCase):
         controller._executor = ThreadPoolExecutor(max_workers=2)
         controller.debug = False
         controller._logical_frames_sent = 0
+        controller._transport_lock = threading.RLock()
+        controller._firmware_active = False
+        controller._active_payload_digests = []
 
         try:
             controller.set_all_pixels(np.zeros((2, 3), dtype=np.uint8))
@@ -378,6 +370,9 @@ class MultiDevicePartialTests(unittest.TestCase):
         controller._executor = None
         controller.debug = False
         controller._logical_frames_sent = 0
+        controller._transport_lock = threading.RLock()
+        controller._firmware_active = False
+        controller._active_payload_digests = []
 
         controller.set_all_pixels(np.zeros((2, 3), dtype=np.uint8))
 
@@ -396,6 +391,9 @@ class MultiDevicePartialTests(unittest.TestCase):
         controller._executor = None
         controller.debug = False
         controller._logical_frames_sent = 0
+        controller._transport_lock = threading.RLock()
+        controller._firmware_active = False
+        controller._active_payload_digests = []
 
         frame = np.arange(24, dtype=np.uint8).reshape(8, 3)
         controller.set_frame(frame, dirty_ranges=((3, 5),))
@@ -410,7 +408,7 @@ class MultiDevicePartialTests(unittest.TestCase):
 class ReceiverAcceptanceTests(unittest.TestCase):
     def test_live_sweep_evaluator_checks_only_integrity_counter_deltas(self):
         first = {
-            'receiver_status_version': 2,
+            'receiver_status_version': 3,
             'receiver_crc_errors': 4,
             'receiver_publish_drops': 0,
             'receiver_spi_queue_errors': 0,
@@ -428,7 +426,7 @@ class ReceiverAcceptanceTests(unittest.TestCase):
 
     def test_acceptance_evaluator_passes_accounted_180fps_pipeline(self):
         first = {
-            'receiver_status_version': 2,
+            'receiver_status_version': 3,
             'receiver_crc_errors': 1,
             'receiver_publish_drops': 0,
             'receiver_spi_queue_errors': 0,
@@ -456,7 +454,7 @@ class ReceiverAcceptanceTests(unittest.TestCase):
 
     def test_acceptance_evaluator_reports_integrity_and_timing_failures(self):
         first = {
-            'receiver_status_version': 2,
+            'receiver_status_version': 3,
             'receiver_frames_accepted': 0,
             'receiver_frames_displayed': 0,
             'receiver_frames_superseded': 0,

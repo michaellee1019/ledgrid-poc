@@ -1,0 +1,31 @@
+menu "LED Grid Receiver Security"
+
+config LEDGRID_TRUSTED_KEY_ID
+    string "Trusted package key ID"
+    default ""
+    help
+        Exact 20-byte key ID (key- plus 16 lowercase hex characters).
+
+config LEDGRID_TRUSTED_P256_PUBLIC_KEY_HEX
+    string "Trusted P-256 public key (uncompressed SEC1 hex)"
+    default ""
+    help
+        Exactly 130 hex characters beginning 04. An empty value disables
+        signed uploads and the signed/upload status capabilities.
+
+config LEDGRID_ALLOW_UNSIGNED_DEVELOPMENT
+    bool "DANGEROUS: accept packages without signature verification"
+    default n
+    help
+        Development bench use only. Status exposes UNSIGNED_DEVELOPMENT and
+        boot logs continuously warn. Never enable on an installed receiver.
+
+config LEDGRID_LOGICAL_DEVICE
+    int "Logical receiver index"
+    range 0 3
+    default 0
+    help
+        Receiver slice in the four-device wall. Each installed board must use
+        its assigned index so signed device payload binding cannot be bypassed.
+
+endmenu

@@ -10,6 +10,7 @@ import argparse
 import binascii
 import spidev
 import sys
+import struct
 
 import numpy as np
 
@@ -28,10 +29,12 @@ SPI_INTER_FRAME_DELAY = 0.0  # No delay needed - SPI is stable now
 
 MAX_SPI_TRANSFER = 4096
 CRC_BYTES = 2
-RECEIVER_STATUS_MAGIC = (ord('L'), ord('G'), ord('S'), ord('1'))
-RECEIVER_STATUS_MAGIC_V2 = (ord('L'), ord('G'), ord('S'), ord('2'))
-RECEIVER_STATUS_BYTES = 29
-RECEIVER_STATUS_BYTES_V2 = 64
+# The ESP32 slave keeps two DMA transactions queued. A command result is
+# therefore returned by the second complete transfer after that command.
+SPI_RESPONSE_QUEUE_DEPTH = 2
+RECEIVER_STATUS_MAGIC = (ord('L'), ord('G'), ord('S'), ord('3'))
+RECEIVER_STATUS_VERSION = 3
+RECEIVER_STATUS_BYTES = 128
 MAX_PIXELS_SET_ALL = (MAX_SPI_TRANSFER - 1 - CRC_BYTES) // 3
 MAX_PIXELS_PER_RANGE = min(255, (MAX_SPI_TRANSFER - 4 - CRC_BYTES) // 3)
 
@@ -94,11 +97,43 @@ CMD_CLEAR = 0x04
 CMD_SET_RANGE = 0x05
 CMD_SET_ALL = 0x06
 CMD_CONFIG = 0x07
+CMD_CAPABILITIES_QUERY = 0x20
+CMD_ASSET_PROBE = 0x21
+CMD_ASSET_BEGIN = 0x22
+CMD_ASSET_CHUNK = 0x23
+CMD_ASSET_COMMIT = 0x24
+CMD_ASSET_REMOVE = 0x25
+CMD_ANIMATION_START = 0x26
+CMD_ANIMATION_STOP = 0x27
+CMD_ANIMATION_RESTART = 0x28
+CMD_ANIMATION_PARAMETERS = 0x29
+CMD_ASSET_ABORT = 0x2A
 CMD_PING = 0xFF
+
+MAX_ASSET_CHUNK_BYTES = MAX_SPI_TRANSFER - CRC_BYTES - 1 - 4
+ASSET_KIND_CODES = {'native': 1, 'frames': 2}
+RESULT_NAMES = {
+    0: 'none', 1: 'ok', 2: 'invalid_command', 3: 'invalid_state',
+    4: 'bad_size', 5: 'bad_digest', 6: 'bad_signature', 7: 'wrong_abi',
+    8: 'wrong_geometry', 9: 'wrong_device', 10: 'storage_error',
+    11: 'unsupported', 12: 'quarantined', 13: 'render_failed',
+    14: 'watchdog', 15: 'not_found', 16: 'unknown_key',
+    17: 'wrong_target', 18: 'bad_envelope',
+}
+CAPABILITY_NATIVE = 1 << 0
+CAPABILITY_FRAME_TRACK = 1 << 1
+CAPABILITY_SIGNED_PACKAGES = 1 << 2
+CAPABILITY_ASSET_UPLOAD = 1 << 3
+CAPABILITY_TYPED_PARAMETERS = 1 << 6
+CAPABILITY_LOGICAL_DEVICE_SHIFT = 16
+CAPABILITY_LOGICAL_DEVICE_MASK = 0x3 << CAPABILITY_LOGICAL_DEVICE_SHIFT
+CAPABILITY_LOGICAL_DEVICE_IDENTITY = 1 << 18
 
 
 class LEDController:
     """Control LED strips via SPI"""
+
+    MAX_ASSET_CHUNK_BYTES = MAX_ASSET_CHUNK_BYTES
     
     def __init__(self, bus=SPI_BUS, device=SPI_DEVICE, speed=SPI_SPEED, mode=SPI_MODE,
                  strips=DEFAULT_NUM_STRIPS, leds_per_strip=DEFAULT_LED_PER_STRIP,
@@ -158,6 +193,22 @@ class LEDController:
         self._receiver_last_encode_us = 0
         self._receiver_last_accepted_sequence = 0
         self._receiver_last_displayed_sequence = 0
+        self._receiver_capabilities = 0
+        self._receiver_logical_device = None
+        self._receiver_display_mode = 0
+        self._receiver_asset_kind = 0
+        self._receiver_upload_state = 0
+        self._receiver_last_result = 0
+        self._receiver_active_digest = None
+        self._receiver_cache_free_bytes = 0
+        self._receiver_cache_used_bytes = 0
+        self._receiver_upload_received_bytes = 0
+        self._receiver_upload_total_bytes = 0
+        self._receiver_last_render_or_decode_us = 0
+        self._receiver_max_render_or_decode_us = 0
+        self._receiver_missed_deadlines = 0
+        self._receiver_watchdog_events = 0
+        self._receiver_quarantine_state = 0
         self._frame_packet = bytearray(1 + self.total_leds * 3 + CRC_BYTES)
         
         if self.debug:
@@ -190,6 +241,12 @@ class LEDController:
 
     def _xfer_packet(self, buf, payload_length):
         """Finalize and transfer a packet whose CRC storage is preallocated."""
+        if payload_length < 1 or payload_length + CRC_BYTES > MAX_SPI_TRANSFER:
+            raise ValueError(
+                f"SPI transaction must be 1..{MAX_SPI_TRANSFER} bytes including CRC"
+            )
+        if len(buf) != payload_length + CRC_BYTES:
+            raise ValueError("packet buffer must contain exactly payload plus CRC storage")
         crc = _crc16_ccitt(memoryview(buf)[:payload_length])
         buf[payload_length] = (crc >> 8) & 0xFF
         buf[payload_length + 1] = crc & 0xFF
@@ -220,60 +277,211 @@ class LEDController:
     def _update_receiver_status(self, response):
         """Parse the ESP32 status snapshot returned alongside an SPI write."""
         # SPI is full duplex, so the response can only be as long as the
-        # command. Short control/configuration transfers cannot carry either
-        # status structure and therefore are not telemetry misses.
+        # command. Short control/configuration transfers cannot carry the
+        # complete status structure and therefore are not telemetry misses.
         if response is None or len(response) < RECEIVER_STATUS_BYTES:
-            return
-        if len(response) < RECEIVER_STATUS_BYTES_V2 and getattr(
-            self, '_receiver_status_version', 0
-        ) >= 2:
-            # A v2 receiver needs a 64-byte transaction to return its complete
-            # atomic status snapshot. Do not interpret a truncated prefix.
             return
 
         magic = tuple(int(response[index]) for index in range(4))
-        if magic == RECEIVER_STATUS_MAGIC_V2 and len(response) >= RECEIVER_STATUS_BYTES_V2:
-            self._receiver_status_seen = True
-            self._receiver_status_version = int(response[4])
-            self._receiver_status_responses = getattr(self, '_receiver_status_responses', 0) + 1
-            self._receiver_active_strips = int(response[6])
-            self._receiver_leds_per_strip = self._response_u16(response, 8)
-            self._receiver_queued_transactions = self._response_u16(response, 10)
-            self._receiver_packets = self._response_u32(response, 12)
-            self._receiver_crc_errors = self._response_u32(response, 16)
-            self._receiver_crc_ok_packets = self._response_u32(response, 20)
-            self._receiver_frames_accepted = self._response_u32(response, 24)
-            self._receiver_frames_displayed = self._response_u32(response, 28)
-            self._receiver_frames_rendered = self._receiver_frames_displayed
-            self._receiver_frames_superseded = self._response_u32(response, 32)
-            self._receiver_publish_drops = self._response_u32(response, 36)
-            self._receiver_spi_queue_errors = self._response_u32(response, 40)
-            self._receiver_last_crc_us = self._response_u16(response, 44)
-            self._receiver_last_copy_us = self._response_u16(response, 46)
-            self._receiver_last_encode_us = self._response_u16(response, 48)
-            self._receiver_last_show_us = self._response_u16(response, 50)
-            self._receiver_last_accepted_sequence = self._response_u32(response, 52)
-            self._receiver_last_displayed_sequence = self._response_u32(response, 56)
-            self._receiver_display_errors = self._response_u32(response, 60)
-            return
-
-        if magic != RECEIVER_STATUS_MAGIC:
+        if magic != RECEIVER_STATUS_MAGIC or int(response[4]) != RECEIVER_STATUS_VERSION:
             if getattr(self, '_receiver_status_seen', False):
                 self._receiver_status_misses = getattr(self, '_receiver_status_misses', 0) + 1
             return
 
         self._receiver_status_seen = True
-        self._receiver_status_version = 1
+        self._receiver_status_version = RECEIVER_STATUS_VERSION
         self._receiver_status_responses = getattr(self, '_receiver_status_responses', 0) + 1
-        self._receiver_packets = self._response_u32(response, 4)
-        self._receiver_crc_errors = self._response_u32(response, 8)
-        self._receiver_crc_ok_packets = self._response_u32(response, 12)
-        self._receiver_frames_rendered = self._response_u32(response, 16)
-        self._receiver_last_crc_us = self._response_u16(response, 20)
-        self._receiver_last_copy_us = self._response_u16(response, 22)
-        self._receiver_last_show_us = self._response_u16(response, 24)
-        self._receiver_active_strips = int(response[26])
-        self._receiver_leds_per_strip = self._response_u16(response, 27)
+        self._receiver_active_strips = int(response[6])
+        self._receiver_leds_per_strip = self._response_u16(response, 8)
+        self._receiver_queued_transactions = self._response_u16(response, 10)
+        self._receiver_packets = self._response_u32(response, 12)
+        self._receiver_crc_errors = self._response_u32(response, 16)
+        self._receiver_crc_ok_packets = self._response_u32(response, 20)
+        self._receiver_frames_accepted = self._response_u32(response, 24)
+        self._receiver_frames_displayed = self._response_u32(response, 28)
+        self._receiver_frames_rendered = self._receiver_frames_displayed
+        self._receiver_frames_superseded = self._response_u32(response, 32)
+        self._receiver_publish_drops = self._response_u32(response, 36)
+        self._receiver_spi_queue_errors = self._response_u32(response, 40)
+        self._receiver_last_crc_us = self._response_u16(response, 44)
+        self._receiver_last_copy_us = self._response_u16(response, 46)
+        self._receiver_last_encode_us = self._response_u16(response, 48)
+        self._receiver_last_show_us = self._response_u16(response, 50)
+        self._receiver_last_accepted_sequence = self._response_u32(response, 52)
+        self._receiver_last_displayed_sequence = self._response_u32(response, 56)
+        self._receiver_display_errors = self._response_u32(response, 60)
+        self._receiver_capabilities = self._response_u32(response, 64)
+        self._receiver_logical_device = (
+            (self._receiver_capabilities & CAPABILITY_LOGICAL_DEVICE_MASK)
+            >> CAPABILITY_LOGICAL_DEVICE_SHIFT
+            if self._receiver_capabilities & CAPABILITY_LOGICAL_DEVICE_IDENTITY
+            else None
+        )
+        self._receiver_display_mode = int(response[68])
+        self._receiver_asset_kind = int(response[69])
+        self._receiver_upload_state = int(response[70])
+        self._receiver_last_result = int(response[71])
+        digest = bytes(response[72:104])
+        self._receiver_active_digest = digest.hex() if any(digest) else None
+        self._receiver_cache_free_bytes = self._response_u32(response, 104)
+        self._receiver_cache_used_bytes = self._response_u32(response, 108)
+        self._receiver_upload_received_bytes = self._response_u32(response, 112)
+        self._receiver_upload_total_bytes = self._response_u32(response, 116)
+        self._receiver_last_render_or_decode_us = self._response_u16(response, 120)
+        self._receiver_max_render_or_decode_us = self._response_u16(response, 122)
+        self._receiver_missed_deadlines = self._response_u16(response, 124)
+        self._receiver_watchdog_events = int(response[126])
+        self._receiver_quarantine_state = int(response[127])
+
+    @staticmethod
+    def _digest_bytes(digest):
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise ValueError("digest must be 64 hexadecimal characters")
+        try:
+            return bytes.fromhex(digest)
+        except ValueError as exc:
+            raise ValueError("digest must be 64 hexadecimal characters") from exc
+
+    def query_receiver_status(self):
+        """Clock out one complete queued LGS3 snapshot."""
+        payload = bytearray(RECEIVER_STATUS_BYTES - CRC_BYTES)
+        payload[0] = CMD_CAPABILITIES_QUERY
+        self._xfer(payload)
+        return self.get_stats()
+
+    def _command_status(self, payload):
+        """Send a command and drain the receiver's two-deep response queue."""
+        self._xfer(payload)
+        status = None
+        for _ in range(SPI_RESPONSE_QUEUE_DEPTH):
+            status = self.query_receiver_status()
+        return status
+
+    def asset_probe(self, digest):
+        return self._command_status(
+            bytes([CMD_ASSET_PROBE]) + self._digest_bytes(digest)
+        )
+
+    @staticmethod
+    def _asset_begin_command(envelope):
+        """Validate the SDK trust envelope before any receiver I/O."""
+        required = (
+            'payload_size', 'payload_digest', 'kind', 'device_index', 'key_id',
+            'signed_index', 'signature', 'asset_begin_command',
+        )
+        if envelope is None or any(not hasattr(envelope, name) for name in required):
+            raise ValueError("signed receiver verification envelope is required")
+        try:
+            command = bytes(envelope.asset_begin_command())
+            key_id = envelope.key_id.encode('ascii')
+        except (AttributeError, TypeError, UnicodeError, ValueError) as exc:
+            raise ValueError("receiver verification envelope is malformed") from exc
+        kind_code = ASSET_KIND_CODES.get(envelope.kind)
+        if (
+            len(command) != 313 or command[0:2] != bytes((CMD_ASSET_BEGIN, 1))
+            or int.from_bytes(command[2:4], 'big') != 309
+            or int.from_bytes(command[4:8], 'big') != int(envelope.payload_size)
+            or command[8:40] != bytes(envelope.payload_digest)
+            or command[40] != kind_code
+            or int.from_bytes(command[41:43], 'big') != 1
+            or int.from_bytes(command[43:45], 'big') != 1
+            or command[45] != 8
+            or int.from_bytes(command[46:48], 'big') != 138
+            or command[48] != int(envelope.device_index)
+            or command[49] != 20 or len(key_id) != 20 or command[50:70] != key_id
+            or int.from_bytes(command[70:72], 'big') != 176
+            or len(bytes(envelope.signed_index)) != 176
+            or command[72:248] != bytes(envelope.signed_index)
+            or command[248] != 64 or len(bytes(envelope.signature)) != 64
+            or command[249:313] != bytes(envelope.signature)
+        ):
+            raise ValueError("receiver verification envelope is not canonical")
+        return command
+
+    def asset_begin(self, envelope):
+        payload = self._asset_begin_command(envelope)
+        return self._command_status(payload)
+
+    def asset_chunk(self, offset, chunk):
+        data = bytes(chunk)
+        if len(data) > MAX_ASSET_CHUNK_BYTES:
+            raise ValueError(f"asset chunk exceeds {MAX_ASSET_CHUNK_BYTES} bytes")
+        return self._command_status(
+            bytes([CMD_ASSET_CHUNK]) + struct.pack(">I", int(offset)) + data
+        )
+
+    def asset_commit(self, digest):
+        return self._command_status(
+            bytes([CMD_ASSET_COMMIT]) + self._digest_bytes(digest)
+        )
+
+    def asset_abort(self):
+        return self._command_status([CMD_ASSET_ABORT])
+
+    def asset_remove(self, digest):
+        return self._command_status(
+            bytes([CMD_ASSET_REMOVE]) + self._digest_bytes(digest)
+        )
+
+    @staticmethod
+    def _parameter_blob(parameters):
+        """Encode the stable typed-parameter v1 wire representation."""
+        if not isinstance(parameters, dict) or len(parameters) > 32:
+            raise ValueError("parameters must be an object with at most 32 values")
+        blob = bytearray((1, len(parameters)))
+        for name in sorted(parameters):
+            name_bytes = str(name).encode('utf-8')
+            if not 1 <= len(name_bytes) <= 63:
+                raise ValueError("parameter names must encode to 1..63 bytes")
+            value = parameters[name]
+            blob.append(len(name_bytes))
+            blob.extend(name_bytes)
+            if isinstance(value, bool):
+                blob.extend((3, int(value)))
+            elif isinstance(value, int):
+                if not -(2 ** 31) <= value < 2 ** 31:
+                    raise ValueError(f"integer parameter {name} is out of int32 range")
+                blob.append(1)
+                blob.extend(struct.pack(">i", value))
+            elif isinstance(value, float):
+                blob.append(2)
+                blob.extend(struct.pack(">f", value))
+            elif isinstance(value, str) and len(value) == 7 and value.startswith('#'):
+                try:
+                    color = bytes.fromhex(value[1:])
+                except ValueError as exc:
+                    raise ValueError(f"invalid color parameter {name}") from exc
+                blob.append(5)
+                blob.extend(color)
+            elif isinstance(value, str):
+                value_bytes = value.encode('utf-8')
+                if not 1 <= len(value_bytes) <= 63:
+                    raise ValueError("enum values must encode to 1..63 bytes")
+                blob.extend((4, len(value_bytes)))
+                blob.extend(value_bytes)
+            else:
+                raise ValueError(f"unsupported parameter type for {name}")
+        if len(blob) > 1024:
+            raise ValueError("parameter blob exceeds 1024 bytes")
+        return bytes(blob)
+
+    def start_firmware_animation(self, digest, global_strip_offset, parameters=None):
+        blob = self._parameter_blob(parameters)
+        payload = (bytes([CMD_ANIMATION_START]) + self._digest_bytes(digest)
+                   + struct.pack(">HH", int(global_strip_offset), len(blob)) + blob)
+        return self._command_status(payload)
+
+    def stop_firmware_animation(self):
+        return self._command_status([CMD_ANIMATION_STOP])
+
+    def restart_firmware_animation(self):
+        return self._command_status([CMD_ANIMATION_RESTART])
+
+    def update_firmware_parameters(self, parameters):
+        blob = self._parameter_blob(parameters)
+        return self._command_status(
+            bytes([CMD_ANIMATION_PARAMETERS]) + struct.pack(">H", len(blob)) + blob
+        )
 
     def _refresh_configuration(self, force=False):
         now = time.time()
@@ -519,6 +727,25 @@ class LEDController:
             'receiver_last_displayed_sequence': self._receiver_last_displayed_sequence,
             'receiver_active_strips': self._receiver_active_strips,
             'receiver_leds_per_strip': self._receiver_leds_per_strip,
+            'receiver_capabilities': self._receiver_capabilities,
+            'receiver_logical_device': self._receiver_logical_device,
+            'receiver_display_mode': self._receiver_display_mode,
+            'receiver_asset_kind': self._receiver_asset_kind,
+            'receiver_upload_state': self._receiver_upload_state,
+            'receiver_last_result': self._receiver_last_result,
+            'receiver_last_result_name': RESULT_NAMES.get(
+                self._receiver_last_result, 'unknown'
+            ),
+            'receiver_active_digest': self._receiver_active_digest,
+            'receiver_cache_free_bytes': self._receiver_cache_free_bytes,
+            'receiver_cache_used_bytes': self._receiver_cache_used_bytes,
+            'receiver_upload_received_bytes': self._receiver_upload_received_bytes,
+            'receiver_upload_total_bytes': self._receiver_upload_total_bytes,
+            'receiver_last_render_or_decode_us': self._receiver_last_render_or_decode_us,
+            'receiver_max_render_or_decode_us': self._receiver_max_render_or_decode_us,
+            'receiver_missed_deadlines': self._receiver_missed_deadlines,
+            'receiver_watchdog_events': self._receiver_watchdog_events,
+            'receiver_quarantine_state': self._receiver_quarantine_state,
         }
 
 
