@@ -5,4 +5,3 @@ from dashboard.plugin import DashboardAnimationPlugin as _DashboardAnimationPlug
 
 class DashboardAnimation(_DashboardAnimationPlugin):
     """AnimationBase-compatible dashboard wrapper."""
-
