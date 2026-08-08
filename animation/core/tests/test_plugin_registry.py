@@ -197,6 +197,34 @@ class ExternalAnimation(AnimationBase):
         self.assertFalse(manager.current_animation.params['plant_aware'])
         self.assertEqual(manager.current_animation.params['red'], 9)
 
+    def test_selected_preset_is_reported_and_live_edits_mark_it_modified(self):
+        class _Controller:
+            strip_count = 1
+            leds_per_strip = 4
+            total_leds = 4
+            debug = False
+
+            def configure(self): pass
+            def set_all_pixels(self, _frame): pass
+            def show(self): pass
+            def clear(self): pass
+
+        manager = AnimationManager(_Controller(), auto_start=False)
+        self.addCleanup(manager.stop_animation)
+        preset = {
+            'preset_id': 'warm', 'name': 'Warm', 'animation': 'solid',
+        }
+
+        self.assertTrue(manager.start_animation('solid', {'red': 12}, preset=preset))
+        self.assertEqual(manager.get_current_status()['current_preset'], {
+            **preset, 'is_dirty': False,
+        })
+
+        self.assertTrue(manager.update_animation_parameters({'red': 20}))
+        self.assertTrue(manager.get_current_status()['current_preset']['is_dirty'])
+        self.assertTrue(manager.set_current_preset(preset))
+        self.assertFalse(manager.get_current_status()['current_preset']['is_dirty'])
+
     def test_preview_manager_can_load_plugins_without_starting_a_thread(self):
         class _Controller:
             strip_count = 1

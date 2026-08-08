@@ -364,6 +364,7 @@
     let controlParameterUpdateTimeout = null;
     let controlParameterStore = {};
     let controlParameterSchema = {};
+    let currentPresetSelection = null;
     const PLANT_MODIFIERS = [
         ['Visual', 'illuminate', 'Illuminate'], ['Visual', 'shadow', 'Shadow'],
         ['Visual', 'refract', 'Refract'], ['Visual', 'hue_shift', 'Hue shift'],
@@ -380,6 +381,15 @@
     document.addEventListener('DOMContentLoaded', function() {
         animationRenderer = new LEDAnimationRenderer('ledCanvas');
         initializeGeneratedPreviews();
+        const previewPresetName = document.getElementById('previewPresetName');
+        previewPresetName?.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                savePreviewPreset();
+            } else if (event.key === 'Escape') {
+                closePreviewPresetComposer();
+            }
+        });
         if (INITIAL_STATUS) {
             syncControlPanel(INITIAL_STATUS);
             syncGlobalSpeedFromStatus(INITIAL_STATUS);
@@ -620,7 +630,13 @@
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.error || 'Unable to load preset');
             controlSelectedAnimation = animationName;
+            controlParameterStore[animationName] = {...(payload.preset.params || {})};
             highlightControlSelection(animationName);
+            setCurrentPresetSelection(animationName, payload.preset);
+            loadControlParameters(animationName, {
+                showPlaceholder: false,
+                currentParams: payload.preset.params || {}
+            });
             showToast(`Playing ${payload.preset.name}`, 'success');
         } catch (error) {
             showToast(error.message, 'error');
@@ -894,16 +910,23 @@
                 controlSelectedAnimation = null;
                 highlightControlSelection(null);
             }
+            setCurrentPresetSelection(null, null);
             showControlPlaceholder('Start or select an animation to adjust its live controls.', {clearControls: true});
             return;
         }
+        setCurrentPresetSelection(runningAnimation, status.current_preset || null);
         if (controlSelectedAnimation === runningAnimation) {
             return;
         }
         controlSelectedAnimation = runningAnimation;
+        const liveParams = status.animation_info?.current_params;
+        if (liveParams && typeof liveParams === 'object' && !Array.isArray(liveParams)) {
+            controlParameterStore[runningAnimation] = {...liveParams};
+        }
         highlightControlSelection(runningAnimation);
         loadControlParameters(runningAnimation, {
-            placeholderMessage: `Loading controls for ${humanizeParamName(runningAnimation)}...`
+            placeholderMessage: `Loading controls for ${humanizeParamName(runningAnimation)}...`,
+            currentParams: controlParameterStore[runningAnimation]
         });
     }
 
@@ -932,6 +955,8 @@
 
     function selectControlAnimation(name, options = {}) {
         controlSelectedAnimation = name;
+        delete controlParameterStore[name];
+        setCurrentPresetSelection(name, null);
         highlightControlSelection(name);
         if (animationRenderer && animationRenderer.previewMode) {
             const params = controlParameterStore[name] || null;
@@ -960,7 +985,7 @@
     }
 
     function loadControlParameters(name, options = {}) {
-        const { showPlaceholder = true, placeholderMessage = null } = options;
+        const { showPlaceholder = true, placeholderMessage = null, currentParams = null } = options;
         if (showPlaceholder) {
             showControlPlaceholder(placeholderMessage || 'Loading controls...', {clearControls: true});
         }
@@ -968,10 +993,13 @@
             .then(r => r.json())
             .then(info => {
                 if (info && info.parameters && Object.keys(info.parameters).length) {
-                    renderControlParameterControls(info.parameters, info.current_params || {});
+                    renderControlParameterControls(info.parameters, currentParams || info.current_params || {});
                     hideControlPlaceholder();
                     loadControlPresets(name);
                 } else {
+                    controlParameterSchema = info?.parameters || {};
+                    controlParameterStore[name] = currentParams || info?.current_params || {};
+                    updatePreviewPresetAction();
                     showControlPlaceholder('This animation does not expose live controls.', {clearControls: true});
                 }
             })
@@ -1205,6 +1233,7 @@
         if (controlSelectedAnimation) {
             controlParameterStore[controlSelectedAnimation] = parameterSnapshot;
             syncPreviewParameters(controlSelectedAnimation);
+            updatePreviewPresetAction();
         }
     }
 
@@ -1231,6 +1260,110 @@
         }
     }
 
+    function setCurrentPresetSelection(animationName, preset) {
+        if (!animationName) {
+            currentPresetSelection = null;
+        } else if (preset && preset.animation === animationName) {
+            currentPresetSelection = {...preset, animation: animationName};
+        } else {
+            currentPresetSelection = {animation: animationName, is_dirty: true};
+        }
+        updatePreviewPresetAction();
+    }
+
+    function updatePreviewPresetAction() {
+        const current = document.getElementById('previewPresetCurrent');
+        const currentName = document.getElementById('previewPresetCurrentName');
+        const saveButton = document.getElementById('previewSavePresetButton');
+        const context = document.getElementById('previewPresetContext');
+        if (!current || !currentName || !saveButton || !context) return;
+
+        const animationName = controlSelectedAnimation;
+        const isCurrentPreset = Boolean(
+            animationName && currentPresetSelection &&
+            currentPresetSelection.animation === animationName &&
+            currentPresetSelection.preset_id && !currentPresetSelection.is_dirty
+        );
+        current.hidden = !isCurrentPreset;
+        saveButton.hidden = isCurrentPreset;
+        currentName.textContent = isCurrentPreset ? currentPresetSelection.name : '';
+        saveButton.disabled = !animationName || !Object.prototype.hasOwnProperty.call(controlParameterStore, animationName);
+
+        if (!animationName) {
+            context.textContent = 'Play an animation to save its current look.';
+        } else if (isCurrentPreset) {
+            context.textContent = humanizeParamName(animationName);
+            closePreviewPresetComposer();
+        } else if (currentPresetSelection?.name) {
+            context.textContent = `Modified from ${currentPresetSelection.name} · ${humanizeParamName(animationName)}`;
+        } else {
+            context.textContent = `Save the current ${humanizeParamName(animationName)} look.`;
+        }
+    }
+
+    function openPreviewPresetComposer() {
+        const composer = document.getElementById('previewPresetComposer');
+        const input = document.getElementById('previewPresetName');
+        if (!composer || !input || !controlSelectedAnimation) return;
+        composer.hidden = false;
+        input.value = '';
+        input.focus();
+    }
+
+    function closePreviewPresetComposer() {
+        const composer = document.getElementById('previewPresetComposer');
+        const input = document.getElementById('previewPresetName');
+        if (composer) composer.hidden = true;
+        if (input) input.value = '';
+    }
+
+    async function saveAnimationPreset(name, category = 'Personal', description = '') {
+        const animationName = controlSelectedAnimation;
+        if (!animationName || !name) {
+            showToast('Select an animation and enter a preset name.', 'info');
+            return null;
+        }
+        const params = controlParameterStore[animationName];
+        if (!params || typeof params !== 'object') {
+            showToast('The current animation settings are still loading.', 'info');
+            return null;
+        }
+        const response = await fetch(`/api/animations/${encodeURIComponent(animationName)}/presets`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name, category, description, params})
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            showToast(payload.error || 'Failed to save preset.', 'error');
+            return null;
+        }
+        setCurrentPresetSelection(animationName, payload.preset);
+        await loadControlPresets(animationName);
+        const select = document.getElementById('controlPresetSelect');
+        if (select) select.value = payload.preset.preset_id;
+        showToast(`Saved preset: ${payload.preset.name}`, 'success');
+        return payload.preset;
+    }
+
+    async function savePreviewPreset() {
+        const input = document.getElementById('previewPresetName');
+        const confirm = document.getElementById('previewPresetConfirm');
+        const presetName = input?.value.trim() || '';
+        if (!presetName) {
+            showToast('Enter a name for this preset.', 'info');
+            input?.focus();
+            return;
+        }
+        if (confirm) confirm.disabled = true;
+        try {
+            const saved = await saveAnimationPreset(presetName);
+            if (saved) closePreviewPresetComposer();
+        } finally {
+            if (confirm) confirm.disabled = false;
+        }
+    }
+
     async function saveControlPreset() {
         const input = document.getElementById('controlPresetName');
         const categoryInput = document.getElementById('controlPresetCategory');
@@ -1241,27 +1374,15 @@
             showToast('Select an animation and enter a preset name.', 'info');
             return;
         }
-        const response = await fetch(`/api/animations/${encodeURIComponent(animationName)}/presets`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                name: presetName,
-                category: categoryInput.value.trim() || 'Personal',
-                description: descriptionInput.value.trim(),
-                params: controlParameterStore[animationName] || {}
-            })
-        });
-        const payload = await response.json();
-        if (!response.ok) {
-            showToast(payload.error || 'Failed to save preset.', 'error');
-            return;
-        }
+        const saved = await saveAnimationPreset(
+            presetName,
+            categoryInput.value.trim() || 'Personal',
+            descriptionInput.value.trim()
+        );
+        if (!saved) return;
         input.value = '';
         categoryInput.value = '';
         descriptionInput.value = '';
-        await loadControlPresets(animationName);
-        document.getElementById('controlPresetSelect').value = payload.preset.preset_id;
-        showToast(`Saved preset: ${payload.preset.name}`, 'success');
     }
 
     async function applyControlPreset() {
@@ -1282,6 +1403,7 @@
         document.getElementById('controlPresetName').value = payload.preset.name || '';
         document.getElementById('controlPresetCategory').value = payload.preset.category || '';
         document.getElementById('controlPresetDescription').value = payload.preset.description || '';
+        setCurrentPresetSelection(animationName, payload.preset);
         showToast(`Loaded preset: ${payload.preset.name}`, 'success');
     }
 
@@ -1329,6 +1451,10 @@
         if (controlSelectedAnimation) {
             if (!controlParameterStore[controlSelectedAnimation]) controlParameterStore[controlSelectedAnimation] = {};
             Object.assign(controlParameterStore[controlSelectedAnimation], params);
+            if (currentPresetSelection?.animation === controlSelectedAnimation) {
+                currentPresetSelection = {...currentPresetSelection, is_dirty: true};
+                updatePreviewPresetAction();
+            }
             if (animationRenderer && animationRenderer.previewMode && animationRenderer.previewAnimation === controlSelectedAnimation) {
                 animationRenderer.setPreviewParams(controlParameterStore[controlSelectedAnimation]);
             }

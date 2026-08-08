@@ -133,6 +133,7 @@ class AnimationManager:
         self.current_animation: Optional[AnimationBase] = None
         self.current_animation_name: Optional[str] = None
         self.current_animation_hash: Optional[str] = None
+        self.current_preset: Optional[Dict[str, Any]] = None
         self.is_running = False
         # 200 Hz stays below the physical ceiling of a 138-pixel
         # WS2812 strip while leaving headroom for frame generation and transfer.
@@ -277,13 +278,19 @@ class AnimationManager:
         """Get detailed info about a specific animation"""
         return self.plugin_loader.get_plugin_info(animation_name)
     
-    def start_animation(self, animation_name: str, config: Dict[str, Any] = None) -> bool:
+    def start_animation(
+        self,
+        animation_name: str,
+        config: Dict[str, Any] = None,
+        preset: Optional[Dict[str, Any]] = None,
+    ) -> bool:
         """
         Start playing an animation
         
         Args:
             animation_name: Name of animation plugin to start
             config: Animation configuration parameters
+            preset: Optional selected-preset metadata for dashboard status
             
         Returns:
             True if started successfully
@@ -305,6 +312,7 @@ class AnimationManager:
             self.current_animation = animation_class(self.controller, effective_config)
             self.current_animation_name = animation_name
             self.current_animation_hash = self._compute_animation_hash(animation_name)
+            self.current_preset = self._normalize_current_preset(preset, animation_name)
 
             print(f"🔍 Animation instance created: {type(self.current_animation)}")
             print(f"🔍 Is StatefulAnimationBase? {isinstance(self.current_animation, StatefulAnimationBase)}")
@@ -368,6 +376,7 @@ class AnimationManager:
                 self.current_animation = None
 
             self.current_animation_name = None
+            self.current_preset = None
             self.frame_timestamps.clear()
             with self.frame_data_lock:
                 self.current_frame_data = []
@@ -377,6 +386,7 @@ class AnimationManager:
         if self.painter_active:
             self.painter_active = False
             self.current_animation_name = None
+            self.current_preset = None
             self.frame_timestamps.clear()
             with self.frame_data_lock:
                 self.current_frame_data = []
@@ -395,12 +405,50 @@ class AnimationManager:
                 params['plant_aware'] = self.plant_aware if self._legacy_plant_aware_bridge else False
                 params['plant_modifiers'] = self.plant_modifier_state.to_dict()
                 self.current_animation.update_parameters(params)
+                if self.current_preset is not None:
+                    self.current_preset['is_dirty'] = True
                 print(f"✓ Updated animation parameters: {params}")
                 return True
             except Exception as e:
                 print(f"✗ Failed to update parameters: {e}")
                 return False
         return False
+
+    @staticmethod
+    def _normalize_current_preset(
+        preset: Optional[Dict[str, Any]], animation_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return the small, safe preset selection shape exposed in status."""
+        if not isinstance(preset, dict):
+            return None
+        preset_id = preset.get('preset_id')
+        name = preset.get('name')
+        preset_animation = preset.get('animation', animation_name)
+        if not all(isinstance(value, str) and value for value in (
+            preset_id, name, preset_animation
+        )):
+            return None
+        if preset_animation != animation_name:
+            return None
+        return {
+            'preset_id': preset_id,
+            'name': name,
+            'animation': preset_animation,
+            'is_dirty': bool(preset.get('is_dirty', False)),
+        }
+
+    def set_current_preset(self, preset: Dict[str, Any]) -> bool:
+        """Mark the running animation as the saved preset without restarting it."""
+        if not self.is_running or not self.current_animation_name:
+            return False
+        selection = self._normalize_current_preset(
+            preset, self.current_animation_name
+        )
+        if selection is None:
+            return False
+        selection['is_dirty'] = False
+        self.current_preset = selection
+        return True
 
     @staticmethod
     def _clamp_channel(value: Any) -> int:
@@ -546,21 +594,22 @@ class AnimationManager:
             'painter_active': self.painter_active,
             'painter_updated_at': self.painter_updated_at if self.painter_active else None,
             'current_animation': displayed_animation,
-                'frame_count': self.frame_count,
-                'frames_presented': self.frames_presented,
-                'unchanged_frames_skipped': self.unchanged_frames_skipped,
-                'uptime': (time.perf_counter() - self.start_time) if self.is_running else 0,
-                'target_fps': self.target_fps,
-                'animation_speed_scale': self.animation_speed_scale,
-                'plant_aware': self.plant_aware,
-                'plant_modifiers': self.plant_modifier_state.to_dict(),
-                'actual_fps': self._calculate_fps(),
-                'animation_hash': self.current_animation_hash,
-                'led_info': {
-                    'total_leds': self.controller.total_leds,
-                    'strip_count': self.controller.strip_count,
-                    'leds_per_strip': self.controller.leds_per_strip
-                }
+            'current_preset': dict(self.current_preset) if self.current_preset else None,
+            'frame_count': self.frame_count,
+            'frames_presented': self.frames_presented,
+            'unchanged_frames_skipped': self.unchanged_frames_skipped,
+            'uptime': (time.perf_counter() - self.start_time) if self.is_running else 0,
+            'target_fps': self.target_fps,
+            'animation_speed_scale': self.animation_speed_scale,
+            'plant_aware': self.plant_aware,
+            'plant_modifiers': self.plant_modifier_state.to_dict(),
+            'actual_fps': self._calculate_fps(),
+            'animation_hash': self.current_animation_hash,
+            'led_info': {
+                'total_leds': self.controller.total_leds,
+                'strip_count': self.controller.strip_count,
+                'leds_per_strip': self.controller.leds_per_strip
+            }
         }
         
         status['animation_info'] = None

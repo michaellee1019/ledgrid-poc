@@ -24,11 +24,16 @@ class LocalControlChannel:
     def send_command(self, action: str, **data: Any) -> Dict[str, Any]:
         manager = self.manager
         if action == "start":
-            manager.start_animation(data.get("animation"), data.get("config") or {})
+            manager.start_animation(
+                data.get("animation"), data.get("config") or {},
+                preset=data.get("preset"),
+            )
         elif action == "stop":
             manager.stop_animation()
         elif action == "update_params":
             manager.update_animation_parameters(data.get("params") or {})
+        elif action == "set_current_preset":
+            manager.set_current_preset(data.get("preset") or {})
         elif action == "set_target_fps":
             manager.set_target_fps(int(data.get("target_fps")))
         elif action == "set_animation_speed_scale":

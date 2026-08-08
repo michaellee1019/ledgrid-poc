@@ -222,6 +222,26 @@
                         <small class="text-muted d-block mt-2"><span id="rendererStatus">Waiting…</span> · <span id="rendererFPS">0 FPS</span> · <span id="rendererFrameCount">0 frames</span></small>
                     </div>
                 </div>
+                <div class="card-footer bg-white border-0 px-2 pb-2 pt-0">
+                    <div class="preview-preset-action" id="previewPresetAction" aria-live="polite">
+                        <div class="preview-preset-current" id="previewPresetCurrent" hidden>
+                            <span class="preview-preset-label">Current preset</span>
+                            <strong id="previewPresetCurrentName"></strong>
+                        </div>
+                        <button class="btn btn-success save-preset-button w-100" id="previewSavePresetButton" type="button" onclick="openPreviewPresetComposer()" disabled>
+                            <i class="fas fa-bookmark me-1"></i> Save as preset
+                        </button>
+                        <small class="preview-preset-context text-muted" id="previewPresetContext">Play an animation to save its current look.</small>
+                        <div class="preview-preset-composer mt-2" id="previewPresetComposer" hidden>
+                            <label class="visually-hidden" for="previewPresetName">Preset name</label>
+                            <div class="input-group input-group-sm">
+                                <input class="form-control" id="previewPresetName" maxlength="64" placeholder="Name this look" autocomplete="off">
+                                <button class="btn btn-success" id="previewPresetConfirm" type="button" onclick="savePreviewPreset()">Save</button>
+                                <button class="btn btn-outline-secondary" type="button" onclick="closePreviewPresetComposer()" aria-label="Cancel saving preset"><i class="fas fa-times"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="d-none d-xl-block mb-3">

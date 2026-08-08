@@ -10,8 +10,8 @@ class _Manager:
         self.calls = []
         self.current_animation = None
 
-    def start_animation(self, animation, config):
-        self.calls.append(("start", animation, config))
+    def start_animation(self, animation, config, preset=None):
+        self.calls.append(("start", animation, config, preset))
         return animation != "missing"
 
     def stop_animation(self):
@@ -19,6 +19,10 @@ class _Manager:
 
     def update_animation_parameters(self, params):
         self.calls.append(("update", params))
+        return True
+
+    def set_current_preset(self, preset):
+        self.calls.append(("preset", preset))
         return True
 
     def set_target_fps(self, value):
@@ -61,6 +65,9 @@ class StartServerTests(unittest.TestCase):
 
         self.assertTrue(handle_command(manager, "start", {"animation": "solid", "config": {"red": 4}}))
         self.assertTrue(handle_command(manager, "update_params", {"params": {"brightness": 0.5}}))
+        self.assertTrue(handle_command(manager, "set_current_preset", {
+            "preset": {"preset_id": "warm", "name": "Warm", "animation": "solid"}
+        }))
         self.assertTrue(handle_command(manager, "set_target_fps", {"target_fps": 144}))
         self.assertTrue(handle_command(manager, "set_animation_speed_scale", {"animation_speed_scale": 0.45}))
         self.assertTrue(handle_command(manager, "set_plant_aware", {"plant_aware": False}))
@@ -69,8 +76,9 @@ class StartServerTests(unittest.TestCase):
         }))
 
         self.assertEqual(manager.calls, [
-            ("start", "solid", {"red": 4}),
+            ("start", "solid", {"red": 4}, None),
             ("update", {"brightness": 0.5}),
+            ("preset", {"preset_id": "warm", "name": "Warm", "animation": "solid"}),
             ("fps", 144),
             ("speed", 0.45),
             ("plant", False),

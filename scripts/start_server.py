@@ -174,7 +174,7 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
         animation = data.get('animation')
         config = data.get('config') or {}
         print(f"▶️  Start requested: {animation}")
-        return manager.start_animation(animation, config)
+        return manager.start_animation(animation, config, preset=data.get('preset'))
     elif action == 'stop':
         print("⏹️  Stop requested")
         manager.stop_animation()
@@ -183,6 +183,9 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
         if params:
             print(f"⚙️  Update params: {params}")
             return manager.update_animation_parameters(params)
+    elif action == 'set_current_preset':
+        preset = data.get('preset') or {}
+        return manager.set_current_preset(preset)
     elif action == 'set_target_fps':
         requested = data.get('target_fps')
         try:

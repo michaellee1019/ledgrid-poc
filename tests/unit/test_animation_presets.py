@@ -101,7 +101,15 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.channel.commands[-1], {
             'action': 'start',
-            'data': {'animation': 'sparkle', 'config': {'brightness': 0.9}},
+            'data': {
+                'animation': 'sparkle',
+                'config': {'brightness': 0.9},
+                'preset': {
+                    'preset_id': 'evening',
+                    'name': 'Evening',
+                    'animation': 'sparkle',
+                },
+            },
         })
 
     def test_list_alphabetizes_presets_with_mixed_timestamp_formats(self):
@@ -325,6 +333,8 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertIn('id="testAnimationCollapse" class="accordion-collapse collapse"', html)
         self.assertIn('/static/css/dashboard.css', html)
         self.assertIn('/static/js/dashboard.js', html)
+        self.assertIn('id="previewSavePresetButton"', html)
+        self.assertIn('Save as preset', html)
         css_response = self.client.get('/static/css/dashboard.css')
         js_response = self.client.get('/static/js/dashboard.js')
         try:
@@ -333,6 +343,8 @@ class AnimationPresetTests(unittest.TestCase):
             javascript = js_response.get_data(as_text=True)
             self.assertIn('function parameterPresets(info)', javascript)
             self.assertIn('applyParameterPreset', javascript)
+            self.assertIn('function savePreviewPreset()', javascript)
+            self.assertIn('function setCurrentPresetSelection(animationName, preset)', javascript)
         finally:
             css_response.close()
             js_response.close()

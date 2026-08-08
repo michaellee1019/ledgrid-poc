@@ -202,6 +202,9 @@ class AnimationWebInterface:
                 elif existing and field in existing:
                     preset_payload[field] = existing[field]
             self._write_animation_preset(animation_name, preset_id, preset_payload)
+            self.control_channel.send_command(
+                'set_current_preset', preset=self._animation_preset_selection(preset_payload)
+            )
             if self.runtime_preview_worker is not None:
                 fallback = self._preview_metadata(animation_name) or {}
                 preset_path = self._animation_preset_path(animation_name, preset_id)
@@ -218,7 +221,8 @@ class AnimationWebInterface:
             if not preset:
                 return jsonify({'error': 'Preset not found'}), 404
             self.control_channel.send_command(
-                'start', animation=animation_name, config=preset['params']
+                'start', animation=animation_name, config=preset['params'],
+                preset=self._animation_preset_selection(preset),
             )
             return jsonify({'success': True, 'preset': preset})
 
@@ -1165,6 +1169,15 @@ class AnimationWebInterface:
             summary['preview'] = self._preview_metadata(animation_name, preset_id)
         return summary
 
+    @staticmethod
+    def _animation_preset_selection(payload: Dict[str, Any]) -> Dict[str, str]:
+        """Return the identity stored with the active animation runtime state."""
+        return {
+            'preset_id': str(payload.get('preset_id') or ''),
+            'name': str(payload.get('name') or ''),
+            'animation': str(payload.get('animation') or ''),
+        }
+
     def _list_animation_presets(self, animation_name: str) -> List[Dict[str, Any]]:
         """List curated and runtime presets, with runtime files overriding IDs."""
         paths: Dict[str, Path] = {}
@@ -1264,6 +1277,7 @@ class AnimationWebInterface:
         status.setdefault('performance', {})
         status.setdefault('driver_stats', {})
         status.setdefault('current_animation', None)
+        status.setdefault('current_preset', None)
         status.setdefault('is_running', False)
         status.setdefault('mode', 'animation' if status.get('is_running') else 'idle')
         status.setdefault('painter_active', status.get('mode') == 'painter')
@@ -1337,6 +1351,7 @@ class AnimationWebInterface:
             'painter_active': False,
             'painter_updated_at': None,
             'current_animation': None,
+            'current_preset': None,
             'frame_count': 0,
             'uptime': 0,
             'target_fps': 0,
