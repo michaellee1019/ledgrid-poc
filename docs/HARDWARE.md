@@ -6,7 +6,10 @@ receivers. Each receiver drives eight WS2812 lanes of 138 LEDs. Firmware keeps a
 
 ## Receiver pins
 
-All four receivers run the same firmware.
+All four receivers run the same source baseline. Streamed-frame firmware can use
+one common image. Signed receiver-local animations additionally require four
+builds with immutable `LEDGRID_LOGICAL_DEVICE` values 0 through 3 and one common
+trusted P-256 public key.
 
 | Function | ESP32-S3 GPIO |
 | --- | ---: |
@@ -23,8 +26,12 @@ details.
 
 ## Raspberry Pi buses
 
-Boards on the same bus share clock, MOSI, and optional MISO; each board has its
-own chip select. All grounds must be common.
+Boards on the same bus share clock and MOSI; each board has its own chip select.
+MISO is optional only for the streamed-frame baseline. Signed package upload,
+acknowledgement, identity checks, telemetry, and receiver-local playback require
+every receiver's MISO connection. Receivers on one bus share that bus's MISO
+line and release it while their chip select is inactive. All grounds must be
+common.
 
 | Bus signal | Pi GPIO | Physical pin |
 | --- | ---: | ---: |
@@ -54,6 +61,29 @@ The full deployment configures `dtparam=spi=on` and `dtoverlay=spi1-2cs`
 idempotently. A boot-config change requires a Pi reboot before all four device
 nodes appear.
 
+For the current installed wall, the verified SPI1 mapping is:
+
+| Logical receiver | Linux device | Select |
+| ---: | --- | --- |
+| 2 | `/dev/spidev1.1` | CE1, Pi GPIO 17 / physical pin 11 |
+| 3 | `/dev/spidev1.0` | CE0, Pi GPIO 18 / physical pin 12 |
+
+### Current SPI1 return-path blocker
+
+As of 2026-08-08, Pi GPIO 19 / physical pin 35 (shared SPI1 MISO) is electrically
+coupled/shorted to Pi GPIO 20 / physical pin 38 (shared SPI1 MOSI). Direct
+stopped-service sweeps on both SPI1 devices returned exact TX echo over every
+tested speed and transfer size even with chip select disabled or held high, and
+an unmuxed GPIO test made GPIO 19 follow GPIO 20. SPI0 returned valid LGS3 at
+the same tested speeds. The service was restored after diagnosis.
+
+This explains the otherwise confusing split: receivers 2 and 3 can still accept
+ordinary Pi-to-ESP streamed frames over MOSI, but cannot return LGS3 identities,
+capabilities, or operation acknowledgements over MISO. Native package operations
+must continue to fail closed. Do not change software readiness to accommodate
+this fault. See the authoritative [evidence, powered-off isolation steps, and
+post-repair sequence](plan-native-animations.md#decisive-installed-wall-evidence).
+
 ## Power and signal integrity
 
 Do not power the wall from the ESP32 USB or Pi header. Supply the LED strips from
@@ -70,14 +100,19 @@ hardware current protection and conservative software brightness limits.
 
 ## Bring-up
 
-1. With LED power off, continuity-check common ground, every chip select, and
-   both bus clock/data pairs.
+1. With the Pi, every receiver USB/serial connection, LED supply, and any powered
+   intermediary disconnected, continuity-check common ground, every chip select,
+   and both bus clock/data pairs.
 2. Power and flash one receiver over USB:
 
    ```bash
    uv run --with platformio pio run -d firmware/esp32 -e esp32-s3-devkitc-1
    uv run --with platformio pio run -d firmware/esp32 -e esp32-s3-devkitc-1 -t upload
    ```
+
+   The checked-in default is intentionally fail-closed: it has no production
+   trust key and identifies as logical device 0. It is suitable for baseline
+   bring-up, not production signed-package acceptance.
 
 3. On the Pi, verify the expected device nodes:
 
@@ -90,6 +125,19 @@ hardware current protection and conservative software brightness limits.
 5. Connect and verify one LED lane at a time, then run the full-wall animation
    and output-rate sweeps.
 
+For receiver-local animations, initialize the ignored authoring configuration
+once with `just provision-native-animations` and four stable
+`/dev/serial/by-id` paths in logical wall order. `just deploy` then builds four
+isolated images with logical identities 0 through 3 and a common public trust
+key, flashes only those explicitly mapped receivers, and requires exact LGS3
+identity/capability readback before reporting success. The signing private key
+never leaves the workstation.
+
+The current workstation is already provisioned. After the SPI1 repair, verify
+fresh LGS3 readiness against the already-installed baseline **before** running
+`just deploy`; use the exact commands in the
+[cold-resume handoff](plan-native-animations.md#first-commands-when-resuming).
+
 ## Troubleshooting
 
 ### Missing `/dev/spidev*`
@@ -101,8 +149,17 @@ and rerun the deployment. Do not add competing SPI overlays by hand.
 
 - Verify Pi SCLK to ESP32 GPIO 12, Pi MOSI to GPIO 11, selected CE to GPIO 10,
   and a common ground.
+- For LGS3 status or receiver-local animations, also verify ESP32 GPIO 13 to the
+  bus MISO pin: Pi GPIO 9 / physical pin 21 on SPI0, or Pi GPIO 19 / physical
+  pin 35 on SPI1. A receiver may continue displaying streamed frames with this
+  return path missing, but signed animation deployment must fail closed.
 - Check that the host and firmware use SPI mode 0 and the configured bus/device.
 - Inspect receiver serial output and host `driver_stats`.
+
+If streamed frames work but LGS3/status and signed package operations do not,
+diagnose MISO separately from MOSI. A one-way stream proves the outbound frame
+path only; exact TX echo on MISO with CS disabled/high points to electrical
+coupling, not a receiver parser or SPI-rate problem.
 
 ### CRC or queue errors increase
 

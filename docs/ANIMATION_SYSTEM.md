@@ -1,6 +1,20 @@
-# Animation plugins
+# Animation system
 
-Animations are allowlisted, self-contained Python packages discovered by the
+The system has two explicit execution backends:
+
+- allowlisted Python plugins rendered by the Raspberry Pi and streamed as RGB
+  frames; and
+- signed `.lga` packages rendered locally by the four ESP32-S3 receivers as
+  native modules or pre-encoded frame tracks.
+
+These backends share manager state and dashboard selection, but not a runtime
+frame contract. Receiver-local playback is not represented as a fake
+`AnimationBase`, and an uploaded target binary is never executed by the web or
+controller process to create a preview.
+
+## Python plugin contract
+
+Python animations are allowlisted, self-contained packages discovered by the
 animation manager. The web UI reads the same registry for names, descriptions,
 parameters, presets, previews, and reload operations.
 
@@ -189,3 +203,62 @@ process writes commands through `ipc/control_channel.py` and reads status and
 preview frames from the same channel. Hot reload is suitable for local plugin
 iteration, but production changes should go through the normal deploy and
 acceptance flow.
+
+## Receiver-local firmware animations
+
+The Pi owns a persistent, signed package library under
+`run_state/firmware_animations`; each receiver holds only a disposable cache.
+Packages contain a canonical manifest, signed LGIX index, animated WebP preview,
+and either one import-free ESP32-S3 native module or four device-specific `LGT1`
+tracks. See [the package SDK](../firmware_animations/README.md) for authoring
+commands and [the implementation record](plan-native-animations.md) for the
+cross-component contract.
+
+The manager exposes `python`, `firmware_animation`, `painter`, and `idle` modes.
+Starting receiver-local playback first verifies that all four device payloads
+are cached, then starts receivers in deterministic order with their logical
+strip offsets. A complete streamed host frame takes ownership back. Local
+playback intentionally continues through a Pi disconnect or controller-process
+restart, and persisted provider/package/parameter state lets the manager adopt
+that retained mode.
+
+Package manifests own native parameter schemas and frame controls. The public
+frame controls are `pause`, `loop`, `playback_speed`, and `asset_brightness`;
+the manager injects global `time_scale`. Python-only target FPS and plant
+modifiers are unavailable in receiver-local mode. `scaled_elapsed_us` already
+contains the global scale, so native modules apply their own speed control once.
+`LGT1` v1 stores only infinite-loop metadata; the public boolean `loop` selects
+repeat-forever versus one pass/hold, and arbitrary fixed repeat counts are
+rejected rather than ignored.
+
+The dashboard preview is the package's trusted authoring-time WebP. There is no
+live receiver framebuffer readback, so it must not be described as the exact
+physical frame. Receiver render/decode telemetry in LGS3 is the runtime
+evidence available to the host.
+
+LGS3 is the only supported receiver status version for this backend. The clean
+cutover intentionally has no LGS1/LGS2 adapters or mixed-version deployment
+path; all four receivers must receive the baseline together.
+
+### Firmware-animation gates
+
+Run the software gates from the repository root:
+
+```bash
+just test-unit
+just test-native-animations
+just test-firmware
+```
+
+The native-example benchmark is a trusted desktop proxy at exact 8×138 local
+geometry, and the firmware recipe is a portable suite plus ESP32-S3 cross-build.
+Neither flashes a receiver or proves physical render/decode timing.
+
+Production provisioning is part of `just deploy`: four explicit stable USB IDs,
+a common trusted public key, distinct logical IDs 0–3, matching Pi trust
+configuration, and LGS3 identity/capability readback are mandatory. Physical
+acceptance remains open. Do not describe the backend as release-ready until
+one-receiver acceptance, all-four acceptance, fallback/restart tests,
+start-skew/drift measurements, and both 30-minute soaks pass. The current
+installed-wall blocker, exact resume commands, and remaining physical checklist
+live only in the [dated handoff](plan-native-animations.md#cold-resume-handoff-2026-08-08).

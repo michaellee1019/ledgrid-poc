@@ -23,9 +23,17 @@ Notes:
 - `performance` and `driver_stats` are present even if empty.
 - The web layer normalizes keys and fills defaults when missing.
 - Multi-device driver stats include receiver-side CRC counters and the latest
-  ESP32 CRC/copy/show timings when MISO status is available.
+  ESP32 CRC/copy/show timings when LGS3 is available over MISO. LGS3 also carries
+  logical identity, signed-playback capabilities, active digest, upload/cache,
+  render/decode, missed-deadline, watchdog, and quarantine fields.
 - Multi-device aggregate stats expose `spi_bus_count` and `device_map`; independent
   bus groups are presented concurrently, while devices sharing a bus are ordered.
+
+Working streamed output does not prove that these fields are trustworthy:
+streamed frames travel outbound on MOSI, while LGS3 returns on MISO. Status
+version 0 or exact TX echo must be diagnosed as a return-path fault before using
+the counters for native-animation acceptance. See the
+[current installed-wall handoff](plan-native-animations.md#decisive-installed-wall-evidence).
 
 ## Web API
 

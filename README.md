@@ -1,9 +1,10 @@
 # LED Grid Control System
 
 Controller, web UI, animation plugins, and ESP32-S3 firmware for a 32 x 138
-(4,416-pixel) plant-wall installation. A Raspberry Pi renders frames and sends
-them over two SPI buses to four receivers; each receiver drives eight WS2812
-lanes in parallel.
+(4,416-pixel) plant-wall installation. A Raspberry Pi normally renders frames
+and sends them over two SPI buses to four receivers; the explicit
+`firmware_animation` backend instead runs signed native modules or frame tracks
+on those receivers. Each receiver drives eight WS2812 lanes in parallel.
 
 ## Local development
 
@@ -34,6 +35,8 @@ content-addressed results are reused on later launches.
   including its manifest, curated presets, tests, and owned assets
 - `drivers/`: host-side frame transport and LED layout
 - `firmware/esp32/`: ESP32-S3 receiver firmware and native tests
+- `firmware_animations/`: signed `.lga` package SDK, persistent library, native
+  ABI, and frame-track encoder
 - `ipc/`: file-based web/controller communication
 - `scripts/`: runtime and calibration entry points
 - `tools/`: deployment, diagnostics, and acceptance utilities
@@ -44,6 +47,12 @@ The root `presets/animations/` tree is a runtime/user-writable overlay. Curated
 presets belong to the plugin that owns them.
 
 ## Hardware deployment
+
+> **Installed-wall hold (2026-08-08):** receiver-animation software is complete,
+> but SPI1 MISO is electrically coupled/shorted to MOSI. Streamed frames can
+> still work while signed package identity and acknowledgements fail closed. Do
+> not run a full deployment to probe the fault or bypass readiness; begin with
+> the [cold-resume handoff](docs/plan-native-animations.md#cold-resume-handoff-2026-08-08).
 
 ```bash
 just setup             # prepare the Pi and local web environment
@@ -71,7 +80,8 @@ Before merging or deploying a change:
 
 ## Documentation
 
-- [Animation plugins](docs/ANIMATION_SYSTEM.md)
+- [Animation system](docs/ANIMATION_SYSTEM.md)
+- [Firmware-animation implementation status](docs/plan-native-animations.md)
 - [Architecture](docs/ARCHITECTURE_DIAGRAM.md)
 - [Deployment](docs/DEPLOYMENT.md)
 - [Hardware and wiring](docs/HARDWARE.md)

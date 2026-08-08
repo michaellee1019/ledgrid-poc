@@ -33,6 +33,11 @@ See `docs/METRICS.md` for field descriptions and API payloads.
 - **Low FPS**: Inspect `performance.avg_frame_ms` and driver timing.
 - **Stale UI**: Confirm the controller is writing `run_state/status.json`.
 - **Missing LEDs**: Check `driver_stats.aggregate.total_leds` vs expected.
+- **Streamed frames work but receiver animations/readiness fail**: treat this as
+  a directional SPI fault. Frames travel over MOSI; LGS3 identity and operation
+  acknowledgements return over MISO. For the current installed SPI1 blocker,
+  use the [cold-resume handoff](plan-native-animations.md#cold-resume-handoff-2026-08-08)
+  rather than changing readiness code.
 
 ## Diagnostics Tools
 
