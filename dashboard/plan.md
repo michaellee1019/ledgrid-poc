@@ -1,5 +1,9 @@
 # Dashboard Module Implementation Plan
 
+> Historical design plan. The clock-only MVP described here is implemented, but
+> the plugin integration predates the manifest-backed animation package contract.
+> Start with [CONTINUATION.md](CONTINUATION.md) before changing or registering it.
+
 ## Goal
 Build a new top-level Python module `dashboard/` as the primary home for all dashboard-specific logic (time display, weather, transit, layout, typography, data adapters). Keep `animation/dashboard.py` as a minimal shim that only adapts the `dashboard` module to the existing animation plugin interface.
 
