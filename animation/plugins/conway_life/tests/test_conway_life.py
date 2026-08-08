@@ -31,9 +31,10 @@ class ConwayLifeAnimationTests(unittest.TestCase):
 
     def test_preview_frame_generation(self):
         controller = PreviewLEDController(strips=8, leds_per_strip=8)
-        manager = AnimationManager(controller)
+        manager = AnimationManager(controller, auto_start=False)
 
         preview = manager.get_animation_preview("conway_life")
+        self.assertIsNone(manager.animation_thread)
         self.assertEqual(len(preview["frame_data"]), 64)
         self.assertEqual(preview["current_animation"], "conway_life")
         self.assertNotIn("error", preview)
