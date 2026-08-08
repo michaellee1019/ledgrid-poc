@@ -1,206 +1,191 @@
-# LED Grid Animation System
+# Animation plugins
 
-A plugin-based animation system with web interface for hot-swapping animations over the air.
+Animations are allowlisted, self-contained Python packages discovered by the
+animation manager. The web UI reads the same registry for names, descriptions,
+parameters, presets, previews, and reload operations.
 
-## Features
+## Package contract
 
-- 🎨 **Plugin-based animations** - Easy to create and modify
-- 🌐 **Web interface** - Control animations from any device
-- 🔄 **Hot-swapping** - Upload and switch animations without restart
-- ⚡ **Real-time parameters** - Adjust animation settings live
-- 📊 **Performance monitoring** - FPS tracking and system status
-- 🎯 **High performance** - Optimized for 50+ FPS
+Each built-in animation owns one directory:
 
-## Quick Start
-
-1. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Start the animation server:**
-   ```bash
-   python scripts/start_server.py
-   ```
-
-3. **Open web interface:**
-   - Dashboard: http://localhost:5000/
-   - Control Panel: http://localhost:5000/control
-   - Upload: http://localhost:5000/upload
-
-## Architecture
-
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Web Interface │    │   Animation      │    │   LED           │
-│   (Flask)       │───▶│   Manager        │───▶│   Controller    │
-│                 │    │                  │    │   (SPI)         │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-        │                        │                        │
-        ▼                        ▼                        ▼
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Plugin        │    │   Animation      │    │   ESP32/SCORPIO │
-│   Loader        │    │   Plugins        │    │   Hardware      │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
+```text
+animation/plugins/<plugin_id>/
+├── __init__.py       # AnimationBase subclass and plugin-specific code
+├── manifest.json     # stable registry metadata
+├── presets/          # curated JSON presets
+├── tests/            # focused unit and behavior tests
+└── assets/           # optional files used only by this plugin
 ```
 
-## Creating Animations
+Only `__init__.py` and `manifest.json` are required. Framework and lifecycle
+contracts live in `animation/core/` with tests under `animation/core/tests/`.
+Reusable rendering or simulation primitives used by multiple plugins belong in
+`animation/libraries/` with tests under `animation/libraries/tests/`.
 
-### Basic Animation Structure
+The package directory and manifest `plugin_id` must agree, and the manifest's
+`class` must name the package's one concrete animation class. `icon` is required;
+`gallery` is either `show` or `test`. Built-in packages are discovered in sorted
+`plugin_id` order. Flat `.py` plugins remain supported only for explicitly
+configured external plugin directories.
+
+Root `presets/animations/<plugin_id>/` is a user-writable runtime overlay.
+Do not place curated source presets there.
+
+## Minimal plugin
+
+`animation/plugins/example/__init__.py`:
 
 ```python
-#!/usr/bin/env python3
-from typing import List, Tuple, Dict, Any
-from animation import AnimationBase
+import numpy as np
 
-class MyAnimation(AnimationBase):
-    ANIMATION_NAME = "My Animation"
-    ANIMATION_DESCRIPTION = "What this animation does"
-    ANIMATION_AUTHOR = "Your Name"
+from animation.core.base import AnimationBase
+
+
+class ExampleAnimation(AnimationBase):
+    ANIMATION_NAME = "Example"
+    ANIMATION_DESCRIPTION = "A static red frame."
+    ANIMATION_AUTHOR = "LED Grid"
     ANIMATION_VERSION = "1.0"
-    
-    def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
-        """Generate a frame of animation"""
-        strip_count, leds_per_strip = self.get_strip_info()
-        pixel_colors = []
-        
-        for strip in range(strip_count):
-            for led in range(leds_per_strip):
-                # Your animation logic here
-                r, g, b = 255, 0, 0  # Red
-                pixel_colors.append((r, g, b))
-        
-        return pixel_colors
+
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
+        frame = self.next_frame_buffer(clear=False)
+        frame[:] = (255, 0, 0)
+        return frame
 ```
 
-### Adding Parameters
+`animation/plugins/example/manifest.json`:
+
+```json
+{
+  "plugin_id": "example",
+  "class": "ExampleAnimation",
+  "icon": "💡",
+  "gallery": "show"
+}
+```
+
+Checked-in manifests are the built-in allowlist. A directory without a valid
+manifest is not loaded or exposed by the web API.
+
+## Frame contract
+
+`generate_frame(time_elapsed, frame_count)` returns either:
+
+- a C-contiguous `numpy.uint8` array shaped `(controller.total_leds, 3)`; or
+- `RenderedFrame(pixels, changed, dirty_ranges)` with presentation hints.
+
+Use `next_frame_buffer()` instead of allocating a fresh full-wall array on each
+frame. Source-rate or event-driven plugins should return `changed=False` while
+their image is unchanged. `dirty_ranges` may identify canonical flat-index
+ranges for a controller that supports partial transfer.
+
+Simulation state belongs to the plugin instance. Use elapsed time or a bounded
+fixed timestep for motion; do not make behavior depend on web request timing.
+Plugins must not call SPI or the web layer directly.
+
+## Parameters
+
+Extend the base schema and read applied values from `self.params`:
 
 ```python
-def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
+def get_parameter_schema(self):
     schema = super().get_parameter_schema()
-    schema.update({
-        'speed': {
-            'type': 'float',
-            'min': 0.1,
-            'max': 5.0,
-            'default': 1.0,
-            'description': 'Animation speed'
-        },
-        'color': {
-            'type': 'int',
-            'min': 0,
-            'max': 255,
-            'default': 255,
-            'description': 'Red component'
-        }
-    })
+    schema["density"] = {
+        "type": "float",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.25,
+        "description": "Fraction of active pixels",
+    }
     return schema
-
-def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
-    speed = self.params.get('speed', 1.0)
-    red = self.params.get('color', 255)
-    # Use parameters in your animation...
 ```
 
-## Example Animations
+Defaults must render a useful, bounded scene without network, sensor, or user
+input. Keep parameter names stable because saved runtime presets refer to them.
 
-The system comes with several example animations:
+Numeric controls may also declare named values with an optional `presets`
+mapping. The names are presentation metadata: the selected value sent to the
+animation and stored in an animation preset remains numeric, and operators can
+still choose any value allowed by the control's range.
 
-### Rainbow (`animation/plugins/rainbow.py`)
-- **RainbowAnimation**: Classic rainbow cycle
-- **RainbowWaveAnimation**: Rainbow wave effect
+```python
+schema["background_speed"] = {
+    "type": "float",
+    "min": 0.0,
+    "max": 3.0,
+    "default": 1.0,
+    "presets": {"frozen": 0.0, "normal": 1.0, "lively": 2.0},
+    "description": "Backdrop motion speed",
+}
+```
 
-### Solid Colors (`animation/plugins/solid.py`)
-- **SolidColorAnimation**: Solid color with breathing effect
-- **GradientAnimation**: Color gradients
+## Composable plant modifiers
 
-### Effects (`animation/plugins/effects.py`)
-- **SparkleAnimation**: Random sparkle effect
-- **WaveAnimation**: Sine wave patterns
+The manager owns one validated, versioned `plant_modifiers` state with active
+modifier IDs and normalized strengths. It applies that state live and to every
+future animation start and preview. Plugins declare supported semantics through
+`PLANT_MODIFIER_SUPPORT`, then use `plant_modifier_enabled()` and
+`plant_modifier_strength()`; unsupported active IDs are observable no-ops.
 
-## Web Interface
+The fourteen stable IDs are `illuminate`, `shadow`, `refract`, `hue_shift`,
+`liquid_glass`, `attractor`, `repulsor`, `slow_zone`, `obstacle`, `portal`,
+`bumper`, `hazard`, `habitat`, and `emitter`. Hue Shift and Liquid Glass are
+universal presentation modifiers applied by the framework after plugin rendering;
+all other modifiers require explicit plugin support. At most one field modifier
+and one surface modifier may be active.
+The old `plant_aware` boolean remains only as a compatibility input and migrates
+to Illuminate plus Obstacle; newly persisted global state uses the composable
+shape.
 
-### Dashboard (`/`)
-- View available animations
-- System status and performance
-- Quick animation start
+The base schema also supplies `plant_clearance`, `plant_mask_path`, and
+`plant_globe_mask_path`. Plugins load calibrated masks lazily through
+`get_plant_masks()`, including per-layer edges, distance/normal fields, and the
+seven ordered globe-region masks.
 
-### Control Panel (`/control`)
-- Real-time parameter adjustment
-- Animation switching
-- Keyboard shortcuts
+Keep foliage, globes, their union, and clearance-expanded obstacles semantically
+separate. Interactive simulations can use them for collision and routing;
+visual effects can use them as masks or accent layers. An empty active state
+must restore byte-identical pixels, semantic evolution, and RNG consumption.
 
-### Upload (`/upload`)
-- Upload Python animation files
-- Create animations with code editor
-- Animation templates and guidelines
+Shared mask geometry belongs in `animation/libraries/`, not in individual
+plugins.
 
-## API Endpoints
+## Presets and assets
 
-- `GET /api/animations` - List available animations
-- `POST /api/start/<name>` - Start animation
-- `POST /api/stop` - Stop current animation
-- `GET /api/status` - Get system status
-- `POST /api/parameters` - Update animation parameters
-- `POST /api/upload` - Upload new animation
-- `POST /api/refresh` - Refresh plugin list
+Curated presets live at `animation/plugins/<plugin_id>/presets/*.json` and are
+versioned with the code they configure. The registry merges them with runtime
+presets from `presets/animations/<plugin_id>/`, with runtime files remaining
+ignored until intentionally promoted into the plugin package.
 
-## Configuration
+An asset used by one plugin belongs in that plugin's `assets/` directory. An
+asset used by several plugins may live under root `assets/` with a documented
+owner and format.
 
-### Command Line Options
+## Tests and acceptance
+
+Focused tests live beside the plugin. They should cover:
+
+- manifest discovery and import;
+- frame shape, dtype, contiguity, and bounds;
+- deterministic state transitions for seeded simulations;
+- meaningful parameter extremes;
+- ordinary and plant-aware behavior when applicable;
+- every curated preset loading and rendering successfully.
+
+Run the repository checks before exposing a plugin:
 
 ```bash
-python scripts/start_server.py --help
+just test
+just test-rendering
 ```
 
-Key options:
-- `--host 0.0.0.0` - Bind to all interfaces
-- `--port 5000` - Web server port
-- `--strips 8` - Number of LED strips
-- `--leds-per-strip 140` - LEDs per strip
-- `--spi-speed 10000000` - SPI communication speed
-- `--target-fps 40` - Animation frame rate
-- `--animation-speed-scale 0.2` - Multiplier applied to animation speed parameters (lower = slower motion)
+The rendering benchmark is the authoritative performance gate for the installed
+32 x 138 geometry.
 
-### Hardware Configuration
+## Runtime boundaries
 
-The system supports:
-- **ESP32-S3** via SPI (recommended for high performance)
-- **RP2040 SCORPIO** via SPI (8 parallel outputs)
-
-See `HARDWARE.md` for connection details.
-
-## Performance Tips
-
-1. **Efficient calculations** - Keep frame generation fast
-2. **Use bulk transfers** - `set_all_pixels()` is faster than individual pixels
-3. **Parameter caching** - Cache expensive calculations
-4. **Appropriate FPS** - Balance visual quality with performance
-
-## Troubleshooting
-
-### Common Issues
-
-1. **No animations showing**
-   - Check `animation/plugins/` directory exists
-   - Verify Python syntax in animation files
-   - Check web console for errors
-
-2. **Low FPS**
-   - Reduce animation complexity
-   - Lower target FPS
-   - Check SPI speed settings
-
-3. **Parameter updates not working**
-   - Ensure animation implements `get_parameter_schema()`
-   - Check parameter types match schema
-   - Verify real-time updates in `generate_frame()`
-
-### Debug Mode
-
-Enable debug output:
-```bash
-python scripts/start_server.py --debug --controller-debug
-```
-
-This provides detailed logging for troubleshooting.
+The controller process owns plugin instances and hardware presentation. The web
+process writes commands through `ipc/control_channel.py` and reads status and
+preview frames from the same channel. Hot reload is suitable for local plugin
+iteration, but production changes should go through the normal deploy and
+acceptance flow.

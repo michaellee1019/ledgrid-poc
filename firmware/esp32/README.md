@@ -1,106 +1,113 @@
-# ESP32 XIAO S3 SPI Slave LED Controller
+# ESP32-S3 LED Receiver Firmware
 
-High-performance LED controller using ESP32-S3's hardware SPI slave with DMA.
+Firmware for an ESP32-S3-N16R8 that receives RGB frames from a Raspberry Pi
+over 20 MHz SPI and drives eight WS2812 lanes in parallel.
 
 ## Hardware
 
-- **Board**: Seeed XIAO ESP32-S3
-- **LEDs**: WS2812B/NeoPixels (7 strips on D0-D6, default 140 LEDs per strip = 980 total)
-- **SPI Master**: Raspberry Pi
+- Board: ESP32-S3-DevKitC-1-N16R8V
+- Flash: 16 MB
+- PSRAM: 8 MB
+- Installed default geometry: 8 strips × 138 LEDs
+- Maximum buffer geometry: 8 strips × 140 LEDs
 
-## Wiring
+| Function | GPIO |
+|---|---:|
+| SPI MOSI | 11 |
+| SPI MISO | 13 |
+| SPI SCLK | 12 |
+| SPI CS | 10 |
+| LED strip 0 | 18 |
+| LED strip 1 | 17 |
+| LED strip 2 | 16 |
+| LED strip 3 | 15 |
+| LED strip 4 | 7 |
+| LED strip 5 | 6 |
+| LED strip 6 | 5 |
+| LED strip 7 | 4 |
+| Status LED | 48 |
 
-```
-Raspberry Pi          →  XIAO ESP32-S3
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-GPIO 10 (MOSI)       →  GPIO9  (SPI MOSI)
-GPIO 11 (SCLK)       →  GPIO7  (SPI SCK)
-GPIO 8  (CE0)        →  GPIO44 (SPI CS)
-GPIO 9  (MISO)       →  GPIO8  (SPI MISO) [optional]
-GND                  →  GND
+The Raspberry Pi and ESP32 must share ground. WS2812 power is supplied separately.
 
-LED Strips:
-Strip 0 Data         →  GPIO1  (D0)
-Strip 1 Data         →  GPIO2  (D1)
-Strip 2 Data         →  GPIO3  (D2)
-Strip 3 Data         →  GPIO4  (D3)
-Strip 4 Data         →  GPIO5  (D4)
-Strip 5 Data         →  GPIO6  (D5)
-Strip 6 Data         →  GPIO43 (D6)
-```
+## Architecture
 
-**Note**: The XIAO ESP32-S3 uses GPIO 7, 8, 9, 44 for SPI communication, leaving D0-D6 (GPIO 1-6, 43) for LED strips.
+The receiver deliberately separates transport and display work:
 
-## Setup
+1. As soon as the parallel LED driver is ready, the display task renders a
+   firmware-resident 45-degree rainbow continuously with no software frame
+   cap. The field moves up and right and completes one spectrum cycle per
+   second.
+2. Two SPI slave DMA transactions are kept queued.
+3. The Arduino loop consumes completed packets, checks CRC-16, and updates a
+   compact RGB working frame.
+4. The first valid Pi command (normally the initialization PING) stops the
+   startup animation. Complete host frames are then published to a three-slot
+   latest-frame-wins mailbox.
+5. A FreeRTOS display task on the other core converts RGB to an eight-bit parallel
+   WS2812 waveform.
+6. ESP-IDF LCD/I80 DMA emits all eight strips concurrently.
 
-### 1. Install PlatformIO
+The firmware does not use FastLED. At 2.4 MHz, each WS2812 bit is encoded as three
+samples (`100` for zero and `110` for one). A 140-pixel frame contains 4.2 ms of
+pixel data followed by 300 us reset-low time.
+
+## Building and testing
 
 ```bash
 cd firmware/esp32
-pio run --target upload
-pio device monitor
+
+# Portable encoder, mailbox, and status-protocol tests
+pio test -e native
+
+# Exact production target
+pio run -e esp32-s3-devkitc-1
+
+# Upload one controller
+pio run -e esp32-s3-devkitc-1 -t upload --upload-port /dev/ttyACM0
 ```
 
-### 2. On Raspberry Pi
+The production target uses the pioarduino stable platform with Arduino 3.3.9 and
+ESP-IDF 5.5.4. The board target must remain `esp32-s3-devkitc1-n16r8` so PSRAM and
+flash timing match the installed controllers.
 
-Ensure SPI is enabled and set to Mode 3:
+## SPI commands
+
+Every command is followed by a big-endian CRC-16/CCITT-FALSE.
+
+| Command | Code | Payload |
+|---|---:|---|
+| SET_PIXEL | `0x01` | pixel high, pixel low, R, G, B |
+| SET_BRIGHTNESS | `0x02` | brightness 0–255 |
+| SHOW | `0x03` | none; publish the working frame |
+| CLEAR | `0x04` | none; clear and publish |
+| SET_RANGE | `0x05` | start high, start low, count, RGB bytes |
+| SET_ALL | `0x06` | tightly packed RGB bytes; publishes inline |
+| CONFIG | `0x07` | strips, length high, length low, optional debug byte |
+| PING | `0xFF` | none |
+
+SET_PIXEL and SET_RANGE modify the working frame. SHOW publishes their combined
+result. SET_ALL, CLEAR, brightness changes, and geometry changes publish inline.
+
+## Receiver status v2
+
+The ESP32 returns a 64-byte `LGS2` snapshot over MISO alongside normal writes.
+It includes:
+
+- SPI packets, valid CRCs, and CRC errors;
+- currently queued transactions;
+- accepted, displayed, superseded, and publish-dropped frames;
+- SPI queue and display errors;
+- CRC, frame-copy, waveform-encode, and LCD/I80 DMA timings;
+- last accepted and displayed sequence numbers.
+
+The host exposes these fields through `/api/status` and `/api/metrics`. Run the
+automated canary gate with:
 
 ```bash
-# SPI should already be configured for Mode 3 from previous setup
-python3 ../test_hardware_spi.py rainbow 10 10
+python tools/benchmarks/receiver_acceptance.py \
+  --base-url http://ledgridwall.local:5000 \
+  --device 0 --duration 60 --animation rainbow
 ```
 
-## Features
-
-- ✅ **Hardware SPI Slave** with DMA - no CPU overhead
-- ✅ **SPI Mode 3** - Most reliable for ESP32
-- ✅ **FastLED** - Optimized LED library
-- ✅ **Full command protocol** - All LED commands supported
-- ✅ **High performance** - Can handle 60+ FPS
-- ✅ **Statistics** - Packet/frame counters
-
-## Performance
-
-- **SPI Speed**: Up to 20 MHz (hardware limited)
-- **Frame Rate**: 60+ FPS for full 160 LED updates
-- **Latency**: < 1ms from SPI to LED update
-- **CPU Usage**: Minimal (DMA handles transfers)
-
-## Notes
-
-### 3.3V Logic Level
-
-The XIAO ESP32-S3 outputs 3.3V logic. WS2812B LEDs expect 5V logic (3.5V+ for HIGH).
-
-**Temporary workaround** (until level shifter):
-- May work but colors might be incorrect/dim
-- Short wires help (<30cm)
-- First LED acts as signal repeater
-
-**Proper solution** (order these):
-- 74AHCT125 or 74HCT245 level shifter
-- Or SN74LV1T34 (single gate, cheap)
-- Or dedicated WS2812 level shifter board
-
-## Troubleshooting
-
-### No data received
-- Check wiring (especially GND!)
-- Verify SPI enabled on Pi: `ls /dev/spidev*`
-- Check serial monitor for errors
-
-### LEDs not working  
-- 3.3V logic issue - order level shifter
-- Check LED power (5V, adequate amperage)
-- Verify data pin connection
-
-### Colors wrong
-- Likely 3.3V logic level issue
-- Try shorter wire to first LED
-- Order level shifter
-
-## Command Protocol
-
-Same as RP2040 version - see `../test_hardware_spi.py` for examples.
-
-
+See [rendering acceptance](../../docs/RENDERING_PIPELINE_ACCEPTANCE.md) for the
+required thresholds and rollback conditions.

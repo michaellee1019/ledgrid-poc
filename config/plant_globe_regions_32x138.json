@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "source_image": "calibration_photos/webcam-20260721-ambient-on-globes-dim-pass1.jpg",
+  "geometry": {
+    "strip_count": 32,
+    "leds_per_strip": 138,
+    "total_leds": 4416
+  },
+  "region_shape": "circle_in_8x8_led_box",
+  "regions": [
+    {"id": "top_left", "strip_start": 0, "led_start": 85, "width": 8, "height": 8},
+    {"id": "top_right", "strip_start": 9, "led_start": 91, "width": 8, "height": 8},
+    {"id": "upper_middle", "strip_start": 10, "led_start": 76, "width": 8, "height": 8},
+    {"id": "middle_left", "strip_start": 4, "led_start": 61, "width": 8, "height": 8},
+    {"id": "middle_right", "strip_start": 25, "led_start": 55, "width": 8, "height": 8},
+    {"id": "lower_left", "strip_start": 0, "led_start": 45, "width": 8, "height": 8},
+    {"id": "lower_right", "strip_start": 25, "led_start": 35, "width": 8, "height": 8}
+  ]
+}

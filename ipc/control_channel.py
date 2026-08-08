@@ -4,6 +4,8 @@ File-backed control and status channel for decoupling controller and web UI.
 """
 
 import json
+import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -24,20 +26,75 @@ class FileControlChannel:
         self.status_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _atomic_write(self, path: Path, payload: Dict[str, Any]):
-        tmp_path = path.with_suffix(path.suffix + ".tmp")
-        with tmp_path.open("w", encoding="utf-8") as fh:
-            json.dump(payload, fh, separators=(",", ":"))
-        tmp_path.replace(path)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=str(path.parent),
+        )
+        tmp_path = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, separators=(",", ":"))
+                fh.flush()
+                os.fsync(fh.fileno())
+            tmp_path.replace(path)
+        finally:
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
 
-    def read_control(self) -> Optional[Dict[str, Any]]:
-        if not self.control_path.exists():
+    @staticmethod
+    def _recover_last_json_object(raw_payload: str) -> Optional[Dict[str, Any]]:
+        """
+        Best-effort recovery for files that accidentally contain concatenated JSON
+        objects (e.g. {"a":1}{"b":2}). Returns the last object if parseable.
+        """
+        decoder = json.JSONDecoder()
+        index = 0
+        last_obj: Optional[Dict[str, Any]] = None
+        length = len(raw_payload)
+
+        while index < length:
+            while index < length and raw_payload[index].isspace():
+                index += 1
+            if index >= length:
+                break
+
+            parsed, end = decoder.raw_decode(raw_payload, index)
+            if isinstance(parsed, dict):
+                last_obj = parsed
+            index = end
+
+        return last_obj
+
+    def _read_json_file(self, path: Path, label: str) -> Optional[Dict[str, Any]]:
+        if not path.exists():
             return None
         try:
-            with self.control_path.open("r", encoding="utf-8") as fh:
-                return json.load(fh)
+            raw_payload = path.read_text(encoding="utf-8")
         except Exception as exc:  # pragma: no cover - best effort read
-            print(f"⚠️ Failed to read control file {self.control_path}: {exc}")
+            print(f"⚠️ Failed to read {label} file {path}: {exc}")
             return None
+
+        if not raw_payload.strip():
+            return None
+
+        try:
+            parsed = json.loads(raw_payload)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError as exc:
+            recovered = self._recover_last_json_object(raw_payload)
+            if recovered is not None:
+                print(f"⚠️ {label} file {path} contained concatenated JSON; recovered latest command")
+                self._atomic_write(path, recovered)
+                return recovered
+            print(f"⚠️ Failed to read {label} file {path}: {exc}")
+            return None
+
+    def read_control(self) -> Optional[Dict[str, Any]]:
+        return self._read_json_file(self.control_path, "control")
 
     def write_control(self, payload: Dict[str, Any]):
         payload = dict(payload)
@@ -59,14 +116,7 @@ class FileControlChannel:
         return payload
 
     def read_status(self) -> Optional[Dict[str, Any]]:
-        if not self.status_path.exists():
-            return None
-        try:
-            with self.status_path.open("r", encoding="utf-8") as fh:
-                return json.load(fh)
-        except Exception as exc:  # pragma: no cover - best effort read
-            print(f"⚠️ Failed to read status file {self.status_path}: {exc}")
-            return None
+        return self._read_json_file(self.status_path, "status")
 
     def write_status(self, payload: Dict[str, Any]):
         payload = dict(payload)

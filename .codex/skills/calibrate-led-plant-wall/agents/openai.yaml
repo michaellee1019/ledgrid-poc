@@ -1,0 +1,4 @@
+interface:
+  display_name: "Calibrate LED Plant Wall"
+  short_description: "Rebuild foliage and globe masks from webcam captures"
+  default_prompt: "Use $calibrate-led-plant-wall to recalibrate the LED wall after plant or camera movement."

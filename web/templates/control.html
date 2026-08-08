@@ -85,8 +85,28 @@
                 <h5>Animation Parameters</h5>
                 <small class="text-muted">Adjust parameters in real-time</small>
             </div>
-            <div class="card-body" id="parametersContainer">
-                <!-- Parameters will be loaded here -->
+            <div class="card-body">
+                <div class="border-bottom pb-3 mb-3">
+                    <label class="form-label fw-semibold" for="presetSelect">Presets</label>
+                    <div class="input-group input-group-sm mb-2">
+                        <select class="form-select" id="presetSelect" aria-label="Animation preset" onchange="showSelectedPresetDetails()">
+                            <option value="">No saved presets</option>
+                        </select>
+                        <button class="btn btn-outline-primary" type="button" onclick="applySelectedPreset()">Load</button>
+                        <button class="btn btn-outline-danger" type="button" onclick="deleteSelectedPreset()" title="Delete selected preset">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                    <div id="presetDetails" class="small text-muted mb-2" style="display: none;"></div>
+                    <div class="input-group input-group-sm">
+                        <input class="form-control" id="presetName" maxlength="64" placeholder="Preset name">
+                        <button class="btn btn-success" type="button" onclick="saveAnimationPreset()">
+                            <i class="fas fa-save"></i> Save current
+                        </button>
+                    </div>
+                    <small class="text-muted">Loading a preset starts this animation with its saved settings.</small>
+                </div>
+                <div id="parametersContainer"><!-- Parameters will be loaded here --></div>
             </div>
         </div>
 
@@ -107,18 +127,6 @@
                     <button class="dpad-btn" data-direction="down" aria-label="Soft drop">⬇️</button>
                     <div class="dpad-spacer"></div>
                 </div>
-            </div>
-        </div>
-
-        <div class="card mt-3" id="conwayControlsCard" style="display: none;">
-            <div class="card-header">
-                <h5>🧬 Conway Controls</h5>
-                <small class="text-muted">Spawn a south-to-north glider on demand.</small>
-            </div>
-            <div class="card-body">
-                <button class="btn btn-success w-100" onclick="sendConwayGlider()">
-                    Send Glider
-                </button>
             </div>
         </div>
     </div>
@@ -206,6 +214,10 @@
                     <strong id="metricDriverFrames">--</strong>
                 </div>
                 <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
+                    <span>Pipeline FPS</span>
+                    <strong id="metricDriverFps">--</strong>
+                </div>
+                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
                     <span>Bytes Sent</span>
                     <strong id="metricDriverBytes">--</strong>
                 </div>
@@ -221,9 +233,17 @@
                     <span>Last Frame</span>
                     <strong id="metricDriverLast">--</strong>
                 </div>
-                <div class="d-flex justify-content-between align-items-center">
+                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
                     <span>SPI Speed</span>
                     <strong id="metricSpiSpeed">--</strong>
+                </div>
+                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
+                    <span>SPI Transfers</span>
+                    <strong id="metricSpiTransfers">--</strong>
+                </div>
+                <div class="d-flex justify-content-between align-items-center">
+                    <span>CRC Overhead</span>
+                    <strong id="metricCrcBytes">--</strong>
                 </div>
             </div>
         </div>
@@ -249,6 +269,9 @@
 let currentAnimation = null;
 let parameterUpdateTimeout = null;
 let dpadCooldown = null;
+let currentParameterSchema = {};
+let currentParameterValues = {};
+let currentPresetCatalog = {};
 
 function humanizeParamName(name) {
     return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -258,7 +281,6 @@ function humanizeParamName(name) {
 function selectAnimation(name) {
     currentAnimation = name;
     updateTetrisControls(name);
-    updateConwayControls(name);
     
     // Update button states
     document.querySelectorAll('.animation-btn').forEach(btn => {
@@ -285,6 +307,7 @@ function loadAnimationParameters(name) {
             if (info.parameters) {
                 renderParameterControls(info.parameters, info.current_params);
                 document.getElementById('parametersCard').style.display = 'block';
+                loadAnimationPresets(name);
             }
         })
         .catch(console.error);
@@ -297,25 +320,10 @@ function updateTetrisControls(name) {
     card.style.display = isTetris ? 'block' : 'none';
 }
 
-function updateConwayControls(name) {
-    const card = document.getElementById('conwayControlsCard');
-    if (!card) return;
-    const isConway = name && name.toLowerCase() === 'conway_life';
-    card.style.display = isConway ? 'block' : 'none';
-}
-
 function sendDpad(direction) {
     return fetch(`/api/dpad/${direction}`, {method: 'POST'})
         .then(r => r.json())
         .catch(console.error);
-}
-
-function sendConwayGlider() {
-    updateParameters({spawn_glider: true}).then(result => {
-        if (!result.success) {
-            console.error('Failed to send glider');
-        }
-    });
 }
 
 // Render parameter controls
@@ -323,8 +331,12 @@ function renderParameterControls(schema, currentParams) {
     const container = document.getElementById('parametersContainer');
     container.innerHTML = '';
     
+    currentParameterSchema = schema;
+    currentParameterValues = {};
+
     Object.entries(schema).forEach(([paramName, paramInfo]) => {
-        const currentValue = currentParams[paramName] || paramInfo.default;
+        const currentValue = currentParams[paramName] ?? paramInfo.default;
+        currentParameterValues[paramName] = currentValue;
         const prettyName = humanizeParamName(paramName);
         const rangeText = (paramInfo.min !== undefined && paramInfo.max !== undefined)
             ? `Range: ${paramInfo.min} – ${paramInfo.max} (default ${paramInfo.default})`
@@ -341,9 +353,36 @@ function renderParameterControls(schema, currentParams) {
             </label>
         `;
         
-        if (paramInfo.type === 'float' || paramInfo.type === 'int') {
+        if (Array.isArray(paramInfo.options) && paramInfo.options.length) {
+            const options = paramInfo.options.map(option => {
+                const selected = String(option) === String(currentValue) ? ' selected' : '';
+                return `<option value="${option}"${selected}>${humanizeParamName(String(option))}</option>`;
+            }).join('');
+            controlHtml += `
+                <select class="form-select" id="${paramName}"
+                        onchange="updateParameter('${paramName}', this.value, 'str')">
+                    ${options}
+                </select>
+            `;
+        } else if (paramInfo.type === 'float' || paramInfo.type === 'int') {
             const step = paramInfo.type === 'float' ? '0.1' : '1';
             const numberInputId = `${paramName}-value`;
+            const presets = paramInfo.presets && !Array.isArray(paramInfo.presets)
+                ? Object.entries(paramInfo.presets)
+                : [];
+            if (presets.length) {
+                const presetOptions = presets.map(([name, value]) => {
+                    const selected = Number(value) === Number(currentValue) ? ' selected' : '';
+                    return `<option value="${value}"${selected}>${humanizeParamName(name)} (${value})</option>`;
+                }).join('');
+                controlHtml += `
+                    <select class="form-select form-select-sm mb-2" id="${paramName}-preset"
+                            onchange="handleNamedPreset('${paramName}', this.value, '${paramInfo.type}', '${numberInputId}')">
+                        <option value="">Custom</option>
+                        ${presetOptions}
+                    </select>
+                `;
+            }
             controlHtml += `
                 <div class="row">
                     <div class="col-8">
@@ -395,6 +434,7 @@ function handleRangeInput(name, value, type, mirrorInputId) {
     if (mirror) {
         mirror.value = value;
     }
+    syncNamedPreset(name, value);
     updateParameter(name, value, type);
 }
 
@@ -406,6 +446,25 @@ function handleNumberInput(name, value, type, mirrorSliderId) {
     if (slider) {
         slider.value = value;
     }
+    syncNamedPreset(name, value);
+    updateParameter(name, value, type);
+}
+
+function syncNamedPreset(name, value) {
+    const preset = document.getElementById(`${name}-preset`);
+    if (!preset) return;
+    const matchingOption = Array.from(preset.options).find(option => (
+        option.value !== '' && Number(option.value) === Number(value)
+    ));
+    preset.value = matchingOption ? matchingOption.value : '';
+}
+
+function handleNamedPreset(name, value, type, numberInputId) {
+    if (value === '') return;
+    const numberInput = document.getElementById(numberInputId);
+    const slider = document.getElementById(name);
+    if (numberInput) numberInput.value = value;
+    if (slider) slider.value = value;
     updateParameter(name, value, type);
 }
 
@@ -420,6 +479,7 @@ function updateParameter(name, value, type) {
     } else if (type === 'bool') {
         convertedValue = Boolean(value);
     }
+    currentParameterValues[name] = convertedValue;
     
     // Clear existing timeout
     if (parameterUpdateTimeout) {
@@ -437,6 +497,113 @@ function updateParameter(name, value, type) {
             }
         });
     }, 100); // 100ms debounce
+}
+
+async function loadAnimationPresets(name = currentAnimation) {
+    const select = document.getElementById('presetSelect');
+    if (!select || !name) return;
+    try {
+        const response = await fetch(`/api/animations/${encodeURIComponent(name)}/presets`);
+        const payload = await response.json();
+        select.innerHTML = '';
+        const presets = Array.isArray(payload.presets) ? payload.presets : [];
+        currentPresetCatalog = Object.fromEntries(presets.map(preset => [preset.preset_id, preset]));
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = presets.length ? 'Choose a preset…' : 'No saved presets';
+        select.appendChild(placeholder);
+        presets.forEach(preset => {
+            const option = document.createElement('option');
+            option.value = preset.preset_id;
+            option.textContent = preset.category ? `${preset.name} · ${preset.category}` : preset.name;
+            select.appendChild(option);
+        });
+        showSelectedPresetDetails();
+    } catch (error) {
+        console.error('Failed to load animation presets', error);
+    }
+}
+
+function showSelectedPresetDetails() {
+    const select = document.getElementById('presetSelect');
+    const details = document.getElementById('presetDetails');
+    if (!select || !details) return;
+    const preset = currentPresetCatalog[select.value];
+    details.replaceChildren();
+    if (!preset) {
+        details.style.display = 'none';
+        return;
+    }
+    if (preset.description) {
+        const description = document.createElement('span');
+        description.textContent = preset.description;
+        details.appendChild(description);
+    }
+    const colors = preset.palette && Array.isArray(preset.palette.colors)
+        ? preset.palette.colors : [];
+    if (colors.length) {
+        const swatches = document.createElement('span');
+        swatches.className = 'ms-2';
+        colors.filter(color => /^#[0-9a-fA-F]{6}$/.test(color)).forEach(color => {
+            const dot = document.createElement('span');
+            dot.style.cssText = `display:inline-block;width:12px;height:12px;border-radius:50%;margin-left:3px;background:${color};border:1px solid rgba(255,255,255,.35)`;
+            dot.title = color;
+            swatches.appendChild(dot);
+        });
+        details.appendChild(swatches);
+    }
+    details.style.display = details.childNodes.length ? 'block' : 'none';
+}
+
+async function saveAnimationPreset() {
+    const nameInput = document.getElementById('presetName');
+    const presetName = nameInput.value.trim();
+    if (!currentAnimation || !presetName) {
+        window.alert('Select an animation and enter a preset name.');
+        return;
+    }
+    const response = await fetch(`/api/animations/${encodeURIComponent(currentAnimation)}/presets`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: presetName, params: currentParameterValues})
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+        window.alert(payload.error || 'Failed to save preset.');
+        return;
+    }
+    nameInput.value = '';
+    await loadAnimationPresets();
+    document.getElementById('presetSelect').value = payload.preset.preset_id;
+    showSelectedPresetDetails();
+}
+
+async function applySelectedPreset() {
+    const presetId = document.getElementById('presetSelect').value;
+    if (!currentAnimation || !presetId) return;
+    const response = await fetch(
+        `/api/animations/${encodeURIComponent(currentAnimation)}/presets/${encodeURIComponent(presetId)}/apply`,
+        {method: 'POST'}
+    );
+    const payload = await response.json();
+    if (!response.ok) {
+        window.alert(payload.error || 'Failed to load preset.');
+        return;
+    }
+    renderParameterControls(currentParameterSchema, payload.preset.params || {});
+}
+
+async function deleteSelectedPreset() {
+    const select = document.getElementById('presetSelect');
+    const presetId = select.value;
+    if (!currentAnimation || !presetId) return;
+    const presetName = select.options[select.selectedIndex].textContent;
+    if (!window.confirm(`Delete preset "${presetName}"?`)) return;
+    const response = await fetch(
+        `/api/animations/${encodeURIComponent(currentAnimation)}/presets/${encodeURIComponent(presetId)}`,
+        {method: 'DELETE'}
+    );
+    if (response.ok) await loadAnimationPresets();
 }
 
 // Keyboard shortcuts
@@ -509,7 +676,6 @@ function updateStatus() {
         if (status.is_running && status.current_animation !== currentAnimation) {
             currentAnimation = status.current_animation;
             updateTetrisControls(currentAnimation);
-            updateConwayControls(currentAnimation);
             document.querySelectorAll('.animation-btn').forEach(btn => {
                 btn.classList.remove('btn-primary');
                 btn.classList.add('btn-outline-primary');
@@ -523,7 +689,6 @@ function updateStatus() {
         } else if (!status.is_running) {
             currentAnimation = null;
             updateTetrisControls(null);
-            updateConwayControls(null);
         }
     }).catch(console.error);
 }
@@ -532,7 +697,6 @@ function updateStatus() {
 {% if status.is_running %}
 currentAnimation = '{{ status.current_animation }}';
 updateTetrisControls(currentAnimation);
-updateConwayControls(currentAnimation);
 loadAnimationParameters(currentAnimation);
 {% endif %}
 </script>

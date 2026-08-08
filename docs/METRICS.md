@@ -22,6 +22,10 @@ The controller writes `run_state/status.json` at a fixed interval. Key fields:
 Notes:
 - `performance` and `driver_stats` are present even if empty.
 - The web layer normalizes keys and fills defaults when missing.
+- Multi-device driver stats include receiver-side CRC counters and the latest
+  ESP32 CRC/copy/show timings when MISO status is available.
+- Multi-device aggregate stats expose `spi_bus_count` and `device_map`; independent
+  bus groups are presented concurrently, while devices sharing a bus are ordered.
 
 ## Web API
 
@@ -74,3 +78,11 @@ Example response:
 - Controller status assembly: `animation/core/manager.py`
 - Status file writing: `scripts/start_server.py`
 - Web normalization and endpoints: `web/app.py`
+## Physical-output observability
+
+Receiver CRC, queue, mailbox, encode, and display counters stop at the ESP32
+output peripheral. WS2812 strips do not acknowledge data, so a flash caused by
+a marginal strip data connection, ground reference, level shifter, or power
+transient is not visible in software telemetry. Use the live output-rate sweep
+to correlate visual failures with target FPS; zero receiver errors alone does
+not prove downstream signal integrity.

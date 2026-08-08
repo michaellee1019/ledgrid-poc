@@ -6,7 +6,6 @@ Test script to verify virtual environment deployment works correctly
 import subprocess
 import sys
 import tempfile
-import os
 from pathlib import Path
 
 def run_command(cmd, cwd=None):

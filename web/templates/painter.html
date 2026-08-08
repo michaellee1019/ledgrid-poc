@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+
+{% block title %}Plant Mask Painter - LED Grid{% endblock %}
+
+{% block content %}
+<style>
+    .mask-painter-page {
+        width: min(96vw, 1780px);
+        margin-left: 50%;
+        transform: translateX(-50%);
+    }
+
+    .painter-heading {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .painter-heading h1 {
+        font-size: clamp(1.55rem, 2.4vw, 2.35rem);
+        margin-bottom: .25rem;
+    }
+
+    .painter-actions {
+        display: flex;
+        gap: .65rem;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .painter-actions .btn {
+        min-width: 118px;
+        padding: .65rem 1rem;
+        font-weight: 650;
+    }
+
+    .painter-layout {
+        display: grid;
+        grid-template-columns: minmax(250px, 310px) minmax(0, 1fr);
+        gap: 1rem;
+        align-items: start;
+    }
+
+    .painter-toolbar {
+        position: sticky;
+        top: 1rem;
+    }
+
+    .mask-tools {
+        display: grid;
+        gap: .65rem;
+    }
+
+    .mask-tool {
+        display: grid;
+        grid-template-columns: 22px 1fr;
+        align-items: center;
+        gap: .75rem;
+        width: 100%;
+        padding: .85rem .9rem;
+        border: 2px solid #d8dee8;
+        border-radius: .75rem;
+        background: #fff;
+        color: #172033;
+        text-align: left;
+        transition: border-color .12s ease, box-shadow .12s ease, transform .12s ease;
+    }
+
+    .mask-tool:hover {
+        transform: translateY(-1px);
+        border-color: #9aa9bc;
+    }
+
+    .mask-tool.active {
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 3px rgba(13, 110, 253, .16);
+    }
+
+    .mask-swatch {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .35), 0 0 0 1px rgba(0, 0, 0, .2);
+    }
+
+    .mask-tool-title {
+        display: block;
+        font-weight: 700;
+        line-height: 1.1;
+    }
+
+    .mask-tool-meta {
+        display: block;
+        color: #6c757d;
+        font-size: .78rem;
+        margin-top: .25rem;
+    }
+
+    .erase-swatch {
+        display: grid;
+        place-items: center;
+        background: repeating-linear-gradient(135deg, #fff 0 4px, #dce2ea 4px 8px);
+        color: #586476;
+    }
+
+    .painter-counts {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: .55rem;
+        margin-top: 1rem;
+    }
+
+    .painter-count {
+        padding: .65rem .75rem;
+        border: 1px solid #e1e6ed;
+        border-radius: .6rem;
+        background: #f7f9fc;
+    }
+
+    .painter-count strong {
+        display: block;
+        font-size: 1.15rem;
+    }
+
+    .painter-canvas-card {
+        min-width: 0;
+    }
+
+    .painter-canvas-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .painter-canvas-wrap {
+        overflow: auto;
+        height: calc(100vh - 205px);
+        min-height: 640px;
+        border-radius: .65rem;
+        background:
+            radial-gradient(circle at 30% 12%, rgba(38, 55, 82, .78), transparent 30%),
+            #090d13;
+        padding: 26px;
+        overscroll-behavior: contain;
+    }
+
+    #painterCanvas {
+        display: block;
+        margin: 0 auto;
+        image-rendering: pixelated;
+        cursor: crosshair;
+        touch-action: none;
+        box-shadow: 0 18px 60px rgba(0, 0, 0, .48);
+        border-radius: 4px;
+    }
+
+    .status-line {
+        min-height: 1.5rem;
+        color: #667085;
+        font-size: .88rem;
+    }
+
+    .status-line.error {
+        color: #b42318;
+    }
+
+    .status-line.success {
+        color: #067647;
+    }
+
+    .shortcut-list {
+        margin: 0;
+        padding-left: 1.15rem;
+        color: #667085;
+        font-size: .82rem;
+    }
+
+    kbd {
+        background: #e9edf3;
+        color: #344054;
+        border: 1px solid #d0d5dd;
+        box-shadow: none;
+    }
+
+    @media (max-width: 900px) {
+        .painter-heading {
+            display: block;
+        }
+
+        .painter-actions {
+            justify-content: stretch;
+            margin-top: 1rem;
+        }
+
+        .painter-actions .btn {
+            flex: 1;
+        }
+
+        .painter-layout {
+            grid-template-columns: 1fr;
+        }
+
+        .painter-toolbar {
+            position: static;
+        }
+
+        .mask-tools {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .painter-canvas-wrap {
+            height: 70vh;
+            min-height: 500px;
+        }
+    }
+</style>
+
+<div class="mask-painter-page">
+    <div class="painter-heading">
+        <div>
+            <h1><i class="fas fa-seedling"></i> Plant Mask Painter</h1>
+            <p class="text-muted mb-0">
+                Paint foliage and planter-bowl pixels directly. The wall mirrors this canvas exactly while you edit.
+            </p>
+        </div>
+        <div class="painter-actions">
+            <button class="btn btn-outline-secondary" id="undoBtn" type="button" disabled>
+                <i class="fas fa-rotate-left"></i> Undo
+            </button>
+            <button class="btn btn-primary" id="saveMasksBtn" type="button" disabled>
+                <i class="fas fa-floppy-disk"></i> Save masks
+            </button>
+        </div>
+    </div>
+
+    <div class="painter-layout">
+        <aside class="card painter-toolbar">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong>Paint as</strong>
+                <span class="badge bg-secondary" id="layoutBadge">Loading</span>
+            </div>
+            <div class="card-body">
+                <div class="mask-tools" id="maskTools">
+                    <button class="mask-tool active" data-tool="foliage" type="button">
+                        <span class="mask-swatch" data-swatch="foliage"></span>
+                        <span>
+                            <span class="mask-tool-title">Foliage</span>
+                            <span class="mask-tool-meta">Leaves and vines · <kbd>1</kbd></span>
+                        </span>
+                    </button>
+                    <button class="mask-tool" data-tool="planter_bowls" type="button">
+                        <span class="mask-swatch" data-swatch="planter_bowls"></span>
+                        <span>
+                            <span class="mask-tool-title">Planter bowls</span>
+                            <span class="mask-tool-meta">Solid rooting globes · <kbd>2</kbd></span>
+                        </span>
+                    </button>
+                    <button class="mask-tool" data-tool="erase" type="button">
+                        <span class="mask-swatch erase-swatch"><i class="fas fa-eraser"></i></span>
+                        <span>
+                            <span class="mask-tool-title">Erase</span>
+                            <span class="mask-tool-meta">Remove either mask · <kbd>E</kbd></span>
+                        </span>
+                    </button>
+                </div>
+
+                <div class="painter-counts">
+                    <div class="painter-count">
+                        <strong id="foliageCount">—</strong>
+                        <span class="small text-muted">foliage</span>
+                    </div>
+                    <div class="painter-count">
+                        <strong id="planterCount">—</strong>
+                        <span class="small text-muted">bowls</span>
+                    </div>
+                </div>
+
+                <hr>
+
+                <label for="zoomRange" class="form-label d-flex justify-content-between">
+                    <span>Editor size</span>
+                    <span id="zoomLabel">16px</span>
+                </label>
+                <input type="range" class="form-range" id="zoomRange" min="10" max="28" value="16">
+
+                <div class="status-line mt-3" id="paintStatus" role="status">Loading mask files…</div>
+
+                <hr>
+
+                <ul class="shortcut-list">
+                    <li>Drag to paint continuous strokes.</li>
+                    <li><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Z</kbd> undoes a stroke.</li>
+                    <li><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>S</kbd> saves both mask files.</li>
+                </ul>
+            </div>
+        </aside>
+
+        <section class="card painter-canvas-card">
+            <div class="card-header painter-canvas-header">
+                <strong>Wall pixels</strong>
+                <small class="text-muted">Top of the canvas is the top of the wall</small>
+            </div>
+            <div class="card-body p-2">
+                <div class="painter-canvas-wrap" id="canvasWrap">
+                    <canvas id="painterCanvas" width="1" height="1" aria-label="Plant mask pixel editor"></canvas>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/painter.js') }}"></script>
+{% endblock %}

@@ -16,8 +16,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from animation.core.manager import AnimationManager
 from ipc.control_channel import FileControlChannel
-from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP, default_strip_count
+from drivers.frame_codec import decode_frame_data
 from web.app import create_app
+from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
+from tools.deployment.preserve_deploy_settings import load_saved_state, save_status
 
 # Try to import the real LED controller, fall back to mock for testing
 try:
@@ -48,19 +51,31 @@ except ImportError:
                 pass
 
 
+def device_count_for_strips(strip_count: int, strips_per_device: int = 8) -> int:
+    """Return enough devices to cover every configured strip."""
+    return max(1, (max(1, strip_count) + strips_per_device - 1) // strips_per_device)
+
+
 def run_controller_mode(args):
     """Controller process: drives LEDs and writes status/frames to disk."""
+    saved_state = None
+    try:
+        saved_state = load_saved_state(Path(args.saved_state_file))
+        print(f"💾 Restart default: {saved_state['animation']}/before-deploy")
+    except RuntimeError as exc:
+        print(f"ℹ️ No usable saved animation state: {exc}")
+
     # Determine if we're using multi-device or single-device controller
     # Multi-device controller expects total strips, single-device expects strips per device
     if hasattr(LEDController, '__name__') and 'Multi' in LEDController.__name__:
         # Multi-device controller - calculate number of devices from strip count
-        strips_per_device = 7  # XIAO S3 has 7 strips (D0-D6)
-        num_devices = max(1, args.strips // strips_per_device)
+        strips_per_device = 8  # ESP32-S3 DevKitC has 8 strips
+        num_devices = device_count_for_strips(args.strips, strips_per_device)
         controller = LEDController(
             num_devices=num_devices,
             bus=args.bus,
             speed=args.spi_speed,
-            mode=3,
+            mode=0,
             strips_per_device=strips_per_device,
             leds_per_strip=args.leds_per_strip,
             debug=args.controller_debug,
@@ -72,17 +87,33 @@ def run_controller_mode(args):
             bus=args.bus,
             device=args.device,
             speed=args.spi_speed,
-            mode=3,
+            mode=0,
             strips=args.strips,
             leds_per_strip=args.leds_per_strip,
             debug=args.controller_debug,
         )
+    startup_speed_scale = (
+        saved_state.get('animation_speed_scale', args.animation_speed_scale)
+        if saved_state else args.animation_speed_scale
+    )
+    startup_modifiers = saved_state.get('plant_modifiers') if saved_state else None
     manager = AnimationManager(
         controller,
         plugins_dir=args.animations_dir,
-        animation_speed_scale=args.animation_speed_scale,
+        animation_speed_scale=startup_speed_scale,
+        plant_aware=DEFAULT_PLANT_AWARE,
+        plant_modifiers=startup_modifiers,
+        default_animation=saved_state.get('animation') if saved_state else None,
+        default_animation_config=saved_state.get('params') if saved_state else None,
     )
-    manager.target_fps = args.target_fps
+    manager.target_fps = int(saved_state.get('target_fps', args.target_fps)) if saved_state else args.target_fps
+
+    if hasattr(controller, "set_brightness"):
+        try:
+            controller.set_brightness(args.brightness)
+            print(f"  Brightness : {args.brightness}")
+        except Exception as exc:
+            print(f"⚠️ Failed to set controller brightness to {args.brightness}: {exc}")
 
     channel = FileControlChannel(control_path=args.control_file, status_path=args.status_file)
 
@@ -93,7 +124,9 @@ def run_controller_mode(args):
     print(f"  Status every: {args.status_interval}s")
     print()
 
-    last_command_id = None
+    # Seed from any existing control file so stale commands aren't re-executed on restart
+    stale_cmd = channel.read_control()
+    last_command_id = stale_cmd.get('command_id') if stale_cmd else None
     last_status_time = 0.0
 
     try:
@@ -103,7 +136,16 @@ def run_controller_mode(args):
                 last_command_id = cmd.get('command_id')
                 action = cmd.get('action')
                 data = cmd.get('data') or {}
-                handle_command(manager, action, data)
+                if handle_command(manager, action, data):
+                    try:
+                        save_status(
+                            manager.get_current_status(),
+                            Path(args.presets_dir),
+                            Path(args.saved_state_file),
+                        )
+                        print(f"💾 Saved restart state: {manager.current_animation_name}/before-deploy")
+                    except Exception as exc:
+                        print(f"⚠️ Failed to save restart state: {exc}")
 
             now = time.time()
             if now - last_status_time >= args.status_interval:
@@ -127,12 +169,12 @@ def run_controller_mode(args):
 
 
 def handle_command(manager: AnimationManager, action: str, data: dict):
-    """Dispatch a command to the animation manager."""
+    """Dispatch a command and report whether restart state changed."""
     if action == 'start':
         animation = data.get('animation')
         config = data.get('config') or {}
         print(f"▶️  Start requested: {animation}")
-        manager.start_animation(animation, config)
+        return manager.start_animation(animation, config)
     elif action == 'stop':
         print("⏹️  Stop requested")
         manager.stop_animation()
@@ -140,7 +182,39 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
         params = data.get('params') or {}
         if params:
             print(f"⚙️  Update params: {params}")
-            manager.update_animation_parameters(params)
+            return manager.update_animation_parameters(params)
+    elif action == 'set_target_fps':
+        requested = data.get('target_fps')
+        try:
+            applied = manager.set_target_fps(int(requested))
+            print(f"🎚️ Target FPS: {applied}")
+            return True
+        except (TypeError, ValueError):
+            print(f"⚠️ Invalid target FPS: {requested!r}")
+    elif action == 'set_animation_speed_scale':
+        requested = data.get('animation_speed_scale')
+        try:
+            applied = manager.set_animation_speed_scale(float(requested))
+            print(f"🎚️ Animation speed scale: {applied:.3f}")
+            return True
+        except (TypeError, ValueError):
+            print(f"⚠️ Invalid animation speed scale: {requested!r}")
+    elif action == 'set_plant_aware':
+        requested = data.get('plant_aware')
+        try:
+            applied = manager.set_plant_aware(requested)
+            print(f"🌿 Plant-aware mode: {'on' if applied else 'off'}")
+            return True
+        except (TypeError, ValueError):
+            print(f"⚠️ Invalid plant-aware state: {requested!r}")
+    elif action == 'set_plant_modifiers':
+        requested = data.get('plant_modifiers')
+        try:
+            applied = manager.set_plant_modifiers(requested)
+            print(f"🌿 Plant modifiers: {', '.join(applied['active']) or 'off'}")
+            return True
+        except (TypeError, ValueError):
+            print(f"⚠️ Invalid plant modifier state: {requested!r}")
     elif action == 'refresh_plugins':
         animation = data.get('animation')
         if animation:
@@ -150,16 +224,44 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
             print("🔄 Refresh all plugins")
             manager.refresh_plugins()
     elif action == 'puncture_hole':
-        print("💥 Random hole requested")
-        manager.trigger_random_hole()
+        x = data.get('x')
+        y = data.get('y')
+        radius = data.get('radius')
+        if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            print(f"💥 Hole requested at ({x:.1f}, {y:.1f})")
+            manager.trigger_hole(float(x), float(y), radius)
+        else:
+            print("💥 Random hole requested")
+            manager.trigger_random_hole()
     elif action == 'dpad':
         direction = (data.get('direction') or '').lower().replace('_', '-')
         if manager.current_animation and hasattr(manager.current_animation, 'handle_input'):
             manager.current_animation.handle_input(direction)
         else:
             print(f"⚠️ D-pad input ignored (no handler): {direction}")
+    elif action == 'painter_set_frame':
+        frame_data = data.get('frame_data')
+        encoded = data.get('frame_data_encoded')
+        if isinstance(encoded, str) and encoded:
+            frame_data = decode_frame_data(encoded)
+        if isinstance(frame_data, list):
+            print(f"🖌️  Painter set frame ({len(frame_data)} pixels)")
+            manager.set_painter_frame(frame_data)
+        else:
+            print("⚠️ painter_set_frame ignored: missing frame payload")
+    elif action == 'painter_apply_updates':
+        updates = data.get('updates') or []
+        if isinstance(updates, list):
+            applied = manager.apply_painter_updates(updates)
+            print(f"🖌️  Painter updates: {len(updates)} ({'applied' if applied else 'no changes'})")
+        else:
+            print("⚠️ painter_apply_updates ignored: updates must be a list")
+    elif action == 'painter_clear':
+        print("🧽 Painter clear requested")
+        manager.clear_painter_frame()
     else:
         print(f"⚠️ Unknown action: {action}")
+    return False
 
 
 def run_web_mode(args):
@@ -181,7 +283,7 @@ def run_web_mode(args):
     print(f"  URL: http://{args.host}:{args.port}")
     print(f"  Dashboard: http://{args.host}:{args.port}/")
     print(f"  Control:   http://{args.host}:{args.port}/control")
-    print(f"  Upload:    http://{args.host}:{args.port}/upload")
+    print(f"  Painter:   http://{args.host}:{args.port}/painter")
     print()
 
     web_interface.run(debug=args.debug)
@@ -201,8 +303,12 @@ def main():
                         help='Path to control file (default: run_state/control.json)')
     parser.add_argument('--status-file', default='run_state/status.json',
                         help='Path to status file (default: run_state/status.json)')
-    parser.add_argument('--strips', type=int, default=DEFAULT_STRIP_COUNT,
-                        help=f'Number of LED strips (default: {DEFAULT_STRIP_COUNT})')
+    parser.add_argument('--presets-dir', default='presets/animations',
+                        help='Directory for restart-state animation presets')
+    parser.add_argument('--saved-state-file', default='run_state/before_deploy.json',
+                        help='Path to the persisted restart animation state')
+    parser.add_argument('--strips', type=int, default=default_strip_count(),
+                        help=f'Number of LED strips (default: {default_strip_count()})')
     parser.add_argument('--leds-per-strip', type=int, default=DEFAULT_LEDS_PER_STRIP,
                         help=f'LEDs per strip (default: {DEFAULT_LEDS_PER_STRIP})')
 
@@ -219,15 +325,17 @@ def main():
                         help='SPI bus number (default: 0)')
     parser.add_argument('--device', type=int, default=0,
                         help='SPI device number (default: 0)')
-    parser.add_argument('--spi-speed', type=int, default=10000000,
-                        help='SPI speed in Hz (default: 10000000)')
+    parser.add_argument('--spi-speed', type=int, default=20000000,
+                        help='SPI speed in Hz (default: 20000000)')
     parser.add_argument('--controller-debug', action='store_true',
                         help='Enable LED controller debug output')
-    parser.add_argument('--target-fps', type=int, default=150,
-                        help='Target animation FPS (default: 150)')
-    parser.add_argument('--animation-speed-scale', type=float, default=0.2,
-                        help='Multiplier applied to each animation\'s speed parameter (default: 0.2)')
-    parser.add_argument('--poll-interval', type=float, default=0.5,
+    parser.add_argument('--target-fps', type=int, default=200,
+                        help=f'Target animation FPS (default: 200; tuned for {DEFAULT_LEDS_PER_STRIP}-pixel WS2812 strips)')
+    parser.add_argument('--brightness', type=int, default=50,
+                        help='Global hardware brightness 0-255 (default: 50)')
+    parser.add_argument('--animation-speed-scale', type=float, default=DEFAULT_ANIMATION_SPEED_SCALE,
+                        help=f'Multiplier applied to animation speed parameters (default: {DEFAULT_ANIMATION_SPEED_SCALE})')
+    parser.add_argument('--poll-interval', type=float, default=0.05,
                         help='Seconds between control-file polls (controller mode)')
     parser.add_argument('--status-interval', type=float, default=0.5,
                         help='Seconds between status writes (controller mode)')

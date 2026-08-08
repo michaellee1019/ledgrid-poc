@@ -1,0 +1,899 @@
+#!/usr/bin/env python3
+"""Tetris animation that plays itself on the LED grid."""
+
+import random
+import threading
+from dataclasses import dataclass
+from math import sqrt
+from typing import List, Tuple, Dict, Any, Optional
+
+from animation import AnimationBase
+from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+
+
+Color = Tuple[int, int, int]
+BoardCell = Optional[Color]
+MAX_TETROMINO_COUNT = 128
+MAX_SPAWNS_PER_UPDATE = 8
+MAX_COORDINATED_PLANS = 3
+MAX_SIMULATION_DELTA = 0.05
+
+
+BASE_SHAPES = {
+    "I": ["XXXX"],
+    "J": ["X..", "XXX"],
+    "L": ["..X", "XXX"],
+    "O": ["XX", "XX"],
+    "S": [".XX", "XX."],
+    "T": [".X.", "XXX"],
+    "Z": ["XX.", ".XX"],
+}
+
+PIECE_COLORS: Dict[str, Color] = {
+    "I": (0, 255, 255),
+    "J": (0, 102, 255),
+    "L": (255, 140, 0),
+    "O": (255, 220, 0),
+    "S": (0, 255, 120),
+    "T": (200, 0, 200),
+    "Z": (255, 60, 60),
+}
+
+PLANT_FOLIAGE_COLOR: Color = (10, 52, 22)
+PLANT_GLOBE_COLOR: Color = (78, 16, 70)
+
+
+def _normalize(coords: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    min_x = min(x for x, _ in coords)
+    min_y = min(y for _, y in coords)
+    return [(x - min_x, y - min_y) for x, y in coords]
+
+
+def _rotate(coords: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    return [(y, -x) for x, y in coords]
+
+
+def _parse_shape(rows: List[str]) -> List[Tuple[int, int]]:
+    coords: List[Tuple[int, int]] = []
+    for y, row in enumerate(rows):
+        for x, char in enumerate(row):
+            if char != '.':
+                coords.append((x, y))
+    return coords
+
+
+def _build_rotations(rows: List[str]) -> List[List[Tuple[int, int]]]:
+    coords = _parse_shape(rows)
+    rotations: List[List[Tuple[int, int]]] = []
+    seen = set()
+    current = coords
+    for _ in range(4):
+        normalized = _normalize(current)
+        key = tuple(sorted(normalized))
+        if key not in seen:
+            rotations.append(normalized)
+            seen.add(key)
+        current = _rotate(current)
+    return rotations
+
+
+TETROMINOS: Dict[str, Dict[str, Any]] = {
+    name: {
+        'rotations': _build_rotations(patterns),
+        'color': PIECE_COLORS[name]
+    }
+    for name, patterns in BASE_SHAPES.items()
+}
+
+
+@dataclass(eq=False)
+class ActivePiece:
+    """All mutable state for one independently moving tetromino."""
+
+    kind: str
+    rotation: int = 0
+    x: int = 0
+    y: int = -3
+    fall_progress: float = 0.0
+    last_fall_rows: int = 0
+    action_accumulator: float = 0.0
+    plan: Optional[Dict[str, Any]] = None
+    planning_deferred: bool = False
+    manual_override: float = 0.0
+
+
+class TetrisAnimation(AnimationBase):
+    """Classic Tetris with a coordinated self-playing bot."""
+
+    ANIMATION_NAME = "Tetris"
+    ANIMATION_DESCRIPTION = "Autoplaying Tetris board with coordinated falling tetrominoes"
+    ANIMATION_AUTHOR = "LED Grid Team"
+    ANIMATION_VERSION = "1.0"
+
+    def __init__(self, controller, config: Dict[str, Any] = None):
+        super().__init__(controller, config)
+
+        self.num_strips = getattr(controller, 'strip_count', DEFAULT_STRIP_COUNT)
+        self.leds_per_strip = getattr(controller, 'leds_per_strip', DEFAULT_LEDS_PER_STRIP)
+        self.board_width = max(1, self.num_strips - 1)  # Keep column 0 dark
+        self.board_height = self.leds_per_strip
+        self.board: List[List[BoardCell]] = [
+            [None for _ in range(self.board_width)]
+            for _ in range(self.board_height)
+        ]
+
+        self.active_pieces: List[ActivePiece] = []
+        self.last_elapsed: Optional[float] = None
+        self.last_render_elapsed: Optional[float] = None
+        self.next_render_elapsed: Optional[float] = None
+        self.last_rendered_frame: Optional[Any] = None
+        self.lines_cleared = 0
+        self.random = random.Random()
+        self.game_over_flash = 0.0
+        self.input_queue: List[str] = []
+        self.input_lock = threading.Lock()
+        self.input_piece_index = 0
+        self.plans_dirty = False
+        self._tetris_plant_masks = None
+
+        self.default_params.update({
+            'speed': 3.0,
+            'tetromino_count': 5,
+            'bot_imperfection': 0.18,
+            'smooth_drop': True,
+            'smooth_drop_strength': 0.6,
+            'smooth_drop_max_pieces': 32,
+            'render_fps': 150.0,
+            'high_density_render_fps': 150.0,
+        })
+        self.params = {**self.default_params, **self.config}
+
+        self.base_drop_speed = max(12.0, self.board_height / 4.0)
+        self._refresh_runtime_params()
+
+    def _refresh_runtime_params(self):
+        speed = max(0.2, float(self.params.get('speed', 1.0)))
+        self.drop_speed = self.base_drop_speed * speed
+        self.action_interval = max(0.0125, 0.1 / speed)
+        self.fail_rate = min(0.6, max(0.0, float(self.params.get('bot_imperfection', 0.18))))
+        self.tetromino_count = max(
+            1,
+            min(MAX_TETROMINO_COUNT, int(self.params.get('tetromino_count', 5))),
+        )
+
+    def get_parameter_schema(self) -> Dict[str, Any]:
+        schema = super().get_parameter_schema()
+        schema.update({
+            'tetromino_count': {
+                'type': 'int',
+                'min': 1,
+                'max': MAX_TETROMINO_COUNT,
+                'default': 5,
+                'description': 'Number of coordinated falling tetrominoes'
+            },
+            'bot_imperfection': {
+                'type': 'float',
+                'min': 0.0,
+                'max': 0.6,
+                'default': 0.18,
+                'description': 'Chance for the bot to pick a risky move'
+            },
+            'speed': {
+                'type': 'float',
+                'min': 0.2,
+                'max': 5.0,
+                'default': 2.0,
+                'description': 'Playback speed multiplier'
+            },
+            'smooth_drop': {
+                'type': 'bool',
+                'default': True,
+                'description': 'Blend falling pieces across rows for smoother motion'
+            },
+            'smooth_drop_strength': {
+                'type': 'float',
+                'min': 0.0,
+                'max': 1.0,
+                'default': 0.6,
+                'description': 'Blend intensity for smooth falling pieces'
+            },
+            'smooth_drop_max_pieces': {
+                'type': 'int',
+                'min': 0,
+                'max': MAX_TETROMINO_COUNT,
+                'default': 32,
+                'description': 'Disable costly sub-row blending above this piece count'
+            },
+            'render_fps': {
+                'type': 'float',
+                'min': 15.0,
+                'max': 200.0,
+                'default': 150.0,
+                'description': 'Maximum Tetris simulation and render rate'
+            },
+            'high_density_render_fps': {
+                'type': 'float',
+                'min': 15.0,
+                'max': 200.0,
+                'default': 150.0,
+                'description': 'Render rate used above the smooth-piece limit'
+            }
+        })
+        return schema
+
+    def update_parameters(self, params: Dict[str, Any]):
+        super().update_parameters(params)
+        self._refresh_runtime_params()
+        if {
+            'plant_aware', 'plant_clearance', 'plant_mask_path',
+            'plant_globe_mask_path',
+        } & params.keys():
+            self.plans_dirty = True
+            self._tetris_plant_masks = None
+        if len(self.active_pieces) > self.tetromino_count:
+            del self.active_pieces[self.tetromino_count:]
+        self.last_render_elapsed = None
+        self.next_render_elapsed = None
+
+    def generate_frame(self, time_elapsed: float, frame_count: int) -> Any:
+        render_fps = self._effective_render_fps()
+        if (
+            self.last_rendered_frame is not None
+            and self.next_render_elapsed is not None
+            and time_elapsed < self.next_render_elapsed
+        ):
+            return self.rendered_frame(self.last_rendered_frame, changed=False)
+
+        render_interval = 1.0 / render_fps
+        if self.next_render_elapsed is None or (
+            self.last_render_elapsed is not None and time_elapsed < self.last_render_elapsed
+        ):
+            self.next_render_elapsed = time_elapsed + render_interval
+        else:
+            while self.next_render_elapsed <= time_elapsed:
+                self.next_render_elapsed += render_interval
+        self.last_render_elapsed = time_elapsed
+        frame = self.next_frame_buffer(clear=True)
+
+        delta = 0.0
+        if self.last_elapsed is None:
+            self.last_elapsed = time_elapsed
+        else:
+            delta = min(MAX_SIMULATION_DELTA, max(0.0, time_elapsed - self.last_elapsed))
+            self.last_elapsed = time_elapsed
+
+        self._update_game(delta)
+
+        if self.plant_aware_enabled():
+            self._render_plant_landmarks(frame)
+
+        if self.game_over_flash > 0.0:
+            flash_strength = int(80 * min(1.0, self.game_over_flash))
+            if flash_strength > 0:
+                tint = self.apply_brightness((flash_strength, 10, 10))
+                for strip in range(1, self.num_strips):
+                    base_index = strip * self.leds_per_strip
+                    for led in range(self.board_height):
+                        phys_led = (self.leds_per_strip - 1) - led
+                        idx = base_index + phys_led
+                        if idx < len(frame):
+                            frame[idx] = tint
+
+        for y in range(self.board_height):
+            row = self.board[y]
+            for x in range(self.board_width):
+                color = row[x]
+                if color:
+                    self._set_pixel(frame, x + 1, y, color)
+
+        smooth_piece_limit = max(0, int(self.params.get('smooth_drop_max_pieces', 32)))
+        smooth_drop = (
+            bool(self.params.get('smooth_drop', True))
+            and len(self.active_pieces) <= smooth_piece_limit
+        )
+        active_colors = {
+            kind: self._active_piece_color(kind)
+            for kind in TETROMINOS
+        }
+        for piece in self.active_pieces:
+            active_color = active_colors[piece.kind]
+            coords = self._piece_shape(piece)
+            fall_offset = max(0.0, min(1.0, piece.fall_progress))
+            for cx, cy in coords:
+                px = piece.x + cx
+                py = piece.y + cy
+                base_row = py
+                next_row = py + 1
+                if 0 <= px < self.board_width:
+                    if smooth_drop and piece.last_fall_rows > 1:
+                        for step in range(1, piece.last_fall_rows):
+                            trail_row = base_row - step
+                            alpha = 1.0 - (step / piece.last_fall_rows)
+                            if 0 <= trail_row < self.board_height:
+                                self._set_pixel_blend(frame, px + 1, trail_row, active_color, alpha)
+                    if not smooth_drop or fall_offset <= 0.0:
+                        if 0 <= base_row < self.board_height:
+                            self._set_pixel(frame, px + 1, base_row, active_color)
+                    else:
+                        if 0 <= base_row < self.board_height:
+                            self._set_pixel_blend(frame, px + 1, base_row, active_color, 1.0 - fall_offset)
+                        if 0 <= next_row < self.board_height:
+                            self._set_pixel_blend(frame, px + 1, next_row, active_color, fall_offset)
+
+        self.last_rendered_frame = frame
+        return self.rendered_frame(frame, changed=True)
+
+    def handle_input(self, action: str):
+        """Handle player input from the D-pad."""
+        action = (action or '').lower().replace('_', '-')
+        if action == 'up':
+            action = 'rotate-right'
+        valid = {'left', 'right', 'down', 'rotate-left', 'rotate-right', 'drop'}
+        if action not in valid:
+            return
+        with self.input_lock:
+            self.input_queue.append(action)
+        self.last_render_elapsed = None
+        self.next_render_elapsed = None
+
+    def _update_game(self, delta: float):
+        if self.board_width <= 0 or self.board_height <= 0:
+            return
+
+        if self.game_over_flash > 0.0:
+            self.game_over_flash = max(0.0, self.game_over_flash - delta)
+
+        spawn_budget = MAX_SPAWNS_PER_UPDATE
+        spawn_budget -= self._replenish_active_pieces(spawn_budget)
+        if self.plans_dirty:
+            self._coordinate_plans()
+        for piece in self.active_pieces:
+            piece.last_fall_rows = 0
+
+        self._apply_pending_inputs()
+
+        for piece in list(self.active_pieces):
+            if piece.manual_override > 0.0:
+                piece.manual_override = max(0.0, piece.manual_override - delta)
+            else:
+                piece.action_accumulator += delta
+                while piece.action_accumulator >= self.action_interval:
+                    self._run_player_step(piece)
+                    piece.action_accumulator -= self.action_interval
+
+        effective_drop_speed = self._effective_drop_speed()
+        for piece in list(self.active_pieces):
+            if not self.active_pieces:
+                break
+            piece.fall_progress += delta * effective_drop_speed
+            while piece.fall_progress >= 1.0:
+                if not self._move_piece(piece, 0, 1):
+                    self._lock_piece(piece)
+                    break
+                piece.fall_progress -= 1.0
+                piece.last_fall_rows += 1
+
+        self._replenish_active_pieces(spawn_budget)
+
+    def _replenish_active_pieces(self, spawn_budget: int = MAX_SPAWNS_PER_UPDATE) -> int:
+        spawned = 0
+        while len(self.active_pieces) < self.tetromino_count and spawned < spawn_budget:
+            if not self._spawn_piece():
+                break
+            spawned += 1
+        return spawned
+
+    def _effective_render_fps(self) -> float:
+        render_fps = max(15.0, min(200.0, float(self.params.get('render_fps', 150.0))))
+        smooth_piece_limit = max(0, int(self.params.get('smooth_drop_max_pieces', 32)))
+        if self.tetromino_count > smooth_piece_limit:
+            high_density_fps = max(
+                15.0,
+                min(200.0, float(self.params.get('high_density_render_fps', 150.0))),
+            )
+            render_fps = min(render_fps, high_density_fps)
+        return render_fps
+
+    def _effective_drop_speed(self) -> float:
+        # Preserve the original pace at normal density, then reduce per-piece
+        # work so total movement does not grow linearly into the hundreds.
+        density_scale = max(1.0, sqrt(self.tetromino_count / 8.0))
+        return self.drop_speed / density_scale
+
+    def _spawn_piece(self) -> bool:
+        piece = ActivePiece(kind=self.random.choice(list(TETROMINOS.keys())))
+        piece.rotation = self.random.randrange(len(TETROMINOS[piece.kind]['rotations']))
+        coords = self._piece_shape(piece)
+        width = self._shape_extent(coords, axis=0)
+        piece.x = self.random.randint(0, max(0, self.board_width - width))
+        landing_y = self._find_drop_y(coords, piece.x)
+        if landing_y is None or landing_y < piece.y:
+            self._handle_game_over()
+            return False
+
+        # Scatter a newly created batch across every valid point in its fall
+        # path. Active pieces intentionally do not reserve space for each
+        # other, so even large counts remain independent rather than forming
+        # coordinated spawn lanes.
+        # Leave at least one visible fall step when space allows. Besides
+        # looking better, this gives the coordinated steering loop one tick to
+        # execute before a newly spawned piece can lock.
+        piece.y = self.random.randint(piece.y, max(piece.y, landing_y - 1))
+        piece.fall_progress = self.random.random()
+        piece.action_accumulator = self.random.random() * self.action_interval
+        self.active_pieces.append(piece)
+        self.plans_dirty = True
+        return True
+
+    def _handle_game_over(self):
+        self.board = [[None for _ in range(self.board_width)] for _ in range(self.board_height)]
+        self.active_pieces.clear()
+        self.plans_dirty = False
+        self.game_over_flash = 1.0
+
+    def _run_player_step(self, piece: ActivePiece):
+        if not piece.plan or piece.plan.get('piece') != piece.kind:
+            if piece.planning_deferred:
+                return
+            self._plan_move(piece)
+        if not piece.plan:
+            return
+
+        target_rotation = piece.plan['rotation']
+        rotation_count = len(TETROMINOS[piece.kind]['rotations'])
+        if rotation_count > 1 and piece.rotation != target_rotation:
+            diff = (target_rotation - piece.rotation) % rotation_count
+            direction = 1 if diff <= rotation_count / 2 else -1
+            rotated = self._rotate_piece(piece, direction)
+            if rotated:
+                return
+
+        target_x = piece.plan['x']
+        if piece.x < target_x:
+            self._move_toward_x(piece, target_x)
+        elif piece.x > target_x:
+            self._move_toward_x(piece, target_x)
+        else:
+            if self.random.random() < 0.35:
+                self._move_piece(piece, 0, 1)
+
+    def _move_toward_x(self, piece: ActivePiece, target_x: int):
+        """Steer far enough per bot tick to traverse unusually wide LED grids."""
+        direction = 1 if target_x > piece.x else -1
+        max_steps = max(1, (self.board_width + 9) // 10)
+        for _ in range(min(max_steps, abs(target_x - piece.x))):
+            if not self._move_piece(piece, direction, 0):
+                break
+
+    def _plan_move(self, piece: ActivePiece):
+        """Refresh the shared plan, retaining this method for bot-step callers."""
+        self.plans_dirty = True
+        self._coordinate_plans()
+
+    def _coordinate_plans(self):
+        """Reserve good landings for every active piece on one projected board.
+
+        Bottom-most pieces are expected to lock first. Each selected placement is
+        applied to a virtual board (including line clears) before the next piece
+        is evaluated, so concurrent pieces complement rather than duplicate one
+        another's moves.
+        """
+        projected_board = [row[:] for row in self.board]
+        ordered_pieces = sorted(
+            self.active_pieces,
+            key=lambda active: active.y + self._shape_extent(
+                self._piece_shape(active), axis=1
+            ),
+            reverse=True,
+        )
+
+        # A short look-ahead is enough to coordinate the pieces that can lock
+        # next. Bounding it keeps planning cost constant even at the supported
+        # 128-piece visual density; distant pieces simply fall until they enter
+        # the horizon.
+        for piece in ordered_pieces:
+            piece.plan = None
+            piece.planning_deferred = True
+        ordered_pieces = ordered_pieces[:MAX_COORDINATED_PLANS]
+
+        for piece in ordered_pieces:
+            piece.planning_deferred = False
+            placement = self._best_placement(piece, projected_board)
+            if placement is None:
+                piece.plan = None
+                continue
+            rotation, target_x, landing_y, score = placement
+            piece.plan = {
+                'piece': piece.kind,
+                'rotation': rotation,
+                'x': target_x,
+                'landing_y': landing_y,
+                'score': score,
+            }
+            projected_board, _ = self._project_placement(
+                projected_board,
+                TETROMINOS[piece.kind]['rotations'][rotation],
+                target_x,
+                landing_y,
+                TETROMINOS[piece.kind]['color'],
+            )
+        self.plans_dirty = False
+
+    def _best_placement(
+        self,
+        piece: ActivePiece,
+        board: List[List[BoardCell]],
+    ) -> Optional[Tuple[int, int, int, float]]:
+        candidates: List[Tuple[int, int, int, float]] = []
+        rotations = TETROMINOS[piece.kind]['rotations']
+        heights, column_holes, row_fill = self._board_metrics(board)
+        for rotation, coords in enumerate(rotations):
+            width = self._shape_extent(coords, axis=0)
+            for target_x in range(max(0, self.board_width - width) + 1):
+                landing_y = self._find_drop_y_from_heights(
+                    coords, target_x, heights
+                )
+                if landing_y is None or landing_y < piece.y:
+                    continue
+                score = self._score_placement(
+                    board,
+                    coords,
+                    target_x,
+                    landing_y,
+                    heights,
+                    column_holes,
+                    row_fill,
+                )
+                candidates.append((rotation, target_x, landing_y, score))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda candidate: candidate[3], reverse=True)
+        if self.random.random() < self.fail_rate:
+            # Imperfect play still makes a plausible move instead of abandoning
+            # all board awareness.
+            return self.random.choice(candidates[:min(6, len(candidates))])
+        return candidates[0]
+
+    def _find_drop_y_from_heights(
+        self,
+        coords: List[Tuple[int, int]],
+        x_offset: int,
+        heights: List[int],
+    ) -> Optional[int]:
+        """Find a landing in O(4) from each column's top occupied cell."""
+        landing_y = min(
+            self.board_height - heights[x_offset + cx] - cy - 1
+            for cx, cy in coords
+        )
+        return None if landing_y < -4 else landing_y
+
+    def _project_placement(
+        self,
+        board: List[List[BoardCell]],
+        coords: List[Tuple[int, int]],
+        x_offset: int,
+        y_offset: int,
+        color: Color,
+    ) -> Tuple[List[List[BoardCell]], int]:
+        projected = [row[:] for row in board]
+        for cx, cy in coords:
+            px = x_offset + cx
+            py = y_offset + cy
+            if 0 <= px < self.board_width and 0 <= py < self.board_height:
+                projected[py][px] = color
+        return self._clear_lines_from(projected)
+
+    def _clear_lines_from(
+        self,
+        board: List[List[BoardCell]],
+    ) -> Tuple[List[List[BoardCell]], int]:
+        remaining = [row for row in board if not all(row)]
+        cleared = self.board_height - len(remaining)
+        empty_rows = [
+            [None for _ in range(self.board_width)]
+            for _ in range(cleared)
+        ]
+        return empty_rows + remaining, cleared
+
+    def _board_metrics(
+        self,
+        board: List[List[BoardCell]],
+    ) -> Tuple[List[int], List[int], List[int]]:
+        heights: List[int] = []
+        column_holes: List[int] = []
+        for x in range(self.board_width):
+            first_filled: Optional[int] = None
+            holes = 0
+            for y in range(self.board_height):
+                if board[y][x]:
+                    if first_filled is None:
+                        first_filled = y
+                elif first_filled is not None:
+                    holes += 1
+            heights.append(
+                0 if first_filled is None else self.board_height - first_filled
+            )
+            column_holes.append(holes)
+        row_fill = [sum(cell is not None for cell in row) for row in board]
+        return heights, column_holes, row_fill
+
+    def _score_placement(
+        self,
+        board: List[List[BoardCell]],
+        coords: List[Tuple[int, int]],
+        x_offset: int,
+        y_offset: int,
+        heights: List[int],
+        column_holes: List[int],
+        row_fill: List[int],
+    ) -> float:
+        projected_heights = heights[:]
+        projected_holes = sum(column_holes)
+        cells_by_column: Dict[int, List[int]] = {}
+        cells_by_row: Dict[int, int] = {}
+        for cx, cy in coords:
+            px = x_offset + cx
+            py = y_offset + cy
+            cells_by_column.setdefault(px, []).append(py)
+            if py >= 0:
+                cells_by_row[py] = cells_by_row.get(py, 0) + 1
+
+        for x, piece_rows in cells_by_column.items():
+            visible_rows = [y for y in piece_rows if y >= 0]
+            if not visible_rows:
+                continue
+            old_first = self.board_height - heights[x]
+            new_first = min(old_first, min(visible_rows))
+            cells_above_surface = sum(y < old_first for y in visible_rows)
+            empty_rows_exposed = max(0, old_first - new_first) - cells_above_surface
+            holes_filled = sum(
+                y >= old_first and board[y][x] is None
+                for y in visible_rows
+            )
+            projected_holes += empty_rows_exposed - holes_filled
+            projected_heights[x] = self.board_height - new_first
+
+        cleared = sum(
+            row_fill[y] + added == self.board_width
+            for y, added in cells_by_row.items()
+        )
+
+        aggregate_height = sum(projected_heights)
+        max_height = max(projected_heights, default=0)
+        bumpiness = sum(
+            abs(left - right)
+            for left, right in zip(projected_heights, projected_heights[1:])
+        )
+        return (
+            cleared * 12.0
+            - projected_holes * 8.0
+            - aggregate_height * 0.45
+            - bumpiness * 0.35
+            - max_height * 0.8
+            - self._plant_placement_penalty(coords, x_offset, y_offset)
+        )
+
+    def _plant_placement_penalty(
+        self,
+        coords: List[Tuple[int, int]],
+        x_offset: int,
+        y_offset: int,
+    ) -> float:
+        """Discourage bot landings that the calibrated plants would obscure."""
+        if not self.plant_aware_enabled():
+            return 0.0
+
+        masks = self._plant_geometry()
+        penalty = 0.0
+        for cx, cy in coords:
+            board_x = x_offset + cx
+            board_y = y_offset + cy
+            if not (0 <= board_x < self.board_width and 0 <= board_y < self.board_height):
+                continue
+            strip = board_x + 1
+            physical_led = (self.leds_per_strip - 1) - board_y
+            if masks.globes[strip, physical_led]:
+                penalty += 80.0
+            elif masks.foliage[strip, physical_led]:
+                penalty += 24.0
+            elif masks.clearance[strip, physical_led]:
+                penalty += 7.0
+        return penalty
+
+    def _apply_pending_inputs(self):
+        with self.input_lock:
+            if not self.input_queue:
+                return
+            pending = list(self.input_queue)
+            self.input_queue.clear()
+
+        for action in pending:
+            if not self.active_pieces:
+                return
+            piece = self.active_pieces[self.input_piece_index % len(self.active_pieces)]
+            piece.manual_override = max(piece.manual_override, 2.0)
+            piece.plan = None
+            piece.planning_deferred = False
+            if action == 'left':
+                self._move_piece(piece, -1, 0)
+            elif action == 'right':
+                self._move_piece(piece, 1, 0)
+            elif action == 'down':
+                self._move_piece(piece, 0, 1)
+            elif action == 'rotate-left':
+                self._rotate_piece(piece, -1)
+            elif action == 'rotate-right':
+                self._rotate_piece(piece, 1)
+            elif action == 'drop':
+                while self._move_piece(piece, 0, 1):
+                    pass
+                self._lock_piece(piece)
+                if self.active_pieces:
+                    self.input_piece_index %= len(self.active_pieces)
+
+    def _find_drop_y(
+        self,
+        coords: List[Tuple[int, int]],
+        x_offset: int,
+        board: Optional[List[List[BoardCell]]] = None,
+    ) -> Optional[int]:
+        target_board = self.board if board is None else board
+        y = -4
+        while True:
+            if self._collides(target_board, coords, x_offset, y + 1):
+                if self._collides(target_board, coords, x_offset, y):
+                    return None
+                return y
+            y += 1
+            if y > self.board_height:
+                return None
+
+    def _move_piece(self, piece: ActivePiece, dx: int, dy: int) -> bool:
+        coords = self._piece_shape(piece)
+        new_x = piece.x + dx
+        new_y = piece.y + dy
+        if self._collides(self.board, coords, new_x, new_y):
+            return False
+        piece.x = new_x
+        piece.y = new_y
+        return True
+
+    def _rotate_piece(self, piece: ActivePiece, direction: int) -> bool:
+        info = TETROMINOS[piece.kind]
+        rotations = info['rotations']
+        new_rotation = (piece.rotation + direction) % len(rotations)
+        coords = rotations[new_rotation]
+        if self._collides(self.board, coords, piece.x, piece.y):
+            return False
+        piece.rotation = new_rotation
+        return True
+
+    def _lock_piece(self, piece: ActivePiece):
+        if piece not in self.active_pieces:
+            return
+        coords = self._piece_shape(piece)
+        color = TETROMINOS[piece.kind]['color']
+        overflow = False
+        for cx, cy in coords:
+            px = piece.x + cx
+            py = piece.y + cy
+            if py < 0:
+                overflow = True
+                continue
+            if 0 <= px < self.board_width and 0 <= py < self.board_height:
+                self.board[py][px] = color
+        if overflow:
+            self._handle_game_over()
+            return
+        cleared = self._clear_lines()
+        if cleared:
+            self.lines_cleared += cleared
+        self.active_pieces.remove(piece)
+        self.plans_dirty = True
+
+    def _clear_lines(self) -> int:
+        self.board, cleared = self._clear_lines_from(self.board)
+        return cleared
+
+    def _collides(self, board: List[List[BoardCell]], coords: List[Tuple[int, int]], x_offset: int, y_offset: int) -> bool:
+        for cx, cy in coords:
+            px = x_offset + cx
+            py = y_offset + cy
+            if px < 0 or px >= self.board_width:
+                return True
+            if py >= self.board_height:
+                return True
+            if py >= 0 and board[py][px]:
+                return True
+        return False
+
+    def _piece_shape(self, piece: ActivePiece) -> List[Tuple[int, int]]:
+        rotations = TETROMINOS[piece.kind]['rotations']
+        return rotations[piece.rotation % len(rotations)]
+
+    def _shape_extent(self, coords: List[Tuple[int, int]], axis: int) -> int:
+        if axis == 0:
+            return max((x for x, _ in coords), default=0) + 1
+        return max((y for _, y in coords), default=0) + 1
+
+    def _active_piece_color(self, piece: str) -> Color:
+        base = TETROMINOS[piece]['color']
+        return tuple(min(255, int(c * 1.15) + 10) for c in base)
+
+    def _render_plant_landmarks(self, frame: Any):
+        """Keep calibrated plant cores legible underneath the Tetris board."""
+        masks = self._plant_geometry()
+        frame[masks.foliage_flat] = self.apply_brightness(PLANT_FOLIAGE_COLOR)
+        frame[masks.globes_flat] = self.apply_brightness(PLANT_GLOBE_COLOR)
+
+    def _plant_geometry(self):
+        if self._tetris_plant_masks is None:
+            self._tetris_plant_masks = self.get_plant_masks()
+        return self._tetris_plant_masks
+
+    def _plant_occludes_index(self, index: int) -> bool:
+        if not self.plant_aware_enabled():
+            return False
+        return bool(self._plant_geometry().obstacle_flat[index])
+
+    def _set_pixel(self, frame: List[Color], strip: int, led: int, color: Color):
+        if strip < 0 or strip >= self.num_strips:
+            return
+        if led < 0 or led >= self.leds_per_strip:
+            return
+        phys_led = (self.leds_per_strip - 1) - led
+        idx = strip * self.leds_per_strip + phys_led
+        if 0 <= idx < len(frame):
+            if self._plant_occludes_index(idx):
+                return
+            frame[idx] = self.apply_brightness(color)
+
+    def _set_pixel_blend(self, frame: List[Color], strip: int, led: int, color: Color, alpha: float):
+        if alpha <= 0.0:
+            return
+        strength = float(self.params.get('smooth_drop_strength', 0.6))
+        strength = max(0.0, min(1.0, strength))
+        alpha = min(1.0, alpha) * strength
+        if alpha <= 0.0:
+            return
+        scaled = self.apply_brightness((
+            int(color[0] * alpha),
+            int(color[1] * alpha),
+            int(color[2] * alpha),
+        ))
+        if strip < 0 or strip >= self.num_strips:
+            return
+        if led < 0 or led >= self.leds_per_strip:
+            return
+        phys_led = (self.leds_per_strip - 1) - led
+        idx = strip * self.leds_per_strip + phys_led
+        if 0 <= idx < len(frame):
+            if self._plant_occludes_index(idx):
+                return
+            base = frame[idx]
+            frame[idx] = (
+                min(255, int(base[0]) + scaled[0]),
+                min(255, int(base[1]) + scaled[1]),
+                min(255, int(base[2]) + scaled[2]),
+            )
+
+    def get_runtime_stats(self) -> Dict[str, Any]:
+        stats = {
+            'lines_cleared': self.lines_cleared,
+            'bot_fail_rate': self.fail_rate,
+            'active_tetrominoes': len(self.active_pieces),
+            'tetromino_count': self.tetromino_count,
+            'effective_render_fps': self._effective_render_fps(),
+            'effective_drop_speed': self._effective_drop_speed(),
+            'max_spawns_per_update': MAX_SPAWNS_PER_UPDATE,
+            'max_coordinated_plans': MAX_COORDINATED_PLANS,
+        }
+        if self.plant_aware_enabled():
+            masks = self._plant_geometry()
+            stats.update({
+                'plant_foliage_pixels': masks.foliage_count,
+                'plant_globe_pixels': masks.globe_count,
+                'plant_mask_error': masks.error,
+            })
+        return stats

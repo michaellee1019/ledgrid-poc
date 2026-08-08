@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "preset_id": "lantern-meadow",
+  "name": "Lantern Meadow",
+  "animation": "firefly_synchrony",
+  "category": "Candlelit Living",
+  "description": "Warm firefly clusters drift gently above a luminous candlelit meadow.",
+  "tags": ["candlelight", "fireflies", "gentle"],
+  "palette": {"name": "Lantern Gold", "colors": ["#1E0902", "#B24A12", "#FFDA80"]},
+  "created_at": "2026-07-22T00:00:00Z",
+  "updated_at": "2026-07-22T00:00:00Z",
+  "params": {
+    "plant_aware": true,
+    "seed": 12107,
+    "brightness": 1.0,
+    "motion": 0.58,
+    "density": 1.1,
+    "mood": "candlelight",
+    "background": "radiant",
+    "background_level": 0.95,
+    "simulation_hz": 12.0,
+    "render_fps": 30.0,
+    "population": 132,
+    "coupling_radius": 10.5,
+    "synchrony": 1.15,
+    "wandering": 0.42,
+    "pulse_softness": 0.72,
+    "meadow_glow": 0.42,
+    "plant_modifiers": {
+      "version": 1,
+      "active": ["emitter", "hue_shift", "liquid_glass"],
+      "strengths": {"emitter": 0.68, "hue_shift": 0.18, "liquid_glass": 0.3}
+    }
+  }
+}
