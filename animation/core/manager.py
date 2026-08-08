@@ -8,11 +8,13 @@ Handles animation switching, parameter updates, and frame generation.
 
 import hashlib
 import math
+import sys
 import time
 import threading
 import traceback
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 import numpy as np
@@ -22,6 +24,8 @@ from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT
 from animation.core.plant_awareness import PlantModifierState
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import encode_frame_data, FRAME_ENCODING_NAME
+from firmware_animations.errors import PackageValidationError
+from firmware_animations.manifest import validate_parameters
 
 # Try to import the real LED controller, fall back to mock for testing
 try:
@@ -109,6 +113,7 @@ class AnimationManager:
                  plant_modifiers: Optional[Dict[str, Any]] = None,
                  default_animation: Optional[str] = None,
                  default_animation_config: Optional[Dict[str, Any]] = None,
+                 firmware_library: Any = None,
                  auto_start: bool = True):
         """
         Initialize animation manager
@@ -128,12 +133,19 @@ class AnimationManager:
         )
         self._default_animation = default_animation or self.DEFAULT_ANIMATION
         self._default_animation_config = default_animation_config or {}
+        self.firmware_library = firmware_library
         
         # Animation state
         self.current_animation: Optional[AnimationBase] = None
         self.current_animation_name: Optional[str] = None
         self.current_animation_hash: Optional[str] = None
         self.is_running = False
+        self.mode = 'idle'
+        self.provider: Optional[str] = None
+        self.firmware_package_id: Optional[str] = None
+        self.firmware_package_digest: Optional[str] = None
+        self.firmware_parameters: Dict[str, Any] = {}
+        self._firmware_manifest: Dict[str, Any] = {}
         # 200 Hz stays below the physical ceiling of a 138-pixel
         # WS2812 strip while leaving headroom for frame generation and transfer.
         self.target_fps = 200
@@ -226,6 +238,14 @@ class AnimationManager:
             raise ValueError("animation speed scale must be a positive finite number")
 
         previous = self.animation_speed_scale
+        if self.mode == 'firmware_animation':
+            parameters = dict(self.firmware_parameters)
+            parameters['time_scale'] = requested
+            if not self.controller.update_firmware_parameters(parameters):
+                raise RuntimeError("receiver rejected firmware animation tempo")
+            self.animation_speed_scale = requested
+            self.firmware_parameters = parameters
+            return self.animation_speed_scale
         self.animation_speed_scale = requested
         if (
             self.current_animation
@@ -290,7 +310,8 @@ class AnimationManager:
         """
         try:
             # Stop current animation if running
-            self.stop_animation(clear_leds=True)
+            if not self.stop_animation(clear_leds=True):
+                return False
             
             # Get animation class
             animation_class = self.plugin_loader.get_plugin(animation_name)
@@ -321,6 +342,8 @@ class AnimationManager:
             # Start animation
             self.current_animation.start()
             self.is_running = True
+            self.mode = 'python'
+            self.provider = 'python'
             self.stop_event.clear()
             self.frame_count = 0
             self.frames_presented = 0
@@ -350,7 +373,21 @@ class AnimationManager:
     
     def stop_animation(self, clear_leds: bool = True):
         """Stop current animation or painter mode output."""
-        had_output = self.is_running or self.painter_active
+        had_output = self.is_running or self.painter_active or self.mode == 'firmware_animation'
+
+        if self.mode == 'firmware_animation':
+            try:
+                stopped = self.controller.stop_firmware_animation()
+            except Exception as exc:
+                print(f"✗ Failed to stop firmware animation: {exc}")
+                return False
+            if not stopped:
+                print("✗ Receivers did not unanimously confirm firmware stop")
+                return False
+            self.firmware_package_id = None
+            self.firmware_package_digest = None
+            self.firmware_parameters = {}
+            self._firmware_manifest = {}
 
         if self.is_running:
             self.is_running = False
@@ -383,9 +420,155 @@ class AnimationManager:
             print("✓ Painter mode stopped")
 
         self.current_animation_hash = None
+        self.mode = 'idle'
+        self.provider = None
 
         if clear_leds and had_output:
             self.controller.clear()
+        return True
+
+    def start_firmware_animation(
+        self,
+        package_id: str,
+        parameters: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Start receiver-local playback without manufacturing a Python plugin."""
+        if not isinstance(package_id, str) or not package_id:
+            raise ValueError("package_id is required")
+        asset = self._firmware_asset_descriptor(package_id)
+        params = self._validated_firmware_parameters(
+            asset['manifest'], parameters, time_scale=self.animation_speed_scale
+        )
+
+        if not self.stop_animation(clear_leds=False):
+            return False
+        if not self.controller.start_firmware_animation(asset, params):
+            return False
+        self.mode = 'firmware_animation'
+        self.provider = 'firmware'
+        self.firmware_package_id = package_id
+        self.firmware_package_digest = asset['package_digest']
+        self.firmware_parameters = params
+        self._firmware_manifest = dict(asset['manifest'])
+        self.is_running = True
+        self.start_time = time.perf_counter()
+        return True
+
+    def _firmware_asset_descriptor(self, package_id: str) -> Dict[str, Any]:
+        """Adapt the optional package SDK to the transport's device payloads."""
+        if self.firmware_library is None:
+            raise RuntimeError("firmware animation library is unavailable")
+        try:
+            package = self.firmware_library.verified(package_id)
+        except KeyError as exc:
+            raise ValueError(f"unknown firmware animation: {package_id}")
+        payloads = []
+        device_count = int(self.controller.num_devices)
+        if device_count != 4:
+            raise RuntimeError("firmware animations require exactly four receivers")
+        for device_index in range(device_count):
+            data = package.payload_for_device(device_index)
+            envelope = package.verification_envelope(device_index)
+            payload_digest = hashlib.sha256(data).digest()
+            if (
+                envelope.package_digest != package.digest
+                or envelope.device_index != device_index
+                or envelope.payload_size != len(data)
+                or envelope.payload_digest != payload_digest
+            ):
+                raise ValueError("package SDK returned an inconsistent receiver envelope")
+            payloads.append({
+                'logical_device': device_index,
+                'digest': payload_digest.hex(),
+                'data': data,
+                'envelope': envelope,
+            })
+        return {
+            'package_digest': package.digest,
+            'kind': package.manifest['kind'],
+            'manifest': package.manifest,
+            'payloads': payloads,
+        }
+
+    @staticmethod
+    def _validated_firmware_parameters(
+        manifest: Dict[str, Any], parameters: Optional[Dict[str, Any]], *,
+        time_scale: float,
+    ) -> Dict[str, Any]:
+        supplied = dict(parameters or {})
+        supplied.pop('time_scale', None)
+        try:
+            validated = validate_parameters(manifest, supplied, require_all=True)
+        except PackageValidationError as exc:
+            raise ValueError(str(exc)) from exc
+        validated['time_scale'] = time_scale
+        return validated
+
+    def validate_firmware_package_path(self, package_id: str, package_path: str) -> bool:
+        """Reject tampered IPC paths even after the web-side library check."""
+        if self.firmware_library is None or not isinstance(package_path, str):
+            raise ValueError("managed package_path is required")
+        installed = self.firmware_library.get(package_id)
+        if installed is None:
+            raise ValueError(f"unknown firmware animation: {package_id}")
+        if Path(package_path).resolve(strict=True) != installed.package_path.resolve(strict=True):
+            raise ValueError("package_path does not match the managed library entry")
+        return True
+
+    def install_firmware_animation(self, package_id: str) -> bool:
+        asset = self._firmware_asset_descriptor(package_id)
+        self.controller.install_firmware_asset(asset)
+        return True
+
+    def remove_firmware_animation(self, package_id: str) -> bool:
+        if package_id == self.firmware_package_id and self.mode == 'firmware_animation':
+            raise ValueError("cannot delete the active firmware animation")
+        asset = self._firmware_asset_descriptor(package_id)
+        if not self.controller.remove_firmware_asset(asset):
+            return False
+        self.firmware_library.delete(package_id)
+        return True
+
+    def adopt_firmware_state(
+        self, package_id: str, digest: str, parameters: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Represent playback that receivers retained across a Pi restart."""
+        if not isinstance(package_id, str) or not package_id:
+            raise ValueError("package_id is required")
+        asset = self._firmware_asset_descriptor(package_id)
+        if not isinstance(digest, str) or digest.lower() != asset['package_digest']:
+            raise ValueError("persisted firmware package digest does not match the library")
+        params = self._validated_firmware_parameters(
+            asset['manifest'], parameters, time_scale=self.animation_speed_scale
+        )
+        if not self.controller.adopt_firmware_animation(asset, params):
+            return False
+        self.mode = 'firmware_animation'
+        self.provider = 'firmware'
+        self.firmware_package_id = package_id
+        self.firmware_package_digest = asset['package_digest']
+        self.firmware_parameters = params
+        self._firmware_manifest = dict(asset['manifest'])
+        self.is_running = True
+        self.start_time = time.perf_counter()
+        return True
+
+    def update_firmware_parameters(self, parameters: Dict[str, Any]) -> bool:
+        """Apply already schema-validated typed values to active local playback."""
+        if self.mode != 'firmware_animation' or not isinstance(parameters, dict):
+            return False
+        merged = {
+            name: value for name, value in self.firmware_parameters.items()
+            if name != 'time_scale'
+        }
+        merged.update(parameters)
+        validated = self._validated_firmware_parameters(
+            self._firmware_manifest, merged, time_scale=self.animation_speed_scale
+        )
+        if not self.controller.update_firmware_parameters(validated):
+            return False
+        self.firmware_parameters = validated
+        return True
     
     def update_animation_parameters(self, params: Dict[str, Any]) -> bool:
         """Update current animation parameters in real-time"""
@@ -476,8 +659,9 @@ class AnimationManager:
 
     def set_painter_frame(self, frame_data: Optional[List[Any]]) -> bool:
         """Replace the full painter frame and display it immediately."""
-        if self.is_running:
-            self.stop_animation(clear_leds=False)
+        if self.is_running or self.mode == 'firmware_animation':
+            if not self.stop_animation(clear_leds=False):
+                return False
 
         frame = self._normalize_frame(frame_data)
         with self.painter_lock:
@@ -488,6 +672,9 @@ class AnimationManager:
             self.current_frame_data = list(frame)
 
         self._push_frame_to_controller(frame)
+        self.mode = 'painter'
+        self.provider = 'painter'
+        self.is_running = False
         return True
 
     def apply_painter_updates(self, updates: List[Any]) -> bool:
@@ -495,8 +682,9 @@ class AnimationManager:
         if not isinstance(updates, list) or not updates:
             return False
 
-        if self.is_running:
-            self.stop_animation(clear_leds=False)
+        if self.is_running or self.mode == 'firmware_animation':
+            if not self.stop_animation(clear_leds=False):
+                return False
 
         self._ensure_painter_frame_length()
         total_pixels = self.controller.total_leds
@@ -526,6 +714,9 @@ class AnimationManager:
             self.current_frame_data = list(frame)
 
         self._push_frame_to_controller(frame)
+        self.mode = 'painter'
+        self.provider = 'painter'
+        self.is_running = False
         return True
 
     def clear_painter_frame(self) -> bool:
@@ -535,14 +726,21 @@ class AnimationManager:
     
     def get_current_status(self) -> Dict[str, Any]:
         """Get current animation status and performance info"""
-        mode = 'animation' if self.is_running else ('painter' if self.painter_active else 'idle')
-        displayed_animation = self.current_animation_name if self.is_running else (
+        mode = self.mode
+        displayed_animation = self.current_animation_name if mode == 'python' else (
+            self.firmware_package_id if mode == 'firmware_animation' else (
             'frame_painter' if self.painter_active else None
-        )
+        ))
 
         status = {
             'is_running': self.is_running,
             'mode': mode,
+            'provider': self.provider,
+            'firmware_animation': {
+                'package_id': self.firmware_package_id,
+                'digest': self.firmware_package_digest,
+                'parameters': dict(self.firmware_parameters),
+            } if mode == 'firmware_animation' else None,
             'painter_active': self.painter_active,
             'painter_updated_at': self.painter_updated_at if self.painter_active else None,
             'current_animation': displayed_animation,
@@ -550,10 +748,10 @@ class AnimationManager:
                 'frames_presented': self.frames_presented,
                 'unchanged_frames_skipped': self.unchanged_frames_skipped,
                 'uptime': (time.perf_counter() - self.start_time) if self.is_running else 0,
-                'target_fps': self.target_fps,
+                'target_fps': self.target_fps if mode == 'python' else None,
                 'animation_speed_scale': self.animation_speed_scale,
-                'plant_aware': self.plant_aware,
-                'plant_modifiers': self.plant_modifier_state.to_dict(),
+                'plant_aware': self.plant_aware if mode == 'python' else None,
+                'plant_modifiers': self.plant_modifier_state.to_dict() if mode == 'python' else None,
                 'actual_fps': self._calculate_fps(),
                 'animation_hash': self.current_animation_hash,
                 'led_info': {
@@ -641,10 +839,11 @@ class AnimationManager:
                 frame_data = list(raw)
 
         encoded_frame = encode_frame_data(frame_data)
-        mode = 'animation' if self.is_running else ('painter' if self.painter_active else 'idle')
-        displayed_animation = self.current_animation_name if self.is_running else (
+        mode = self.mode
+        displayed_animation = self.current_animation_name if mode == 'python' else (
+            self.firmware_package_id if mode == 'firmware_animation' else (
             'frame_painter' if self.painter_active else None
-        )
+        ))
 
         return {
             'frame_data_encoded': encoded_frame,
@@ -809,6 +1008,11 @@ class AnimationManager:
 
     def _animation_loop(self):
         """Main animation loop running in separate thread"""
+        # Normal callers own deterministic stop/join through stop_animation().
+        # This finalization guard prevents a forgotten daemon loop from creating
+        # executor workers or writing diagnostics after Python begins shutdown.
+        if sys.is_finalizing():
+            return
         inline_show = getattr(self.controller, "inline_show", False)
         pending_present = None
 
@@ -816,7 +1020,11 @@ class AnimationManager:
         # it before the animation can rotate back to the same one of its two
         # reusable buffers, so ownership remains deterministic without copies.
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix="led-present") as presenter:
-            while self.is_running and not self.stop_event.is_set():
+            while (
+                self.is_running
+                and not self.stop_event.is_set()
+                and not sys.is_finalizing()
+            ):
                 loop_start = time.perf_counter()
                 generate_duration = 0.0
                 send_duration = 0.0
@@ -886,6 +1094,8 @@ class AnimationManager:
                     self._update_fps_tracking(loop_start)
 
                 except Exception as e:
+                    if sys.is_finalizing():
+                        break
                     print(f"✗ Animation loop error: {e}")
                     traceback.print_exc()
                     time.sleep(0.05)
@@ -909,7 +1119,8 @@ class AnimationManager:
                 try:
                     pending_present.result()
                 except Exception as e:
-                    print(f"✗ Final frame presentation failed: {e}")
+                    if not sys.is_finalizing():
+                        print(f"✗ Final frame presentation failed: {e}")
 
     def _present_frame(self, frame, dirty_ranges, use_partial, inline_show):
         """Present one frame on the dedicated I/O worker and return timings."""

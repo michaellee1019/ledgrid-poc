@@ -7,6 +7,7 @@ the web/preview UI as separate Python processes that communicate via files.
 """
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -21,6 +22,25 @@ from drivers.frame_codec import decode_frame_data
 from web.app import create_app
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from tools.deployment.preserve_deploy_settings import load_saved_state, save_status
+from firmware_animations import FirmwareAnimationLibrary
+
+
+def create_firmware_library(root, *, active_id_provider=None):
+    """Open and recover the managed firmware-animation library."""
+    trusted_keys = {}
+    for value in os.environ.get('LEDGRID_LGA_TRUSTED_KEYS', '').split(os.pathsep):
+        if not value:
+            continue
+        key_id, separator, key_path = value.partition('=')
+        if not separator:
+            key_path = key_id
+            key_id = Path(key_path).stem
+        trusted_keys[key_id] = key_path
+    library = FirmwareAnimationLibrary(
+        Path(root), trusted_keys, active_id_provider=active_id_provider,
+    )
+    library.recover()
+    return library
 
 # Try to import the real LED controller, fall back to mock for testing
 try:
@@ -61,7 +81,8 @@ def run_controller_mode(args):
     saved_state = None
     try:
         saved_state = load_saved_state(Path(args.saved_state_file))
-        print(f"💾 Restart default: {saved_state['animation']}/before-deploy")
+        restart_name = saved_state.get('animation') or saved_state.get('package_id')
+        print(f"💾 Restart default: {restart_name}/before-deploy")
     except RuntimeError as exc:
         print(f"ℹ️ No usable saved animation state: {exc}")
 
@@ -97,16 +118,31 @@ def run_controller_mode(args):
         if saved_state else args.animation_speed_scale
     )
     startup_modifiers = saved_state.get('plant_modifiers') if saved_state else None
+    saved_firmware = bool(saved_state and saved_state.get('provider') == 'firmware')
     manager = AnimationManager(
         controller,
         plugins_dir=args.animations_dir,
         animation_speed_scale=startup_speed_scale,
         plant_aware=DEFAULT_PLANT_AWARE,
         plant_modifiers=startup_modifiers,
-        default_animation=saved_state.get('animation') if saved_state else None,
+        default_animation=saved_state.get('animation') if saved_state and not saved_firmware else None,
         default_animation_config=saved_state.get('params') if saved_state else None,
+        firmware_library=create_firmware_library(args.firmware_library),
+        auto_start=not saved_firmware,
     )
     manager.target_fps = int(saved_state.get('target_fps', args.target_fps)) if saved_state else args.target_fps
+    if saved_firmware:
+        try:
+            adopted = manager.adopt_firmware_state(
+                saved_state['package_id'], saved_state['package_digest'],
+                saved_state.get('parameters') or {},
+            )
+        except (ValueError, RuntimeError, OSError) as exc:
+            print(f"⚠️ Cannot adopt retained firmware animation: {exc}")
+            adopted = False
+        if not adopted:
+            print("⚠️ Receivers did not retain the saved firmware animation; starting fallback")
+            manager.start_animation(manager.DEFAULT_ANIMATION, {})
 
     if hasattr(controller, "set_brightness"):
         try:
@@ -115,7 +151,10 @@ def run_controller_mode(args):
         except Exception as exc:
             print(f"⚠️ Failed to set controller brightness to {args.brightness}: {exc}")
 
-    channel = FileControlChannel(control_path=args.control_file, status_path=args.status_file)
+    channel = FileControlChannel(
+        control_path=args.control_file, status_path=args.status_file,
+        managed_library_root=args.firmware_library,
+    )
 
     print("🎛️ Controller mode")
     print(f"  Control file: {args.control_file}")
@@ -143,7 +182,7 @@ def run_controller_mode(args):
                             Path(args.presets_dir),
                             Path(args.saved_state_file),
                         )
-                        print(f"💾 Saved restart state: {manager.current_animation_name}/before-deploy")
+                        print(f"💾 Saved restart state: {manager.get_current_status().get('current_animation')}/before-deploy")
                     except Exception as exc:
                         print(f"⚠️ Failed to save restart state: {exc}")
 
@@ -160,7 +199,10 @@ def run_controller_mode(args):
     except KeyboardInterrupt:
         print("\n👋 Controller stopped by user")
     finally:
-        manager.stop_animation()
+        # Receiver-local playback intentionally survives Pi disconnects and
+        # controller service restarts. Python/painter output still cleans up.
+        if manager.mode != 'firmware_animation':
+            manager.stop_animation()
         if hasattr(controller, "close"):
             try:
                 controller.close()
@@ -259,6 +301,28 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
     elif action == 'painter_clear':
         print("🧽 Painter clear requested")
         manager.clear_painter_frame()
+    elif action == 'firmware_install':
+        try:
+            manager.validate_firmware_package_path(data.get('package_id'), data.get('package_path'))
+            return manager.install_firmware_animation(data.get('package_id'))
+        except (ValueError, RuntimeError, OSError) as exc:
+            print(f"⚠️ Firmware install rejected: {exc}")
+    elif action == 'firmware_play':
+        try:
+            manager.validate_firmware_package_path(data.get('package_id'), data.get('package_path'))
+            return manager.start_firmware_animation(
+                data.get('package_id'), data.get('parameters') or {}
+            )
+        except (ValueError, RuntimeError, OSError) as exc:
+            print(f"⚠️ Firmware play rejected: {exc}")
+    elif action == 'firmware_parameters':
+        return manager.update_firmware_parameters(data.get('parameters') or {})
+    elif action == 'firmware_remove':
+        try:
+            manager.validate_firmware_package_path(data.get('package_id'), data.get('package_path'))
+            return manager.remove_firmware_animation(data.get('package_id'))
+        except (ValueError, RuntimeError, OSError) as exc:
+            print(f"⚠️ Firmware removal rejected: {exc}")
     else:
         print(f"⚠️ Unknown action: {action}")
     return False
@@ -266,7 +330,18 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
 
 def run_web_mode(args):
     """Web/preview process."""
-    channel = FileControlChannel(control_path=args.control_file, status_path=args.status_file)
+    channel = FileControlChannel(
+        control_path=args.control_file, status_path=args.status_file,
+        managed_library_root=args.firmware_library,
+    )
+
+    def active_firmware_identity():
+        status = channel.read_status() or {}
+        active = status.get('firmware_animation') or {}
+        if status.get('mode') != 'firmware_animation':
+            return None
+        return active.get('digest') or active.get('package_id')
+
     web_interface = create_app(
         control_channel=channel,
         host=args.host,
@@ -275,6 +350,10 @@ def run_web_mode(args):
         leds_per_strip=args.leds_per_strip,
         animations_dir=args.animations_dir,
         animation_speed_scale=args.animation_speed_scale,
+        firmware_library=create_firmware_library(
+            args.firmware_library,
+            active_id_provider=active_firmware_identity,
+        ),
     )
 
     print("🌐 Web/Preview mode")
@@ -307,6 +386,8 @@ def main():
                         help='Directory for restart-state animation presets')
     parser.add_argument('--saved-state-file', default='run_state/before_deploy.json',
                         help='Path to the persisted restart animation state')
+    parser.add_argument('--firmware-library', default='run_state/firmware_animations',
+                        help='Managed uploaded firmware-animation library')
     parser.add_argument('--strips', type=int, default=default_strip_count(),
                         help=f'Number of LED strips (default: {default_strip_count()})')
     parser.add_argument('--leds-per-strip', type=int, default=DEFAULT_LEDS_PER_STRIP,

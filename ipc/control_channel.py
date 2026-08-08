@@ -19,9 +19,11 @@ class FileControlChannel:
     """
 
     def __init__(self, control_path: str = "run_state/control.json",
-                 status_path: str = "run_state/status.json"):
+                 status_path: str = "run_state/status.json",
+                 managed_library_root: str = "run_state/firmware_animations"):
         self.control_path = Path(control_path)
         self.status_path = Path(status_path)
+        self.managed_library_root = Path(managed_library_root).resolve()
         self.control_path.parent.mkdir(parents=True, exist_ok=True)
         self.status_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -105,6 +107,12 @@ class FileControlChannel:
         """
         Convenience helper for writing a single command payload with a unique id.
         """
+        if action.startswith('firmware_'):
+            if any(isinstance(value, (bytes, bytearray, memoryview)) for value in data.values()):
+                raise ValueError("firmware commands may not contain package bytes")
+            if 'package_path' in data:
+                data = dict(data)
+                data['package_path'] = str(self.validate_managed_package_path(data['package_path']))
         command_id = time.time()
         payload = {
             "command_id": command_id,
@@ -114,6 +122,19 @@ class FileControlChannel:
         }
         self.write_control(payload)
         return payload
+
+    def validate_managed_package_path(self, package_path: Any) -> Path:
+        """Resolve a package only when it is an existing file under the library."""
+        if not isinstance(package_path, (str, os.PathLike)):
+            raise ValueError("package_path must be a filesystem path")
+        candidate = Path(package_path).resolve(strict=True)
+        try:
+            candidate.relative_to(self.managed_library_root)
+        except ValueError as exc:
+            raise ValueError("package_path is outside the managed animation library") from exc
+        if not candidate.is_file() or candidate.suffix.lower() != '.lga':
+            raise ValueError("package_path must be a managed .lga file")
+        return candidate
 
     def read_status(self) -> Optional[Dict[str, Any]]:
         return self._read_json_file(self.status_path, "status")

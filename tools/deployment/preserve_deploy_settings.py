@@ -24,7 +24,7 @@ from animation.core.plant_awareness import PlantModifierState
 
 
 PRESET_ID = "before-deploy"
-STATE_VERSION = 3
+STATE_VERSION = 4
 
 
 def _positive_finite_number(value: Any) -> float | None:
@@ -104,6 +104,35 @@ def save_status(
     status: dict[str, Any], presets_dir: Path, state_path: Path
 ) -> dict[str, Any]:
     """Persist a controller status snapshot as the restart default."""
+    if status.get('mode') == 'firmware_animation':
+        firmware = status.get('firmware_animation')
+        if not status.get('is_running') or not isinstance(firmware, dict):
+            raise RuntimeError("No running firmware animation is available to preserve")
+        package_id = _safe_animation_name(firmware.get('package_id'))
+        digest = firmware.get('digest')
+        parameters = firmware.get('parameters')
+        if not package_id or not isinstance(digest, str) or len(digest) != 64:
+            raise RuntimeError("Firmware animation identity is invalid")
+        try:
+            bytes.fromhex(digest)
+        except ValueError as exc:
+            raise RuntimeError("Firmware animation digest is invalid") from exc
+        if not isinstance(parameters, dict):
+            raise RuntimeError("Firmware animation parameters are invalid")
+        state = {
+            'version': STATE_VERSION,
+            'provider': 'firmware',
+            'package_id': package_id,
+            'package_digest': digest.lower(),
+            'parameters': parameters,
+            'saved_at': time.time(),
+        }
+        speed_scale = _positive_finite_number(status.get('animation_speed_scale'))
+        if speed_scale is not None:
+            state['animation_speed_scale'] = speed_scale
+        _atomic_write(state_path, state)
+        return state
+
     animation = _safe_animation_name(status.get("current_animation"))
     if not status.get("is_running") or not animation:
         raise RuntimeError("No running animation is available to preserve")
@@ -127,6 +156,7 @@ def save_status(
     _atomic_write(preset_path, preset)
     state = {
         "version": STATE_VERSION,
+        "provider": "python",
         "animation": animation,
         "preset_path": str(preset_path),
         "saved_at": now,
@@ -159,6 +189,27 @@ def save(status_path: Path, presets_dir: Path, state_path: Path) -> dict[str, An
 def load_saved_state(state_path: Path) -> dict[str, Any]:
     """Load and validate the animation and parameters used for restart."""
     state = _read_object(state_path)
+    if state.get('provider') == 'firmware':
+        package_id = _safe_animation_name(state.get('package_id'))
+        digest = state.get('package_digest')
+        parameters = state.get('parameters')
+        if not package_id or not isinstance(digest, str) or len(digest) != 64:
+            raise RuntimeError("Saved firmware animation identity is invalid")
+        try:
+            bytes.fromhex(digest)
+        except ValueError as exc:
+            raise RuntimeError("Saved firmware animation digest is invalid") from exc
+        if not isinstance(parameters, dict):
+            raise RuntimeError("Saved firmware animation parameters are invalid")
+        result = dict(state)
+        result.update(provider='firmware', package_id=package_id,
+                      package_digest=digest.lower(), parameters=dict(parameters))
+        speed_scale = _positive_finite_number(state.get('animation_speed_scale'))
+        if 'animation_speed_scale' in state and speed_scale is None:
+            raise RuntimeError("Saved deployment state has an invalid animation speed scale")
+        if speed_scale is not None:
+            result['animation_speed_scale'] = speed_scale
+        return result
     animation = _safe_animation_name(state.get("animation"))
     if not animation:
         raise RuntimeError("Saved deployment state has an invalid animation name")
@@ -210,6 +261,24 @@ def _wait_for_fresh_controller(channel: FileControlChannel, started_at: float, t
 def restore(status_path: Path, control_path: Path, state_path: Path, timeout: float) -> dict[str, Any]:
     restore_started_at = time.time()
     state = load_saved_state(state_path)
+    if state.get('provider') == 'firmware':
+        channel = FileControlChannel(str(control_path), str(status_path))
+        _wait_for_fresh_controller(channel, restore_started_at, timeout)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            status = channel.read_status() or {}
+            active = status.get('firmware_animation') or {}
+            if (status.get('mode') == 'firmware_animation'
+                    and active.get('package_id') == state['package_id']
+                    and active.get('digest') == state['package_digest']):
+                return {
+                    'provider': 'firmware', 'package_id': state['package_id'],
+                    'parameters': state['parameters'],
+                }
+            time.sleep(0.1)
+        raise RuntimeError(
+            f"Controller did not report retained firmware animation {state['package_id']!r}"
+        )
     animation = state["animation"]
 
     channel = FileControlChannel(str(control_path), str(status_path))
@@ -244,6 +313,18 @@ def record_deploy(deployment_path: Path, timestamp: float | None = None) -> floa
     return deploy_timestamp
 
 
+def _saved_label(state: dict[str, Any]) -> str:
+    if state.get("provider") == "firmware":
+        package_id = state.get("package_id")
+        if isinstance(package_id, str) and package_id:
+            return f"firmware package {package_id}"
+        raise RuntimeError("Firmware deployment state has no package id")
+    animation = state.get("animation")
+    if isinstance(animation, str) and animation:
+        return f"{animation}/{PRESET_ID}"
+    raise RuntimeError("Python deployment state has no animation name")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=("save", "restore", "record-deploy"))
@@ -257,10 +338,10 @@ def main() -> None:
 
     if args.action == "save":
         preset = save(args.status, args.presets, args.state)
-        print(f"Saved {preset['animation']}/{PRESET_ID}")
+        print(f"Saved {_saved_label(preset)}")
     elif args.action == "restore":
         preset = restore(args.status, args.control, args.state, args.wait)
-        print(f"Restored {preset['animation']}/{PRESET_ID}")
+        print(f"Restored {_saved_label(preset)}")
     else:
         deploy_timestamp = record_deploy(args.deployment)
         print(f"Recorded deployment timestamp {deploy_timestamp}")

@@ -3,8 +3,12 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest import mock
 
+import tools.deployment.preserve_deploy_settings as preserve
 from tools.deployment.preserve_deploy_settings import (
     load_saved_state,
     record_deploy,
@@ -15,6 +19,25 @@ from tools.deployment.preserve_deploy_settings import (
 
 
 class PreserveDeploySettingsTests(unittest.TestCase):
+    def test_cli_labels_firmware_save_and_restore_without_animation_key(self):
+        for action in ("save", "restore"):
+            with self.subTest(action=action):
+                result = {
+                    "provider": "firmware",
+                    "package_id": "startup-rainbow-native",
+                    "parameters": {},
+                }
+                output = StringIO()
+                target = "save" if action == "save" else "restore"
+                with mock.patch.object(preserve, target, return_value=result), \
+                     mock.patch("sys.argv", ["preserve_deploy_settings.py", action]), \
+                     redirect_stdout(output):
+                    preserve.main()
+                self.assertEqual(
+                    output.getvalue().strip(),
+                    f"{action.capitalize()}d firmware package startup-rainbow-native",
+                )
+
     def test_record_deploy_updates_timestamp(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             deployment_path = Path(temporary_dir) / "deployment.json"

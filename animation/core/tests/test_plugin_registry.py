@@ -127,6 +127,7 @@ class ExternalAnimation(AnimationBase):
         manager = AnimationManager.__new__(AnimationManager)
         manager.animation_speed_scale = 0.2
         manager.current_animation = _Animation()
+        manager.mode = 'python'
 
         applied = manager.set_animation_speed_scale(0.3)
 
