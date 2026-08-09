@@ -7,6 +7,7 @@ Handles animation switching, parameter updates, and frame generation.
 """
 
 import hashlib
+import json
 import math
 import time
 import threading
@@ -180,6 +181,9 @@ class AnimationManager:
             self.controller.leds_per_strip,
             getattr(self.controller, 'debug', False)
         )
+        self._preview_lock = threading.RLock()
+        self._preview_session: Optional[Dict[str, Any]] = None
+        self._preview_session_ttl = 300.0
 
         # Load all plugins on startup and auto-start the default animation
         self.refresh_plugins()
@@ -251,6 +255,7 @@ class AnimationManager:
                 'plant_aware': self.plant_aware,
                 'plant_modifiers': state.to_dict(),
             })
+        self._update_preview_plant_state()
         return self.plant_aware
 
     def set_plant_modifiers(self, state: Any) -> Dict[str, Any]:
@@ -263,7 +268,22 @@ class AnimationManager:
                 'plant_aware': False,
                 'plant_modifiers': self.plant_modifier_state.to_dict(),
             })
+        self._update_preview_plant_state()
         return self.plant_modifier_state.to_dict()
+
+    def _update_preview_plant_state(self) -> None:
+        """Apply global installation state without resetting preview semantics."""
+        lock = getattr(self, '_preview_lock', None)
+        if lock is None:
+            return
+        with lock:
+            session = self._preview_session
+            if not session:
+                return
+            session['animation'].update_parameters({
+                'plant_aware': self.plant_aware if self._legacy_plant_aware_bridge else False,
+                'plant_modifiers': self.plant_modifier_state.to_dict(),
+            })
     
     def list_animations(self) -> List[Dict[str, Any]]:
         """Get list of available animations with metadata"""
@@ -616,6 +636,9 @@ class AnimationManager:
         status['animation_stats'] = {}
         if self.current_animation:
             status['animation_info'] = self.current_animation.get_info()
+            status['interaction_types'] = status['animation_info'].get(
+                'interaction_types', []
+            )
             status['plant_modifier_support'] = status['animation_info'].get(
                 'plant_modifier_support', []
             )
@@ -628,6 +651,8 @@ class AnimationManager:
                     status['animation_stats'] = stats
             except Exception as exc:
                 status['animation_stats'] = {'error': str(exc)}
+        else:
+            status['interaction_types'] = []
 
         performance = self._get_perf_summary()
         if performance:
@@ -665,6 +690,43 @@ class AnimationManager:
         except Exception as exc:
             print(f"⚠️ Failed to trigger positioned hole: {exc}")
             return False
+
+    @staticmethod
+    def _validated_interaction(
+        animation: AnimationBase,
+        kind: str,
+        x: float,
+        y: float,
+        strength: float,
+    ) -> tuple[str, float, float, float]:
+        kind = str(kind or 'primary')
+        if kind not in animation.INTERACTION_TYPES:
+            raise ValueError(f"interaction {kind!r} is not supported")
+        values = (float(x), float(y), float(strength))
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("interaction coordinates and strength must be finite")
+        x_value, y_value, strength_value = values
+        width, height = animation.get_strip_info()
+        if not 0.0 <= x_value < width or not 0.0 <= y_value < height:
+            raise ValueError("interaction coordinates are outside the animation grid")
+        if not 0.0 <= strength_value <= 1.0:
+            raise ValueError("interaction strength must be between 0 and 1")
+        return kind, x_value, y_value, strength_value
+
+    def dispatch_interaction(
+        self,
+        kind: str,
+        x: float,
+        y: float,
+        strength: float = 1.0,
+    ) -> bool:
+        """Dispatch a validated logical-grid interaction to the active animation."""
+        if not self.current_animation:
+            return False
+        event = self._validated_interaction(
+            self.current_animation, kind, x, y, strength
+        )
+        return bool(self.current_animation.handle_interaction(*event))
 
     def _compute_animation_hash(self, animation_name: str) -> Optional[str]:
         path = self.plugin_loader.get_plugin_file(animation_name)
@@ -712,149 +774,116 @@ class AnimationManager:
             'timestamp': time.time()
         }
 
+    def _preview_config(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        effective = dict(params or {})
+        effective['plant_aware'] = (
+            self.plant_aware if self._legacy_plant_aware_bridge else False
+        )
+        effective['plant_modifiers'] = self.plant_modifier_state.to_dict()
+        return effective
+
+    def _preview_session_for(
+        self, animation_name: str, params: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        if animation_name not in self.plugin_loader.loaded_plugins:
+            raise ValueError(f"Animation '{animation_name}' not found")
+        self.preview_controller.strip_count = self.controller.strip_count
+        self.preview_controller.leds_per_strip = self.controller.leds_per_strip
+        self.preview_controller.total_leds = self.controller.total_leds
+        authored = dict(params or {})
+        fingerprint = hashlib.sha256(json.dumps(
+            authored, sort_keys=True, separators=(',', ':'), default=str
+        ).encode()).hexdigest()
+        geometry = (
+            self.preview_controller.strip_count,
+            self.preview_controller.leds_per_strip,
+        )
+        now = time.monotonic()
+        session = self._preview_session
+        expired = bool(
+            session and now - float(session['last_access']) > self._preview_session_ttl
+        )
+        if (
+            session is None
+            or expired
+            or session['animation_name'] != animation_name
+            or session['fingerprint'] != fingerprint
+            or session['geometry'] != geometry
+        ):
+            animation_class = self.plugin_loader.loaded_plugins[animation_name]
+            animation = animation_class(
+                self.preview_controller, self._preview_config(authored)
+            )
+            session = {
+                'animation_name': animation_name,
+                'fingerprint': fingerprint,
+                'geometry': geometry,
+                'animation': animation,
+                'started_at': now,
+                'last_access': now,
+                'frame_count': 0,
+            }
+            self._preview_session = session
+        session['last_access'] = now
+        return session
+
+    def _render_preview(
+        self, animation_name: str, params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        with self._preview_lock:
+            session = self._preview_session_for(animation_name, params)
+            animation = session['animation']
+            elapsed = max(0.0, time.monotonic() - session['started_at'])
+            rendered = animation.generate_frame(elapsed, session['frame_count'])
+            changed = rendered.changed if isinstance(rendered, RenderedFrame) else True
+            frame_data = self._normalize_frame(rendered)
+            frame_data = animation.apply_framework_plant_modifiers(
+                frame_data, changed=changed
+            )
+            if isinstance(frame_data, np.ndarray):
+                frame_data = frame_data.tolist()
+            session['frame_count'] += 1
+            return {
+                'frame_data': frame_data,
+                'led_info': {
+                    'total_leds': self.controller.total_leds,
+                    'strip_count': self.controller.strip_count,
+                    'leds_per_strip': self.controller.leds_per_strip,
+                },
+                'is_running': False,
+                'frame_count': session['frame_count'],
+                'current_animation': animation_name,
+                'interaction_types': sorted(animation.INTERACTION_TYPES),
+                'timestamp': time.time(),
+                'preview': True,
+                'params': dict(params or {}),
+            }
+
     def get_animation_preview(self, animation_name: str) -> Dict[str, Any]:
-        """Get a preview frame from a specific animation without starting it"""
-        if animation_name not in self.plugin_loader.loaded_plugins:
-            raise ValueError(f"Animation '{animation_name}' not found")
+        """Advance and return the process-local dashboard preview session."""
+        return self._render_preview(animation_name)
 
-        animation_class = self.plugin_loader.loaded_plugins[animation_name]
+    def get_animation_preview_with_params(
+        self, animation_name: str, params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Advance a preview, resetting only when authored parameters change."""
+        return self._render_preview(animation_name, params)
 
-        # Keep preview controller dimensions in sync with the real controller
-        self.preview_controller.strip_count = self.controller.strip_count
-        self.preview_controller.leds_per_strip = self.controller.leds_per_strip
-        self.preview_controller.total_leds = self.controller.total_leds
-
-        try:
-            # Create a temporary instance of the animation
-            temp_animation = animation_class(self.preview_controller, {
-                'plant_aware': self.plant_aware if self._legacy_plant_aware_bridge else False,
-                'plant_modifiers': self.plant_modifier_state.to_dict(),
-            })
-
-            # Generate a sample frame
-            if hasattr(temp_animation, 'generate_frame'):
-                # For frame-based animations
-                frame_data = temp_animation.generate_frame(time_elapsed=0.0, frame_count=0)
-                if frame_data is None:
-                    frame_data = [(0, 0, 0)] * self.controller.total_leds
-            else:
-                # For step-based animations, run a few steps
-                temp_animation.reset()
-                for _ in range(5):  # Run a few steps to get interesting output
-                    temp_animation.step()
-
-                # Get the current state
-                frame_data = [(0, 0, 0)] * self.controller.total_leds
-                if hasattr(temp_animation, 'get_current_colors'):
-                    frame_data = temp_animation.get_current_colors()
-
-            frame_data = self._normalize_frame(frame_data)
-            frame_data = temp_animation.apply_framework_plant_modifiers(frame_data)
-
-            return {
-                'frame_data': frame_data,
-                'led_info': {
-                    'total_leds': self.controller.total_leds,
-                    'strip_count': self.controller.strip_count,
-                    'leds_per_strip': self.controller.leds_per_strip
-                },
-                'is_running': False,
-                'frame_count': 0,
-                'current_animation': animation_name,
-                'timestamp': time.time(),
-                'preview': True
-            }
-
-        except Exception as e:
-            print(f"Error generating preview for {animation_name}: {e}")
-            # Return a default pattern
-            return {
-                'frame_data': [(50, 50, 50)] * self.controller.total_leds,  # Dim gray
-                'led_info': {
-                    'total_leds': self.controller.total_leds,
-                    'strip_count': self.controller.strip_count,
-                    'leds_per_strip': self.controller.leds_per_strip
-                },
-                'is_running': False,
-                'frame_count': 0,
-                'current_animation': animation_name,
-                'timestamp': time.time(),
-                'preview': True,
-                'error': str(e)
-            }
-
-    def get_animation_preview_with_params(self, animation_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Get a preview frame from a specific animation with custom parameters"""
-        if animation_name not in self.plugin_loader.loaded_plugins:
-            raise ValueError(f"Animation '{animation_name}' not found")
-
-        animation_class = self.plugin_loader.loaded_plugins[animation_name]
-
-        # Keep preview controller dimensions in sync with the real controller
-        self.preview_controller.strip_count = self.controller.strip_count
-        self.preview_controller.leds_per_strip = self.controller.leds_per_strip
-        self.preview_controller.total_leds = self.controller.total_leds
-
-        try:
-            # Create a temporary instance of the animation with custom parameters
-            effective_params = dict(params)
-            effective_params['plant_aware'] = self.plant_aware if self._legacy_plant_aware_bridge else False
-            effective_params['plant_modifiers'] = self.plant_modifier_state.to_dict()
-            temp_animation = animation_class(self.preview_controller, effective_params)
-
-            # Generate a sample frame
-            if hasattr(temp_animation, 'generate_frame'):
-                # For frame-based animations
-                frame_data = temp_animation.generate_frame(time_elapsed=0.0, frame_count=0)
-                if frame_data is None:
-                    frame_data = [(0, 0, 0)] * self.controller.total_leds
-            else:
-                # For step-based animations, run a few steps
-                temp_animation.reset()
-                for _ in range(5):  # Run a few steps to get interesting output
-                    temp_animation.step()
-
-                # Get the current state
-                frame_data = [(0, 0, 0)] * self.controller.total_leds
-                if hasattr(temp_animation, 'get_current_colors'):
-                    frame_data = temp_animation.get_current_colors()
-
-            frame_data = self._normalize_frame(frame_data)
-            frame_data = temp_animation.apply_framework_plant_modifiers(frame_data)
-
-            return {
-                'frame_data': frame_data,
-                'led_info': {
-                    'total_leds': self.controller.total_leds,
-                    'strip_count': self.controller.strip_count,
-                    'leds_per_strip': self.controller.leds_per_strip
-                },
-                'is_running': False,
-                'frame_count': 0,
-                'current_animation': animation_name,
-                'timestamp': time.time(),
-                'preview': True,
-                'params': params
-            }
-
-        except Exception as e:
-            print(f"Error generating preview with params for {animation_name}: {e}")
-            # Return a default pattern
-            return {
-                'frame_data': [(50, 50, 50)] * self.controller.total_leds,  # Dim gray
-                'led_info': {
-                    'total_leds': self.controller.total_leds,
-                    'strip_count': self.controller.strip_count,
-                    'leds_per_strip': self.controller.leds_per_strip
-                },
-                'is_running': False,
-                'frame_count': 0,
-                'current_animation': animation_name,
-                'timestamp': time.time(),
-                'preview': True,
-                'params': params,
-                'error': str(e)
-            }
+    def dispatch_preview_interaction(
+        self,
+        animation_name: str,
+        kind: str,
+        x: float,
+        y: float,
+        strength: float = 1.0,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Apply an interaction to the isolated dashboard preview session."""
+        with self._preview_lock:
+            session = self._preview_session_for(animation_name, params)
+            animation = session['animation']
+            event = self._validated_interaction(animation, kind, x, y, strength)
+            return bool(animation.handle_interaction(*event))
 
     def _animation_loop(self):
         """Main animation loop running in separate thread"""

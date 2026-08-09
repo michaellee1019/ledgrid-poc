@@ -362,6 +362,25 @@ class AnimationWebInterface:
             self.control_channel.send_command('puncture_hole', **data)
             return jsonify({'success': True, 'positioned': 'x' in data})
 
+        @self.app.route('/api/interaction', methods=['POST'])
+        def api_animation_interaction():
+            """Send a logical-grid primary interaction to the live animation."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                kind, x, y, strength = self._validated_interaction_payload(payload)
+                raw_status = self.control_channel.read_status() or {}
+                layout = self._sync_preview_layout_from_status(raw_status)
+                self._validate_interaction_bounds(x, y, layout)
+                supported = raw_status.get('interaction_types', [])
+                if kind not in supported:
+                    raise ValueError(f'interaction {kind!r} is not supported')
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+            self.control_channel.send_command(
+                'animation_interaction', kind=kind, x=x, y=y, strength=strength
+            )
+            return jsonify({'success': True, 'accepted': True})
+
         @self.app.route('/api/frame')
         def api_get_frame():
             """API: Get current animation frame data"""
@@ -507,6 +526,24 @@ class AnimationWebInterface:
                     'frame_count': 0,
                     'timestamp': time.time()
                 }), 500
+
+        @self.app.route('/api/preview/<animation_name>/interaction', methods=['POST'])
+        def api_preview_interaction(animation_name):
+            """Apply an interaction only to the isolated preview session."""
+            payload = request.get_json(silent=True) or {}
+            try:
+                kind, x, y, strength = self._validated_interaction_payload(payload)
+                params = payload.get('params')
+                if params is not None and not isinstance(params, dict):
+                    raise ValueError('params must be an object')
+                layout = self._sync_preview_layout_from_status()
+                self._validate_interaction_bounds(x, y, layout)
+                accepted = self.preview_manager.dispatch_preview_interaction(
+                    animation_name, kind, x, y, strength, params=params
+                )
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+            return jsonify({'success': True, 'accepted': bool(accepted)})
         
         @self.app.route('/api/parameters', methods=['POST'])
         def api_update_parameters():
@@ -1177,6 +1214,34 @@ class AnimationWebInterface:
             'name': str(payload.get('name') or ''),
             'animation': str(payload.get('animation') or ''),
         }
+
+    @staticmethod
+    def _validated_interaction_payload(
+        payload: Dict[str, Any]
+    ) -> tuple[str, float, float, float]:
+        if not isinstance(payload, dict):
+            raise ValueError('interaction payload must be an object')
+        kind = str(payload.get('kind') or 'primary')
+        if 'x' not in payload or 'y' not in payload:
+            raise ValueError('x and y are required')
+        raw_values = (payload['x'], payload['y'], payload.get('strength', 1.0))
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in raw_values):
+            raise ValueError('x, y, and strength must be numeric')
+        x, y, strength = map(float, raw_values)
+        if not all(math.isfinite(value) for value in (x, y, strength)):
+            raise ValueError('x, y, and strength must be finite')
+        if not 0.0 <= strength <= 1.0:
+            raise ValueError('strength must be between 0 and 1')
+        return kind, x, y, strength
+
+    @staticmethod
+    def _validate_interaction_bounds(
+        x: float, y: float, layout: Dict[str, int]
+    ) -> None:
+        width = int(layout['strip_count'])
+        height = int(layout['leds_per_strip'])
+        if not 0.0 <= x < width or not 0.0 <= y < height:
+            raise ValueError('interaction coordinates are outside the animation grid')
 
     def _list_animation_presets(self, animation_name: str) -> List[Dict[str, Any]]:
         """List curated and runtime presets, with runtime files overriding IDs."""

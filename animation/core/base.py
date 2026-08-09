@@ -39,6 +39,7 @@ class AnimationBase(ABC):
     """Base class for all LED animations"""
 
     PLANT_MODIFIER_SUPPORT = frozenset()
+    INTERACTION_TYPES = frozenset()
     
     def __init__(self, controller, config: Dict[str, Any] = None):
         """
@@ -305,10 +306,21 @@ class AnimationBase(ABC):
             'parameters': self.get_parameter_schema(),
             'current_params': self.params,
             'plant_modifier_support': list(supported),
+            'interaction_types': sorted(self.INTERACTION_TYPES),
             'unsupported_plant_modifiers': [
                 modifier for modifier in state.active if modifier not in supported_set
             ],
         }
+
+    def handle_interaction(
+        self,
+        kind: str,
+        x: float,
+        y: float,
+        strength: float = 1.0,
+    ) -> bool:
+        """Handle a validated logical-grid interaction when supported."""
+        return False
     
     def get_runtime_stats(self) -> Dict[str, Any]:
         """

@@ -65,6 +65,8 @@
     .preset-swatch { width: .72rem; height: .72rem; margin-left: -.16rem; border: 1px solid rgba(255,255,255,.9); border-radius: 50%; box-shadow: 0 0 0 1px rgba(41,46,72,.12); }
     .compact-preview { border: 1px solid var(--show-border); border-radius: 16px; }
     .compact-preview .preview-canvas { max-height: 330px; width: auto !important; max-width: 100%; }
+    .compact-preview .interactive-preview-canvas { cursor: crosshair; }
+    .preview-interaction-hint { font-size: .72rem; font-weight: 700; }
     .preview-preset-action { padding: .65rem; border: 1px solid #e6e8f2; border-radius: 12px; background: #f8f9fd; }
     .preview-preset-current { display: flex; align-items: center; justify-content: space-between; gap: .65rem; padding: .55rem .65rem; border-radius: 9px; background: #eeecff; color: var(--show-accent-dark); }
     .preview-preset-label { font-size: .67rem; font-weight: 800; letter-spacing: .055em; text-transform: uppercase; }

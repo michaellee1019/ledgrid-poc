@@ -35,6 +35,7 @@ class FluidTankAnimation(AnimationBase):
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "2.0"
     PLANT_MODIFIER_SUPPORT = frozenset(("obstacle", "refract", "slow_zone"))
+    INTERACTION_TYPES = frozenset(("primary",))
     CC_PER_CELL = 5.0
 
     def __init__(self, controller, config: Dict[str, Any] = None):
@@ -486,6 +487,15 @@ class FluidTankAnimation(AnimationBase):
         """Punch a hole at a grid coordinate. Multiple simultaneous holes are supported."""
         now = self.last_time if self.last_time is not None else time.time()
         return self._activate_hole(now, x, y, radius or float(self.params.get('hole_radius', 1.5)), manual=True)
+
+    def handle_interaction(
+        self, kind: str, x: float, y: float, strength: float = 1.0
+    ) -> bool:
+        """Preserve the dashboard's existing click-to-puncture behavior."""
+        if kind != "primary":
+            return False
+        radius = float(self.params.get('hole_radius', 1.5)) * (0.75 + 0.5 * strength)
+        return self.trigger_hole(x, y, radius)
 
     def trigger_random_hole(self):
         """Backward-compatible external hook for a random puncture."""

@@ -25,6 +25,10 @@ class _Manager:
         self.calls.append(("preset", preset))
         return True
 
+    def dispatch_interaction(self, kind, x, y, strength):
+        self.calls.append(("interaction", kind, x, y, strength))
+        return True
+
     def set_target_fps(self, value):
         if value <= 0:
             raise ValueError("invalid")
@@ -68,6 +72,9 @@ class StartServerTests(unittest.TestCase):
         self.assertTrue(handle_command(manager, "set_current_preset", {
             "preset": {"preset_id": "warm", "name": "Warm", "animation": "solid"}
         }))
+        self.assertTrue(handle_command(manager, "animation_interaction", {
+            "kind": "primary", "x": 5.0, "y": 9.0, "strength": 0.75,
+        }))
         self.assertTrue(handle_command(manager, "set_target_fps", {"target_fps": 144}))
         self.assertTrue(handle_command(manager, "set_animation_speed_scale", {"animation_speed_scale": 0.45}))
         self.assertTrue(handle_command(manager, "set_plant_aware", {"plant_aware": False}))
@@ -79,6 +86,7 @@ class StartServerTests(unittest.TestCase):
             ("start", "solid", {"red": 4}, None),
             ("update", {"brightness": 0.5}),
             ("preset", {"preset_id": "warm", "name": "Warm", "animation": "solid"}),
+            ("interaction", "primary", 5.0, 9.0, 0.75),
             ("fps", 144),
             ("speed", 0.45),
             ("plant", False),

@@ -19,6 +19,7 @@
             this.fetchInFlight = false;
             this.lastFrameData = null;
             this.previewParams = null;
+            this.interactionTypes = [];
 
             // LED configuration - will be updated from server
             this.stripCount = Number.isFinite(INITIAL_STRIP_COUNT) && INITIAL_STRIP_COUNT > 0 ? INITIAL_STRIP_COUNT : 1;
@@ -29,7 +30,7 @@
             this.ledSize = 6;
             this.ledSpacing = 0.5;
             this.stripSpacing = 1;
-            this.canvas.addEventListener('click', (event) => this.requestHoleAtEvent(event));
+            this.canvas.addEventListener('click', (event) => this.requestInteractionAtEvent(event));
             this._onResize = () => this.syncDisplayWidth();
             window.addEventListener('resize', this._onResize);
 
@@ -37,14 +38,18 @@
             this.initialize();
         }
 
-        requestHoleAtEvent(event) {
+        requestInteractionAtEvent(event) {
+            if (!this.interactionTypes.includes('primary')) return;
             const rect = this.canvas.getBoundingClientRect();
             if (rect.width <= 0 || rect.height <= 0) return;
             const x = Math.max(0, Math.min(this.stripCount - 1,
                 ((event.clientX - rect.left) / rect.width) * this.stripCount));
             const displayY = Math.max(0, Math.min(this.ledsPerStrip - 1,
                 ((event.clientY - rect.top) / rect.height) * this.ledsPerStrip));
-            requestHoleAt(x, displayY);
+            requestAnimationInteraction(
+                x, displayY, this.previewMode, this.previewAnimation,
+                this.previewParams
+            );
         }
 
         async initialize() {
@@ -199,6 +204,9 @@
         }
 
         renderFrame(frameData) {
+            this.interactionTypes = Array.isArray(frameData?.interaction_types)
+                ? frameData.interaction_types : [];
+            this.updateInteractionAffordance();
             if (frameData && frameData.led_info) {
                 this.applyLedInfo(frameData.led_info);
             }
@@ -227,6 +235,16 @@
             // Update frame counter
             this.frameCount++;
             this.updateFPS();
+        }
+
+        updateInteractionAffordance() {
+            const enabled = this.interactionTypes.includes('primary');
+            this.canvas.classList.toggle('interactive-preview-canvas', enabled);
+            const hint = document.getElementById('previewInteractionHint');
+            if (hint) {
+                hint.hidden = !enabled;
+                hint.textContent = this.previewMode ? 'Click to stir preview' : 'Click to interact';
+            }
         }
 
         renderLED(strip, led, r, g, b) {
@@ -761,19 +779,25 @@
             .catch(error => console.error('Failed to punch hole', error));
     }
 
-    function requestHoleAt(x, y) {
-        fetch('/api/hole', {
+    function requestAnimationInteraction(x, y, previewMode, previewAnimation, previewParams) {
+        const isPreview = Boolean(previewMode && previewAnimation);
+        const url = isPreview
+            ? `/api/preview/${encodeURIComponent(previewAnimation)}/interaction`
+            : '/api/interaction';
+        const body = {kind: 'primary', x, y, strength: 1};
+        if (isPreview && previewParams) body.params = previewParams;
+        fetch(url, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({x, y})
+            body: JSON.stringify(body)
         })
             .then(r => r.json())
             .then(result => {
                 if (result.success && typeof showToast === 'function') {
-                    showToast(`Punched hole at (${Math.round(x)}, ${Math.round(y)})`, 'success');
+                    showToast(isPreview ? 'Stirred preview' : 'Interaction sent', 'success');
                 }
             })
-            .catch(error => console.error('Failed to punch positioned hole', error));
+            .catch(error => console.error('Failed to send animation interaction', error));
     }
 
     function startStatsPolling() {

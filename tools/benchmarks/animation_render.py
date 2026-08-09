@@ -64,6 +64,17 @@ STRESS_SCENARIOS = {
             "active": ["portal"], "strengths": {"portal": 1.0},
         }},
     },
+    "lava-lamp-max-action": {
+        "plugin": "lava_lamp", "fps": 200.0,
+        "config": {
+            "blob_count": 12, "blob_scale": 1.2, "speed": 4.0,
+            "glow": 1.0, "background": "ember",
+            "plant_modifiers": {
+                "active": ["refract", "bumper", "emitter"],
+                "strengths": {"refract": 1.0, "bumper": 1.0, "emitter": 1.0},
+            },
+        },
+    },
     "conway-plant-emitter-habitat": {
         "plugin": "conway_life", "fps": 200.0,
         "config": {"random_density": 0.14, "generations_per_second": 5.0,

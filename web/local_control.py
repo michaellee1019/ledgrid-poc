@@ -50,6 +50,11 @@ class LocalControlChannel:
                 manager.trigger_hole(float(data["x"]), float(data["y"]), data.get("radius"))
             else:
                 manager.trigger_random_hole()
+        elif action == "animation_interaction":
+            manager.dispatch_interaction(
+                data.get("kind", "primary"), data.get("x"), data.get("y"),
+                data.get("strength", 1.0),
+            )
         elif action == "dpad":
             current = manager.current_animation
             if current is not None and hasattr(current, "handle_input"):

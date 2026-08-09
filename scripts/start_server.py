@@ -236,6 +236,15 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
         else:
             print("💥 Random hole requested")
             manager.trigger_random_hole()
+    elif action == 'animation_interaction':
+        try:
+            return manager.dispatch_interaction(
+                data.get('kind', 'primary'), data.get('x'), data.get('y'),
+                data.get('strength', 1.0),
+            )
+        except (TypeError, ValueError) as exc:
+            print(f"⚠️ Invalid animation interaction: {exc}")
+            return False
     elif action == 'dpad':
         direction = (data.get('direction') or '').lower().replace('_', '-')
         if manager.current_animation and hasattr(manager.current_animation, 'handle_input'):
