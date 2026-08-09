@@ -64,6 +64,17 @@ STRESS_SCENARIOS = {
             "active": ["portal"], "strengths": {"portal": 1.0},
         }},
     },
+    "canopy-cup-max-action": {
+        "plugin": "canopy_cup", "fps": 200.0,
+        "config": {
+            "render_fps": 90.0, "course_difficulty": 1.4,
+            "enemy_density": 1.0, "rivalry": 1.0, "powerup_rate": 1.0,
+            "plant_modifiers": {
+                "active": ["illuminate", "obstacle", "emitter"],
+                "strengths": {"illuminate": 1.0, "obstacle": 1.0, "emitter": 1.0},
+            },
+        },
+    },
     "lava-lamp-max-action": {
         "plugin": "lava_lamp", "fps": 200.0,
         "config": {
