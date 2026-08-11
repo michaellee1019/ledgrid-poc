@@ -254,6 +254,61 @@ class AnimationWebInterface:
             """API: Stop current animation"""
             self.control_channel.send_command('stop')
             return jsonify({'success': True})
+
+        @self.app.route('/api/device/state', methods=['POST'])
+        def api_set_device_state():
+            """API: Apply power, brightness, animation, and preset as one command."""
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, dict) or not payload:
+                return jsonify({'error': 'request body must be a non-empty JSON object'}), 400
+
+            supported = {'power', 'brightness', 'animation', 'preset'}
+            unknown = sorted(set(payload) - supported)
+            if unknown:
+                return jsonify({
+                    'error': f"unsupported device state fields: {', '.join(unknown)}"
+                }), 400
+
+            command_data: Dict[str, Any] = {}
+            if 'power' in payload:
+                if not isinstance(payload['power'], bool):
+                    return jsonify({'error': 'power must be boolean'}), 400
+                command_data['power'] = payload['power']
+
+            if 'brightness' in payload:
+                try:
+                    command_data['brightness'] = AnimationManager.validate_output_brightness(
+                        payload['brightness']
+                    )
+                except ValueError as exc:
+                    return jsonify({'error': str(exc)}), 400
+
+            animation_name = payload.get('animation')
+            if 'animation' in payload:
+                if not isinstance(animation_name, str) or not animation_name:
+                    return jsonify({'error': 'animation must be a non-empty string'}), 400
+                if not self.preview_manager.get_animation_info(animation_name):
+                    return jsonify({'error': 'Animation not found'}), 404
+                if payload.get('power') is False:
+                    return jsonify({
+                        'error': 'power false cannot be combined with an animation'
+                    }), 400
+                command_data['animation'] = animation_name
+
+            if 'preset' in payload:
+                preset_id = payload['preset']
+                if not isinstance(preset_id, str) or not preset_id:
+                    return jsonify({'error': 'preset must be a non-empty string'}), 400
+                if not animation_name:
+                    return jsonify({'error': 'preset requires an animation'}), 400
+                preset = self._load_animation_preset(animation_name, preset_id)
+                if not preset:
+                    return jsonify({'error': 'Preset not found'}), 404
+                command_data['config'] = dict(preset['params'])
+                command_data['preset'] = self._animation_preset_selection(preset)
+
+            self.control_channel.send_command('set_device_state', **command_data)
+            return jsonify({'success': True, 'state': payload})
         
         @self.app.route('/api/status')
         def api_get_status():
@@ -313,6 +368,22 @@ class AnimationWebInterface:
                 'multiplier': multiplier,
                 'animation_speed_scale': speed_scale,
             })
+
+        @self.app.route('/api/config/brightness', methods=['POST'])
+        def api_set_output_brightness():
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, dict):
+                return jsonify({'error': 'request body must be a JSON object'}), 400
+            try:
+                brightness = AnimationManager.validate_output_brightness(
+                    payload.get('brightness')
+                )
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+            self.control_channel.send_command(
+                'set_output_brightness', brightness=brightness
+            )
+            return jsonify({'success': True, 'brightness': brightness})
 
         @self.app.route('/api/config/plant-aware', methods=['POST'])
         def api_set_plant_aware():
@@ -1343,6 +1414,7 @@ class AnimationWebInterface:
         status.setdefault('driver_stats', {})
         status.setdefault('current_animation', None)
         status.setdefault('current_preset', None)
+        status.setdefault('brightness', None)
         status.setdefault('is_running', False)
         status.setdefault('mode', 'animation' if status.get('is_running') else 'idle')
         status.setdefault('painter_active', status.get('mode') == 'painter')
@@ -1417,6 +1489,7 @@ class AnimationWebInterface:
             'painter_updated_at': None,
             'current_animation': None,
             'current_preset': None,
+            'brightness': None,
             'frame_count': 0,
             'uptime': 0,
             'target_fps': 0,

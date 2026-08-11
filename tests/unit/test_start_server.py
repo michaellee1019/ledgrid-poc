@@ -9,13 +9,16 @@ class _Manager:
     def __init__(self):
         self.calls = []
         self.current_animation = None
+        self.is_running = False
 
     def start_animation(self, animation, config, preset=None):
         self.calls.append(("start", animation, config, preset))
-        return animation != "missing"
+        self.is_running = animation != "missing"
+        return self.is_running
 
     def stop_animation(self):
         self.calls.append(("stop",))
+        self.is_running = False
 
     def update_animation_parameters(self, params):
         self.calls.append(("update", params))
@@ -40,6 +43,20 @@ class _Manager:
             raise ValueError("invalid")
         self.calls.append(("speed", value))
         return value
+
+    def set_output_brightness(self, value):
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
+            raise ValueError("invalid")
+        self.calls.append(("brightness", value))
+        return value
+
+    def apply_device_state(self, state):
+        self.calls.append(("device", state))
+        if state.get("power") is False:
+            self.is_running = False
+        elif state.get("power") is True or state.get("animation"):
+            self.is_running = True
+        return True
 
     def set_plant_aware(self, value):
         if not isinstance(value, bool):
@@ -106,6 +123,33 @@ class StartServerTests(unittest.TestCase):
         self.assertFalse(handle_command(manager, "unknown", {}))
 
         self.assertEqual(manager.calls[-2:], [("stop",), ("clear",)])
+
+    def test_brightness_and_compound_state_commands_dispatch_once(self):
+        manager = _Manager()
+        manager.is_running = True
+
+        self.assertTrue(handle_command(
+            manager, "set_output_brightness", {"brightness": 96}
+        ))
+        self.assertTrue(handle_command(manager, "set_device_state", {
+            "power": True,
+            "brightness": 128,
+            "animation": "solid",
+        }))
+        self.assertFalse(handle_command(
+            manager, "set_device_state", {"power": False}
+        ))
+        self.assertFalse(handle_command(
+            manager, "set_output_brightness", {"brightness": 256}
+        ))
+
+        self.assertEqual(manager.calls, [
+            ("brightness", 96),
+            ("device", {
+                "power": True, "brightness": 128, "animation": "solid",
+            }),
+            ("device", {"power": False}),
+        ])
 
 
 if __name__ == "__main__":

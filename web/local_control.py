@@ -38,6 +38,10 @@ class LocalControlChannel:
             manager.set_target_fps(int(data.get("target_fps")))
         elif action == "set_animation_speed_scale":
             manager.set_animation_speed_scale(float(data.get("animation_speed_scale")))
+        elif action == "set_output_brightness":
+            manager.set_output_brightness(data.get("brightness"))
+        elif action == "set_device_state":
+            manager.apply_device_state(data)
         elif action == "set_plant_aware":
             manager.set_plant_aware(data.get("plant_aware"))
         elif action == "set_plant_modifiers":

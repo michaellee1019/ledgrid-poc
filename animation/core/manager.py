@@ -71,6 +71,7 @@ class PreviewLEDController:
         self.leds_per_strip = leds_per_strip
         self.total_leds = strips * leds_per_strip
         self.debug = debug
+        self.current_brightness: Optional[int] = None
 
     def set_all_pixels(self, *_args, **_kwargs):
         pass
@@ -81,8 +82,8 @@ class PreviewLEDController:
     def set_range(self, *_args, **_kwargs):
         pass
 
-    def set_brightness(self, *_args, **_kwargs):
-        pass
+    def set_brightness(self, brightness, *_args, **_kwargs):
+        self.current_brightness = int(brightness)
 
     def show(self, *_args, **_kwargs):
         pass
@@ -135,6 +136,10 @@ class AnimationManager:
         self.current_animation_name: Optional[str] = None
         self.current_animation_hash: Optional[str] = None
         self.current_preset: Optional[Dict[str, Any]] = None
+        self.output_brightness: Optional[int] = getattr(
+            controller, 'current_brightness', None
+        )
+        self._last_active_state: Optional[Dict[str, Any]] = None
         self.is_running = False
         # 200 Hz stays below the physical ceiling of a 138-pixel
         # WS2812 strip while leaving headroom for frame generation and transfer.
@@ -244,6 +249,120 @@ class AnimationManager:
             })
         return self.animation_speed_scale
 
+    @staticmethod
+    def validate_output_brightness(brightness: Any) -> int:
+        """Return a valid hardware brightness level without numeric coercion."""
+        if isinstance(brightness, bool) or not isinstance(brightness, int):
+            raise ValueError("brightness must be an integer between 0 and 255")
+        if brightness < 0 or brightness > 255:
+            raise ValueError("brightness must be between 0 and 255")
+        return brightness
+
+    def set_output_brightness(self, brightness: Any) -> int:
+        """Apply the installation-wide receiver brightness at runtime."""
+        level = self.validate_output_brightness(brightness)
+        setter = getattr(self.controller, 'set_brightness', None)
+        if not callable(setter):
+            raise RuntimeError("LED controller does not support global brightness")
+        setter(level)
+        self.output_brightness = level
+        return level
+
+    def _remember_active_state(
+        self,
+        animation_name: str,
+        config: Dict[str, Any],
+        preset: Optional[Dict[str, Any]],
+    ) -> None:
+        """Keep the last playable state so a device-level power-on can resume it."""
+        self._last_active_state = {
+            'animation': animation_name,
+            'config': dict(config),
+            'preset': dict(preset) if preset else None,
+        }
+
+    def _sync_last_active_preset(self) -> None:
+        if (
+            self._last_active_state is not None
+            and self._last_active_state.get('animation') == self.current_animation_name
+        ):
+            self._last_active_state['preset'] = (
+                dict(self.current_preset) if self.current_preset else None
+            )
+
+    def apply_device_state(self, state: Dict[str, Any]) -> bool:
+        """Atomically validate and apply a device-level control request.
+
+        The IPC transport carries this request as one command. Hardware changes
+        are then applied together by the controller process, so a rapid HA
+        power/effect/brightness update cannot lose one of its fields.
+        """
+        if not isinstance(state, dict) or not state:
+            raise ValueError("device state must contain at least one field")
+        supported = {'power', 'brightness', 'animation', 'config', 'preset'}
+        unknown = sorted(set(state) - supported)
+        if unknown:
+            raise ValueError(f"unsupported device state fields: {', '.join(unknown)}")
+
+        has_power = 'power' in state
+        power = state.get('power')
+        if has_power and not isinstance(power, bool):
+            raise ValueError("power must be boolean")
+
+        has_brightness = 'brightness' in state
+        brightness = (
+            self.validate_output_brightness(state.get('brightness'))
+            if has_brightness else None
+        )
+
+        has_animation = 'animation' in state
+        animation = state.get('animation')
+        if has_animation:
+            if not isinstance(animation, str) or not animation:
+                raise ValueError("animation must be a non-empty string")
+            if self.plugin_loader.get_plugin(animation) is None:
+                raise ValueError(f"animation not found: {animation}")
+
+        config = state.get('config', {})
+        if not isinstance(config, dict):
+            raise ValueError("config must be an object")
+        if 'config' in state and not has_animation:
+            raise ValueError("config requires an animation")
+
+        preset = state.get('preset')
+        if 'preset' in state:
+            if not has_animation:
+                raise ValueError("preset requires an animation")
+            if self._normalize_current_preset(preset, animation) is None:
+                raise ValueError("preset metadata is invalid")
+
+        if power is False and has_animation:
+            raise ValueError("power false cannot be combined with an animation")
+
+        if has_brightness:
+            self.set_output_brightness(brightness)
+
+        if power is False:
+            self.stop_animation()
+            return True
+
+        if has_animation:
+            return self.start_animation(animation, config, preset=preset)
+
+        if power is True and not self.is_running:
+            restore = self._last_active_state or {
+                'animation': self._default_animation,
+                'config': self._default_animation_config,
+                'preset': None,
+            }
+            return self.start_animation(
+                restore['animation'],
+                dict(restore.get('config') or {}),
+                preset=restore.get('preset'),
+            )
+
+        return True
+
     def set_plant_aware(self, enabled: bool) -> bool:
         """Compatibility boundary translating the old global boolean."""
         state = PlantModifierState.from_legacy(enabled)
@@ -315,6 +434,7 @@ class AnimationManager:
         Returns:
             True if started successfully
         """
+        restore_config = dict(config or {})
         try:
             # Stop current animation if running
             self.stop_animation(clear_leds=True)
@@ -369,6 +489,10 @@ class AnimationManager:
                 self.animation_thread.start()
                 print(f"✓ Started frame-based animation: {animation_name}")
 
+            self._remember_active_state(
+                animation_name, restore_config, self.current_preset
+            )
+
             return True
             
         except Exception as e:
@@ -421,13 +545,24 @@ class AnimationManager:
         """Update current animation parameters in real-time"""
         if self.current_animation:
             try:
-                params = dict(params)
-                params['plant_aware'] = self.plant_aware if self._legacy_plant_aware_bridge else False
-                params['plant_modifiers'] = self.plant_modifier_state.to_dict()
-                self.current_animation.update_parameters(params)
+                requested_params = dict(params)
+                effective_params = dict(requested_params)
+                effective_params['plant_aware'] = self.plant_aware if self._legacy_plant_aware_bridge else False
+                effective_params['plant_modifiers'] = self.plant_modifier_state.to_dict()
+                self.current_animation.update_parameters(effective_params)
                 if self.current_preset is not None:
                     self.current_preset['is_dirty'] = True
-                print(f"✓ Updated animation parameters: {params}")
+                if (
+                    self._last_active_state is not None
+                    and self._last_active_state.get('animation') == self.current_animation_name
+                ):
+                    restore_params = {
+                        key: value for key, value in requested_params.items()
+                        if key not in {'plant_aware', 'plant_modifiers'}
+                    }
+                    self._last_active_state['config'].update(restore_params)
+                    self._sync_last_active_preset()
+                print(f"✓ Updated animation parameters: {effective_params}")
                 return True
             except Exception as e:
                 print(f"✗ Failed to update parameters: {e}")
@@ -468,6 +603,7 @@ class AnimationManager:
             return False
         selection['is_dirty'] = False
         self.current_preset = selection
+        self._sync_last_active_preset()
         return True
 
     @staticmethod
@@ -615,6 +751,7 @@ class AnimationManager:
             'painter_updated_at': self.painter_updated_at if self.painter_active else None,
             'current_animation': displayed_animation,
             'current_preset': dict(self.current_preset) if self.current_preset else None,
+            'brightness': self.output_brightness,
             'frame_count': self.frame_count,
             'frames_presented': self.frames_presented,
             'unchanged_frames_skipped': self.unchanged_frames_skipped,

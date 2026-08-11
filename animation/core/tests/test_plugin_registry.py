@@ -225,6 +225,77 @@ class ExternalAnimation(AnimationBase):
         self.assertTrue(manager.set_current_preset(preset))
         self.assertFalse(manager.get_current_status()['current_preset']['is_dirty'])
 
+    def test_device_state_applies_brightness_and_resumes_last_animation(self):
+        class _Controller:
+            strip_count = 1
+            leds_per_strip = 4
+            total_leds = 4
+            debug = False
+            current_brightness = None
+
+            def __init__(self):
+                self.brightness_calls = []
+
+            def configure(self): pass
+            def set_all_pixels(self, _frame): pass
+            def show(self): pass
+            def clear(self): pass
+            def set_brightness(self, value):
+                self.current_brightness = value
+                self.brightness_calls.append(value)
+
+        controller = _Controller()
+        manager = AnimationManager(controller, auto_start=False)
+        self.addCleanup(manager.stop_animation)
+        preset = {'preset_id': 'warm', 'name': 'Warm', 'animation': 'solid'}
+
+        self.assertTrue(manager.apply_device_state({
+            'power': True,
+            'brightness': 80,
+            'animation': 'solid',
+            'config': {'red': 12},
+            'preset': preset,
+        }))
+        self.assertEqual(manager.get_current_status()['brightness'], 80)
+        self.assertEqual(controller.brightness_calls, [80])
+        self.assertEqual(manager.current_animation.params['red'], 12)
+
+        self.assertTrue(manager.apply_device_state({'power': False}))
+        self.assertFalse(manager.is_running)
+        self.assertTrue(manager.apply_device_state({'power': True}))
+        self.assertTrue(manager.is_running)
+        self.assertEqual(manager.current_animation_name, 'solid')
+        self.assertEqual(manager.current_animation.params['red'], 12)
+        self.assertEqual(manager.current_preset['preset_id'], 'warm')
+
+    def test_device_state_validates_all_fields_before_hardware_changes(self):
+        class _Controller:
+            strip_count = 1
+            leds_per_strip = 4
+            total_leds = 4
+            debug = False
+            current_brightness = None
+
+            def __init__(self):
+                self.brightness_calls = []
+
+            def set_brightness(self, value):
+                self.brightness_calls.append(value)
+
+        controller = _Controller()
+        manager = AnimationManager(controller, auto_start=False)
+
+        with self.assertRaisesRegex(ValueError, 'animation not found'):
+            manager.apply_device_state({
+                'brightness': 100, 'animation': 'missing',
+            })
+        self.assertEqual(controller.brightness_calls, [])
+
+        for invalid in (-1, 256, True, 10.5, '10'):
+            with self.subTest(brightness=invalid):
+                with self.assertRaises(ValueError):
+                    manager.apply_device_state({'brightness': invalid})
+
     def test_preview_manager_can_load_plugins_without_starting_a_thread(self):
         class _Controller:
             strip_count = 1

@@ -60,6 +60,7 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                 "current_animation": "rainbow",
                 "animation_speed_scale": 0.45,
                 "target_fps": 144,
+                "brightness": 96,
                 "plant_aware": False,
                 "animation_info": {
                     "current_params": {"speed": 0.9, "brightness": 0.7},
@@ -71,6 +72,7 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             self.assertEqual(saved["params"], {"speed": 2.0, "brightness": 0.7})
             self.assertEqual(saved["animation_speed_scale"], 0.45)
             self.assertEqual(saved["target_fps"], 144)
+            self.assertEqual(saved["brightness"], 96)
             self.assertEqual(saved["plant_modifiers"], {
                 "version": 1, "active": [], "strengths": {},
             })
@@ -111,6 +113,12 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                 load_saved_state(state_path)
 
             state["target_fps"] = 144
+            state["brightness"] = 256
+            state_path.write_text(json.dumps(state))
+            with self.assertRaisesRegex(RuntimeError, "invalid brightness"):
+                load_saved_state(state_path)
+
+            state["brightness"] = 96
             state["plant_modifiers"] = {"active": ["attractor", "repulsor"]}
             state_path.write_text(json.dumps(state))
             with self.assertRaisesRegex(RuntimeError, "invalid plant modifiers"):

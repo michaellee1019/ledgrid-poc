@@ -112,6 +112,75 @@ class AnimationPresetTests(unittest.TestCase):
             },
         })
 
+    def test_output_brightness_endpoint_validates_hardware_range(self):
+        response = self.client.post(
+            '/api/config/brightness', json={'brightness': 128}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['brightness'], 128)
+        self.assertEqual(self.channel.commands[-1], {
+            'action': 'set_output_brightness',
+            'data': {'brightness': 128},
+        })
+
+        for invalid in (-1, 256, 12.5, True, '128', None):
+            with self.subTest(brightness=invalid):
+                command_count = len(self.channel.commands)
+                response = self.client.post(
+                    '/api/config/brightness', json={'brightness': invalid}
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(len(self.channel.commands), command_count)
+
+    def test_device_state_resolves_preset_into_one_atomic_command(self):
+        preset_dir = Path(self.temp_dir.name) / 'sparkle'
+        preset_dir.mkdir()
+        (preset_dir / 'evening.json').write_text(json.dumps({
+            'preset_id': 'evening',
+            'name': 'Evening',
+            'animation': 'sparkle',
+            'params': {'brightness': 0.4, 'speed': 0.6},
+        }), encoding='utf-8')
+
+        response = self.client.post('/api/device/state', json={
+            'power': True,
+            'brightness': 72,
+            'animation': 'sparkle',
+            'preset': 'evening',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.channel.commands), 1)
+        self.assertEqual(self.channel.commands[0], {
+            'action': 'set_device_state',
+            'data': {
+                'power': True,
+                'brightness': 72,
+                'animation': 'sparkle',
+                'config': {'brightness': 0.4, 'speed': 0.6},
+                'preset': {
+                    'preset_id': 'evening',
+                    'name': 'Evening',
+                    'animation': 'sparkle',
+                },
+            },
+        })
+
+    def test_device_state_rejects_conflicts_before_writing_command(self):
+        invalid_payloads = (
+            {},
+            {'power': 'on'},
+            {'brightness': 300},
+            {'animation': 'sparkle', 'power': False},
+            {'preset': 'evening'},
+            {'power': True, 'unknown': 1},
+        )
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                response = self.client.post('/api/device/state', json=payload)
+                self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.channel.commands, [])
+
     def test_list_alphabetizes_presets_with_mixed_timestamp_formats(self):
         preset_dir = Path(self.temp_dir.name) / 'conway_life'
         preset_dir.mkdir()

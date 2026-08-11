@@ -97,6 +97,9 @@ def run_controller_mode(args):
         if saved_state else args.animation_speed_scale
     )
     startup_modifiers = saved_state.get('plant_modifiers') if saved_state else None
+    startup_brightness = (
+        saved_state.get('brightness', args.brightness) if saved_state else args.brightness
+    )
     manager = AnimationManager(
         controller,
         plugins_dir=args.animations_dir,
@@ -108,12 +111,11 @@ def run_controller_mode(args):
     )
     manager.target_fps = int(saved_state.get('target_fps', args.target_fps)) if saved_state else args.target_fps
 
-    if hasattr(controller, "set_brightness"):
-        try:
-            controller.set_brightness(args.brightness)
-            print(f"  Brightness : {args.brightness}")
-        except Exception as exc:
-            print(f"⚠️ Failed to set controller brightness to {args.brightness}: {exc}")
+    try:
+        manager.set_output_brightness(startup_brightness)
+        print(f"  Brightness : {startup_brightness}")
+    except (RuntimeError, ValueError) as exc:
+        print(f"⚠️ Failed to set controller brightness to {startup_brightness}: {exc}")
 
     channel = FileControlChannel(control_path=args.control_file, status_path=args.status_file)
 
@@ -202,6 +204,21 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
             return True
         except (TypeError, ValueError):
             print(f"⚠️ Invalid animation speed scale: {requested!r}")
+    elif action == 'set_output_brightness':
+        requested = data.get('brightness')
+        try:
+            applied = manager.set_output_brightness(requested)
+            print(f"💡 Output brightness: {applied}")
+            return bool(manager.is_running)
+        except (RuntimeError, TypeError, ValueError):
+            print(f"⚠️ Invalid output brightness: {requested!r}")
+    elif action == 'set_device_state':
+        try:
+            applied = manager.apply_device_state(data)
+            print(f"🏛️ Device state: {data}")
+            return bool(applied and manager.is_running)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            print(f"⚠️ Invalid device state: {exc}")
     elif action == 'set_plant_aware':
         requested = data.get('plant_aware')
         try:

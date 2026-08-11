@@ -45,6 +45,12 @@ def _positive_int(value: Any) -> int | None:
     return integer if integer > 0 else None
 
 
+def _brightness_level(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 0 <= value <= 255 else None
+
+
 def _read_object(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -137,6 +143,9 @@ def save_status(
     target_fps = _positive_int(status.get("target_fps"))
     if target_fps is not None:
         state["target_fps"] = target_fps
+    brightness = _brightness_level(status.get("brightness"))
+    if brightness is not None:
+        state["brightness"] = brightness
     try:
         modifiers = PlantModifierState.from_payload(status.get("plant_modifiers"))
     except ValueError as exc:
@@ -175,14 +184,19 @@ def load_saved_state(state_path: Path) -> dict[str, Any]:
     result["params"] = dict(preset["params"])
     speed_scale = _positive_finite_number(state.get("animation_speed_scale"))
     target_fps = _positive_int(state.get("target_fps"))
+    brightness = _brightness_level(state.get("brightness"))
     if "animation_speed_scale" in state and speed_scale is None:
         raise RuntimeError("Saved deployment state has an invalid animation speed scale")
     if "target_fps" in state and target_fps is None:
         raise RuntimeError("Saved deployment state has an invalid target FPS")
+    if "brightness" in state and brightness is None:
+        raise RuntimeError("Saved deployment state has an invalid brightness")
     if speed_scale is not None:
         result["animation_speed_scale"] = speed_scale
     if target_fps is not None:
         result["target_fps"] = target_fps
+    if brightness is not None:
+        result["brightness"] = brightness
     try:
         if "plant_modifiers" in state:
             modifiers = PlantModifierState.from_payload(state["plant_modifiers"])

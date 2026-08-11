@@ -15,10 +15,13 @@ API endpoints:
 - GET /api/animations/<animation_name>
 - POST /api/start/<animation_name>
 - POST /api/stop
+- `POST /api/device/state` — atomically apply `power`, hardware `brightness`,
+  `animation`, and optional `preset`
 - GET /api/status
 - GET /api/stats
 - GET /api/metrics
 - GET /api/hardware/stats
+- `POST /api/config/brightness` — set the receiver-wide 0–255 output brightness
 - `POST /api/hole` — random hole with `{}`, or positioned hole with `{"x": 7.5, "y": 42, "radius": 1.5}`
 - `POST /api/interaction` — primary interaction for the live animation with `{"kind":"primary","x":7.5,"y":42,"strength":1}`
 - GET /api/frame
