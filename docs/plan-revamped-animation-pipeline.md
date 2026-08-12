@@ -1313,9 +1313,8 @@ prerequisite passes.
 
 Implementation status (2026-08-12): **Phase 0 delivery foundation,
 coordinator cutover, and Phase 1 contract freeze/portable baseline are complete.
-Phase 2A implementation and portable acceptance are complete; its clean
-wall-deploy gate is in progress. Phase 2B remains the next independently
-shippable host-side lane after that gate closes**.
+Phase 2A top-level vibe, portable acceptance, and clean wall-deploy gate are
+complete. Phase 2B is the next independently shippable host-side lane**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -1623,13 +1622,13 @@ framework in this phase.
 
 Deliver useful vibe switching before composition or receiver-native playback.
 
-Implementation status (2026-08-12): **portable implementation and regression
-gates complete; clean wall deploy pending**. Three parallel, contract-first lanes have converged: core
+Implementation status (2026-08-12): **complete**. Three parallel,
+contract-first lanes converged: core
 vibe/runtime and timing adapters; API, persistence, preview, dashboard, and
 deploy-state integration; and four pilot capability mappings with adversarial
 acceptance coverage. Focused manager/pilot/product tests, the deployment suite,
-and the installed-geometry render gate pass. An actual clean `just deploy`
-remains mandatory before this status becomes complete.
+and the installed-geometry render gate pass. The final actual clean
+`just deploy` also passed with restored display state and fresh wall health.
 
 - [x] Immutable versioned vibe state, five-profile registry, deterministic
   digest, manager-owned revision, explicit neutral fallback diagnostic, status,
@@ -1648,7 +1647,7 @@ remains mandatory before this status becomes complete.
   and the 4 ms p95 installed-geometry render gate pass.
 - [x] Final full portable regression/firmware/build suite passes at installed
   geometry and the final pre-deploy source identity.
-- [ ] An actual clean wall `just deploy` passes at the committed Phase 2A source
+- [x] An actual clean wall `just deploy` passes at the committed Phase 2A source
   identity.
 
 Portable evidence on 2026-08-12 (development Mac, not Pi/ESP32 timing evidence):
@@ -1663,6 +1662,12 @@ Portable evidence on 2026-08-12 (development Mac, not Pi/ESP32 timing evidence):
 - The production firmware remains unchanged at 372,546 bytes flash and 53,092
   bytes RAM. Both ordinary deploy dry runs still resolve to one clean-policy
   coordinator invocation.
+- Actual clean `just deploy` passed for commit `f8aad7b` with deployment receipt
+  `ae97abd085d04ec283ea196bcd0bf233`. The coordinator activated immutable release
+  `188411799ec10630f30b025d17127fc27a1abab0c2dc4d8f55c39a4d7bb02d5c`,
+  skipped unchanged receiver firmware, restored the running Gradient snapshot,
+  and observed the desired release on both web and controller across two stable
+  fresh-health samples at 32 x 138 with all four receivers.
 
 - Add validated immutable `VibeState`, central profile registry, API/status,
   persistence, preview input, and one global dashboard control.
