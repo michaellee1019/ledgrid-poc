@@ -4,24 +4,27 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-if [ ! -d "venv" ]; then
-    echo "Virtual environment not found at $ROOT_DIR/venv" >&2
+RUNTIME_PYTHON="$ROOT_DIR/venv/bin/python"
+if [ ! -x "$RUNTIME_PYTHON" ]; then
+    echo "Runtime Python not found or not executable at $RUNTIME_PYTHON" >&2
     exit 1
 fi
 
-source venv/bin/activate
-
-DEFAULT_STRIPS=$(python - <<'PY'
+# Digest-addressed environments are built in a temporary directory and then
+# atomically renamed. Python resolves a moved venv correctly when its interpreter
+# is invoked directly, while activation scripts retain the temporary absolute
+# path. Never source the activation script in production startup.
+DEFAULT_STRIPS=$("$RUNTIME_PYTHON" - <<'PY'
 from drivers.led_layout import default_strip_count
 print(default_strip_count())
 PY
 )
-DEFAULT_LEDS_PER_STRIP=$(python - <<'PY'
+DEFAULT_LEDS_PER_STRIP=$("$RUNTIME_PYTHON" - <<'PY'
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP
 print(DEFAULT_LEDS_PER_STRIP)
 PY
 )
-DEFAULT_ANIMATION_SPEED_SCALE=$(python - <<'PY'
+DEFAULT_ANIMATION_SPEED_SCALE=$("$RUNTIME_PYTHON" - <<'PY'
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
 print(DEFAULT_ANIMATION_SPEED_SCALE)
 PY
@@ -50,7 +53,7 @@ export STRIPS
 
 mkdir -p "$(dirname "$CONTROL_FILE")" "$(dirname "$STATUS_FILE")"
 
-python scripts/start_server.py \
+"$RUNTIME_PYTHON" scripts/start_server.py \
     --mode controller \
     --control-file "$CONTROL_FILE" \
     --status-file "$STATUS_FILE" \
@@ -66,7 +69,7 @@ python scripts/start_server.py \
 CONTROLLER_PID=$!
 echo "$CONTROLLER_PID" > run_state/controller.pid
 
-python scripts/start_server.py \
+"$RUNTIME_PYTHON" scripts/start_server.py \
     --mode web \
     --control-file "$CONTROL_FILE" \
     --status-file "$STATUS_FILE" \

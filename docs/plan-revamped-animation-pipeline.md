@@ -1311,6 +1311,64 @@ a loader-capable baseline. Host-only contract and prototype work may be develope
 locally, but no later phase is production-ready until its relevant Phase 0
 prerequisite passes.
 
+Implementation status (2026-08-12): **portable foundation and legacy wall
+deployment complete; coordinator cutover acceptance pending**.
+
+- [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
+  dirty, plan, and verbose modes; complete source accounting; locked Python
+  groups and Pi export; digest-addressed smoke-tested runtimes; PlatformIO
+  6.1.19, pioarduino 55.03.39, and native-platform 1.2.1 pins.
+- [x] Phase 0C–0D implementation: injectable coordinator, redaction, atomic
+  append-only local/remote receipts, advancing fresh-health samples, immutable
+  releases, automatic app restoration, and fail-closed app-only rollback.
+- [x] Phase 0E policy implementation: complete cache identities and defensive
+  probes exist, but no cache or cache store ships. The evidence decision remains
+  `insufficient_evidence` until twenty normal successful receipt timings exist.
+- [x] Phase 0F portable implementation: exact desired/observed topology,
+  distinct plan causality, configuration-only repair, selective common-image
+  flashing, one bounded reboot resume, per-device partial-failure evidence, and
+  app-activation gating are covered without touching hardware.
+- [x] Compatibility gate: `just --dry-run deploy` and
+  `just --dry-run deploy-python` preserve source validation -> tests -> the
+  established leaf exactly once; read-only `just deploy-plan` accounts for the
+  dirty source and coordinator order; full `just test` passes.
+- [x] Legacy wall gate: a full dirty deployment passed the complete precheck,
+  found SPI ready, skipped unchanged receiver firmware, reused the selected
+  digest runtime without installation, restarted systemd, and reached the API
+  health endpoint.
+- [ ] Coordinator cutover gate: run coordinator shadow/parity evidence on the
+  Pi, prove target-side receipts, immutable releases, and fresh desired-release
+  health, and only then make the coordinator authoritative.
+
+Portable evidence on 2026-08-12 (development Mac, not Pi/ESP32 timing evidence):
+
+- `just test`: 539 unit/plugin tests and 845 subtests passed; 18 rendering
+  pipeline tests passed; 8 native firmware tests passed; 99 deployment tests
+  and 48 subtests passed.
+- Branch-aware coverage across the seven new/expanded deployment policy modules
+  is 82 percent overall; coordinator and app-release modules are each 82
+  percent, and gate/reconciliation policy modules are 90 and 91 percent.
+- The 32 x 138 stress benchmark passed the 4 ms p95 gate; the highest observed
+  accepted p95 was 3.800 ms for `snake-max-density` at a 0.62 changed ratio.
+- The pinned ESP32-S3 production build used 372,546 bytes flash (5.7 percent)
+  and 53,092 bytes RAM (16.2 percent).
+- Frozen controller/web import smoke, lock/export equality, Python compilation,
+  `bash -n` for every deployment shell helper, and `git diff --check` passed.
+- A live dirty-deploy failure exposed the relocation semantics of venv activation
+  scripts: the environment was healthy, but activation selected the deleted
+  temporary build path. Production startup now invokes the selected
+  `venv/bin/python` directly; regression coverage poisons activation and proves
+  both processes use the selected runtime, with no system-Python fallback.
+- The operator's first live dirty deployment synced the managed source, created
+  the digest runtime, and restarted the Pi service; receiver firmware was
+  unchanged and correctly skipped. It failed fresh health because of the stale
+  activation path described above.
+- The corrected full dirty deployment then passed on the wall. It reused runtime
+  identity `eed879c054a5c19f470cd12fa00bfd2d8877d6e5ea6787cebecb7f7927d31c97`
+  with `installed: false`, again skipped unchanged firmware, restarted the
+  service, and reported the web API healthy. Coordinator shadow/parity remains
+  the only open Phase 0 cutover gate.
+
 #### Phase 0A: Quiet and explicit deployment UX
 
 - Enable quiet `just` behavior and remove traced shell output from ordinary

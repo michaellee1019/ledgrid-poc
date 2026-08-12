@@ -30,8 +30,10 @@ set -euo pipefail
 
 export PATH="$HOME/.local/bin:$PATH"
 
-if command -v pio >/dev/null 2>&1; then
-  echo "[SUCCESS] PlatformIO already installed"
+EXPECTED_PLATFORMIO_VERSION="6.1.19"
+if command -v pio >/dev/null 2>&1 \
+    && pio --version 2>/dev/null | grep -q "version ${EXPECTED_PLATFORMIO_VERSION}$"; then
+  echo "[SUCCESS] PlatformIO ${EXPECTED_PLATFORMIO_VERSION} already installed"
   exit 0
 fi
 
@@ -44,7 +46,7 @@ fi
 VENV_DIR="$HOME/.platformio-venv"
 python3 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --upgrade pip
-"$VENV_DIR/bin/pip" install --upgrade platformio
+"$VENV_DIR/bin/pip" install --upgrade "platformio==${EXPECTED_PLATFORMIO_VERSION}"
 
 mkdir -p "$HOME/.local/bin"
 ln -sf "$VENV_DIR/bin/pio" "$HOME/.local/bin/pio"
@@ -58,16 +60,15 @@ set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
 if command -v pio >/dev/null 2>&1; then
-  pio --version >/dev/null 2>&1
-  exit 0
+  pio --version 2>/dev/null | grep -q 'version 6\.1\.19$' && exit 0
 fi
 
 if [ -x "$HOME/.platformio-venv/bin/pio" ]; then
-  "$HOME/.platformio-venv/bin/pio" --version >/dev/null 2>&1
-  exit 0
+  "$HOME/.platformio-venv/bin/pio" --version 2>/dev/null \
+    | grep -q 'version 6\.1\.19$' && exit 0
 fi
 
-echo "[ERROR] PlatformIO not found after setup"
+echo "[ERROR] PlatformIO 6.1.19 not found after setup"
 exit 1
 EOF
 then

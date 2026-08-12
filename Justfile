@@ -1,18 +1,54 @@
-set shell := ["bash", "-euxo", "pipefail", "-c"]
+set shell := ["bash", "-euo", "pipefail", "-c"]
+set quiet := true
 
 web_venv := ".venv-web"
-python_env := "uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' --with opencv-python-headless"
+python_env := "uv run --frozen --group test --group calibration"
+captured := "python3 tools/deployment/run_captured.py --log-dir .deploy-logs"
 
 # Run the complete local gate before a provision/firmware deployment.
 # Set TEST=false for an explicitly requested fast deployment.
 deploy:
-	case "${TEST:-true}" in false|FALSE|0|no|NO) echo "[INFO] Skipping tests (TEST=$TEST)" ;; *) just deploy-precheck ;; esac
-	./tools/deployment/deploy.sh
+	{{captured}} --phase source.validate -- python3 tools/deployment/deploy_manifest.py --scope full --policy clean --json
+	case "${TEST:-true}" in false|FALSE|0|no|NO) ;; *) {{captured}} --phase tests.run -- just deploy-precheck ;; esac
+	{{captured}} --phase deploy.full -- ./tools/deployment/deploy.sh
+
+# Explicit development exception: deploy tracked edits plus safe untracked source.
+deploy-dirty:
+	{{captured}} --phase source.validate -- python3 tools/deployment/deploy_manifest.py --scope full --policy dirty --json
+	case "${TEST:-true}" in false|FALSE|0|no|NO) ;; *) {{captured}} --phase tests.run -- just deploy-precheck ;; esac
+	{{captured}} --phase deploy.full -- ./tools/deployment/deploy.sh
+
+# Stream the clean deployment while retaining the same captured log and policy.
+deploy-verbose:
+	{{captured}} --verbose --phase source.validate -- python3 tools/deployment/deploy_manifest.py --scope full --policy clean --json
+	case "${TEST:-true}" in false|FALSE|0|no|NO) ;; *) {{captured}} --verbose --phase tests.run -- just deploy-precheck ;; esac
+	{{captured}} --verbose --phase deploy.full -- ./tools/deployment/deploy.sh
+
+# Read-only source accounting plus the coordinator sequence that will replace
+# the legacy leaf only after wall parity has passed.
+deploy-plan:
+	python3 tools/deployment/deploy_manifest.py --scope full --policy plan
+	python3 tools/deployment/deploy_coordinator.py plan --mode full
 
 # Sync tracked application/plugin files without provisioning or flashing firmware.
 deploy-python:
-	case "${TEST:-true}" in false|FALSE|0|no|NO) echo "[INFO] Skipping tests (TEST=$TEST)" ;; *) just test-unit test-rendering test-deployment ;; esac
-	./tools/deployment/deploy_python.sh
+	{{captured}} --phase source.validate -- python3 tools/deployment/deploy_manifest.py --scope fast --policy clean --json
+	case "${TEST:-true}" in false|FALSE|0|no|NO) ;; *) {{captured}} --phase tests.run -- just test-unit test-rendering test-deployment ;; esac
+	{{captured}} --phase deploy.python -- ./tools/deployment/deploy_python.sh
+
+deploy-python-dirty:
+	{{captured}} --phase source.validate -- python3 tools/deployment/deploy_manifest.py --scope fast --policy dirty --json
+	case "${TEST:-true}" in false|FALSE|0|no|NO) ;; *) {{captured}} --phase tests.run -- just test-unit test-rendering test-deployment ;; esac
+	{{captured}} --phase deploy.python -- ./tools/deployment/deploy_python.sh
+
+deploy-python-verbose:
+	{{captured}} --verbose --phase source.validate -- python3 tools/deployment/deploy_manifest.py --scope fast --policy clean --json
+	case "${TEST:-true}" in false|FALSE|0|no|NO) ;; *) {{captured}} --verbose --phase tests.run -- just test-unit test-rendering test-deployment ;; esac
+	{{captured}} --verbose --phase deploy.python -- ./tools/deployment/deploy_python.sh
+
+deploy-python-plan:
+	python3 tools/deployment/deploy_manifest.py --scope fast --policy plan
+	python3 tools/deployment/deploy_coordinator.py plan --mode python
 
 # Compatibility name for the fast Python deployment.
 deploy-no-firmware: deploy-python
@@ -39,7 +75,20 @@ start-mac:
 # Create/refresh the lightweight virtualenv for serving the web controller locally.
 setup-web:
 	uv venv --allow-existing {{web_venv}}
-	uv pip install --python {{web_venv}}/bin/python flask "werkzeug>=2.0.0"
+	uv pip sync --python {{web_venv}}/bin/python requirements-pi.lock
+	{{web_venv}}/bin/python tools/deployment/runtime_env.py smoke --root .
+
+# Reproduce the complete local development environment from uv.lock.
+setup-local:
+	uv sync --frozen --all-groups
+
+# Intentionally update all reproducible Python inputs after dependency review.
+lock-dependencies:
+	uv lock --python 3.10
+	uv export --locked --no-default-groups --no-dev --no-emit-project \
+		--no-annotate --no-header --output-file requirements-pi.lock
+	uv export --locked --only-group firmware --no-emit-project \
+		--no-annotate --no-header --output-file requirements-platformio.lock
 
 # Prepare the deploy target for flashing ESP32 firmware and running the app.
 setup:
@@ -50,22 +99,27 @@ test: test-unit test-rendering test-firmware test-deployment
 
 # Discover unit tests in both shared code and self-contained animation plugins.
 test-unit:
-	{{python_env}} --with pytest pytest -q tests animation
+	{{python_env}} pytest -q tests animation
 
 # Verify the host rendering pipeline and its performance budget.
 test-rendering:
-	{{python_env}} --with pytest pytest -q animation/core/tests/test_frame_pipeline.py tests/unit/test_spi_crc.py
+	{{python_env}} pytest -q animation/core/tests/test_frame_pipeline.py tests/unit/test_spi_crc.py
 	{{python_env}} python tools/benchmarks/animation_render.py --frames 100 --stress --check --max-p95-ms 4.0 --json
 
 # Run native firmware tests, build the production target, and enforce dependencies.
 test-firmware:
-	uv run --with platformio pio test -d firmware/esp32 -e native
-	uv run --with platformio pio run -d firmware/esp32 -e esp32-s3-devkitc-1
+	uv run --frozen --group firmware pio test -d firmware/esp32 -e native
+	uv run --frozen --group firmware pio run -d firmware/esp32 -e esp32-s3-devkitc-1
 	if rg -n 'FastLED|fastled' firmware/esp32/src firmware/esp32/include firmware/esp32/platformio.ini; then exit 1; fi
 
 # Run deployment behavior tests and validate every maintained shell script.
 test-deployment:
-	{{python_env}} --with pytest pytest -q tests/unit/test_deploy_*.py tests/unit/test_preserve_deploy_settings.py
+	{{python_env}} pytest -q \
+		tests/unit/test_deploy_*.py \
+		tests/unit/test_app_releases.py \
+		tests/unit/test_firmware_reconciliation.py \
+		tests/unit/test_gate_policy.py \
+		tests/unit/test_preserve_deploy_settings.py
 	for script in tools/deployment/*.sh; do bash -n "$script"; done
 
 # Full local readiness gate.

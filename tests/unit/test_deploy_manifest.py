@@ -2,19 +2,38 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path, PurePosixPath
 
-from tools.deployment.deploy_manifest import tracked_paths
+from tools.deployment.deploy_manifest import (
+    manifest_plan,
+    source_identity,
+    tracked_paths,
+    working_tree_dirty,
+)
 
 
 class DeployManifestTests(unittest.TestCase):
     def setUp(self):
         self.temporary_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_dir.name)
-        subprocess.run(["git", "init", "-q", self.root], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "tag.gpgsign=false",
+                "init",
+                "-q",
+                self.root,
+            ],
+            check=True,
+        )
 
     def tearDown(self):
         self.temporary_dir.cleanup()
@@ -27,6 +46,26 @@ class DeployManifestTests(unittest.TestCase):
 
     def _track(self, *relative_paths: str) -> None:
         subprocess.run(["git", "-C", self.root, "add", "--", *relative_paths], check=True)
+
+    def _commit(self, *relative_paths: str) -> None:
+        self._track(*relative_paths)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                self.root,
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+            check=True,
+        )
 
     def test_fast_manifest_includes_tracked_code_templates_and_plugin_assets(self):
         tracked = (
@@ -82,12 +121,16 @@ class DeployManifestTests(unittest.TestCase):
     def test_full_manifest_includes_new_application_modules_but_not_root_miscellany(self):
         self._write("web/preview_worker.py")
         self._write("animation/core/preview_assets.py")
+        self._write("pyproject.toml")
+        self._write("requirements-pi.lock")
         self._write("scratch-secret.txt")
 
         self.assertEqual(
             tracked_paths(self.root, "full"),
             [
                 PurePosixPath("animation/core/preview_assets.py"),
+                PurePosixPath("pyproject.toml"),
+                PurePosixPath("requirements-pi.lock"),
                 PurePosixPath("web/preview_worker.py"),
             ],
         )
@@ -98,6 +141,181 @@ class DeployManifestTests(unittest.TestCase):
         deleted.unlink()
 
         self.assertEqual(tracked_paths(self.root, "full"), [])
+
+    def test_plan_accounts_for_selected_safe_untracked_and_every_exclusion(self):
+        self._write("scripts/tracked.py")
+        self._write("animation/new.py")
+        self._write("notes.txt")
+        self._write("presets/animations/rainbow/runtime.json")
+        deleted = self._write("docs/deleted.md")
+        self._track("scripts/tracked.py", "docs/deleted.md")
+        deleted.unlink()
+
+        plan = manifest_plan(self.root, "full")
+
+        self.assertEqual(
+            plan.selected,
+            (
+                PurePosixPath("animation/new.py"),
+                PurePosixPath("scripts/tracked.py"),
+            ),
+        )
+        self.assertEqual(plan.safe_untracked, (PurePosixPath("animation/new.py"),))
+        self.assertEqual(
+            {(item.path.as_posix(), item.reason) for item in plan.excluded},
+            {
+                ("docs/deleted.md", "deleted from working tree"),
+                ("notes.txt", "untracked path is outside safe deployment roots"),
+                (
+                    "presets/animations/rainbow/runtime.json",
+                    "target-owned runtime preset",
+                ),
+            },
+        )
+
+    def test_fast_plan_explains_non_fast_tracked_and_safe_untracked_files(self):
+        self._write("docs/README.md")
+        self._write("tools/new-config.toml")
+        self._write("web/app.py")
+        self._track("docs/README.md", "web/app.py")
+
+        plan = manifest_plan(self.root, "fast")
+
+        self.assertEqual(plan.selected, (PurePosixPath("web/app.py"),))
+        self.assertEqual(
+            {(item.path.as_posix(), item.reason) for item in plan.excluded},
+            {
+                ("docs/README.md", "outside fast application scope"),
+                ("tools/new-config.toml", "outside fast application scope"),
+            },
+        )
+
+    def test_dependency_inputs_are_safe_untracked_for_full_but_excluded_from_fast(self):
+        for path in ("pyproject.toml", "uv.lock", "requirements-pi.lock"):
+            self._write(path)
+
+        full = manifest_plan(self.root, "full")
+        fast = manifest_plan(self.root, "fast")
+
+        expected = tuple(
+            PurePosixPath(path)
+            for path in ("pyproject.toml", "requirements-pi.lock", "uv.lock")
+        )
+        self.assertEqual(full.selected, expected)
+        self.assertEqual(full.safe_untracked, expected)
+        self.assertEqual(fast.selected, ())
+        self.assertEqual(
+            {item.path for item in fast.excluded},
+            set(expected),
+        )
+
+    def test_dirty_identity_is_stable_and_changes_with_included_source_bytes(self):
+        tracked = self._write("scripts/server.py", b"initial")
+        self._commit("scripts/server.py")
+        tracked.write_bytes(b"edited")
+        safe = self._write("web/new.py", b"safe one")
+        self._write("notes.txt", b"excluded one")
+
+        plan = manifest_plan(self.root, "full")
+        first = source_identity(self.root, plan)
+        second = source_identity(self.root, manifest_plan(self.root, "full"))
+        self.assertEqual(first, second)
+        self.assertEqual(first["safe_untracked"], ["web/new.py"])
+
+        safe.write_bytes(b"safe two")
+        changed_safe = source_identity(self.root, manifest_plan(self.root, "full"))
+        self.assertNotEqual(first["diff_sha256"], changed_safe["diff_sha256"])
+
+        self._write("notes.txt", b"excluded two")
+        changed_excluded = source_identity(self.root, manifest_plan(self.root, "full"))
+        self.assertEqual(changed_safe["diff_sha256"], changed_excluded["diff_sha256"])
+
+    def test_fast_identity_ignores_tracked_changes_outside_fast_scope(self):
+        self._write("web/app.py", b"web initial")
+        docs = self._write("docs/README.md", b"docs initial")
+        self._commit("web/app.py", "docs/README.md")
+
+        first = source_identity(self.root, manifest_plan(self.root, "fast"))
+        docs.write_bytes(b"docs changed")
+        second = source_identity(self.root, manifest_plan(self.root, "fast"))
+        self.assertEqual(first["diff_sha256"], second["diff_sha256"])
+
+        self._write("web/app.py", b"web changed")
+        third = source_identity(self.root, manifest_plan(self.root, "fast"))
+        self.assertNotEqual(second["diff_sha256"], third["diff_sha256"])
+
+    def test_clean_state_includes_non_ignored_untracked_files(self):
+        self._write("README.md")
+        self._commit("README.md")
+        self.assertFalse(working_tree_dirty(self.root))
+        self._write("scratch.txt")
+        self.assertTrue(working_tree_dirty(self.root))
+
+    def test_clean_cli_rejects_dirty_tree_while_dirty_cli_records_identity(self):
+        self._write("README.md")
+        self._commit("README.md")
+        self._write("web/new.py", b"candidate")
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve().parents[2] / "tools/deployment/deploy_manifest.py"),
+            "--root",
+            str(self.root),
+            "--scope",
+            "full",
+        ]
+
+        clean = subprocess.run(
+            [*command, "--policy", "clean", "--json"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(clean.returncode, 2)
+        self.assertIn("clean deployment refused", clean.stderr)
+
+        dirty = subprocess.run(
+            [*command, "--policy", "dirty", "--json"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(dirty.stdout)
+        self.assertTrue(payload["dirty"])
+        self.assertEqual(payload["safe_untracked"], ["web/new.py"])
+        self.assertEqual(len(payload["diff_sha256"]), 64)
+
+    def test_plan_cli_is_read_only(self):
+        self._write("README.md")
+        self._commit("README.md")
+        self._write("tools/new.py")
+        before = subprocess.run(
+            ["git", "-C", self.root, "status", "--porcelain=v1", "-z"],
+            check=True,
+            capture_output=True,
+        ).stdout
+
+        plan = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve().parents[2] / "tools/deployment/deploy_manifest.py"),
+                "--root",
+                str(self.root),
+                "--scope",
+                "full",
+                "--policy",
+                "plan",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        after = subprocess.run(
+            ["git", "-C", self.root, "status", "--porcelain=v1", "-z"],
+            check=True,
+            capture_output=True,
+        ).stdout
+
+        self.assertEqual(before, after)
+        self.assertIn("tools/new.py [safe untracked]", plan.stdout)
 
     def test_sync_contract_deletes_stale_code_but_protects_target_state(self):
         root = Path(__file__).resolve().parents[2]

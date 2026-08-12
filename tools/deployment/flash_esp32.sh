@@ -24,8 +24,14 @@ if ! command -v pio >/dev/null 2>&1; then
   fi
 fi
 
-if ! $PIO_CMD --version >/dev/null 2>&1; then
+pio_version="$($PIO_CMD --version 2>/dev/null || true)"
+if [ -z "$pio_version" ]; then
   log_warning "PlatformIO not available; skipping ESP32 flash"
+  exit 1
+fi
+if ! grep -q 'version 6\.1\.19$' <<< "$pio_version"; then
+  log_warning "PlatformIO 6.1.19 is required; found: $pio_version"
+  log_warning "Run 'just setup' to install the pinned firmware build tool"
   exit 1
 fi
 
@@ -42,8 +48,12 @@ fi
 
 log_info "Computing firmware source hash..."
 current_hash="$(
-  cd "$FIRMWARE_DIR"
-  find platformio.ini include src -type f -print0 | sort -z | xargs -0 "${HASH_TOOL[@]}" | "${HASH_TOOL[@]}" | awk '{print $1}'
+  {
+    cd "$FIRMWARE_DIR"
+    find platformio.ini extra_script.py include src -type f -print0 \
+      | sort -z | xargs -0 "${HASH_TOOL[@]}"
+    printf '%s\n' "$pio_version"
+  } | "${HASH_TOOL[@]}" | awk '{print $1}'
 )"
 
 previous_hash=""

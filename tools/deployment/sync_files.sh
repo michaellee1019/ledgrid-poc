@@ -42,6 +42,7 @@ sync_full_deployment() {
         -e "ssh $SSH_OPTS" \
         --exclude 'venv/' \
         --exclude '.venv*/' \
+        --exclude '.venvs/' \
         --exclude 'run_state/' \
         --filter 'protect /presets/' \
         --filter 'protect /presets/animations/***' \

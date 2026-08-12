@@ -11,6 +11,7 @@
 **/__pycache__/
 .pytest_cache/
 .coverage
+.deploy-logs/
 htmlcov/
 .venv-web
 run_state

@@ -108,25 +108,13 @@ if [ "${#missing[@]}" -gt 0 ]; then
 fi
 EOF
 
-    log_info "Checking Python virtual environment and dependency hash..."
+    log_info "Checking digest-addressed Python runtime environment..."
     ssh $SSH_OPTS "$PI_HOST" "bash -s -- '$DEPLOY_DIR'" <<'EOF'
 set -euo pipefail
 deploy_dir=$1
 cd ~/"$deploy_dir"
-created=0
-if [ ! -x venv/bin/python ]; then
-  python3 -m venv venv
-  created=1
-fi
-requirements_hash=$(sha256sum requirements.txt | awk '{print $1}')
-installed_hash=$(cat venv/.ledgrid_requirements_sha256 2>/dev/null || true)
-if [ "$created" = 1 ] || [ "$requirements_hash" != "$installed_hash" ]; then
-  if [ "$created" = 1 ]; then venv/bin/python -m pip install --upgrade pip; fi
-  venv/bin/python -m pip install -r requirements.txt
-  printf '%s\n' "$requirements_hash" > venv/.ledgrid_requirements_sha256
-else
-  echo "[INFO] Python dependencies unchanged; skipping pip install"
-fi
+python3 tools/deployment/runtime_env.py ensure \
+  --root . --lock requirements-pi.lock --link venv
 EOF
 
     log_success "Python environment is ready"
@@ -195,7 +183,7 @@ check_web_server() {
         "for attempt in {1..120}; do curl --fail --silent --max-time 2 http://127.0.0.1:5000/api/status >/dev/null && exit 0; sleep 0.25; done; exit 1"; then
         log_error "Web server did not become healthy; collecting startup logs"
         ssh $SSH_OPTS "$PI_HOST" \
-            "sudo systemctl status ledgrid.service --no-pager -l || true; tail -80 ~/$DEPLOY_DIR/web.log 2>/dev/null || true; tail -80 ~/$DEPLOY_DIR/controller.log 2>/dev/null || true"
+            "sudo systemctl status ledgrid.service --no-pager -l || true; sudo journalctl -u ledgrid.service -n 80 --no-pager || true; tail -80 ~/$DEPLOY_DIR/web.log 2>/dev/null || true; tail -80 ~/$DEPLOY_DIR/controller.log 2>/dev/null || true"
         return 1
     fi
     log_success "Web server is responding"

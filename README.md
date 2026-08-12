@@ -7,10 +7,11 @@ lanes in parallel.
 
 ## Local development
 
-The repository uses `just` as its command entry point and `uv` for isolated
-test dependencies.
+The repository uses `just` as its command entry point and `uv` with a committed
+lockfile for reproducible runtime, test, calibration, and firmware-tool groups.
 
 ```bash
+just setup-local
 just setup-web
 just test
 just start
@@ -48,11 +49,15 @@ presets belong to the plugin that owns them.
 ```bash
 just setup             # prepare the Pi and local web environment
 just deploy-precheck   # local validation without changing the Pi
+just deploy-plan       # read-only source and deployment-step accounting
 just deploy            # full application and firmware deployment
 ```
 
-Use `just deploy-python` when firmware and boot configuration are unchanged.
-The deployment target defaults to `ledgridwall@ledgridwall.local`.
+`just deploy` and `just deploy-python` require a clean worktree. Use the
+corresponding `*-dirty` recipe only for an intentional development deployment;
+it records the base commit, selected diff digest, and safe untracked files. Use
+`*-verbose` to stream the normally captured deployment log. The deployment
+target defaults to `ledgridwall@ledgridwall.local`.
 
 ## Required checks
 

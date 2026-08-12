@@ -1,6 +1,8 @@
+# Compatibility input for existing manual tooling. Production deployment uses
+# requirements-pi.lock directly and local development uses frozen uv groups.
 smbus2>=0.4.0
 pyserial>=3.5
-spidev
+spidev; sys_platform == "linux"
 flask
 werkzeug>=2.0.0
 numpy
