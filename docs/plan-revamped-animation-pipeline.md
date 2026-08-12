@@ -1311,9 +1311,8 @@ a loader-capable baseline. Host-only contract and prototype work may be develope
 locally, but no later phase is production-ready until its relevant Phase 0
 prerequisite passes.
 
-Implementation status (2026-08-12): **portable foundation complete; coordinator
-shadow, canary, no-op, and rollback wall gates passed; final clean operator
-deployment pending**.
+Implementation status (2026-08-12): **Phase 0 delivery foundation and
+coordinator cutover complete; Phase 1 is next**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -1338,10 +1337,9 @@ deployment pending**.
   found SPI ready, skipped unchanged receiver firmware, reused the selected
   digest runtime without installation, restarted systemd, and reached the API
   health endpoint.
-- [ ] Coordinator cutover gate: shadow staging, target-side receipts, immutable
-  releases, fresh desired-release health, unchanged reconciliation, and explicit
-  app-only rollback have passed on the Pi. Complete an actual clean `just deploy`
-  after committing the accepted implementation before closing this checkbox.
+- [x] Coordinator cutover gate: shadow staging, target-side receipts, immutable
+  releases, fresh desired-release health, unchanged reconciliation, explicit
+  app-only rollback, and an actual clean `just deploy` passed on the Pi.
 
 The coordinator is authoritative under the ordinary `deploy` and
 `deploy-python` recipes. Paired append-only local/target receipts, exact
@@ -1349,8 +1347,8 @@ running-release identity in advancing API samples, and automatic restoration at
 every post-activation failure boundary are enforced. The legacy shell leaves
 remain available under explicit recovery names; their sync protections preserve
 `current`, immutable releases, receipts, calibration evidence, and the receiver
-library. Only the final clean-tree operator invocation remains before this gate
-is closed.
+library. Phase 0 is closed; do not broaden the retained legacy leaves or add a
+deployment cache without the separately defined evidence gate.
 
 Portable evidence on 2026-08-12 (development Mac, not Pi/ESP32 timing evidence):
 
@@ -1408,6 +1406,12 @@ Portable evidence on 2026-08-12 (development Mac, not Pi/ESP32 timing evidence):
   passed its exact seven-step allowlist and the round trip returned to release
   `30e56d99b70b11e489e929eb625bf87d4ba7e628522ecaaa741e9fa27db89c59`.
   Firmware-marker and boot-configuration hashes were unchanged across rollback.
+- The exact clean operator command `just deploy` passed from commit `9d2ac07`
+  with receipt `be50b119fd5948a78112eb6aab7e18e4`: clean source policy,
+  no diff or safe-untracked inputs, full precheck, immutable release
+  `c9a0cb505314bf62fa5c59d7334e7d2cdf017d0aa7582bddc41541ee713748bb`,
+  fresh exact-release health, and a byte-identical local/target receipt. Systemd
+  reported both its working directory and startup script through `current`.
 
 #### Phase 0A: Quiet and explicit deployment UX
 
