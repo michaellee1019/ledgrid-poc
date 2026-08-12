@@ -29,6 +29,18 @@ from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
 print(DEFAULT_ANIMATION_SPEED_SCALE)
 PY
 )
+RELEASE_ID=$("$RUNTIME_PYTHON" - "$ROOT_DIR" <<'PY'
+import sys
+from pathlib import Path
+from scripts.start_server import resolve_active_release_id
+
+print(resolve_active_release_id(Path(sys.argv[1])) or "")
+PY
+)
+RELEASE_ARGS=()
+if [ -n "$RELEASE_ID" ]; then
+    RELEASE_ARGS=(--release-id "$RELEASE_ID")
+fi
 
 STRIPS=${STRIPS:-$DEFAULT_STRIPS}
 LEDS_PER_STRIP=${LEDS_PER_STRIP:-$DEFAULT_LEDS_PER_STRIP}
@@ -65,6 +77,7 @@ mkdir -p "$(dirname "$CONTROL_FILE")" "$(dirname "$STATUS_FILE")"
     --poll-interval "$POLL_INTERVAL" \
     --status-interval "$STATUS_INTERVAL" \
     --spi-speed "$SPI_SPEED" \
+    ${RELEASE_ARGS[@]+"${RELEASE_ARGS[@]}"} \
     > controller.log 2>&1 &
 CONTROLLER_PID=$!
 echo "$CONTROLLER_PID" > run_state/controller.pid
@@ -79,6 +92,7 @@ echo "$CONTROLLER_PID" > run_state/controller.pid
     --animation-speed-scale "$ANIMATION_SPEED_SCALE" \
     --host "$HOST" \
     --port "$PORT" \
+    ${RELEASE_ARGS[@]+"${RELEASE_ARGS[@]}"} \
     > web.log 2>&1 &
 WEB_PID=$!
 echo "$WEB_PID" > run_state/web.pid

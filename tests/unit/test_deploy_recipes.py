@@ -11,9 +11,12 @@ ROOT = Path(__file__).resolve().parents[2]
 class DeployRecipeTests(unittest.TestCase):
     def test_deploy_recipes_default_to_tests_and_allow_explicit_skip(self):
         justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
-        self.assertGreaterEqual(justfile.count('${TEST:-true}'), 6)
-        self.assertIn('just deploy-precheck', justfile)
-        self.assertIn('just test-unit test-rendering test-deployment', justfile)
+        entrypoint = (ROOT / "tools/deployment/deploy_entrypoint.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('os.environ.get("TEST", "true")', entrypoint)
+        self.assertIn('("just", "deploy-precheck")', entrypoint)
+        self.assertIn('("just", "test-unit", "test-rendering", "test-deployment")', entrypoint)
         self.assertIn("set quiet := true", justfile)
         self.assertNotIn('["bash", "-euxo"', justfile)
 
@@ -35,8 +38,10 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn("--policy plan", justfile)
         self.assertIn("--verbose --phase", justfile)
         self.assertIn("run_captured.py --log-dir .deploy-logs", justfile)
-        self.assertIn("deploy_coordinator.py plan --mode full", justfile)
-        self.assertIn("deploy_coordinator.py plan --mode python", justfile)
+        self.assertIn("deploy_entrypoint.py plan --mode full", justfile)
+        self.assertIn("deploy_entrypoint.py plan --mode python", justfile)
+        self.assertIn("deploy-legacy:", justfile)
+        self.assertIn("deploy-python-legacy:", justfile)
 
     def test_deployment_gate_includes_every_phase_zero_policy_suite(self):
         justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
@@ -49,7 +54,7 @@ class DeployRecipeTests(unittest.TestCase):
         ):
             self.assertIn(suite, justfile)
 
-    def test_just_dry_run_preserves_full_and_python_leaf_order_without_hardware(self):
+    def test_just_dry_run_uses_authoritative_coordinator_without_hardware(self):
         full = subprocess.run(
             ["just", "--dry-run", "deploy"],
             cwd=ROOT,
@@ -58,13 +63,8 @@ class DeployRecipeTests(unittest.TestCase):
             text=True,
         )
         full = full.stdout + full.stderr
-        full_phases = [
-            full.index("--phase source.validate"),
-            full.index("--phase tests.run"),
-            full.index("--phase deploy.full"),
-        ]
-        self.assertEqual(full_phases, sorted(full_phases))
-        self.assertEqual(full.count("./tools/deployment/deploy.sh"), 1)
+        self.assertEqual(full.count("deploy_entrypoint.py run --mode full --policy clean"), 1)
+        self.assertNotIn("./tools/deployment/deploy.sh", full)
         self.assertNotIn("ssh ", full)
 
         fast = subprocess.run(
@@ -75,13 +75,8 @@ class DeployRecipeTests(unittest.TestCase):
             text=True,
         )
         fast = fast.stdout + fast.stderr
-        fast_phases = [
-            fast.index("--phase source.validate"),
-            fast.index("--phase tests.run"),
-            fast.index("--phase deploy.python"),
-        ]
-        self.assertEqual(fast_phases, sorted(fast_phases))
-        self.assertEqual(fast.count("./tools/deployment/deploy_python.sh"), 1)
+        self.assertEqual(fast.count("deploy_entrypoint.py run --mode python --policy clean"), 1)
+        self.assertNotIn("./tools/deployment/deploy_python.sh", fast)
         self.assertNotIn("ssh ", fast)
 
     def test_full_deploy_uses_digest_environment_and_reports_startup_failures(self):
@@ -92,6 +87,39 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn("for attempt in {1..120}", script)
         self.assertIn("collecting startup logs", script)
         self.assertIn("journalctl -u ledgrid.service -n 80", script)
+
+    def test_legacy_full_sync_preserves_cutover_and_target_owned_state(self):
+        script = (ROOT / "tools/deployment/sync_files.sh").read_text(
+            encoding="utf-8"
+        )
+        for protected in (
+            "/current",
+            "/releases/***",
+            "/.incoming/***",
+            "/receipts/***",
+            "/calibration_photos/***",
+            "/receiver_library/***",
+            "/presets/animations/***",
+        ):
+            self.assertIn(f"protect {protected}", script)
+
+    def test_partial_firmware_failure_is_not_reported_as_success(self):
+        script = (ROOT / "tools/deployment/flash_esp32.sh").read_text(
+            encoding="utf-8"
+        )
+        failure = 'log_warning "Some devices failed to flash; hash NOT updated (will retry next deploy)"'
+        self.assertIn(failure, script)
+        self.assertIn(f"{failure}\n  exit 1", script)
+
+    def test_remote_recovery_helpers_use_the_supervised_service(self):
+        stop = (ROOT / "tools/deployment/stop_remote.sh").read_text(encoding="utf-8")
+        diagnose = (ROOT / "tools/diagnostics/remote_diagnostics.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("sudo systemctl restart ledgrid.service", stop)
+        self.assertNotIn("nohup ./start.sh", stop)
+        self.assertIn("sudo systemctl restart ledgrid.service", diagnose)
+        self.assertNotIn('standalone web process', diagnose)
 
     def test_dependencies_and_firmware_toolchains_are_pinned(self):
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")

@@ -258,6 +258,11 @@ def main() -> None:
     ensure_parser.add_argument("--root", type=Path, default=Path.cwd())
     ensure_parser.add_argument("--lock", type=Path, default=Path("requirements-pi.lock"))
     ensure_parser.add_argument("--link", default="venv")
+    ensure_parser.add_argument(
+        "--smoke-root",
+        type=Path,
+        help="candidate application root to import while environment storage remains shared",
+    )
 
     smoke_parser = subparsers.add_parser("smoke")
     smoke_parser.add_argument("--root", type=Path, default=Path.cwd())
@@ -279,6 +284,11 @@ def main() -> None:
         args.lock,
         base_python=Path(sys.executable),
         link_name=args.link,
+        smoke=(
+            (lambda python, _root: _smoke_subprocess(python, args.smoke_root))
+            if args.smoke_root is not None
+            else _smoke_subprocess
+        ),
     )
     print(
         json.dumps(

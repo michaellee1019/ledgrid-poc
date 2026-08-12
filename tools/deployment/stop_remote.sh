@@ -4,8 +4,8 @@
 set -e
 
 # Configuration
-PI_HOST="ledgridwall@ledgridwall.local"
-DEPLOY_DIR="ledgrid-pod"
+PI_HOST="${PI_HOST:-ledgridwall@ledgridwall.local}"
+DEPLOY_DIR="${DEPLOY_DIR:-ledgrid-pod}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -33,42 +33,15 @@ log_error() {
 # Stop the animation system
 stop_system() {
     log_info "Stopping LED Grid Animation System on $PI_HOST..."
-    
-    # Check if system is running
-    if ssh "$PI_HOST" "pgrep -f 'start_server.py' > /dev/null"; then
-        log_info "Found running animation server, stopping..."
-        
-        # Stop the process
-        ssh "$PI_HOST" "pkill -f 'start_server.py' || true"
-        
-        # Wait a moment
-        sleep 2
-        
-        # Check if stopped
-        if ! ssh "$PI_HOST" "pgrep -f 'start_server.py' > /dev/null"; then
-            log_success "Animation system stopped successfully"
-        else
-            log_warning "Process may still be running, trying force stop..."
-            ssh "$PI_HOST" "pkill -9 -f 'start_server.py' || true"
-            sleep 1
-            
-            if ! ssh "$PI_HOST" "pgrep -f 'start_server.py' > /dev/null"; then
-                log_success "Animation system force stopped"
-            else
-                log_error "Failed to stop animation system"
-                exit 1
-            fi
-        fi
-    else
-        log_warning "Animation system is not running"
-    fi
+    ssh "$PI_HOST" "sudo systemctl stop ledgrid.service"
+    log_success "Animation system stopped successfully"
 }
 
 # Show system status
 show_status() {
     log_info "Checking system status..."
     
-    if ssh "$PI_HOST" "pgrep -f 'start_server.py' > /dev/null"; then
+    if ssh "$PI_HOST" "systemctl is-active --quiet ledgrid.service"; then
         PI_IP=$(ssh "$PI_HOST" "hostname -I | awk '{print \$1}'")
         echo -e "${GREEN}Status: RUNNING${NC}"
         echo "Web interface: http://$PI_IP:5000/"
@@ -100,11 +73,9 @@ main() {
         "restart")
             echo "🔄 Restarting LED Grid Animation System"
             echo "======================================="
-            stop_system
+            log_info "Restarting the supervised service..."
+            ssh "$PI_HOST" "sudo systemctl restart ledgrid.service"
             sleep 2
-            log_info "Starting system with virtual environment..."
-            ssh "$PI_HOST" "cd ~/$DEPLOY_DIR && nohup ./start.sh > animation_system.log 2>&1 &"
-            sleep 3
             show_status
             ;;
         *)

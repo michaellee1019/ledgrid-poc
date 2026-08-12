@@ -1311,8 +1311,9 @@ a loader-capable baseline. Host-only contract and prototype work may be develope
 locally, but no later phase is production-ready until its relevant Phase 0
 prerequisite passes.
 
-Implementation status (2026-08-12): **portable foundation and legacy wall
-deployment complete; coordinator cutover acceptance pending**.
+Implementation status (2026-08-12): **portable foundation complete; coordinator
+shadow, canary, no-op, and rollback wall gates passed; final clean operator
+deployment pending**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -1328,28 +1329,42 @@ deployment complete; coordinator cutover acceptance pending**.
   distinct plan causality, configuration-only repair, selective common-image
   flashing, one bounded reboot resume, per-device partial-failure evidence, and
   app-activation gating are covered without touching hardware.
-- [x] Compatibility gate: `just --dry-run deploy` and
-  `just --dry-run deploy-python` preserve source validation -> tests -> the
-  established leaf exactly once; read-only `just deploy-plan` accounts for the
-  dirty source and coordinator order; full `just test` passes.
+- [x] Recipe compatibility gate: `just --dry-run deploy` and
+  `just --dry-run deploy-python` each invoke the authoritative executable
+  coordinator exactly once; read-only `just deploy-plan` accounts for the dirty
+  source and exact coordinator order; the retained shell leaves are reachable
+  only through explicit `*-legacy` recovery recipes.
 - [x] Legacy wall gate: a full dirty deployment passed the complete precheck,
   found SPI ready, skipped unchanged receiver firmware, reused the selected
   digest runtime without installation, restarted systemd, and reached the API
   health endpoint.
-- [ ] Coordinator cutover gate: run coordinator shadow/parity evidence on the
-  Pi, prove target-side receipts, immutable releases, and fresh desired-release
-  health, and only then make the coordinator authoritative.
+- [ ] Coordinator cutover gate: shadow staging, target-side receipts, immutable
+  releases, fresh desired-release health, unchanged reconciliation, and explicit
+  app-only rollback have passed on the Pi. Complete an actual clean `just deploy`
+  after committing the accepted implementation before closing this checkbox.
+
+The coordinator is authoritative under the ordinary `deploy` and
+`deploy-python` recipes. Paired append-only local/target receipts, exact
+running-release identity in advancing API samples, and automatic restoration at
+every post-activation failure boundary are enforced. The legacy shell leaves
+remain available under explicit recovery names; their sync protections preserve
+`current`, immutable releases, receipts, calibration evidence, and the receiver
+library. Only the final clean-tree operator invocation remains before this gate
+is closed.
 
 Portable evidence on 2026-08-12 (development Mac, not Pi/ESP32 timing evidence):
 
-- `just test`: 539 unit/plugin tests and 845 subtests passed; 18 rendering
-  pipeline tests passed; 8 native firmware tests passed; 99 deployment tests
-  and 48 subtests passed.
-- Branch-aware coverage across the seven new/expanded deployment policy modules
-  is 82 percent overall; coordinator and app-release modules are each 82
-  percent, and gate/reconciliation policy modules are 90 and 91 percent.
+- `just test`: 580 unit/plugin tests and 860 subtests passed; 18 rendering
+  pipeline tests passed; 8 native firmware tests passed; 138 deployment tests
+  and 63 subtests passed.
+- Deployment coverage includes real filesystem staging/reuse, exact full,
+  Python, and rollback step allowlists, failure injection at every
+  post-activation boundary, activation-acknowledgement ambiguity, paired receipt
+  failure semantics, controller/web/systemd identity disagreement, stale and
+  non-advancing health, topology errors, reboot resume, partial flash, and
+  unchanged reconciliation.
 - The 32 x 138 stress benchmark passed the 4 ms p95 gate; the highest observed
-  accepted p95 was 3.800 ms for `snake-max-density` at a 0.62 changed ratio.
+  accepted p95 was 3.615 ms for `snake-max-density` at a 0.62 changed ratio.
 - The pinned ESP32-S3 production build used 372,546 bytes flash (5.7 percent)
   and 53,092 bytes RAM (16.2 percent).
 - Frozen controller/web import smoke, lock/export equality, Python compilation,
@@ -1366,8 +1381,33 @@ Portable evidence on 2026-08-12 (development Mac, not Pi/ESP32 timing evidence):
 - The corrected full dirty deployment then passed on the wall. It reused runtime
   identity `eed879c054a5c19f470cd12fa00bfd2d8877d6e5ea6787cebecb7f7927d31c97`
   with `installed: false`, again skipped unchanged firmware, restarted the
-  service, and reported the web API healthy. Coordinator shadow/parity remains
-  the only open Phase 0 cutover gate.
+  service, and reported the web API healthy.
+- Coordinator shadow staging froze 1,356 accounted files, rendered all 335
+  dashboard previews from the frozen source, staged app release
+  `8a85b4800d839e5ee91b316071a26f6dd34ac5c95201d448fdf2659ea01165ab`,
+  and left the legacy service, `current`, firmware, and settings untouched.
+- Authoritative full canary receipt
+  `9487a83f5c93458d954daf2e76ff60a0` selected immutable release
+  `9a380babbf33e3008180797e3ff0e301b518dd32c983724ae3d9243cc4c42beb`,
+  moved systemd to `current`, restored the Clock state, skipped unchanged
+  firmware across four attached serial devices, and accepted two advancing
+  exact-release samples at 32 x 138 with logical receivers 0 through 3. The
+  local and target receipt files had the same SHA-256 digest.
+- Wall retries exposed and then regression-covered three integration faults
+  before unsafe mutation: helper lifetime after incoming cleanup, immutable
+  support permissions in a writable PlatformIO cache, and absolute snapshot
+  paths/unseeded plugin state in preview identity. Two independent full shadow
+  renders now produce identical snapshot ID
+  `6cb89c5d1c1d95eb5739e420fd27f5cae26dbd88e88f3c6b6cada08a3de09133`.
+- Unchanged receipt `97dfa953996446518eaafa70110a5d44` reused app release
+  `30e56d99b70b11e489e929eb625bf87d4ba7e628522ecaaa741e9fa27db89c59`
+  and the support release; dependency installation, unit/SPI changes, firmware
+  build/flash, app activation, service restart, and state restore all skipped,
+  while fresh health and the post-health timestamp still ran.
+- App-only rollback receipt `ec980c05ab444f14878500796765b8e3`
+  passed its exact seven-step allowlist and the round trip returned to release
+  `30e56d99b70b11e489e929eb625bf87d4ba7e628522ecaaa741e9fa27db89c59`.
+  Firmware-marker and boot-configuration hashes were unchanged across rollback.
 
 #### Phase 0A: Quiet and explicit deployment UX
 

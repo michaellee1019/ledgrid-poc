@@ -54,6 +54,7 @@ printf '%s\n' "$*" >> "$LEDGRID_TEST_PYTHON_TRACE"
 if [ "${1:-}" = "-" ]; then
     program=$(cat)
     case "$program" in
+        *resolve_active_release_id*) printf '%s\n' "${LEDGRID_TEST_RELEASE_ID:-}" ;;
         *default_strip_count*) printf '32\n' ;;
         *DEFAULT_LEDS_PER_STRIP*) printf '138\n' ;;
         *DEFAULT_ANIMATION_SPEED_SCALE*) printf '1.0\n' ;;
@@ -87,6 +88,7 @@ exit 65
         self.assertEqual(completed.returncode, 0, completed.stderr)
         invocations = trace.read_text(encoding="utf-8").splitlines()
         self.assertEqual(invocations.count("-"), 3)
+        self.assertEqual(sum(line.startswith("- ") for line in invocations), 1)
         self.assertEqual(
             sum(
                 "scripts/start_server.py --mode controller" in line
@@ -98,6 +100,64 @@ exit 65
             sum("scripts/start_server.py --mode web" in line for line in invocations),
             1,
         )
+
+    def test_verified_release_identity_is_passed_to_both_processes(self) -> None:
+        release_id = "e" * 64
+        trace = self.root / "python-invocations.log"
+        bash_env = self.root / "bash-env"
+        bash_env.write_text(
+            'wait() { if [ "${1:-}" = -n ]; then shift; builtin wait "$1"; '
+            'else builtin wait "$@"; fi; }\n',
+            encoding="utf-8",
+        )
+        self._write_executable(
+            self.root / "venv" / "bin" / "python",
+            """#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$LEDGRID_TEST_PYTHON_TRACE"
+if [ "${1:-}" = "-" ]; then
+    program=$(cat)
+    case "$program" in
+        *resolve_active_release_id*) printf '%s\n' "$LEDGRID_TEST_RELEASE_ID" ;;
+        *default_strip_count*) printf '32\n' ;;
+        *DEFAULT_LEDS_PER_STRIP*) printf '138\n' ;;
+        *DEFAULT_ANIMATION_SPEED_SCALE*) printf '1.0\n' ;;
+        *) exit 64 ;;
+    esac
+    exit 0
+fi
+if [ "${1:-}" = "scripts/start_server.py" ]; then
+    case " $* " in
+        *" --mode controller "*) sleep 0.2 ;;
+    esac
+    exit 0
+fi
+exit 65
+""",
+        )
+
+        completed = subprocess.run(
+            ["/bin/bash", os.fspath(self.start_script)],
+            cwd=self.root,
+            env={
+                **os.environ,
+                "BASH_ENV": os.fspath(bash_env),
+                "LEDGRID_TEST_PYTHON_TRACE": os.fspath(trace),
+                "LEDGRID_TEST_RELEASE_ID": release_id,
+            },
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        server_invocations = [
+            line for line in trace.read_text(encoding="utf-8").splitlines()
+            if line.startswith("scripts/start_server.py")
+        ]
+        self.assertEqual(len(server_invocations), 2)
+        for invocation in server_invocations:
+            self.assertIn(f"--release-id {release_id}", invocation)
 
     def test_missing_runtime_interpreter_fails_without_system_python_fallback(
         self,

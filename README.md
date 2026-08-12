@@ -57,7 +57,11 @@ just deploy            # full application and firmware deployment
 corresponding `*-dirty` recipe only for an intentional development deployment;
 it records the base commit, selected diff digest, and safe untracked files. Use
 `*-verbose` to stream the normally captured deployment log. The deployment
-target defaults to `ledgridwall@ledgridwall.local`.
+target defaults to `ledgridwall@ledgridwall.local`. Both commands stage an
+immutable release, atomically select `current`, require advancing release-aware
+health, and persist matching local/target receipts. Use `just releases` to
+inspect release state, `just rollback <release-id>` for an application-only
+rollback, and the explicitly named `*-legacy` recipes only for recovery.
 
 ## Required checks
 

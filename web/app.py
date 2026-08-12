@@ -53,7 +53,8 @@ class AnimationWebInterface:
                  preview_manager: AnimationManager,
                  host: str = '0.0.0.0',
                  port: int = 5000,
-                 local_mode: bool = False):
+                 local_mode: bool = False,
+                 release_id: Optional[str] = None):
         """
         Initialize web interface
 
@@ -68,6 +69,7 @@ class AnimationWebInterface:
         self.host = host
         self.port = port
         self.local_mode = bool(local_mode)
+        self.release_id = release_id
         self.project_root = Path(__file__).resolve().parents[1]
         self.painter_presets_dir = self.project_root / "presets" / "frame_painter"
         self.animation_presets_dir = self.project_root / "presets" / "animations"
@@ -1404,6 +1406,10 @@ class AnimationWebInterface:
             return self._empty_status()
 
         status = dict(raw_status)
+        controller_release_id = status.get('release_id')
+        status['controller_release_id'] = controller_release_id
+        status['release_id'] = self.release_id
+        status['release_consistent'] = controller_release_id == self.release_id
         status['led_info'] = self._sync_preview_layout_from_status(status)
         stats = status.get('animation_stats') or status.get('stats') or {}
         status['animation_stats'] = stats
@@ -1507,6 +1513,9 @@ class AnimationWebInterface:
             'frame_data_length': 0,
             'frame_encoding': None,
             'deploy_timestamp': self._deploy_timestamp(),
+            'release_id': self.release_id,
+            'controller_release_id': None,
+            'release_consistent': self.release_id is None,
             'timestamp': time.time()
         }
 
@@ -1518,7 +1527,8 @@ def create_app(control_channel: FileControlChannel = None,
                leds_per_strip: int = DEFAULT_LEDS_PER_STRIP,
                animations_dir: str = None,
                animation_speed_scale: float = DEFAULT_ANIMATION_SPEED_SCALE,
-               plant_aware: bool = DEFAULT_PLANT_AWARE):
+               plant_aware: bool = DEFAULT_PLANT_AWARE,
+               release_id: Optional[str] = None):
     """Factory function to create the web application"""
     if control_channel is None:
         control_channel = FileControlChannel()
@@ -1536,7 +1546,13 @@ def create_app(control_channel: FileControlChannel = None,
     )
 
     # Create web interface
-    web_interface = AnimationWebInterface(control_channel, animation_manager, host=host, port=port)
+    web_interface = AnimationWebInterface(
+        control_channel,
+        animation_manager,
+        host=host,
+        port=port,
+        release_id=release_id,
+    )
 
     return web_interface
 

@@ -40,6 +40,12 @@ sync_full_deployment() {
     # remove presets saved through the deployed UI.
     rsync -az --delete --stats \
         -e "ssh $SSH_OPTS" \
+        --filter 'protect /current' \
+        --filter 'protect /releases/***' \
+        --filter 'protect /.incoming/***' \
+        --filter 'protect /receipts/***' \
+        --filter 'protect /calibration_photos/***' \
+        --filter 'protect /receiver_library/***' \
         --exclude 'venv/' \
         --exclude '.venv*/' \
         --exclude '.venvs/' \

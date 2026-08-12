@@ -8,47 +8,55 @@ captured := "python3 tools/deployment/run_captured.py --log-dir .deploy-logs"
 # Run the complete local gate before a provision/firmware deployment.
 # Set TEST=false for an explicitly requested fast deployment.
 deploy:
-	{{captured}} --phase source.validate -- python3 tools/deployment/deploy_manifest.py --scope full --policy clean --json
-	case "${TEST:-true}" in false|FALSE|0|no|NO) ;; *) {{captured}} --phase tests.run -- just deploy-precheck ;; esac
-	{{captured}} --phase deploy.full -- ./tools/deployment/deploy.sh
+	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean
 
 # Explicit development exception: deploy tracked edits plus safe untracked source.
 deploy-dirty:
-	{{captured}} --phase source.validate -- python3 tools/deployment/deploy_manifest.py --scope full --policy dirty --json
-	case "${TEST:-true}" in false|FALSE|0|no|NO) ;; *) {{captured}} --phase tests.run -- just deploy-precheck ;; esac
-	{{captured}} --phase deploy.full -- ./tools/deployment/deploy.sh
+	{{captured}} --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy dirty
 
 # Stream the clean deployment while retaining the same captured log and policy.
 deploy-verbose:
-	{{captured}} --verbose --phase source.validate -- python3 tools/deployment/deploy_manifest.py --scope full --policy clean --json
-	case "${TEST:-true}" in false|FALSE|0|no|NO) ;; *) {{captured}} --verbose --phase tests.run -- just deploy-precheck ;; esac
-	{{captured}} --verbose --phase deploy.full -- ./tools/deployment/deploy.sh
+	{{captured}} --verbose --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --verbose
 
-# Read-only source accounting plus the coordinator sequence that will replace
-# the legacy leaf only after wall parity has passed.
+# Read-only source accounting plus the authoritative coordinator sequence.
 deploy-plan:
-	python3 tools/deployment/deploy_manifest.py --scope full --policy plan
-	python3 tools/deployment/deploy_coordinator.py plan --mode full
+	python3 tools/deployment/deploy_entrypoint.py plan --mode full --policy plan
 
 # Sync tracked application/plugin files without provisioning or flashing firmware.
 deploy-python:
-	{{captured}} --phase source.validate -- python3 tools/deployment/deploy_manifest.py --scope fast --policy clean --json
-	case "${TEST:-true}" in false|FALSE|0|no|NO) ;; *) {{captured}} --phase tests.run -- just test-unit test-rendering test-deployment ;; esac
-	{{captured}} --phase deploy.python -- ./tools/deployment/deploy_python.sh
+	{{captured}} --phase deploy.python -- python3 tools/deployment/deploy_entrypoint.py run --mode python --policy clean
 
 deploy-python-dirty:
-	{{captured}} --phase source.validate -- python3 tools/deployment/deploy_manifest.py --scope fast --policy dirty --json
-	case "${TEST:-true}" in false|FALSE|0|no|NO) ;; *) {{captured}} --phase tests.run -- just test-unit test-rendering test-deployment ;; esac
-	{{captured}} --phase deploy.python -- ./tools/deployment/deploy_python.sh
+	{{captured}} --phase deploy.python -- python3 tools/deployment/deploy_entrypoint.py run --mode python --policy dirty
 
 deploy-python-verbose:
-	{{captured}} --verbose --phase source.validate -- python3 tools/deployment/deploy_manifest.py --scope fast --policy clean --json
-	case "${TEST:-true}" in false|FALSE|0|no|NO) ;; *) {{captured}} --verbose --phase tests.run -- just test-unit test-rendering test-deployment ;; esac
-	{{captured}} --verbose --phase deploy.python -- ./tools/deployment/deploy_python.sh
+	{{captured}} --verbose --phase deploy.python -- python3 tools/deployment/deploy_entrypoint.py run --mode python --policy clean --verbose
 
 deploy-python-plan:
-	python3 tools/deployment/deploy_manifest.py --scope fast --policy plan
-	python3 tools/deployment/deploy_coordinator.py plan --mode python
+	python3 tools/deployment/deploy_entrypoint.py plan --mode python --policy plan
+
+# Explicit recovery paths for the retained pre-cutover shell leaves.
+deploy-legacy:
+	{{captured}} --phase deploy.legacy.full -- python3 tools/deployment/deploy_entrypoint.py legacy --mode full --policy clean
+
+deploy-legacy-dirty:
+	{{captured}} --phase deploy.legacy.full -- python3 tools/deployment/deploy_entrypoint.py legacy --mode full --policy dirty
+
+deploy-python-legacy:
+	{{captured}} --phase deploy.legacy.python -- python3 tools/deployment/deploy_entrypoint.py legacy --mode python --policy clean
+
+deploy-shadow:
+	python3 tools/deployment/deploy_entrypoint.py shadow --mode full --policy plan
+
+deploy-shadow-stage:
+	python3 tools/deployment/deploy_entrypoint.py shadow --mode full --policy plan --target-stage
+
+releases:
+	python3 tools/deployment/deploy_entrypoint.py releases
+
+rollback release_id:
+	{{captured}} --phase deploy.rollback -- python3 tools/deployment/deploy_entrypoint.py \
+		rollback "{{release_id}}"
 
 # Compatibility name for the fast Python deployment.
 deploy-no-firmware: deploy-python

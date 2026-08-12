@@ -176,4 +176,5 @@ if $all_ok; then
   log_success "All $port_count ESP32 device(s) flashed successfully"
 else
   log_warning "Some devices failed to flash; hash NOT updated (will retry next deploy)"
+  exit 1
 fi

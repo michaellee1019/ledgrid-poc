@@ -18,21 +18,30 @@ Use `just` recipes rather than invoking deployment helpers directly:
 | `just test` | Run every required local gate |
 | `just preflight` | Alias for the full test gate |
 | `just deploy-precheck` | Full test gate used by deployment |
-| `just deploy-plan` | Read-only full source accounting and coordinator step plan |
-| `just deploy` | Clean-tree precheck, sync, provision, changed-firmware flash, and restart |
-| `just deploy-dirty` | Explicit full deployment of tracked edits plus allowlisted safe untracked source |
+| `just deploy-plan` | Read-only source accounting and authoritative coordinator step plan |
+| `just deploy-shadow` | Freeze and verify an immutable snapshot without contacting the Pi |
+| `just deploy-shadow-stage` | Stage immutable app/support releases on the Pi without activation or host/receiver mutation |
+| `just deploy` | Clean-tree coordinated release, provision, changed-firmware reconciliation, activation, and fresh health |
+| `just deploy-dirty` | Explicit coordinated deployment of tracked edits plus allowlisted safe untracked source |
 | `just deploy-verbose` | Clean full deployment with normally captured phase output streamed live |
 | `just deploy-python` | Clean-tree application sync/restart without provisioning or firmware flash |
 | `just deploy-python-plan` | Read-only Python-only source accounting and coordinator step plan |
 | `just deploy-python-dirty` | Explicit Python-only deployment of the dirty source manifest |
+| `just releases` | Inspect immutable releases, selected `current`, and target receipt state |
+| `just rollback <release-id>` | Coordinated application-only rollback; never provisions, reboots, builds, or flashes |
+| `just deploy-legacy` | Explicit clean recovery path through the retained pre-cutover full shell leaf |
+| `just deploy-python-legacy` | Explicit clean recovery path through the retained pre-cutover Python shell leaf |
 | `just fetch-presets` | Fetch Pi-saved runtime presets for review |
 
 `deploy-no-firmware` is retained as a compatibility alias for
 `deploy-python`; use the canonical name in new automation and documentation.
 
-Successful deployments are intentionally quiet and retain per-phase logs in
-the ignored `.deploy-logs/` directory. A failure prints its phase, exit status,
-the relevant log tail, and the complete log path. Set `DEBUG=1` for leaf-helper
+Successful deployments are intentionally quiet. Captured command logs remain
+under ignored `.deploy-logs/`; append-only attempt receipts are required both
+locally in `.deploy-logs/receipts/` and on the target in
+`run_state/deploy_receipts/`. A missing receipt copy makes the command fail even
+when the wall operation itself succeeded. A failure prints its phase, exit
+status, relevant log tail, and complete log path. Set `DEBUG=1` for leaf-helper
 diagnostics or use the verbose recipe to stream phase output.
 
 ## First deployment
@@ -67,13 +76,22 @@ untracked application/tooling paths, and records the base commit, selected diff
 digest, and included safe-untracked paths. `deploy-plan` prints every selected
 path and every Git-visible exclusion with its reason before any mutation.
 
-A full sync removes stale managed files but preserves target-owned state:
+The coordinator never syncs over the live root. It uploads one verified source
+snapshot to `.incoming/<attempt-id>`, stages application files in an immutable
+`releases/<sha256>` directory, stages firmware/support inputs separately in
+`support_releases/<sha256>`, and removes the incoming snapshot. Target-owned
+state remains outside immutable releases:
 
 - `run_state/`
 - `presets/animations/`
 - Python and PlatformIO environments/build caches
 - runtime logs
 - calibration and receiver-artifact libraries
+
+The retained legacy full-sync leaf has matching excludes for `current`,
+immutable release trees, incoming/receipt evidence, calibration, receiver
+artifacts, runtime state, presets, environments, and logs. Use it only as an
+explicit recovery path.
 
 Built-in plugin code, manifests, curated presets, tests needed by acceptance,
 and owned assets deploy from `animation/plugins/<plugin_id>/`. The runtime
@@ -82,8 +100,11 @@ preset overlay is never the source of curated content.
 ## Full and Python-only flows
 
 `just deploy` always validates a clean source manifest and runs
-`deploy-precheck`. It then invokes the existing full deployment leaf in its
-established order. The Pi runtime is selected through an atomic `venv` symlink
+`deploy-precheck`. It then runs the coordinator's stable full sequence: source,
+tests, target connection, immutable app stage, receiver build, host provision,
+receiver flash reconciliation, candidate validation, settings capture,
+activation, restart, settings restoration, and fresh health. The Pi runtime is
+selected through an atomic `venv` symlink
 to a fresh, digest-addressed `.venvs/` environment keyed by the hash-pinned
 runtime lock and the Pi Python/platform identity. A candidate environment must
 import both controller and web entrypoints before it can become active; an
@@ -96,9 +117,12 @@ selection. Direct interpreter invocation resolves the selected environment and
 fails closed if that interpreter is absent.
 
 `just deploy-python` is for changes that do not affect firmware, Pi packages,
-permissions, or boot configuration. It verifies the existing target environment,
-syncs the application subset, preserves the active animation settings, restarts
-the service, restores those settings, and checks `/api/status`.
+permissions, or boot configuration. It stages an immutable application release,
+verifies the existing target environment, preserves the active animation
+settings, atomically selects `current`, restarts only when selection changed,
+restores those settings, and requires release-aware fresh health. An identical
+repeat reuses the release and skips activation/restart while still proving fresh
+health and recording the post-health deployment timestamp.
 
 Do not use the Python-only flow after changing any of:
 
@@ -109,21 +133,44 @@ Do not use the Python-only flow after changing any of:
 
 ## Coordinator and immutable-release rollout
 
-Phase 0 includes a tested thin coordinator, atomic/redacted attempt receipts,
-fresh desired-release health, desired/observed reconciliation, and immutable app
-release primitives. `deploy-plan` exposes the coordinator's stable ordered step
-IDs read-only. The production `deploy` and `deploy-python` recipes deliberately
-continue to invoke the established shell leaves until coordinator parity is
-accepted on the physical wall, as required by the rollout plan.
+Phase 0's thin coordinator is the authoritative `deploy` and `deploy-python`
+path. `deploy-plan` exposes its stable ordered step IDs read-only. The old shell
+leaves remain only under explicit `*-legacy` recovery recipes and do not share
+the authoritative command names.
 
-The release manager stages an explicit source manifest plus generated previews
-under `releases/<sha256>`, validates file digests/modes and shared-state links,
-then can atomically select `current`. Presets, `run_state`, logs, environments,
-calibration, firmware, and the receiver library stay outside releases. The
-coordinated rollback path contains only validate, capture, activate, restart,
-restore, and fresh-health steps; direct rollback execution fails closed until
-the target operations are configured. No release garbage collection ships in
-Phase 0.
+The release manager stages an explicit source manifest plus previews rendered
+from the frozen source under `releases/<sha256>`, validates every digest, mode,
+and shared-state link, then atomically selects `current`. Presets, `run_state`,
+logs, environments, calibration, firmware, and the receiver library stay
+outside releases. The coordinated rollback path contains only source/release
+validation, capture, activate, restart, restore, and fresh health; its step
+policy cannot acquire provision, build, reboot, or flash operations. No release
+garbage collection ships in Phase 0.
+
+Every release contains `.release.json`. Startup accepts that identity only when
+the lowercase SHA-256 digest matches both its content-addressed directory and
+the target's selected `current` symlink. `/api/status` publishes web and
+controller release identities plus `release_consistent`. Acceptance requires
+active systemd, agreement between systemd/current/web/controller identities,
+two advancing post-boundary status samples, exact 32 x 138 geometry, ready
+state, and exactly four distinct logical receiver IDs `0..3`.
+
+The cutover sequence is deliberately graduated:
+
+```bash
+just deploy-plan
+just deploy-shadow
+just deploy-shadow-stage
+just releases
+just deploy-dirty       # development canary only
+just deploy             # final clean-tree gate
+```
+
+Shadow staging may create/reuse immutable app/support releases, but cannot
+change `current`, systemd, firmware, settings, or deployment timestamp. If any
+post-activation boundary fails or is interrupted, the coordinator selects the
+prior immutable app release, restarts it, restores settings, proves its fresh
+health, and records the failure evidence in both receipts.
 
 Receipts distinguish executed, cached, and skipped steps. No gate cache ships:
 the policy requires at least twenty normal successful receipt timings and a
@@ -172,7 +219,8 @@ just diagnose-remote-restart
 ```
 
 The first collects API, service, process, and log evidence. The second may also
-clear a stale port binding and restart the web service. Output is written to the
+clear a stale port binding and restart `ledgrid.service`; it never launches a
+standalone process from the mutable root. Output is written to the
 ignored `diagnostics/remote_diagnostics.out` file.
 
 For manual service operations, use the deployment service helper:
@@ -201,9 +249,9 @@ tools/deployment/stop_remote.sh stop
 ## Planned receiver-native deployment
 
 The commands above are the current supported deployment surface. Phase 0 of the
-[unified roadmap](plan-revamped-animation-pipeline.md) supplies the portable
-delivery foundation while retaining the legacy physical execution leaf until
-wall parity. Later phases add separate native
+[unified roadmap](plan-revamped-animation-pipeline.md) supplies the coordinated,
+immutable delivery foundation; the legacy physical leaf is recovery-only.
+Later phases add separate native
 `build -> publish -> probe -> stage -> verify -> activate/compensate` steps so a
 background-source change does not imply an app restart, Pi reboot, or loader
 firmware flash.

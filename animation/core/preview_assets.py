@@ -93,13 +93,18 @@ def _safe_component(value: str) -> str:
     return "".join(character if character.isalnum() or character in "-_" else "_" for character in value)
 
 
-def _file_digest(paths: Iterable[Path], extra: Dict[str, Any]) -> str:
+def _file_digest(paths: Iterable[Path], extra: Dict[str, Any], *, root: Path) -> str:
     digest = hashlib.sha256()
     digest.update(json.dumps(extra, sort_keys=True, separators=(",", ":")).encode())
+    resolved_root = root.resolve()
     for path in sorted(set(paths), key=lambda item: item.as_posix()):
         if not path.is_file():
             continue
-        digest.update(path.as_posix().encode())
+        try:
+            relative = path.resolve().relative_to(resolved_root)
+        except ValueError as exc:
+            raise ValueError(f"preview source escapes the project root: {path}") from exc
+        digest.update(relative.as_posix().encode())
         digest.update(path.read_bytes())
     return digest.hexdigest()
 
@@ -171,6 +176,11 @@ class PreviewRenderer:
         stable_seed = int(hashlib.sha256(key.encode()).hexdigest()[:8], 16)
         random.seed(stable_seed)
         np.random.seed(stable_seed & 0xFFFFFFFF)
+        # A few stateful plugins intentionally own an isolated RNG rather than
+        # the process-global generator. Seed that common contract explicitly.
+        owned_rng = getattr(animation, "random", None)
+        if isinstance(owned_rng, random.Random):
+            owned_rng.seed(stable_seed)
         schema = animation.get_parameter_schema()
         seed_updates: Dict[str, Any] = {}
         for name in ("seed", "random_seed"):
@@ -183,6 +193,21 @@ class PreviewRenderer:
             animation.update_parameters(seed_updates)
         if hasattr(animation, "_clock_now"):
             animation._clock_now = MethodType(lambda _self: FIXED_CLOCK, animation)
+        if hasattr(animation, "_current_hour"):
+            fixed_hour = FIXED_CLOCK.hour + FIXED_CLOCK.minute / 60 + FIXED_CLOCK.second / 3600
+            original_current_hour = animation._current_hour
+
+            def deterministic_hour(_self: Any, elapsed: float) -> float:
+                fixed = float(_self.params.get("hour", -1.0))
+                if fixed >= 0:
+                    return original_current_hour(elapsed)
+                return (
+                    fixed_hour
+                    + float(_self.params.get("time_offset", 0.0))
+                    + elapsed * float(_self.params.get("time_scale", 1.0)) / 3600.0
+                ) % 24.0
+
+            animation._current_hour = MethodType(deterministic_hour, animation)
 
     def render(
         self,
@@ -222,6 +247,7 @@ class PreviewRenderer:
                 "layout": [self.strips, self.leds_per_strip],
                 "fixed_clock": FIXED_CLOCK.isoformat(),
             },
+            root=self.root,
         )
         stem = _safe_component(f"{animation_name}--{preset_id or 'default'}--{digest[:16]}")
         poster_path = self.output_dir / f"{stem}--poster.webp"

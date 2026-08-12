@@ -11,9 +11,11 @@ import numpy as np
 from PIL import Image
 
 from animation.core.plugin_loader import AnimationPluginLoader
+from animation.core.manager import PreviewLEDController
 from animation.core.preview_assets import (
     FIXED_CLOCK,
     PreviewRenderer,
+    _file_digest,
     clean_stale_assets,
     empty_catalog,
     load_catalog,
@@ -67,6 +69,39 @@ class AnimationPreviewTests(unittest.TestCase):
         reused = renderer.render("rainbow")
         self.assertEqual(entry["digest"], reused["digest"])
         self.assertEqual(before, (poster.stat().st_mtime_ns, loop.stat().st_mtime_ns))
+
+    def test_preview_digest_is_stable_when_frozen_project_root_moves(self):
+        first_root = self.output / "first" / "snapshot"
+        second_root = self.output / "second" / "snapshot"
+        relative = Path("animation/plugins/example/manifest.json")
+        for root in (first_root, second_root):
+            source = root / relative
+            source.parent.mkdir(parents=True)
+            source.write_text('{"plugin_id":"example"}\n', encoding="utf-8")
+
+        first = _file_digest([first_root / relative], {"item": "example"}, root=first_root)
+        second = _file_digest([second_root / relative], {"item": "example"}, root=second_root)
+
+        self.assertEqual(first, second)
+
+    def test_determinism_seeds_plugin_owned_rng_and_real_time_hour(self):
+        renderer = PreviewRenderer(
+            ROOT, self.output, "/preview-test", strips=4, leds_per_strip=8,
+        )
+        controller = PreviewLEDController(4, 8)
+        tetris = renderer.plugins["tetris"](controller, {})
+        renderer._make_deterministic(tetris, {}, "tetris/default")
+        first_random = tetris.random.random()
+
+        second_tetris = renderer.plugins["tetris"](controller, {})
+        renderer._make_deterministic(second_tetris, {}, "tetris/default")
+        self.assertEqual(first_random, second_tetris.random.random())
+
+        circadian = renderer.plugins["circadian_window"](
+            controller, {"hour": -1.0, "time_offset": 0.0, "time_scale": 1.0},
+        )
+        renderer._make_deterministic(circadian, {}, "circadian/default")
+        self.assertAlmostEqual(circadian._current_hour(0), 10 + 19 / 60)
 
     def test_mac_renderer_authors_dense_real_time_loop(self):
         renderer = PreviewRenderer(

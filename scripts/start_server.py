@@ -7,6 +7,8 @@ the web/preview UI as separate Python processes that communicate via files.
 """
 
 import argparse
+import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -21,6 +23,65 @@ from drivers.frame_codec import decode_frame_data
 from web.app import create_app
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from tools.deployment.preserve_deploy_settings import load_saved_state, save_status
+
+
+RELEASE_METADATA = ".release.json"
+RELEASE_ID_PATTERN = re.compile(r"[0-9a-f]{64}")
+
+
+def resolve_active_release_id(project_root: Path) -> str | None:
+    """Return the verified immutable release selected by ``current``.
+
+    A checkout using the legacy root layout has no release metadata and returns
+    ``None``. Once a release marker exists, startup fails closed unless the
+    marker, content-addressed directory, and deployment root's ``current``
+    symlink all identify the same release.
+    """
+    root = project_root.resolve()
+    metadata_path = root / RELEASE_METADATA
+    deploy_root = root.parent.parent if root.parent.name == "releases" else None
+    current_path = deploy_root / "current" if deploy_root is not None else None
+
+    if not metadata_path.exists():
+        if current_path is not None and current_path.is_symlink():
+            try:
+                selected = current_path.resolve(strict=True)
+            except OSError as exc:
+                raise RuntimeError(f"active release symlink is invalid: {exc}") from exc
+            if selected == root:
+                raise RuntimeError(f"active release is missing {RELEASE_METADATA}")
+        return None
+    if metadata_path.is_symlink() or not metadata_path.is_file():
+        raise RuntimeError(f"{RELEASE_METADATA} must be a regular file")
+
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"could not read active release metadata: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("active release metadata must be a JSON object")
+
+    release_id = payload.get("id")
+    digest = payload.get("digest")
+    if (
+        not isinstance(release_id, str)
+        or RELEASE_ID_PATTERN.fullmatch(release_id) is None
+        or digest != release_id
+    ):
+        raise RuntimeError("active release metadata has an invalid identity")
+    if root.name != release_id or root.parent.name != "releases":
+        raise RuntimeError("active release identity does not match its directory")
+
+    assert current_path is not None
+    if not current_path.is_symlink():
+        raise RuntimeError("active release has no current symlink")
+    try:
+        selected = current_path.resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError(f"active release symlink is invalid: {exc}") from exc
+    if selected != root:
+        raise RuntimeError("release is not selected by current")
+    return release_id
 
 # Try to import the real LED controller, fall back to mock for testing
 try:
@@ -54,6 +115,22 @@ except ImportError:
 def device_count_for_strips(strip_count: int, strips_per_device: int = 8) -> int:
     """Return enough devices to cover every configured strip."""
     return max(1, (max(1, strip_count) + strips_per_device - 1) // strips_per_device)
+
+
+def controller_status_payload(
+    manager: AnimationManager,
+    *,
+    release_id: str | None,
+    last_command_id: str | None,
+    updated_at: float,
+) -> dict:
+    """Build one controller snapshot with its immutable release identity."""
+    payload = manager.get_current_frame()
+    payload.update(manager.get_current_status())
+    payload['release_id'] = release_id
+    payload['last_command_id'] = last_command_id
+    payload['updated_at'] = updated_at
+    return payload
 
 
 def run_controller_mode(args):
@@ -151,10 +228,12 @@ def run_controller_mode(args):
 
             now = time.time()
             if now - last_status_time >= args.status_interval:
-                status_payload = manager.get_current_frame()
-                status_payload.update(manager.get_current_status())
-                status_payload['last_command_id'] = last_command_id
-                status_payload['updated_at'] = now
+                status_payload = controller_status_payload(
+                    manager,
+                    release_id=args.release_id,
+                    last_command_id=last_command_id,
+                    updated_at=now,
+                )
                 channel.write_status(status_payload)
                 last_status_time = now
 
@@ -304,6 +383,7 @@ def run_web_mode(args):
         leds_per_strip=args.leds_per_strip,
         animations_dir=args.animations_dir,
         animation_speed_scale=args.animation_speed_scale,
+        release_id=args.release_id,
     )
 
     print("🌐 Web/Preview mode")
@@ -336,6 +416,8 @@ def main():
                         help='Directory for restart-state animation presets')
     parser.add_argument('--saved-state-file', default='run_state/before_deploy.json',
                         help='Path to the persisted restart animation state')
+    parser.add_argument('--release-id', default=None,
+                        help='Verified immutable release identity supplied by production startup')
     parser.add_argument('--strips', type=int, default=default_strip_count(),
                         help=f'Number of LED strips (default: {default_strip_count()})')
     parser.add_argument('--leds-per-strip', type=int, default=DEFAULT_LEDS_PER_STRIP,
@@ -370,6 +452,18 @@ def main():
                         help='Seconds between status writes (controller mode)')
 
     args = parser.parse_args()
+
+    project_root = Path(__file__).resolve().parents[1]
+    try:
+        active_release_id = resolve_active_release_id(project_root)
+    except RuntimeError as exc:
+        parser.error(str(exc))
+    if args.release_id is not None:
+        if RELEASE_ID_PATTERN.fullmatch(args.release_id) is None:
+            parser.error('--release-id must be a lowercase SHA-256 digest')
+        if args.release_id != active_release_id:
+            parser.error('--release-id does not match the active current release')
+    args.release_id = active_release_id
 
     print("🎨 LED Grid Animation Server")
     print("=" * 40)

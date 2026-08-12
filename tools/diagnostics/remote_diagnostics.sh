@@ -58,47 +58,8 @@ if [ "${KILL_PORT}" = "1" ]; then
 fi
 
 if [ "${RESTART_WEB}" = "1" ]; then
-  section "remote web restart"
-  ssh ${SSH_OPTS} "${REMOTE}" "REMOTE_DIR=${REMOTE_DIR} PORT=${PORT} bash -s" <<'EOS'
-set -euo pipefail
-REMOTE_DIR_EXPANDED="${REMOTE_DIR/#\~/$HOME}"
-cd "${REMOTE_DIR_EXPANDED}"
-PYTHON_BIN="python3"
-if [ -x "venv/bin/python" ]; then
-  PYTHON_BIN="venv/bin/python"
-fi
-"${PYTHON_BIN}" - <<'PY' > /tmp/ledgrid_web_params.txt
-import json
-from pathlib import Path
-from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE
-from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
-status_path = Path('run_state/status.json')
-strips = DEFAULT_STRIP_COUNT
-leds = DEFAULT_LEDS_PER_STRIP
-if status_path.exists():
-    try:
-        data = json.loads(status_path.read_text())
-        led_info = data.get('led_info') or {}
-        strips = int(led_info.get('strip_count', strips) or strips)
-        leds = int(led_info.get('leds_per_strip', leds) or leds)
-    except Exception:
-        pass
-print(f"{strips} {leds} {DEFAULT_ANIMATION_SPEED_SCALE}")
-PY
-read -r STRIPS LEDS ANIMATION_SPEED_SCALE < /tmp/ledgrid_web_params.txt
-nohup "${PYTHON_BIN}" scripts/start_server.py \
-  --mode web \
-  --control-file run_state/control.json \
-  --status-file run_state/status.json \
-  --animations-dir animation/plugins \
-  --strips "${STRIPS}" \
-  --leds-per-strip "${LEDS}" \
-  --animation-speed-scale "${ANIMATION_SPEED_SCALE}" \
-  --host 0.0.0.0 \
-  --port "${PORT}" \
-  > web.log 2>&1 &
-echo $! > run_state/web.pid
-EOS
+  section "remote supervised service restart"
+  ssh ${SSH_OPTS} "${REMOTE}" "sudo systemctl restart ledgrid.service"
 fi
 
 section "remote port ${PORT} after restart"
