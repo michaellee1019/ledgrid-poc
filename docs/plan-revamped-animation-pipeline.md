@@ -1312,7 +1312,8 @@ locally, but no later phase is production-ready until its relevant Phase 0
 prerequisite passes.
 
 Implementation status (2026-08-12): **Phase 0 delivery foundation and
-coordinator cutover complete; Phase 1 is next**.
+coordinator cutover and Phase 1 contract freeze/portable baseline complete;
+Phases 2A and 2B are the next independently shippable host-side lanes**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -1538,6 +1539,42 @@ and hardware gates prove the real semantics.
 ### Phase 1: Freeze Contracts and Baseline Evidence
 
 Define byte, state, and timing contracts without changing visible behavior.
+
+Implementation status (2026-08-12): **complete**.
+
+- [x] Frozen v1 descriptor, scene, vibe/profile, desired-display,
+  runtime-context, BaseFrame/OverlayFrame, cadence, timing-adapter, coordinate,
+  fixed-point alpha, rollout-flag, ownership, failure, and dormant foreground
+  wire contracts in
+  [ANIMATION_PIPELINE_CONTRACT_V1.md](ANIMATION_PIPELINE_CONTRACT_V1.md).
+- [x] Added one generated language-neutral golden fixture for alpha endpoints,
+  black/transparency, rounding, saturation, opacity, ordered folds, dirty
+  movement/clear, canvas/logical coordinates, all four receiver boundaries, and
+  the exact two-patch receiver snapshot. Python and portable C++ tests enforce
+  the fixture contract without wiring it into live behavior.
+- [x] Classified all 50 shipped plugins reproducibly in
+  [animation-plugin-compatibility-inventory.md](animation-plugin-compatibility-inventory.md):
+  49 ordinary Python backgrounds, the current Clock as the sole compatibility
+  full scene, and no current direct-hardware/stateful packages.
+- [x] Captured deterministic installed-geometry Clock cadence, latency,
+  changed-frame, derived dirty-pixel/range, preview, and payload evidence in
+  [clock-phase1-baseline.md](clock-phase1-baseline.md), with workstation timing
+  separated explicitly from retained Pi/receiver identities and physical gates.
+- [x] Introduced all six rollout flags as a strict immutable all-off reference
+  object. Current manager/API/persistence/preview/receiver code does not import
+  or consume it, preserving the Phase 1 no-op boundary.
+- [x] Final portable gate: `just test` passed 619 Python unit/plugin tests and
+  904 subtests, 18 rendering pipeline tests, 20 native firmware tests, the
+  pinned production firmware build, and the complete deployment test suite.
+  The highest accepted 32 x 138 stress p95 was 3.6417 ms for
+  `snake-max-density` at a 0.62 changed ratio. The ESP32-S3 build retained the
+  existing 372,546-byte flash payload and 53,092-byte RAM usage.
+- [x] Deployment continuity: `just --dry-run deploy` and
+  `just --dry-run deploy-python` still resolve to one authoritative clean-policy
+  coordinator invocation; `just deploy-plan` accounts for the new app and
+  firmware contract source and retains the complete ordered reconciliation
+  sequence. No deployment or receiver flash was performed for this contract-only
+  phase.
 
 - Inventory every current plugin as ordinary background, compatibility full
   scene, or unsupported direct-hardware/stateful component.
@@ -2142,29 +2179,33 @@ Rollback layers remain independent:
 - No mandatory rewrite of all existing plugins or 290 curated presets before
   the vertical slice ships.
 
-## Open Decisions to Close in Phase 1
+## Phase 1 Resolved Decisions
 
-- Final names and visual definitions for the five initial vibe IDs.
-- Exact schema/version names for descriptors, scenes, runtime context, native
-  ABI, unsigned bundle, status, and foreground protocol.
-- Whether `next_deadline` is absolute scene time or a bounded relative duration;
-  the same meaning must be used by Python preview and firmware.
-- The common scene-epoch source and acceptable measured skew/drift for analytic
-  backgrounds.
-- Default foreground stale policies and lease intervals for clock, alerts, and
-  decorative layers.
-- The simplest compatibility representation for current global speed while
-  authored/effective state is separated.
-- Which one procedural family, game/stateful plugin, and exact-color plugin form
-  the vibe pilot set.
-- Which analytic background becomes the first repo-peer native pilot.
-- Which stateless installation transform provides the clearest first physical
-  parity test.
+The exact versioned vocabulary, timing/epoch meaning, skew/drift acceptance,
+stale policies and leases, authored/effective speed boundary, pilot selections,
+ownership matrix, wire sizes, and failure vocabulary are frozen in
+[ANIMATION_PIPELINE_CONTRACT_V1.md](ANIMATION_PIPELINE_CONTRACT_V1.md). In
+summary:
 
-These decisions may choose names and numeric bounds. They may not reopen the
-core boundaries: vibe stays independent, provider stays explicit, foreground
-uses alpha, the Pi remains authoritative, complete host frames remain fallback,
-and unsigned native code remains restricted to trusted repository builds.
+- Stable vibe IDs are `neutral`, `quiet`, `cozy`, `vivid`, and
+  `celebration`; exact role-color payloads remain versioned Phase 2A data.
+- `next_deadline_scene_time` is absolute unscaled seconds since the scene epoch;
+  serialized scheduling uses unsigned microseconds since a controller monotonic
+  epoch, and the controller session remains an opaque 128-bit ID.
+- Clock/HUD, alert, and decorative stale policies use explicit 3-second,
+  15-second, and hold contracts respectively.
+- Compatibility timing uses an ephemeral authored x vibe x operator speed view;
+  it never persists or mutates authored values.
+- Pilot selections are Clock, `aurora_curtains`, `snake`, `world_flags`, future
+  `aurora_curtains_native`, and receiver-safe `hue_shift`.
+- The dormant foreground protocol reserves exact big-endian IDs and sizes; a
+  4,096-byte transfer carries 1,016 RGBA pixels, so one 8 x 138 receiver
+  snapshot is the golden two-patch sequence `[0, 1016)`, `[1016, 1104)`.
+
+These resolutions do not reopen the core boundaries: vibe stays independent,
+provider stays explicit, foreground uses alpha, the Pi remains authoritative,
+complete host frames remain fallback, and unsigned native code remains
+restricted to trusted repository builds.
 
 ## Assumptions
 

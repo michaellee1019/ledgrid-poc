@@ -1,0 +1,656 @@
+{
+  "$schema": "ledgrid.animation-pipeline-golden",
+  "arithmetic": {
+    "encoding": "premultiplied_rgba8",
+    "product_formula": "(value * factor + 127) // 255",
+    "rounding": "round_half_up_divide_by_255",
+    "source_over_order": "bottom_to_top"
+  },
+  "blend_vectors": [
+    {
+      "base_rgb": [
+        12,
+        34,
+        56
+      ],
+      "expected_rgb": [
+        12,
+        34,
+        56
+      ],
+      "id": "transparent_black",
+      "overlay_rgba": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "base_rgb": [
+        12,
+        34,
+        56
+      ],
+      "expected_rgb": [
+        0,
+        0,
+        0
+      ],
+      "id": "opaque_black",
+      "overlay_rgba": [
+        0,
+        0,
+        0,
+        255
+      ]
+    },
+    {
+      "base_rgb": [
+        250,
+        200,
+        150
+      ],
+      "expected_rgb": [
+        17,
+        31,
+        47
+      ],
+      "id": "opaque_color",
+      "overlay_rgba": [
+        17,
+        31,
+        47,
+        255
+      ]
+    },
+    {
+      "base_rgb": [
+        1,
+        2,
+        3
+      ],
+      "expected_rgb": [
+        1,
+        1,
+        2
+      ],
+      "id": "half_up_rounding",
+      "overlay_rgba": [
+        0,
+        0,
+        0,
+        127
+      ]
+    },
+    {
+      "base_rgb": [
+        255,
+        255,
+        255
+      ],
+      "expected_rgb": [
+        255,
+        254,
+        253
+      ],
+      "id": "channel_saturation",
+      "overlay_rgba": [
+        254,
+        253,
+        252,
+        254
+      ]
+    },
+    {
+      "base_rgb": [
+        241,
+        17,
+        99
+      ],
+      "expected_rgb": [
+        152,
+        72,
+        65
+      ],
+      "id": "mixed_channels",
+      "overlay_rgba": [
+        32,
+        64,
+        16,
+        128
+      ]
+    }
+  ],
+  "board_slices": {
+    "boards": [
+      {
+        "board_index": 0,
+        "end_flat_index": 1104,
+        "global_strip_offset": 0,
+        "pixel_count": 1104,
+        "start_flat_index": 0
+      },
+      {
+        "board_index": 1,
+        "end_flat_index": 2208,
+        "global_strip_offset": 8,
+        "pixel_count": 1104,
+        "start_flat_index": 1104
+      },
+      {
+        "board_index": 2,
+        "end_flat_index": 3312,
+        "global_strip_offset": 16,
+        "pixel_count": 1104,
+        "start_flat_index": 2208
+      },
+      {
+        "board_index": 3,
+        "end_flat_index": 4416,
+        "global_strip_offset": 24,
+        "pixel_count": 1104,
+        "start_flat_index": 3312
+      }
+    ],
+    "global_strips": 32,
+    "leds_per_strip": 138,
+    "strips_per_board": 8
+  },
+  "canvas_to_logical_vectors": [
+    {
+      "canvas_column": 0,
+      "canvas_row": 0,
+      "expected_global_index": 0,
+      "global_strips": 32,
+      "id": "canvas_top_left",
+      "leds_per_strip": 138
+    },
+    {
+      "canvas_column": 31,
+      "canvas_row": 0,
+      "expected_global_index": 4278,
+      "global_strips": 32,
+      "id": "canvas_first_row_last_strip",
+      "leds_per_strip": 138
+    },
+    {
+      "canvas_column": 0,
+      "canvas_row": 137,
+      "expected_global_index": 137,
+      "global_strips": 32,
+      "id": "canvas_last_row_first_strip",
+      "leds_per_strip": 138
+    },
+    {
+      "canvas_column": 31,
+      "canvas_row": 137,
+      "expected_global_index": 4415,
+      "global_strips": 32,
+      "id": "canvas_bottom_right",
+      "leds_per_strip": 138
+    },
+    {
+      "canvas_column": 18,
+      "canvas_row": 73,
+      "expected_global_index": 2557,
+      "global_strips": 32,
+      "id": "canvas_interior",
+      "leds_per_strip": 138
+    }
+  ],
+  "coordinate_vectors": [
+    {
+      "expected_global_index": 0,
+      "expected_local_index": 0,
+      "global_strip": 0,
+      "global_strip_offset": 0,
+      "global_strips": 32,
+      "global_valid": true,
+      "id": "wall_origin",
+      "led": 0,
+      "leds_per_strip": 138,
+      "local_strips": 8,
+      "valid": true
+    },
+    {
+      "expected_global_index": 1103,
+      "expected_local_index": 1103,
+      "global_strip": 7,
+      "global_strip_offset": 0,
+      "global_strips": 32,
+      "global_valid": true,
+      "id": "board_0_last",
+      "led": 137,
+      "leds_per_strip": 138,
+      "local_strips": 8,
+      "valid": true
+    },
+    {
+      "expected_global_index": 1104,
+      "expected_local_index": 0,
+      "global_strip": 8,
+      "global_strip_offset": 8,
+      "global_strips": 32,
+      "global_valid": true,
+      "id": "board_1_first",
+      "led": 0,
+      "leds_per_strip": 138,
+      "local_strips": 8,
+      "valid": true
+    },
+    {
+      "expected_global_index": 2207,
+      "expected_local_index": 1103,
+      "global_strip": 15,
+      "global_strip_offset": 8,
+      "global_strips": 32,
+      "global_valid": true,
+      "id": "board_1_last",
+      "led": 137,
+      "leds_per_strip": 138,
+      "local_strips": 8,
+      "valid": true
+    },
+    {
+      "expected_global_index": 2208,
+      "expected_local_index": 0,
+      "global_strip": 16,
+      "global_strip_offset": 16,
+      "global_strips": 32,
+      "global_valid": true,
+      "id": "board_2_first",
+      "led": 0,
+      "leds_per_strip": 138,
+      "local_strips": 8,
+      "valid": true
+    },
+    {
+      "expected_global_index": 3311,
+      "expected_local_index": 1103,
+      "global_strip": 23,
+      "global_strip_offset": 16,
+      "global_strips": 32,
+      "global_valid": true,
+      "id": "board_2_last",
+      "led": 137,
+      "leds_per_strip": 138,
+      "local_strips": 8,
+      "valid": true
+    },
+    {
+      "expected_global_index": 3312,
+      "expected_local_index": 0,
+      "global_strip": 24,
+      "global_strip_offset": 24,
+      "global_strips": 32,
+      "global_valid": true,
+      "id": "board_3_first",
+      "led": 0,
+      "leds_per_strip": 138,
+      "local_strips": 8,
+      "valid": true
+    },
+    {
+      "expected_global_index": 4415,
+      "expected_local_index": 1103,
+      "global_strip": 31,
+      "global_strip_offset": 24,
+      "global_strips": 32,
+      "global_valid": true,
+      "id": "wall_last",
+      "led": 137,
+      "leds_per_strip": 138,
+      "local_strips": 8,
+      "valid": true
+    },
+    {
+      "expected_global_index": 1103,
+      "expected_local_index": null,
+      "global_strip": 7,
+      "global_strip_offset": 8,
+      "global_strips": 32,
+      "global_valid": true,
+      "id": "before_local_offset",
+      "led": 137,
+      "leds_per_strip": 138,
+      "local_strips": 8,
+      "valid": false
+    },
+    {
+      "expected_global_index": 2208,
+      "expected_local_index": null,
+      "global_strip": 16,
+      "global_strip_offset": 8,
+      "global_strips": 32,
+      "global_valid": true,
+      "id": "after_local_range",
+      "led": 0,
+      "leds_per_strip": 138,
+      "local_strips": 8,
+      "valid": false
+    },
+    {
+      "expected_global_index": null,
+      "expected_local_index": null,
+      "global_strip": 24,
+      "global_strip_offset": 24,
+      "global_strips": 32,
+      "global_valid": false,
+      "id": "led_out_of_range",
+      "led": 138,
+      "leds_per_strip": 138,
+      "local_strips": 8,
+      "valid": false
+    },
+    {
+      "expected_global_index": null,
+      "expected_local_index": null,
+      "global_strip": 32,
+      "global_strip_offset": 24,
+      "global_strips": 32,
+      "global_valid": false,
+      "id": "strip_out_of_range",
+      "led": 0,
+      "leds_per_strip": 138,
+      "local_strips": 8,
+      "valid": false
+    }
+  ],
+  "dirty_range_vectors": [
+    {
+      "expected_union": [
+        [
+          10,
+          13
+        ],
+        [
+          20,
+          23
+        ]
+      ],
+      "id": "movement",
+      "next_coverage": [
+        [
+          20,
+          23
+        ]
+      ],
+      "pixel_count": 64,
+      "previous_coverage": [
+        [
+          10,
+          13
+        ]
+      ]
+    },
+    {
+      "expected_union": [
+        [
+          10,
+          18
+        ],
+        [
+          30,
+          36
+        ]
+      ],
+      "id": "overlap_and_adjacency",
+      "next_coverage": [
+        [
+          13,
+          18
+        ],
+        [
+          34,
+          36
+        ]
+      ],
+      "pixel_count": 64,
+      "previous_coverage": [
+        [
+          10,
+          14
+        ],
+        [
+          30,
+          34
+        ]
+      ]
+    },
+    {
+      "expected_union": [
+        [
+          4,
+          9
+        ],
+        [
+          40,
+          44
+        ]
+      ],
+      "id": "complete_clear",
+      "next_coverage": [],
+      "pixel_count": 64,
+      "previous_coverage": [
+        [
+          4,
+          9
+        ],
+        [
+          40,
+          44
+        ]
+      ]
+    },
+    {
+      "expected_union": [],
+      "id": "empty",
+      "next_coverage": [],
+      "pixel_count": 64,
+      "previous_coverage": []
+    }
+  ],
+  "firmware_protocol": {
+    "command_ids": {
+      "controller_session_begin": 32,
+      "overlay_begin": 48,
+      "overlay_clear": 51,
+      "overlay_commit": 50,
+      "overlay_patch": 49,
+      "overlay_renew": 52
+    },
+    "crc_bytes": 2,
+    "full_snapshot_patches": [
+      {
+        "count": 1016,
+        "start": 0
+      },
+      {
+        "count": 88,
+        "start": 1016
+      }
+    ],
+    "header_bytes": {
+      "controller_session_begin": 58,
+      "overlay_begin": 66,
+      "overlay_clear": 34,
+      "overlay_commit": 50,
+      "overlay_patch": 30,
+      "overlay_renew": 30
+    },
+    "local_pixels": 1104,
+    "max_rgba_pixels_per_patch": 1016,
+    "max_transaction_bytes": 4096,
+    "version": 1
+  },
+  "opacity_vectors": [
+    {
+      "expected_rgba": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "id": "zero_endpoint",
+      "input_rgba": [
+        99,
+        66,
+        33,
+        128
+      ],
+      "opacity": 0
+    },
+    {
+      "expected_rgba": [
+        99,
+        66,
+        33,
+        128
+      ],
+      "id": "opaque_endpoint",
+      "input_rgba": [
+        99,
+        66,
+        33,
+        128
+      ],
+      "opacity": 255
+    },
+    {
+      "expected_rgba": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "id": "half_up_to_one",
+      "input_rgba": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "opacity": 128
+    },
+    {
+      "expected_rgba": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "id": "half_down_to_zero",
+      "input_rgba": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "opacity": 127
+    },
+    {
+      "expected_rgba": [
+        94,
+        47,
+        24,
+        100
+      ],
+      "id": "mixed_opacity",
+      "input_rgba": [
+        120,
+        60,
+        30,
+        128
+      ],
+      "opacity": 200
+    }
+  ],
+  "overlay_fold_vectors": [
+    {
+      "bottom_rgba": [
+        80,
+        40,
+        20,
+        128
+      ],
+      "expected_rgba": [
+        80,
+        40,
+        20,
+        128
+      ],
+      "id": "transparent_top",
+      "top_rgba": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "bottom_rgba": [
+        80,
+        40,
+        20,
+        128
+      ],
+      "expected_rgba": [
+        5,
+        7,
+        9,
+        255
+      ],
+      "id": "opaque_top",
+      "top_rgba": [
+        5,
+        7,
+        9,
+        255
+      ]
+    },
+    {
+      "bottom_rgba": [
+        80,
+        20,
+        10,
+        128
+      ],
+      "expected_rgba": [
+        55,
+        72,
+        21,
+        176
+      ],
+      "id": "ordered_overlap",
+      "top_rgba": [
+        5,
+        60,
+        15,
+        96
+      ]
+    },
+    {
+      "bottom_rgba": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "expected_rgba": [
+        1,
+        0,
+        0,
+        128
+      ],
+      "id": "round_each_fold",
+      "top_rgba": [
+        1,
+        0,
+        0,
+        128
+      ]
+    }
+  ],
+  "version": 1
+}
