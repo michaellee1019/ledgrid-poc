@@ -1,1 +1,23 @@
-{"plugin_id":"lava_lamp","class":"LavaLampAnimation","icon":"🫧","gallery":"show","preview":{"capture_seconds":[0,0.5,1.5,3,5,8,12,18],"simulation_fps":100}}
+{
+  "plugin_id": "lava_lamp",
+  "class": "LavaLampAnimation",
+  "icon": "🫧",
+  "gallery": "show",
+  "preview": {
+    "capture_seconds": [0, 0.5, 1.5, 3, 5, 8, 12, 18],
+    "simulation_fps": 100
+  },
+  "vibe": {
+    "color_policy": "grade",
+    "timing_adapter": "scaled_context",
+    "capabilities": ["palette_roles", "tempo", "luminance"],
+    "legacy_parameter_mappings": {
+      "palette": {
+        "quiet": "mono",
+        "cozy": "ruby",
+        "vivid": "candy",
+        "celebration": "solar"
+      }
+    }
+  }
+}

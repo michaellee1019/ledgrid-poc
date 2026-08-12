@@ -156,9 +156,12 @@
                 if (this.previewMode && this.previewAnimation) {
                     // In preview mode, fetch preview data for specific animation
                     const hasParams = this.previewParams && Object.keys(this.previewParams).length > 0;
-                    const url = hasParams
+                    const baseUrl = hasParams
                         ? `/api/preview/${this.previewAnimation}/with_params`
                         : `/api/preview/${this.previewAnimation}`;
+                    const vibeQuery = globalVibeId
+                        ? `?vibe=${encodeURIComponent(globalVibeId)}` : '';
+                    const url = `${baseUrl}${vibeQuery}`;
                     const options = hasParams ? {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
@@ -383,6 +386,11 @@
     let controlParameterStore = {};
     let controlParameterSchema = {};
     let currentPresetSelection = null;
+    function vibeIdFromStatus(status) {
+        const vibe = status?.vibe?.state || status?.vibe || {};
+        return vibe.id || vibe.vibe_id || 'neutral';
+    }
+    let globalVibeId = vibeIdFromStatus(INITIAL_STATUS);
     const PLANT_MODIFIERS = [
         ['Visual', 'illuminate', 'Illuminate'], ['Visual', 'shadow', 'Shadow'],
         ['Visual', 'refract', 'Refract'], ['Visual', 'hue_shift', 'Hue shift'],
@@ -411,6 +419,7 @@
         if (INITIAL_STATUS) {
             syncControlPanel(INITIAL_STATUS);
             syncGlobalSpeedFromStatus(INITIAL_STATUS);
+            syncGlobalVibeFromStatus(INITIAL_STATUS);
             syncPlantModifiersFromStatus(INITIAL_STATUS);
         }
         startStatsPolling();
@@ -562,6 +571,47 @@
 
     function setGlobalSpeedPreset(value) {
         setGlobalSpeed(value);
+    }
+
+    function syncGlobalVibeFromStatus(status) {
+        if (!status?.vibe) return;
+        globalVibeId = vibeIdFromStatus(status);
+        const select = document.getElementById('globalVibeSelect');
+        if (select && document.activeElement !== select) select.value = globalVibeId;
+        const diagnostic = status.vibe.diagnostic;
+        const message = document.getElementById('vibeDiagnostic');
+        if (message) {
+            message.hidden = !diagnostic;
+            message.textContent = diagnostic ? String(
+                diagnostic.message || diagnostic.reason || diagnostic.code
+                || (typeof diagnostic === 'object' ? JSON.stringify(diagnostic) : diagnostic)
+            ) : '';
+        }
+    }
+
+    async function setGlobalVibe(vibeId) {
+        const previous = globalVibeId;
+        globalVibeId = vibeId;
+        try {
+            const response = await fetch('/api/config/vibe', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({vibe: vibeId})
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || 'Unable to change vibe');
+            const requested = payload.requested_vibe || {};
+            globalVibeId = requested.id || requested.vibe_id || vibeId;
+            if (animationRenderer?.previewMode && animationRenderer.previewAnimation) {
+                animationRenderer.lastFrameData = null;
+            }
+            showToast(`${humanizeParamName(globalVibeId)} vibe selected`, 'success');
+        } catch (error) {
+            globalVibeId = previous;
+            const select = document.getElementById('globalVibeSelect');
+            if (select) select.value = previous;
+            showToast(error.message, 'error');
+        }
     }
 
     function syncPlantModifiersFromStatus(status) {
@@ -818,6 +868,7 @@
             updateStatusJson(data);
             syncControlPanel(data);
             syncGlobalSpeedFromStatus(data);
+            syncGlobalVibeFromStatus(data);
             syncPlantModifiersFromStatus(data);
         } catch (err) {
             console.error('Failed to fetch stats', err);
@@ -1017,7 +1068,17 @@
             .then(r => r.json())
             .then(info => {
                 if (info && info.parameters && Object.keys(info.parameters).length) {
-                    renderControlParameterControls(info.parameters, currentParams || info.current_params || {});
+                    const allParams = currentParams || info.current_params || {};
+                    controlParameterStore[name] = {...allParams};
+                    const globalMappings = new Set(Object.keys(
+                        info.vibe?.legacy_parameter_mappings || {}
+                    ));
+                    globalMappings.add('vibe');
+                    globalMappings.add('vibe_id');
+                    const visibleSchema = Object.fromEntries(
+                        Object.entries(info.parameters).filter(([key]) => !globalMappings.has(key))
+                    );
+                    renderControlParameterControls(visibleSchema, allParams);
                     hideControlPlaceholder();
                     loadControlPresets(name);
                 } else {
@@ -1208,7 +1269,10 @@
         if (!container) return;
         container.innerHTML = '';
         controlParameterSchema = schema;
-        const parameterSnapshot = {};
+        const parameterSnapshot = {
+            ...(controlSelectedAnimation ? controlParameterStore[controlSelectedAnimation] : {}),
+            ...(currentParams || {})
+        };
         Object.entries(schema).forEach(([name, info]) => {
             parameterSnapshot[name] = currentParams[name] ?? info.default;
         });

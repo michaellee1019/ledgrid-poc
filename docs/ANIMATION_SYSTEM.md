@@ -119,6 +119,53 @@ schema["background_speed"] = {
 }
 ```
 
+## Top-level vibe context
+
+The manager owns one versioned vibe independently of the running animation and
+selected preset. The stable IDs are `neutral`, `quiet`, `cozy`, `vivid`, and
+`celebration`; the central profile registry resolves each ID to immutable
+palette roles, tempo, luminance, and a deterministic profile digest. Vibe
+selection survives controller restart and deploy-state restoration, is exposed
+in status, and is passed explicitly to both plain and parameterized previews.
+Changing it does not mutate authored parameters or dirty preset identity.
+
+Plugins opt in through a strict optional `vibe` manifest object. For example:
+
+```json
+{
+  "vibe": {
+    "color_policy": "grade",
+    "timing_adapter": "scaled_context",
+    "capabilities": ["palette_roles", "tempo", "luminance"],
+    "legacy_parameter_mappings": {
+      "palette": {
+        "quiet": "mono",
+        "cozy": "ruby",
+        "vivid": "candy",
+        "celebration": "solar"
+      }
+    }
+  }
+}
+```
+
+Capabilities are `palette_roles`, `tempo`, and `luminance`. Color policy is
+`semantic`, `grade`, or `preserve`: semantic plugins consume palette roles,
+grade plugins accept the bounded framework grade, and preserve plugins retain
+their source colors. Framework luminance is applied once after plant optics.
+Legacy parameter mappings are ephemeral render inputs and may target only
+declared schema parameters; they never rewrite an authored preset. `neutral`
+must not declare a mapping and remains byte-compatible.
+
+Timing is explicit. `legacy_speed_param` receives unscaled elapsed time and an
+effective `speed`; `scaled_context` receives continuously scaled elapsed time
+and a unit speed; `wall_clock` receives unscaled elapsed time and ignores vibe
+tempo. Authored speed, vibe tempo, and the operator tempo multiplier are kept
+separate and applied once. Managed plugins can inspect the immutable
+`presentation_context`, `authored_params`, and per-render `effective_params`.
+`on_presentation_context_changed(old, new)` may invalidate presentation caches
+but must not reset, advance, reseed, or otherwise mutate semantic state.
+
 ## Composable plant modifiers
 
 The manager owns one validated, versioned `plant_modifiers` state with active
@@ -193,9 +240,9 @@ acceptance flow.
 ## Planned evolution and prototype reference
 
 This document describes the current Python-only plugin contract. The
-[unified roadmap](plan-revamped-animation-pipeline.md) evolves it into explicit
-component providers, a background-plus-overlay scene, independent vibe state,
-and repository-peer receiver-native backgrounds. Do not implement that future
+[unified roadmap](plan-revamped-animation-pipeline.md) next evolves it into
+explicit component providers, a background-plus-overlay scene, and
+repository-peer receiver-native backgrounds. Do not implement that future
 state by treating firmware playback as an `AnimationBase` or by weakening the
 current manifest allowlist.
 

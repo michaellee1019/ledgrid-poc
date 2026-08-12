@@ -1,1 +1,11 @@
-{"plugin_id":"simple_test","class":"SimpleTestAnimation","icon":"🧪","gallery":"test"}
+{
+  "plugin_id": "simple_test",
+  "class": "SimpleTestAnimation",
+  "icon": "🧪",
+  "gallery": "test",
+  "vibe": {
+    "color_policy": "preserve",
+    "timing_adapter": "wall_clock",
+    "capabilities": ["luminance"]
+  }
+}

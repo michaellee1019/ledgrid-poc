@@ -111,6 +111,7 @@ class LavaLampAnimation(AnimationBase):
         self.simulation_time = 0.0
         self._accumulator = 0.0
         self._last_source_time: Optional[float] = None
+        self._last_semantic_time: Optional[float] = None
         self._last_render_tick: Optional[int] = None
         self._cached_frame: Optional[np.ndarray] = None
         self._steps = 0
@@ -183,6 +184,10 @@ class LavaLampAnimation(AnimationBase):
             self._reset_simulation()
         elif "blob_count" in new_params and int(self.params["blob_count"]) != old_count:
             self._reconcile_blob_count()
+        self._last_render_tick = None
+
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Refresh presentation without resetting wax state or consuming RNG."""
         self._last_render_tick = None
 
     def _reconcile_blob_count(self) -> None:
@@ -545,7 +550,9 @@ class LavaLampAnimation(AnimationBase):
         halo = np.clip((self._field - 0.12) / 0.52, 0.0, 1.0) * glow_strength
         cool, warm, hot, glow_color = (
             np.asarray(color, dtype=np.float32)
-            for color in PALETTES[str(self.params.get("palette", "classic"))]
+            for color in PALETTES[
+                str(getattr(self, "effective_params", self.params).get("palette", "classic"))
+            ]
         )
         heat_mix = np.clip(temperature, 0.0, 1.0)[..., None]
         wax_color = cool + (warm - cool) * np.minimum(1.0, heat_mix * 1.5)
@@ -587,15 +594,26 @@ class LavaLampAnimation(AnimationBase):
         return frame
 
     def generate_frame(self, time_elapsed: float, frame_count: int):
-        source_tick = int(math.floor(max(0.0, time_elapsed) * self.SOURCE_FPS + 1e-9))
+        context = getattr(self, "presentation_context", None)
+        cadence_elapsed = (
+            context.unscaled_elapsed if context is not None else time_elapsed
+        )
+        semantic_elapsed = (
+            context.scaled_elapsed if context is not None else time_elapsed
+        )
+        source_tick = int(math.floor(max(0.0, cadence_elapsed) * self.SOURCE_FPS + 1e-9))
         if self._last_render_tick == source_tick and self._cached_frame is not None:
             return self.rendered_frame(self._cached_frame, changed=False)
-        if self._last_source_time is None:
+        if self._last_semantic_time is None:
             real_delta = self.PHYSICS_DT
         else:
-            real_delta = max(0.0, min(0.1, time_elapsed - self._last_source_time))
-        self._last_source_time = time_elapsed
-        speed = max(0.1, min(4.0, float(self.params.get("speed", 1.0))))
+            real_delta = max(0.0, min(0.1, semantic_elapsed - self._last_semantic_time))
+        self._last_source_time = cadence_elapsed
+        self._last_semantic_time = semantic_elapsed
+        speed = (
+            1.0 if context is not None
+            else max(0.1, min(4.0, float(self.params.get("speed", 1.0))))
+        )
         self._accumulator += real_delta * speed
         steps = 0
         while self._accumulator + 1e-12 >= self.PHYSICS_DT and steps < 8:
@@ -606,7 +624,7 @@ class LavaLampAnimation(AnimationBase):
             self._dropped_steps += int(self._accumulator / self.PHYSICS_DT)
             self._accumulator = math.fmod(self._accumulator, self.PHYSICS_DT)
         alpha = max(0.0, min(1.0, self._accumulator / self.PHYSICS_DT))
-        self._cached_frame = self._render(time_elapsed, alpha)
+        self._cached_frame = self._render(semantic_elapsed, alpha)
         self._last_render_tick = source_tick
         return self.rendered_frame(self._cached_frame, changed=True)
 

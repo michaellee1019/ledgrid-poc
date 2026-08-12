@@ -112,18 +112,32 @@ class ClockAnimation(AnimationBase):
         return schema
 
     def generate_frame(self, time_elapsed: float, frame_count: int):
+        context = getattr(self, "presentation_context", None)
+        presentation_elapsed = (
+            context.unscaled_elapsed if context is not None else time_elapsed
+        )
         now = self._clock_now()
         background = self._choice("background", self.BACKGROUND_OPTIONS, "gradient")
         face = self._choice("face", self.FACE_OPTIONS, "digital")
         animated = background in {"stars", "aurora", "scanlines", "horizon", "grid"} or face in {"orbit", "hourglass"}
-        tick = int(time_elapsed * (12 if animated else 1))
+        tick = int(presentation_elapsed * (12 if animated else 1))
         time_key = (now.year, now.month, now.day, now.hour, now.minute, now.second if self.params.get("show_seconds", True) else 0)
-        render_key = (tick if animated else 0, time_key, tuple(sorted(self.params.items())))
+        palette = self._presentation_palette()
+        vibe_key = (
+            (context.vibe_id, context.vibe_profile_version)
+            if context is not None else ("neutral", 1)
+        )
+        render_key = (
+            tick if animated else 0,
+            time_key,
+            tuple(sorted(self.params.items())),
+            palette,
+            vibe_key,
+        )
         if render_key == self._last_render_key and self._last_frame is not None:
             return self.rendered_frame(self._last_frame, changed=False)
 
-        palette = self.PALETTES[self._choice("palette", tuple(self.PALETTES), "amber")]
-        self._render_background(background, palette, time_elapsed)
+        self._render_background(background, palette, presentation_elapsed)
         draw = {
             "digital": self._draw_digital, "analog": self._draw_analog,
             "binary": self._draw_binary, "orbit": self._draw_orbit,
@@ -132,7 +146,7 @@ class ClockAnimation(AnimationBase):
             "calendar": self._draw_calendar, "word": self._draw_word,
         }[face]
         marks = np.zeros((self.width, self.height, 3), dtype=np.float32)
-        draw(marks, now, palette, time_elapsed)
+        draw(marks, now, palette, presentation_elapsed)
         if self._plant_placement_enabled():
             marks = self._place_away_from_plants(marks)
         else:
@@ -151,6 +165,37 @@ class ClockAnimation(AnimationBase):
         self.apply_brightness_array(frame, out=frame)
         self._last_render_key, self._last_frame = render_key, frame
         return self.rendered_frame(frame)
+
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Invalidate presentation only; wall time and authored state stay intact."""
+        self._last_render_key = None
+
+    def _presentation_palette(self) -> Tuple[Color, Color, Color, Color]:
+        effective = getattr(self, "effective_params", self.params)
+        palette_name = str(effective.get("palette", "amber")).lower()
+        palette = self.PALETTES.get(palette_name, self.PALETTES["amber"])
+        context = getattr(self, "presentation_context", None)
+        if context is None or context.vibe_id == "neutral":
+            return palette
+
+        roles = context.palette_roles
+        fallback = {
+            "background_low": palette[0],
+            "background_mid": palette[3],
+            "accent": palette[1],
+            "hud": palette[2],
+        }
+
+        def role(name: str) -> Color:
+            value = roles.get(name, fallback[name])
+            return tuple(int(channel) for channel in value)
+
+        return (
+            role("background_low"),
+            role("accent"),
+            role("hud"),
+            role("background_mid"),
+        )
 
     def _clock_now(self) -> datetime:
         """Return wall time for the face; isolated so render tests stay deterministic."""

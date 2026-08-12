@@ -177,6 +177,10 @@ class SnakeAnimation(AnimationBase):
             self._build_background()
         self.last_render_elapsed = None
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Force a repaint while retaining game, RNG, and event state exactly."""
+        self.last_render_elapsed = None
+
     def get_runtime_stats(self) -> Dict[str, Any]:
         alive = sum(bool(snake.body) for snake in self.snakes)
         requested_rate = self._requested_moves_per_second()
@@ -204,17 +208,24 @@ class SnakeAnimation(AnimationBase):
         }
 
     def generate_frame(self, time_elapsed: float, frame_count: int) -> Any:
+        context = getattr(self, "presentation_context", None)
+        cadence_elapsed = (
+            context.unscaled_elapsed if context is not None else time_elapsed
+        )
+        semantic_elapsed = (
+            context.scaled_elapsed if context is not None else time_elapsed
+        )
         render_fps = max(15.0, min(90.0, float(self.params.get("render_fps", 60.0))))
         if (self.last_rendered_frame is not None and self.last_render_elapsed is not None
-                and 0.0 <= time_elapsed - self.last_render_elapsed < 1.0 / render_fps):
+                and 0.0 <= cadence_elapsed - self.last_render_elapsed < 1.0 / render_fps):
             return self.rendered_frame(self.last_rendered_frame, changed=False)
 
-        if self.last_elapsed is None or time_elapsed < self.last_elapsed:
+        if self.last_elapsed is None or semantic_elapsed < self.last_elapsed:
             dt = 0.0
         else:
-            dt = min(0.25, max(0.0, time_elapsed - self.last_elapsed))
-        self.last_elapsed = time_elapsed
-        self.last_render_elapsed = time_elapsed
+            dt = min(0.25, max(0.0, semantic_elapsed - self.last_elapsed))
+        self.last_elapsed = semantic_elapsed
+        self.last_render_elapsed = cadence_elapsed
 
         moves_per_second = self._effective_moves_per_second()
         self._step_accumulator += dt * moves_per_second
@@ -228,7 +239,7 @@ class SnakeAnimation(AnimationBase):
 
         decay = math.exp(-max(0.2, float(self.params.get("trail_decay", 2.5))) * dt)
         self._trail *= decay
-        self._render(time_elapsed)
+        self._render(semantic_elapsed)
         frame = self.next_frame_buffer(clear=False)
         frame.reshape(self.width, self.height, 3)[:] = self._canvas[::-1].transpose(1, 0, 2)
         self.apply_brightness_array(frame, out=frame)
@@ -240,7 +251,10 @@ class SnakeAnimation(AnimationBase):
         return min(self._requested_moves_per_second(), render_fps * MAX_SIMULATION_STEPS)
 
     def _requested_moves_per_second(self) -> float:
-        speed = max(0.2, float(self.params.get("speed", 1.0)))
+        speed = (
+            1.0 if getattr(self, "presentation_context", None) is not None
+            else max(0.2, float(self.params.get("speed", 1.0)))
+        )
         moves_per_second = max(2.0, float(self.params.get("moves_per_second", 11.0)))
         return moves_per_second * speed * SNAKE_SPEED_BASELINE
 

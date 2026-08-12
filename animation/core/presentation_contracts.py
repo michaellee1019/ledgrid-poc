@@ -1,13 +1,16 @@
-"""Dormant version 1 presentation contracts for the revamped pipeline.
+"""Version 1 contracts for the revamped animation pipeline.
 
-These value objects freeze validation, naming, and serialization boundaries for
-later phases.  Nothing in the current manager imports or activates them.
+Phase 1 froze these validation and serialization boundaries.  Phase 2A now
+activates the vibe/profile and runtime-context subset in the existing Python
+manager while the scene, overlay, and receiver-native contracts remain dormant.
 """
 
 from __future__ import annotations
 
 import math
 import re
+import hashlib
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
@@ -40,6 +43,20 @@ NEXT_DEADLINE_SEMANTICS = "absolute_unscaled_seconds_since_scene_epoch"
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _EMPTY_MAPPING: Mapping[str, Any] = MappingProxyType({})
+
+VIBE_CAPABILITIES = frozenset(("palette_roles", "tempo", "luminance"))
+VIBE_COLOR_POLICIES = frozenset(("semantic", "grade", "preserve"))
+VIBE_PALETTE_ROLES = (
+    "background_low",
+    "background_mid",
+    "background_high",
+    "primary",
+    "secondary",
+    "accent",
+    "hud",
+    "warning",
+)
+CANONICAL_VIBE_IDS = ("neutral", "quiet", "cozy", "vivid", "celebration")
 
 
 class ComponentProvider(str, Enum):
@@ -254,8 +271,44 @@ class VibeState:
         _schema_version("vibe state", self.schema, VIBE_STATE_SCHEMA, self.schema_version)
         _uint64("revision", self.revision)
         _identifier("vibe_id", self.vibe_id)
+        if self.vibe_id not in CANONICAL_VIBE_IDS:
+            raise ValueError(
+                f"unknown vibe ID {self.vibe_id!r}; expected one of "
+                f"{', '.join(CANONICAL_VIBE_IDS)}"
+            )
         _bounded_int("profile_version", self.profile_version, 1, 2**31 - 1)
         _digest("resolved_profile_digest", self.resolved_profile_digest)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "schema_version": self.schema_version,
+            "revision": self.revision,
+            "vibe_id": self.vibe_id,
+            "profile_version": self.profile_version,
+            "resolved_profile_digest": self.resolved_profile_digest,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "VibeState":
+        if not isinstance(payload, Mapping):
+            raise TypeError("vibe state must be a mapping")
+        known = {
+            "schema", "schema_version", "revision", "vibe_id", "id",
+            "profile_version", "resolved_profile_digest",
+        }
+        unknown = set(payload) - known
+        if unknown:
+            raise ValueError(f"unknown vibe state fields: {', '.join(sorted(unknown))}")
+        vibe_id = payload.get("vibe_id", payload.get("id"))
+        return cls(
+            revision=payload.get("revision", 0),
+            vibe_id=vibe_id,
+            profile_version=payload.get("profile_version", VIBE_PROFILE_VERSION),
+            resolved_profile_digest=payload.get("resolved_profile_digest"),
+            schema_version=payload.get("schema_version", VIBE_STATE_VERSION),
+            schema=payload.get("schema", VIBE_STATE_SCHEMA),
+        )
 
 
 @dataclass(frozen=True)
@@ -280,6 +333,95 @@ class VibeProfile:
         for name in ("palette_roles", "capability_values"):
             object.__setattr__(self, name, _immutable_mapping(name, getattr(self, name)))
         _validate_palette_roles(self.palette_roles)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "schema_version": self.schema_version,
+            "vibe_id": self.vibe_id,
+            "profile_version": self.profile_version,
+            "palette_roles": _mutable_json(self.palette_roles),
+            "tempo_scale": self.tempo_scale,
+            "luminance_scale": self.luminance_scale,
+            "capability_values": _mutable_json(self.capability_values),
+        }
+
+    @property
+    def resolved_profile_digest(self) -> str:
+        payload = json.dumps(
+            self.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    def to_state(self, *, revision: int = 0) -> VibeState:
+        return VibeState(
+            revision=revision,
+            vibe_id=self.vibe_id,
+            profile_version=self.profile_version,
+            resolved_profile_digest=self.resolved_profile_digest,
+        )
+
+
+@dataclass(frozen=True)
+class ResolvedVibe:
+    profile: VibeProfile
+    state: VibeState
+
+    def __post_init__(self) -> None:
+        if self.state.vibe_id != self.profile.vibe_id:
+            raise ValueError("resolved vibe state/profile IDs must match")
+        if self.state.profile_version != self.profile.profile_version:
+            raise ValueError("resolved vibe state/profile versions must match")
+        if self.state.resolved_profile_digest != self.profile.resolved_profile_digest:
+            raise ValueError("resolved vibe digest does not match the profile")
+
+
+def _profile(
+    vibe_id: str,
+    tempo: float,
+    luminance: float,
+    colors: tuple[tuple[int, int, int], ...],
+    *,
+    chroma: float,
+    energy: float,
+) -> VibeProfile:
+    return VibeProfile(
+        vibe_id=vibe_id,
+        profile_version=VIBE_PROFILE_VERSION,
+        palette_roles=dict(zip(VIBE_PALETTE_ROLES, colors)),
+        tempo_scale=tempo,
+        luminance_scale=luminance,
+        capability_values={"chroma_scale": chroma, "energy": energy},
+    )
+
+
+def get_vibe_profile(vibe_id: str, profile_version: Optional[int] = None) -> VibeProfile:
+    """Return one canonical profile, rejecting unknown IDs and versions."""
+    if not isinstance(vibe_id, str) or vibe_id not in VIBE_PROFILE_REGISTRY:
+        raise ValueError(
+            f"unknown vibe ID {vibe_id!r}; expected one of {', '.join(CANONICAL_VIBE_IDS)}"
+        )
+    profile = VIBE_PROFILE_REGISTRY[vibe_id]
+    if profile_version is not None and profile_version != profile.profile_version:
+        raise ValueError(
+            f"unsupported profile version {profile_version!r} for vibe {vibe_id!r}; "
+            f"expected {profile.profile_version}"
+        )
+    return profile
+
+
+def list_vibe_profiles() -> tuple[VibeProfile, ...]:
+    return tuple(VIBE_PROFILE_REGISTRY.values())
+
+
+def resolve_vibe(
+    vibe_id: str = "neutral",
+    *,
+    revision: int = 0,
+    profile_version: Optional[int] = None,
+) -> ResolvedVibe:
+    profile = get_vibe_profile(vibe_id, profile_version)
+    return ResolvedVibe(profile=profile, state=profile.to_state(revision=revision))
 
 
 @dataclass(frozen=True)
@@ -343,6 +485,12 @@ class AnimationRuntimeContext:
     capability_values: Mapping[str, Any]
     installation_profile_view: Mapping[str, Any]
     plant_modifiers: Mapping[str, Any]
+    resolved_profile_digest: Optional[str] = None
+    tempo_scale: float = 1.0
+    luminance_scale: float = 1.0
+    operator_tempo_scale: float = 1.0
+    authored_speed: float = 1.0
+    effective_time_scale: float = 1.0
     schema_version: int = ANIMATION_RUNTIME_CONTEXT_VERSION
     schema: str = ANIMATION_RUNTIME_CONTEXT_SCHEMA
 
@@ -366,6 +514,13 @@ class AnimationRuntimeContext:
             raise ValueError("local strip range must fit within global_width")
         _identifier("vibe_id", self.vibe_id)
         _bounded_int("vibe_profile_version", self.vibe_profile_version, 1, 2**31 - 1)
+        if self.resolved_profile_digest is not None:
+            _digest("resolved_profile_digest", self.resolved_profile_digest)
+        for name in (
+            "tempo_scale", "operator_tempo_scale", "authored_speed", "effective_time_scale"
+        ):
+            _finite_number(name, getattr(self, name), minimum=0.01, maximum=10000.0)
+        _finite_number("luminance_scale", self.luminance_scale, minimum=0.0, maximum=1.0)
         for name in (
             "palette_roles",
             "capability_values",
@@ -380,6 +535,27 @@ class AnimationRuntimeContext:
         """Return the absolute clock on which ``next_deadline_scene_time`` is based."""
 
         return float(self.unscaled_elapsed)
+
+    @property
+    def presentation_identity(self) -> tuple[Any, ...]:
+        """Inputs whose change may invalidate presentation caches.
+
+        Frame clocks and indices are intentionally absent: advancing a frame is
+        not a presentation-context change event.
+        """
+        return (
+            self.vibe_id,
+            self.vibe_profile_version,
+            self.resolved_profile_digest,
+            self.tempo_scale,
+            self.luminance_scale,
+            self.operator_tempo_scale,
+            self.authored_speed,
+            tuple(self.palette_roles.items()),
+            tuple(self.capability_values.items()),
+            tuple(self.installation_profile_view.items()),
+            tuple(self.plant_modifiers.items()),
+        )
 
 
 @dataclass(frozen=True)
@@ -541,6 +717,14 @@ def _immutable_json(name: str, value: Any) -> Any:
     raise TypeError(f"{name} must contain only finite JSON-compatible values")
 
 
+def _mutable_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _mutable_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_mutable_json(item) for item in value]
+    return value
+
+
 def _validate_palette_roles(palette_roles: Mapping[str, Any]) -> None:
     for role, color in palette_roles.items():
         _identifier("palette role", role)
@@ -548,3 +732,34 @@ def _validate_palette_roles(palette_roles: Mapping[str, Any]) -> None:
             raise ValueError(f"palette_roles[{role!r}] must be an RGB triplet")
         for channel in color:
             _bounded_int(f"palette_roles[{role!r}] channel", channel, 0, 255)
+
+
+# Registry construction intentionally follows every validator used by
+# VibeProfile.__post_init__; module import must be deterministic and side-effect free.
+_VIBE_PROFILES = (
+    _profile("neutral", 1.0, 1.0, (
+        (8, 10, 16), (32, 38, 52), (92, 104, 128), (224, 228, 236),
+        (152, 164, 184), (255, 184, 72), (240, 244, 252), (255, 72, 64),
+    ), chroma=1.0, energy=0.5),
+    _profile("quiet", 0.65, 0.55, (
+        (5, 9, 14), (17, 30, 40), (47, 72, 82), (126, 166, 170),
+        (91, 123, 132), (151, 142, 116), (178, 202, 201), (192, 108, 96),
+    ), chroma=0.62, energy=0.18),
+    _profile("cozy", 0.85, 0.75, (
+        (16, 7, 5), (53, 24, 16), (112, 59, 32), (244, 164, 86),
+        (194, 94, 58), (255, 205, 108), (255, 228, 174), (238, 77, 54),
+    ), chroma=0.86, energy=0.4),
+    _profile("vivid", 1.15, 0.95, (
+        (4, 5, 20), (18, 23, 76), (45, 66, 154), (70, 225, 255),
+        (191, 72, 255), (255, 224, 48), (232, 250, 255), (255, 52, 91),
+    ), chroma=1.2, energy=0.78),
+    _profile("celebration", 1.35, 1.0, (
+        (12, 3, 20), (53, 15, 80), (112, 32, 157), (255, 78, 174),
+        (44, 224, 242), (255, 211, 35), (255, 250, 226), (255, 53, 60),
+    ), chroma=1.35, energy=1.0),
+)
+VIBE_PROFILE_REGISTRY: Mapping[str, VibeProfile] = MappingProxyType({
+    profile.vibe_id: profile for profile in _VIBE_PROFILES
+})
+if tuple(VIBE_PROFILE_REGISTRY) != CANONICAL_VIBE_IDS:
+    raise RuntimeError("canonical vibe registry order does not match the wire vocabulary")

@@ -117,6 +117,7 @@ class AnimationWebInterface:
                 animations=[item for item in animations if not item['is_test']],
                 test_animations=[item for item in animations if item['is_test']],
                 status=status,
+                vibe_profiles=self._vibe_profile_catalog(),
                 speed_baseline=DEFAULT_ANIMATION_SPEED_SCALE,
                 local_mode=self.local_mode,
             )
@@ -316,6 +317,40 @@ class AnimationWebInterface:
         def api_get_status():
             """API: Get current status"""
             return jsonify(self._status_payload())
+
+        @self.app.route('/api/config/vibe', methods=['GET'])
+        @self.app.route('/api/v1/vibe', methods=['GET'])
+        def api_get_vibe():
+            """API: Read the selected global vibe and stable profile catalog."""
+            return jsonify({
+                'version': 1,
+                'vibe': self._selected_vibe_status(),
+                'profiles': self._vibe_profile_catalog(),
+            })
+
+        @self.app.route('/api/config/vibe', methods=['POST'])
+        @self.app.route('/api/v1/vibe', methods=['PUT', 'POST'])
+        def api_set_vibe():
+            """API: Validate and independently update the global vibe."""
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, dict):
+                return jsonify({'error': 'request body must be a JSON object'}), 400
+            requested = payload.get('vibe')
+            if requested is None:
+                requested = payload.get('id', payload.get('vibe_id'))
+            try:
+                state = self._canonical_vibe_state(requested)
+            except (KeyError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
+            profile = self._vibe_profile_for_state(state)
+            command = self.control_channel.send_command('set_vibe', vibe=state)
+            return jsonify({
+                'success': True,
+                'version': 1,
+                'requested_vibe': state,
+                'profile': profile,
+                'command_id': command.get('command_id') if isinstance(command, dict) else None,
+            })
         
         @self.app.route('/api/stats')
         def api_get_stats():
@@ -570,8 +605,13 @@ class AnimationWebInterface:
             try:
                 self._sync_preview_layout_from_status()
                 # Get a sample frame from the animation without starting it
-                preview_data = self.preview_manager.get_animation_preview(animation_name)
+                vibe = self._preview_vibe(request.args.get('vibe'))
+                preview_data = self.preview_manager.get_animation_preview(
+                    animation_name, vibe=vibe
+                )
                 return jsonify(preview_data)
+            except (KeyError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
             except Exception as e:
                 return jsonify({
                     'error': f'Failed to get preview for {animation_name}: {str(e)}',
@@ -587,9 +627,26 @@ class AnimationWebInterface:
             """API: Get preview frame data for a specific animation with custom parameters"""
             try:
                 self._sync_preview_layout_from_status()
-                params = request.get_json() or {}
-                preview_data = self.preview_manager.get_animation_preview_with_params(animation_name, params)
+                payload = request.get_json(silent=True)
+                if payload is None:
+                    payload = {}
+                if not isinstance(payload, dict):
+                    raise ValueError('request body must be a JSON object')
+                if isinstance(payload.get('params'), dict):
+                    params = dict(payload['params'])
+                    requested_vibe = payload.get('vibe', request.args.get('vibe'))
+                else:
+                    # Preserve the legacy flat parameter payload. Vibe travels in
+                    # the query string so a plugin parameter cannot be stolen.
+                    params = payload
+                    requested_vibe = request.args.get('vibe')
+                vibe = self._preview_vibe(requested_vibe)
+                preview_data = self.preview_manager.get_animation_preview_with_params(
+                    animation_name, params, vibe=vibe
+                )
                 return jsonify(preview_data)
+            except (KeyError, TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 400
             except Exception as e:
                 return jsonify({
                     'error': f'Failed to get preview for {animation_name}: {str(e)}',
@@ -691,6 +748,67 @@ class AnimationWebInterface:
             item['presets'] = presets
             catalog.append(item)
         return catalog
+
+    @staticmethod
+    def _canonical_vibe_state(requested: Any) -> Dict[str, Any]:
+        """Resolve untrusted API input through the central versioned registry."""
+        from animation.core.presentation_contracts import VibeState, resolve_vibe
+
+        if isinstance(requested, str):
+            resolved = resolve_vibe(requested)
+        elif isinstance(requested, dict):
+            payload = requested.get('state', requested)
+            state = VibeState.from_payload(payload)
+            resolved = resolve_vibe(
+                state.vibe_id,
+                revision=state.revision,
+                profile_version=state.profile_version,
+            )
+            if (
+                resolved.state.resolved_profile_digest
+                != state.resolved_profile_digest
+            ):
+                raise ValueError('vibe profile digest does not match registry')
+        else:
+            raise ValueError('vibe must be a stable vibe ID or versioned vibe state')
+        return resolved.state.to_dict()
+
+    def _selected_vibe_status(self) -> Dict[str, Any]:
+        """Return live controller vibe status, falling back to local neutral."""
+        status = self.control_channel.read_status() or {}
+        vibe = status.get('vibe')
+        if isinstance(vibe, dict):
+            return dict(vibe)
+        getter = getattr(self.preview_manager, 'get_vibe_status', None)
+        if callable(getter):
+            return dict(getter())
+        return {'state': self._canonical_vibe_state('neutral')}
+
+    def _preview_vibe(self, requested: Any = None) -> Dict[str, Any]:
+        """Resolve preview vibe explicitly without mutating the live manager."""
+        if requested is not None:
+            return self._canonical_vibe_state(requested)
+        selected = self._selected_vibe_status()
+        return self._canonical_vibe_state(selected.get('state', selected))
+
+    @staticmethod
+    def _vibe_profile_catalog() -> List[Dict[str, Any]]:
+        """Serialize public profile choices for API and dashboard consumers."""
+        from animation.core.presentation_contracts import list_vibe_profiles
+
+        catalog = []
+        for profile in list_vibe_profiles():
+            payload = profile.to_dict()
+            catalog.append(payload)
+        return catalog
+
+    @staticmethod
+    def _vibe_profile_for_state(state: Dict[str, Any]) -> Dict[str, Any]:
+        from animation.core.presentation_contracts import get_vibe_profile
+
+        vibe_id = state.get('id', state.get('vibe_id'))
+        profile = get_vibe_profile(vibe_id)
+        return profile.to_dict()
 
     def _preview_catalog(self) -> Dict[str, Any]:
         """Merge deploy-generated previews with target-owned runtime previews."""
@@ -1433,6 +1551,8 @@ class AnimationWebInterface:
             'plant_modifiers',
             PlantModifierState.from_legacy(DEFAULT_PLANT_AWARE).to_dict(),
         )
+        if not isinstance(status.get('vibe'), dict):
+            status['vibe'] = self._selected_vibe_status()
         if not self.local_mode and hasattr(self.preview_manager, 'set_plant_modifiers'):
             try:
                 self.preview_manager.set_plant_modifiers(status['plant_modifiers'])
@@ -1501,6 +1621,8 @@ class AnimationWebInterface:
             'target_fps': 0,
             'animation_speed_scale': DEFAULT_ANIMATION_SPEED_SCALE,
             'plant_aware': DEFAULT_PLANT_AWARE,
+            'plant_modifiers': PlantModifierState.from_legacy(DEFAULT_PLANT_AWARE).to_dict(),
+            'vibe': self._selected_vibe_status(),
             'actual_fps': 0,
             'animation_stats': {},
             'stats': {},

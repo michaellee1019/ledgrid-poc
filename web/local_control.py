@@ -46,6 +46,11 @@ class LocalControlChannel:
             manager.set_plant_aware(data.get("plant_aware"))
         elif action == "set_plant_modifiers":
             manager.set_plant_modifiers(data.get("plant_modifiers"))
+        elif action == "set_vibe":
+            requested = data.get("vibe", data.get("vibe_id"))
+            if requested is None:
+                raise ValueError("vibe is required")
+            manager.set_vibe(requested)
         elif action == "refresh_plugins":
             animation = data.get("animation")
             manager.reload_animation(animation) if animation else manager.refresh_plugins()

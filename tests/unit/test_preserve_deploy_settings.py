@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from tools.deployment.preserve_deploy_settings import (
+    _expected_restored_vibe,
     load_saved_state,
     record_deploy,
     restore,
@@ -15,6 +16,12 @@ from tools.deployment.preserve_deploy_settings import (
 
 
 class PreserveDeploySettingsTests(unittest.TestCase):
+    @staticmethod
+    def _vibe(vibe_id="cozy"):
+        from animation.core.presentation_contracts import resolve_vibe
+
+        return resolve_vibe(vibe_id).state.to_dict()
+
     def test_record_deploy_updates_timestamp(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             deployment_path = Path(temporary_dir) / "deployment.json"
@@ -26,7 +33,7 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                 456.75,
             )
 
-    def test_save_overwrites_preset_and_unscales_speed(self):
+    def test_save_overwrites_preset_and_preserves_authored_speed(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
             status_path = root / "status.json"
@@ -45,7 +52,7 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             preset = save(status_path, presets_dir, state_path)
 
             self.assertEqual(preset["created_at"], 123)
-            self.assertAlmostEqual(preset["params"]["speed"], 2.0)
+            self.assertAlmostEqual(preset["params"]["speed"], 0.4)
             self.assertEqual(preset["params"]["brightness"], 0.7)
             self.assertEqual(json.loads(state_path.read_text())["animation"], "sparkle")
 
@@ -69,7 +76,7 @@ class PreserveDeploySettingsTests(unittest.TestCase):
 
             saved = load_saved_state(state_path)
             self.assertEqual(saved["animation"], "rainbow")
-            self.assertEqual(saved["params"], {"speed": 2.0, "brightness": 0.7})
+            self.assertEqual(saved["params"], {"speed": 0.9, "brightness": 0.7})
             self.assertEqual(saved["animation_speed_scale"], 0.45)
             self.assertEqual(saved["target_fps"], 144)
             self.assertEqual(saved["brightness"], 96)
@@ -77,6 +84,60 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                 "version": 1, "active": [], "strengths": {},
             })
             self.assertNotIn("plant_aware", json.loads(state_path.read_text()))
+
+    def test_save_status_keeps_vibe_independent_from_authored_params_and_preset(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            vibe = self._vibe("cozy")
+            save_status({
+                "is_running": True,
+                "current_animation": "rainbow",
+                "current_preset": {
+                    "preset_id": "sunset", "name": "Sunset",
+                    "animation": "rainbow", "is_dirty": False,
+                },
+                "animation_speed_scale": 1.7,
+                "vibe": {"state": vibe, "profile": {"tempo_scale": 0.9}},
+                "animation_info": {"current_params": {"speed": 0.65}},
+            }, root / "presets", root / "state.json")
+
+            saved = load_saved_state(root / "state.json")
+            self.assertEqual(saved["vibe"], vibe)
+            self.assertEqual(saved["params"]["speed"], 0.65)
+            self.assertEqual(saved["animation_speed_scale"], 1.7)
+            self.assertEqual(saved["current_preset"], {
+                "preset_id": "sunset", "name": "Sunset",
+                "animation": "rainbow", "is_dirty": False,
+            })
+            self.assertNotIn("vibe", json.loads(
+                (root / "presets" / "rainbow" / "before-deploy.json").read_text()
+            )["params"])
+
+    def test_idle_vibe_update_retains_last_playable_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            neutral = self._vibe("neutral")
+            quiet = self._vibe("quiet")
+            running = {
+                "is_running": True,
+                "current_animation": "rainbow",
+                "animation_info": {"current_params": {"speed": 0.65}},
+                "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
+                "vibe": {"state": neutral},
+            }
+            save_status(running, root / "presets", root / "state.json")
+
+            save_status({
+                "is_running": False,
+                "current_animation": None,
+                "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
+                "vibe": {"state": quiet},
+            }, root / "presets", root / "state.json")
+
+            saved = load_saved_state(root / "state.json")
+            self.assertEqual(saved["animation"], "rainbow")
+            self.assertEqual(saved["params"], {"speed": 0.65})
+            self.assertEqual(saved["vibe"], quiet)
 
     def test_save_status_ignores_non_finite_optional_runtime_values(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -143,6 +204,45 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             self.assertNotIn("plant_aware", loaded)
             self.assertEqual(preset.read_text(), original)
 
+    def test_unknown_persisted_vibe_version_is_retained_for_visible_neutral_fallback(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            preset = root / "before-deploy.json"
+            preset.write_text(json.dumps({"animation": "sparkle", "params": {}}))
+            unknown = self._vibe("cozy")
+            unknown["profile_version"] = 999
+            state = root / "state.json"
+            state.write_text(json.dumps({
+                "animation": "sparkle", "preset_path": str(preset),
+                "vibe": unknown,
+            }))
+
+            loaded = load_saved_state(state)
+            fallback, expects_diagnostic = _expected_restored_vibe(loaded["vibe"])
+
+            self.assertEqual(loaded["vibe"]["profile_version"], 999)
+            self.assertEqual(fallback["vibe_id"], "neutral")
+            self.assertTrue(expects_diagnostic)
+
+    def test_stale_persisted_vibe_digest_requires_visible_neutral_fallback(self):
+        stale = self._vibe("cozy")
+        stale["resolved_profile_digest"] = "f" * 64
+
+        fallback, expects_diagnostic = _expected_restored_vibe(stale)
+
+        self.assertEqual(fallback["vibe_id"], "neutral")
+        self.assertEqual(fallback["revision"], stale["revision"])
+        self.assertTrue(expects_diagnostic)
+
+    def test_malformed_fallback_revision_matches_manager_uint64_boundary(self):
+        for revision in (True, -1, 2**64):
+            with self.subTest(revision=revision):
+                stale = self._vibe("cozy")
+                stale.update(profile_version=999, revision=revision)
+                fallback, expects_diagnostic = _expected_restored_vibe(stale)
+                self.assertEqual(fallback["revision"], 0)
+                self.assertTrue(expects_diagnostic)
+
     def test_save_requires_a_running_animation(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
@@ -191,6 +291,109 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             controller.join()
 
             self.assertEqual(preset["params"], {"brightness": 0.7})
+
+    def test_restore_acknowledges_vibe_before_start_and_rechecks_final_state(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            status_path = root / "status.json"
+            control_path = root / "control.json"
+            preset_path = root / "before-deploy.json"
+            state_path = root / "state.json"
+            vibe = self._vibe("cozy")
+            preset_path.write_text(json.dumps({
+                "animation": "sparkle", "params": {"speed": 0.65},
+            }))
+            state_path.write_text(json.dumps({
+                "animation": "sparkle", "preset_path": str(preset_path),
+                "vibe": vibe,
+                "current_preset": {
+                    "preset_id": "stars", "name": "Stars",
+                    "animation": "sparkle", "is_dirty": False,
+                },
+            }))
+            status_path.write_text(json.dumps({"updated_at": 1}))
+            observed_actions = []
+
+            def simulate_controller():
+                time.sleep(0.05)
+                status_path.write_text(json.dumps({"updated_at": time.time()}))
+                first_command_id = None
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    if not control_path.exists():
+                        time.sleep(0.01)
+                        continue
+                    command = json.loads(control_path.read_text())
+                    if command["command_id"] == first_command_id:
+                        time.sleep(0.01)
+                        continue
+                    observed_actions.append(command["action"])
+                    if command["action"] == "set_vibe":
+                        first_command_id = command["command_id"]
+                        status_path.write_text(json.dumps({
+                            "updated_at": time.time(),
+                            "last_command_id": first_command_id,
+                            "vibe": {"state": vibe},
+                        }))
+                    elif command["action"] == "start":
+                        self.assertEqual(command["data"]["preset"]["preset_id"], "stars")
+                        status_path.write_text(json.dumps({
+                            "updated_at": time.time(),
+                            "last_command_id": command["command_id"],
+                            "current_animation": "sparkle",
+                            "is_running": True,
+                            "vibe": {"state": vibe},
+                            "current_preset": command["data"]["preset"],
+                        }))
+                        return
+
+            controller = threading.Thread(target=simulate_controller)
+            controller.start()
+            restored = restore(status_path, control_path, state_path, 1)
+            controller.join()
+
+            self.assertEqual(observed_actions, ["set_vibe", "start"])
+            self.assertEqual(restored["vibe"], vibe)
+            self.assertFalse(restored["vibe_fallback"])
+            self.assertEqual(restored["params"]["speed"], 0.65)
+            self.assertEqual(restored["current_preset"]["preset_id"], "stars")
+
+    def test_restore_rejects_acknowledged_but_mismatched_vibe(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            status_path = root / "status.json"
+            control_path = root / "control.json"
+            preset_path = root / "before-deploy.json"
+            state_path = root / "state.json"
+            cozy = self._vibe("cozy")
+            neutral = self._vibe("neutral")
+            preset_path.write_text(json.dumps({"animation": "sparkle", "params": {}}))
+            state_path.write_text(json.dumps({
+                "animation": "sparkle", "preset_path": str(preset_path),
+                "vibe": cozy,
+            }))
+            status_path.write_text(json.dumps({"updated_at": 1}))
+
+            def simulate_bad_ack():
+                time.sleep(0.02)
+                status_path.write_text(json.dumps({"updated_at": time.time()}))
+                deadline = time.monotonic() + 0.5
+                while time.monotonic() < deadline:
+                    if control_path.exists():
+                        command = json.loads(control_path.read_text())
+                        status_path.write_text(json.dumps({
+                            "updated_at": time.time(),
+                            "last_command_id": command["command_id"],
+                            "vibe": {"state": neutral},
+                        }))
+                        return
+                    time.sleep(0.01)
+
+            controller = threading.Thread(target=simulate_bad_ack)
+            controller.start()
+            with self.assertRaisesRegex(RuntimeError, "expected vibe"):
+                restore(status_path, control_path, state_path, 0.2)
+            controller.join()
 
 
 if __name__ == "__main__":

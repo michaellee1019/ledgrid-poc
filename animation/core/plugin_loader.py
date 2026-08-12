@@ -16,6 +16,13 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Type
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 from .base import AnimationBase
+from .presentation_contracts import (
+    CANONICAL_VIBE_IDS,
+    VIBE_CAPABILITIES as CANONICAL_VIBE_CAPABILITIES,
+    VIBE_COLOR_POLICIES as CANONICAL_VIBE_COLOR_POLICIES,
+    VIBE_PALETTE_ROLES,
+    TimingAdapter,
+)
 
 
 class AnimationPluginLoader:
@@ -29,6 +36,10 @@ class AnimationPluginLoader:
 
     MANIFEST_FILENAME = "manifest.json"
     DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parents[1] / "plugins"
+    VIBE_IDS = frozenset(CANONICAL_VIBE_IDS)
+    VIBE_CAPABILITIES = CANONICAL_VIBE_CAPABILITIES
+    VIBE_COLOR_POLICIES = CANONICAL_VIBE_COLOR_POLICIES
+    VIBE_SEMANTIC_ROLES = frozenset(VIBE_PALETTE_ROLES)
 
     def __init__(
         self,
@@ -119,7 +130,190 @@ class AnimationPluginLoader:
                     "manifest preview.simulation_fps must be an integer from 1 to 120: "
                     f"{manifest_path}"
                 )
+        AnimationPluginLoader._normalize_vibe_manifest(payload, manifest_path)
         return payload
+
+    @classmethod
+    def _normalize_vibe_manifest(
+        cls, payload: Dict[str, Any], manifest_path: Path
+    ) -> None:
+        """Validate and canonicalize optional Phase 2A presentation metadata."""
+        vibe = payload.get("vibe")
+        if vibe is None:
+            return
+        if not isinstance(vibe, dict):
+            raise ValueError(f"manifest vibe must be an object: {manifest_path}")
+        allowed = {
+            "color_policy", "timing_adapter", "capabilities",
+            "semantic_roles", "legacy_parameter_mappings",
+        }
+        unknown = set(vibe) - allowed
+        if unknown:
+            raise ValueError(
+                f"manifest vibe has unsupported keys {sorted(unknown)}: {manifest_path}"
+            )
+
+        color_policy = vibe.get("color_policy")
+        if color_policy not in cls.VIBE_COLOR_POLICIES:
+            raise ValueError(
+                "manifest vibe.color_policy must be semantic, grade, or preserve: "
+                f"{manifest_path}"
+            )
+        timing_adapter = vibe.get("timing_adapter")
+        try:
+            TimingAdapter(timing_adapter)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "manifest vibe.timing_adapter must be legacy_speed_param, "
+                f"scaled_context, or wall_clock: {manifest_path}"
+            ) from exc
+
+        capabilities = cls._identifier_list(
+            vibe.get("capabilities"), "vibe.capabilities", manifest_path
+        )
+        unsupported = set(capabilities) - cls.VIBE_CAPABILITIES
+        if unsupported:
+            raise ValueError(
+                "manifest vibe.capabilities has unsupported values "
+                f"{sorted(unsupported)}: {manifest_path}"
+            )
+        if timing_adapter == TimingAdapter.WALL_CLOCK.value and "tempo" in capabilities:
+            raise ValueError(
+                f"wall_clock components cannot claim tempo capability: {manifest_path}"
+            )
+        if timing_adapter == TimingAdapter.SCALED_CONTEXT.value and "tempo" not in capabilities:
+            raise ValueError(
+                f"scaled_context components must claim tempo capability: {manifest_path}"
+            )
+
+        semantic_roles = cls._identifier_list(
+            vibe.get("semantic_roles", []), "vibe.semantic_roles", manifest_path
+        )
+        unsupported_roles = set(semantic_roles) - cls.VIBE_SEMANTIC_ROLES
+        if unsupported_roles:
+            raise ValueError(
+                "manifest vibe.semantic_roles has unsupported values "
+                f"{sorted(unsupported_roles)}: {manifest_path}"
+            )
+        if semantic_roles and color_policy != "semantic":
+            raise ValueError(
+                f"only semantic color policy may declare semantic_roles: {manifest_path}"
+            )
+        if color_policy == "semantic" and (
+            "palette_roles" not in capabilities or not semantic_roles
+        ):
+            raise ValueError(
+                "semantic color policy requires palette_roles capability and at least "
+                f"one semantic role: {manifest_path}"
+            )
+
+        mappings = vibe.get("legacy_parameter_mappings", {})
+        if not isinstance(mappings, dict):
+            raise ValueError(
+                f"manifest vibe.legacy_parameter_mappings must be an object: {manifest_path}"
+            )
+        if mappings and "palette_roles" not in capabilities:
+            raise ValueError(
+                "manifest vibe legacy parameter mappings require palette_roles "
+                f"capability: {manifest_path}"
+            )
+        normalized_mappings: Dict[str, Dict[str, str]] = {}
+        for parameter, values in sorted(mappings.items()):
+            if not isinstance(parameter, str) or re.fullmatch(
+                r"[a-z][a-z0-9_]*", parameter
+            ) is None:
+                raise ValueError(
+                    "manifest vibe legacy parameter names must be identifiers: "
+                    f"{manifest_path}"
+                )
+            if not isinstance(values, dict) or not values:
+                raise ValueError(
+                    f"manifest vibe mapping for {parameter!r} must be a non-empty object: "
+                    f"{manifest_path}"
+                )
+            normalized_values: Dict[str, str] = {}
+            for vibe_id, target in sorted(values.items()):
+                if vibe_id not in cls.VIBE_IDS:
+                    raise ValueError(
+                        f"manifest vibe mapping has unknown vibe ID {vibe_id!r}: "
+                        f"{manifest_path}"
+                    )
+                if vibe_id == "neutral":
+                    raise ValueError(
+                        "neutral must preserve the authored parameter and cannot have a "
+                        f"legacy mapping: {manifest_path}"
+                    )
+                if not isinstance(target, str) or not target:
+                    raise ValueError(
+                        f"manifest vibe mapping target must be a non-empty string: {manifest_path}"
+                    )
+                normalized_values[vibe_id] = target
+            normalized_mappings[parameter] = normalized_values
+
+        vibe["capabilities"] = capabilities
+        if semantic_roles or "semantic_roles" in vibe:
+            vibe["semantic_roles"] = semantic_roles
+        if normalized_mappings or "legacy_parameter_mappings" in vibe:
+            vibe["legacy_parameter_mappings"] = normalized_mappings
+
+    @staticmethod
+    def _identifier_list(value: Any, label: str, manifest_path: Path) -> List[str]:
+        if not isinstance(value, list) or any(
+            not isinstance(item, str)
+            or re.fullmatch(r"[a-z][a-z0-9_]*", item) is None
+            for item in value
+        ):
+            raise ValueError(
+                f"manifest {label} must be a list of identifiers: {manifest_path}"
+            )
+        if len(value) != len(set(value)):
+            raise ValueError(
+                f"manifest {label} must not contain duplicates: {manifest_path}"
+            )
+        return sorted(value)
+
+    @staticmethod
+    def _bind_vibe_manifest(
+        animation_class: Type[AnimationBase], manifest: Dict[str, Any]
+    ) -> None:
+        """Bind normalized metadata and validate bridge targets against the schema."""
+        vibe = manifest.get("vibe")
+        if vibe is None:
+            return
+
+        mappings = vibe.get("legacy_parameter_mappings", {})
+        if mappings:
+            class _ManifestController:
+                strip_count = DEFAULT_STRIP_COUNT
+                leds_per_strip = DEFAULT_LEDS_PER_STRIP
+                total_leds = strip_count * leds_per_strip
+                debug = False
+
+            schema = animation_class(_ManifestController()).get_parameter_schema()
+            for parameter, values in mappings.items():
+                definition = schema.get(parameter)
+                if not isinstance(definition, dict):
+                    raise ValueError(
+                        f"manifest vibe maps unknown parameter {parameter!r}"
+                    )
+                options = definition.get("options")
+                if not isinstance(options, (list, tuple)) or not options:
+                    raise ValueError(
+                        f"manifest vibe mapped parameter {parameter!r} must declare options"
+                    )
+                invalid = set(values.values()) - set(options)
+                if invalid:
+                    raise ValueError(
+                        f"manifest vibe mapping for {parameter!r} has unsupported targets "
+                        f"{sorted(invalid)}"
+                    )
+
+        animation_class.TIMING_ADAPTER = TimingAdapter(vibe["timing_adapter"])
+        animation_class.VIBE_CAPABILITIES = frozenset(vibe["capabilities"])
+        animation_class.VIBE_COLOR_POLICY = vibe["color_policy"]
+        animation_class.VIBE_PARAMETER_MAPPINGS = {
+            parameter: dict(values) for parameter, values in mappings.items()
+        }
 
     def scan_plugins(self) -> List[str]:
         """Scan package and external flat plugins in deterministic ID order."""
@@ -223,6 +417,8 @@ class AnimationPluginLoader:
                     f"manifest class {manifest['class']!r} does not match "
                     f"{animation_class.__name__!r} in plugin {plugin_name}"
                 )
+            if manifest:
+                self._bind_vibe_manifest(animation_class, manifest)
 
             self.loaded_plugins[plugin_name] = animation_class
             print(f"✓ Loaded plugin: {plugin_name} -> {animation_class.__name__}")
@@ -285,6 +481,7 @@ class AnimationPluginLoader:
         manifest_info = {
             "emoji": manifest.get("icon", "✨"),
             "is_test": manifest.get("gallery") == "test",
+            "vibe": json.loads(json.dumps(manifest.get("vibe", {}))),
         }
         try:
             info = plugin_class(_InfoController()).get_info()

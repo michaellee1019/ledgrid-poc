@@ -8,9 +8,12 @@ import colorsys
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Tuple, Dict, Any, Optional, Union
+from types import MappingProxyType
+from typing import List, Tuple, Dict, Any, Optional, Union, Mapping
 
 import numpy as np
+
+from animation.core.presentation_contracts import AnimationRuntimeContext, TimingAdapter
 
 from animation.core.plant_awareness import (
     FRAMEWORK_VISUAL_MODIFIERS, PlantMaskCache, PlantMaskGeometry,
@@ -40,6 +43,10 @@ class AnimationBase(ABC):
 
     PLANT_MODIFIER_SUPPORT = frozenset()
     INTERACTION_TYPES = frozenset()
+    TIMING_ADAPTER = TimingAdapter.LEGACY_SPEED_PARAM
+    VIBE_CAPABILITIES = frozenset()
+    VIBE_COLOR_POLICY = "preserve"
+    VIBE_PARAMETER_MAPPINGS: Mapping[str, Any] = MappingProxyType({})
     
     def __init__(self, controller, config: Dict[str, Any] = None):
         """
@@ -63,6 +70,8 @@ class AnimationBase(ABC):
         self._framework_modifier_buffer_index = 0
         self._framework_modifier_geometry: Optional[int] = None
         self._framework_modifier_cached_frame: Optional[np.ndarray] = None
+        self._presentation_context: Optional[AnimationRuntimeContext] = None
+        self._presentation_lock = threading.RLock()
         
         # Animation metadata
         self.name = getattr(self, 'ANIMATION_NAME', self.__class__.__name__)
@@ -84,8 +93,102 @@ class AnimationBase(ABC):
         }
         
         # Merge default params with config
-        self.params = {**self.default_params, **self.config}
+        self._authored_params = {**self.default_params, **self.config}
+        self.params = self._authored_params
         self._plant_modifier_state = self._resolve_plant_modifier_state()
+
+    @property
+    def presentation_context(self) -> Optional[AnimationRuntimeContext]:
+        """Current immutable runtime context, or ``None`` for direct/headless use."""
+        return self._presentation_context
+
+    @property
+    def authored_params(self) -> Mapping[str, Any]:
+        """Read-only view of parameters selected by the preset/operator."""
+        with self._presentation_lock:
+            self._sync_authored_params()
+            return MappingProxyType(self._authored_params)
+
+    def get_authored_parameter(self, name: str, default: Any = None) -> Any:
+        """Read one authored value atomically without copying the parameter set."""
+        with self._presentation_lock:
+            self._sync_authored_params()
+            return self._authored_params.get(name, default)
+
+    def authored_params_snapshot(self) -> Dict[str, Any]:
+        """Return a stable authored snapshot for status and persistence."""
+        with self._presentation_lock:
+            self._sync_authored_params()
+            return dict(self._authored_params)
+
+    @property
+    def effective_params(self) -> Mapping[str, Any]:
+        """Read-only parameters visible to the current render invocation."""
+        with self._presentation_lock:
+            self._sync_authored_params()
+            return MappingProxyType(dict(self.params))
+
+    def _sync_authored_params(self) -> None:
+        """Adopt subclass post-super initialization before managed rendering."""
+        if self._presentation_context is None and self.params is not self._authored_params:
+            self._authored_params = dict(self.params)
+            self.params = self._authored_params
+
+    def set_presentation_context(self, context: AnimationRuntimeContext) -> None:
+        """Install presentation inputs without entering parameter lifecycle.
+
+        Hooks run only when presentation identity changes, never merely because
+        frame time or frame index advanced.
+        """
+        if not isinstance(context, AnimationRuntimeContext):
+            raise TypeError("presentation context must be an AnimationRuntimeContext")
+        with self._presentation_lock:
+            self._sync_authored_params()
+            old = self._presentation_context
+            self._presentation_context = context
+            if old is None or old.presentation_identity != context.presentation_identity:
+                self.on_presentation_context_changed(old, context)
+
+    def on_presentation_context_changed(
+        self,
+        old: Optional[AnimationRuntimeContext],
+        new: AnimationRuntimeContext,
+    ) -> None:
+        """Presentation-cache invalidation hook; semantic state must remain intact."""
+
+    def generate_frame_with_context(
+        self, context: AnimationRuntimeContext
+    ) -> FrameOutput:
+        """Run one frame through the declared compatibility timing adapter."""
+        with self._presentation_lock:
+            self._sync_authored_params()
+            self.set_presentation_context(context)
+            adapter = TimingAdapter(self.TIMING_ADAPTER)
+            visible_elapsed = context.unscaled_elapsed
+            effective = self._authored_params
+            if adapter is TimingAdapter.LEGACY_SPEED_PARAM:
+                effective = dict(self._authored_params)
+                if "speed" in effective:
+                    effective["speed"] = context.effective_time_scale
+            elif adapter is TimingAdapter.SCALED_CONTEXT:
+                visible_elapsed = context.scaled_elapsed
+                effective = dict(self._authored_params)
+                if "speed" in effective:
+                    effective["speed"] = 1.0
+
+            if context.vibe_id != "neutral":
+                for parameter, values in self.VIBE_PARAMETER_MAPPINGS.items():
+                    mapped = values.get(context.vibe_id)
+                    if mapped is not None:
+                        if effective is self._authored_params:
+                            effective = dict(self._authored_params)
+                        effective[parameter] = mapped
+
+            self.params = effective
+            try:
+                return self.generate_frame(visible_elapsed, context.frame_index)
+            finally:
+                self.params = self._authored_params
     
     @abstractmethod
     def generate_frame(self, time_elapsed: float, frame_count: int) -> FrameOutput:
@@ -143,12 +246,16 @@ class AnimationBase(ABC):
     
     def update_parameters(self, new_params: Dict[str, Any]):
         """Update animation parameters in real-time"""
+        self._sync_authored_params()
         if 'plant_modifiers' in new_params:
             new_params = dict(new_params)
             new_params['plant_modifiers'] = PlantModifierState.from_payload(
                 new_params['plant_modifiers']
             ).to_dict()
-        self.params.update(new_params)
+        with self._presentation_lock:
+            self._authored_params.update(new_params)
+            if self.params is not self._authored_params:
+                self.params.update(new_params)
         if {'plant_aware', 'plant_modifiers'} & new_params.keys():
             self._plant_modifier_state = self._resolve_plant_modifier_state()
             self._framework_modifier_cached_frame = None
@@ -304,7 +411,9 @@ class AnimationBase(ABC):
             'author': self.author,
             'version': self.version,
             'parameters': self.get_parameter_schema(),
-            'current_params': self.params,
+            # Status/persistence always expose authored values, even if a render
+            # thread is temporarily using an ephemeral effective parameter view.
+            'current_params': self.authored_params_snapshot(),
             'plant_modifier_support': list(supported),
             'interaction_types': sorted(self.INTERACTION_TYPES),
             'unsupported_plant_modifiers': [

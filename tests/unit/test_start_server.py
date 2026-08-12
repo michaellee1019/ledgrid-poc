@@ -70,6 +70,10 @@ class _Manager:
         self.calls.append(("modifiers", value))
         return {"version": 1, "active": value["active"], "strengths": value.get("strengths", {})}
 
+    def set_vibe(self, value):
+        self.calls.append(("vibe", value))
+        return value if isinstance(value, dict) else {"vibe_id": value}
+
     def clear_painter_frame(self):
         self.calls.append(("clear",))
 
@@ -98,6 +102,7 @@ class StartServerTests(unittest.TestCase):
         self.assertTrue(handle_command(manager, "set_plant_modifiers", {
             "plant_modifiers": {"active": ["shadow"], "strengths": {"shadow": 0.5}}
         }))
+        self.assertTrue(handle_command(manager, "set_vibe", {"vibe_id": "cozy"}))
 
         self.assertEqual(manager.calls, [
             ("start", "solid", {"red": 4}, None),
@@ -108,6 +113,7 @@ class StartServerTests(unittest.TestCase):
             ("speed", 0.45),
             ("plant", False),
             ("modifiers", {"active": ["shadow"], "strengths": {"shadow": 0.5}}),
+            ("vibe", "cozy"),
         ])
 
     def test_failed_or_nonpersistent_commands_return_false(self):
@@ -118,6 +124,7 @@ class StartServerTests(unittest.TestCase):
         self.assertFalse(handle_command(manager, "set_animation_speed_scale", {"animation_speed_scale": "bad"}))
         self.assertFalse(handle_command(manager, "set_plant_aware", {"plant_aware": "yes"}))
         self.assertFalse(handle_command(manager, "set_plant_modifiers", {"plant_modifiers": []}))
+        self.assertFalse(handle_command(manager, "set_vibe", {"vibe": None}))
         self.assertFalse(handle_command(manager, "stop", {}))
         self.assertFalse(handle_command(manager, "painter_clear", {}))
         self.assertFalse(handle_command(manager, "unknown", {}))

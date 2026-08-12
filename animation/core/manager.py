@@ -21,6 +21,13 @@ import numpy as np
 from animation.core import AnimationBase, RenderedFrame, StatefulAnimationBase, AnimationPluginLoader
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.plant_awareness import PlantModifierState
+from animation.core.presentation_contracts import (
+    AnimationRuntimeContext,
+    ResolvedVibe,
+    VibeState,
+    list_vibe_profiles,
+    resolve_vibe,
+)
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import encode_frame_data, FRAME_ENCODING_NAME
 
@@ -109,8 +116,10 @@ class AnimationManager:
                  animation_speed_scale: float = DEFAULT_ANIMATION_SPEED_SCALE,
                  plant_aware: bool = DEFAULT_PLANT_AWARE,
                  plant_modifiers: Optional[Dict[str, Any]] = None,
+                 vibe: Optional[Any] = None,
                  default_animation: Optional[str] = None,
                  default_animation_config: Optional[Dict[str, Any]] = None,
+                 default_animation_preset: Optional[Dict[str, Any]] = None,
                  auto_start: bool = True):
         """
         Initialize animation manager
@@ -118,7 +127,7 @@ class AnimationManager:
         Args:
             controller: LED controller instance
             plugins_dir: Directory containing animation plugins
-            animation_speed_scale: Multiplier applied to each animation's speed parameter at start
+            animation_speed_scale: Operator tempo multiplier applied at render time
             plant_aware: Global plant-aware state applied to every animation
             default_animation: Animation to auto-start on init (None = use DEFAULT_ANIMATION)
             default_animation_config: Parameters to apply to the default animation
@@ -130,6 +139,7 @@ class AnimationManager:
         )
         self._default_animation = default_animation or self.DEFAULT_ANIMATION
         self._default_animation_config = default_animation_config or {}
+        self._default_animation_preset = default_animation_preset
         
         # Animation state
         self.current_animation: Optional[AnimationBase] = None
@@ -148,7 +158,15 @@ class AnimationManager:
         self.frames_presented = 0
         self.unchanged_frames_skipped = 0
         self.start_time = 0.0
-        self.animation_speed_scale = animation_speed_scale
+        self._presentation_state_lock = threading.RLock()
+        self.animation_speed_scale = self._validate_tempo_scale(animation_speed_scale)
+        self._resolved_vibe, self._vibe_diagnostic = self._resolve_initial_vibe(vibe)
+        self._presentation_revision = 0
+        self._scaled_elapsed = 0.0
+        self._last_unscaled_elapsed = 0.0
+        self._scene_epoch = time.time_ns() & ((1 << 64) - 1)
+        self._presentation_refresh_pending = True
+        self._live_presentation_state = self._empty_presentation_state()
         self.plant_modifier_state = (
             PlantModifierState.from_payload(plant_modifiers)
             if plant_modifiers is not None
@@ -193,7 +211,11 @@ class AnimationManager:
         # Load all plugins on startup and auto-start the default animation
         self.refresh_plugins()
         if auto_start and self._default_animation:
-            if self.start_animation(self._default_animation, self._default_animation_config):
+            if self.start_animation(
+                self._default_animation,
+                self._default_animation_config,
+                preset=self._default_animation_preset,
+            ):
                 print(f"▶️  Auto-started default animation: {self._default_animation}")
             else:
                 print(f"⚠️  Could not auto-start default animation: {self._default_animation}")
@@ -209,45 +231,315 @@ class AnimationManager:
             traceback.print_exc()
             return {}
 
-    def _apply_speed_scale(self):
-        """Apply global speed scaling to the current animation if supported"""
-        if not self.current_animation:
-            return
-        if not hasattr(self.current_animation, "params"):
-            return
-        if 'speed' not in self.current_animation.params:
-            return
-        base_speed = self.current_animation.params['speed']
-        scaled_speed = base_speed * self.animation_speed_scale
-        # Prevent negative or zero speeds
-        if scaled_speed <= 0:
-            scaled_speed = base_speed
-        self.current_animation.update_parameters({'speed': scaled_speed})
-
     def set_animation_speed_scale(self, speed_scale: float) -> float:
-        """Apply a live global animation speed scalar.
+        """Update operator tempo without mutating authored animation state."""
+        requested = self._validate_tempo_scale(speed_scale)
+        changed = False
+        with self._presentation_state_guard():
+            if requested != self.animation_speed_scale:
+                self.animation_speed_scale = requested
+                self._presentation_revision = (
+                    getattr(self, "_presentation_revision", 0) + 1
+                )
+                self._presentation_refresh_pending = True
+                changed = True
+        if changed:
+            self._refresh_active_presentation_context()
+        return self.animation_speed_scale
 
-        The active animation already contains the previously scaled value, so
-        adjust it by the ratio between the new and old scales. Preset-authored
-        speed values therefore remain independent of the dashboard tempo knob.
-        """
-        requested = float(speed_scale)
+    def _presentation_state_guard(self) -> threading.RLock:
+        """Return the manager presentation-state lock, including old test doubles."""
+        lock = getattr(self, "_presentation_state_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._presentation_state_lock = lock
+        return lock
+
+    @staticmethod
+    def _validate_tempo_scale(value: Any) -> float:
+        requested = float(value)
         if not math.isfinite(requested) or requested <= 0:
             raise ValueError("animation speed scale must be a positive finite number")
+        return requested
 
-        previous = self.animation_speed_scale
-        self.animation_speed_scale = requested
-        if (
-            self.current_animation
-            and hasattr(self.current_animation, "params")
-            and 'speed' in self.current_animation.params
-            and previous > 0
-        ):
-            current_speed = self.current_animation.params['speed']
-            self.current_animation.update_parameters({
-                'speed': current_speed * (requested / previous)
-            })
-        return self.animation_speed_scale
+    @staticmethod
+    def _canonical_vibe(payload: Any, *, revision: Optional[int] = None) -> ResolvedVibe:
+        if payload is None:
+            return resolve_vibe("neutral", revision=0 if revision is None else revision)
+        if isinstance(payload, str):
+            return resolve_vibe(payload, revision=0 if revision is None else revision)
+        if not isinstance(payload, dict):
+            raise TypeError("vibe must be a stable ID or versioned state")
+        state = VibeState.from_payload(payload.get("state", payload))
+        resolved = resolve_vibe(
+            state.vibe_id,
+            revision=state.revision if revision is None else revision,
+            profile_version=state.profile_version,
+        )
+        if state.resolved_profile_digest != resolved.state.resolved_profile_digest:
+            raise ValueError("persisted vibe profile digest does not match the registry")
+        return resolved
+
+    @classmethod
+    def _resolve_initial_vibe(cls, payload: Any) -> tuple[ResolvedVibe, Optional[Dict[str, str]]]:
+        if payload is None:
+            return resolve_vibe("neutral"), None
+        try:
+            return cls._canonical_vibe(payload), None
+        except (KeyError, TypeError, ValueError) as exc:
+            revision = 0
+            raw = payload.get("state", payload) if isinstance(payload, dict) else {}
+            raw_revision = raw.get("revision") if isinstance(raw, dict) else None
+            if (
+                isinstance(raw_revision, int)
+                and not isinstance(raw_revision, bool)
+                and 0 <= raw_revision <= 2**64 - 1
+            ):
+                revision = raw_revision
+            return resolve_vibe("neutral", revision=revision), {
+                "code": "vibe_profile_fallback",
+                "message": f"Saved vibe was incompatible; using neutral: {exc}",
+            }
+
+    def get_vibe_state(self) -> Dict[str, Any]:
+        with self._presentation_state_guard():
+            return self._resolved_vibe.state.to_dict()
+
+    def get_vibe_status(self) -> Dict[str, Any]:
+        with self._presentation_state_guard():
+            status: Dict[str, Any] = {
+                "state": self._resolved_vibe.state.to_dict(),
+                "profile": self._resolved_vibe.profile.to_dict(),
+            }
+            if self._vibe_diagnostic:
+                status["diagnostic"] = dict(self._vibe_diagnostic)
+            return status
+
+    @staticmethod
+    def list_vibe_profiles() -> List[Dict[str, Any]]:
+        return [profile.to_dict() for profile in list_vibe_profiles()]
+
+    def set_vibe(self, payload: Any) -> Dict[str, Any]:
+        if isinstance(payload, dict):
+            requested, diagnostic = self._resolve_initial_vibe(payload)
+        else:
+            requested = self._canonical_vibe(payload)
+            diagnostic = None
+        presentation_changed = False
+        with self._presentation_state_guard():
+            current = self._resolved_vibe
+            same_profile = (
+                requested.state.vibe_id == current.state.vibe_id
+                and requested.state.profile_version == current.state.profile_version
+                and requested.state.resolved_profile_digest
+                == current.state.resolved_profile_digest
+            )
+            if not same_profile:
+                requested = resolve_vibe(
+                    requested.state.vibe_id,
+                    revision=current.state.revision + 1,
+                    profile_version=requested.state.profile_version,
+                )
+                self._resolved_vibe = requested
+                self._presentation_revision += 1
+                self._presentation_refresh_pending = True
+                presentation_changed = True
+            elif diagnostic and requested.state.revision != current.state.revision:
+                # Preserve the saved revision when an incompatible persisted
+                # profile resolves to the already-active neutral fallback.
+                # Valid live updates remain manager-owned and idempotent.
+                self._resolved_vibe = requested
+            self._vibe_diagnostic = diagnostic
+        if presentation_changed:
+            self._refresh_active_presentation_context()
+        return self.get_vibe_status()
+
+    @staticmethod
+    def _animation_authored_speed(animation: AnimationBase) -> float:
+        try:
+            value = float(animation.get_authored_parameter("speed", 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+        return value if math.isfinite(value) and value > 0 else 1.0
+
+    @staticmethod
+    def _component_tempo(profile, animation: AnimationBase) -> float:
+        return profile.tempo_scale if "tempo" in animation.VIBE_CAPABILITIES else 1.0
+
+    def _runtime_context(
+        self,
+        animation: AnimationBase,
+        *,
+        unscaled_elapsed: float,
+        scaled_elapsed: float,
+        frame_index: int,
+        resolved_vibe: Optional[ResolvedVibe] = None,
+        operator_tempo_scale: Optional[float] = None,
+    ) -> AnimationRuntimeContext:
+        if resolved_vibe is None or operator_tempo_scale is None:
+            with self._presentation_state_guard():
+                resolved = resolved_vibe or self._resolved_vibe
+                operator_tempo = (
+                    self.animation_speed_scale
+                    if operator_tempo_scale is None else operator_tempo_scale
+                )
+        else:
+            resolved = resolved_vibe
+            operator_tempo = operator_tempo_scale
+        authored_speed = self._animation_authored_speed(animation)
+        vibe_tempo = self._component_tempo(resolved.profile, animation)
+        return AnimationRuntimeContext(
+            wall_time=time.time(),
+            unscaled_elapsed=max(0.0, float(unscaled_elapsed)),
+            scaled_elapsed=max(0.0, float(scaled_elapsed)),
+            frame_index=max(0, int(frame_index)),
+            scene_epoch=self._scene_epoch,
+            global_width=int(self.controller.strip_count),
+            height=int(self.controller.leds_per_strip),
+            local_strip_offset=0,
+            local_width=int(self.controller.strip_count),
+            vibe_id=resolved.state.vibe_id,
+            vibe_profile_version=resolved.state.profile_version,
+            resolved_profile_digest=resolved.state.resolved_profile_digest,
+            palette_roles=resolved.profile.palette_roles,
+            capability_values=resolved.profile.capability_values,
+            tempo_scale=vibe_tempo,
+            luminance_scale=(
+                resolved.profile.luminance_scale
+                if "luminance" in animation.VIBE_CAPABILITIES else 1.0
+            ),
+            operator_tempo_scale=operator_tempo,
+            authored_speed=authored_speed,
+            effective_time_scale=(
+                authored_speed * vibe_tempo * operator_tempo
+            ),
+            installation_profile_view={},
+            plant_modifiers=self.plant_modifier_state.to_dict(),
+        )
+
+    def _advance_runtime_context(
+        self,
+        animation: AnimationBase,
+        unscaled_elapsed: float,
+        frame_index: int,
+        *,
+        resolved_vibe: Optional[ResolvedVibe] = None,
+        operator_tempo_scale: Optional[float] = None,
+    ) -> AnimationRuntimeContext:
+        if resolved_vibe is None or operator_tempo_scale is None:
+            with self._presentation_state_guard():
+                resolved = resolved_vibe or self._resolved_vibe
+                operator_tempo = (
+                    self.animation_speed_scale
+                    if operator_tempo_scale is None else operator_tempo_scale
+                )
+        else:
+            resolved = resolved_vibe
+            operator_tempo = operator_tempo_scale
+        unscaled = max(0.0, float(unscaled_elapsed))
+        delta = max(0.0, unscaled - self._last_unscaled_elapsed)
+        authored_speed = self._animation_authored_speed(animation)
+        vibe_tempo = self._component_tempo(resolved.profile, animation)
+        self._scaled_elapsed += (
+            delta * authored_speed * vibe_tempo * operator_tempo
+        )
+        self._last_unscaled_elapsed = unscaled
+        return self._runtime_context(
+            animation,
+            unscaled_elapsed=unscaled,
+            scaled_elapsed=self._scaled_elapsed,
+            frame_index=frame_index,
+            resolved_vibe=resolved,
+            operator_tempo_scale=operator_tempo,
+        )
+
+    def _refresh_active_presentation_context(self) -> None:
+        animation = self.current_animation
+        if not isinstance(animation, AnimationBase):
+            return
+        with self._presentation_state_guard():
+            resolved = self._resolved_vibe
+            operator_tempo = self.animation_speed_scale
+        context = self._runtime_context(
+            animation,
+            unscaled_elapsed=self._last_unscaled_elapsed,
+            scaled_elapsed=self._scaled_elapsed,
+            frame_index=self.frame_count,
+            resolved_vibe=resolved,
+            operator_tempo_scale=operator_tempo,
+        )
+        animation.set_presentation_context(context)
+
+    @staticmethod
+    def _empty_presentation_state() -> Dict[str, Any]:
+        return {
+            "buffers": [], "index": 0, "geometry": None,
+            "cached": None, "identity": None,
+        }
+
+    @staticmethod
+    def _apply_vibe_presentation(
+        animation: AnimationBase,
+        pixels: Any,
+        *,
+        profile,
+        changed: bool,
+        state: Dict[str, Any],
+        force_refresh: bool = False,
+    ) -> tuple[Any, bool]:
+        capabilities = animation.VIBE_CAPABILITIES
+        policy = animation.VIBE_COLOR_POLICY
+        grade = (
+            profile.vibe_id != "neutral"
+            and policy == "grade"
+            and "palette_roles" in capabilities
+        )
+        luminance = profile.luminance_scale if "luminance" in capabilities else 1.0
+        identity = (
+            profile.resolved_profile_digest, policy, tuple(sorted(capabilities))
+        )
+        refresh = force_refresh or state.get("identity") != identity
+        state["identity"] = identity
+
+        if not grade and luminance == 1.0:
+            state["cached"] = None
+            return pixels, changed or refresh
+        if not changed and not refresh and state.get("cached") is not None:
+            return state["cached"], False
+
+        array = np.asarray(pixels, dtype=np.uint8)
+        if array.ndim != 2 or array.shape[1] != 3:
+            raise ValueError("vibe presentation requires an RGB frame")
+        count = array.shape[0]
+        if state.get("geometry") != count:
+            state["buffers"] = [
+                np.empty((count, 3), dtype=np.uint8) for _ in range(2)
+            ]
+            state["index"] = 0
+            state["geometry"] = count
+        output = state["buffers"][state["index"]]
+        state["index"] = (state["index"] + 1) % len(state["buffers"])
+
+        working = array.astype(np.float32)
+        if grade:
+            chroma = float(profile.capability_values.get("chroma_scale", 1.0))
+            luma = (
+                working[:, 0] * 0.299
+                + working[:, 1] * 0.587
+                + working[:, 2] * 0.114
+            )[:, None]
+            working = luma + (working - luma) * chroma
+            energy = float(profile.capability_values.get("energy", 0.5))
+            tint_weight = min(0.12, max(0.0, abs(energy - 0.5) * 0.18))
+            if tint_weight:
+                tint = np.asarray(profile.palette_roles["primary"], dtype=np.float32)
+                working = working * (1.0 - tint_weight) + tint * tint_weight
+        if luminance != 1.0:
+            working *= luminance
+        np.clip(working, 0.0, 255.0, out=working)
+        np.copyto(output, np.rint(working), casting="unsafe")
+        state["cached"] = output
+        return output, changed or refresh
 
     @staticmethod
     def validate_output_brightness(brightness: Any) -> int:
@@ -457,8 +749,6 @@ class AnimationManager:
             print(f"🔍 Animation instance created: {type(self.current_animation)}")
             print(f"🔍 Is StatefulAnimationBase? {isinstance(self.current_animation, StatefulAnimationBase)}")
 
-            self._apply_speed_scale()
-
             # Ensure controller is configured before frames start flowing
             if hasattr(self.controller, "configure"):
                 try:
@@ -478,6 +768,12 @@ class AnimationManager:
                 self.perf_samples.clear()
                 self._last_perf_sample = {}
             self.start_time = time.perf_counter()
+            self._scaled_elapsed = 0.0
+            self._last_unscaled_elapsed = 0.0
+            self._scene_epoch = time.time_ns() & ((1 << 64) - 1)
+            self._presentation_refresh_pending = True
+            self._live_presentation_state = self._empty_presentation_state()
+            self._refresh_active_presentation_context()
 
             # Check if this is a stateful animation
             if isinstance(self.current_animation, StatefulAnimationBase):
@@ -758,6 +1054,7 @@ class AnimationManager:
             'uptime': (time.perf_counter() - self.start_time) if self.is_running else 0,
             'target_fps': self.target_fps,
             'animation_speed_scale': self.animation_speed_scale,
+            'vibe': self.get_vibe_status(),
             'plant_aware': self.plant_aware,
             'plant_modifiers': self.plant_modifier_state.to_dict(),
             'actual_fps': self._calculate_fps(),
@@ -959,23 +1256,57 @@ class AnimationManager:
                 'started_at': now,
                 'last_access': now,
                 'frame_count': 0,
+                'last_unscaled_elapsed': 0.0,
+                'scaled_elapsed': 0.0,
+                'presentation_state': self._empty_presentation_state(),
             }
             self._preview_session = session
         session['last_access'] = now
         return session
 
     def _render_preview(
-        self, animation_name: str, params: Optional[Dict[str, Any]] = None
+        self,
+        animation_name: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        vibe: Optional[Any] = None,
     ) -> Dict[str, Any]:
         with self._preview_lock:
             session = self._preview_session_for(animation_name, params)
             animation = session['animation']
             elapsed = max(0.0, time.monotonic() - session['started_at'])
-            rendered = animation.generate_frame(elapsed, session['frame_count'])
+            with self._presentation_state_guard():
+                resolved = (
+                    self._resolved_vibe if vibe is None else self._canonical_vibe(vibe)
+                )
+                operator_tempo = self.animation_speed_scale
+            delta = max(0.0, elapsed - float(session['last_unscaled_elapsed']))
+            authored_speed = self._animation_authored_speed(animation)
+            vibe_tempo = self._component_tempo(resolved.profile, animation)
+            session['scaled_elapsed'] += (
+                delta * authored_speed * vibe_tempo * operator_tempo
+            )
+            session['last_unscaled_elapsed'] = elapsed
+            context = self._runtime_context(
+                animation,
+                unscaled_elapsed=elapsed,
+                scaled_elapsed=session['scaled_elapsed'],
+                frame_index=session['frame_count'],
+                resolved_vibe=resolved,
+                operator_tempo_scale=operator_tempo,
+            )
+            rendered = animation.generate_frame_with_context(context)
             changed = rendered.changed if isinstance(rendered, RenderedFrame) else True
             frame_data = self._normalize_frame(rendered)
             frame_data = animation.apply_framework_plant_modifiers(
                 frame_data, changed=changed
+            )
+            frame_data, changed = self._apply_vibe_presentation(
+                animation,
+                frame_data,
+                profile=resolved.profile,
+                changed=changed,
+                state=session['presentation_state'],
             )
             if isinstance(frame_data, np.ndarray):
                 frame_data = frame_data.tolist()
@@ -994,17 +1325,28 @@ class AnimationManager:
                 'timestamp': time.time(),
                 'preview': True,
                 'params': dict(params or {}),
+                'changed': changed,
+                'vibe': {
+                    'state': resolved.state.to_dict(),
+                    'profile': resolved.profile.to_dict(),
+                },
             }
 
-    def get_animation_preview(self, animation_name: str) -> Dict[str, Any]:
+    def get_animation_preview(
+        self, animation_name: str, *, vibe: Optional[Any] = None
+    ) -> Dict[str, Any]:
         """Advance and return the process-local dashboard preview session."""
-        return self._render_preview(animation_name)
+        return self._render_preview(animation_name, vibe=vibe)
 
     def get_animation_preview_with_params(
-        self, animation_name: str, params: Dict[str, Any]
+        self,
+        animation_name: str,
+        params: Dict[str, Any],
+        *,
+        vibe: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """Advance a preview, resetting only when authored parameters change."""
-        return self._render_preview(animation_name, params)
+        return self._render_preview(animation_name, params, vibe=vibe)
 
     def dispatch_preview_interaction(
         self,
@@ -1043,7 +1385,39 @@ class AnimationManager:
 
                     time_elapsed = loop_start - self.start_time
                     gen_start = time.perf_counter()
-                    rendered = self.current_animation.generate_frame(time_elapsed, self.frame_count)
+                    if isinstance(self.current_animation, AnimationBase):
+                        if not hasattr(self, '_resolved_vibe'):
+                            self._resolved_vibe = resolve_vibe('neutral')
+                            self._vibe_diagnostic = None
+                            self.animation_speed_scale = getattr(
+                                self, 'animation_speed_scale', 1.0
+                            )
+                            self.plant_modifier_state = getattr(
+                                self, 'plant_modifier_state', PlantModifierState.empty()
+                            )
+                            self._scaled_elapsed = 0.0
+                            self._last_unscaled_elapsed = 0.0
+                            self._scene_epoch = 0
+                            self._presentation_revision = 0
+                        with self._presentation_state_guard():
+                            resolved_vibe = self._resolved_vibe
+                            operator_tempo = self.animation_speed_scale
+                            presentation_revision = self._presentation_revision
+                            force_refresh = bool(getattr(
+                                self, '_presentation_refresh_pending', False
+                            ))
+                        context = self._advance_runtime_context(
+                            self.current_animation,
+                            time_elapsed,
+                            self.frame_count,
+                            resolved_vibe=resolved_vibe,
+                            operator_tempo_scale=operator_tempo,
+                        )
+                        rendered = self.current_animation.generate_frame_with_context(context)
+                    else:
+                        rendered = self.current_animation.generate_frame(
+                            time_elapsed, self.frame_count
+                        )
                     changed = rendered.changed if isinstance(rendered, RenderedFrame) else True
                     dirty_ranges = rendered.dirty_ranges if isinstance(rendered, RenderedFrame) else None
                     frame = self._normalize_frame(rendered)
@@ -1069,6 +1443,23 @@ class AnimationManager:
                         # neighboring plant-region pixel, so plugin dirty ranges
                         # are no longer a complete presentation description.
                         dirty_ranges = None
+                    if isinstance(self.current_animation, AnimationBase):
+                        source_changed = changed
+                        if not hasattr(self, '_live_presentation_state'):
+                            self._live_presentation_state = self._empty_presentation_state()
+                        frame, changed = self._apply_vibe_presentation(
+                            self.current_animation,
+                            frame,
+                            profile=resolved_vibe.profile,
+                            changed=changed,
+                            state=self._live_presentation_state,
+                            force_refresh=force_refresh,
+                        )
+                        with self._presentation_state_guard():
+                            if self._presentation_revision == presentation_revision:
+                                self._presentation_refresh_pending = False
+                        if changed and not source_changed:
+                            dirty_ranges = None
                     generate_duration = time.perf_counter() - gen_start
 
                     with self.frame_data_lock:
@@ -1100,6 +1491,16 @@ class AnimationManager:
                     self.frame_count += 1
                     self._update_fps_tracking(loop_start)
 
+                except RuntimeError as e:
+                    if str(e).startswith("cannot schedule new futures after"):
+                        # A daemon render loop can overlap the last instant of
+                        # interpreter shutdown in short-lived tools/tests.
+                        # Exit quietly once the futures runtime is unavailable.
+                        self.is_running = False
+                        break
+                    print(f"✗ Animation loop error: {e}")
+                    traceback.print_exc()
+                    time.sleep(0.05)
                 except Exception as e:
                     print(f"✗ Animation loop error: {e}")
                     traceback.print_exc()

@@ -189,7 +189,7 @@
                                 </div>
                                 <div class="row g-2">
                                     <div class="col-md-7"><input class="form-control" id="controlPresetName" maxlength="64" placeholder="Preset name, e.g. Sunday Aurora"></div>
-                                    <div class="col-md-5"><input class="form-control" id="controlPresetCategory" maxlength="40" placeholder="Vibe or category"></div>
+                                    <div class="col-md-5"><input class="form-control" id="controlPresetCategory" maxlength="40" placeholder="Category, e.g. Ambient"></div>
                                     <div class="col-12"><textarea class="form-control" id="controlPresetDescription" rows="2" maxlength="180" placeholder="What makes this version special?"></textarea></div>
                                     <div class="col-12 d-grid d-md-flex justify-content-md-end"><button class="btn btn-success save-preset-button px-4" type="button" onclick="saveControlPreset()"><i class="fas fa-sparkles me-1"></i> Save this look</button></div>
                                 </div>
@@ -247,6 +247,20 @@
 
             <div class="d-none d-xl-block mb-3">
                 {{ speed_control() }}
+            </div>
+
+            <div class="card vibe-card mb-3" aria-labelledby="globalVibeLabel">
+                <div class="card-body p-3">
+                    <label class="text-uppercase fw-bold small opacity-75" id="globalVibeLabel" for="globalVibeSelect">Global vibe</label>
+                    <div class="small opacity-75 mb-2">Palette, energy, and luminance stay independent from the selected preset.</div>
+                    <select class="form-select vibe-select" id="globalVibeSelect" onchange="setGlobalVibe(this.value)">
+                        {% for profile in vibe_profiles %}
+                        {% set profile_id = profile.id or profile.vibe_id %}
+                        <option value="{{ profile_id }}">{{ (profile.name or profile_id)|replace('_', ' ')|title }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="small mt-2" id="vibeDiagnostic" role="status" hidden></div>
+                </div>
             </div>
 
             <div class="card plant-aware-card mb-3">

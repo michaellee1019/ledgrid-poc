@@ -265,6 +265,9 @@ class AnimationPreviewTests(unittest.TestCase):
             def stop_animation(self):
                 self.stopped = True
 
+            def set_vibe(self, vibe):
+                self.vibe = vibe
+
         manager = _Manager()
         channel = LocalControlChannel(manager)
         status = channel.read_status()
@@ -272,6 +275,8 @@ class AnimationPreviewTests(unittest.TestCase):
         self.assertEqual(status["current_animation"], "rainbow")
         channel.send_command("stop")
         self.assertTrue(manager.stopped)
+        channel.send_command("set_vibe", vibe_id="quiet")
+        self.assertEqual(manager.vibe, "quiet")
 
 
 if __name__ == "__main__":

@@ -116,7 +116,7 @@ class ExternalAnimation(AnimationBase):
                 self.assertEqual(pixels.shape, (DEFAULT_STRIP_COUNT * 138, 3))
                 self.assertEqual(pixels.dtype, np.uint8)
 
-    def test_live_global_speed_scale_preserves_relative_animation_speed(self):
+    def test_live_global_speed_scale_preserves_authored_animation_speed(self):
         class _Animation:
             def __init__(self):
                 self.params = {'speed': 0.4}
@@ -131,7 +131,7 @@ class ExternalAnimation(AnimationBase):
         applied = manager.set_animation_speed_scale(0.3)
 
         self.assertAlmostEqual(applied, 0.3)
-        self.assertAlmostEqual(manager.current_animation.params['speed'], 0.6)
+        self.assertAlmostEqual(manager.current_animation.params['speed'], 0.4)
 
     def test_live_global_speed_scale_rejects_non_finite_values(self):
         manager = AnimationManager.__new__(AnimationManager)
@@ -335,6 +335,7 @@ class ExternalAnimation(AnimationBase):
             manager.current_animation.plant_modifier_state().active, ("shadow",)
         )
 
+        running_animation = manager.current_animation
         frame_count = manager.frame_count
         manager.update_animation_parameters({
             "plant_modifiers": {"active": ["refract"]}, "brightness": 0.4,
@@ -342,7 +343,8 @@ class ExternalAnimation(AnimationBase):
         self.assertEqual(
             manager.current_animation.plant_modifier_state().active, ("shadow",)
         )
-        self.assertEqual(manager.frame_count, frame_count)
+        self.assertIs(manager.current_animation, running_animation)
+        self.assertGreaterEqual(manager.frame_count, frame_count)
         status = manager.get_current_status()
         self.assertEqual(status["plant_modifiers"]["active"], ["shadow"])
         self.assertIn("shadow", status["plant_modifier_support"])

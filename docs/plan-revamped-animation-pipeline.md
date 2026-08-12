@@ -1311,9 +1311,11 @@ a loader-capable baseline. Host-only contract and prototype work may be develope
 locally, but no later phase is production-ready until its relevant Phase 0
 prerequisite passes.
 
-Implementation status (2026-08-12): **Phase 0 delivery foundation and
-coordinator cutover and Phase 1 contract freeze/portable baseline complete;
-Phases 2A and 2B are the next independently shippable host-side lanes**.
+Implementation status (2026-08-12): **Phase 0 delivery foundation,
+coordinator cutover, and Phase 1 contract freeze/portable baseline are complete.
+Phase 2A implementation and portable acceptance are complete; its clean
+wall-deploy gate is in progress. Phase 2B remains the next independently
+shippable host-side lane after that gate closes**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -1620,6 +1622,47 @@ framework in this phase.
 ### Phase 2A: Top-Level Vibe on the Existing Python Pipeline
 
 Deliver useful vibe switching before composition or receiver-native playback.
+
+Implementation status (2026-08-12): **portable implementation and regression
+gates complete; clean wall deploy pending**. Three parallel, contract-first lanes have converged: core
+vibe/runtime and timing adapters; API, persistence, preview, dashboard, and
+deploy-state integration; and four pilot capability mappings with adversarial
+acceptance coverage. Focused manager/pilot/product tests, the deployment suite,
+and the installed-geometry render gate pass. An actual clean `just deploy`
+remains mandatory before this status becomes complete.
+
+- [x] Immutable versioned vibe state, five-profile registry, deterministic
+  digest, manager-owned revision, explicit neutral fallback diagnostic, status,
+  API, IPC, persistence, deploy restore, and one global dashboard selector.
+- [x] Authored/effective parameter separation, continuous scaled clock, all
+  three timing adapters, presentation-only cache hook, and framework-owned
+  grade/luminance applied once after plant optics.
+- [x] Plain and parameterized preview isolation, preset identity preservation,
+  and hidden mapped authored values retained across preset changes.
+- [x] Clock, Lava Lamp, Snake, and Simple Test pilots cover semantic, grade, and
+  preserve color policies; wall-clock and scaled-context timing; semantic and
+  legacy palette bridges; seeded procedural/game parity; and diagnostic exact
+  color preservation.
+- [x] Adversarial pilot acceptance, manager timing/presentation acceptance, real
+  local-dashboard round trips, deployment preservation, manifest validation,
+  and the 4 ms p95 installed-geometry render gate pass.
+- [x] Final full portable regression/firmware/build suite passes at installed
+  geometry and the final pre-deploy source identity.
+- [ ] An actual clean wall `just deploy` passes at the committed Phase 2A source
+  identity.
+
+Portable evidence on 2026-08-12 (development Mac, not Pi/ESP32 timing evidence):
+
+- `just test` passed 647 Python unit/plugin tests and 924 subtests, 18 rendering
+  pipeline tests, 20 native firmware tests, the pinned production ESP32-S3
+  build, and 145 deployment tests with 66 subtests.
+- The highest accepted direct-plugin 32 x 138 stress p95 was 3.2551 ms for
+  `snake-max-density` at a 0.62 changed ratio. The full manager Snake vivid
+  grade+luminance path measured p50 0.0712 ms, p95 0.5293 ms, p99 0.5435 ms,
+  and max 0.6256 ms; a transform on every changed frame measured 0.0828 ms p95.
+- The production firmware remains unchanged at 372,546 bytes flash and 53,092
+  bytes RAM. Both ordinary deploy dry runs still resolve to one clean-policy
+  coordinator invocation.
 
 - Add validated immutable `VibeState`, central profile registry, API/status,
   persistence, preview input, and one global dashboard control.

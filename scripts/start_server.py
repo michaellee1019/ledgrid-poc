@@ -183,8 +183,12 @@ def run_controller_mode(args):
         animation_speed_scale=startup_speed_scale,
         plant_aware=DEFAULT_PLANT_AWARE,
         plant_modifiers=startup_modifiers,
+        vibe=saved_state.get('vibe') if saved_state else None,
         default_animation=saved_state.get('animation') if saved_state else None,
         default_animation_config=saved_state.get('params') if saved_state else None,
+        default_animation_preset=(
+            saved_state.get('current_preset') if saved_state else None
+        ),
     )
     manager.target_fps = int(saved_state.get('target_fps', args.target_fps)) if saved_state else args.target_fps
 
@@ -314,6 +318,19 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
             return True
         except (TypeError, ValueError):
             print(f"⚠️ Invalid plant modifier state: {requested!r}")
+    elif action == 'set_vibe':
+        requested = data.get('vibe', data.get('vibe_id'))
+        if requested is None:
+            print("⚠️ Invalid vibe: None")
+            return False
+        try:
+            applied = manager.set_vibe(requested)
+            state = applied.get('state', applied) if isinstance(applied, dict) else {}
+            vibe_id = state.get('id', state.get('vibe_id', requested))
+            print(f"🎨 Vibe: {vibe_id}")
+            return True
+        except (TypeError, ValueError):
+            print(f"⚠️ Invalid vibe: {requested!r}")
     elif action == 'refresh_plugins':
         animation = data.get('animation')
         if animation:

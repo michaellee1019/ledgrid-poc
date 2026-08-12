@@ -59,7 +59,11 @@ class SimpleTestAnimation(AnimationBase):
     
     def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Tuple[int, int, int]]:
         """Generate test frame"""
-        color_index = int(time_elapsed / max(0.5, self.change_interval)) % len(self.colors)
+        context = getattr(self, "presentation_context", None)
+        cadence_elapsed = (
+            context.unscaled_elapsed if context is not None else time_elapsed
+        )
+        color_index = int(cadence_elapsed / max(0.5, self.change_interval)) % len(self.colors)
         plant_aware = self.plant_aware_enabled()
         output_key = (plant_aware, color_index, self._plant_frame_key if plant_aware else None)
         color_changed = color_index != self._last_output_index
@@ -79,6 +83,10 @@ class SimpleTestAnimation(AnimationBase):
         changed = output_key != self._last_output_key
         self._last_output_key = output_key
         return self.rendered_frame(pixels, changed=changed)
+
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Request luminance refresh without changing diagnostic source colors."""
+        self._last_output_key = None
 
     def _plant_aware_frames(self):
         """Build connectivity frames that distinguish occlusion from LED failure."""
