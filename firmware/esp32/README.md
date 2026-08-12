@@ -111,3 +111,18 @@ python tools/benchmarks/receiver_acceptance.py \
 
 See [rendering acceptance](../../docs/RENDERING_PIPELINE_ACCEPTANCE.md) for the
 required thresholds and rollback conditions.
+
+## Planned local-background work
+
+This file describes current deployed firmware. The
+[unified roadmap](../../docs/plan-revamped-animation-pipeline.md) first replaces
+the one-way first-command transition with explicit display ownership, then adds
+a statically linked background and sparse RGBA foreground before dynamic modules.
+
+The `native-animations` branch is the organ donor for the loader-capable ESP-IDF
+baseline, ABI, asset upload/cache, typed parameters, receiver control, status,
+quarantine, and portable failure tests. Port narrow pieces with their tests; do
+not merge it wholesale or preserve its signed envelope, frame tracks, exclusive
+playback, single-digest cache model, render-only watchdog, or partial-RGB
+takeover semantics. Its physical handoff did not qualify the installed SPI1
+wiring, so branch tests do not replace the roadmap's H0 and wall gates.

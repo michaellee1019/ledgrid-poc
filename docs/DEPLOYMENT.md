@@ -149,3 +149,21 @@ tools/deployment/stop_remote.sh stop
   deployment.
 - If electronic gates or visual acceptance fail, restore the last validated
   application/firmware pair before continuing experiments.
+
+## Planned receiver-native deployment
+
+The commands above are the current supported deployment surface. The
+[unified roadmap](plan-revamped-animation-pipeline.md) first hardens it with
+explicit clean/dirty source policy, locked inputs, receipts, fresh health, staged
+app releases, and domain-specific rollback. It later adds separate native
+`build -> publish -> probe -> stage -> verify -> activate/compensate` steps so a
+background-source change does not imply an app restart, Pi reboot, or loader
+firmware flash.
+
+The `native-animations` branch is an organ donor for firmware hashing/readiness,
+managed libraries, chunk upload, cache probing, and four-receiver transaction
+tests. Do not run or port its deployment recipe as the new workflow: it assumes
+signing/key provisioning, signed capabilities, exclusive receiver playback, and
+branch-specific artifacts. Current `just deploy` also must not begin installing
+receiver-native packages until the roadmap's explicit Phase 3/4 and hardware
+gates pass.

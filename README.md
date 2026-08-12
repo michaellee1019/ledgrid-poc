@@ -79,6 +79,11 @@ Before merging or deploying a change:
 - [Metrics](docs/METRICS.md)
 - [GIF asset pipeline](docs/GIF_PIPELINE.md)
 - [Plant-wall calibration](docs/PLANT_WALL_CALIBRATION.md)
+- [Unified delivery and animation roadmap](docs/plan-revamped-animation-pipeline.md)
 
 Repository documentation describes the current supported system. Use Git
-history for change history and abandoned approaches.
+history for change history and abandoned approaches. The `native-animations`
+branch is a retained prototype/organ donor for the roadmap's Phase 3 and Phase 4
+work; it is not the deployed architecture or a merge target. The roadmap records
+the reusable commits and the signing, frame-track, exclusive-mode, and UI pieces
+that must not be ported unchanged.

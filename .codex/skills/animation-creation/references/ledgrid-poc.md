@@ -88,6 +88,12 @@ selectable or uploadable crosses the firmware, SPI driver, multi-device
 controller, manager lifecycle, IPC status, persistence, and dashboard; do not
 implement it as an isolated firmware renderer.
 
+The `native-animations` branch is a retained organ donor for this work. Consult
+the donor map in `docs/plan-revamped-animation-pipeline.md` and port narrow lanes
+with their tests. Do not merge/cherry-pick it wholesale or inherit its signed
+package envelope, frame-track product, separate gallery/catalog, exclusive
+playback, or partial-RGB takeover semantics.
+
 - Preserve the compiled startup animation as a boot and recovery path. The first
   valid host command currently transfers display ownership to the mailbox path,
   so replace that one-way transition with an explicit display-mode state machine
@@ -123,9 +129,12 @@ implement it as an isolated firmware renderer.
 - A receiver-local animation has no live framebuffer readback. Use the package
   preview in the dashboard and label it as a preview instead of presenting it as
   the exact current physical frame.
-- Native modules require a baseline receiver firmware containing a loader and
-  trust anchor. Subsequent package installation is not a firmware flash, but
-  changing the loader ABI or trusted public key is.
+- Native modules require baseline receiver firmware containing the loader.
+  Subsequent package installation is not a firmware flash, but changing the
+  loader ABI is. This repository's approved v1 exception to the skill's general
+  signing guidance is trusted unsigned code built only from tracked, allowlisted
+  repository paths, with no arbitrary upload surface; SHA-256 provides integrity
+  and content identity, not authenticity or sandboxing.
 
 The accepted phased design is documented in
 `docs/plan-revamped-animation-pipeline.md`: establish explicit display ownership

@@ -94,3 +94,19 @@ After all four controllers are flashed:
 
 Keep the previously validated firmware binaries until full-wall acceptance passes.
 A failed canary is restored before further firmware changes are deployed.
+
+## Future receiver-native modes
+
+The [unified roadmap](plan-revamped-animation-pipeline.md) adds acceptance for a
+compiled local-background canary, sparse RGBA foreground, installation profile,
+and eventually trusted unsigned native modules. Those gates extend this file's
+streamed-frame requirements; they never replace or lower them.
+
+The `native-animations` branch remains an organ donor for portable ABI/loader,
+package-validation, status, timing, cache, quarantine, and four-board
+failure-injection tests. Its historical passing software tests are not current
+main-branch or physical-wall evidence. Re-port each relevant test with its
+implementation, update it for the unsigned bundle and base-plus-foreground
+contracts, then re-run the roadmap's one-receiver and four-receiver gates. The
+branch's unresolved SPI1 MISO/MOSI coupling fault makes fresh Gate H0 wiring and
+streamed-baseline evidence mandatory before receiver-native wall acceptance.

@@ -116,3 +116,18 @@ source already exists.
   physical signal path.
 
 See [Rendering acceptance](RENDERING_PIPELINE_ACCEPTANCE.md) for thresholds.
+
+## Planned evolution and prototype boundary
+
+Everything above describes the current deployed host-frame pipeline. The
+[unified roadmap](plan-revamped-animation-pipeline.md) preserves it as fallback
+while adding a fixed scene model, independent vibe state, a receiver-local
+background, and a sparse premultiplied-RGBA foreground. Until the corresponding
+phase passes acceptance, receivers still do not own selectable animation logic.
+
+The `native-animations` branch is retained as an organ donor for that work, not
+as an alternate architecture to deploy. Its ESP-IDF baseline, ABI, loader,
+cache/status machinery, and four-board orchestration are reference
+implementations. Its exclusive display mode, signed package/index, frame-track
+player, separate catalog/gallery, and partial-RGB takeover semantics conflict
+with the planned base-plus-foreground architecture and must be redesigned.

@@ -67,6 +67,65 @@ risk domain.
 - [ANIMATION_SYSTEM.md](ANIMATION_SYSTEM.md) remains the current Python contract
   until each phase explicitly updates it.
 
+### `native-animations` branch as an organ donor
+
+The branch is a substantial, cross-domain prototype and remains the preferred
+source for implementation patterns once work reaches Phase 3. It is not the
+roadmap, a production baseline, or a branch to merge/cherry-pick wholesale. Main
+and `native-animations` have diverged, and the prototype encodes product choices
+that this plan has replaced.
+
+Port by responsibility, together with the nearest tests:
+
+| Unified phase | Donor commits and areas | Reuse | Redesign or omit |
+| --- | --- | --- | --- |
+| Phase 0 | `ebf0ede`; firmware hashing, readiness, provisioning, deploy failure tests | Input identity, capability/readiness gates, per-device evidence | Signing keys, signed capability gates, four key-specific builds |
+| Phase 3A | `ac72df1`; ESP-IDF baseline, protocol/status, display mode, receiver control, startup fallback | Loader-capable baseline, explicit state scaffolding, status counters, typed parameters | Exclusive host-or-local ownership, first-frame takeover side effects, ignored cadence |
+| Phase 3D | `c7e1464`; ABI header, target/host builds, ELF checks, previews, examples, benchmarks | Stable C ABI seam, global offsets/time, caller-owned output, dual builds, validation | ABI v1, split native catalog/source layout, signed package/index assumptions |
+| Phase 4 | `ac72df1` and `c9432b5`; loader, upload/cache, library, drivers, four-board transactions | Ordered idempotent chunks, `.part` staging, hash verification, atomic visibility, disposable cache, failure injection | Signature envelope, single ambiguous digest, unpinned rollback asset, render-only watchdog coverage |
+| Phase 4 product integration | `db0a361` and `a4a0805`; manager persistence/adoption and dashboard health | Transition/adoption cases, progress/status UX, API and persistence test ideas | Separate gallery, fake peer lifecycle, one exclusive provider/mode |
+
+Useful branch paths include:
+
+- `firmware/esp32/include/ledgrid/animation_abi.h`
+- `firmware/esp32/include/ledgrid/display_mode.hpp`
+- `firmware/esp32/src/esp_backends.cpp`
+- `firmware/esp32/src/asset_upload.cpp`
+- `firmware/esp32/src/receiver_control.cpp`
+- `firmware/esp32/test/test_native/test_pipeline.cpp`
+- `firmware_animations/native.py`, `manifest.py`, `library.py`, and `package.py`
+- `drivers/spi_controller.py` and `drivers/multi_device.py`
+- `tests/unit/test_firmware_host_protocol.py`
+- `tests/unit/test_firmware_host_orchestration.py`
+- `tests/unit/test_firmware_package_sdk.py`
+
+Inspect them with `git show native-animations:<path>` or a narrow diff. Prefer
+porting a small implementation lane plus its tests over copying a final branch
+file, because main has continued changing the manager, deployment, firmware, and
+plugin contracts.
+
+The following branch behavior is evidence only and must not cross into the new
+contract:
+
+- the signed `.lga`/LGIX envelope, ECDSA verification, key provisioning, and
+  `LEDGRID_ALLOW_UNSIGNED_DEVELOPMENT` path;
+- receiver frame tracks and GIF/WebP packaging, which remain deferred;
+- central native example catalog and separate on-device gallery;
+- mutually exclusive Python versus firmware animation playback;
+- partial RGB updates that take ownership of the sole working frame instead of
+  representing an alpha foreground;
+- one digest standing for both bundle metadata and executable bytes;
+- cache eviction that protects only the active artifact, not the rollback and
+  staged candidate;
+- watchdog coverage limited to render rather than every module-controlled phase;
+- reliance on `preferred_fps` validation without enforcing source cadence;
+- any security or recovery guarantee for unsandboxed in-process machine code.
+
+The branch's physical handoff is also not acceptance evidence. Its documented
+SPI1 MISO/MOSI coupling fault must be repaired and the Phase H0 streamed baseline
+must pass before all-wall receiver-native release. Until then, use branch code as
+tested prototype material, not proof that the installed system is qualified.
+
 ## Problems and Success Criteria
 
 ### Problems to solve

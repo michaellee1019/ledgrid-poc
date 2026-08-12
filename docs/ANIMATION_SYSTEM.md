@@ -189,3 +189,20 @@ process writes commands through `ipc/control_channel.py` and reads status and
 preview frames from the same channel. Hot reload is suitable for local plugin
 iteration, but production changes should go through the normal deploy and
 acceptance flow.
+
+## Planned evolution and prototype reference
+
+This document describes the current Python-only plugin contract. The
+[unified roadmap](plan-revamped-animation-pipeline.md) evolves it into explicit
+component providers, a background-plus-overlay scene, independent vibe state,
+and repository-peer receiver-native backgrounds. Do not implement that future
+state by treating firmware playback as an `AnimationBase` or by weakening the
+current manifest allowlist.
+
+The `native-animations` branch remains an organ donor for the roadmap's later
+receiver phases. Reuse its ABI/build validation, host preview harness, ESP-IDF
+loader baseline, content-addressed cache, typed parameters, status, quarantine,
+and four-board failure tests. Do not carry forward its separate native catalog,
+signed package envelope, frame-track backend, separate gallery, or exclusive
+Python-versus-firmware lifecycle. The roadmap's donor table is authoritative for
+commit/path mapping and replacement contracts.

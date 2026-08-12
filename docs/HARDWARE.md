@@ -126,3 +126,17 @@ host layout code.
 
 The full timing and rollback criteria are in
 [Rendering acceptance](RENDERING_PIPELINE_ACCEPTANCE.md).
+
+## Receiver-native roadmap hardware gate
+
+The [unified roadmap](plan-revamped-animation-pipeline.md) uses the
+`native-animations` branch as an implementation organ donor, but the branch's
+handoff recorded unresolved SPI1 MISO/MOSI coupling. That branch is not evidence
+that the installed wall can safely stage, verify, or reconcile four receiver
+artifacts.
+
+Before any all-wall receiver-native release, power down and verify SPI1 MISO and
+MOSI are isolated and correctly routed, then obtain fresh identity/status from
+all four receivers with no TX echo and rerun the existing streamed one-receiver
+and full-wall canaries. Only after that H0 baseline may ported loader/cache or
+sparse-overlay code proceed to the roadmap's physical gates.
