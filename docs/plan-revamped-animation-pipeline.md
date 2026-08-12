@@ -1,8 +1,16 @@
-# Revamped Animation Pipeline
+# Unified Delivery and Animation Pipeline
 
 ## Summary
 
-Replace the single-animation pipeline with a small, explicit presentation model:
+Build the delivery foundation first, then replace the single-animation pipeline
+with a small, explicit presentation model:
+
+- Keep `just` as the operator interface, `uv` and PlatformIO as the build tools,
+  systemd as the runtime supervisor, and shell/SSH/SPI helpers as stable leaf
+  operations. Add only a thin, testable deployment coordinator.
+- Make dependencies and firmware toolchains reproducible, record append-only
+  deployment receipts, stage immutable app releases with app-only rollback, and
+  automate provisioning only after those foundations pass physical acceptance.
 
 - A **scene** contains one opaque background and zero or more transparent
   overlays. Version 1 supports one aggregate foreground plane and source-over
@@ -31,28 +39,33 @@ Replace the single-animation pipeline with a small, explicit presentation model:
 
 The existing 32 x 138 wall, four 8 x 138 receivers, 200 Hz manager target, and
 compiled startup rainbow remain the operating envelope and fallback. Existing
-Python plugins and presets must continue to work throughout migration.
+Python plugins and presets must continue to work throughout migration. Every
+phase is independently useful, has an acceptance gate, and stops before the next
+risk domain.
 
-## Relationship to Existing Plans
+## Plan Authority and Resolved Decisions
 
-- This plan supersedes the signed-package and exclusive-playback direction in
-  [plan-native-animations.md](plan-native-animations.md) for native backgrounds.
-  That document and the `native-animations` branch remain implementation
-  references for the ABI, builder, loader, cache, status, quarantine, and
-  four-board orchestration.
-- This plan retains the incremental deployment seams in
-  [plan-build-deploy-system.md](plan-build-deploy-system.md): stable step IDs,
-  shared state outside application releases, deployment receipts, and separate
-  build, install, and activate operations.
+- This is the sole forward-looking `docs/plan*` document. It consolidates the
+  former build/deploy, uploadable-native-animation, and revamped-animation plans;
+  their prior text remains available through Git history.
+- The `native-animations` branch remains an implementation reference for the
+  ABI, builder, loader, cache, status, quarantine, and four-board orchestration.
+  Port audited pieces by responsibility; do not merge the branch wholesale.
+- Native backgrounds are trusted, unsigned artifacts built only from tracked,
+  allowlisted repository source. There is no arbitrary dashboard upload. If the
+  trust boundary expands, require a sandbox or authenticity mechanism first.
+- Receiver frame tracks, GIF/WebP packages, signing infrastructure, a separate
+  native gallery, and exclusive receiver playback are deferred. The first
+  receiver product is one native background plus a sparse Pi foreground.
+- Deployment uses stable namespaced step IDs, opaque artifact receipt metadata,
+  shared state outside application releases, and explicit build, install, and
+  activate steps. It does not begin with a generic provider/action DSL.
 - [RENDERING_PIPELINE_ACCEPTANCE.md](RENDERING_PIPELINE_ACCEPTANCE.md) remains
   the baseline for streamed-frame performance, receiver timing, rollback, and
   physical-wall qualification. New modes add gates; they do not weaken existing
   ones.
 - [ANIMATION_SYSTEM.md](ANIMATION_SYSTEM.md) remains the current Python contract
-  until each increment explicitly updates it.
-
-Do not merge the `native-animations` branch wholesale. Port audited pieces by
-responsibility after their replacement contracts are accepted.
+  until each phase explicitly updates it.
 
 ## Problems and Success Criteria
 
@@ -90,6 +103,24 @@ responsibility after their replacement contracts are accepted.
    Persistence must reverse that mutation, and the same approach would make vibe
    changes dirty presets and couple presentation changes to simulation lifecycle.
 
+8. **Deployment behavior is noisy and source policy is implicit.**
+   Operators cannot easily distinguish a clean release, a deliberate dirty-tree
+   deployment, a no-op, or the exact phase that failed.
+
+9. **Dependencies, firmware toolchains, and target environments are mutable.**
+   Repeating a build or deployment can resolve different inputs, while runtime
+   environments are updated in place and may retain stale packages.
+
+10. **Deployment sequencing and health are difficult to test.**
+    Shell currently carries both platform leaf operations and policy. There is no
+    durable attempt receipt proving source identity, completed phases, fresh
+    readiness, or rollback outcome.
+
+11. **Application, provisioning, and firmware changes have different rollback
+    properties.**
+    Treating them as one transaction would over-promise whole-system atomicity
+    and make receiver-native rollout harder to recover.
+
 ### End-state success criteria
 
 - A user can put the clock over any supported Python background without creating
@@ -115,6 +146,18 @@ responsibility after their replacement contracts are accepted.
   complete host frames without requiring a receiver reflash.
 - Existing Python plugins, painter/manual output, previews, curated presets,
   deployment preservation, and streamed-frame acceptance continue to pass.
+- `just deploy` accepts only a clean tree, `just deploy-dirty` is explicit, and
+  `just deploy-plan` accounts for selected and excluded source before mutation.
+- A clean checkout reproduces the intended Python and firmware toolchains; an
+  unchanged deployment performs no dependency work, provisioning, reboot,
+  release activation, or receiver flash.
+- Every deployment attempt records an atomic redacted receipt and reports
+  success only after fresh controller/system health for the desired release.
+- An unhealthy application release automatically restores the prior healthy app
+  without claiming that provisioning or firmware was rolled back.
+- Native-background source iteration can build, publish, install, and activate
+  its artifact without rebuilding the app environment, restarting systemd,
+  rebooting the Pi, or flashing loader firmware.
 
 ## Core Decisions and Invariants
 
@@ -164,14 +207,37 @@ responsibility after their replacement contracts are accepted.
    recoverable cache.
 
 10. **Unsigned means trusted-local, not safe-to-upload.**
-    Only checked-in, allowlisted source may enter the native build/install path.
-    Hashes detect corruption and identify content; they do not authorize code.
-    If native content later becomes multi-user or externally supplied, stop and
-    choose a sandbox or restore an authenticity mechanism before expanding scope.
+    Only source at tracked, allowlisted repository paths may enter the native
+    build/install path. An explicit development command may build modified
+    tracked source and records its exact working-tree digest; it never accepts an
+    arbitrary or untracked executable input. Hashes detect corruption and identify
+    content; they do not authorize code. If native content later becomes
+    multi-user or externally supplied, stop and choose a sandbox or restore an
+    authenticity mechanism before expanding scope.
 
 11. **Preserve physical acceptance boundaries.**
     Host simulation and desktop timings are useful gates but never substitute
     for Raspberry Pi, one-receiver, four-receiver, and photographed wall evidence.
+
+12. **Use the existing tools at their natural boundaries.**
+    `just` remains the operator interface, `uv` and PlatformIO own reproducible
+    build inputs, systemd owns runtime supervision, and rsync/SSH/SPI/flashing
+    remain platform-specific leaf operations.
+
+13. **Keep the deployment coordinator deliberately small.**
+    It owns source policy, ordered steps, redaction, receipts, health, and
+    recovery sequencing. It is not an artifact-provider framework, action DSL,
+    deployment database, or shell rewrite.
+
+14. **Keep rollback claims domain-specific.**
+    App releases can switch atomically and automatically restore. Firmware
+    partial failure requires explicit recovery. Receiver-background activation
+    owns its own stage/verify/activate/compensate transaction.
+
+15. **Measure before caching gates.**
+    Never cache health, provisioning discovery, flashing, receiver readiness, or
+    physical acceptance. Add a deterministic local gate cache only after receipts
+    show that a complete-input gate repeatedly costs enough to matter.
 
 ## Core Model
 
@@ -426,7 +492,7 @@ master brightness on each receiver. Preview uses the same fixed-point blend and
 ordering as its execution provider.
 
 The current framework invokes universal plant optics through the active Python
-animation before presentation. Increment 3 must relocate that invocation to the
+animation before presentation. Phase 2B must relocate that invocation to the
 manager-owned compositor output for composed scenes, while retaining byte-exact
 background-only behavior. A component must never apply the same universal optic
 before composition and then receive it again afterward.
@@ -454,16 +520,138 @@ native application:
 - `tests/` and `tools/benchmarks/` own cross-domain golden fixtures,
   compatibility tests, performance evidence, and failure injection.
 
-Exact new filenames are chosen during Increment 1. Do not put provider-specific
+Exact new filenames are chosen during Phase 1. Do not put provider-specific
 policy into the generic compositor or duplicate receiver orchestration in the
 web process.
+
+## Delivery Architecture
+
+### Operator and source contract
+
+- `just deploy` requires a clean tree.
+- `just deploy-dirty` intentionally uses the current tracked-plus-safe-untracked
+  manifest policy and records the base commit, diff digest, and included
+  untracked paths.
+- `just deploy-plan` is read-only and explains selected files, exclusions,
+  deployment mode, gates, dependency work, provisioning, release activation,
+  firmware work, receiver-artifact work, and expected restart/reboot behavior.
+- Successful commands are quiet. A small local runner captures output in an
+  ignored log, shows an erasable TTY status line, and prints a concise failure
+  plus log path. `DEBUG=1` or an explicit verbose command streams normally.
+- Preserve protected runtime presets, `run_state`, logs, environments,
+  calibration, artifact libraries, and validated firmware images.
+
+### Reproducible inputs
+
+- Add `pyproject.toml` and `uv.lock` with runtime, test/development, and
+  calibration groups. Local setup uses frozen synchronization rather than
+  repeated inline dependency lists.
+- Pin PlatformIO Core and the currently validated immutable pioarduino/ESP-IDF
+  `55.03.39` platform release. PlatformIO continues to resolve and build firmware
+  dependencies; changing this pin requires the normal firmware acceptance path.
+- Export a fully pinned Pi runtime requirements lock. Build a fresh Pi virtual
+  environment keyed by lock digest and Pi Python identity, smoke-test it, and
+  reuse it only while that identity remains unchanged.
+- Firmware identity includes all source, configuration, platform/toolchain,
+  partition, and build-flag inputs. Prefer one common firmware image; keep stable
+  logical-device identity/global offset in provisioned configuration and include
+  that configuration identity in each receiver's desired-state receipt.
+
+### Thin coordinator and receipts
+
+Introduce only these generic deployment types:
+
+```text
+DeployContext
+  source policy, target, mode, flags, paths, and redaction rules
+
+Step
+  stable namespaced ID, mutating flag, and callable operation
+
+StepResult
+  timing, outcome, log reference, and opaque artifact metadata
+
+DeployReceipt
+  attempt/source identity, completed steps, artifacts, health, and outcome
+```
+
+- Build steps procedurally. Retain rsync, SSH, SPI, flashing, and systemd helpers
+  as leaf commands invoked with argument arrays and no `shell=True`.
+- Initial step IDs include `source.validate`, `tests.run`, `app.stage`,
+  `host.provision`, `receiver.firmware_build`, `receiver.firmware_flash`,
+  `host.restart`, and `health.readiness`. Native-domain steps later add
+  `receiver_background.build`, `.publish`, `.probe`, `.stage`, `.verify`, and
+  `.activate` without generalizing them prematurely.
+- Persist append-only, atomic JSON receipts locally and remotely for success,
+  failure, and interruption. Record deployment ID, timestamps, target, mode,
+  Git revision or dirty digest, dependency/toolchain/manifest digests, step
+  timings, opaque artifact entries, health result, and final outcome.
+- Artifact receipt entries retain the small shape
+  `{kind, id, digest, version, target_id?}`. Domain-specific evidence may live in
+  a referenced log or artifact; do not turn the receipt into a general database.
+- Never serialize environment values. Redact private-key arguments, sensitive
+  paths, and configured secret names from commands, receipts, and logs.
+- Health requires systemd state, expected geometry and receiver topology,
+  controller status newer than restart, stable fresh samples, and the desired
+  release identity. Set the API deployment timestamp only after readiness passes.
+
+### App releases and rollback
+
+- Stage runtime application files and generated previews under
+  `releases/<content-digest>` and point systemd at an atomic `current` symlink.
+- Keep virtual environments, presets, `run_state`, logs, calibration, firmware,
+  and receiver-artifact libraries outside release directories.
+- Validate imports and static structure before activation, then preserve settings,
+  switch `current`, restart, restore settings, and require fresh desired-release
+  health.
+- On failure, restore the previous symlink, restart it, verify prior health, and
+  record both candidate failure and restoration.
+- `just releases` and `just rollback [release-id]` operate only on the app lane.
+  They never provision, reboot, build, flash firmware, or mutate receiver state.
+- Once receiver-native playback exists, app rollback preflights compatibility and
+  refuses an unsafe downgrade. A separate explicit scene-recovery operation must
+  take complete host-frame ownership and persist a known Python fallback first;
+  the app-only rollback command itself remains receiver-read-only.
+- Do not add release garbage collection until retention policy is informed by
+  real usage.
+
+### Provisioning and firmware automation
+
+- After receipts and app rollback are proven, compare desired and observed host
+  packages, permissions, SPI boot settings, systemd definitions, environment,
+  app release, and receiver firmware. Apply only differences.
+- If provisioning requires reboot, persist the phase, reboot, wait for SSH,
+  rediscover target state, and resume idempotently with a strict loop bound.
+- Build the common receiver image before downtime and flash only receivers whose
+  firmware identity differs, using stable provisioned paths. During migration,
+  existing device-specific images remain supported until logical identity is
+  externalized. Missing, duplicate, unexpected, or failed receivers fail the
+  operation.
+- On partial flash failure, do not activate the candidate app. Leave the service
+  stopped, retain prior/candidate images and evidence, and require explicit
+  firmware recovery. Do not claim automatic whole-system rollback.
+- After firmware success, activate the staged host release and use app-only
+  health restoration if that activation fails.
+
+### Evidence-based gate caching
+
+- Use receipts to collect unit, rendering, preview, deployment, firmware-test,
+  and firmware-build timings across at least twenty normal attempts.
+- Consider caching only a deterministic local gate that regularly costs at least
+  five seconds, has a complete reviewable input set, has no hardware/external
+  dependency, and materially improves the observed workflow.
+- Its key includes selected source contents, dirty manifest, lockfile,
+  interpreter/platform, toolchain, command arguments, and an explicit gate
+  version. Corruption or missing state reruns the gate safely.
+- `just test` always forces the complete gate. If no candidate meets the measured
+  threshold, ship no gate cache.
 
 ## Vibe and Palette Contract
 
 ### Canonical vibe IDs
 
 Use a small stable wire vocabulary. Display names may change, but IDs do not.
-Finalize visual values during Increment 2 using these initial candidates:
+Finalize visual values during Phase 2A using these initial candidates:
 
 - `neutral`: authored presentation with unity tempo and luminance.
 - `quiet`: restrained motion, luminance, and chroma.
@@ -637,7 +825,7 @@ OVERLAY_RENEW(controller_session_id, generation, lease)
 - Every serialized command, including headers and CRC, remains within the current
   4096-byte host/receiver transaction ceiling. Exact maximum-size packets are
   shared test fixtures.
-- Increment 1 freezes the exact header and CRC size, then defines
+- Phase 1 freezes the exact header and CRC size, then defines
   `max_rgba_pixels = floor((4096 - header_bytes - crc_bytes) / 4)`. A complete
   4,416-byte receiver foreground is necessarily split into multiple patches;
   full-snapshot chunking, ordering, and completion are part of the golden wire
@@ -851,6 +1039,11 @@ just native-run <plugin-id>
 
 `native-run` is convenience composition of build, preview, validate, publish,
 probe, stage, verify, and activate. The underlying receipt retains each step.
+These native-source commands operate on the selected package's exact working-tree
+digest without requiring unrelated repository files to be clean. Modified tracked
+package source is allowed only through this explicit development workflow and is
+recorded in the receipt; arbitrary paths and untracked executable inputs remain
+rejected. This does not weaken the clean-tree requirement for `just deploy`.
 
 ### Pi library and receiver cache
 
@@ -968,10 +1161,21 @@ only process that mutates receiver state.
 - Loader, ABI, partition, or firmware changes use the full firmware deployment
   lane.
 - Application release rollback preserves the native library and calibration
-  library. Before downgrading to software that cannot understand active native
-  state, take complete host-frame ownership and persist a known Python fallback.
+  library. It refuses to downgrade to software that cannot understand active
+  native state until a separate explicit recovery operation has taken complete
+  host-frame ownership and persisted a known Python fallback.
 
 ## Alternatives Considered
+
+### Delivery orchestration
+
+| Approach | Advantages | Disadvantages | Decision |
+| --- | --- | --- | --- |
+| Keep all policy in shell | Minimal migration | Harder failure injection, receipts, redaction, resume, and health testing | Retain shell only for leaf operations |
+| Rewrite deployment wholesale in Python | One implementation language | Large simultaneous migration and loss of proven platform behavior | Rejected |
+| Thin Python coordinator over existing helpers | Testable policy and receipts with incremental parity | Temporary dual path during migration | Chosen |
+| Generic provider/action/transaction DSL | Abstractly uniform | Premature before two accepted domains expose real commonality | Deferred |
+| Cache every successful gate | Fast repeated deploys | Unsafe incomplete keys and hidden external state | Rejected; measure first |
 
 ### Composition
 
@@ -1008,31 +1212,169 @@ only process that mutates receiver state.
 | Move every modifier to firmware | Local final frame is available | Duplicates semantic logic and creates boundary/synchronization risk | Rejected |
 | Shared profile plus selected receiver-safe optics | Preserves semantic geometry and enables hybrid final transforms | Requires profile ABI and parity tests | Chosen |
 
-## Incremental Delivery
+## Phased Delivery
 
-Each increment must be independently useful, gated behind explicit capability or
+Each phase must be independently useful, gated behind explicit capability or
 feature state, and retain the previous complete-frame path. Do not begin a later
-increment merely because earlier code exists; its acceptance and stop boundary
-must be satisfied.
+phase merely because earlier code exists; its acceptance and stop boundary must
+be satisfied. Subphases within Phase 0 ship separately in their listed order.
 
 Dependency outline:
 
 ```text
-Increment 1 contracts
-  ├── Increment 2 vibe
-  └── Increment 3 host composition
-          └── Increment 4 scene/catalog productization
-                  ├── Increment 5 receiver ownership/background
-                  │       └── Increment 6 sparse foreground
-                  │               └── Increment 7 geometry profile
-                  └── Increment 8 native build/library
+Phase 0A quiet deploy UX
+  → 0B reproducible inputs
+  → 0C coordinator/receipts/health
+  → 0D app releases/rollback
+  → 0F automatic provisioning/firmware
 
-Increments 5 + 6 + 7 + 8
-  └── Increment 9 loader and wall release
-          └── Increment 10 migration/expansion
+Phase 0C → 0E collect timings/cache decision
+
+Phase 0 delivery foundation
+  → Phase 1 contracts and baseline
+      ├── Phase 2A vibe
+      └── Phase 2B host composition
+              └── Phase 2C scene/catalog productization
+                      ├── Phase 3A receiver ownership/static background
+                      │       └── Phase 3B sparse foreground
+                      │               └── Phase 3C geometry profile
+                      └── Phase 3D native peer build/library
+
+Phases 3A + 3B + 3C + 3D
+  → Phase 4 dynamic loader and wall release
+      → Phase 5 evidence-driven expansion
 ```
 
-### Increment 1: Freeze Contracts and Baseline Evidence
+### Phase 0: Safe and Reproducible Delivery Foundation
+
+Complete the delivery foundation before changing receiver ownership or flashing
+a loader-capable baseline. Host-only contract and prototype work may be developed
+locally, but no later phase is production-ready until its relevant Phase 0
+prerequisite passes.
+
+#### Phase 0A: Quiet and explicit deployment UX
+
+- Enable quiet `just` behavior and remove traced shell output from ordinary
+  success paths.
+- Add the captured-log runner and explicit clean, dirty, plan, and verbose source
+  modes defined in the delivery architecture.
+- Preserve every current helper, command order, protected target path,
+  `PI_HOST`, `DEPLOY_DIR`, and compatibility flag.
+
+Acceptance:
+
+- Full and Python-only deployments invoke the same operations in the same order
+  as before.
+- Success produces no durable terminal noise; failure identifies the phase,
+  concise cause, relevant log tail, and log path.
+- `deploy-plan` accounts for every selected safe untracked file and every
+  exclusion.
+
+Stop before changing remote layout, dependencies, health, provisioning,
+firmware, or systemd configuration.
+
+#### Phase 0B: Reproducible dependencies and toolchains
+
+- Lock Python dependency groups and PlatformIO/toolchain inputs as defined above.
+- Export the pinned Pi runtime set and build fresh digest-addressed environments
+  instead of updating an environment in place.
+- Smoke-test controller and web entrypoints before an environment becomes
+  activatable.
+
+Acceptance:
+
+- A clean checkout completes frozen setup and every non-hardware gate.
+- Supported local and Pi Python identities resolve their intended sets, and a
+  fresh Pi environment imports both runtime entrypoints.
+- Dependency/toolchain changes alter identity; an unchanged repeat performs no
+  installation.
+
+Stop before replacing the existing shell coordinator or target release layout.
+
+#### Phase 0C: Thin coordinator, receipts, and fresh health
+
+- Implement `DeployContext`, `Step`, `StepResult`, `DeployReceipt`, redaction,
+  and injectable subprocess/SSH execution.
+- Build the existing deployment sequence procedurally over current leaf helpers.
+- Persist success, failure, and interruption receipts, and require desired,
+  post-restart fresh health before recording deployment success.
+- Keep legacy shell entrypoints until coordinator parity passes on the wall.
+
+Acceptance:
+
+- Failure injection covers every phase, fail-fast order, interruption, stale
+  health, dirty-source policy, state preservation, and diagnostics.
+- Receipts remain atomic and useful after success, failure, and interruption;
+  sensitive material cannot appear in commands, receipts, or logs.
+- Existing deploy, deploy-dirty, and Python-only operator commands remain
+  compatible.
+
+Stop before a provider framework, deployment database/UI, gate cache, release
+symlink, or receiver-artifact transaction.
+
+#### Phase 0D: App-only staged releases and rollback
+
+- Stage immutable app releases and generated previews by digest, activate
+  through `current`, and keep target-owned/shared state outside releases.
+- Validate before activation and automatically restore the previous healthy app
+  when candidate health fails.
+- Add release listing and explicit app rollback commands.
+
+Acceptance:
+
+- Two releases contain no stale code and preserve presets, `run_state`, logs,
+  environments, calibration, firmware, and a receiver-library fixture.
+- Injected unhealthy activation returns to the previous healthy API and records
+  candidate failure plus restoration.
+- Explicit app rollback performs no build, provisioning, reboot, or flash.
+
+Stop before immutable provisioning/firmware releases, whole-system rollback
+claims, or automatic release garbage collection.
+
+#### Phase 0E: Measure before gate caching
+
+- Collect at least twenty normal attempt timings through Phase 0C receipts.
+- Apply the eligibility, complete-key, corruption, and force-test rules in the
+  delivery architecture.
+
+Acceptance:
+
+- Every declared input demonstrably invalidates the candidate entry; corrupt or
+  missing state reruns safely; receipts distinguish executed, cached, and skipped
+  work.
+- If no deterministic local gate regularly costs at least five seconds or saves
+  meaningful time, close the phase by shipping no cache.
+
+This optional optimization never blocks Phase 0F and never caches external or
+physical acceptance.
+
+#### Phase 0F: Robust automatic provisioning and firmware
+
+- Reconcile desired/observed host and firmware state, resume bounded reboot
+  phases idempotently, build before downtime, and flash the common image only to
+  receivers whose firmware identity differs while reconciling logical identity
+  as provisioned state.
+- Fail on missing, duplicate, unexpected, or failed receivers. On partial flash,
+  preserve evidence and require explicit recovery rather than activating the app
+  or claiming rollback.
+- Activate the staged app only after firmware success, then apply app-only health
+  restoration if required.
+
+Acceptance:
+
+- An unchanged deployment performs no provisioning, reboot, dependency work,
+  release activation, or flash.
+- Package, SPI, unit, dependency, app, and firmware changes produce distinct,
+  accurate plans.
+- Automatic reboot resumes once without looping; partial firmware failure is
+  explicit per device and never records success.
+- Full deployment updates the API timestamp only after fresh readiness.
+
+Stop before receiver-background packages or generic grouped activation. The
+receiver-native domain adds its own transaction only after the static-background
+and hardware gates prove the real semantics.
+
+### Phase 1: Freeze Contracts and Baseline Evidence
 
 Define byte, state, and timing contracts without changing visible behavior.
 
@@ -1075,16 +1417,16 @@ Define byte, state, and timing contracts without changing visible behavior.
 #### Stop boundary
 
 Do not introduce scenes, vibe behavior, firmware modes, or a generic provider
-framework in this increment.
+framework in this phase.
 
-### Increment 2: Top-Level Vibe on the Existing Python Pipeline
+### Phase 2A: Top-Level Vibe on the Existing Python Pipeline
 
 Deliver useful vibe switching before composition or receiver-native playback.
 
 - Add validated immutable `VibeState`, central profile registry, API/status,
   persistence, preview input, and one global dashboard control.
 - Persist the versioned vibe alongside the existing single-animation snapshot in
-  this increment. Increment 4 folds that already-versioned value into
+  this phase. Phase 2C folds that already-versioned value into
   `DesiredDisplayState` through a legacy-scene adapter; it does not postpone vibe
   restart/deploy survival.
 - Replace authored-speed mutation with explicit authored versus effective state.
@@ -1118,7 +1460,7 @@ Deliver useful vibe switching before composition or receiver-native playback.
 
 Do not rewrite all palettes, add scene presets, or send vibe to firmware yet.
 
-### Increment 3: Fixed Host-Side Background and Clock Composition
+### Phase 2B: Fixed Host-Side Background and Clock Composition
 
 Prove layer semantics entirely on the Pi.
 
@@ -1165,7 +1507,7 @@ Prove layer semantics entirely on the Pi.
 Do not add arbitrary graphs, multiple firmware planes, additive blend, native
 clock execution, or receiver protocol changes.
 
-### Increment 4: Scene State, Unified Catalog, UI, and Persistence
+### Phase 2C: Scene State, Unified Catalog, UI, and Persistence
 
 Productize the host composition contract before adding another execution backend.
 
@@ -1198,7 +1540,7 @@ Productize the host composition contract before adding another execution backend
 Support only Python providers in live scenes. Do not build a generic artifact
 provider or receiver transaction abstraction before a receiver backend exists.
 
-### Increment 5: Explicit Receiver Ownership and Statically Linked Background
+### Phase 3A: Explicit Receiver Ownership and Statically Linked Background
 
 Establish safe receiver-local playback without packages, cache, or dynamic code.
 
@@ -1206,7 +1548,10 @@ Establish safe receiver-local playback without packages, cache, or dynamic code.
 - Add a new backward-capable status/capability version and host parser.
 - If the pinned dynamic loader requires the reference branch's native ESP-IDF
   entrypoint, migrate to that loader-capable baseline here with dynamic loading
-  disabled. Requalify streamed behavior before enabling even the static canary.
+  disabled. Begin from the prototype's pinned Espressif `elf_loader` 1.3.2 and
+  revalidate that exact version against the locked firmware toolchain before
+  changing it. Requalify streamed behavior before enabling even the static
+  canary.
 - Preserve current SPI, mailbox, LCD/I80, parallel output, brightness, and
   startup fallback behavior when the feature is disabled.
 - Make the compiled rainbow selectable as a local background with declared
@@ -1242,7 +1587,7 @@ Establish safe receiver-local playback without packages, cache, or dynamic code.
 Do not add upload, cache, dynamic loader, geometry profile, or full-wall release.
 Portable tests and a deliberately scheduled one-receiver canary are sufficient.
 
-### Increment 6: Sparse Foreground over the Compiled Background
+### Phase 3B: Sparse Foreground over the Compiled Background
 
 Prove the core hybrid value before solving native artifact loading.
 
@@ -1284,7 +1629,7 @@ Prove the core hybrid value before solving native artifact loading.
 Keep one aggregate source-over foreground plane. Do not add dynamic native code,
 receiver-rendered overlays, multiple blend modes, or general layer graphs.
 
-### Increment 7: Versioned Installation Geometry and Receiver-Safe Optics
+### Phase 3C: Versioned Installation Geometry and Receiver-Safe Optics
 
 Move only geometry and transforms justified by hybrid rendering.
 
@@ -1325,7 +1670,7 @@ Move only geometry and transforms justified by hybrid rendering.
 Do not move every plant modifier, raw calibration JSON, or liquid-glass sampling
 to receivers.
 
-### Increment 8: Repo-Peer Native Build and Managed Library
+### Phase 3D: Repo-Peer Native Build and Managed Library
 
 Build and validate an unsigned native peer without executing it on the installed
 wall.
@@ -1364,7 +1709,7 @@ wall.
 
 Do not expose arbitrary upload or execute dynamic modules on installed receivers.
 
-### Increment 9: Dynamic Loader, Cache, Four-Board Orchestration, and Release
+### Phase 4: Dynamic Loader, Cache, Four-Board Orchestration, and Release
 
 Activate trusted unsigned modules only after the earlier contracts and hardware
 prerequisites are proven.
@@ -1401,8 +1746,9 @@ prerequisites are proven.
 - Pi restart adoption requires unanimous bundle/payload binding, mode, vibe,
   resolved plant-modifier revision, and profile, then republishes the foreground
   snapshot.
-- App downgrade preflight returns to a known Python full scene before switching
-  to software that cannot understand native state.
+- App downgrade preflight refuses while incompatible receiver-native state is
+  active; after the explicit recovery operation establishes a known Python full
+  scene, app-only rollback succeeds without mutating receivers.
 - One receiver and then all four pass physical install/start/update/stop,
   disconnect/restart, crash/fallback, overlay, geometry, switchback, skew/drift,
   and soak acceptance.
@@ -1412,7 +1758,7 @@ prerequisites are proven.
 Do not add third-party packages, frame tracks, strict v-sync, receiver-native
 foregrounds, or general artifact-provider abstractions.
 
-### Increment 10: Migrate Palettes and Expand Only from Evidence
+### Phase 5: Migrate Palettes and Expand Only from Evidence
 
 Broaden the system after the vertical slice is production-accepted.
 
@@ -1460,7 +1806,7 @@ Further expansion requires a new measured problem statement and acceptance gate.
 | Installation-profile mismatch | Reject required-profile start or use declared optional no-op; never mix silently |
 | Mixed receiver capabilities | Continue legacy streaming; refuse native activation |
 | Complete host frame arrives | Explicitly reclaim host ownership and bypass/clear receiver foreground |
-| App rollback cannot understand scene | Preflight to known Python full scene before switching release |
+| App rollback cannot understand scene | Refuse the app-only rollback; require an explicit receiver/scene recovery to a known Python full scene first |
 | Firmware rollback | Stop native, take host/fallback ownership, retain prior binaries and partition data |
 | Managed library corruption | Reject the invalid bundle/payload binding, retain the pinned prior artifact, rebuild from tracked source if necessary |
 
@@ -1579,29 +1925,34 @@ be enabled by default or described as production-ready.
 
 ## Migration and Rollback
 
-1. Deploy host code that understands old and new status while every new feature
+1. Complete Phase 0 through app rollback and automatic provisioning acceptance;
+   keep legacy shell entrypoints until wall parity is recorded.
+2. Deploy host code that understands old and new status while every new feature
    is off. Legacy streaming remains the only active mode.
-2. Migrate persistence to versioned desired display state and prove legacy
+3. Migrate persistence to versioned desired display state and prove legacy
    single-animation round trips.
-3. Enable vibe and host composition independently; either can be disabled
+4. Enable vibe and host composition independently; either can be disabled
    without firmware changes.
-4. Qualify the explicit receiver-mode baseline on one receiver, then all four,
+5. Qualify the explicit receiver-mode baseline on one receiver, then all four,
    while local playback remains off by default.
-5. Enable the compiled background canary, then sparse foreground, then geometry,
+6. Enable the compiled background canary, then sparse foreground, then geometry,
    as separate gates.
-6. Publish and install the native pilot without auto-start. Verify all hashes,
+7. Publish and install the native pilot without auto-start. Verify all hashes,
    identities, cache entries, and rollback artifacts.
-7. Opt into dynamic native playback only after unanimous receiver readiness.
+8. Opt into dynamic native playback only after unanimous receiver readiness.
 
 Rollback layers remain independent:
 
+- **Deployment attempt:** retain logs and receipts for failure/interruption;
+  resume only idempotent provisioning phases.
 - **Scene:** select a known Python background-only scene.
 - **Foreground:** clear the generation and continue the base.
 - **Native artifact:** reserve and stage the candidate while the prior
   bundle/payload binding remains pinned; restore that binding on any activation
   failure.
-- **Application:** preserve artifact/calibration libraries; take host ownership
-  before downgrading to an app that lacks native support.
+- **Application:** preserve artifact/calibration libraries; refuse incompatible
+  downgrade until an explicit recovery operation has taken host ownership, then
+  perform app-only rollback without receiver mutation.
 - **Firmware:** retain prior images and partition data; receiver cache may be
   erased because the Pi library is authoritative.
 - **Persistent state:** unknown schema/provider/bundle binding fails to the stored
@@ -1630,7 +1981,7 @@ Rollback layers remain independent:
 - No mandatory rewrite of all existing plugins or 290 curated presets before
   the vertical slice ships.
 
-## Open Decisions to Close in Increment 1
+## Open Decisions to Close in Phase 1
 
 - Final names and visual definitions for the five initial vibe IDs.
 - Exact schema/version names for descriptors, scenes, runtime context, native
@@ -1658,6 +2009,13 @@ and unsigned native code remains restricted to trusted repository builds.
 
 - The installation remains one Mac development machine, one Raspberry Pi, and
   four ESP32-S3 receivers; no hosted registry or telemetry service is required.
+- `just deploy` ultimately performs full desired-state reconciliation from a
+  clean tree; `just deploy-dirty` is the explicit development exception.
+- Successful deployment output is ephemeral, while receipts and failure logs
+  remain durable and redacted.
+- Application health failure automatically restores the prior app release.
+  Firmware failure remains in place with explicit recovery and no false
+  whole-system rollback claim.
 - All four receivers run the same baseline firmware and expose stable logical
   identity/global offset.
 - Application releases, runtime state, native artifact library, calibration

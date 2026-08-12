@@ -22,8 +22,9 @@ Read this reference only when working in the `ledgrid-poc` repository.
   between the web and hardware-owning controller processes.
 - `docs/ANIMATION_SYSTEM.md`: architecture and creation overview.
 - `docs/RENDERING_PIPELINE_ACCEPTANCE.md`: rendering acceptance details.
-- `docs/plan-native-animations.md`: approved direction for signed native modules,
-  frame-track packages, receiver caching, and dashboard control.
+- `docs/plan-revamped-animation-pipeline.md`: unified phased direction for
+  deployment hardening, scenes and vibe, sparse overlays, installation geometry,
+  and trusted repository-built receiver-native backgrounds.
 - `Justfile`: canonical test, benchmark, live sweep, and deployment commands.
 
 ## Repository contracts
@@ -126,11 +127,13 @@ implement it as an isolated firmware renderer.
   trust anchor. Subsequent package installation is not a firmware flash, but
   changing the loader ABI or trusted public key is.
 
-The accepted initial design is documented in `docs/plan-native-animations.md`:
-signed `.lga` packages built by a trusted local CLI, C/C++ shared objects loaded
-on ESP32-S3, GIF/WebP-derived device tracks, a Pi-authoritative library, and
-transactional all-board staging. Strict cross-board clock synchronization and
-shared v-sync are deferred; retain measured skew/drift in hardware acceptance.
+The accepted phased design is documented in
+`docs/plan-revamped-animation-pipeline.md`: establish explicit display ownership
+and a compiled-background/sparse-overlay canary first, then add trusted unsigned
+modules built only from allowlisted repository source, a Pi-authoritative library,
+and transactional all-board staging. Arbitrary upload, frame-track playback, and
+strict shared v-sync are deferred; retain measured skew/drift in hardware
+acceptance.
 
 ## Preset-family workflow
 
@@ -205,13 +208,13 @@ before any hardware request:
 pio test -d firmware/esp32 -e native
 ```
 
-Add focused host tests for protocol serialization/status parsing, package and
-signature validation, track encoding/decoding, IPC commands, mode persistence,
-and all-board transaction failure. Physical acceptance must cover one receiver
-before all four, switching back to streamed frames, Pi disconnect/restart,
-interrupted uploads, cache eviction, module crash fallback, and a soak at each
-payload's declared cadence. Do not flash or start the wall unless the user has
-explicitly put hardware operation in scope.
+Add focused host tests for protocol serialization/status parsing, unsigned bundle
+and ELF/hash validation, sparse foreground generations, IPC commands, mode
+persistence, and all-board transaction failure. Physical acceptance must cover
+one receiver before all four, switching back to streamed frames, Pi
+disconnect/restart, interrupted uploads, cache eviction/pinning, module crash
+fallback, and a soak at each payload's declared cadence. Do not flash or start
+the wall unless the user has explicitly put hardware operation in scope.
 
 ## Performance interpretation
 
