@@ -2005,6 +2005,21 @@ Portable/integrated evidence on 2026-08-13:
   used 270,729 bytes flash and 50,696 bytes RAM; the deployment regression
   proves only the feature-off production environment is eligible for ordinary
   `just deploy`.
+- Clean deployment from commit `cfb8464` passed source validation, the complete
+  local gate, target connection, immutable app/support staging, production
+  firmware build, unchanged host provisioning, and a successful production-image
+  flash to `/dev/ttyACM0` through `/dev/ttyACM3`. Receipt
+  `7242a4a4490547c196a191f3fa614e9d` then failed at the non-mutating
+  `app.validate` step because `ledgridwall.local` stopped resolving. The
+  candidate app was not validated or activated, systemd was not restarted, and
+  no state restore or health acceptance ran. The documented `PI_HOST` retry via
+  `192.168.1.62` reached the address during a read-only probe but its deployment
+  stopped at `target.connect` when the workstation SSH agent failed to sign;
+  later approval reviews for the authenticated retry timed out before launch.
+  The API and mDNS are currently unavailable, so service health and all-four
+  post-flash identity remain unproven. Resume the same clean reconciliation only
+  after stable SSH/API reachability, then repeat status and streamed gates; do
+  not close Phase 3A from the successful flash alone.
 
 - Replace `pi_connected` with explicit base, foreground, and maintenance state.
 - Add a new backward-capable status/capability version and host parser.
