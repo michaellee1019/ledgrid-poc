@@ -1917,7 +1917,8 @@ deployment recipe checks, focused host/orchestration tests, and cross-language
 vectors pass. The ordinary production image keeps receiver-local playback
 disabled. Completion still requires an actual clean `just deploy`, fresh Phase 3A
 wall status, streamed wall acceptance, and the deliberately restored one-receiver
-physical canary.
+physical canary. The first clean deployment attempt is safely blocked at the
+read-only target connection because the configured wall host is offline.
 
 - [x] Explicit orthogonal receiver ownership replaces implicit first-command
   takeover while preserving the complete-host-frame kill path and all legacy
@@ -1956,6 +1957,12 @@ Portable/integrated evidence on 2026-08-13:
   faults, post-verifies live parameters, and always attempts a complete black
   host-frame takeover in `finally`. It never flashes firmware or manages the
   service.
+- Clean `just deploy` attempt `20260813T155129.914376Z` reran the full local gate
+  successfully, then stopped at the non-mutating `target.connect` step because
+  `ledgridwall.local` did not resolve. The neighbor-table address
+  `192.168.1.62` also timed out over HTTP and reported `Host is down` over SSH.
+  No release, service, firmware, or wall state changed; deployment, streamed
+  acceptance, and the restored one-receiver canary remain open stop gates.
 
 - Replace `pi_connected` with explicit base, foreground, and maintenance state.
 - Add a new backward-capable status/capability version and host parser.
