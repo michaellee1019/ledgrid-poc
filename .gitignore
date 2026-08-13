@@ -12,6 +12,8 @@
 .pytest_cache/
 .coverage
 .deploy-logs/
+/.gpt-key
+/.gpt-key.pub
 htmlcov/
 .venv-web
 run_state

@@ -1296,5 +1296,58 @@ class EntrypointReceiptExitTests(unittest.TestCase):
             )
 
 
+class DedicatedSSHKeyTests(unittest.TestCase):
+    def test_ssh_key_env_resolves_from_root_and_disables_agent_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            key = root / "keys" / "agent key"
+            key.parent.mkdir()
+            key.write_text("private-key-fixture\n", encoding="utf-8")
+            key.chmod(0o600)
+            with patch.dict(os.environ, {"SSH_KEY": "keys/agent key"}):
+                args = deploy_entrypoint._parser().parse_args(
+                    ("run", "--mode", "python", "--root", os.fspath(root))
+                )
+                config = deploy_entrypoint._config(args)
+
+            self.assertEqual(
+                config.ssh_options,
+                (
+                    *deploy_entrypoint.DEFAULT_SSH_OPTIONS,
+                    "-i", os.fspath(key.resolve()),
+                    "-o", "IdentitiesOnly=yes",
+                ),
+            )
+            context = deploy_entrypoint._context(config)
+            self.assertEqual(context.ssh_runner.ssh_options, config.ssh_options)
+            self.assertEqual(
+                deploy_entrypoint._rsync_ssh_command(config.ssh_options),
+                "ssh -o BatchMode=yes -o ConnectTimeout=10 "
+                "-o StrictHostKeyChecking=accept-new -i "
+                f"'{key.resolve()}' -o IdentitiesOnly=yes",
+            )
+
+    def test_unset_ssh_key_preserves_default_openssh_behavior(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            args = deploy_entrypoint._parser().parse_args(
+                ("plan", "--mode", "full", "--root", os.fspath(Path.cwd()))
+            )
+            config = deploy_entrypoint._config(args)
+        self.assertEqual(config.ssh_options, deploy_entrypoint.DEFAULT_SSH_OPTIONS)
+        self.assertNotIn("IdentitiesOnly=yes", config.ssh_options)
+
+    def test_missing_or_insecure_ssh_key_fails_before_target_connection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            with self.assertRaisesRegex(ValueError, "does not exist"):
+                deploy_entrypoint._ssh_options(root, "missing-key")
+
+            key = root / "open-key"
+            key.write_text("private-key-fixture\n", encoding="utf-8")
+            key.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "permissions"):
+                deploy_entrypoint._ssh_options(root, os.fspath(key))
+
+
 if __name__ == "__main__":
     unittest.main()

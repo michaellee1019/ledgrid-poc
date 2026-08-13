@@ -3,12 +3,19 @@
 Deployment targets `ledgridwall@ledgridwall.local` and `~/ledgrid-pod` by
 default. Override `PI_HOST` or `DEPLOY_DIR` for another installation.
 
+For unattended or agent-driven work, `SSH_KEY` selects one explicit private
+key and adds OpenSSH `IdentitiesOnly=yes`; this prevents an SSH agent failure
+from falling through to unrelated identities. Relative key paths resolve from
+the repository root. When `SSH_KEY` is unset, deployment retains ordinary
+OpenSSH configuration and agent behavior unchanged.
+
 ## Command surface
 
 Use `just` recipes rather than invoking deployment helpers directly:
 
 | Recipe | Purpose |
 | --- | --- |
+| `just generate-ai-ssh-key` | Create the ignored `.gpt-key` identity and print its one-time authorization command |
 | `just setup-web` | Create the local web/preview environment |
 | `just setup` | Prepare SSH, Pi permissions, SPI, and firmware tooling |
 | `just test-unit` | Run Python unit and plugin tests |
@@ -60,6 +67,20 @@ Run:
 just setup
 just deploy
 ```
+
+To create a dedicated repository-local automation identity instead, run:
+
+```bash
+PI_HOST=ledgridwall@192.168.1.62 just generate-ai-ssh-key
+ssh-copy-id -i .gpt-key.pub ledgridwall@192.168.1.62
+SSH_KEY=./.gpt-key PI_HOST=ledgridwall@192.168.1.62 just deploy
+```
+
+The private key and public-key sidecar are ignored by Git. The generator uses
+Ed25519, creates the private key with mode `0600`, and refuses to overwrite an
+existing key. The authorization command intentionally uses normal SSH handling
+once; subsequent commands that set `SSH_KEY` do not consult the agent for other
+identities.
 
 Setup installs pinned PlatformIO 6.1.19 in a dedicated environment on the Pi
 and verifies serial permissions. Firmware uses the immutable pioarduino

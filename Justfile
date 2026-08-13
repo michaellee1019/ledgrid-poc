@@ -4,6 +4,31 @@ set quiet := true
 web_venv := ".venv-web"
 python_env := "uv run --frozen --group test --group calibration"
 captured := "python3 tools/deployment/run_captured.py --log-dir .deploy-logs"
+ai_ssh_key := ".gpt-key"
+
+# Create an ignored, repository-local identity for automated wall operations.
+generate-ai-ssh-key key_path=ai_ssh_key:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	umask 077
+	key="{{key_path}}"
+	if [ -e "$key" ] || [ -e "$key.pub" ]; then
+	  echo "Refusing to overwrite existing AI SSH key: $key or $key.pub" >&2
+	  exit 1
+	fi
+	if [ ! -d "$(dirname -- "$key")" ]; then
+	  echo "AI SSH key parent directory does not exist: $(dirname -- "$key")" >&2
+	  exit 1
+	fi
+	ssh-keygen -q -t ed25519 -N "" -C "codex-ledgrid-poc" -f "$key"
+	chmod 600 "$key"
+	chmod 644 "$key.pub"
+	target="${PI_HOST:-ledgridwall@ledgridwall.local}"
+	echo "Generated dedicated AI SSH key: $key"
+	echo "Authorize it once using your normal SSH handling:"
+	printf '  ssh-copy-id -i %q %q\n' "$key.pub" "$target"
+	echo "Then deploy without the SSH agent using:"
+	printf '  SSH_KEY=%q just deploy\n' "$key"
 
 # Run the complete local gate before a provision/firmware deployment.
 # Set TEST=false for an explicitly requested fast deployment.

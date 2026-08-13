@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import shlex
 import shutil
 import stat
 import subprocess
@@ -80,6 +81,10 @@ SUPPORT_FILES = frozenset({"requirements-platformio.lock"})
 DEFAULT_TARGET = "ledgridwall@ledgridwall.local"
 DEFAULT_DEPLOY_DIR = "ledgrid-pod"
 DEFAULT_LOCAL_RECEIPTS = Path(".deploy-logs") / "receipts"
+DEFAULT_SSH_OPTIONS = (
+    "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+    "-o", "StrictHostKeyChecking=accept-new",
+)
 
 
 _REMOTE_RELEASE_INSPECTOR = r"""
@@ -136,6 +141,37 @@ def _safe_deploy_dir(value: str) -> PurePosixPath:
     if path.is_absolute() or not path.parts or ".." in path.parts or path == PurePosixPath("."):
         raise ValueError(f"DEPLOY_DIR must be a safe path below the target home: {value!r}")
     return path
+
+
+def _ssh_options(root: Path, ssh_key: Optional[str]) -> tuple[str, ...]:
+    """Resolve an optional dedicated identity without consulting an SSH agent."""
+    if ssh_key is None or not ssh_key.strip():
+        return DEFAULT_SSH_OPTIONS
+    candidate = Path(ssh_key).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    try:
+        resolved = candidate.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ValueError(f"SSH_KEY does not exist: {candidate}") from exc
+    if not resolved.is_file():
+        raise ValueError(f"SSH_KEY is not a regular file: {resolved}")
+    permissions = stat.S_IMODE(resolved.stat().st_mode)
+    if permissions & 0o077:
+        raise ValueError(
+            f"SSH_KEY permissions must not grant group/other access: "
+            f"{resolved} has mode {permissions:04o}"
+        )
+    return (
+        *DEFAULT_SSH_OPTIONS,
+        "-i", os.fspath(resolved),
+        "-o", "IdentitiesOnly=yes",
+    )
+
+
+def _rsync_ssh_command(ssh_options: Sequence[str]) -> str:
+    """Encode the exact OpenSSH argv for rsync's remote-shell argument."""
+    return shlex.join(("ssh", *ssh_options))
 
 
 def _is_support_path(path: PurePosixPath) -> bool:
@@ -384,10 +420,7 @@ class DeploymentConfig:
     leds_per_strip: int = 138
     receiver_count: int = 4
     health_timeout: float = 30.0
-    ssh_options: tuple[str, ...] = (
-        "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-        "-o", "StrictHostKeyChecking=accept-new",
-    )
+    ssh_options: tuple[str, ...] = DEFAULT_SSH_OPTIONS
     local_receipts: Path = DEFAULT_LOCAL_RECEIPTS
 
     def __post_init__(self) -> None:
@@ -561,7 +594,7 @@ class CoordinatorDeployment:
                 "-az",
                 "--delete",
                 "-e",
-                "ssh " + " ".join(self.config.ssh_options),
+                _rsync_ssh_command(self.config.ssh_options),
                 os.fspath(evidence.path) + "/",
                 destination,
             ),
@@ -1083,7 +1116,7 @@ def shadow_deployment(config: DeploymentConfig, *, target_stage: bool = False) -
             context.command(
                 (
                     "rsync", "-az", "--delete", "-e",
-                    "ssh " + " ".join(config.ssh_options),
+                    _rsync_ssh_command(config.ssh_options),
                     os.fspath(evidence.path) + "/",
                     f"{config.target}:{target.incoming}/",
                 ),
@@ -1170,6 +1203,7 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--policy", choices=("clean", "dirty", "plan"), default="clean")
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--target", default=os.environ.get("PI_HOST", DEFAULT_TARGET))
+    parser.add_argument("--ssh-key", default=os.environ.get("SSH_KEY"))
     parser.add_argument("--deploy-dir", default=os.environ.get("DEPLOY_DIR", DEFAULT_DEPLOY_DIR))
     parser.add_argument("--skip-tests", action="store_true")
     parser.add_argument("--skip-previews", action="store_true")
@@ -1183,6 +1217,7 @@ def _add_rollback_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("release_id")
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--target", default=os.environ.get("PI_HOST", DEFAULT_TARGET))
+    parser.add_argument("--ssh-key", default=os.environ.get("SSH_KEY"))
     parser.add_argument("--deploy-dir", default=os.environ.get("DEPLOY_DIR", DEFAULT_DEPLOY_DIR))
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--strips", type=int, default=int(os.environ.get("STRIPS", "32")))
@@ -1199,6 +1234,7 @@ def _add_rollback_options(parser: argparse.ArgumentParser) -> None:
 def _add_readonly_target_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--target", default=os.environ.get("PI_HOST", DEFAULT_TARGET))
+    parser.add_argument("--ssh-key", default=os.environ.get("SSH_KEY"))
     parser.add_argument("--deploy-dir", default=os.environ.get("DEPLOY_DIR", DEFAULT_DEPLOY_DIR))
     parser.set_defaults(
         mode="python",
@@ -1214,8 +1250,9 @@ def _add_readonly_target_options(parser: argparse.ArgumentParser) -> None:
 
 def _config(args: argparse.Namespace) -> DeploymentConfig:
     test_env = os.environ.get("TEST", "true").lower() not in {"false", "0", "no"}
+    root = args.root.resolve()
     return DeploymentConfig(
-        root=args.root.resolve(),
+        root=root,
         mode=args.mode,
         policy=args.policy,
         target=args.target,
@@ -1226,6 +1263,7 @@ def _config(args: argparse.Namespace) -> DeploymentConfig:
         strips=args.strips,
         leds_per_strip=args.leds_per_strip,
         receiver_count=args.receivers,
+        ssh_options=_ssh_options(root, args.ssh_key),
     )
 
 

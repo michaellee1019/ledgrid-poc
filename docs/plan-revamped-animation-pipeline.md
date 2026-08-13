@@ -2020,6 +2020,19 @@ Portable/integrated evidence on 2026-08-13:
   post-flash identity remain unproven. Resume the same clean reconciliation only
   after stable SSH/API reachability, then repeat status and streamed gates; do
   not close Phase 3A from the successful flash alone.
+- The repeated `target.connect` failure was isolated from wall reachability:
+  OpenSSH reached `192.168.1.62`, but the workstation's 1Password-backed SSH
+  agent failed while signing `id_rsa`. A dedicated-key path now keeps that
+  external agent out of automated deployment: `just generate-ai-ssh-key`
+  creates an ignored Ed25519 `.gpt-key` at mode `0600`, refuses overwrite, and
+  prints the one-time authorization command. `SSH_KEY=./.gpt-key just deploy`
+  resolves the key from the repository root and supplies both the exact `-i`
+  path and `IdentitiesOnly=yes` to every coordinator SSH, rsync, receipt,
+  rollback, and inspection operation. With `SSH_KEY` unset, the existing
+  OpenSSH/agent behavior is byte-for-byte unchanged. Deployment regression
+  coverage passes; physical reconciliation resumes only after the operator
+  authorizes the generated public key and the dedicated identity passes a
+  read-only connection probe.
 
 - Replace `pi_connected` with explicit base, foreground, and maintenance state.
 - Add a new backward-capable status/capability version and host parser.

@@ -1,7 +1,9 @@
 """Regression checks for fast, recoverable deployment recipes."""
 
 from pathlib import Path
+import os
 import subprocess
+import tempfile
 import unittest
 
 
@@ -9,6 +11,42 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class DeployRecipeTests(unittest.TestCase):
+    def test_ai_ssh_key_recipe_generates_ignored_ed25519_and_refuses_overwrite(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            key = Path(temporary_dir) / "agent key"
+            generated = subprocess.run(
+                ["just", "generate-ai-ssh-key", os.fspath(key)],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertTrue(key.is_file())
+            self.assertTrue(key.with_suffix(".pub").is_file())
+            self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(key.with_suffix(".pub").stat().st_mode & 0o777, 0o644)
+            self.assertTrue(
+                key.with_suffix(".pub").read_text(encoding="utf-8").startswith(
+                    "ssh-ed25519 "
+                )
+            )
+            self.assertIn("ssh-copy-id", generated.stdout)
+            self.assertIn("SSH_KEY=", generated.stdout)
+
+            repeated = subprocess.run(
+                ["just", "generate-ai-ssh-key", os.fspath(key)],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(repeated.returncode, 0)
+            self.assertIn("Refusing to overwrite", repeated.stderr)
+
+        ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("/.gpt-key\n", ignore)
+        self.assertIn("/.gpt-key.pub\n", ignore)
+
     def test_deploy_recipes_default_to_tests_and_allow_explicit_skip(self):
         justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
         entrypoint = (ROOT / "tools/deployment/deploy_entrypoint.py").read_text(
