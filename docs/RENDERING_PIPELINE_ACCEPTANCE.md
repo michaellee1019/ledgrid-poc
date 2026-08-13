@@ -105,7 +105,7 @@ receiver telemetry cannot observe downstream LED wiring.
 
 Run a dense, changing animation for at least 60 seconds at the installed 160 FPS
 full-frame target. This proves production pipeline capacity; it does not qualify
-the hand-wired strip links. Use
+the downstream physical strip links. Use
 `just receiver-acceptance device=0 duration=60 min_fps=150 target_fps=160`;
 the recipe also accepts positional arguments and defaults. The capacity gate
 temporarily neutralizes manager-global plant modifiers so operator optics cannot
@@ -143,7 +143,7 @@ WS2812 lanes have no return channel. Receiver CRC and DMA telemetry therefore
 cannot detect a flash caused by a marginal data/power connection downstream of
 the ESP32. After the electronic gates pass, run `just output-rate-sweep` while
 watching the affected strips. Retain the highest target with no visible flash;
-the installed hand-wired wall defaults to 160 FPS until that qualification is
+the installed wall defaults to 160 FPS until that qualification is
 complete. A rate is not accepted merely because receiver counters are clean.
 
 If any integrity criterion fails, do not roll out. Timing thresholds may be revised

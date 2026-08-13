@@ -41,6 +41,11 @@ content-addressed results are reused on later launches.
 - `web/`: Flask application and templates
 - `config/`: production plant-wall geometry and semantic masks
 
+The repository documents the runtime wiring contract for assembled hardware but
+does not contain PCB/schematic source, a BOM, or fabrication outputs. See
+[Hardware and wiring](docs/HARDWARE.md) for the known configuration and the
+explicit as-built gaps.
+
 The root `presets/animations/` tree is a runtime/user-writable overlay. Curated
 presets belong to the plugin that owns them.
 
