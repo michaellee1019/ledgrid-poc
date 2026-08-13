@@ -1,6 +1,7 @@
 """Reusable rendering and pixel-art primitives shared by animations."""
 
 from .color import mix_rgb, parameter_rgb, scale_rgb
+from .clock_face import ClockFaceRenderer
 from .mask_effects import (
     build_halo_weights,
     dilate_8,
@@ -13,6 +14,7 @@ from .spatial import normalized_axis_positions
 
 __all__ = [
     "AnimatedPaletteField",
+    "ClockFaceRenderer",
     "build_halo_weights",
     "dilate_8",
     "indices_from_payload",

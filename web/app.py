@@ -220,6 +220,8 @@ class AnimationWebInterface:
         @self.app.route('/api/animations/<animation_name>/presets/<preset_id>/apply', methods=['POST'])
         def api_apply_animation_preset(animation_name: str, preset_id: str):
             """API: Re-read a preset from disk and start its animation with those settings."""
+            if not self.preview_manager.get_animation_info(animation_name):
+                return jsonify({'error': 'Animation not found'}), 404
             preset = self._load_animation_preset(animation_name, preset_id)
             if not preset:
                 return jsonify({'error': 'Preset not found'}), 404
@@ -246,6 +248,8 @@ class AnimationWebInterface:
         @self.app.route('/api/start/<animation_name>', methods=['POST'])
         def api_start_animation(animation_name):
             """API: Start an animation"""
+            if not self.preview_manager.get_animation_info(animation_name):
+                return jsonify({'error': 'Animation not found'}), 404
             config = request.get_json() or {}
             self.control_channel.send_command('start', animation=animation_name, config=config)
             # Controller polls periodically, so assume success if write succeeded

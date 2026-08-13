@@ -8,9 +8,13 @@ firmware without activating either path.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import Optional, Tuple
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Optional, Tuple
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from animation.core.presentation_contracts import BaseFrame, OverlayFrame
 
 
 RGBA8_MAX = 255
@@ -269,3 +273,294 @@ def normalize_optional_dirty_ranges(
     if ranges is None:
         return None
     return normalize_dirty_ranges(ranges, pixel_count)
+
+
+def _require_offset(name: str, value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{name} must be an integer")
+    return int(value)
+
+
+@dataclass(frozen=True)
+class PlacedOverlay:
+    """One full-wall overlay translated into the global logical scene."""
+
+    frame: OverlayFrame
+    strip_offset: int = 0
+    led_offset: int = 0
+    opacity: int = RGBA8_MAX
+    enabled: bool = True
+
+    def __post_init__(self) -> None:
+        # Import lazily because presentation_contracts imports the reference
+        # dirty-range helpers from this module.
+        from animation.core.presentation_contracts import OverlayFrame
+
+        if not isinstance(self.frame, OverlayFrame):
+            raise TypeError("frame must be an OverlayFrame")
+        object.__setattr__(
+            self, "strip_offset", _require_offset("strip_offset", self.strip_offset)
+        )
+        object.__setattr__(self, "led_offset", _require_offset("led_offset", self.led_offset))
+        object.__setattr__(self, "opacity", _require_u8("opacity", self.opacity))
+        if not isinstance(self.enabled, bool):
+            raise TypeError("enabled must be a bool")
+
+
+class HostSceneCompositor:
+    """Compose a canonical opaque base and ordered premultiplied overlays.
+
+    The compositor owns and reuses its base, aggregate, output, and arithmetic
+    buffers.  Component buffers are read-only inputs.  Overlay order is the
+    sequence order, from bottom to top.
+    """
+
+    def __init__(self, strip_count: int, leds_per_strip: int):
+        _validate_geometry(strip_count, leds_per_strip)
+        self.strip_count = strip_count
+        self.leds_per_strip = leds_per_strip
+        self.pixel_count = strip_count * leds_per_strip
+
+        self._base = np.empty((self.pixel_count, 3), dtype=np.uint8)
+        self._aggregate = np.empty((self.pixel_count, 4), dtype=np.uint8)
+        # Generation of frame N+1 can overlap presentation of frame N.  Two
+        # outputs keep the prior frame stable while bounding buffer ownership.
+        self._outputs = (
+            np.empty((self.pixel_count, 3), dtype=np.uint8),
+            np.empty((self.pixel_count, 3), dtype=np.uint8),
+        )
+        self._output_index = -1
+        self._scaled_overlay = np.empty((self.pixel_count, 4), dtype=np.uint8)
+        self._rgba_work = np.empty((self.pixel_count, 4), dtype=np.uint16)
+        self._rgb_work = np.empty((self.pixel_count, 3), dtype=np.uint16)
+        self._alpha_work = np.empty(self.pixel_count, dtype=np.uint16)
+
+        self._has_output = False
+        self._placement_signature: Optional[tuple[tuple[int, int, int, bool], ...]] = None
+        self._content_signature: Optional[tuple[tuple[int, int], ...]] = None
+        self._aggregate_coverage: DirtyRanges = ()
+
+    def compose(
+        self, base: BaseFrame, overlays: Sequence[PlacedOverlay] = ()
+    ) -> BaseFrame:
+        """Return the reusable opaque scene buffer and exact change metadata."""
+
+        from animation.core.presentation_contracts import BaseFrame
+
+        if not isinstance(base, BaseFrame):
+            raise TypeError("base must be a BaseFrame")
+        self._require_pixel_count("base", base.pixels)
+        if isinstance(overlays, (str, bytes)) or not isinstance(overlays, Sequence):
+            raise TypeError("overlays must be a sequence of PlacedOverlay values")
+        placed = tuple(overlays)
+        for index, item in enumerate(placed):
+            if not isinstance(item, PlacedOverlay):
+                raise TypeError(f"overlays[{index}] must be a PlacedOverlay")
+            self._require_pixel_count(f"overlays[{index}].frame", item.frame.pixels)
+
+        placement_signature = tuple(
+            (
+                item.strip_offset,
+                item.led_offset,
+                item.opacity,
+                item.enabled,
+            )
+            for item in placed
+        )
+        content_signature = tuple(
+            (item.frame.revision, id(item.frame.pixels)) for item in placed
+        )
+        placement_changed = placement_signature != self._placement_signature
+        overlay_frame_changed = any(item.frame.changed for item in placed)
+        content_changed = content_signature != self._content_signature
+        silent_content_changed = content_changed and any(
+            not item.frame.changed
+            and (
+                self._content_signature is None
+                or index >= len(self._content_signature)
+                or content_signature[index] != self._content_signature[index]
+            )
+            for index, item in enumerate(placed)
+        )
+        overlays_changed = placement_changed or content_changed or overlay_frame_changed
+
+        if self._has_output and not base.changed and not overlays_changed:
+            return BaseFrame(
+                self._outputs[self._output_index], changed=False, dirty_ranges=()
+            )
+
+        first_composition = not self._has_output
+        dirty_unknown = first_composition
+        dirty_groups: list[DirtyRanges] = []
+
+        if first_composition or base.changed:
+            np.copyto(self._base, base.pixels)
+            if not first_composition:
+                if base.dirty_ranges is None:
+                    dirty_unknown = True
+                else:
+                    dirty_groups.append(base.dirty_ranges)
+
+        if first_composition or overlays_changed:
+            previous_coverage = self._aggregate_coverage
+            self._compose_aggregate(placed)
+            current_coverage = alpha_coverage_ranges(self._aggregate)
+
+            if not first_composition and (placement_changed or silent_content_changed):
+                dirty_groups.extend((previous_coverage, current_coverage))
+
+            if not first_composition:
+                for item in placed:
+                    if not item.frame.changed or not item.enabled or item.opacity == 0:
+                        continue
+                    if item.frame.dirty_ranges is None:
+                        dirty_unknown = True
+                    else:
+                        dirty_groups.append(
+                            self._translate_ranges(
+                                item.frame.dirty_ranges,
+                                strip_offset=item.strip_offset,
+                                led_offset=item.led_offset,
+                            )
+                        )
+
+            self._aggregate_coverage = current_coverage
+            self._placement_signature = placement_signature
+            self._content_signature = content_signature
+
+        self._output_index = (self._output_index + 1) % len(self._outputs)
+        output = self._outputs[self._output_index]
+        self._compose_output(output)
+        self._has_output = True
+        dirty_ranges = (
+            None
+            if dirty_unknown
+            else union_dirty_ranges(*dirty_groups, pixel_count=self.pixel_count)
+        )
+        return BaseFrame(output, changed=True, dirty_ranges=dirty_ranges)
+
+    def _require_pixel_count(self, name: str, pixels: np.ndarray) -> None:
+        if pixels.shape[0] != self.pixel_count:
+            raise ValueError(
+                f"{name} geometry must contain {self.pixel_count} pixels "
+                f"({self.strip_count} strips x {self.leds_per_strip} LEDs); "
+                f"got {pixels.shape[0]}"
+            )
+
+    def _placement_slices(
+        self, *, strip_offset: int, led_offset: int
+    ) -> Optional[tuple[slice, slice, slice, slice]]:
+        destination_strip_start = max(0, strip_offset)
+        destination_strip_end = min(self.strip_count, self.strip_count + strip_offset)
+        destination_led_start = max(0, led_offset)
+        destination_led_end = min(self.leds_per_strip, self.leds_per_strip + led_offset)
+        if (
+            destination_strip_start >= destination_strip_end
+            or destination_led_start >= destination_led_end
+        ):
+            return None
+        return (
+            slice(destination_strip_start - strip_offset, destination_strip_end - strip_offset),
+            slice(destination_led_start - led_offset, destination_led_end - led_offset),
+            slice(destination_strip_start, destination_strip_end),
+            slice(destination_led_start, destination_led_end),
+        )
+
+    def _compose_aggregate(self, overlays: Sequence[PlacedOverlay]) -> None:
+        aggregate = self._aggregate.reshape(
+            (self.strip_count, self.leds_per_strip, 4)
+        )
+        scaled_buffer = self._scaled_overlay.reshape(
+            (self.strip_count, self.leds_per_strip, 4)
+        )
+        rgba_work = self._rgba_work.reshape(
+            (self.strip_count, self.leds_per_strip, 4)
+        )
+        alpha_work = self._alpha_work.reshape(
+            (self.strip_count, self.leds_per_strip)
+        )
+        aggregate.fill(0)
+
+        for item in overlays:
+            if not item.enabled or item.opacity == 0:
+                continue
+            slices = self._placement_slices(
+                strip_offset=item.strip_offset, led_offset=item.led_offset
+            )
+            if slices is None:
+                continue
+            source_strip, source_led, destination_strip, destination_led = slices
+            source = item.frame.pixels.reshape(
+                (self.strip_count, self.leds_per_strip, 4)
+            )[source_strip, source_led]
+            destination = aggregate[destination_strip, destination_led]
+
+            if item.opacity == RGBA8_MAX:
+                top = source
+            else:
+                top = scaled_buffer[destination_strip, destination_led]
+                scale_work = rgba_work[destination_strip, destination_led]
+                np.multiply(source, item.opacity, out=scale_work, dtype=np.uint16)
+                np.add(scale_work, 127, out=scale_work)
+                np.floor_divide(scale_work, RGBA8_MAX, out=scale_work)
+                np.copyto(top, scale_work, casting="unsafe")
+
+            product = rgba_work[destination_strip, destination_led]
+            inverse_alpha = alpha_work[destination_strip, destination_led]
+            np.subtract(RGBA8_MAX, top[..., 3], out=inverse_alpha)
+            np.multiply(destination, inverse_alpha[..., None], out=product, dtype=np.uint16)
+            np.add(product, 127, out=product)
+            np.floor_divide(product, RGBA8_MAX, out=product)
+            np.add(product, top, out=product)
+            np.copyto(destination, product, casting="unsafe")
+
+    def _compose_output(self, output: np.ndarray) -> None:
+        inverse_alpha = self._alpha_work
+        np.subtract(RGBA8_MAX, self._aggregate[:, 3], out=inverse_alpha)
+        np.multiply(
+            self._base, inverse_alpha[:, None], out=self._rgb_work, dtype=np.uint16
+        )
+        np.add(self._rgb_work, 127, out=self._rgb_work)
+        np.floor_divide(self._rgb_work, RGBA8_MAX, out=self._rgb_work)
+        np.add(self._rgb_work, self._aggregate[:, :3], out=self._rgb_work)
+        np.copyto(output, self._rgb_work, casting="unsafe")
+
+    def _translate_ranges(
+        self,
+        ranges: DirtyRanges,
+        *,
+        strip_offset: int,
+        led_offset: int,
+    ) -> DirtyRanges:
+        slices = self._placement_slices(
+            strip_offset=strip_offset, led_offset=led_offset
+        )
+        if slices is None or not ranges:
+            return ()
+        source_strip, source_led, _, _ = slices
+        source_strip_start = int(source_strip.start)
+        source_strip_end = int(source_strip.stop)
+        source_led_start = int(source_led.start)
+        source_led_end = int(source_led.stop)
+
+        translated: list[DirtyRange] = []
+        for start, end in ranges:
+            first_strip = max(source_strip_start, start // self.leds_per_strip)
+            last_strip = min(
+                source_strip_end - 1, (end - 1) // self.leds_per_strip
+            )
+            for source_strip_index in range(first_strip, last_strip + 1):
+                strip_start = source_strip_index * self.leds_per_strip
+                segment_start = max(start - strip_start, source_led_start)
+                segment_end = min(end - strip_start, source_led_end)
+                if segment_start >= segment_end:
+                    continue
+                destination_start = (
+                    (source_strip_index + strip_offset) * self.leds_per_strip
+                    + segment_start
+                    + led_offset
+                )
+                translated.append(
+                    (destination_start, destination_start + segment_end - segment_start)
+                )
+        return normalize_dirty_ranges(translated, self.pixel_count)

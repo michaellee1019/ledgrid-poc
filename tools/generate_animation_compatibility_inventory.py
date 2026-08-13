@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Generate the Phase 1 compatibility inventory for shipped animations.
+"""Generate the compatibility inventory for shipped animations.
 
 The inventory is deliberately derived from the same manifests and concrete
-classes used by the production loader.  It is evidence about today's Python
-pipeline, not the future component descriptor implementation.
+classes used by the production loader. It records the current Python host-scene
+boundary without pretending to be the Phase 2C unified descriptor catalog.
 """
 
 from __future__ import annotations
@@ -28,11 +28,12 @@ from animation.core.manager import AnimationManager
 from animation.core.plugin_loader import AnimationPluginLoader
 
 
-INVENTORY_VERSION = 1
+INVENTORY_VERSION = 2
 DEFAULT_OUTPUT = ROOT / "docs" / "animation-plugin-compatibility-inventory.md"
 
 ORDINARY_BACKGROUND = "ordinary_background"
 COMPATIBILITY_FULL_SCENE = "compatibility_full_scene"
+PYTHON_OVERLAY = "python_overlay"
 UNSUPPORTED_DIRECT_HARDWARE_STATEFUL = "unsupported_direct_hardware_stateful"
 
 # These calls bypass the manager-owned frame/presentation path. Attribute reads
@@ -90,7 +91,13 @@ def direct_controller_mutations(animation_class: type) -> tuple[str, ...]:
     return tuple(sorted(mutations))
 
 
-def classify_plugin(plugin_id: str, animation_class: type, gallery: str) -> InventoryEntry:
+def classify_plugin(
+    plugin_id: str,
+    animation_class: type,
+    gallery: str,
+    *,
+    role: str | None = None,
+) -> InventoryEntry:
     direct_calls = direct_controller_mutations(animation_class)
     if issubclass(animation_class, StatefulAnimationBase) or direct_calls:
         reasons: list[str] = []
@@ -105,6 +112,12 @@ def classify_plugin(plugin_id: str, animation_class: type, gallery: str) -> Inve
     elif plugin_id in FULL_SCENE_COMPATIBILITY:
         classification = COMPATIBILITY_FULL_SCENE
         evidence = FULL_SCENE_COMPATIBILITY[plugin_id]
+    elif role == "overlay":
+        classification = PYTHON_OVERLAY
+        evidence = (
+            "Explicit Python overlay manifest; returns premultiplied RGBA8 "
+            "through the manager-owned composition path."
+        )
     else:
         classification = ORDINARY_BACKGROUND
         evidence = "Concrete AnimationBase renderer; no direct controller mutation."
@@ -136,6 +149,7 @@ def build_inventory() -> tuple[InventoryEntry, ...]:
             plugin_id,
             plugins[plugin_id],
             str(loader.plugin_manifests[plugin_id].get("gallery", "show")),
+            role=loader.plugin_manifests[plugin_id].get("role"),
         )
         for plugin_id in shipped
     )
@@ -149,6 +163,7 @@ def render_markdown(entries: tuple[InventoryEntry, ...]) -> str:
     counts = {
         ORDINARY_BACKGROUND: _count(entries, ORDINARY_BACKGROUND),
         COMPATIBILITY_FULL_SCENE: _count(entries, COMPATIBILITY_FULL_SCENE),
+        PYTHON_OVERLAY: _count(entries, PYTHON_OVERLAY),
         UNSUPPORTED_DIRECT_HARDWARE_STATEFUL: _count(
             entries, UNSUPPORTED_DIRECT_HARDWARE_STATEFUL
         ),
@@ -158,10 +173,10 @@ def render_markdown(entries: tuple[InventoryEntry, ...]) -> str:
         "",
         f"Inventory schema: `{INVENTORY_VERSION}`.",
         "",
-        "This Phase 1 inventory is generated from the shipped `manifest.json` files,",
+        "This compatibility inventory is generated from the shipped `manifest.json` files,",
         "the production plugin loader, and each loaded concrete class. It describes",
-        "compatibility with the planned fixed background-plus-overlay stack; it does",
-        "not add component descriptors or change runtime behavior.",
+        "compatibility with the current fixed host background-plus-overlay stack; it is",
+        "not the future unified component descriptor catalog.",
         "",
         "Regenerate with:",
         "",
@@ -175,8 +190,10 @@ def render_markdown(entries: tuple[InventoryEntry, ...]) -> str:
         "- `ordinary_background`: a concrete frame renderer with no direct controller",
         "  mutation. The compatibility adapter treats it as a Python background.",
         "- `compatibility_full_scene`: a deliberate Phase 1 exception that owns a",
-        "  complete authored scene. The existing `clock` stays here until the separate",
-        "  `clock_overlay` package exists.",
+        "  complete authored scene. The existing `clock` stays here for preset and",
+        "  command compatibility while `clock_overlay` supplies composition.",
+        "- `python_overlay`: an explicit Python overlay that returns premultiplied",
+        "  RGBA8 and is accepted only by the manager-owned composition path.",
         "- `unsupported_direct_hardware_stateful`: a `StatefulAnimationBase` subclass",
         "  or a class that calls a controller mutation method directly. It cannot join",
         "  composition without conversion to the manager-owned frame contract.",
@@ -191,6 +208,7 @@ def render_markdown(entries: tuple[InventoryEntry, ...]) -> str:
         "| --- | ---: |",
         f"| `ordinary_background` | {counts[ORDINARY_BACKGROUND]} |",
         f"| `compatibility_full_scene` | {counts[COMPATIBILITY_FULL_SCENE]} |",
+        f"| `python_overlay` | {counts[PYTHON_OVERLAY]} |",
         "| `unsupported_direct_hardware_stateful` | "
         f"{counts[UNSUPPORTED_DIRECT_HARDWARE_STATEFUL]} |",
         f"| **Total shipped packages** | **{len(entries)}** |",
@@ -210,10 +228,11 @@ def render_markdown(entries: tuple[InventoryEntry, ...]) -> str:
         "## Current conclusion",
         "",
         "Every shipped package has exactly one classification. The current tree has no",
-        "stateful or direct-hardware plugin package: 49 packages enter through the",
-        "ordinary Python-background compatibility path, while the existing Clock is the",
-        "sole compatibility full scene. This is an inventory result, not permission to",
-        "make all backgrounds transparent or to infer overlay semantics from black RGB.",
+        "stateful or direct-hardware plugin package. Existing opaque renderers retain the",
+        "ordinary Python-background compatibility path, the original Clock remains the",
+        "sole compatibility full scene, and explicit overlay packages enter only through",
+        "manager-owned composition. This is not permission to make backgrounds transparent",
+        "or to infer overlay semantics from black RGB.",
         "",
     ])
     return "\n".join(lines)

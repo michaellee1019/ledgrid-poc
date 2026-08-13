@@ -1314,7 +1314,7 @@ prerequisite passes.
 Implementation status (2026-08-12): **Phase 0 delivery foundation,
 coordinator cutover, and Phase 1 contract freeze/portable baseline are complete.
 Phase 2A top-level vibe, portable acceptance, and clean wall-deploy gate are
-complete. Phase 2B is the next independently shippable host-side lane**.
+complete. Phase 2B is the active independently shippable host-side lane**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -1553,10 +1553,12 @@ Implementation status (2026-08-12): **complete**.
   movement/clear, canvas/logical coordinates, all four receiver boundaries, and
   the exact two-patch receiver snapshot. Python and portable C++ tests enforce
   the fixture contract without wiring it into live behavior.
-- [x] Classified all 50 shipped plugins reproducibly in
+- [x] Classified all 50 then-shipped plugins reproducibly in
   [animation-plugin-compatibility-inventory.md](animation-plugin-compatibility-inventory.md):
   49 ordinary Python backgrounds, the current Clock as the sole compatibility
-  full scene, and no current direct-hardware/stateful packages.
+  full scene, and no direct-hardware/stateful packages. Phase 2B adds the
+  separately classified `clock_overlay`, bringing the current generated total
+  to 51.
 - [x] Captured deterministic installed-geometry Clock cadence, latency,
   changed-frame, derived dirty-pixel/range, preview, and payload evidence in
   [clock-phase1-baseline.md](clock-phase1-baseline.md), with workstation timing
@@ -1710,28 +1712,80 @@ Do not rewrite all palettes, add scene presets, or send vibe to firmware yet.
 
 Prove layer semantics entirely on the Pi.
 
-- Add a manager-owned compositor with reusable output buffers and independent
-  component scheduling.
-- Add `OverlayFrame` and a separate `clock_overlay` plugin package using shared
+Implementation status (2026-08-12): **portable acceptance complete; an actual
+clean wall deployment remains before phase closure**. Three contract-first,
+non-overlapping lanes delivered reusable
+fixed-point host composition and dirty-coverage semantics; shared clock-face
+helpers plus the transparent `clock_overlay` component; and manager-owned
+lifecycle, semantic-cadence caching, preview, transport, and benchmark
+integration. Cross-review also added run-generation/controller-I/O ownership so
+a blocked old presentation cannot rejoin a restarted scene. Phase 2B remains
+host-only: the existing
+complete RGB transport is authoritative and no firmware protocol, dashboard
+product surface, scene persistence, or receiver ownership changes are in scope.
+
+Portable closure requires focused deterministic layer and lifecycle tests; the
+complete Python, rendering, deployment, portable-firmware, and production-build
+gates; installed-geometry scene benchmarks reporting p50/p95/p99/max, changed
+ratio, overlay coverage/ranges, and observed presented RGB payload bytes;
+ordinary deploy
+dry-run and source-plan continuity; and an actual clean `just deploy` with fresh
+wall health. Workstation results remain pre-hardware evidence and cannot close
+the final deployment gate by themselves.
+
+- [x] Add a manager-owned compositor with reusable output buffers, independent
+  component clocks/counters, and semantic-cadence caching under manager polling.
+- [x] Add `OverlayFrame` and a separate `clock_overlay` plugin package using shared
   Clock layout/glyph/time helpers.
-- Retain the existing Clock as a compatibility full scene and preserve its
+- [x] Retain the existing Clock as a compatibility full scene and preserve its
   curated presets.
-- Support exactly one Python background plus one aggregate foreground plane and
+- [x] Support exactly one Python background plus one aggregate foreground plane and
   source-over alpha.
-- Implement previous/new coverage union, cached base and overlay frames,
+- [x] Implement previous/new coverage union, cached base and overlay frames,
   independent lifecycle, targeted interaction routing, and scene preview.
-- Move the current universal framework plant-optics invocation to the composed
+- [x] Move the current universal framework plant-optics invocation to the composed
   output path for composed scenes. Prove it is applied exactly once and retain
   background-only compatibility.
-- Initially flatten to the existing authoritative RGB path so firmware and
+- [x] Initially flatten to the existing authoritative RGB path so firmware and
   transport remain unchanged.
-- Extend benchmarks with compositor cost, scene changed ratio, overlay dirty
-  pixels/ranges, and actual transmitted bytes.
+- [x] Extend benchmarks with compositor cost, scene changed ratio, overlay dirty
+  pixels/ranges, and bytes observed at the manager/controller presentation
+  boundary. Receiver/SPI byte counters remain physical-deployment evidence.
+
+Portable evidence on 2026-08-12 (development Mac, not Pi/ESP32 timing evidence):
+
+- Focused host-compositor, manager, Clock/overlay, manifest, frozen-contract,
+  inventory, and legacy-product acceptance passed 113 tests plus 300 subtests;
+  the later real three-background preview/live addition also passes in the full
+  suite.
+- `just test-unit` passed 689 Python unit/plugin tests and 969 subtests.
+  Coverage includes transparent/opaque black, per-fold rounding, clipping and
+  ordered overlap, previous/new clear coverage, exact legacy Clock preset
+  hashes, second/minute cadence, exact-once optics/luminance, legacy boundary
+  rejection, manager-global plant authority, and a blocked-controller restart
+  proving one presentation owner and stable frame-N bytes.
+- `just test-rendering` passed 18 frame/SPI tests and every installed-geometry
+  default/stress/scene 4 ms p95 gate. The highest direct stress p95 was 3.2966
+  ms for `snake-max-density`. Gradient, Aurora Curtains, and Sparkle with Clock
+  Overlay measured 0.3948, 0.7424, and 0.6160 ms p95 respectively; each observed
+  one overlay revision in 100 simulated 200 Hz polls and 180 dirty pixels across
+  32 ranges at rollover.
+- Observed RGB payload at the manager/controller boundary was 13,788 bytes for
+  static Gradient (one 13,248-byte full frame plus one 540-byte partial), 199,260
+  bytes for Aurora Curtains, and 1,324,800 bytes for continuously changing
+  Sparkle across the canonical 100-frame run.
+- All 20 portable firmware tests and the pinned production ESP32-S3 build passed;
+  firmware remains unchanged at 372,546 bytes flash and 53,092 bytes RAM.
+  The deployment suite passed 145 tests plus 66 subtests.
+- `git diff --check`, Python compilation, compatibility-inventory regeneration,
+  both ordinary deploy dry runs, and the authoritative dirty source plan pass.
+  The remaining gate is an actual clean `just deploy` from the committed tree.
 
 #### Acceptance
 
 - The clock renders over at least three representative backgrounds without
-  restarting or advancing them when the clock changes.
+  restarting them or adding a background advance outside the ordinary manager
+  tick when the clock changes.
 - Transparent and opaque black, movement, removal, enable/disable, opacity,
   minute/second rollover, and plant-aware placement leave no stale pixels.
 - Translation/clipping and two ordered overlapping logical overlays match the
@@ -1740,8 +1794,8 @@ Prove layer semantics entirely on the Pi.
 - A changing base recomposites stable foreground coverage correctly.
 - Universal plant optics are applied once after composition; disabling them
   preserves the existing background-only frame byte for byte.
-- Cached calls return `changed=False`; a 1 Hz clock does not render 200 times per
-  second.
+- Cached calls return `changed=False`; at a 200 Hz manager poll rate the 1 Hz
+  clock produces only one content revision/render per wall-clock tick.
 - Combined generation and composition preserve the 4 ms p95 host-render gate at
   installed geometry for accepted scenes, with p99/max and changed ratio
   reported separately.
@@ -1761,8 +1815,9 @@ Productize the host composition contract before adding another execution backend
   updates, manager status, IPC/API commands, and fixed-slot dashboard controls.
 - Refactor plugin discovery into descriptor scanning plus the current Python
   loading adapter. Existing manifests retain a compatibility path.
-- Validate provider/role/capability fields without introducing a generic
-  lifecycle DSL.
+- Generalize Phase 2B's fail-closed explicit Python provider/role/entrypoint/
+  cadence subset into versioned descriptors and the unified catalog, without
+  introducing a generic lifecycle DSL.
 - Store selected scene independently from vibe and operator output state.
 - Update before-deploy preservation, restart restoration, and preview cache keys.
 - Expose one unified component catalog filterable by provider and role.

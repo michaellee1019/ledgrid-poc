@@ -1,0 +1,398 @@
+"""Shared clock glyph, face, wall-time, and plant-aware layout helpers.
+
+The compatibility :mod:`animation.plugins.clock` scene and the sparse Clock
+overlay intentionally share this authored geometry.  The helpers render RGB
+marks in visual wall coordinates; each caller remains responsible for its own
+background or premultiplied-alpha presentation contract.
+"""
+
+from __future__ import annotations
+
+import math
+from datetime import datetime, timedelta
+from typing import Any, Dict, Iterable, Sequence, Tuple
+
+import numpy as np
+
+
+Color = Tuple[int, int, int]
+ClockPalette = Tuple[Color, Color, Color, Color]
+
+
+class ClockFaceRenderer:
+    """Mixin containing the stable, background-independent Clock renderer."""
+
+    FACE_OPTIONS = (
+        "digital", "analog", "binary", "orbit", "linear",
+        "segments", "minimal", "hourglass", "calendar", "word",
+    )
+    PALETTES: Dict[str, ClockPalette] = {
+        "amber": ((4, 1, 0), (255, 126, 20), (255, 224, 128), (90, 22, 2)),
+        "ice": ((0, 5, 12), (70, 210, 255), (225, 252, 255), (8, 52, 92)),
+        "mono": ((0, 0, 0), (205, 220, 210), (255, 255, 255), (35, 42, 38)),
+        "neon": ((5, 0, 15), (255, 35, 180), (30, 245, 255), (45, 5, 85)),
+        "forest": ((0, 7, 4), (70, 220, 120), (220, 255, 190), (8, 55, 28)),
+        "sunset": ((10, 1, 10), (255, 80, 65), (255, 205, 95), (72, 10, 66)),
+        "ocean": ((0, 4, 18), (20, 120, 230), (80, 255, 220), (4, 30, 90)),
+        "violet": ((4, 0, 14), (150, 80, 255), (245, 175, 255), (35, 8, 80)),
+        "paper": ((18, 13, 8), (235, 205, 150), (255, 244, 205), (70, 48, 28)),
+        "signal": ((2, 3, 2), (255, 45, 25), (255, 245, 225), (65, 10, 5)),
+    }
+
+    # Compact 3x5 bitmap glyphs. Rows are encoded most-significant-bit first.
+    FONT = {
+        "0": (7, 5, 5, 5, 7), "1": (2, 6, 2, 2, 7),
+        "2": (7, 1, 7, 4, 7), "3": (7, 1, 7, 1, 7),
+        "4": (5, 5, 7, 1, 1), "5": (7, 4, 7, 1, 7),
+        "6": (7, 4, 7, 5, 7), "7": (7, 1, 1, 1, 1),
+        "8": (7, 5, 7, 5, 7), "9": (7, 5, 7, 1, 7),
+        ":": (0, 2, 0, 2, 0), "-": (0, 0, 7, 0, 0), " ": (0, 0, 0, 0, 0),
+        "A": (2, 5, 7, 5, 5), "C": (7, 4, 4, 4, 7),
+        "D": (6, 5, 5, 5, 6), "E": (7, 4, 6, 4, 7),
+        "F": (7, 4, 6, 4, 4), "G": (7, 4, 5, 5, 7),
+        "H": (5, 5, 7, 5, 5), "I": (7, 2, 2, 2, 7),
+        "L": (4, 4, 4, 4, 7), "M": (5, 7, 7, 5, 5),
+        "N": (5, 7, 7, 7, 5), "O": (7, 5, 5, 5, 7),
+        "P": (7, 5, 7, 4, 4), "R": (6, 5, 6, 5, 5),
+        "S": (7, 4, 7, 1, 7), "T": (7, 2, 2, 2, 2),
+        "U": (5, 5, 5, 5, 7), "W": (5, 5, 7, 7, 5),
+        "Y": (5, 5, 2, 2, 2),
+    }
+
+    def _initialize_clock_face_state(self) -> None:
+        self._plant_layout_offset = (0, 0)
+        self._plant_obstacle_overlap = 0
+        self._plant_clearance_overlap = 0
+
+    def _presentation_palette(self) -> ClockPalette:
+        effective = getattr(self, "effective_params", self.params)
+        palette_name = str(effective.get("palette", "amber")).lower()
+        palette = self.PALETTES.get(palette_name, self.PALETTES["amber"])
+        context = getattr(self, "presentation_context", None)
+        if context is None or context.vibe_id == "neutral":
+            return palette
+
+        roles = context.palette_roles
+        fallback = {
+            "background_low": palette[0],
+            "background_mid": palette[3],
+            "accent": palette[1],
+            "hud": palette[2],
+        }
+
+        def role(name: str) -> Color:
+            value = roles.get(name, fallback[name])
+            return tuple(int(channel) for channel in value)
+
+        return (
+            role("background_low"),
+            role("accent"),
+            role("hud"),
+            role("background_mid"),
+        )
+
+    def _clock_now(self) -> datetime:
+        """Return local wall time, isolated so render tests can replace it."""
+        return self._apply_clock_offset(datetime.now().astimezone())
+
+    def _apply_clock_offset(self, value: datetime) -> datetime:
+        return value + timedelta(
+            minutes=int(self.params.get("clock_offset_minutes", 0))
+        )
+
+    @staticmethod
+    def _clock_time_key(now: datetime, show_seconds: bool) -> tuple[int, ...]:
+        key = (now.year, now.month, now.day, now.hour, now.minute)
+        return (*key, now.second) if show_seconds else key
+
+    def _plant_placement_enabled(self) -> bool:
+        """Protect the clock for legacy mode or any non-zero global mode."""
+        if bool(self.params.get("plant_aware", False)):
+            return True
+        return any(
+            self.plant_modifier_strength(modifier) > 0.0
+            for modifier in self.PLANT_MODIFIER_SUPPORT
+        )
+
+    def _place_away_from_plants(self, marks: np.ndarray) -> np.ndarray:
+        """Translate the complete clock face to its clearest visible location.
+
+        Keeping the face together preserves the relationship between hands,
+        digits, and seconds while treating foliage and globes as calibrated HUD
+        exclusion zones. Candidate translations never clip a lit face pixel.
+        """
+        occupied = np.any(marks > 0, axis=2)
+        coordinates = np.argwhere(occupied)
+        if coordinates.size == 0:
+            self._reset_clock_placement_stats()
+            return marks
+
+        masks = self.get_plant_masks()
+        min_x, min_y = coordinates.min(axis=0)
+        max_x, max_y = coordinates.max(axis=0)
+        dx_values = np.arange(-int(min_x), self.width - int(max_x), dtype=np.intp)
+        dy_values = np.arange(-int(min_y), self.height - int(max_y), dtype=np.intp)
+        shifted_x = coordinates[:, 0, None, None] + dx_values[None, :, None]
+        shifted_y = coordinates[:, 1, None, None] + dy_values[None, None, :]
+        # Plant masks use physical LED coordinates; clock marks use visual y.
+        globes = masks.globes[:, ::-1]
+        foliage = masks.foliage[:, ::-1]
+        clearance = masks.clearance[:, ::-1]
+        globe_counts = np.count_nonzero(globes[shifted_x, shifted_y], axis=0)
+        foliage_counts = np.count_nonzero(foliage[shifted_x, shifted_y], axis=0)
+        clearance_counts = np.count_nonzero(
+            clearance[shifted_x, shifted_y], axis=0
+        )
+        weighted = globe_counts * 12 + foliage_counts * 4 + clearance_counts
+        direct = globe_counts + foliage_counts
+        distance = np.abs(dx_values)[:, None] + np.abs(dy_values)[None, :]
+        order = np.lexsort((
+            np.broadcast_to(np.abs(dx_values)[:, None], weighted.shape).ravel(),
+            np.broadcast_to(np.abs(dy_values)[None, :], weighted.shape).ravel(),
+            distance.ravel(),
+            direct.ravel(),
+            weighted.ravel(),
+        ))
+        dx_index, dy_index = np.unravel_index(int(order[0]), weighted.shape)
+        best_offset = (int(dx_values[dx_index]), int(dy_values[dy_index]))
+
+        dx, dy = best_offset
+        self._plant_layout_offset = best_offset
+        self._plant_obstacle_overlap = int(direct[dx_index, dy_index])
+        self._plant_clearance_overlap = int(clearance_counts[dx_index, dy_index])
+        if best_offset == (0, 0):
+            return marks
+        placed = np.zeros_like(marks)
+        placed[coordinates[:, 0] + dx, coordinates[:, 1] + dy] = marks[
+            coordinates[:, 0], coordinates[:, 1]
+        ]
+        return placed
+
+    def _reset_clock_placement_stats(self) -> None:
+        self._plant_layout_offset = (0, 0)
+        self._plant_obstacle_overlap = 0
+        self._plant_clearance_overlap = 0
+
+    def get_runtime_stats(self) -> Dict[str, Any]:
+        if not self._plant_placement_enabled():
+            return {}
+        masks = self.get_plant_masks()
+        return {
+            "plant_layout_offset": self._plant_layout_offset,
+            "plant_face_obstacle_overlap": self._plant_obstacle_overlap,
+            "plant_face_clearance_overlap": self._plant_clearance_overlap,
+            "plant_foliage_pixels": masks.foliage_count,
+            "plant_globe_pixels": masks.globe_count,
+            "plant_mask_error": masks.error,
+        }
+
+    def _choice(self, key: str, options: Sequence[str], fallback: str) -> str:
+        value = str(self.params.get(key, fallback)).lower()
+        return value if value in options else fallback
+
+    def _center_y(self) -> int:
+        return int(round(float(self.params.get("position_y", 0.5)) * (self.height - 1)))
+
+    @staticmethod
+    def _paint(canvas: np.ndarray, x: int, y: int, color: Iterable[float]) -> None:
+        if 0 <= x < canvas.shape[0] and 0 <= y < canvas.shape[1]:
+            np.maximum(canvas[x, y], color, out=canvas[x, y])
+
+    def _text(self, canvas, text: str, x: int, y: int, color, scale: int = 1, spacing: int = 1) -> None:
+        cursor = x
+        for character in text.upper():
+            rows = self.FONT.get(character, self.FONT[" "])
+            for row, bits in enumerate(rows):
+                for column in range(3):
+                    if bits & (1 << (2 - column)):
+                        for dx in range(scale):
+                            for dy in range(scale):
+                                self._paint(canvas, cursor + column * scale + dx, y + row * scale + dy, color)
+            cursor += 3 * scale + spacing
+
+    @staticmethod
+    def _text_width(text: str, scale: int = 1, spacing: int = 1) -> int:
+        return max(0, len(text) * (3 * scale + spacing) - spacing)
+
+    def _line(self, canvas, start, end, color) -> None:
+        x0, y0 = start
+        x1, y1 = end
+        steps = max(abs(x1 - x0), abs(y1 - y0), 1)
+        for step in range(steps + 1):
+            ratio = step / steps
+            self._paint(canvas, round(x0 + (x1 - x0) * ratio), round(y0 + (y1 - y0) * ratio), color)
+
+    def _display_hour(self, now: datetime) -> int:
+        if bool(self.params.get("format_24h", False)):
+            return now.hour
+        return now.hour % 12 or 12
+
+    def _abstract_seconds_enabled(self) -> bool:
+        """Compatibility hook for abstract faces that historically show seconds."""
+        return True
+
+    def _draw_face(self, canvas, face: str, now: datetime, palette, elapsed: float) -> None:
+        draw = {
+            "digital": self._draw_digital, "analog": self._draw_analog,
+            "binary": self._draw_binary, "orbit": self._draw_orbit,
+            "linear": self._draw_linear, "segments": self._draw_segments,
+            "minimal": self._draw_minimal, "hourglass": self._draw_hourglass,
+            "calendar": self._draw_calendar, "word": self._draw_word,
+        }[face]
+        draw(canvas, now, palette, elapsed)
+
+    def _draw_digital(self, c, now, palette, _elapsed):
+        text = f"{self._display_hour(now):02d}:{now.minute:02d}"
+        x = (self.width - self._text_width(text)) // 2
+        y = self._center_y() - 3
+        self._text(c, text, x, y, palette[2])
+        if bool(self.params.get("show_seconds", True)):
+            seconds = f"{now.second:02d}"
+            self._text(c, seconds, (self.width - self._text_width(seconds)) // 2, y + 8, palette[1])
+
+    def _draw_analog(self, c, now, palette, _elapsed):
+        cx, cy = self.width // 2, self._center_y()
+        radius = max(4, min(self.width // 2 - 2, 6 + int(self.params.get("scale", 1)) * 3))
+        for hour in range(12):
+            angle = math.tau * hour / 12 - math.pi / 2
+            self._paint(c, round(cx + math.cos(angle) * radius), round(cy + math.sin(angle) * radius), palette[1])
+        second = now.second + now.microsecond / 1_000_000
+        minute = now.minute + second / 60
+        hour = (now.hour % 12) + minute / 60
+        for value, period, length, color in ((hour, 12, 0.52, palette[2]), (minute, 60, 0.78, palette[2])):
+            angle = math.tau * value / period - math.pi / 2
+            self._line(c, (cx, cy), (round(cx + math.cos(angle) * radius * length), round(cy + math.sin(angle) * radius * length)), color)
+        if bool(self.params.get("show_seconds", True)):
+            angle = math.tau * second / 60 - math.pi / 2
+            self._line(c, (cx, cy), (round(cx + math.cos(angle) * radius * 0.9), round(cy + math.sin(angle) * radius * 0.9)), palette[1])
+        self._paint(c, cx, cy, palette[2])
+
+    def _draw_binary(self, c, now, palette, _elapsed):
+        values = (now.hour // 10, now.hour % 10, now.minute // 10, now.minute % 10)
+        if self._abstract_seconds_enabled():
+            values += (now.second // 10, now.second % 10)
+        bits = 4
+        gap, cell = 2, 3
+        total = len(values) * cell + (len(values) - 1) * gap
+        x0, y0 = (self.width - total) // 2, self._center_y() - bits * 2
+        for column, value in enumerate(values):
+            x = x0 + column * (cell + gap)
+            for bit in range(bits):
+                color = palette[2] if value & (1 << (bits - 1 - bit)) else palette[3]
+                for dx in range(cell):
+                    self._paint(c, x + dx, y0 + bit * 3, color)
+
+    def _draw_orbit(self, c, now, palette, elapsed):
+        cx, cy = self.width // 2, self._center_y()
+        values = ((now.hour % 12) / 12, now.minute / 60)
+        colors = (palette[3], palette[1])
+        if self._abstract_seconds_enabled():
+            values += (now.second / 60,)
+            colors += (palette[2],)
+        for index, (value, color) in enumerate(zip(values, colors)):
+            radius = 5 + index * 4
+            for sample in range(max(16, radius * 5)):
+                angle = math.tau * sample / max(16, radius * 5)
+                if sample % 2 == 0:
+                    self._paint(c, round(cx + math.cos(angle) * radius), round(cy + math.sin(angle) * radius), np.asarray(color) * 0.28)
+            angle = math.tau * value - math.pi / 2 + elapsed * 0.03 * index
+            self._paint(c, round(cx + math.cos(angle) * radius), round(cy + math.sin(angle) * radius), color)
+
+    def _draw_linear(self, c, now, palette, _elapsed):
+        values = (now.hour / 24, now.minute / 60)
+        colors = (palette[3], palette[1])
+        if self._abstract_seconds_enabled():
+            values += (now.second / 60,)
+            colors += (palette[2],)
+        cy = self._center_y()
+        for row, (value, color) in enumerate(zip(values, colors)):
+            y = cy - 4 + row * 4
+            length = round(value * (self.width - 2))
+            for x in range(1, self.width - 1):
+                self._paint(c, x, y, color if x <= length else np.asarray(color) * 0.13)
+
+    def _draw_segments(self, c, now, palette, _elapsed):
+        values = (now.hour / 24, now.minute / 60)
+        widths = (5, 7)
+        colors = (palette[3], palette[1])
+        if self._abstract_seconds_enabled():
+            values += (now.second / 60,)
+            widths += (9,)
+            colors += (palette[2],)
+        cy = self._center_y()
+        for index, (value, width) in enumerate(zip(values, widths)):
+            height = max(4, round(value * 24))
+            x0 = self.width // 2 - width // 2
+            y0 = cy + 12
+            color = colors[index]
+            for y in range(y0 - height, y0):
+                for x in range(x0, x0 + width):
+                    if (x + y) % 2 == index % 2:
+                        self._paint(c, x, y, color)
+
+    def _draw_minimal(self, c, now, palette, _elapsed):
+        cy = self._center_y()
+        for x in range(1, self.width - 1):
+            self._paint(c, x, cy, np.asarray(palette[3]) * 0.35)
+        values = ((now.hour, 24, cy - 2, palette[3]), (now.minute, 60, cy, palette[1]))
+        if self._abstract_seconds_enabled():
+            values += ((now.second, 60, cy + 2, palette[2]),)
+        for value, period, y, color in values:
+            self._paint(c, round(1 + value / period * (self.width - 3)), y, color)
+
+    def _draw_hourglass(self, c, now, palette, elapsed):
+        cx, cy, radius = self.width // 2, self._center_y(), min(12, self.width // 2 - 2)
+        top, bottom = cy - radius, cy + radius
+        self._line(c, (cx - radius, top), (cx + radius, top), palette[3])
+        self._line(c, (cx - radius, bottom), (cx + radius, bottom), palette[3])
+        self._line(c, (cx - radius, top), (cx + radius, bottom), palette[3])
+        self._line(c, (cx + radius, top), (cx - radius, bottom), palette[3])
+        progress = (now.second + now.microsecond / 1_000_000) / 60 if self._abstract_seconds_enabled() else 0.0
+        for row in range(radius):
+            half = round((radius - row) * (1 - progress))
+            y = top + row
+            for x in range(cx - half, cx + half + 1, 2):
+                self._paint(c, x, y, palette[1])
+        pile = round(radius * progress)
+        for row in range(pile):
+            half = round(row * radius / max(1, pile))
+            for x in range(cx - half, cx + half + 1, 2):
+                self._paint(c, x, bottom - row, palette[2])
+        if self._abstract_seconds_enabled():
+            self._paint(c, cx, cy + int(elapsed * 8) % max(1, radius), palette[2])
+
+    def _draw_calendar(self, c, now, palette, _elapsed):
+        y = self._center_y() - 9
+        clock = f"{self._display_hour(now):02d}:{now.minute:02d}"
+        day = now.strftime("%a").upper()
+        date = now.strftime("%m-%d")
+        for line, color in ((clock, palette[2]), (day, palette[1]), (date, palette[3])):
+            self._text(c, line, (self.width - self._text_width(line)) // 2, y, color)
+            y += 7
+
+    def _draw_word(self, c, now, palette, _elapsed):
+        if 5 <= now.hour < 12:
+            word = "DAWN"
+        elif 12 <= now.hour < 17:
+            word = "DAY"
+        elif 17 <= now.hour < 21:
+            word = "DUSK"
+        else:
+            word = "NIGHT"
+        y = self._center_y() - 7
+        self._text(c, word, (self.width - self._text_width(word)) // 2, y, palette[2])
+        hour = f"{self._display_hour(now):02d}"
+        self._text(c, hour, (self.width - self._text_width(hour)) // 2, y + 9, palette[1])
+
+    def _composite_glow(self, marks: np.ndarray, amount: float) -> None:
+        """Preserve the legacy full-scene Clock glow composition."""
+        amount = max(0.0, min(1.0, amount))
+        if amount:
+            halo = np.zeros_like(marks)
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                halo += np.roll(marks, (dx, dy), axis=(0, 1))
+            self._canvas += halo * (amount * 0.13)
+        np.maximum(self._canvas, marks, out=self._canvas)
+
+
+__all__ = ["ClockFaceRenderer", "ClockPalette", "Color"]

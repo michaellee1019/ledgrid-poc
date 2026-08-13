@@ -1,11 +1,11 @@
 # Animation Plugin Compatibility Inventory
 
-Inventory schema: `1`.
+Inventory schema: `2`.
 
-This Phase 1 inventory is generated from the shipped `manifest.json` files,
+This compatibility inventory is generated from the shipped `manifest.json` files,
 the production plugin loader, and each loaded concrete class. It describes
-compatibility with the planned fixed background-plus-overlay stack; it does
-not add component descriptors or change runtime behavior.
+compatibility with the current fixed host background-plus-overlay stack; it is
+not the future unified component descriptor catalog.
 
 Regenerate with:
 
@@ -19,8 +19,10 @@ uv run --with numpy --with pillow tools/generate_animation_compatibility_invento
 - `ordinary_background`: a concrete frame renderer with no direct controller
   mutation. The compatibility adapter treats it as a Python background.
 - `compatibility_full_scene`: a deliberate Phase 1 exception that owns a
-  complete authored scene. The existing `clock` stays here until the separate
-  `clock_overlay` package exists.
+  complete authored scene. The existing `clock` stays here for preset and
+  command compatibility while `clock_overlay` supplies composition.
+- `python_overlay`: an explicit Python overlay that returns premultiplied
+  RGBA8 and is accepted only by the manager-owned composition path.
 - `unsupported_direct_hardware_stateful`: a `StatefulAnimationBase` subclass
   or a class that calls a controller mutation method directly. It cannot join
   composition without conversion to the manager-owned frame contract.
@@ -35,8 +37,9 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 | --- | ---: |
 | `ordinary_background` | 49 |
 | `compatibility_full_scene` | 1 |
+| `python_overlay` | 1 |
 | `unsupported_direct_hardware_stateful` | 0 |
-| **Total shipped packages** | **50** |
+| **Total shipped packages** | **51** |
 
 ## Shipped packages
 
@@ -49,6 +52,7 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 | `christmas_tree` | `ChristmasTreeAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `circadian_window` | `CircadianWindowAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `clock` | `ClockAnimation` | `show` | `compatibility_full_scene` | Owns both the clock face and its opaque authored background. |
+| `clock_overlay` | `ClockOverlayAnimation` | `test` | `python_overlay` | Explicit Python overlay manifest; returns premultiplied RGBA8 through the manager-owned composition path. |
 | `cloud_canyon` | `CloudCanyonAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `conway_life` | `ConwayLifeAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `cyclic_reef` | `CyclicReefAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
@@ -96,7 +100,8 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 ## Current conclusion
 
 Every shipped package has exactly one classification. The current tree has no
-stateful or direct-hardware plugin package: 49 packages enter through the
-ordinary Python-background compatibility path, while the existing Clock is the
-sole compatibility full scene. This is an inventory result, not permission to
-make all backgrounds transparent or to infer overlay semantics from black RGB.
+stateful or direct-hardware plugin package. Existing opaque renderers retain the
+ordinary Python-background compatibility path, the original Clock remains the
+sole compatibility full scene, and explicit overlay packages enter only through
+manager-owned composition. This is not permission to make backgrounds transparent
+or to infer overlay semantics from black RGB.

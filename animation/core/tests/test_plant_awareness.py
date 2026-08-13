@@ -10,6 +10,7 @@ import numpy as np
 from animation import AnimationBase, RenderedFrame
 from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.plugin_loader import AnimationPluginLoader
+from animation.core.presentation_contracts import OverlayFrame
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 
@@ -95,7 +96,6 @@ class PlantAwarenessTests(unittest.TestCase):
         loader = AnimationPluginLoader(allowed_plugins=AnimationManager.ALLOWED_PLUGINS)
         plugins = loader.load_all_plugins()
         controller = PreviewLEDController(DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP)
-        expected_shape = (controller.total_leds, 3)
 
         self.assertEqual(set(plugins), AnimationManager.ALLOWED_PLUGINS)
         for name, animation_class in sorted(plugins.items()):
@@ -105,9 +105,18 @@ class PlantAwarenessTests(unittest.TestCase):
                 self.assertIn("plant_aware", schema)
                 self.assertFalse(schema["plant_aware"]["default"])
                 rendered = animation.generate_frame(0.0, 0)
-                pixels = rendered.pixels if isinstance(rendered, RenderedFrame) else rendered
+                pixels = (
+                    rendered.pixels
+                    if isinstance(rendered, (RenderedFrame, OverlayFrame))
+                    else rendered
+                )
+                channels = (
+                    4
+                    if loader.plugin_manifests[name].get("role") == "overlay"
+                    else 3
+                )
                 self.assertIsInstance(pixels, np.ndarray)
-                self.assertEqual(pixels.shape, expected_shape)
+                self.assertEqual(pixels.shape, (controller.total_leds, channels))
                 self.assertEqual(pixels.dtype, np.uint8)
 
 

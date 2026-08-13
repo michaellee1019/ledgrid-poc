@@ -181,6 +181,16 @@ class AnimationPresetTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 400)
         self.assertEqual(self.channel.commands, [])
 
+    def test_scene_only_overlay_is_rejected_by_legacy_start_and_device_routes(self):
+        started = self.client.post('/api/start/clock_overlay', json={})
+        device = self.client.post('/api/device/state', json={
+            'power': True, 'animation': 'clock_overlay',
+        })
+
+        self.assertEqual(started.status_code, 404)
+        self.assertEqual(device.status_code, 404)
+        self.assertEqual(self.channel.commands, [])
+
     def test_list_alphabetizes_presets_with_mixed_timestamp_formats(self):
         preset_dir = Path(self.temp_dir.name) / 'conway_life'
         preset_dir.mkdir()

@@ -28,6 +28,13 @@ The package directory and manifest `plugin_id` must agree, and the manifest's
 `plugin_id` order. Flat `.py` plugins remain supported only for explicitly
 configured external plugin directories.
 
+Existing manifests without component fields retain the Python-background
+compatibility default. Newly authored components declare `provider`, `role`,
+`entrypoint`, and `cadence` together. The current host loader accepts Python
+`background`, `overlay`, and compatibility `full_scene` roles and fails closed
+when only part of that metadata is present. `clock_overlay` is the reference
+explicit overlay; the existing `clock` remains the preset-compatible full scene.
+
 Root `presets/animations/<plugin_id>/` is a user-writable runtime overlay.
 Do not place curated source presets there.
 
@@ -74,6 +81,13 @@ manifest is not loaded or exposed by the web API.
 - a C-contiguous `numpy.uint8` array shaped `(controller.total_leds, 3)`; or
 - `RenderedFrame(pixels, changed, dirty_ranges)` with presentation hints.
 
+An explicit overlay instead returns `OverlayFrame`: a C-contiguous `uint8`
+array shaped `(controller.total_leds, 4)` in premultiplied RGBA8, plus a
+monotonic content revision and the same change/dirty hints. RGB channels may
+not exceed alpha. Alpha zero is transparent; RGB zero with alpha 255 is opaque
+black. The legacy single-animation start, list, and preview paths reject
+overlays rather than interpreting RGBA as RGB.
+
 Use `next_frame_buffer()` instead of allocating a fresh full-wall array on each
 frame. Source-rate or event-driven plugins should return `changed=False` while
 their image is unchanged. `dirty_ranges` may identify canonical flat-index
@@ -82,6 +96,30 @@ ranges for a controller that supports partial transfer.
 Simulation state belongs to the plugin instance. Use elapsed time or a bounded
 fixed timestep for motion; do not make behavior depend on web request timing.
 Plugins must not call SPI or the web layer directly.
+
+## Fixed host scenes
+
+Phase 2B supports exactly one Python RGB background plus one aggregate Python
+overlay through the process-local `AnimationManager` scene methods. This is an
+implementation and acceptance surface, not yet the persistent dashboard/API
+product introduced in Phase 2C. The manager owns component lifecycle, elapsed
+time, frame counters, targeted interactions, cached frames, placement, opacity,
+and the compositor. Removing, disabling, moving, or updating the overlay does
+not restart the background.
+
+Composition uses canonical strip-major coordinates, integer strip/LED
+translation with clipping, and fixed-point premultiplied source-over. The
+compositor never mutates component buffers and rotates two RGB outputs so frame
+N remains stable while frame N+1 is generated. Previous and new alpha coverage
+are unioned for movement and clearing; unknown dirty coverage falls back to a
+complete frame. The result is flattened to the existing authoritative RGB
+transport, so firmware and receiver protocol behavior do not change.
+
+Rendering order is component semantics, component-local palette/grade,
+composition, universal plant optics once, then vibe luminance once. Receiver
+master brightness remains last. `get_scene_preview()` uses the same composition
+and presentation order without hardware I/O. The shipped acceptance scenes pair
+`clock_overlay` with Gradient, Aurora Curtains, and Sparkle.
 
 ## Parameters
 
@@ -219,6 +257,11 @@ Focused tests live beside the plugin. They should cover:
 - ordinary and plant-aware behavior when applicable;
 - every curated preset loading and rendering successfully.
 
+Overlay and scene changes additionally require golden fixed-point blend and
+rounding vectors, previous/new dirty coverage, placement/clipping, cache and
+lifecycle tests, preview/live equivalence, legacy-boundary rejection, and
+installed-geometry scene benchmarks with changed and transport-volume metrics.
+
 Run the repository checks before exposing a plugin:
 
 ```bash
@@ -227,7 +270,9 @@ just test-rendering
 ```
 
 The rendering benchmark is the authoritative performance gate for the installed
-32 x 138 geometry.
+32 x 138 geometry. Its standard gate includes the three accepted background +
+clock scenes and reports p50/p95/p99/max separately; desktop results are portable
+evidence, not Raspberry Pi or physical-wall timing evidence.
 
 ## Runtime boundaries
 
@@ -239,12 +284,12 @@ acceptance flow.
 
 ## Planned evolution and prototype reference
 
-This document describes the current Python-only plugin contract. The
-[unified roadmap](plan-revamped-animation-pipeline.md) next evolves it into
-explicit component providers, a background-plus-overlay scene, and
-repository-peer receiver-native backgrounds. Do not implement that future
-state by treating firmware playback as an `AnimationBase` or by weakening the
-current manifest allowlist.
+This document describes the current Python host-rendered plugin and fixed-scene
+contract. The [unified roadmap](plan-revamped-animation-pipeline.md) next
+productizes versioned scene state, persistence, a unified catalog, and dashboard
+controls before adding repository-peer receiver-native backgrounds. Do not
+implement that future state by treating firmware playback as an `AnimationBase`
+or by weakening the current manifest allowlist.
 
 The `native-animations` branch remains an organ donor for the roadmap's later
 receiver phases. Reuse its ABI/build validation, host preview harness, ESP-IDF

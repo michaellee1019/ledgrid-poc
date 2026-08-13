@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from datetime import datetime, timedelta, timezone
 import io
 import json
 from pathlib import Path
@@ -138,6 +139,8 @@ STRESS_SCENARIOS = {
     },
 }
 
+ACCEPTED_SCENE_BACKGROUNDS = ("gradient", "aurora_curtains", "sparkle")
+
 
 class BenchmarkController:
     debug = False
@@ -147,9 +150,22 @@ class BenchmarkController:
         self.strip_count = strips
         self.leds_per_strip = leds_per_strip
         self.total_leds = strips * leds_per_strip
+        self.presentation_calls = 0
+        self.full_presentations = 0
+        self.partial_presentations = 0
+        self.presented_rgb_payload_bytes = 0
 
-    def set_all_pixels(self, _frame):
-        pass
+    def set_all_pixels(self, frame):
+        self.presentation_calls += 1
+        self.full_presentations += 1
+        self.presented_rgb_payload_bytes += int(np.asarray(frame).shape[0]) * 3
+
+    def set_frame(self, _frame, *, dirty_ranges):
+        self.presentation_calls += 1
+        self.partial_presentations += 1
+        self.presented_rgb_payload_bytes += sum(
+            (int(end) - int(start)) * 3 for start, end in dirty_ranges
+        )
 
     def show(self):
         pass
@@ -176,6 +192,7 @@ def benchmark(args):
     work_items = [
         (name, animation_class, "default", {}, args.fps)
         for name, animation_class in sorted(plugins.items())
+        if (loader.plugin_manifests.get(name) or {}).get("role") != "overlay"
     ]
     if args.stress:
         for scenario_name, scenario in STRESS_SCENARIOS.items():
@@ -256,6 +273,121 @@ def benchmark(args):
     return results
 
 
+def benchmark_scenes(args):
+    """Measure accepted Phase 2B scenes at the real manager call cadence."""
+    controller = BenchmarkController(args.strips, args.leds_per_strip)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        manager = AnimationManager(controller, auto_start=False)
+    manager._launch_animation_loop = lambda: None
+    results = []
+    for background_name in ACCEPTED_SCENE_BACKGROUNDS:
+        if args.plugin and args.plugin != background_name:
+            continue
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                scene_wall_start = datetime(
+                    2026, 8, 12, 12, 0, 0, 750_000, tzinfo=timezone.utc
+                )
+                simulated_wall_time = [scene_wall_start]
+                manager._wall_time = lambda: simulated_wall_time[0].timestamp()
+                if not manager.start_composed_scene(
+                    background_name,
+                    overlay_name="clock_overlay",
+                    overlay_config={"show_seconds": True},
+                ):
+                    raise RuntimeError("scene start failed")
+                background = manager._scene_background
+                overlay = manager._scene_overlay
+                base_time = max(
+                    float(background["started_at"]), float(overlay["started_at"])
+                )
+                for index in range(args.warmup):
+                    simulated_wall_time[0] = scene_wall_start + timedelta(
+                        seconds=index / args.fps
+                    )
+                    manager.render_composed_scene_frame(
+                        now=base_time + index / args.fps
+                    )
+
+                timings = []
+                changed_calls = 0
+                overlay_changed_before = overlay["changed_calls"]
+                overlay_renders_before = overlay["render_count"]
+                overlay_dirty_pixels = 0
+                overlay_dirty_ranges = 0
+                presentation_calls_before = controller.presentation_calls
+                full_presentations_before = controller.full_presentations
+                partial_presentations_before = controller.partial_presentations
+                payload_bytes_before = controller.presented_rgb_payload_bytes
+                for index in range(args.frames):
+                    now = base_time + (args.warmup + index) / args.fps
+                    simulated_wall_time[0] = scene_wall_start + timedelta(
+                        seconds=(args.warmup + index) / args.fps
+                    )
+                    started = time.perf_counter()
+                    frame = manager.render_composed_scene_frame(now=now)
+                    timings.append((time.perf_counter() - started) * 1000.0)
+                    changed_calls += int(frame.changed)
+                    presented_count = (
+                        controller.presentation_calls - presentation_calls_before
+                    )
+                    if frame.changed or presented_count == 0:
+                        use_partial = bool(
+                            frame.dirty_ranges and presented_count > 0
+                        )
+                        manager._present_frame(
+                            frame.pixels,
+                            frame.dirty_ranges,
+                            use_partial,
+                            controller.inline_show,
+                        )
+                    dirty = overlay.get("last_dirty_ranges")
+                    if dirty:
+                        overlay_dirty_pixels += sum(end - start for start, end in dirty)
+                        overlay_dirty_ranges += len(dirty)
+
+                overlay_changed = overlay["changed_calls"] - overlay_changed_before
+                overlay_renders = overlay["render_count"] - overlay_renders_before
+                results.append({
+                    "plugin": background_name,
+                    "scenario": "clock-overlay-scene",
+                    "kind": "scene",
+                    "mean_ms": round(statistics.mean(timings), 4),
+                    "p50_ms": round(percentile(timings, 0.50), 4),
+                    "p95_ms": round(percentile(timings, 0.95), 4),
+                    "p99_ms": round(percentile(timings, 0.99), 4),
+                    "max_ms": round(max(timings), 4),
+                    "manager_changed_ratio": round(changed_calls / args.frames, 4),
+                    "overlay_changed_ratio": round(overlay_changed / args.frames, 4),
+                    "overlay_render_ratio": round(overlay_renders / args.frames, 4),
+                    "overlay_dirty_pixels": overlay_dirty_pixels,
+                    "overlay_dirty_ranges": overlay_dirty_ranges,
+                    "presentation_calls": (
+                        controller.presentation_calls - presentation_calls_before
+                    ),
+                    "full_presentations": (
+                        controller.full_presentations - full_presentations_before
+                    ),
+                    "partial_presentations": (
+                        controller.partial_presentations - partial_presentations_before
+                    ),
+                    "presented_rgb_payload_bytes": (
+                        controller.presented_rgb_payload_bytes - payload_bytes_before
+                    ),
+                })
+        except Exception as exc:
+            results.append({
+                "plugin": background_name,
+                "scenario": "clock-overlay-scene",
+                "kind": "scene",
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+        finally:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                manager.stop_animation(clear_leds=False)
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--strips", type=int, default=DEFAULT_STRIP_COUNT)
@@ -269,6 +401,10 @@ def main():
         "--stress", action="store_true",
         help="also run named animated and maximum-density scenarios",
     )
+    parser.add_argument(
+        "--scenes", action="store_true",
+        help="also benchmark the three accepted background + clock scenes",
+    )
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
         "--check",
@@ -279,6 +415,8 @@ def main():
     args = parser.parse_args()
 
     results = benchmark(args)
+    if args.scenes:
+        results.extend(benchmark_scenes(args))
     if args.json:
         print(json.dumps(results, indent=2))
     else:
@@ -297,13 +435,21 @@ def main():
                     f"{result['plugin']}[{result.get('scenario', 'default')}]: {result['error']}"
                 )
             elif (
-                result.get("kind") == "frame"
+                result.get("kind") in {"frame", "scene"}
                 and float(result.get("p95_ms", 0.0)) > args.max_p95_ms
             ):
                 failures.append(
                     f"{result['plugin']}[{result.get('scenario', 'default')}]: "
                     f"p95 {result['p95_ms']} ms exceeds "
                     f"{args.max_p95_ms} ms"
+                )
+            elif (
+                result.get("kind") == "scene"
+                and float(result.get("overlay_render_ratio", 0.0)) <= 0.0
+            ):
+                failures.append(
+                    f"{result['plugin']}[{result.get('scenario', 'default')}]: "
+                    "clock overlay did not render across a wall-clock rollover"
                 )
         if failures:
             print("animation render acceptance failed:", file=sys.stderr)

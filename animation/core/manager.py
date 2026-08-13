@@ -19,10 +19,13 @@ from typing import Optional, Dict, Any, List
 import numpy as np
 
 from animation.core import AnimationBase, RenderedFrame, StatefulAnimationBase, AnimationPluginLoader
+from animation.core.compositing import HostSceneCompositor, PlacedOverlay
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.presentation_contracts import (
     AnimationRuntimeContext,
+    BaseFrame,
+    OverlayFrame,
     ResolvedVibe,
     VibeState,
     list_vibe_profiles,
@@ -158,6 +161,9 @@ class AnimationManager:
         self.frames_presented = 0
         self.unchanged_frames_skipped = 0
         self.start_time = 0.0
+        self._run_state_lock = threading.RLock()
+        self._run_generation = 0
+        self._presentation_io_lock = threading.Lock()
         self._presentation_state_lock = threading.RLock()
         self.animation_speed_scale = self._validate_tempo_scale(animation_speed_scale)
         self._resolved_vibe, self._vibe_diagnostic = self._resolve_initial_vibe(vibe)
@@ -167,6 +173,14 @@ class AnimationManager:
         self._scene_epoch = time.time_ns() & ((1 << 64) - 1)
         self._presentation_refresh_pending = True
         self._live_presentation_state = self._empty_presentation_state()
+        # Phase 2B deliberately keeps scene state process-local. Product API,
+        # persistence, and arbitrary layer graphs remain Phase 2C work.
+        self._scene_lock = threading.RLock()
+        self._scene_mode = False
+        self._scene_background: Optional[Dict[str, Any]] = None
+        self._scene_overlay: Optional[Dict[str, Any]] = None
+        self._scene_compositor: Optional[HostSceneCompositor] = None
+        self._scene_final_presentation_state = self._empty_presentation_state()
         self.plant_modifier_state = (
             PlantModifierState.from_payload(plant_modifiers)
             if plant_modifiers is not None
@@ -225,7 +239,11 @@ class AnimationManager:
         try:
             plugins = self.plugin_loader.load_all_plugins()
             print(f"✓ Loaded {len(plugins)} animation plugins")
-            return {name: self.plugin_loader.get_plugin_info(name) for name in plugins.keys()}
+            return {
+                name: self.plugin_loader.get_plugin_info(name)
+                for name in plugins
+                if self._plugin_role(name) != 'overlay'
+            }
         except Exception as e:
             print(f"✗ Error loading plugins: {e}")
             traceback.print_exc()
@@ -261,6 +279,11 @@ class AnimationManager:
         if not math.isfinite(requested) or requested <= 0:
             raise ValueError("animation speed scale must be a positive finite number")
         return requested
+
+    @staticmethod
+    def _wall_time() -> float:
+        """Return presentation wall time; benchmarks can replace this clock."""
+        return time.time()
 
     @staticmethod
     def _canonical_vibe(payload: Any, *, revision: Optional[int] = None) -> ResolvedVibe:
@@ -389,7 +412,7 @@ class AnimationManager:
         authored_speed = self._animation_authored_speed(animation)
         vibe_tempo = self._component_tempo(resolved.profile, animation)
         return AnimationRuntimeContext(
-            wall_time=time.time(),
+            wall_time=self._wall_time(),
             unscaled_elapsed=max(0.0, float(unscaled_elapsed)),
             scaled_elapsed=max(0.0, float(scaled_elapsed)),
             frame_index=max(0, int(frame_index)),
@@ -454,21 +477,40 @@ class AnimationManager:
         )
 
     def _refresh_active_presentation_context(self) -> None:
-        animation = self.current_animation
-        if not isinstance(animation, AnimationBase):
-            return
         with self._presentation_state_guard():
-            resolved = self._resolved_vibe
+            resolved = getattr(self, '_resolved_vibe', resolve_vibe('neutral'))
             operator_tempo = self.animation_speed_scale
-        context = self._runtime_context(
-            animation,
-            unscaled_elapsed=self._last_unscaled_elapsed,
-            scaled_elapsed=self._scaled_elapsed,
-            frame_index=self.frame_count,
-            resolved_vibe=resolved,
-            operator_tempo_scale=operator_tempo,
-        )
-        animation.set_presentation_context(context)
+        if getattr(self, '_scene_mode', False):
+            with self._scene_state_guard():
+                components = tuple(
+                    component for component in (
+                        self._scene_background, self._scene_overlay
+                    ) if component is not None
+                )
+                for component in components:
+                    animation = component['animation']
+                    context = self._runtime_context(
+                        animation,
+                        unscaled_elapsed=component['last_unscaled_elapsed'],
+                        scaled_elapsed=component['scaled_elapsed'],
+                        frame_index=component['frame_index'],
+                        resolved_vibe=resolved,
+                        operator_tempo_scale=operator_tempo,
+                    )
+                    animation.set_presentation_context(context)
+            return
+
+        animation = self.current_animation
+        if isinstance(animation, AnimationBase):
+            context = self._runtime_context(
+                animation,
+                unscaled_elapsed=self._last_unscaled_elapsed,
+                scaled_elapsed=self._scaled_elapsed,
+                frame_index=self.frame_count,
+                resolved_vibe=resolved,
+                operator_tempo_scale=operator_tempo,
+            )
+            animation.set_presentation_context(context)
 
     @staticmethod
     def _empty_presentation_state() -> Dict[str, Any]:
@@ -486,17 +528,26 @@ class AnimationManager:
         changed: bool,
         state: Dict[str, Any],
         force_refresh: bool = False,
+        include_grade: bool = True,
+        include_luminance: bool = True,
     ) -> tuple[Any, bool]:
         capabilities = animation.VIBE_CAPABILITIES
         policy = animation.VIBE_COLOR_POLICY
         grade = (
+            include_grade
+            and
             profile.vibe_id != "neutral"
             and policy == "grade"
             and "palette_roles" in capabilities
         )
-        luminance = profile.luminance_scale if "luminance" in capabilities else 1.0
+        luminance = (
+            profile.luminance_scale
+            if include_luminance and "luminance" in capabilities
+            else 1.0
+        )
         identity = (
-            profile.resolved_profile_digest, policy, tuple(sorted(capabilities))
+            profile.resolved_profile_digest, policy, tuple(sorted(capabilities)),
+            bool(include_grade), bool(include_luminance),
         )
         refresh = force_refresh or state.get("identity") != identity
         state["identity"] = identity
@@ -508,19 +559,21 @@ class AnimationManager:
             return state["cached"], False
 
         array = np.asarray(pixels, dtype=np.uint8)
-        if array.ndim != 2 or array.shape[1] != 3:
-            raise ValueError("vibe presentation requires an RGB frame")
+        if array.ndim != 2 or array.shape[1] not in (3, 4):
+            raise ValueError("vibe presentation requires an RGB or RGBA frame")
         count = array.shape[0]
-        if state.get("geometry") != count:
+        channels = array.shape[1]
+        geometry = (count, channels)
+        if state.get("geometry") != geometry:
             state["buffers"] = [
-                np.empty((count, 3), dtype=np.uint8) for _ in range(2)
+                np.empty(geometry, dtype=np.uint8) for _ in range(2)
             ]
             state["index"] = 0
-            state["geometry"] = count
+            state["geometry"] = geometry
         output = state["buffers"][state["index"]]
         state["index"] = (state["index"] + 1) % len(state["buffers"])
 
-        working = array.astype(np.float32)
+        working = array[:, :3].astype(np.float32)
         if grade:
             chroma = float(profile.capability_values.get("chroma_scale", 1.0))
             luma = (
@@ -533,11 +586,20 @@ class AnimationManager:
             tint_weight = min(0.12, max(0.0, abs(energy - 0.5) * 0.18))
             if tint_weight:
                 tint = np.asarray(profile.palette_roles["primary"], dtype=np.float32)
+                if channels == 4:
+                    tint = tint[None, :] * (
+                        array[:, 3:4].astype(np.float32) / 255.0
+                    )
                 working = working * (1.0 - tint_weight) + tint * tint_weight
         if luminance != 1.0:
             working *= luminance
         np.clip(working, 0.0, 255.0, out=working)
-        np.copyto(output, np.rint(working), casting="unsafe")
+        if channels == 4:
+            # Component grade operates in premultiplied space and must retain
+            # the overlay contract. Final luminance leaves alpha unchanged.
+            np.minimum(working, array[:, 3:4], out=working)
+            np.copyto(output[:, 3], array[:, 3])
+        np.copyto(output[:, :3], np.rint(working), casting="unsafe")
         state["cached"] = output
         return output, changed or refresh
 
@@ -614,6 +676,10 @@ class AnimationManager:
                 raise ValueError("animation must be a non-empty string")
             if self.plugin_loader.get_plugin(animation) is None:
                 raise ValueError(f"animation not found: {animation}")
+            if self._plugin_role(animation) == 'overlay':
+                raise ValueError(
+                    f"overlay component {animation} requires a composed scene"
+                )
 
         config = state.get('config', {})
         if not isinstance(config, dict):
@@ -661,11 +727,17 @@ class AnimationManager:
         self.plant_modifier_state = state
         self.plant_aware = bool(state.active)
         self._legacy_plant_aware_bridge = True
-        if self.current_animation:
-            self.current_animation.update_parameters({
-                'plant_aware': self.plant_aware,
-                'plant_modifiers': state.to_dict(),
-            })
+        with self._scene_state_guard():
+            if self.current_animation:
+                self.current_animation.update_parameters({
+                    'plant_aware': self.plant_aware,
+                    'plant_modifiers': state.to_dict(),
+                })
+            if getattr(self, '_scene_mode', False) and self._scene_overlay:
+                self._scene_overlay['animation'].update_parameters({
+                    'plant_aware': self.plant_aware,
+                    'plant_modifiers': state.to_dict(),
+                })
         self._update_preview_plant_state()
         return self.plant_aware
 
@@ -674,11 +746,17 @@ class AnimationManager:
         self.plant_modifier_state = PlantModifierState.from_payload(state)
         self._legacy_plant_aware_bridge = False
         self.plant_aware = bool(self.plant_modifier_state.active)
-        if self.current_animation:
-            self.current_animation.update_parameters({
-                'plant_aware': False,
-                'plant_modifiers': self.plant_modifier_state.to_dict(),
-            })
+        with self._scene_state_guard():
+            if self.current_animation:
+                self.current_animation.update_parameters({
+                    'plant_aware': False,
+                    'plant_modifiers': self.plant_modifier_state.to_dict(),
+                })
+            if getattr(self, '_scene_mode', False) and self._scene_overlay:
+                self._scene_overlay['animation'].update_parameters({
+                    'plant_aware': False,
+                    'plant_modifiers': self.plant_modifier_state.to_dict(),
+                })
         self._update_preview_plant_state()
         return self.plant_modifier_state.to_dict()
 
@@ -700,14 +778,274 @@ class AnimationManager:
         """Get list of available animations with metadata"""
         animations = []
         for plugin_name in self.plugin_loader.list_plugins():
+            if self._plugin_role(plugin_name) == 'overlay':
+                continue
             info = self.plugin_loader.get_plugin_info(plugin_name)
             if info:
                 animations.append(info)
         return animations
+
+    def _plugin_role(self, plugin_name: str) -> str:
+        """Resolve a role through the Phase 2B Python compatibility adapter."""
+        manifest = self.plugin_loader.plugin_manifests.get(plugin_name) or {}
+        role = manifest.get('role')
+        if role is None and isinstance(manifest.get('component'), dict):
+            role = manifest['component'].get('role')
+        if role is not None:
+            return str(role)
+        animation_class = self.plugin_loader.loaded_plugins.get(plugin_name)
+        if plugin_name == 'clock' or (
+            isinstance(animation_class, type)
+            and issubclass(animation_class, StatefulAnimationBase)
+        ):
+            return 'full_scene'
+        return 'background'
     
     def get_animation_info(self, animation_name: str) -> Optional[Dict[str, Any]]:
-        """Get detailed info about a specific animation"""
+        """Get legacy RGB-animation details, excluding scene-only overlays."""
+        if self._plugin_role(animation_name) == 'overlay':
+            return None
         return self.plugin_loader.get_plugin_info(animation_name)
+
+    def _component_config(self, config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        effective = dict(config or {})
+        effective['plant_aware'] = (
+            self.plant_aware if self._legacy_plant_aware_bridge else False
+        )
+        effective['plant_modifiers'] = self.plant_modifier_state.to_dict()
+        return effective
+
+    def _scene_state_guard(self) -> threading.RLock:
+        lock = getattr(self, '_scene_lock', None)
+        if lock is None:
+            lock = threading.RLock()
+            self._scene_lock = lock
+        return lock
+
+    def _new_scene_component(
+        self,
+        name: str,
+        animation: AnimationBase,
+        config: Optional[Dict[str, Any]],
+        *,
+        started_at: float,
+    ) -> Dict[str, Any]:
+        return {
+            'name': name,
+            'animation': animation,
+            'config': dict(config or {}),
+            'started_at': started_at,
+            'last_unscaled_elapsed': 0.0,
+            'scaled_elapsed': 0.0,
+            'frame_index': 0,
+            'cached_frame': None,
+            'grade_state': self._empty_presentation_state(),
+            'force_changed': True,
+            'calls': 0,
+            'changed_calls': 0,
+            'render_count': 0,
+            'last_revision': None,
+        }
+
+    @staticmethod
+    def _cleanup_scene_component(component: Optional[Dict[str, Any]]) -> None:
+        if not component:
+            return
+        animation = component.get('animation')
+        if animation is None:
+            return
+        try:
+            animation.stop()
+        finally:
+            animation.cleanup()
+
+    def _reset_run_counters(self) -> None:
+        with self._run_state_guard():
+            self._run_generation = getattr(self, '_run_generation', 0) + 1
+            self.is_running = True
+            self.stop_event.clear()
+        self.frame_count = 0
+        self.frames_presented = 0
+        self.unchanged_frames_skipped = 0
+        self.frame_timestamps.clear()
+        with self.perf_lock:
+            self.perf_samples.clear()
+            self._last_perf_sample = {}
+        self.start_time = time.perf_counter()
+        self._scaled_elapsed = 0.0
+        self._last_unscaled_elapsed = 0.0
+        self._scene_epoch = time.time_ns() & ((1 << 64) - 1)
+        self._presentation_refresh_pending = True
+        self._live_presentation_state = self._empty_presentation_state()
+
+    def _launch_animation_loop(self) -> None:
+        with self._run_state_guard():
+            run_generation = self._run_generation
+        self.animation_thread = threading.Thread(
+            target=self._animation_loop, args=(run_generation,), daemon=True
+        )
+        self.animation_thread.start()
+
+    def _run_state_guard(self) -> threading.RLock:
+        lock = getattr(self, '_run_state_lock', None)
+        if lock is None:
+            lock = threading.RLock()
+            self._run_state_lock = lock
+        return lock
+
+    def _run_is_active(self, run_generation: int) -> bool:
+        with self._run_state_guard():
+            return bool(
+                self.is_running
+                and not self.stop_event.is_set()
+                and getattr(self, '_run_generation', 0) == run_generation
+            )
+
+    def _run_owns_generation(self, run_generation: int) -> bool:
+        """Return false only when an external stop/restart revoked this loop."""
+        with self._run_state_guard():
+            return bool(
+                not self.stop_event.is_set()
+                and getattr(self, '_run_generation', 0) == run_generation
+            )
+
+    def start_composed_scene(
+        self,
+        background_name: str,
+        background_config: Optional[Dict[str, Any]] = None,
+        overlay_name: str = 'clock_overlay',
+        overlay_config: Optional[Dict[str, Any]] = None,
+        overlay_opacity: int = 255,
+        strip_offset: int = 0,
+        led_offset: int = 0,
+    ) -> bool:
+        """Start the fixed Phase 2B Python background plus foreground scene."""
+        try:
+            placement = PlacedOverlay(
+                OverlayFrame(
+                    np.zeros((self.controller.total_leds, 4), dtype=np.uint8),
+                    revision=0,
+                    changed=False,
+                ),
+                opacity=overlay_opacity,
+                strip_offset=strip_offset,
+                led_offset=led_offset,
+            )
+        except (TypeError, ValueError) as exc:
+            print(f"✗ Invalid overlay placement: {exc}")
+            return False
+
+        self.stop_animation(clear_leds=True)
+        background_class = self.plugin_loader.get_plugin(background_name)
+        overlay_class = self.plugin_loader.get_plugin(overlay_name)
+        if background_class is None or self._plugin_role(background_name) != 'background':
+            print(f"✗ Scene background not found or not RGB-capable: {background_name}")
+            return False
+        if overlay_class is None or self._plugin_role(overlay_name) != 'overlay':
+            print(f"✗ Scene overlay not found or not declared as an overlay: {overlay_name}")
+            return False
+        if issubclass(background_class, StatefulAnimationBase) or issubclass(
+            overlay_class, StatefulAnimationBase
+        ):
+            print("✗ Stateful animations cannot participate in composed scenes")
+            return False
+
+        background = None
+        overlay = None
+        background_component = None
+        overlay_component = None
+        try:
+            background = background_class(
+                self.controller, self._component_config(background_config)
+            )
+            overlay = overlay_class(
+                self.controller, self._component_config(overlay_config)
+            )
+            if isinstance(background, StatefulAnimationBase) or isinstance(
+                overlay, StatefulAnimationBase
+            ):
+                raise TypeError("Stateful animations cannot participate in composed scenes")
+
+            if hasattr(self.controller, 'configure'):
+                try:
+                    with self._presentation_io_guard():
+                        self.controller.configure()
+                except Exception as controller_error:
+                    print(f"⚠️ Controller configure failed: {controller_error}")
+
+            background.start()
+            started_at = time.perf_counter()
+            background_component = self._new_scene_component(
+                background_name, background, background_config, started_at=started_at
+            )
+            overlay.start()
+            overlay_component = self._new_scene_component(
+                overlay_name, overlay, overlay_config, started_at=time.perf_counter()
+            )
+            overlay_component.update({
+                'enabled': True,
+                'opacity': placement.opacity,
+                'strip_offset': placement.strip_offset,
+                'led_offset': placement.led_offset,
+            })
+
+            self._reset_run_counters()
+            with self._scene_lock:
+                self._scene_mode = True
+                self._scene_background = background_component
+                self._scene_overlay = overlay_component
+                self._scene_compositor = HostSceneCompositor(
+                    self.controller.strip_count, self.controller.leds_per_strip
+                )
+                self._scene_final_presentation_state = self._empty_presentation_state()
+                self.current_animation = background
+                self.current_animation_name = background_name
+                self.current_animation_hash = self._compute_animation_hash(background_name)
+                self.current_preset = None
+                frame, _changed, _dirty = self._render_composed_scene_frame()
+                with self.frame_data_lock:
+                    self.current_frame_data = frame
+
+            self._remember_active_state(
+                background_name, dict(background_config or {}), None
+            )
+            self._launch_animation_loop()
+            print(f"✓ Started composed scene: {background_name} + {overlay_name}")
+            return True
+        except Exception as exc:
+            self.is_running = False
+            self.stop_event.set()
+            for component in (overlay_component, background_component):
+                try:
+                    self._cleanup_scene_component(component)
+                except Exception:
+                    traceback.print_exc()
+            # Construction can fail before a component state exists.
+            for animation, component in (
+                (overlay, overlay_component), (background, background_component)
+            ):
+                if animation is not None and component is None:
+                    try:
+                        animation.stop()
+                        animation.cleanup()
+                    except Exception:
+                        traceback.print_exc()
+            with self._scene_lock:
+                self._clear_scene_state()
+            print(f"✗ Failed to start composed scene: {exc}")
+            traceback.print_exc()
+            return False
+
+    def _clear_scene_state(self) -> None:
+        self._scene_mode = False
+        self._scene_background = None
+        self._scene_overlay = None
+        self._scene_compositor = None
+        self._scene_final_presentation_state = self._empty_presentation_state()
+        self.current_animation = None
+        self.current_animation_name = None
+        self.current_animation_hash = None
+        self.current_preset = None
     
     def start_animation(
         self,
@@ -728,6 +1066,12 @@ class AnimationManager:
         """
         restore_config = dict(config or {})
         try:
+            if self._plugin_role(animation_name) == 'overlay':
+                print(
+                    f"✗ Overlay component {animation_name} requires "
+                    "start_composed_scene()"
+                )
+                return False
             # Stop current animation if running
             self.stop_animation(clear_leds=True)
             
@@ -738,9 +1082,7 @@ class AnimationManager:
                 return False
             
             # Create animation instance
-            effective_config = dict(config or {})
-            effective_config['plant_aware'] = self.plant_aware if self._legacy_plant_aware_bridge else False
-            effective_config['plant_modifiers'] = self.plant_modifier_state.to_dict()
+            effective_config = self._component_config(config)
             self.current_animation = animation_class(self.controller, effective_config)
             self.current_animation_name = animation_name
             self.current_animation_hash = self._compute_animation_hash(animation_name)
@@ -752,27 +1094,14 @@ class AnimationManager:
             # Ensure controller is configured before frames start flowing
             if hasattr(self.controller, "configure"):
                 try:
-                    self.controller.configure()
+                    with self._presentation_io_guard():
+                        self.controller.configure()
                 except Exception as controller_error:
                     print(f"⚠️ Controller configure failed: {controller_error}")
 
             # Start animation
             self.current_animation.start()
-            self.is_running = True
-            self.stop_event.clear()
-            self.frame_count = 0
-            self.frames_presented = 0
-            self.unchanged_frames_skipped = 0
-            self.frame_timestamps.clear()
-            with self.perf_lock:
-                self.perf_samples.clear()
-                self._last_perf_sample = {}
-            self.start_time = time.perf_counter()
-            self._scaled_elapsed = 0.0
-            self._last_unscaled_elapsed = 0.0
-            self._scene_epoch = time.time_ns() & ((1 << 64) - 1)
-            self._presentation_refresh_pending = True
-            self._live_presentation_state = self._empty_presentation_state()
+            self._reset_run_counters()
             self._refresh_active_presentation_context()
 
             # Check if this is a stateful animation
@@ -781,8 +1110,7 @@ class AnimationManager:
                 print(f"✓ Started stateful animation: {animation_name}")
             else:
                 # Frame-based animations need the animation loop
-                self.animation_thread = threading.Thread(target=self._animation_loop, daemon=True)
-                self.animation_thread.start()
+                self._launch_animation_loop()
                 print(f"✓ Started frame-based animation: {animation_name}")
 
             self._remember_active_state(
@@ -801,22 +1129,34 @@ class AnimationManager:
         had_output = self.is_running or self.painter_active
 
         if self.is_running:
-            self.is_running = False
-            self.stop_event.set()
+            with self._run_state_guard():
+                self._run_generation = getattr(self, '_run_generation', 0) + 1
+                self.is_running = False
+                self.stop_event.set()
 
             # Stop frame-based animation thread if it exists
             if self.animation_thread and self.animation_thread.is_alive():
                 self.animation_thread.join(timeout=1.0)
             self.animation_thread = None
 
-            # Stop the animation (stateful animations handle their own threads)
-            if self.current_animation:
-                self.current_animation.stop()
-                self.current_animation.cleanup()
-                self.current_animation = None
+            if self._scene_mode:
+                with self._scene_lock:
+                    overlay = self._scene_overlay
+                    background = self._scene_background
+                    try:
+                        self._cleanup_scene_component(overlay)
+                    finally:
+                        self._cleanup_scene_component(background)
+                    self._clear_scene_state()
+            else:
+                # Stateful compatibility animations handle their own threads.
+                if self.current_animation:
+                    self.current_animation.stop()
+                    self.current_animation.cleanup()
+                    self.current_animation = None
 
-            self.current_animation_name = None
-            self.current_preset = None
+                self.current_animation_name = None
+                self.current_preset = None
             self.frame_timestamps.clear()
             with self.frame_data_lock:
                 self.current_frame_data = []
@@ -835,7 +1175,8 @@ class AnimationManager:
         self.current_animation_hash = None
 
         if clear_leds and had_output:
-            self.controller.clear()
+            with self._presentation_io_guard():
+                self.controller.clear()
     
     def update_animation_parameters(self, params: Dict[str, Any]) -> bool:
         """Update current animation parameters in real-time"""
@@ -864,6 +1205,85 @@ class AnimationManager:
                 print(f"✗ Failed to update parameters: {e}")
                 return False
         return False
+
+    def update_overlay(
+        self,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        opacity: Optional[int] = None,
+        strip_offset: Optional[int] = None,
+        led_offset: Optional[int] = None,
+    ) -> bool:
+        """Update the fixed foreground without restarting the background."""
+        with self._scene_lock:
+            component = self._scene_overlay if self._scene_mode else None
+            if component is None:
+                return False
+            try:
+                probe = PlacedOverlay(
+                    component['cached_frame'],
+                    opacity=component['opacity'] if opacity is None else opacity,
+                    strip_offset=(
+                        component['strip_offset']
+                        if strip_offset is None else strip_offset
+                    ),
+                    led_offset=(
+                        component['led_offset'] if led_offset is None else led_offset
+                    ),
+                    enabled=component['enabled'],
+                )
+                if params is not None:
+                    if not isinstance(params, dict):
+                        raise TypeError("overlay parameters must be an object")
+                    requested = {
+                        key: value for key, value in params.items()
+                        if key not in {'plant_aware', 'plant_modifiers'}
+                    }
+                    effective = dict(requested)
+                    effective['plant_aware'] = (
+                        self.plant_aware if self._legacy_plant_aware_bridge else False
+                    )
+                    effective['plant_modifiers'] = self.plant_modifier_state.to_dict()
+                    component['animation'].update_parameters(effective)
+                    component['config'].update(requested)
+                component['opacity'] = probe.opacity
+                component['strip_offset'] = probe.strip_offset
+                component['led_offset'] = probe.led_offset
+                return True
+            except (TypeError, ValueError) as exc:
+                print(f"✗ Failed to update overlay: {exc}")
+                return False
+
+    def update_overlay_parameters(self, params: Dict[str, Any]) -> bool:
+        return self.update_overlay(params)
+
+    def set_overlay_enabled(self, enabled: bool) -> bool:
+        if not isinstance(enabled, bool):
+            raise TypeError("overlay enabled state must be boolean")
+        with self._scene_lock:
+            component = self._scene_overlay if self._scene_mode else None
+            if component is None:
+                return False
+            component['enabled'] = enabled
+            return True
+
+    def enable_overlay(self) -> bool:
+        return self.set_overlay_enabled(True)
+
+    def disable_overlay(self) -> bool:
+        return self.set_overlay_enabled(False)
+
+    def remove_overlay(self) -> bool:
+        with self._scene_lock:
+            component = self._scene_overlay if self._scene_mode else None
+            if component is None:
+                return False
+            self._scene_overlay = None
+            try:
+                self._cleanup_scene_component(component)
+            except Exception as exc:
+                print(f"⚠️ Overlay cleanup failed: {exc}")
+            return True
 
     @staticmethod
     def _normalize_current_preset(
@@ -1035,7 +1455,12 @@ class AnimationManager:
     
     def get_current_status(self) -> Dict[str, Any]:
         """Get current animation status and performance info"""
-        mode = 'animation' if self.is_running else ('painter' if self.painter_active else 'idle')
+        mode = (
+            'scene' if self.is_running and self._scene_mode
+            else 'animation' if self.is_running
+            else 'painter' if self.painter_active
+            else 'idle'
+        )
         displayed_animation = self.current_animation_name if self.is_running else (
             'frame_painter' if self.painter_active else None
         )
@@ -1088,6 +1513,10 @@ class AnimationManager:
         else:
             status['interaction_types'] = []
 
+        scene_status = self._scene_status_snapshot()
+        if scene_status is not None:
+            status['scene'] = scene_status
+
         performance = self._get_perf_summary()
         if performance:
             status['performance'] = performance
@@ -1102,6 +1531,47 @@ class AnimationManager:
         status['pipeline_fps'] = self._compute_driver_fps(driver_stats)
         
         return status
+
+    def _scene_status_snapshot(self) -> Optional[Dict[str, Any]]:
+        if not self._scene_mode or not self._scene_background:
+            return None
+        with self._scene_lock:
+            background = self._scene_background
+            overlay = self._scene_overlay
+            snapshot: Dict[str, Any] = {
+                'background': {
+                    'name': background['name'],
+                    'frame_count': background['frame_index'],
+                    'calls': background['calls'],
+                    'changed_calls': background['changed_calls'],
+                    'interaction_types': sorted(
+                        background['animation'].INTERACTION_TYPES
+                    ),
+                },
+                'overlay': None if overlay is None else {
+                    'name': overlay['name'],
+                    'enabled': overlay['enabled'],
+                    'opacity': overlay['opacity'],
+                    'strip_offset': overlay['strip_offset'],
+                    'led_offset': overlay['led_offset'],
+                    'frame_count': overlay['frame_index'],
+                    'calls': overlay['calls'],
+                    'changed_calls': overlay['changed_calls'],
+                    'render_count': overlay['render_count'],
+                    'interaction_types': sorted(
+                        overlay['animation'].INTERACTION_TYPES
+                    ),
+                },
+            }
+            if overlay is not None:
+                try:
+                    overlay_stats = overlay['animation'].get_runtime_stats()
+                except Exception as exc:
+                    overlay_stats = {'error': str(exc)}
+                snapshot['overlay']['runtime_stats'] = (
+                    overlay_stats if isinstance(overlay_stats, dict) else {}
+                )
+            return snapshot
 
     def trigger_random_hole(self):
         """Request the current animation to spawn a random puncture if supported."""
@@ -1153,14 +1623,25 @@ class AnimationManager:
         x: float,
         y: float,
         strength: float = 1.0,
+        *,
+        target: str = 'background',
     ) -> bool:
-        """Dispatch a validated logical-grid interaction to the active animation."""
-        if not self.current_animation:
+        """Dispatch to one explicit scene component; legacy defaults to background."""
+        if target not in {'background', 'overlay'}:
+            raise ValueError("interaction target must be 'background' or 'overlay'")
+        if self._scene_mode:
+            with self._scene_lock:
+                component = (
+                    self._scene_background if target == 'background'
+                    else self._scene_overlay
+                )
+                animation = component['animation'] if component else None
+        else:
+            animation = self.current_animation if target == 'background' else None
+        if not animation:
             return False
-        event = self._validated_interaction(
-            self.current_animation, kind, x, y, strength
-        )
-        return bool(self.current_animation.handle_interaction(*event))
+        event = self._validated_interaction(animation, kind, x, y, strength)
+        return bool(animation.handle_interaction(*event))
 
     def _compute_animation_hash(self, animation_name: str) -> Optional[str]:
         path = self.plugin_loader.get_plugin_file(animation_name)
@@ -1186,7 +1667,12 @@ class AnimationManager:
                 frame_data = list(raw)
 
         encoded_frame = encode_frame_data(frame_data)
-        mode = 'animation' if self.is_running else ('painter' if self.painter_active else 'idle')
+        mode = (
+            'scene' if self.is_running and self._scene_mode
+            else 'animation' if self.is_running
+            else 'painter' if self.painter_active
+            else 'idle'
+        )
         displayed_animation = self.current_animation_name if self.is_running else (
             'frame_painter' if self.painter_active else None
         )
@@ -1205,6 +1691,7 @@ class AnimationManager:
             'is_running': self.is_running,
             'frame_count': self.frame_count,
             'current_animation': displayed_animation,
+            'scene': self._scene_status_snapshot(),
             'timestamp': time.time()
         }
 
@@ -1221,6 +1708,10 @@ class AnimationManager:
     ) -> Dict[str, Any]:
         if animation_name not in self.plugin_loader.loaded_plugins:
             raise ValueError(f"Animation '{animation_name}' not found")
+        if self._plugin_role(animation_name) == 'overlay':
+            raise ValueError(
+                f"Overlay component {animation_name!r} requires get_scene_preview()"
+            )
         self.preview_controller.strip_count = self.controller.strip_count
         self.preview_controller.leds_per_strip = self.controller.leds_per_strip
         self.preview_controller.total_leds = self.controller.total_leds
@@ -1348,6 +1839,105 @@ class AnimationManager:
         """Advance a preview, resetting only when authored parameters change."""
         return self._render_preview(animation_name, params, vibe=vibe)
 
+    def get_scene_preview(
+        self,
+        background_name: str,
+        background_config: Optional[Dict[str, Any]] = None,
+        overlay_name: str = 'clock_overlay',
+        overlay_config: Optional[Dict[str, Any]] = None,
+        overlay_opacity: int = 255,
+        strip_offset: int = 0,
+        led_offset: int = 0,
+        *,
+        vibe: Optional[Any] = None,
+        elapsed: float = 0.0,
+    ) -> Dict[str, Any]:
+        """Render one isolated fixed scene through the live composition order."""
+        if not math.isfinite(float(elapsed)) or float(elapsed) < 0.0:
+            raise ValueError("preview elapsed time must be finite and non-negative")
+        background_class = self.plugin_loader.get_plugin(background_name)
+        overlay_class = self.plugin_loader.get_plugin(overlay_name)
+        if background_class is None or self._plugin_role(background_name) != 'background':
+            raise ValueError(f"invalid scene background {background_name!r}")
+        if overlay_class is None or self._plugin_role(overlay_name) != 'overlay':
+            raise ValueError(f"invalid scene overlay {overlay_name!r}")
+        if issubclass(background_class, StatefulAnimationBase) or issubclass(
+            overlay_class, StatefulAnimationBase
+        ):
+            raise TypeError("Stateful animations cannot participate in scene previews")
+
+        background = background_class(
+            self.preview_controller, self._component_config(background_config)
+        )
+        overlay_animation = overlay_class(
+            self.preview_controller, self._component_config(overlay_config)
+        )
+        components: List[Dict[str, Any]] = []
+        try:
+            background.start()
+            background_component = self._new_scene_component(
+                background_name, background, background_config, started_at=0.0
+            )
+            components.append(background_component)
+            overlay_animation.start()
+            overlay_component = self._new_scene_component(
+                overlay_name, overlay_animation, overlay_config, started_at=0.0
+            )
+            overlay_component.update({
+                'enabled': True,
+                'opacity': overlay_opacity,
+                'strip_offset': strip_offset,
+                'led_offset': led_offset,
+            })
+            components.append(overlay_component)
+            with self._presentation_state_guard():
+                resolved = (
+                    self._resolved_vibe if vibe is None else self._canonical_vibe(vibe)
+                )
+                operator_tempo = self.animation_speed_scale
+            frame, changed, dirty_ranges = self._compose_scene_components(
+                background_component,
+                overlay_component,
+                HostSceneCompositor(
+                    self.preview_controller.strip_count,
+                    self.preview_controller.leds_per_strip,
+                ),
+                self._empty_presentation_state(),
+                now=float(elapsed),
+                resolved_vibe=resolved,
+                operator_tempo=operator_tempo,
+            )
+            return {
+                'frame_data': frame.tolist(),
+                'led_info': {
+                    'total_leds': self.preview_controller.total_leds,
+                    'strip_count': self.preview_controller.strip_count,
+                    'leds_per_strip': self.preview_controller.leds_per_strip,
+                },
+                'is_running': False,
+                'mode': 'scene',
+                'current_animation': background_name,
+                'scene': {
+                    'background': background_name,
+                    'overlay': overlay_name,
+                    'overlay_opacity': overlay_opacity,
+                    'strip_offset': strip_offset,
+                    'led_offset': led_offset,
+                },
+                'frame_count': 1,
+                'changed': changed,
+                'dirty_ranges': dirty_ranges,
+                'preview': True,
+                'timestamp': time.time(),
+                'vibe': {
+                    'state': resolved.state.to_dict(),
+                    'profile': resolved.profile.to_dict(),
+                },
+            }
+        finally:
+            for component in reversed(components):
+                self._cleanup_scene_component(component)
+
     def dispatch_preview_interaction(
         self,
         animation_name: str,
@@ -1364,8 +1954,319 @@ class AnimationManager:
             event = self._validated_interaction(animation, kind, x, y, strength)
             return bool(animation.handle_interaction(*event))
 
-    def _animation_loop(self):
+    def _render_scene_component(
+        self,
+        component: Dict[str, Any],
+        *,
+        now: float,
+        resolved_vibe: ResolvedVibe,
+        operator_tempo: float,
+        overlay: bool,
+    ) -> BaseFrame | OverlayFrame:
+        animation = component['animation']
+        elapsed = max(0.0, float(now) - float(component['started_at']))
+        delta = max(0.0, elapsed - component['last_unscaled_elapsed'])
+        authored_speed = self._animation_authored_speed(animation)
+        vibe_tempo = self._component_tempo(resolved_vibe.profile, animation)
+        component['scaled_elapsed'] += (
+            delta * authored_speed * vibe_tempo * operator_tempo
+        )
+        component['last_unscaled_elapsed'] = elapsed
+        context = self._runtime_context(
+            animation,
+            unscaled_elapsed=elapsed,
+            scaled_elapsed=component['scaled_elapsed'],
+            frame_index=component['frame_index'],
+            resolved_vibe=resolved_vibe,
+            operator_tempo_scale=operator_tempo,
+        )
+        rendered = animation.generate_frame_with_context(context)
+        component['calls'] += 1
+        component['frame_index'] += 1
+
+        force_changed = bool(component.pop('force_changed', False))
+        if overlay:
+            if not isinstance(rendered, OverlayFrame):
+                raise TypeError(
+                    f"overlay {component['name']} returned "
+                    f"{type(rendered).__name__}; expected OverlayFrame"
+                )
+            if rendered.pixels.shape[0] != self.controller.total_leds:
+                raise ValueError(
+                    f"overlay {component['name']} returned {rendered.pixels.shape[0]} "
+                    f"pixels; expected {self.controller.total_leds}"
+                )
+            source_changed = rendered.changed or force_changed
+            if rendered.revision != component['last_revision']:
+                component['render_count'] += 1
+                component['last_revision'] = rendered.revision
+            frame: BaseFrame | OverlayFrame = OverlayFrame(
+                rendered.pixels,
+                revision=rendered.revision,
+                changed=source_changed,
+                dirty_ranges=None if force_changed else rendered.dirty_ranges,
+            )
+        else:
+            if isinstance(rendered, OverlayFrame):
+                raise TypeError(
+                    f"background {component['name']} returned OverlayFrame"
+                )
+            if isinstance(rendered, BaseFrame):
+                frame = rendered
+            else:
+                changed = rendered.changed if isinstance(rendered, RenderedFrame) else True
+                dirty_ranges = (
+                    rendered.dirty_ranges if isinstance(rendered, RenderedFrame) else None
+                )
+                pixels = self._normalize_frame(rendered)
+                pixels = np.asarray(pixels, dtype=np.uint8)
+                if pixels.shape != (self.controller.total_leds, 3):
+                    raise ValueError(
+                        f"background {component['name']} returned shape {pixels.shape}"
+                    )
+                if not pixels.flags.c_contiguous:
+                    pixels = np.ascontiguousarray(pixels)
+                frame = BaseFrame(
+                    pixels, changed=changed, dirty_ranges=dirty_ranges
+                )
+            if frame.pixels.shape[0] != self.controller.total_leds:
+                raise ValueError(
+                    f"background {component['name']} returned {frame.pixels.shape[0]} "
+                    f"pixels; expected {self.controller.total_leds}"
+                )
+            source_changed = frame.changed or force_changed
+            if force_changed:
+                frame = BaseFrame(frame.pixels, changed=True, dirty_ranges=None)
+
+        graded, graded_changed = self._apply_vibe_presentation(
+            animation,
+            frame.pixels,
+            profile=resolved_vibe.profile,
+            changed=source_changed,
+            state=component['grade_state'],
+            include_grade=True,
+            include_luminance=False,
+        )
+        dirty_ranges = frame.dirty_ranges
+        if graded_changed and not source_changed:
+            dirty_ranges = None
+        if overlay:
+            result: BaseFrame | OverlayFrame = OverlayFrame(
+                graded,
+                revision=frame.revision,
+                changed=graded_changed,
+                dirty_ranges=dirty_ranges,
+            )
+        else:
+            result = BaseFrame(
+                graded, changed=graded_changed, dirty_ranges=dirty_ranges
+            )
+        component['cached_frame'] = result
+        component['changed_calls'] += int(result.changed)
+        component['last_dirty_ranges'] = result.dirty_ranges
+        return result
+
+    @staticmethod
+    def _cached_overlay_frame(frame: OverlayFrame) -> OverlayFrame:
+        return OverlayFrame(
+            frame.pixels,
+            revision=frame.revision,
+            changed=False,
+            dirty_ranges=(),
+        )
+
+    def _compose_scene_components(
+        self,
+        background: Dict[str, Any],
+        overlay: Optional[Dict[str, Any]],
+        compositor: HostSceneCompositor,
+        final_presentation_state: Dict[str, Any],
+        *,
+        now: float,
+        resolved_vibe: ResolvedVibe,
+        operator_tempo: float,
+        force_refresh: bool = False,
+    ) -> tuple[np.ndarray, bool, Optional[tuple[tuple[int, int], ...]]]:
+        base = self._render_scene_component(
+            background,
+            now=now,
+            resolved_vibe=resolved_vibe,
+            operator_tempo=operator_tempo,
+            overlay=False,
+        )
+        placed = ()
+        if overlay is not None:
+            if overlay['enabled']:
+                overlay_frame = self._render_scene_component(
+                    overlay,
+                    now=now,
+                    resolved_vibe=resolved_vibe,
+                    operator_tempo=operator_tempo,
+                    overlay=True,
+                )
+            else:
+                cached = overlay.get('cached_frame')
+                if not isinstance(cached, OverlayFrame):
+                    raise RuntimeError("overlay was disabled before its initial frame")
+                overlay_frame = self._cached_overlay_frame(cached)
+            placed = (PlacedOverlay(
+                overlay_frame,
+                opacity=overlay['opacity'],
+                strip_offset=overlay['strip_offset'],
+                led_offset=overlay['led_offset'],
+                enabled=overlay['enabled'],
+            ),)
+
+        composed = compositor.compose(base, placed)
+        changed = composed.changed
+        dirty_ranges = composed.dirty_ranges
+        pixels = composed.pixels
+
+        animation = background['animation']
+        framework_refresh = animation.framework_plant_modifier_refresh_pending()
+        pixels = animation.apply_framework_plant_modifiers(
+            pixels, changed=changed
+        )
+        if animation.framework_plant_modifiers_active():
+            changed = changed or framework_refresh
+            dirty_ranges = None
+
+        luminance_component = next((
+            component['animation']
+            for component in (background, overlay)
+            if component is not None
+            and 'luminance' in component['animation'].VIBE_CAPABILITIES
+        ), None)
+        if luminance_component is not None:
+            source_changed = changed
+            pixels, changed = self._apply_vibe_presentation(
+                luminance_component,
+                pixels,
+                profile=resolved_vibe.profile,
+                changed=changed,
+                state=final_presentation_state,
+                force_refresh=force_refresh,
+                include_grade=False,
+                include_luminance=True,
+            )
+            if changed and not source_changed:
+                dirty_ranges = None
+        return np.asarray(pixels, dtype=np.uint8), changed, dirty_ranges
+
+    def _render_composed_scene_frame(
+        self, *, now: Optional[float] = None
+    ) -> tuple[np.ndarray, bool, Optional[tuple[tuple[int, int], ...]]]:
+        with self._scene_lock:
+            if not self._scene_mode or not self._scene_background or not self._scene_compositor:
+                raise RuntimeError("no composed scene is active")
+            with self._presentation_state_guard():
+                resolved = self._resolved_vibe
+                operator_tempo = self.animation_speed_scale
+                presentation_revision = self._presentation_revision
+                force_refresh = bool(self._presentation_refresh_pending)
+            result = self._compose_scene_components(
+                self._scene_background,
+                self._scene_overlay,
+                self._scene_compositor,
+                self._scene_final_presentation_state,
+                now=time.perf_counter() if now is None else now,
+                resolved_vibe=resolved,
+                operator_tempo=operator_tempo,
+                force_refresh=force_refresh,
+            )
+            with self._presentation_state_guard():
+                if self._presentation_revision == presentation_revision:
+                    self._presentation_refresh_pending = False
+            return result
+
+    def render_composed_scene_frame(
+        self, *, now: Optional[float] = None
+    ) -> BaseFrame:
+        """Synchronously render one active scene frame for diagnostics/tests."""
+        pixels, changed, dirty_ranges = self._render_composed_scene_frame(now=now)
+        return BaseFrame(pixels, changed=changed, dirty_ranges=dirty_ranges)
+
+    def _render_compatibility_frame(
+        self, time_elapsed: float
+    ) -> tuple[Any, bool, Optional[tuple[tuple[int, int], ...]]]:
+        """Render the unchanged single-animation/background-only pipeline."""
+        animation = self.current_animation
+        if animation is None:
+            raise RuntimeError("no animation is active")
+        if isinstance(animation, AnimationBase):
+            if not hasattr(self, '_resolved_vibe'):
+                self._resolved_vibe = resolve_vibe('neutral')
+                self._vibe_diagnostic = None
+                self.animation_speed_scale = getattr(
+                    self, 'animation_speed_scale', 1.0
+                )
+                self.plant_modifier_state = getattr(
+                    self, 'plant_modifier_state', PlantModifierState.empty()
+                )
+                self._scaled_elapsed = 0.0
+                self._last_unscaled_elapsed = 0.0
+                self._scene_epoch = 0
+                self._presentation_revision = 0
+            with self._presentation_state_guard():
+                resolved_vibe = self._resolved_vibe
+                operator_tempo = self.animation_speed_scale
+                presentation_revision = self._presentation_revision
+                force_refresh = bool(getattr(
+                    self, '_presentation_refresh_pending', False
+                ))
+            context = self._advance_runtime_context(
+                animation,
+                time_elapsed,
+                self.frame_count,
+                resolved_vibe=resolved_vibe,
+                operator_tempo_scale=operator_tempo,
+            )
+            rendered = animation.generate_frame_with_context(context)
+        else:
+            rendered = animation.generate_frame(time_elapsed, self.frame_count)
+            resolved_vibe = resolve_vibe('neutral')
+            presentation_revision = 0
+            force_refresh = False
+
+        changed = rendered.changed if isinstance(rendered, RenderedFrame) else True
+        dirty_ranges = rendered.dirty_ranges if isinstance(rendered, RenderedFrame) else None
+        frame = self._normalize_frame(rendered)
+        refresh_pending = getattr(
+            animation, 'framework_plant_modifier_refresh_pending', None
+        )
+        apply_framework = getattr(animation, 'apply_framework_plant_modifiers', None)
+        framework_active = getattr(animation, 'framework_plant_modifiers_active', None)
+        framework_refresh = bool(
+            refresh_pending() if callable(refresh_pending) else False
+        )
+        if callable(apply_framework):
+            frame = apply_framework(frame, changed=changed)
+        if callable(framework_active) and framework_active():
+            changed = changed or framework_refresh
+            dirty_ranges = None
+        if isinstance(animation, AnimationBase):
+            source_changed = changed
+            if not hasattr(self, '_live_presentation_state'):
+                self._live_presentation_state = self._empty_presentation_state()
+            frame, changed = self._apply_vibe_presentation(
+                animation,
+                frame,
+                profile=resolved_vibe.profile,
+                changed=changed,
+                state=self._live_presentation_state,
+                force_refresh=force_refresh,
+            )
+            with self._presentation_state_guard():
+                if self._presentation_revision == presentation_revision:
+                    self._presentation_refresh_pending = False
+            if changed and not source_changed:
+                dirty_ranges = None
+        return frame, changed, dirty_ranges
+
+    def _animation_loop(self, run_generation: Optional[int] = None):
         """Main animation loop running in separate thread"""
+        if run_generation is None:
+            run_generation = getattr(self, '_run_generation', 0)
         inline_show = getattr(self.controller, "inline_show", False)
         pending_present = None
 
@@ -1373,7 +2274,7 @@ class AnimationManager:
         # it before the animation can rotate back to the same one of its two
         # reusable buffers, so ownership remains deterministic without copies.
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix="led-present") as presenter:
-            while self.is_running and not self.stop_event.is_set():
+            while self._run_is_active(run_generation):
                 loop_start = time.perf_counter()
                 generate_duration = 0.0
                 send_duration = 0.0
@@ -1383,92 +2284,33 @@ class AnimationManager:
                     if not self.current_animation:
                         break
 
-                    time_elapsed = loop_start - self.start_time
                     gen_start = time.perf_counter()
-                    if isinstance(self.current_animation, AnimationBase):
-                        if not hasattr(self, '_resolved_vibe'):
-                            self._resolved_vibe = resolve_vibe('neutral')
-                            self._vibe_diagnostic = None
-                            self.animation_speed_scale = getattr(
-                                self, 'animation_speed_scale', 1.0
-                            )
-                            self.plant_modifier_state = getattr(
-                                self, 'plant_modifier_state', PlantModifierState.empty()
-                            )
-                            self._scaled_elapsed = 0.0
-                            self._last_unscaled_elapsed = 0.0
-                            self._scene_epoch = 0
-                            self._presentation_revision = 0
-                        with self._presentation_state_guard():
-                            resolved_vibe = self._resolved_vibe
-                            operator_tempo = self.animation_speed_scale
-                            presentation_revision = self._presentation_revision
-                            force_refresh = bool(getattr(
-                                self, '_presentation_refresh_pending', False
-                            ))
-                        context = self._advance_runtime_context(
-                            self.current_animation,
-                            time_elapsed,
-                            self.frame_count,
-                            resolved_vibe=resolved_vibe,
-                            operator_tempo_scale=operator_tempo,
+                    if getattr(self, '_scene_mode', False):
+                        frame, changed, dirty_ranges = (
+                            self._render_composed_scene_frame(now=loop_start)
                         )
-                        rendered = self.current_animation.generate_frame_with_context(context)
                     else:
-                        rendered = self.current_animation.generate_frame(
-                            time_elapsed, self.frame_count
+                        frame, changed, dirty_ranges = (
+                            self._render_compatibility_frame(
+                                loop_start - self.start_time
+                            )
                         )
-                    changed = rendered.changed if isinstance(rendered, RenderedFrame) else True
-                    dirty_ranges = rendered.dirty_ranges if isinstance(rendered, RenderedFrame) else None
-                    frame = self._normalize_frame(rendered)
-                    refresh_pending = getattr(
-                        self.current_animation,
-                        'framework_plant_modifier_refresh_pending',
-                        None,
-                    )
-                    apply_framework = getattr(
-                        self.current_animation, 'apply_framework_plant_modifiers', None
-                    )
-                    framework_active = getattr(
-                        self.current_animation, 'framework_plant_modifiers_active', None
-                    )
-                    framework_refresh = bool(
-                        refresh_pending() if callable(refresh_pending) else False
-                    )
-                    if callable(apply_framework):
-                        frame = apply_framework(frame, changed=changed)
-                    if callable(framework_active) and framework_active():
-                        changed = changed or framework_refresh
-                        # Optical displacement can make a source pixel affect a
-                        # neighboring plant-region pixel, so plugin dirty ranges
-                        # are no longer a complete presentation description.
-                        dirty_ranges = None
-                    if isinstance(self.current_animation, AnimationBase):
-                        source_changed = changed
-                        if not hasattr(self, '_live_presentation_state'):
-                            self._live_presentation_state = self._empty_presentation_state()
-                        frame, changed = self._apply_vibe_presentation(
-                            self.current_animation,
-                            frame,
-                            profile=resolved_vibe.profile,
-                            changed=changed,
-                            state=self._live_presentation_state,
-                            force_refresh=force_refresh,
-                        )
-                        with self._presentation_state_guard():
-                            if self._presentation_revision == presentation_revision:
-                                self._presentation_refresh_pending = False
-                        if changed and not source_changed:
-                            dirty_ranges = None
                     generate_duration = time.perf_counter() - gen_start
 
-                    with self.frame_data_lock:
-                        self.current_frame_data = frame
+                    if not self._run_owns_generation(run_generation):
+                        break
+                    with self._run_state_guard():
+                        if not self._run_owns_generation(run_generation):
+                            break
+                        with self.frame_data_lock:
+                            self.current_frame_data = frame
 
                     if pending_present is not None:
                         completed = pending_present
                         pending_present = None
                         send_duration, show_duration = completed.result()
+                        if not self._run_owns_generation(run_generation):
+                            break
 
                     should_present = changed or self.frames_presented == 0
                     if should_present:
@@ -1496,7 +2338,8 @@ class AnimationManager:
                         # A daemon render loop can overlap the last instant of
                         # interpreter shutdown in short-lived tools/tests.
                         # Exit quietly once the futures runtime is unavailable.
-                        self.is_running = False
+                        if self._run_is_active(run_generation):
+                            self.is_running = False
                         break
                     print(f"✗ Animation loop error: {e}")
                     traceback.print_exc()
@@ -1527,20 +2370,29 @@ class AnimationManager:
                 except Exception as e:
                     print(f"✗ Final frame presentation failed: {e}")
 
+    def _presentation_io_guard(self):
+        """Serialize controller I/O across timed-out stop/start boundaries."""
+        lock = getattr(self, '_presentation_io_lock', None)
+        if lock is None:
+            lock = threading.Lock()
+            self._presentation_io_lock = lock
+        return lock
+
     def _present_frame(self, frame, dirty_ranges, use_partial, inline_show):
         """Present one frame on the dedicated I/O worker and return timings."""
-        send_start = time.perf_counter()
-        if use_partial:
-            self.controller.set_frame(frame, dirty_ranges=dirty_ranges)
-        else:
-            self.controller.set_all_pixels(frame)
-        send_duration = time.perf_counter() - send_start
+        with self._presentation_io_guard():
+            send_start = time.perf_counter()
+            if use_partial:
+                self.controller.set_frame(frame, dirty_ranges=dirty_ranges)
+            else:
+                self.controller.set_all_pixels(frame)
+            send_duration = time.perf_counter() - send_start
 
-        show_duration = 0.0
-        if not inline_show and hasattr(self.controller, "show"):
-            show_start = time.perf_counter()
-            self.controller.show()
-            show_duration = time.perf_counter() - show_start
+            show_duration = 0.0
+            if not inline_show and hasattr(self.controller, "show"):
+                show_start = time.perf_counter()
+                self.controller.show()
+                show_duration = time.perf_counter() - show_start
         return send_duration, show_duration
 
     def set_target_fps(self, target_fps: int) -> int:

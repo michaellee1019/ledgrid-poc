@@ -6,6 +6,7 @@ import numpy as np
 from animation.core.base import RenderedFrame
 from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.plugin_loader import AnimationPluginLoader
+from animation.core.presentation_contracts import OverlayFrame
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 from web.app import create_app
 
@@ -52,6 +53,38 @@ class PluginRegistryTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "must match package directory"):
                 AnimationPluginLoader(temporary_dir).scan_plugins()
+
+    def test_explicit_component_manifest_fields_fail_closed(self):
+        import json
+        import tempfile
+
+        valid = {
+            "plugin_id": "example",
+            "class": "ExampleAnimation",
+            "icon": "✨",
+            "gallery": "show",
+            "provider": "python",
+            "role": "overlay",
+            "entrypoint": "animation.plugins.example:ExampleAnimation",
+            "cadence": {"mode": "event_driven"},
+        }
+        invalid_cases = (
+            ({"provider": "receiver_native"}, "provider"),
+            ({"role": "graph"}, "role"),
+            ({"entrypoint": "example:Wrong"}, "entrypoint"),
+            ({"cadence": {"mode": "unbounded"}}, "cadence"),
+            ({"cadence": {"mode": "manager_driven"}}, "cadence"),
+        )
+        for change, message in invalid_cases:
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                plugin_dir = Path(directory) / "example"
+                plugin_dir.mkdir()
+                (plugin_dir / "__init__.py").write_text("", encoding="utf-8")
+                (plugin_dir / "manifest.json").write_text(
+                    json.dumps({**valid, **change}), encoding="utf-8"
+                )
+                with self.assertRaisesRegex(ValueError, message):
+                    AnimationPluginLoader(directory).scan_plugins()
 
     def test_manifest_rejects_animation_class_drift(self):
         import json
@@ -102,18 +135,29 @@ class ExternalAnimation(AnimationBase):
             strips=DEFAULT_STRIP_COUNT,
             leds_per_strip=DEFAULT_LEDS_PER_STRIP,
         )
-        plugins = AnimationPluginLoader(
+        loader = AnimationPluginLoader(
             allowed_plugins=AnimationManager.ALLOWED_PLUGINS,
-        ).load_all_plugins()
+        )
+        plugins = loader.load_all_plugins()
 
         self.assertEqual(DEFAULT_LEDS_PER_STRIP, 138)
         self.assertSetEqual(set(plugins), AnimationManager.ALLOWED_PLUGINS)
         for name, plugin_class in sorted(plugins.items()):
             with self.subTest(plugin=name):
                 rendered = plugin_class(controller).generate_frame(0.0, 0)
-                pixels = rendered.pixels if isinstance(rendered, RenderedFrame) else rendered
+                role = loader.plugin_manifests.get(name, {}).get("role", "background")
+                if role == "overlay":
+                    self.assertIsInstance(rendered, OverlayFrame)
+                    pixels = rendered.pixels
+                    expected_channels = 4
+                else:
+                    pixels = rendered.pixels if isinstance(rendered, RenderedFrame) else rendered
+                    expected_channels = 3
                 self.assertIsInstance(pixels, np.ndarray)
-                self.assertEqual(pixels.shape, (DEFAULT_STRIP_COUNT * 138, 3))
+                self.assertEqual(
+                    pixels.shape,
+                    (DEFAULT_STRIP_COUNT * 138, expected_channels),
+                )
                 self.assertEqual(pixels.dtype, np.uint8)
 
     def test_live_global_speed_scale_preserves_authored_animation_speed(self):

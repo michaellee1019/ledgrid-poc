@@ -37,6 +37,20 @@ All of these must pass before a hardware flash:
 - Every active frame-based animation returns a canonical contiguous `uint8`
   frame without errors and renders at or below 4.0 ms p95 for the installed
   32 x 138 geometry in the headless benchmark.
+- The three accepted host scenes (Gradient, Aurora Curtains, and Sparkle under
+  Clock Overlay) meet the same 4.0 ms p95 generation-plus-composition gate.
+  The benchmark also reports p50/p99/max, scene and overlay changed ratios,
+  overlay dirty pixels/ranges, and RGB payload bytes observed through the
+  manager/controller presentation boundary. SPI/receiver byte counters remain
+  physical-wall evidence.
+- Host-scene contract tests prove premultiplied fixed-point source-over and
+  per-fold rounding, ordered overlap, translation/clipping, previous/new dirty
+  coverage, transparent versus opaque black, two-buffer ownership, independent
+  lifecycle/cadence, preview/live parity, targeted interactions, and exact-once
+  plant-optics and vibe-luminance ordering.
+- The fixed host scene flattens into the existing complete RGB presentation
+  path. Phase 2B changes no receiver packet, firmware, display-mode, or takeover
+  behavior, and the original Clock presets remain byte-compatible.
 - Native firmware tests prove:
   - GRB channel order for all eight lanes;
   - exact `100` and `110` waveform samples;

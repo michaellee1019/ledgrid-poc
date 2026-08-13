@@ -112,7 +112,7 @@ test-unit:
 # Verify the host rendering pipeline and its performance budget.
 test-rendering:
 	{{python_env}} pytest -q animation/core/tests/test_frame_pipeline.py tests/unit/test_spi_crc.py
-	{{python_env}} python tools/benchmarks/animation_render.py --frames 100 --stress --check --max-p95-ms 4.0 --json
+	{{python_env}} python tools/benchmarks/animation_render.py --frames 100 --stress --scenes --check --max-p95-ms 4.0 --json
 
 # Run native firmware tests, build the production target, and enforce dependencies.
 test-firmware:

@@ -10,6 +10,7 @@ from tools.generate_animation_compatibility_inventory import (
     COMPATIBILITY_FULL_SCENE,
     DEFAULT_OUTPUT,
     ORDINARY_BACKGROUND,
+    PYTHON_OVERLAY,
     UNSUPPORTED_DIRECT_HARDWARE_STATEFUL,
     build_inventory,
     classify_plugin,
@@ -56,7 +57,7 @@ class AnimationCompatibilityInventoryTests(unittest.TestCase):
         self.assertSetEqual(set(shipped), AnimationManager.ALLOWED_PLUGINS)
 
     def test_current_compatibility_baseline_is_explicit(self):
-        self.assertEqual(len(self.entries), 50)
+        self.assertEqual(len(self.entries), 51)
         self.assertEqual(
             self.by_id["clock"].classification, COMPATIBILITY_FULL_SCENE
         )
@@ -69,6 +70,11 @@ class AnimationCompatibilityInventoryTests(unittest.TestCase):
             if entry.classification == UNSUPPORTED_DIRECT_HARDWARE_STATEFUL
         ]
         self.assertEqual(len(ordinary), 49)
+        overlays = [
+            entry for entry in self.entries
+            if entry.classification == PYTHON_OVERLAY
+        ]
+        self.assertEqual([entry.plugin_id for entry in overlays], ["clock_overlay"])
         self.assertEqual(unsupported, [])
 
     def test_classification_fails_closed_for_direct_or_stateful_ownership(self):
@@ -84,6 +90,12 @@ class AnimationCompatibilityInventoryTests(unittest.TestCase):
         self.assertEqual(
             classify_plugin("stateful", _Stateful, "test").classification,
             UNSUPPORTED_DIRECT_HARDWARE_STATEFUL,
+        )
+        self.assertEqual(
+            classify_plugin(
+                "overlay", _Ordinary, "show", role="overlay"
+            ).classification,
+            PYTHON_OVERLAY,
         )
 
     def test_committed_human_inventory_is_regeneration_equal(self):

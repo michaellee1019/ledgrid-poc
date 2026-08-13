@@ -90,6 +90,33 @@ class AnimationPluginLoader:
             raise ValueError(f"manifest icon must be a non-empty string: {manifest_path}")
         if payload.get("gallery", "show") not in {"show", "test"}:
             raise ValueError(f"manifest gallery must be 'show' or 'test': {manifest_path}")
+        provider = payload.get("provider")
+        role = payload.get("role")
+        entrypoint = payload.get("entrypoint")
+        cadence = payload.get("cadence")
+        component_fields = (provider, role, entrypoint, cadence)
+        if any(value is not None for value in component_fields):
+            if provider != "python":
+                raise ValueError(
+                    f"manifest provider must be 'python' in the current loader: {manifest_path}"
+                )
+            if role not in {"background", "overlay", "full_scene"}:
+                raise ValueError(
+                    "manifest role must be background, overlay, or full_scene: "
+                    f"{manifest_path}"
+                )
+            expected_entrypoint = (
+                f"animation.plugins.{plugin_name}:{payload['class']}"
+            )
+            if entrypoint != expected_entrypoint:
+                raise ValueError(
+                    f"manifest entrypoint must be {expected_entrypoint!r}: {manifest_path}"
+                )
+            if cadence != {"mode": "event_driven"}:
+                raise ValueError(
+                    "manifest cadence must be the supported event_driven shape: "
+                    f"{manifest_path}"
+                )
         preview = payload.get("preview")
         if preview is not None:
             if not isinstance(preview, dict):

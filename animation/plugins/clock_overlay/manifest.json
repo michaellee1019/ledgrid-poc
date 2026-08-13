@@ -1,0 +1,26 @@
+{
+  "plugin_id": "clock_overlay",
+  "class": "ClockOverlayAnimation",
+  "icon": "🕰️",
+  "gallery": "test",
+  "provider": "python",
+  "role": "overlay",
+  "entrypoint": "animation.plugins.clock_overlay:ClockOverlayAnimation",
+  "cadence": {
+    "mode": "event_driven"
+  },
+  "vibe": {
+    "color_policy": "semantic",
+    "timing_adapter": "wall_clock",
+    "capabilities": ["palette_roles", "luminance"],
+    "semantic_roles": ["accent", "hud"],
+    "legacy_parameter_mappings": {
+      "palette": {
+        "quiet": "mono",
+        "cozy": "amber",
+        "vivid": "neon",
+        "celebration": "signal"
+      }
+    }
+  }
+}
