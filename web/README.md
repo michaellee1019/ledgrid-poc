@@ -12,6 +12,18 @@ Notes:
 
 API endpoints:
 - GET /api/animations
+- `GET /api/v1/components` — unified descriptor catalog, filterable by provider
+  and role
+- `GET|POST|PUT|DELETE /api/v1/scene` — read, start, or stop the fixed scene
+- `POST /api/v1/scene/validate` — validate without changing live output
+- `PATCH /api/v1/scene/components/<target>` — targeted background or
+  `clock_overlay` update
+- `POST /api/v1/scene/preview` — isolated scene preview using the selected vibe
+  and plant state
+- `GET|POST /api/v1/scene-presets` — list or save scene-only presets
+- `GET|DELETE /api/v1/scene-presets/<preset_id>` — inspect or delete a scene preset
+- `POST /api/v1/scene-presets/<preset_id>/apply` — start a saved scene without
+  changing the independent vibe
 - GET /api/animations/<animation_name>
 - POST /api/start/<animation_name>
 - POST /api/stop

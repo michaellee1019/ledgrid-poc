@@ -18,6 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from animation.core.manager import AnimationManager
 from ipc.control_channel import FileControlChannel
+from ipc.runtime_control import (
+    restore_display_state as _restore_display_state,
+    start_scene as _start_scene,
+    update_scene_component as _update_scene_component,
+)
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP, default_strip_count
 from drivers.frame_codec import decode_frame_data
 from web.app import create_app
@@ -189,6 +194,7 @@ def run_controller_mode(args):
         default_animation_preset=(
             saved_state.get('current_preset') if saved_state else None
         ),
+        auto_start=not bool(saved_state and saved_state.get('scene')),
     )
     manager.target_fps = int(saved_state.get('target_fps', args.target_fps)) if saved_state else args.target_fps
 
@@ -197,6 +203,18 @@ def run_controller_mode(args):
         print(f"  Brightness : {startup_brightness}")
     except (RuntimeError, ValueError) as exc:
         print(f"⚠️ Failed to set controller brightness to {startup_brightness}: {exc}")
+
+    if saved_state and saved_state.get('scene'):
+        try:
+            if not _restore_display_state(manager, saved_state):
+                raise RuntimeError("manager rejected the saved scene")
+        except (RuntimeError, TypeError, ValueError) as exc:
+            fallback = saved_state.get("fallback_scene")
+            if fallback is None or not _start_scene(manager, fallback):
+                raise RuntimeError(
+                    f"saved scene and its recorded Python fallback were rejected: {exc}"
+                ) from exc
+            print(f"⚠️ Restored recorded Python fallback: {exc}")
 
     channel = FileControlChannel(control_path=args.control_file, status_path=args.status_file)
 
@@ -260,6 +278,30 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
         config = data.get('config') or {}
         print(f"▶️  Start requested: {animation}")
         return manager.start_animation(animation, config, preset=data.get('preset'))
+    elif action == 'start_scene':
+        print("▶️  Scene start requested")
+        try:
+            return _start_scene(manager, data.get("scene"))
+        except (TypeError, ValueError) as exc:
+            print(f"⚠️ Invalid scene: {exc}")
+            return False
+    elif action == 'update_scene_component':
+        try:
+            return _update_scene_component(
+                manager, data.get("target"), data.get("update") or {}
+            )
+        except (TypeError, ValueError) as exc:
+            print(f"⚠️ Invalid scene update: {exc}")
+            return False
+    elif action == 'stop_scene':
+        stopper = getattr(manager, "stop_scene", manager.stop_animation)
+        stopper()
+    elif action == 'restore_display_state':
+        try:
+            return _restore_display_state(manager, data.get("state"))
+        except (TypeError, ValueError) as exc:
+            print(f"⚠️ Invalid desired display state: {exc}")
+            return False
     elif action == 'stop':
         print("⏹️  Stop requested")
         manager.stop_animation()

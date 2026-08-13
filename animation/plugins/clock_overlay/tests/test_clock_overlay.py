@@ -13,6 +13,7 @@ import numpy as np
 
 from animation.core.compositing import coverage_dirty_union
 from animation.core.plugin_loader import AnimationPluginLoader
+from animation.core.presentation_contracts import NEXT_DEADLINE_SEMANTICS
 from animation.core.presentation_contracts import AnimationRuntimeContext, OverlayFrame
 from animation.plugins.clock import ClockAnimation
 from animation.plugins.clock_overlay import ClockOverlayAnimation
@@ -128,7 +129,10 @@ class ClockOverlayTests(unittest.TestCase):
             manifest["entrypoint"],
             "animation.plugins.clock_overlay:ClockOverlayAnimation",
         )
-        self.assertEqual(manifest["cadence"], {"mode": "event_driven"})
+        self.assertEqual(manifest["cadence"], {
+            "mode": "event_driven",
+            "next_deadline_semantics": NEXT_DEADLINE_SEMANTICS,
+        })
         self.assertEqual(manifest["vibe"]["timing_adapter"], "wall_clock")
         self.assertSetEqual(
             set(manifest["vibe"]["capabilities"]),

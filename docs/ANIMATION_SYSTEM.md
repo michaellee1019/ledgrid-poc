@@ -30,10 +30,18 @@ configured external plugin directories.
 
 Existing manifests without component fields retain the Python-background
 compatibility default. Newly authored components declare `provider`, `role`,
-`entrypoint`, and `cadence` together. The current host loader accepts Python
+`entrypoint`, and `cadence` together and set `manifest_version` to `1`. The
+current host loader accepts Python
 `background`, `overlay`, and compatibility `full_scene` roles and fails closed
 when only part of that metadata is present. `clock_overlay` is the reference
 explicit overlay; the existing `clock` remains the preset-compatible full scene.
+
+Discovery first scans manifest JSON into versioned descriptors without importing
+plugin implementations. The Python adapter then binds the allowlisted class,
+classifies stateful implementations, and adds the validated parameter schema and
+actual no-config defaults. The unified catalog is filterable by provider and
+role. Painter, stateful animations, and legacy Clock remain catalog-visible
+`full_scene` compatibility components with an explicit non-composable diagnostic.
 
 Root `presets/animations/<plugin_id>/` is a user-writable runtime overlay.
 Do not place curated source presets there.
@@ -99,13 +107,21 @@ Plugins must not call SPI or the web layer directly.
 
 ## Fixed host scenes
 
-Phase 2B supports exactly one Python RGB background plus one aggregate Python
-overlay through the process-local `AnimationManager` scene methods. This is an
-implementation and acceptance surface, not yet the persistent dashboard/API
-product introduced in Phase 2C. The manager owns component lifecycle, elapsed
-time, frame counters, targeted interactions, cached frames, placement, opacity,
-and the compositor. Removing, disabling, moving, or updating the overlay does
-not restart the background.
+The host scene product supports exactly one Python RGB background plus the fixed
+`clock_overlay` slot. `SceneState` version 1 persists the component provider,
+resolved authored-parameter snapshot, overrides, optional component-preset
+identity, placement, opacity, stale policy, and a known Python fallback. Vibe,
+plant modifiers, master brightness, and operator tempo remain independent
+top-level display state and are never captured by a scene preset.
+
+The manager owns each component's lifecycle, elapsed time, frame counters,
+targeted interactions, cached frames, placement, opacity, and the compositor.
+Removing, disabling, moving, replacing, or updating the overlay does not restart
+the background. Complete scene replacement, targeted component updates, status,
+and preview use the same provider, role, composability, and parameter validation.
+Existing single-animation starts translate to a background-only compatibility
+scene; legacy APIs, presets, painter, and full-scene stateful animations retain
+their existing product paths.
 
 Composition uses canonical strip-major coordinates, integer strip/LED
 translation with clipping, and fixed-point premultiplied source-over. The
@@ -118,8 +134,17 @@ transport, so firmware and receiver protocol behavior do not change.
 Rendering order is component semantics, component-local palette/grade,
 composition, universal plant optics once, then vibe luminance once. Receiver
 master brightness remains last. `get_scene_preview()` uses the same composition
-and presentation order without hardware I/O. The shipped acceptance scenes pair
-`clock_overlay` with Gradient, Aurora Curtains, and Sparkle.
+and presentation order without hardware I/O and accepts an isolated vibe,
+plant-modifier state, and source time without mutating the live scene. The
+shipped acceptance scenes pair `clock_overlay` with Gradient, Aurora Curtains,
+and Sparkle.
+
+The versioned web/IPC surface exposes the unified catalog, current scene,
+validation, start/stop, targeted updates, preview, component presets, and scene
+presets. Before-deploy and restart persistence use versioned desired display
+state while still migrating legacy animation snapshots. Unsupported scene schema
+or provider state selects the recorded Python fallback only after the complete
+desired state has been validated.
 
 ## Parameters
 
@@ -284,12 +309,12 @@ acceptance flow.
 
 ## Planned evolution and prototype reference
 
-This document describes the current Python host-rendered plugin and fixed-scene
-contract. The [unified roadmap](plan-revamped-animation-pipeline.md) next
-productizes versioned scene state, persistence, a unified catalog, and dashboard
-controls before adding repository-peer receiver-native backgrounds. Do not
-implement that future state by treating firmware playback as an `AnimationBase`
-or by weakening the current manifest allowlist.
+This document describes the current Python host-rendered plugin, catalog, and
+fixed-scene product contract. The
+[unified roadmap](plan-revamped-animation-pipeline.md) next establishes explicit
+receiver ownership with a statically linked native background. Do not implement
+that future state by treating firmware playback as an `AnimationBase` or by
+weakening the current manifest allowlist.
 
 The `native-animations` branch remains an organ donor for the roadmap's later
 receiver phases. Reuse its ABI/build validation, host preview harness, ESP-IDF

@@ -7,10 +7,12 @@ real time.
 """
 
 import json
+import inspect
 import math
 import os
 import re
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -22,6 +24,17 @@ from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.preview_assets import load_catalog, merge_catalogs
 from ipc.control_channel import FileControlChannel
+from ipc.scene_contract import (
+    FIXED_OVERLAY_SLOT,
+    SCENE_PRESET_SCHEMA,
+    SCENE_PRESET_VERSION,
+    SceneValidationError,
+    background_only_scene,
+    decorate_catalog,
+    filter_catalog,
+    normalize_scene_payload,
+    scene_preview_identity,
+)
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import (
     decode_frame_data,
@@ -70,9 +83,11 @@ class AnimationWebInterface:
         self.port = port
         self.local_mode = bool(local_mode)
         self.release_id = release_id
+        self._scene_preview_lock = threading.RLock()
         self.project_root = Path(__file__).resolve().parents[1]
         self.painter_presets_dir = self.project_root / "presets" / "frame_painter"
         self.animation_presets_dir = self.project_root / "presets" / "animations"
+        self.scene_presets_dir = self.project_root / "presets" / "scenes"
         self.foliage_mask_path = self.project_root / "config" / "plant_pixel_map_32x138.json"
         self.planter_mask_path = self.project_root / "config" / "plant_globe_map_32x138.json"
         self.deployment_status_path = self.project_root / "run_state" / "deployment.json"
@@ -100,6 +115,7 @@ class AnimationWebInterface:
 
         self.painter_presets_dir.mkdir(parents=True, exist_ok=True)
         self.animation_presets_dir.mkdir(parents=True, exist_ok=True)
+        self.scene_presets_dir.mkdir(parents=True, exist_ok=True)
 
         # Register routes
         self._register_routes()
@@ -118,6 +134,8 @@ class AnimationWebInterface:
                 test_animations=[item for item in animations if item['is_test']],
                 status=status,
                 vibe_profiles=self._vibe_profile_catalog(),
+                component_catalog=self._component_catalog(),
+                scene_presets=self._list_scene_presets(),
                 speed_baseline=DEFAULT_ANIMATION_SPEED_SCALE,
                 local_mode=self.local_mode,
             )
@@ -127,6 +145,189 @@ class AnimationWebInterface:
             """API: Get list of available animations"""
             animations = self._sorted_animations()
             return jsonify(animations)
+
+        @self.app.route('/api/v1/components')
+        def api_list_components():
+            """Versioned unified catalog, including explicit editor compatibility."""
+            try:
+                components = filter_catalog(
+                    self._component_catalog(),
+                    provider=request.args.get('provider'),
+                    role=request.args.get('role'),
+                )
+            except SceneValidationError as exc:
+                return jsonify({'error': str(exc)}), 400
+            return jsonify({
+                'schema': 'ledgrid.component-catalog',
+                'schema_version': 1,
+                'components': components,
+                'filters': {
+                    'provider': request.args.get('provider'),
+                    'role': request.args.get('role'),
+                },
+            })
+
+        @self.app.route('/api/v1/scene')
+        def api_get_scene():
+            scene = self._current_scene_payload()
+            return jsonify({
+                'schema': 'ledgrid.scene-api', 'schema_version': 1,
+                'scene': scene,
+                'active': scene is not None,
+                'preset_diagnostics': self._scene_preset_diagnostics(scene),
+            })
+
+        @self.app.route('/api/v1/scene/validate', methods=['POST'])
+        def api_validate_scene():
+            try:
+                scene = self._validated_scene_request(request.get_json(silent=True))
+            except SceneValidationError as exc:
+                return jsonify({'valid': False, 'error': str(exc)}), 400
+            return jsonify({
+                'valid': True, 'scene': scene,
+                'preset_diagnostics': self._scene_preset_diagnostics(scene),
+            })
+
+        @self.app.route('/api/v1/scene', methods=['PUT', 'POST'])
+        def api_start_scene():
+            try:
+                scene = self._validated_scene_request(request.get_json(silent=True))
+            except SceneValidationError as exc:
+                return jsonify({'error': str(exc)}), 400
+            command = self.control_channel.send_command('start_scene', scene=scene)
+            return jsonify({
+                'success': True, 'scene': scene,
+                'preset_diagnostics': self._scene_preset_diagnostics(scene),
+                'command_id': command.get('command_id') if isinstance(command, dict) else None,
+            })
+
+        @self.app.route('/api/v1/scene', methods=['DELETE'])
+        def api_stop_scene():
+            command = self.control_channel.send_command('stop_scene')
+            return jsonify({
+                'success': True,
+                'command_id': command.get('command_id') if isinstance(command, dict) else None,
+            })
+
+        @self.app.route('/api/v1/scene/components/<target>', methods=['PATCH'])
+        def api_update_scene_component(target: str):
+            try:
+                update = self._validated_scene_update(target, request.get_json(silent=True))
+            except SceneValidationError as exc:
+                return jsonify({'error': str(exc)}), 400
+            command = self.control_channel.send_command(
+                'update_scene_component', target=target, update=update
+            )
+            return jsonify({
+                'success': True, 'target': target, 'update': update,
+                'command_id': command.get('command_id') if isinstance(command, dict) else None,
+            })
+
+        @self.app.route('/api/v1/scene/preview', methods=['POST'])
+        def api_preview_scene():
+            payload = request.get_json(silent=True)
+            try:
+                body = payload if isinstance(payload, dict) else {}
+                scene = self._validated_scene_request(body.get('scene', body))
+                vibe = self._preview_vibe(body.get('vibe'))
+                status = self.control_channel.read_status() or {}
+                modifiers = PlantModifierState.from_payload(
+                    body.get('plant_modifiers', status.get('plant_modifiers', {}))
+                ).to_dict()
+                preview = self._scene_preview(scene, vibe, modifiers, body.get('elapsed', 0.0))
+            except (KeyError, TypeError, ValueError, SceneValidationError) as exc:
+                return jsonify({'error': str(exc)}), 400
+            preview['preview_identity'] = scene_preview_identity(
+                scene, vibe, modifiers, elapsed=float(body.get('elapsed', 0.0))
+            )
+            preview['scene'] = scene
+            preview['plant_modifiers'] = modifiers
+            return jsonify(preview)
+
+        @self.app.route('/api/v1/components/<component_id>/presets')
+        def api_list_component_presets(component_id: str):
+            if not any(
+                item.get('plugin_id') == component_id for item in self._component_catalog()
+            ):
+                return jsonify({'error': 'Component not found'}), 404
+            return jsonify({
+                'schema': 'ledgrid.component-preset-list', 'schema_version': 1,
+                'component_id': component_id,
+                'presets': self._list_animation_presets(component_id),
+            })
+
+        @self.app.route('/api/v1/scene-presets')
+        def api_list_scene_presets():
+            return jsonify({
+                'schema': 'ledgrid.scene-preset-list', 'schema_version': 1,
+                'presets': self._list_scene_presets(),
+            })
+
+        @self.app.route('/api/v1/scene-presets/<preset_id>')
+        def api_get_scene_preset(preset_id: str):
+            preset = self._load_scene_preset(preset_id)
+            if preset is None:
+                return jsonify({'error': 'Scene preset not found'}), 404
+            return jsonify(preset)
+
+        @self.app.route('/api/v1/scene-presets', methods=['POST'])
+        def api_save_scene_preset():
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, dict):
+                return jsonify({'error': 'request body must be a JSON object'}), 400
+            name = str(payload.get('name') or '').strip()
+            preset_id = self._sanitize_preset_id(name)
+            if not name or not preset_id:
+                return jsonify({'error': 'Scene preset name is required'}), 400
+            if any(key in payload for key in ('vibe', 'plant_modifiers', 'output')):
+                return jsonify({'error': 'Scene presets never capture vibe, plant, or output state'}), 400
+            try:
+                scene = self._validated_scene_request(payload.get('scene'))
+            except SceneValidationError as exc:
+                return jsonify({'error': str(exc)}), 400
+            existing = self._load_scene_preset(preset_id) or {}
+            now = time.time()
+            preset = {
+                'schema': SCENE_PRESET_SCHEMA,
+                'schema_version': SCENE_PRESET_VERSION,
+                'preset_id': preset_id,
+                'name': name,
+                'description': str(payload.get('description') or ''),
+                'scene': scene,
+                'created_at': existing.get('created_at', now),
+                'updated_at': now,
+            }
+            self._write_scene_preset(preset_id, preset)
+            return jsonify({'success': True, 'preset': preset})
+
+        @self.app.route('/api/v1/scene-presets/<preset_id>/apply', methods=['POST'])
+        def api_apply_scene_preset(preset_id: str):
+            preset = self._load_scene_preset(preset_id)
+            if preset is None:
+                return jsonify({'error': 'Scene preset not found'}), 404
+            try:
+                scene = self._validated_scene_request(preset.get('scene'))
+            except SceneValidationError as exc:
+                return jsonify({'error': f'Invalid stored scene preset: {exc}'}), 409
+            command = self.control_channel.send_command(
+                'start_scene', scene=scene,
+                preset={'preset_id': preset_id, 'name': preset['name']},
+            )
+            return jsonify({
+                'success': True, 'preset': preset,
+                'command_id': command.get('command_id') if isinstance(command, dict) else None,
+            })
+
+        @self.app.route('/api/v1/scene-presets/<preset_id>', methods=['DELETE'])
+        def api_delete_scene_preset(preset_id: str):
+            path = self._scene_preset_path(preset_id)
+            if path is None or not path.is_file():
+                return jsonify({'error': 'Scene preset not found'}), 404
+            try:
+                path.unlink()
+            except OSError:
+                return jsonify({'error': 'Failed to delete scene preset'}), 500
+            return jsonify({'success': True})
 
         @self.app.route('/preview-assets/runtime/<path:filename>')
         def runtime_preview_asset(filename: str):
@@ -850,6 +1051,301 @@ class AnimationWebInterface:
             ).casefold(),
         )
 
+    def _component_catalog(self) -> List[Dict[str, Any]]:
+        """Read the unified descriptor catalog without importing implementations."""
+        getter = getattr(self.preview_manager, 'list_components', None)
+        if callable(getter):
+            raw = getter()
+            if isinstance(raw, dict):
+                raw = raw.get('components', [])
+            return decorate_catalog(raw or [])
+        loader = getattr(self.preview_manager, 'plugin_loader', None)
+        if loader is not None:
+            catalog_getter = getattr(loader, 'component_catalog', None)
+            if callable(catalog_getter):
+                return decorate_catalog(catalog_getter())
+        # Small test doubles and legacy local integrations may expose only the
+        # animation list.  Keep this adapter explicit and Python/background-only.
+        return decorate_catalog({
+            **item,
+            'plugin_id': item.get('plugin_id', item.get('plugin_name')),
+            'provider': item.get('provider', 'python'),
+            'role': item.get('role', 'background'),
+        } for item in self.preview_manager.list_animations())
+
+    def _validated_scene_request(self, payload: Any) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise SceneValidationError('request body must contain a scene object')
+        scene = normalize_scene_payload(payload, catalog=self._component_catalog())
+        components = [scene['background'], scene['known_python_fallback']]
+        components.extend(overlay['component'] for overlay in scene['overlays'])
+        for component in components:
+            component_id = component['plugin_id']
+            for field in ('parameter_overrides', 'resolved_parameters'):
+                params = component.get(field) or {}
+                error = self._validate_animation_params(component_id, params)
+                if error:
+                    raise SceneValidationError(error)
+            preset_id = component.get('preset_id')
+            if preset_id is not None:
+                preset = self._load_animation_preset(component_id, preset_id)
+                if preset is None or preset.get('animation') != component_id:
+                    raise SceneValidationError(
+                        f"Component preset {component_id}/{preset_id} does not exist"
+                    )
+        return scene
+
+    def _scene_preset_diagnostics(
+        self, scene: Optional[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Report preset drift while preserving the saved canonical snapshot."""
+        if not isinstance(scene, dict):
+            return []
+        diagnostics = []
+        components = [('background', scene.get('background'))]
+        components.extend(
+            (overlay.get('slot_id', 'overlay'), overlay.get('component'))
+            for overlay in scene.get('overlays', [])
+            if isinstance(overlay, dict)
+        )
+        for slot, component in components:
+            if not isinstance(component, dict) or not component.get('preset_id'):
+                continue
+            component_id = component.get('plugin_id')
+            preset_id = component.get('preset_id')
+            preset = self._load_animation_preset(component_id, preset_id)
+            expected = self._component_preset_fingerprint(preset) if preset else None
+            actual = component.get('preset_fingerprint')
+            dirty = preset is None or expected != actual or bool(component.get('parameter_overrides'))
+            diagnostics.append({
+                'slot': slot,
+                'component_id': component_id,
+                'preset_id': preset_id,
+                'is_dirty': dirty,
+                'code': (
+                    'preset_missing' if preset is None
+                    else 'preset_drift' if expected != actual
+                    else 'live_overrides' if component.get('parameter_overrides')
+                    else 'preset_match'
+                ),
+                'message': (
+                    'Stored canonical parameters will be used; the selected preset changed.'
+                    if dirty else 'Selected preset matches the stored canonical snapshot.'
+                ),
+            })
+        return diagnostics
+
+    @staticmethod
+    def _component_preset_fingerprint(preset: Dict[str, Any]) -> str:
+        from animation.core.presentation_contracts import component_preset_fingerprint
+
+        return component_preset_fingerprint(
+            preset.get('animation'), preset.get('preset_id'), preset.get('params') or {}
+        )
+
+    def _current_scene_payload(self) -> Optional[Dict[str, Any]]:
+        status = self._status_payload()
+        raw_scene = status.get('scene_state')
+        if not isinstance(raw_scene, dict) or not raw_scene.get('schema'):
+            raw_scene = status.get('scene')
+        if isinstance(raw_scene, dict) and raw_scene.get('schema'):
+            try:
+                return normalize_scene_payload(raw_scene, catalog=self._component_catalog())
+            except SceneValidationError:
+                pass
+        animation = status.get('current_animation')
+        if not status.get('is_running') or not isinstance(animation, str):
+            return None
+        info = status.get('animation_info') or {}
+        params = info.get('current_params') if isinstance(info, dict) else {}
+        params = params if isinstance(params, dict) else {}
+        preset = status.get('current_preset') or {}
+        preset_id = preset.get('preset_id') if isinstance(preset, dict) else None
+        fingerprint = None
+        if isinstance(preset_id, str):
+            stored = self._load_animation_preset(animation, preset_id)
+            if stored is not None:
+                fingerprint = self._component_preset_fingerprint(stored)
+        return background_only_scene(
+            animation, params,
+            preset_id=preset_id if fingerprint else None,
+            preset_fingerprint=fingerprint,
+        )
+
+    def _validated_scene_update(self, target: str, value: Any) -> Dict[str, Any]:
+        if target not in {'background', FIXED_OVERLAY_SLOT}:
+            raise SceneValidationError('scene target must be background or clock_overlay')
+        update = value if isinstance(value, dict) else None
+        if update is None:
+            raise SceneValidationError('scene update must be a JSON object')
+        allowed = (
+            {'component', 'params', 'parameter_overrides'}
+            if target == 'background'
+            else {
+                'component', 'params', 'parameter_overrides', 'enabled', 'remove',
+                'opacity', 'placement', 'stale_policy',
+            }
+        )
+        unknown = sorted(set(update) - allowed)
+        if unknown:
+            raise SceneValidationError(
+                f"unsupported scene update fields: {', '.join(unknown)}"
+            )
+        if 'remove' in update and not isinstance(update['remove'], bool):
+            raise SceneValidationError('remove must be boolean')
+        if update.get('remove') and len(update) != 1:
+            raise SceneValidationError('remove cannot be combined with other scene updates')
+
+        scene = self._current_scene_payload()
+        if scene is None:
+            raise SceneValidationError('no live scene is available for a targeted update')
+        candidate = json.loads(json.dumps(scene))
+        if target == 'background':
+            component = candidate['background']
+            if 'component' in update:
+                raise SceneValidationError(
+                    'replace a background by applying a complete scene'
+                )
+            params = update.get('params', update.get('parameter_overrides'))
+            if params is not None:
+                if not isinstance(params, dict):
+                    raise SceneValidationError('scene component params must be an object')
+                component['parameter_overrides'] = dict(params)
+        else:
+            overlays = candidate['overlays']
+            if update.get('remove'):
+                return {'remove': True}
+            if not overlays:
+                if 'component' not in update:
+                    raise SceneValidationError('adding the clock overlay requires component')
+                overlays.append({
+                    'slot_id': FIXED_OVERLAY_SLOT,
+                    'component': update['component'],
+                    'enabled': update.get('enabled', True),
+                    'opacity': update.get('opacity', 255),
+                    'placement': update.get('placement', {}),
+                    'stale_policy': update.get('stale_policy', {'policy': 'hold'}),
+                })
+            else:
+                overlay = overlays[0]
+                for field in ('component', 'enabled', 'opacity', 'placement', 'stale_policy'):
+                    if field in update:
+                        overlay[field] = update[field]
+                params = update.get('params', update.get('parameter_overrides'))
+                if params is not None:
+                    if not isinstance(params, dict):
+                        raise SceneValidationError('scene component params must be an object')
+                    overlay['component']['parameter_overrides'] = dict(params)
+
+        normalized = self._validated_scene_request(candidate)
+        if target == 'background':
+            result: Dict[str, Any] = {'component': normalized['background']}
+            if 'params' in update or 'parameter_overrides' in update:
+                result['params'] = normalized['background']['parameter_overrides']
+            return result
+        overlay = normalized['overlays'][0]
+        result = {
+            key: overlay[key]
+            for key in ('component', 'enabled', 'opacity', 'placement', 'stale_policy')
+            if key in update or key == 'component'
+        }
+        if 'params' in update or 'parameter_overrides' in update:
+            result['params'] = overlay['component']['parameter_overrides']
+        return result
+
+    def _scene_preview(
+        self, scene: Dict[str, Any], vibe: Dict[str, Any],
+        plant_modifiers: Dict[str, Any], elapsed: Any,
+    ) -> Dict[str, Any]:
+        try:
+            elapsed_value = float(elapsed)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise SceneValidationError('preview elapsed must be numeric') from exc
+        if not math.isfinite(elapsed_value) or elapsed_value < 0:
+            raise SceneValidationError('preview elapsed must be finite and non-negative')
+        renderer = self.preview_manager.get_scene_preview
+        parameters = inspect.signature(renderer).parameters
+        first = next(iter(parameters), '')
+        if first in {'scene', 'scene_payload', 'scene_state'}:
+            kwargs: Dict[str, Any] = {'vibe': vibe, 'elapsed': elapsed_value}
+            if 'plant_modifiers' in parameters:
+                kwargs['plant_modifiers'] = plant_modifiers
+            return renderer(scene, **kwargs)
+
+        background = scene['background']
+        overlays = scene['overlays']
+        with self._scene_preview_lock:
+            previous = getattr(self.preview_manager, 'plant_modifier_state', None)
+            previous_payload = previous.to_dict() if hasattr(previous, 'to_dict') else None
+            setter = getattr(self.preview_manager, 'set_plant_modifiers', None)
+            if callable(setter):
+                setter(plant_modifiers)
+            try:
+                if not overlays:
+                    return self.preview_manager.get_animation_preview_with_params(
+                        background['plugin_id'],
+                        {**background['resolved_parameters'], **background['parameter_overrides']},
+                        vibe=vibe,
+                    )
+                overlay = overlays[0]
+                placement = overlay['placement']
+                return renderer(
+                    background['plugin_id'],
+                    {**background['resolved_parameters'], **background['parameter_overrides']},
+                    overlay['component']['plugin_id'],
+                    {
+                        **overlay['component']['resolved_parameters'],
+                        **overlay['component']['parameter_overrides'],
+                    },
+                    overlay['opacity'],
+                    placement['strip_translation'], placement['led_translation'],
+                    vibe=vibe, elapsed=elapsed_value,
+                )
+            finally:
+                if callable(setter) and previous_payload is not None:
+                    setter(previous_payload)
+
+    def _scene_preset_path(self, preset_id: str) -> Optional[Path]:
+        safe_id = self._sanitize_preset_id(preset_id)
+        if not safe_id or safe_id != preset_id:
+            return None
+        return self.scene_presets_dir / f'{safe_id}.json'
+
+    def _load_scene_preset(self, preset_id: str) -> Optional[Dict[str, Any]]:
+        path = self._scene_preset_path(preset_id)
+        if path is None:
+            return None
+        payload = self._read_json_file(path)
+        if not isinstance(payload, dict):
+            return None
+        if (
+            payload.get('schema') != SCENE_PRESET_SCHEMA
+            or payload.get('schema_version') != SCENE_PRESET_VERSION
+            or payload.get('preset_id') != preset_id
+            or any(key in payload for key in ('vibe', 'plant_modifiers', 'output'))
+        ):
+            return None
+        return payload
+
+    def _list_scene_presets(self) -> List[Dict[str, Any]]:
+        presets = []
+        if not self.scene_presets_dir.is_dir():
+            return presets
+        for path in sorted(self.scene_presets_dir.glob('*.json')):
+            payload = self._load_scene_preset(path.stem)
+            if payload is not None:
+                presets.append(payload)
+        return sorted(
+            presets,
+            key=lambda item: str(item.get('name') or item.get('preset_id')).casefold(),
+        )
+
+    def _write_scene_preset(self, preset_id: str, payload: Dict[str, Any]) -> None:
+        path = self._scene_preset_path(preset_id)
+        if path is None:
+            raise ValueError('Invalid scene preset id')
+        self._atomic_write_json(path, payload)
+
     @staticmethod
     def _preset_emoji(preset: Dict[str, Any], fallback: str) -> str:
         """Choose a discoverable icon from curated preset language."""
@@ -905,8 +1401,13 @@ class AnimationWebInterface:
         """Validate runtime preset parameters against the plugin schema."""
         info = self.preview_manager.get_animation_info(animation_name)
         if not info:
+            info = next((
+                item for item in self._component_catalog()
+                if item.get('plugin_id') == animation_name
+            ), None)
+        if not info:
             return f"Unknown animation: {animation_name}"
-        schema = info.get('parameters')
+        schema = info.get('parameters', info.get('parameter_schema'))
         if not isinstance(schema, dict):
             return f"Animation schema is unavailable: {animation_name}"
 

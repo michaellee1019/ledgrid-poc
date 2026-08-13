@@ -85,6 +85,123 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             })
             self.assertNotIn("plant_aware", json.loads(state_path.read_text()))
 
+    def test_scene_capture_is_versioned_desired_display_and_round_trips_independent_state(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            vibe = self._vibe("cozy")
+            scene = {
+                "schema": "ledgrid.scene-state", "schema_version": 1, "revision": 9,
+                "background": {
+                    "plugin_id": "rainbow", "provider": "python",
+                    "parameter_overrides": {"speed": 0.8},
+                    "resolved_parameters": {"speed": 0.8},
+                },
+                "overlays": [{
+                    "slot_id": "clock_overlay",
+                    "component": {
+                        "plugin_id": "clock_overlay", "provider": "python",
+                        "parameter_overrides": {"seconds": True},
+                        "resolved_parameters": {"seconds": True},
+                    },
+                    "enabled": True, "opacity": 144,
+                    "placement": {
+                        "strip_translation": 3, "led_translation": -4,
+                        "clip_policy": "clip_to_wall",
+                    },
+                    "stale_policy": {"policy": "clear_after_lease", "lease_ms": 900},
+                }],
+                "known_python_fallback": {
+                    "plugin_id": "rainbow", "provider": "python",
+                    "parameter_overrides": {"speed": 0.8},
+                    "resolved_parameters": {"speed": 0.8},
+                },
+            }
+            save_status({
+                "is_running": True,
+                "current_animation": "rainbow",
+                "scene_state": scene,
+                "animation_speed_scale": 1.6,
+                "target_fps": 120,
+                "brightness": 102,
+                "plant_modifiers": {
+                    "version": 1, "active": ["shadow"],
+                    "strengths": {"shadow": 0.5},
+                },
+                "vibe": {"state": vibe},
+                "animation_info": {"current_params": {"speed": 0.8}},
+            }, root / "presets", root / "state.json")
+
+            raw = json.loads((root / "state.json").read_text())
+            self.assertEqual(raw["schema"], "ledgrid.desired-display-state")
+            self.assertEqual(raw["schema_version"], 1)
+            self.assertEqual(raw["output"]["master_brightness"], 0.4)
+            self.assertEqual(raw["output"]["operator_tempo_scale"], 1.6)
+            self.assertNotIn("vibe", raw["scene"])
+
+            loaded = load_saved_state(root / "state.json")
+            self.assertEqual(loaded["scene"]["overlays"][0]["opacity"], 144)
+            self.assertEqual(loaded["scene"]["overlays"][0]["placement"]["led_translation"], -4)
+            self.assertEqual(loaded["brightness"], 102)
+            self.assertEqual(loaded["animation_speed_scale"], 1.6)
+            self.assertEqual(loaded["target_fps"], 120)
+            self.assertEqual(loaded["vibe"], vibe)
+
+    def test_unsupported_desired_scene_falls_back_only_to_recorded_python_component(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            fallback = {
+                "plugin_id": "sparkle", "provider": "python",
+                "parameter_overrides": {"speed": 0.6},
+                "resolved_parameters": {"speed": 0.6},
+            }
+            state = {
+                "schema": "ledgrid.desired-display-state",
+                "schema_version": 2,
+                "revision": 1,
+                "scene": {
+                    "schema": "ledgrid.scene-state", "schema_version": 99,
+                    "revision": 1,
+                    "background": {**fallback, "provider": "receiver_native"},
+                    "overlays": [],
+                    "known_python_fallback": fallback,
+                },
+                "vibe": self._vibe("neutral"),
+                "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
+                "installation_profile_digest": "0" * 64,
+                "output": {
+                    "master_brightness": 0.5,
+                    "operator_tempo_scale": 1.0,
+                    "power": True,
+                    "target_fps": 200,
+                },
+            }
+            path = root / "state.json"
+            path.write_text(json.dumps(state))
+
+            loaded = load_saved_state(path)
+            self.assertEqual(loaded["animation"], "sparkle")
+            self.assertEqual(loaded["params"], {"speed": 0.6})
+            self.assertIn("unsupported desired display", loaded["scene_fallback_reason"])
+
+            state["scene"]["known_python_fallback"]["provider"] = "receiver_native"
+            path.write_text(json.dumps(state))
+            with self.assertRaisesRegex(RuntimeError, "valid Python fallback"):
+                load_saved_state(path)
+
+    def test_malformed_desired_output_fails_before_restore_command(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            save_status({
+                "is_running": True, "current_animation": "rainbow",
+                "vibe": {"state": self._vibe("neutral")},
+                "animation_info": {"current_params": {"speed": 0.9}},
+            }, root / "presets", root / "state.json")
+            state = json.loads((root / "state.json").read_text())
+            state["output"]["master_brightness"] = 1.5
+            (root / "state.json").write_text(json.dumps(state))
+            with self.assertRaisesRegex(RuntimeError, "master brightness"):
+                load_saved_state(root / "state.json")
+
     def test_save_status_keeps_vibe_independent_from_authored_params_and_preset(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)

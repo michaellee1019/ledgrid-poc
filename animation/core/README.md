@@ -6,8 +6,12 @@ The core owns framework and lifecycle contracts used by every plugin.
   `StatefulAnimationBase`.
 - `manager.py`: animation lifecycle, timing, previews, painter state, and frame
   presentation.
+- `component_catalog.py`: versioned component descriptors, compatibility
+  classification, provider/role filtering, and loaded parameter metadata.
 - `plugin_loader.py`: manifest validation, built-in package discovery, external
   plugin loading, and curated-preset enumeration.
+- `presentation_contracts.py`: immutable scene, component, vibe, runtime-context,
+  cadence, and layer-frame value contracts.
 - `plant_awareness.py`: cached installation geometry and plant-aware parameters.
 - `tests/`: focused tests for these runtime contracts.
 

@@ -1565,3 +1565,148 @@
         // Auto-remove after 3 seconds
         setTimeout(() => toast.remove(), 3000);
     }
+
+    function sceneComponentRef(componentId) {
+        return {
+            plugin_id: componentId,
+            provider: 'python',
+            parameter_overrides: {},
+            resolved_parameters: {}
+        };
+    }
+
+    function editedScenePayload() {
+        const backgroundId = document.getElementById('sceneBackgroundSelect')?.value;
+        if (!backgroundId) throw new Error('Choose a compatible Python background.');
+        const background = sceneComponentRef(backgroundId);
+        const overlays = [];
+        if (document.getElementById('sceneOverlayEnabled')?.checked) {
+            const stalePolicy = document.getElementById('sceneStalePolicy')?.value || 'hold';
+            const stale = {policy: stalePolicy};
+            if (stalePolicy === 'clear_after_lease') stale.lease_ms = 1000;
+            overlays.push({
+                slot_id: 'clock_overlay',
+                component: sceneComponentRef('clock_overlay'),
+                enabled: true,
+                opacity: Number(document.getElementById('sceneOverlayOpacity')?.value || 255),
+                placement: {
+                    strip_translation: Number(document.getElementById('sceneOverlayStripOffset')?.value || 0),
+                    led_translation: Number(document.getElementById('sceneOverlayLedOffset')?.value || 0),
+                    clip_policy: 'clip_to_wall'
+                },
+                stale_policy: stale
+            });
+        }
+        return {
+            schema: 'ledgrid.scene-state',
+            schema_version: 1,
+            revision: Date.now(),
+            background,
+            overlays,
+            known_python_fallback: {...background}
+        };
+    }
+
+    async function sceneRequest(url, options) {
+        const response = await fetch(url, options);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Scene request failed.');
+        return payload;
+    }
+
+    async function startEditedScene() {
+        try {
+            const scene = editedScenePayload();
+            await sceneRequest('/api/v1/scene', {
+                method: 'PUT', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(scene)
+            });
+            showToast('Scene start requested.', 'success');
+        } catch (error) {
+            showToast(error.message, 'error');
+        }
+    }
+
+    async function previewEditedScene() {
+        try {
+            const payload = await sceneRequest('/api/v1/scene/preview', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    scene: editedScenePayload(),
+                    vibe: globalVibeId,
+                    plant_modifiers: globalPlantModifiers
+                })
+            });
+            if (animationRenderer) {
+                animationRenderer.lastFrameData = payload;
+                animationRenderer.renderFrame(payload);
+            }
+            showToast('Preview rendered without changing the live scene.', 'success');
+        } catch (error) {
+            showToast(error.message, 'error');
+        }
+    }
+
+    async function stopEditedScene() {
+        try {
+            await sceneRequest('/api/v1/scene', {method: 'DELETE'});
+            showToast('Scene stop requested.', 'success');
+        } catch (error) {
+            showToast(error.message, 'error');
+        }
+    }
+
+    function loadSceneIntoEditor(scene) {
+        const background = document.getElementById('sceneBackgroundSelect');
+        if (background) background.value = scene.background.plugin_id;
+        const overlay = Array.isArray(scene.overlays) ? scene.overlays[0] : null;
+        document.getElementById('sceneOverlayEnabled').checked = Boolean(overlay?.enabled);
+        if (!overlay) return;
+        document.getElementById('sceneOverlayOpacity').value = overlay.opacity;
+        document.getElementById('sceneOverlayStripOffset').value = overlay.placement.strip_translation;
+        document.getElementById('sceneOverlayLedOffset').value = overlay.placement.led_translation;
+        document.getElementById('sceneStalePolicy').value = overlay.stale_policy.policy;
+    }
+
+    async function saveScenePreset() {
+        const input = document.getElementById('scenePresetName');
+        const name = input?.value.trim();
+        if (!name) {
+            showToast('Enter a scene preset name.', 'info');
+            input?.focus();
+            return;
+        }
+        try {
+            const payload = await sceneRequest('/api/v1/scene-presets', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, scene: editedScenePayload()})
+            });
+            const select = document.getElementById('scenePresetSelect');
+            let option = Array.from(select.options).find(item => item.value === payload.preset.preset_id);
+            if (!option) {
+                option = document.createElement('option');
+                option.value = payload.preset.preset_id;
+                select.appendChild(option);
+            }
+            option.textContent = payload.preset.name;
+            select.value = payload.preset.preset_id;
+            input.value = '';
+            showToast(`Saved scene preset: ${payload.preset.name}`, 'success');
+        } catch (error) {
+            showToast(error.message, 'error');
+        }
+    }
+
+    async function applyScenePreset() {
+        const presetId = document.getElementById('scenePresetSelect')?.value;
+        if (!presetId) return;
+        try {
+            const encoded = encodeURIComponent(presetId);
+            const preset = await sceneRequest(`/api/v1/scene-presets/${encoded}`);
+            loadSceneIntoEditor(preset.scene);
+            await sceneRequest(`/api/v1/scene-presets/${encoded}/apply`, {method: 'POST'});
+            showToast(`Applied scene preset: ${preset.name}`, 'success');
+        } catch (error) {
+            showToast(error.message, 'error');
+        }
+    }

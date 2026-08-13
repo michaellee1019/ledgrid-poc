@@ -2,7 +2,7 @@
 
 import unittest
 
-from scripts.start_server import device_count_for_strips, handle_command
+from scripts.start_server import _restore_display_state, device_count_for_strips, handle_command
 
 
 class _Manager:
@@ -76,6 +76,25 @@ class _Manager:
 
     def clear_painter_frame(self):
         self.calls.append(("clear",))
+
+    def list_components(self):
+        return [
+            {"plugin_id": "solid", "provider": "python", "role": "background"},
+            {"plugin_id": "clock_overlay", "provider": "python", "role": "overlay"},
+        ]
+
+    def start_scene(self, scene):
+        self.calls.append(("scene", scene))
+        self.is_running = True
+        return True
+
+    def update_scene_component(self, target, update):
+        self.calls.append(("scene_update", target, update))
+        return True
+
+    def stop_scene(self):
+        self.calls.append(("scene_stop",))
+        self.is_running = False
 
 
 class StartServerTests(unittest.TestCase):
@@ -157,6 +176,81 @@ class StartServerTests(unittest.TestCase):
             }),
             ("device", {"power": False}),
         ])
+
+    def test_versioned_scene_commands_dispatch_to_manager_product_api(self):
+        manager = _Manager()
+        component = {
+            "plugin_id": "solid", "provider": "python",
+            "parameter_overrides": {}, "resolved_parameters": {"red": 4},
+        }
+        scene = {
+            "schema": "ledgrid.scene-state", "schema_version": 1, "revision": 1,
+            "background": component, "overlays": [],
+            "known_python_fallback": component,
+        }
+
+        self.assertTrue(handle_command(manager, "start_scene", {"scene": scene}))
+        self.assertTrue(handle_command(manager, "update_scene_component", {
+            "target": "clock_overlay", "update": {"enabled": False},
+        }))
+        self.assertFalse(handle_command(manager, "stop_scene", {}))
+        self.assertEqual(manager.calls[0], ("scene", scene))
+        self.assertEqual(
+            manager.calls[1],
+            ("scene_update", "clock_overlay", {"enabled": False}),
+        )
+        self.assertEqual(manager.calls[2], ("scene_stop",))
+
+    def test_scene_command_rejects_unsupported_provider_before_manager_mutation(self):
+        manager = _Manager()
+        component = {
+            "plugin_id": "solid", "provider": "receiver_native",
+            "parameter_overrides": {}, "resolved_parameters": {},
+        }
+        scene = {
+            "schema": "ledgrid.scene-state", "schema_version": 1, "revision": 0,
+            "background": component, "overlays": [],
+            "known_python_fallback": {**component, "provider": "python"},
+        }
+        self.assertFalse(handle_command(manager, "start_scene", {"scene": scene}))
+        self.assertEqual(manager.calls, [])
+
+    def test_desired_display_unknown_vibe_uses_observable_manager_fallback(self):
+        from animation.core.manager import AnimationManager, PreviewLEDController
+        from animation.core.presentation_contracts import resolve_vibe
+
+        manager = AnimationManager(PreviewLEDController(2, 4), auto_start=False)
+        component = {
+            "plugin_id": "simple_test", "provider": "python",
+            "parameter_overrides": {}, "resolved_parameters": {},
+        }
+        scene = {
+            "schema": "ledgrid.scene-state", "schema_version": 1, "revision": 0,
+            "background": component, "overlays": [],
+            "known_python_fallback": component,
+        }
+        stale = resolve_vibe("cozy").state.to_dict()
+        stale["profile_version"] = 999
+        try:
+            self.assertTrue(_restore_display_state(manager, {
+                "scene": scene,
+                "vibe": stale,
+                "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
+                "output": {
+                    "master_brightness": 0.4,
+                    "operator_tempo_scale": 1.25,
+                    "target_fps": 120,
+                    "power": True,
+                },
+            }))
+            status = manager.get_current_status()
+            self.assertEqual(status["vibe"]["state"]["vibe_id"], "neutral")
+            self.assertEqual(status["vibe"]["diagnostic"]["code"], "vibe_profile_fallback")
+            self.assertEqual(status["brightness"], 102)
+            self.assertEqual(status["animation_speed_scale"], 1.25)
+            self.assertEqual(status["target_fps"], 120)
+        finally:
+            manager.stop_animation()
 
 
 if __name__ == "__main__":

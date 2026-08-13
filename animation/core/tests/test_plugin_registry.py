@@ -63,6 +63,7 @@ class PluginRegistryTests(unittest.TestCase):
             "class": "ExampleAnimation",
             "icon": "✨",
             "gallery": "show",
+            "manifest_version": 1,
             "provider": "python",
             "role": "overlay",
             "entrypoint": "animation.plugins.example:ExampleAnimation",

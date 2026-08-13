@@ -16,6 +16,14 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Type
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 from .base import AnimationBase
+from .component_catalog import (
+    bind_python_implementation,
+    filter_catalog,
+    painter_descriptor,
+    scanned_descriptor,
+    validate_and_normalize_manifest,
+    validate_parameter_overrides,
+)
 from .presentation_contracts import (
     CANONICAL_VIBE_IDS,
     VIBE_CAPABILITIES as CANONICAL_VIBE_CAPABILITIES,
@@ -60,6 +68,8 @@ class AnimationPluginLoader:
         self.loaded_plugins: Dict[str, Type[AnimationBase]] = {}
         self.plugin_files: Dict[str, Path] = {}
         self.plugin_manifests: Dict[str, Dict[str, Any]] = {}
+        self.component_descriptors: Dict[str, Dict[str, Any]] = {}
+        self._scan_completed = False
 
     @classmethod
     def shipped_plugin_ids(cls) -> List[str]:
@@ -77,46 +87,7 @@ class AnimationPluginLoader:
 
         if not isinstance(payload, dict):
             raise ValueError(f"manifest must contain an object: {manifest_path}")
-        if re.fullmatch(r"[a-z][a-z0-9_]*", plugin_name) is None:
-            raise ValueError(f"invalid plugin package ID {plugin_name!r}: {manifest_path}")
-        if payload.get("plugin_id") != plugin_name:
-            raise ValueError(
-                f"manifest plugin_id must match package directory {plugin_name!r}: "
-                f"{manifest_path}"
-            )
-        if not isinstance(payload.get("class"), str) or not payload["class"].strip():
-            raise ValueError(f"manifest class must be a non-empty string: {manifest_path}")
-        if not isinstance(payload.get("icon"), str) or not payload["icon"].strip():
-            raise ValueError(f"manifest icon must be a non-empty string: {manifest_path}")
-        if payload.get("gallery", "show") not in {"show", "test"}:
-            raise ValueError(f"manifest gallery must be 'show' or 'test': {manifest_path}")
-        provider = payload.get("provider")
-        role = payload.get("role")
-        entrypoint = payload.get("entrypoint")
-        cadence = payload.get("cadence")
-        component_fields = (provider, role, entrypoint, cadence)
-        if any(value is not None for value in component_fields):
-            if provider != "python":
-                raise ValueError(
-                    f"manifest provider must be 'python' in the current loader: {manifest_path}"
-                )
-            if role not in {"background", "overlay", "full_scene"}:
-                raise ValueError(
-                    "manifest role must be background, overlay, or full_scene: "
-                    f"{manifest_path}"
-                )
-            expected_entrypoint = (
-                f"animation.plugins.{plugin_name}:{payload['class']}"
-            )
-            if entrypoint != expected_entrypoint:
-                raise ValueError(
-                    f"manifest entrypoint must be {expected_entrypoint!r}: {manifest_path}"
-                )
-            if cadence != {"mode": "event_driven"}:
-                raise ValueError(
-                    "manifest cadence must be the supported event_driven shape: "
-                    f"{manifest_path}"
-                )
+        payload = validate_and_normalize_manifest(payload, manifest_path, plugin_name)
         preview = payload.get("preview")
         if preview is not None:
             if not isinstance(preview, dict):
@@ -346,6 +317,8 @@ class AnimationPluginLoader:
         """Scan package and external flat plugins in deterministic ID order."""
         self.plugin_files.clear()
         self.plugin_manifests.clear()
+        self.component_descriptors.clear()
+        self._scan_completed = True
         if not self.plugins_dir.is_dir():
             return []
 
@@ -377,6 +350,13 @@ class AnimationPluginLoader:
             self.plugin_files[plugin_name] = candidates[plugin_name]
             if plugin_name in manifests:
                 self.plugin_manifests[plugin_name] = manifests[plugin_name]
+                self.component_descriptors[plugin_name] = scanned_descriptor(
+                    plugin_name, manifests[plugin_name]
+                )
+            else:
+                self.component_descriptors[plugin_name] = scanned_descriptor(
+                    plugin_name, None, flat_file=candidates[plugin_name]
+                )
         return list(self.plugin_files)
 
     def _module_name(self, plugin_name: str, file_path: Path) -> str:
@@ -447,6 +427,12 @@ class AnimationPluginLoader:
             if manifest:
                 self._bind_vibe_manifest(animation_class, manifest)
 
+            descriptor = self.component_descriptors.get(plugin_name)
+            if descriptor is not None:
+                self.component_descriptors[plugin_name] = bind_python_implementation(
+                    descriptor, animation_class
+                )
+
             self.loaded_plugins[plugin_name] = animation_class
             print(f"✓ Loaded plugin: {plugin_name} -> {animation_class.__name__}")
             return animation_class
@@ -478,6 +464,37 @@ class AnimationPluginLoader:
         if path is None:
             return None
         return path.parent
+
+    def component_catalog(
+        self, provider: Optional[str] = None, role: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Return one normalized provider/role-filterable component catalog."""
+        if not self._scan_completed:
+            self.scan_plugins()
+        descriptors = list(self.component_descriptors.values())
+        descriptors.append(painter_descriptor())
+        return filter_catalog(descriptors, provider=provider, role=role)
+
+    def get_component_descriptor(self, plugin_id: str) -> Optional[Dict[str, Any]]:
+        """Return an isolated JSON descriptor for a plugin or painter mode."""
+        if not self._scan_completed:
+            self.scan_plugins()
+        if plugin_id == "painter":
+            return painter_descriptor()
+        descriptor = self.component_descriptors.get(plugin_id)
+        if descriptor is None:
+            return None
+        matches = filter_catalog((descriptor,))
+        return matches[0]
+
+    def validate_component_parameters(
+        self, plugin_id: str, values: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Validate controls against a bound implementation's declared schema."""
+        descriptor = self.get_component_descriptor(plugin_id)
+        if descriptor is None:
+            raise ValueError(f"unknown component {plugin_id!r}")
+        return validate_parameter_overrides(descriptor, values)
 
     def iter_curated_preset_files(self, plugin_name: Optional[str] = None) -> Iterator[Path]:
         """Enumerate shipped, plugin-owned presets in stable path order."""

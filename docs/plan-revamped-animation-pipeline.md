@@ -1315,8 +1315,8 @@ Implementation status (2026-08-13): **Phase 0 delivery foundation,
 coordinator cutover, and Phase 1 contract freeze/portable baseline are complete.
 Phase 2A top-level vibe, portable acceptance, and clean wall-deploy gate are
 complete. Phase 2B fixed host composition, portable acceptance, and clean
-wall-deploy gate are complete; Phase 2C is the next independently shippable
-productization lane**.
+wall-deploy gate are complete. Phase 2C scene/catalog productization and its
+portable acceptance are complete; its clean wall-deploy gate is pending**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -1817,6 +1817,51 @@ clock execution, or receiver protocol changes.
 ### Phase 2C: Scene State, Unified Catalog, UI, and Persistence
 
 Productize the host composition contract before adding another execution backend.
+
+Implementation status (2026-08-13): **implementation and portable acceptance
+complete; clean wall deployment pending**. Work landed through three parallel
+lanes: versioned descriptors and compatibility discovery; versioned scene state
+and manager lifecycle; and IPC/API/dashboard/persistence productization. Phase
+2C remains host-only and preserves the complete-frame transport, legacy
+animation/preset API, painter isolation, and clean deployment path.
+
+- [x] Versioned component descriptors scan without importing implementations,
+  expose one provider/role-filterable catalog, and retain explicit compatibility
+  metadata for legacy Python packages and stateful/full-scene components.
+- [x] Versioned scene state validates and round-trips background, fixed overlay
+  slot, component parameters/preset identity, placement, opacity, stale policy,
+  and known Python fallback without capturing vibe or operator output state.
+- [x] Live scene lifecycle supports targeted background/overlay updates,
+  enable/disable/removal, status, and preview without restarting the unaffected
+  background or mutating the live scene during preview.
+- [x] IPC/API and the dashboard expose the unified catalog, fixed scene editor,
+  component presets, scene presets, explicit compatibility diagnostics, and
+  independent vibe controls while rejecting unsupported providers and roles.
+- [x] Before-deploy preservation and restart restoration accept both legacy
+  single-animation snapshots and the new desired-display/scene shape, validate
+  before mutation, and fall back to the recorded Python component on incompatible
+  schema/provider state.
+- [ ] Focused contract, lifecycle, web/IPC, persistence, migration, and negative
+  tests pass together with the full Python, rendering, deployment, portable
+  firmware, pinned production-build, dry-run, source-plan, and clean wall deploy
+  gates required by the inherited Phase 2B closure standard.
+
+Portable evidence on 2026-08-13 (development Mac, not Pi/ESP32 timing evidence):
+
+- `just test` passed 722 Python unit/plugin tests and 990 subtests, 18 rendering
+  pipeline tests, all 20 native firmware tests, the pinned ESP32-S3 production
+  build, and 148 deployment tests plus 66 subtests.
+- The production firmware remained unchanged at 372,546 bytes flash and 53,092
+  bytes RAM. `git diff --check` and Python compilation passed.
+- Every installed-geometry default, stress, and scene benchmark passed the 4 ms
+  p95 gate. The highest accepted p95 was 3.639 ms for `snake-max-density`.
+  Gradient, Aurora Curtains, and Sparkle with Clock Overlay measured 0.4575,
+  0.8099, and 0.7583 ms p95 respectively; each rendered the overlay once in 100
+  simulated 200 Hz polls and reported 180 dirty pixels across 32 ranges.
+- Both ordinary deployment dry runs invoked the authoritative coordinator once.
+  The full dirty source plan accounted for the new catalog, scene contracts,
+  shared runtime adapter, API/UI, tests, and documentation; the clean wall
+  deployment remains the only open Phase 2C gate.
 
 - Add versioned `SceneState`, component/scene preset separation, targeted live
   updates, manager status, IPC/API commands, and fixed-slot dashboard controls.

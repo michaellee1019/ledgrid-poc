@@ -3,6 +3,7 @@
   "class": "ClockOverlayAnimation",
   "icon": "🕰️",
   "gallery": "test",
+  "manifest_version": 1,
   "provider": "python",
   "role": "overlay",
   "entrypoint": "animation.plugins.clock_overlay:ClockOverlayAnimation",

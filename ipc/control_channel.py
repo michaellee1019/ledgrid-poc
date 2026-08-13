@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
+CONTROL_COMMAND_SCHEMA = "ledgrid.control-command"
+CONTROL_STATUS_SCHEMA = "ledgrid.controller-status"
+CONTROL_CHANNEL_VERSION = 1
+
+
 class FileControlChannel:
     """
     Simple JSON file channel used to pass commands to the controller process and
@@ -107,6 +112,8 @@ class FileControlChannel:
         """
         command_id = time.time()
         payload = {
+            "schema": CONTROL_COMMAND_SCHEMA,
+            "schema_version": CONTROL_CHANNEL_VERSION,
             "command_id": command_id,
             "action": action,
             "data": data or {},
@@ -120,5 +127,7 @@ class FileControlChannel:
 
     def write_status(self, payload: Dict[str, Any]):
         payload = dict(payload)
+        payload.setdefault("schema", CONTROL_STATUS_SCHEMA)
+        payload.setdefault("schema_version", CONTROL_CHANNEL_VERSION)
         payload.setdefault("written_at", time.time())
         self._atomic_write(self.status_path, payload)

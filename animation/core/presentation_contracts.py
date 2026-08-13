@@ -25,6 +25,7 @@ COMPONENT_DESCRIPTOR_SCHEMA = "ledgrid.component-descriptor"
 COMPONENT_DESCRIPTOR_VERSION = 1
 SCENE_STATE_SCHEMA = "ledgrid.scene-state"
 SCENE_STATE_VERSION = 1
+AGGREGATE_OVERLAY_SLOT_ID = "clock_overlay"
 DESIRED_DISPLAY_STATE_SCHEMA = "ledgrid.desired-display-state"
 DESIRED_DISPLAY_STATE_VERSION = 1
 VIBE_STATE_SCHEMA = "ledgrid.vibe-state"
@@ -57,6 +58,24 @@ VIBE_PALETTE_ROLES = (
     "warning",
 )
 CANONICAL_VIBE_IDS = ("neutral", "quiet", "cozy", "vivid", "celebration")
+
+
+def component_preset_fingerprint(
+    plugin_id: str, preset_id: str, parameters: Mapping[str, Any]
+) -> str:
+    """Canonical cross-layer identity for one selected component preset snapshot."""
+    _identifier("plugin_id", plugin_id)
+    _identifier("preset_id", preset_id)
+    if not isinstance(parameters, Mapping):
+        raise TypeError("component preset parameters must be a mapping")
+    payload = {
+        "plugin_id": plugin_id,
+        "preset_id": preset_id,
+        "parameters": _mutable_json(parameters),
+    }
+    return hashlib.sha256(json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode()).hexdigest()
 
 
 class ComponentProvider(str, Enum):
@@ -179,11 +198,58 @@ class ComponentRef:
             _digest("preset_fingerprint", self.preset_fingerprint)
         for name in ("parameter_overrides", "resolved_parameters"):
             object.__setattr__(self, name, _immutable_mapping(name, getattr(self, name)))
+        reserved = {"plant_aware", "plant_modifiers", "vibe", "output"}
+        leaked = sorted(reserved & (
+            set(self.parameter_overrides) | set(self.resolved_parameters)
+        ))
+        if leaked:
+            raise ValueError(
+                "component references must not capture scene-external state: "
+                + ", ".join(leaked)
+            )
         if self.provider is ComponentProvider.RECEIVER_NATIVE:
             _digest("bundle_digest", self.bundle_digest)
             _digest("expected_payload_digest", self.expected_payload_digest)
         elif self.bundle_digest is not None or self.expected_payload_digest is not None:
             raise ValueError("Python component references must not carry native payload digests")
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "plugin_id": self.plugin_id,
+            "provider": self.provider.value,
+            "parameter_overrides": _mutable_json(self.parameter_overrides),
+            "resolved_parameters": _mutable_json(self.resolved_parameters),
+        }
+        for name in (
+            "preset_id", "preset_fingerprint", "bundle_digest",
+            "expected_payload_digest",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                payload[name] = value
+        return payload
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "ComponentRef":
+        data = _strict_payload(
+            "component reference",
+            payload,
+            required=("plugin_id", "provider"),
+            optional=(
+                "preset_id", "preset_fingerprint", "parameter_overrides",
+                "resolved_parameters", "bundle_digest", "expected_payload_digest",
+            ),
+        )
+        return cls(
+            plugin_id=data["plugin_id"],
+            provider=data["provider"],
+            preset_id=data.get("preset_id"),
+            preset_fingerprint=data.get("preset_fingerprint"),
+            parameter_overrides=data.get("parameter_overrides", {}),
+            resolved_parameters=data.get("resolved_parameters", {}),
+            bundle_digest=data.get("bundle_digest"),
+            expected_payload_digest=data.get("expected_payload_digest"),
+        )
 
 
 @dataclass(frozen=True)
@@ -197,6 +263,26 @@ class OverlayPlacement:
             _bounded_int(name, getattr(self, name), -(2**31), 2**31 - 1)
         object.__setattr__(self, "clip_policy", _enum_value("clip_policy", self.clip_policy, ClipPolicy))
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "strip_translation": self.strip_translation,
+            "led_translation": self.led_translation,
+            "clip_policy": self.clip_policy.value,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "OverlayPlacement":
+        data = _strict_payload(
+            "overlay placement",
+            payload,
+            optional=("strip_translation", "led_translation", "clip_policy"),
+        )
+        return cls(
+            strip_translation=data.get("strip_translation", 0),
+            led_translation=data.get("led_translation", 0),
+            clip_policy=data.get("clip_policy", ClipPolicy.CLIP_TO_WALL),
+        )
+
 
 @dataclass(frozen=True)
 class StalePolicy:
@@ -209,6 +295,19 @@ class StalePolicy:
             _bounded_int("lease_ms", self.lease_ms, 1, 2**32 - 1)
         elif self.lease_ms is not None:
             raise ValueError("hold stale policy must not declare lease_ms")
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"policy": self.policy.value}
+        if self.lease_ms is not None:
+            payload["lease_ms"] = self.lease_ms
+        return payload
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "StalePolicy":
+        data = _strict_payload(
+            "stale policy", payload, required=("policy",), optional=("lease_ms",)
+        )
+        return cls(policy=data["policy"], lease_ms=data.get("lease_ms"))
 
 
 @dataclass(frozen=True)
@@ -231,6 +330,35 @@ class OverlayRef:
             raise TypeError("placement must be an OverlayPlacement")
         if not isinstance(self.stale_policy, StalePolicy):
             raise TypeError("stale_policy must be a StalePolicy")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "slot_id": self.slot_id,
+            "component": self.component.to_dict(),
+            "enabled": self.enabled,
+            "opacity": self.opacity,
+            "placement": self.placement.to_dict(),
+            "stale_policy": self.stale_policy.to_dict(),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "OverlayRef":
+        data = _strict_payload(
+            "overlay reference",
+            payload,
+            required=(
+                "slot_id", "component", "enabled", "opacity", "placement",
+                "stale_policy",
+            ),
+        )
+        return cls(
+            slot_id=data["slot_id"],
+            component=ComponentRef.from_payload(data["component"]),
+            enabled=data["enabled"],
+            opacity=data["opacity"],
+            placement=OverlayPlacement.from_payload(data["placement"]),
+            stale_policy=StalePolicy.from_payload(data["stale_policy"]),
+        )
 
 
 @dataclass(frozen=True)
@@ -256,6 +384,45 @@ class SceneState:
         slot_ids = [overlay.slot_id for overlay in self.overlays]
         if len(slot_ids) != len(set(slot_ids)):
             raise ValueError("overlay slot_id values must be unique within a scene")
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the complete scene-only persistence envelope.
+
+        Vibe, plant geometry, and output controls intentionally have no fields in
+        this schema and therefore cannot leak into scene presets or snapshots.
+        """
+        return {
+            "schema": self.schema,
+            "schema_version": self.schema_version,
+            "revision": self.revision,
+            "background": self.background.to_dict(),
+            "overlays": [overlay.to_dict() for overlay in self.overlays],
+            "known_python_fallback": self.known_python_fallback.to_dict(),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "SceneState":
+        data = _strict_payload(
+            "scene state",
+            payload,
+            required=(
+                "schema", "schema_version", "revision", "background", "overlays",
+                "known_python_fallback",
+            ),
+        )
+        overlays = data["overlays"]
+        if not isinstance(overlays, (list, tuple)):
+            raise TypeError("scene state overlays must be an array")
+        return cls(
+            revision=data["revision"],
+            background=ComponentRef.from_payload(data["background"]),
+            overlays=tuple(OverlayRef.from_payload(item) for item in overlays),
+            known_python_fallback=ComponentRef.from_payload(
+                data["known_python_fallback"]
+            ),
+            schema_version=data["schema_version"],
+            schema=data["schema"],
+        )
 
 
 @dataclass(frozen=True)
@@ -625,6 +792,25 @@ def _schema_version(label: str, schema: str, expected_schema: str, version: int)
     if schema != expected_schema:
         raise ValueError(f"{label} schema must be {expected_schema!r}, got {schema!r}")
     _bounded_int(f"{label} version", version, 1, 1)
+
+
+def _strict_payload(
+    label: str,
+    payload: Mapping[str, Any],
+    *,
+    required: tuple[str, ...] = (),
+    optional: tuple[str, ...] = (),
+) -> Mapping[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise TypeError(f"{label} must be a mapping")
+    known = set(required) | set(optional)
+    unknown = sorted(set(payload) - known)
+    if unknown:
+        raise ValueError(f"unknown {label} fields: {', '.join(unknown)}")
+    missing = [name for name in required if name not in payload]
+    if missing:
+        raise ValueError(f"missing {label} fields: {', '.join(missing)}")
+    return payload
 
 
 def _identifier(name: str, value: Any) -> None:

@@ -7,6 +7,7 @@ from typing import Any, Dict
 
 from animation.core.manager import AnimationManager
 from drivers.frame_codec import decode_frame_data
+from ipc.runtime_control import restore_display_state, start_scene, update_scene_component
 
 
 class LocalControlChannel:
@@ -28,6 +29,17 @@ class LocalControlChannel:
                 data.get("animation"), data.get("config") or {},
                 preset=data.get("preset"),
             )
+        elif action == "start_scene":
+            start_scene(manager, data.get("scene"))
+        elif action == "update_scene_component":
+            update_scene_component(
+                manager, data.get("target"), data.get("update") or {}
+            )
+        elif action == "stop_scene":
+            stopper = getattr(manager, "stop_scene", manager.stop_animation)
+            stopper()
+        elif action == "restore_display_state":
+            restore_display_state(manager, data.get("state"))
         elif action == "stop":
             manager.stop_animation()
         elif action == "update_params":

@@ -142,6 +142,80 @@
         <div class="alert alert-warning mt-3">No show-ready animations were loaded.</div>
         {% endif %}
 
+        <section class="card scene-editor-card mt-3" aria-labelledby="sceneEditorHeading">
+            <div class="card-body p-3">
+                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                    <div>
+                        <div class="section-kicker">Composed scene</div>
+                        <h2 class="h5 mb-1" id="sceneEditorHeading">Background + clock overlay</h2>
+                        <p class="small text-muted mb-0">Scene presets store components and layout only. Global vibe and plant controls remain independent.</p>
+                    </div>
+                    <span class="badge bg-light text-dark border">Python provider · fixed slots</span>
+                </div>
+                <fieldset>
+                    <legend class="visually-hidden">Fixed scene component slots</legend>
+                    <div class="row g-3">
+                        <div class="col-md-7">
+                            <label class="form-label fw-bold" for="sceneBackgroundSelect">Background</label>
+                            <select class="form-select" id="sceneBackgroundSelect" aria-describedby="sceneCompatibilityHelp">
+                                {% for component in component_catalog if 'background' in component.scene_compatibility.slots %}
+                                <option value="{{ component.plugin_id }}" data-provider="{{ component.provider }}" data-role="{{ component.role }}">{{ component.name or component.plugin_id }} · {{ component.provider }}/{{ component.role }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label fw-bold" for="scenePresetSelect">Scene preset</label>
+                            <div class="input-group">
+                                <select class="form-select" id="scenePresetSelect">
+                                    <option value="">Unsaved scene</option>
+                                    {% for preset in scene_presets %}<option value="{{ preset.preset_id }}">{{ preset.name }}</option>{% endfor %}
+                                </select>
+                                <button class="btn btn-outline-primary" type="button" onclick="applyScenePreset()">Apply</button>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" id="sceneOverlayEnabled" type="checkbox" role="switch" checked>
+                                <label class="form-check-label fw-bold" for="sceneOverlayEnabled">Clock overlay</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="sceneOverlayOpacity">Opacity</label>
+                            <input class="form-range" id="sceneOverlayOpacity" type="range" min="0" max="255" value="255">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="sceneOverlayStripOffset">Horizontal placement</label>
+                            <input class="form-control" id="sceneOverlayStripOffset" type="number" step="1" value="0">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="sceneOverlayLedOffset">Vertical placement</label>
+                            <input class="form-control" id="sceneOverlayLedOffset" type="number" step="1" value="0">
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label" for="sceneStalePolicy">Stale overlay policy</label>
+                            <select class="form-select" id="sceneStalePolicy">
+                                <option value="hold">Hold last frame</option>
+                                <option value="clear_after_lease">Clear after one second</option>
+                            </select>
+                        </div>
+                        <div class="col-md-7">
+                            <label class="form-label" for="scenePresetName">Save scene layout as</label>
+                            <div class="input-group">
+                                <input class="form-control" id="scenePresetName" maxlength="64" placeholder="Evening clock">
+                                <button class="btn btn-success" type="button" onclick="saveScenePreset()">Save scene</button>
+                            </div>
+                        </div>
+                    </div>
+                </fieldset>
+                <div class="small text-muted mt-2" id="sceneCompatibilityHelp" role="status">Only components declaring the matching Python role are selectable. Compatibility full scenes remain in the animation gallery.</div>
+                <div class="d-flex flex-wrap gap-2 mt-3">
+                    <button class="btn btn-primary" type="button" onclick="startEditedScene()"><i class="fas fa-play me-1"></i> Start scene</button>
+                    <button class="btn btn-outline-primary" type="button" onclick="previewEditedScene()"><i class="fas fa-eye me-1"></i> Preview scene</button>
+                    <button class="btn btn-outline-danger ms-md-auto" type="button" onclick="stopEditedScene()"><i class="fas fa-stop me-1"></i> Stop scene</button>
+                </div>
+            </div>
+        </section>
+
         <div class="accordion utility-accordion mt-3" id="testAnimationAccordion">
             <div class="accordion-item rounded-3 overflow-hidden">
                 <h2 class="accordion-header" id="testAnimationHeading">
@@ -305,6 +379,7 @@
     const INITIAL_LEDS_PER_STRIP = Number({{ status.led_info.leds_per_strip }});
     const IS_LOCAL_DASHBOARD = {{ 'true' if local_mode else 'false' }};
     const INITIAL_STATUS = {{ status | tojson }};
+    const SCENE_COMPONENT_CATALOG = {{ component_catalog | tojson }};
     const SPEED_BASELINE = Number({{ speed_baseline }});
 </script>
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>

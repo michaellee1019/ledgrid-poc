@@ -23,11 +23,21 @@ from animation.core.compositing import HostSceneCompositor, PlacedOverlay
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.presentation_contracts import (
+    AGGREGATE_OVERLAY_SLOT_ID,
     AnimationRuntimeContext,
     BaseFrame,
+    ClipPolicy,
+    ComponentProvider,
+    ComponentRef,
+    ForegroundStalePolicy,
     OverlayFrame,
+    OverlayPlacement,
+    OverlayRef,
     ResolvedVibe,
+    SceneState,
+    StalePolicy,
     VibeState,
+    component_preset_fingerprint,
     list_vibe_profiles,
     resolve_vibe,
 )
@@ -180,6 +190,9 @@ class AnimationManager:
         self._scene_background: Optional[Dict[str, Any]] = None
         self._scene_overlay: Optional[Dict[str, Any]] = None
         self._scene_compositor: Optional[HostSceneCompositor] = None
+        self._active_scene_state: Optional[SceneState] = None
+        self._scene_compatibility_mode = False
+        self._scene_allows_compatibility_components = False
         self._scene_final_presentation_state = self._empty_presentation_state()
         self.plant_modifier_state = (
             PlantModifierState.from_payload(plant_modifiers)
@@ -398,6 +411,7 @@ class AnimationManager:
         frame_index: int,
         resolved_vibe: Optional[ResolvedVibe] = None,
         operator_tempo_scale: Optional[float] = None,
+        plant_modifiers: Optional[Dict[str, Any]] = None,
     ) -> AnimationRuntimeContext:
         if resolved_vibe is None or operator_tempo_scale is None:
             with self._presentation_state_guard():
@@ -437,7 +451,10 @@ class AnimationManager:
                 authored_speed * vibe_tempo * operator_tempo
             ),
             installation_profile_view={},
-            plant_modifiers=self.plant_modifier_state.to_dict(),
+            plant_modifiers=(
+                self.plant_modifier_state.to_dict()
+                if plant_modifiers is None else plant_modifiers
+            ),
         )
 
     def _advance_runtime_context(
@@ -785,6 +802,174 @@ class AnimationManager:
                 animations.append(info)
         return animations
 
+    def list_components(
+        self, provider: Optional[str] = None, role: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Return the descriptor-only component catalog used by scene clients."""
+        return self.plugin_loader.component_catalog(provider=provider, role=role)
+
+    @staticmethod
+    def _scene_parameter_payload(payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if payload is None:
+            return {}
+        if not isinstance(payload, dict):
+            raise TypeError("component parameters must be an object")
+        return {
+            key: value for key, value in payload.items()
+            if key not in {"plant_aware", "plant_modifiers", "vibe", "output"}
+        }
+
+    @staticmethod
+    def _component_snapshot_fingerprint(parameters: Dict[str, Any]) -> str:
+        encoded = json.dumps(
+            parameters, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _scene_descriptor(
+        self,
+        ref: ComponentRef,
+        expected_role: str,
+        *,
+        allow_compatibility_component: bool = False,
+    ) -> Dict[str, Any]:
+        if ref.provider is not ComponentProvider.PYTHON:
+            raise ValueError("live scenes support only the python provider")
+        descriptor = self.plugin_loader.get_component_descriptor(ref.plugin_id)
+        if (
+            descriptor is None
+            and allow_compatibility_component
+            and ref.plugin_id in self.plugin_loader.loaded_plugins
+        ):
+            role = self._plugin_role(ref.plugin_id)
+            descriptor = {
+                "plugin_id": ref.plugin_id,
+                "provider": "python",
+                "role": role,
+                "defaults": {},
+                "compatibility": {
+                    "classification": "legacy_runtime_adapter",
+                    "composable": role in {"background", "overlay"},
+                },
+            }
+        if descriptor is None:
+            raise ValueError(f"scene component not found: {ref.plugin_id}")
+        if descriptor.get("provider") != ComponentProvider.PYTHON.value:
+            raise ValueError(
+                f"scene component {ref.plugin_id!r} does not use the python provider"
+            )
+        actual_role = descriptor.get("role")
+        if actual_role != expected_role:
+            raise ValueError(
+                f"scene {expected_role} {ref.plugin_id!r} is declared as {actual_role!r}"
+            )
+        compatibility = descriptor.get("compatibility") or {}
+        if compatibility.get("composable") is not True:
+            classification = compatibility.get("classification", "incompatible")
+            raise ValueError(
+                f"scene component {ref.plugin_id!r} is not composable ({classification})"
+            )
+        animation_class = self.plugin_loader.get_plugin(ref.plugin_id)
+        if animation_class is None:
+            raise ValueError(f"scene component implementation not found: {ref.plugin_id}")
+        if issubclass(animation_class, StatefulAnimationBase):
+            raise TypeError("Stateful animations cannot participate in scenes")
+        return descriptor
+
+    def _resolve_component_ref(
+        self,
+        ref: ComponentRef,
+        *,
+        expected_role: str,
+        allow_compatibility_component: bool = False,
+    ) -> tuple[ComponentRef, Dict[str, Any]]:
+        descriptor = self._scene_descriptor(
+            ref,
+            expected_role,
+            allow_compatibility_component=allow_compatibility_component,
+        )
+        defaults = self._scene_parameter_payload(dict(descriptor.get("defaults") or {}))
+        snapshot = self._scene_parameter_payload(dict(ref.resolved_parameters))
+        overrides = self._scene_parameter_payload(dict(ref.parameter_overrides))
+        resolved = snapshot if snapshot else defaults
+        resolved.update(overrides)
+        try:
+            resolved = self.plugin_loader.validate_component_parameters(
+                ref.plugin_id, resolved
+            )
+        except ValueError:
+            if not allow_compatibility_component:
+                raise
+        canonical = ComponentRef(
+            plugin_id=ref.plugin_id,
+            provider=ref.provider,
+            preset_id=ref.preset_id,
+            preset_fingerprint=ref.preset_fingerprint,
+            parameter_overrides=overrides,
+            resolved_parameters=resolved,
+        )
+        return canonical, resolved
+
+    def _resolve_scene_state(
+        self, payload: Any, *, allow_compatibility_components: bool = False
+    ) -> SceneState:
+        scene = payload if isinstance(payload, SceneState) else SceneState.from_payload(payload)
+        if len(scene.overlays) > 1:
+            raise ValueError("live scene version 1 supports at most one overlay")
+        if scene.overlays and scene.overlays[0].slot_id != AGGREGATE_OVERLAY_SLOT_ID:
+            raise ValueError(
+                "live scene version 1 supports only the fixed "
+                f"{AGGREGATE_OVERLAY_SLOT_ID!r} overlay slot"
+            )
+        background, _ = self._resolve_component_ref(
+            scene.background,
+            expected_role="background",
+            allow_compatibility_component=allow_compatibility_components,
+        )
+        fallback, _ = self._resolve_component_ref(
+            scene.known_python_fallback,
+            expected_role="background",
+            allow_compatibility_component=allow_compatibility_components,
+        )
+        overlays = []
+        for overlay in scene.overlays:
+            component, _ = self._resolve_component_ref(
+                overlay.component,
+                expected_role="overlay",
+                allow_compatibility_component=allow_compatibility_components,
+            )
+            overlays.append(OverlayRef(
+                slot_id=overlay.slot_id,
+                component=component,
+                enabled=overlay.enabled,
+                opacity=overlay.opacity,
+                placement=overlay.placement,
+                stale_policy=overlay.stale_policy,
+            ))
+        return SceneState(
+            revision=scene.revision,
+            background=background,
+            overlays=tuple(overlays),
+            known_python_fallback=fallback,
+        )
+
+    @staticmethod
+    def _component_preset_status(ref: ComponentRef) -> Dict[str, Any]:
+        resolved = dict(ref.resolved_parameters)
+        dirty = bool(ref.parameter_overrides)
+        diagnostic = "live_overrides" if dirty else (
+            "preset_snapshot" if ref.preset_id else "direct_parameters"
+        )
+        return {
+            "preset_id": ref.preset_id,
+            "preset_fingerprint": ref.preset_fingerprint,
+            "resolved_fingerprint": AnimationManager._component_snapshot_fingerprint(
+                resolved
+            ),
+            "is_dirty": dirty,
+            "diagnostic": diagnostic,
+        }
+
     def _plugin_role(self, plugin_name: str) -> str:
         """Resolve a role through the Phase 2B Python compatibility adapter."""
         manifest = self.plugin_loader.plugin_manifests.get(plugin_name) or {}
@@ -829,11 +1014,13 @@ class AnimationManager:
         config: Optional[Dict[str, Any]],
         *,
         started_at: float,
+        ref: Optional[ComponentRef] = None,
     ) -> Dict[str, Any]:
         return {
             'name': name,
             'animation': animation,
             'config': dict(config or {}),
+            'ref': ref,
             'started_at': started_at,
             'last_unscaled_elapsed': 0.0,
             'scaled_elapsed': 0.0,
@@ -919,52 +1106,88 @@ class AnimationManager:
         strip_offset: int = 0,
         led_offset: int = 0,
     ) -> bool:
-        """Start the fixed Phase 2B Python background plus foreground scene."""
+        """Compatibility wrapper for the fixed Phase 2B composed-scene API."""
         try:
-            placement = PlacedOverlay(
-                OverlayFrame(
-                    np.zeros((self.controller.total_leds, 4), dtype=np.uint8),
-                    revision=0,
-                    changed=False,
-                ),
-                opacity=overlay_opacity,
-                strip_offset=strip_offset,
-                led_offset=led_offset,
+            background_parameters = self._scene_parameter_payload(background_config)
+            overlay_parameters = self._scene_parameter_payload(overlay_config)
+            background = ComponentRef(
+                plugin_id=background_name,
+                provider=ComponentProvider.PYTHON,
+                resolved_parameters=background_parameters,
+            )
+            scene = SceneState(
+                revision=0,
+                background=background,
+                overlays=(OverlayRef(
+                    slot_id=AGGREGATE_OVERLAY_SLOT_ID,
+                    component=ComponentRef(
+                        plugin_id=overlay_name,
+                        provider=ComponentProvider.PYTHON,
+                        resolved_parameters=overlay_parameters,
+                    ),
+                    enabled=True,
+                    opacity=overlay_opacity,
+                    placement=OverlayPlacement(
+                        strip_translation=strip_offset,
+                        led_translation=led_offset,
+                        clip_policy=ClipPolicy.CLIP_TO_WALL,
+                    ),
+                    stale_policy=StalePolicy(ForegroundStalePolicy.HOLD),
+                ),),
+                known_python_fallback=background,
             )
         except (TypeError, ValueError) as exc:
-            print(f"✗ Invalid overlay placement: {exc}")
+            print(f"✗ Invalid composed scene: {exc}")
+            return False
+        return self.start_scene(scene, _allow_compatibility_components=True)
+
+    def start_scene(
+        self,
+        scene_payload: Any,
+        *,
+        _compatibility_animation: bool = False,
+        _allow_compatibility_components: bool = False,
+    ) -> bool:
+        """Validate and start a complete fixed-slot Python scene atomically."""
+        try:
+            scene = self._resolve_scene_state(
+                scene_payload,
+                allow_compatibility_components=_allow_compatibility_components,
+            )
+        except (TypeError, ValueError) as exc:
+            print(f"✗ Invalid scene: {exc}")
             return False
 
-        self.stop_animation(clear_leds=True)
-        background_class = self.plugin_loader.get_plugin(background_name)
-        overlay_class = self.plugin_loader.get_plugin(overlay_name)
-        if background_class is None or self._plugin_role(background_name) != 'background':
-            print(f"✗ Scene background not found or not RGB-capable: {background_name}")
-            return False
-        if overlay_class is None or self._plugin_role(overlay_name) != 'overlay':
-            print(f"✗ Scene overlay not found or not declared as an overlay: {overlay_name}")
-            return False
-        if issubclass(background_class, StatefulAnimationBase) or issubclass(
-            overlay_class, StatefulAnimationBase
-        ):
-            print("✗ Stateful animations cannot participate in composed scenes")
+        background_class = self.plugin_loader.get_plugin(scene.background.plugin_id)
+        overlay_ref = scene.overlays[0] if scene.overlays else None
+        overlay_class = (
+            self.plugin_loader.get_plugin(overlay_ref.component.plugin_id)
+            if overlay_ref else None
+        )
+        if background_class is None or (overlay_ref and overlay_class is None):
             return False
 
         background = None
         overlay = None
         background_component = None
         overlay_component = None
+        presentation_taken_over = False
         try:
+            background_config = dict(scene.background.resolved_parameters)
             background = background_class(
                 self.controller, self._component_config(background_config)
             )
-            overlay = overlay_class(
-                self.controller, self._component_config(overlay_config)
-            )
-            if isinstance(background, StatefulAnimationBase) or isinstance(
-                overlay, StatefulAnimationBase
-            ):
+            if isinstance(background, StatefulAnimationBase):
                 raise TypeError("Stateful animations cannot participate in composed scenes")
+            if overlay_ref is not None:
+                overlay_config = dict(overlay_ref.component.resolved_parameters)
+                overlay = overlay_class(
+                    self.controller, self._component_config(overlay_config)
+                )
+                if isinstance(overlay, StatefulAnimationBase):
+                    raise TypeError(
+                        "Stateful animations cannot participate in composed scenes"
+                    )
 
             if hasattr(self.controller, 'configure'):
                 try:
@@ -976,45 +1199,73 @@ class AnimationManager:
             background.start()
             started_at = time.perf_counter()
             background_component = self._new_scene_component(
-                background_name, background, background_config, started_at=started_at
+                scene.background.plugin_id,
+                background,
+                background_config,
+                started_at=started_at,
+                ref=scene.background,
             )
-            overlay.start()
-            overlay_component = self._new_scene_component(
-                overlay_name, overlay, overlay_config, started_at=time.perf_counter()
-            )
-            overlay_component.update({
-                'enabled': True,
-                'opacity': placement.opacity,
-                'strip_offset': placement.strip_offset,
-                'led_offset': placement.led_offset,
-            })
+            if overlay_ref is not None:
+                overlay.start()
+                overlay_component = self._new_scene_component(
+                    overlay_ref.component.plugin_id,
+                    overlay,
+                    overlay_config,
+                    started_at=time.perf_counter(),
+                    ref=overlay_ref.component,
+                )
+                overlay_component.update({
+                    'enabled': overlay_ref.enabled,
+                    'opacity': overlay_ref.opacity,
+                    'strip_offset': overlay_ref.placement.strip_translation,
+                    'led_offset': overlay_ref.placement.led_translation,
+                    'stale_policy': overlay_ref.stale_policy,
+                })
 
+            # Component construction/start is side-effect-free with respect to
+            # manager ownership. Keep the prior scene alive until every new
+            # component has crossed its lifecycle start boundary successfully.
+            self.stop_animation(clear_leds=True)
+            presentation_taken_over = True
             self._reset_run_counters()
             with self._scene_lock:
                 self._scene_mode = True
+                self._scene_compatibility_mode = bool(_compatibility_animation)
+                self._scene_allows_compatibility_components = bool(
+                    _allow_compatibility_components
+                )
                 self._scene_background = background_component
                 self._scene_overlay = overlay_component
+                self._active_scene_state = scene
                 self._scene_compositor = HostSceneCompositor(
                     self.controller.strip_count, self.controller.leds_per_strip
                 )
                 self._scene_final_presentation_state = self._empty_presentation_state()
                 self.current_animation = background
-                self.current_animation_name = background_name
-                self.current_animation_hash = self._compute_animation_hash(background_name)
-                self.current_preset = None
+                self.current_animation_name = scene.background.plugin_id
+                self.current_animation_hash = self._compute_animation_hash(
+                    scene.background.plugin_id
+                )
+                self.current_preset = self._legacy_preset_from_ref(scene.background)
                 frame, _changed, _dirty = self._render_composed_scene_frame()
                 with self.frame_data_lock:
                     self.current_frame_data = frame
 
             self._remember_active_state(
-                background_name, dict(background_config or {}), None
+                scene.background.plugin_id,
+                background_config,
+                self.current_preset,
             )
             self._launch_animation_loop()
-            print(f"✓ Started composed scene: {background_name} + {overlay_name}")
+            label = scene.background.plugin_id
+            if overlay_ref:
+                label += f" + {overlay_ref.component.plugin_id}"
+            print(f"✓ Started scene: {label}")
             return True
         except Exception as exc:
-            self.is_running = False
-            self.stop_event.set()
+            if presentation_taken_over:
+                self.is_running = False
+                self.stop_event.set()
             for component in (overlay_component, background_component):
                 try:
                     self._cleanup_scene_component(component)
@@ -1030,8 +1281,9 @@ class AnimationManager:
                         animation.cleanup()
                     except Exception:
                         traceback.print_exc()
-            with self._scene_lock:
-                self._clear_scene_state()
+            if presentation_taken_over:
+                with self._scene_lock:
+                    self._clear_scene_state()
             print(f"✗ Failed to start composed scene: {exc}")
             traceback.print_exc()
             return False
@@ -1041,6 +1293,9 @@ class AnimationManager:
         self._scene_background = None
         self._scene_overlay = None
         self._scene_compositor = None
+        self._active_scene_state = None
+        self._scene_compatibility_mode = False
+        self._scene_allows_compatibility_components = False
         self._scene_final_presentation_state = self._empty_presentation_state()
         self.current_animation = None
         self.current_animation_name = None
@@ -1072,14 +1327,40 @@ class AnimationManager:
                     "start_composed_scene()"
                 )
                 return False
-            # Stop current animation if running
-            self.stop_animation(clear_leds=True)
-            
-            # Get animation class
             animation_class = self.plugin_loader.get_plugin(animation_name)
             if animation_class is None:
                 print(f"✗ Animation not found: {animation_name}")
                 return False
+            if (
+                self._plugin_role(animation_name) == 'background'
+                and not issubclass(animation_class, StatefulAnimationBase)
+            ):
+                parameters = self._scene_parameter_payload(config)
+                selection = self._normalize_current_preset(preset, animation_name)
+                preset_id = selection['preset_id'] if selection else None
+                preset_fingerprint = None
+                if selection:
+                    preset_fingerprint = component_preset_fingerprint(
+                        animation_name, selection["preset_id"], parameters
+                    )
+                ref = ComponentRef(
+                    plugin_id=animation_name,
+                    provider=ComponentProvider.PYTHON,
+                    preset_id=preset_id,
+                    preset_fingerprint=preset_fingerprint,
+                    resolved_parameters=parameters,
+                )
+                started = self.start_scene(
+                    SceneState(0, ref, (), ref),
+                    _compatibility_animation=True,
+                    _allow_compatibility_components=True,
+                )
+                if started:
+                    self.current_preset = selection
+                    self._sync_last_active_preset()
+                return started
+            # Stop current animation if running
+            self.stop_animation(clear_leds=True)
             
             # Create animation instance
             effective_config = self._component_config(config)
@@ -1123,6 +1404,17 @@ class AnimationManager:
             print(f"✗ Failed to start animation {animation_name}: {e}")
             traceback.print_exc()
             return False
+
+    @staticmethod
+    def _legacy_preset_from_ref(ref: ComponentRef) -> Optional[Dict[str, Any]]:
+        if ref.preset_id is None:
+            return None
+        return {
+            'preset_id': ref.preset_id,
+            'name': ref.preset_id.replace('_', ' ').replace('-', ' ').title(),
+            'animation': ref.plugin_id,
+            'is_dirty': bool(ref.parameter_overrides),
+        }
     
     def stop_animation(self, clear_leds: bool = True):
         """Stop current animation or painter mode output."""
@@ -1180,6 +1472,8 @@ class AnimationManager:
     
     def update_animation_parameters(self, params: Dict[str, Any]) -> bool:
         """Update current animation parameters in real-time"""
+        if self._scene_mode:
+            return self.update_scene_component("background", params=params)
         if self.current_animation:
             try:
                 requested_params = dict(params)
@@ -1215,44 +1509,19 @@ class AnimationManager:
         led_offset: Optional[int] = None,
     ) -> bool:
         """Update the fixed foreground without restarting the background."""
-        with self._scene_lock:
-            component = self._scene_overlay if self._scene_mode else None
-            if component is None:
+        placement = None
+        if strip_offset is not None or led_offset is not None:
+            current = self._scene_overlay
+            if current is None:
                 return False
-            try:
-                probe = PlacedOverlay(
-                    component['cached_frame'],
-                    opacity=component['opacity'] if opacity is None else opacity,
-                    strip_offset=(
-                        component['strip_offset']
-                        if strip_offset is None else strip_offset
-                    ),
-                    led_offset=(
-                        component['led_offset'] if led_offset is None else led_offset
-                    ),
-                    enabled=component['enabled'],
-                )
-                if params is not None:
-                    if not isinstance(params, dict):
-                        raise TypeError("overlay parameters must be an object")
-                    requested = {
-                        key: value for key, value in params.items()
-                        if key not in {'plant_aware', 'plant_modifiers'}
-                    }
-                    effective = dict(requested)
-                    effective['plant_aware'] = (
-                        self.plant_aware if self._legacy_plant_aware_bridge else False
-                    )
-                    effective['plant_modifiers'] = self.plant_modifier_state.to_dict()
-                    component['animation'].update_parameters(effective)
-                    component['config'].update(requested)
-                component['opacity'] = probe.opacity
-                component['strip_offset'] = probe.strip_offset
-                component['led_offset'] = probe.led_offset
-                return True
-            except (TypeError, ValueError) as exc:
-                print(f"✗ Failed to update overlay: {exc}")
-                return False
+            placement = {
+                "strip_translation": current['strip_offset'] if strip_offset is None else strip_offset,
+                "led_translation": current['led_offset'] if led_offset is None else led_offset,
+                "clip_policy": ClipPolicy.CLIP_TO_WALL.value,
+            }
+        return self.update_scene_component(
+            "overlay", params=params, opacity=opacity, placement=placement
+        )
 
     def update_overlay_parameters(self, params: Dict[str, Any]) -> bool:
         return self.update_overlay(params)
@@ -1260,12 +1529,7 @@ class AnimationManager:
     def set_overlay_enabled(self, enabled: bool) -> bool:
         if not isinstance(enabled, bool):
             raise TypeError("overlay enabled state must be boolean")
-        with self._scene_lock:
-            component = self._scene_overlay if self._scene_mode else None
-            if component is None:
-                return False
-            component['enabled'] = enabled
-            return True
+        return self.update_scene_component("overlay", enabled=enabled)
 
     def enable_overlay(self) -> bool:
         return self.set_overlay_enabled(True)
@@ -1274,16 +1538,302 @@ class AnimationManager:
         return self.set_overlay_enabled(False)
 
     def remove_overlay(self) -> bool:
-        with self._scene_lock:
-            component = self._scene_overlay if self._scene_mode else None
-            if component is None:
+        return self.update_scene_component("overlay", remove=True)
+
+    def get_scene_state(self) -> Optional[Dict[str, Any]]:
+        """Return a detached, scene-only serialized snapshot of live state."""
+        with self._scene_state_guard():
+            return (
+                self._active_scene_state.to_dict()
+                if self._scene_mode and self._active_scene_state is not None
+                else None
+            )
+
+    def read_scene(self) -> Optional[Dict[str, Any]]:
+        return self.get_scene_state()
+
+    def stop_scene(self, clear_leds: bool = True) -> bool:
+        if not self._scene_mode:
+            return False
+        self.stop_animation(clear_leds=clear_leds)
+        return True
+
+    def update_scene_component(
+        self,
+        target: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        component: Optional[Any] = None,
+        enabled: Optional[bool] = None,
+        opacity: Optional[int] = None,
+        placement: Optional[Any] = None,
+        stale_policy: Optional[Any] = None,
+        remove: bool = False,
+    ) -> bool:
+        """Apply one live component edit without restarting the other component."""
+        if isinstance(params, dict) and set(params) & {
+            "params", "parameter_overrides", "component", "enabled", "opacity",
+            "placement", "stale_policy", "remove",
+        }:
+            update = dict(params)
+            params = update.get("params", update.get("parameter_overrides"))
+            component = update.get("component", component)
+            enabled = update.get("enabled", enabled)
+            opacity = update.get("opacity", opacity)
+            placement = update.get("placement", placement)
+            stale_policy = update.get("stale_policy", stale_policy)
+            remove = update.get("remove", remove)
+        if not isinstance(remove, bool):
+            raise TypeError("scene overlay remove state must be boolean")
+        if target not in {"background", "overlay", AGGREGATE_OVERLAY_SLOT_ID}:
+            raise ValueError("scene component target must be 'background' or 'overlay'")
+        target = "overlay" if target == AGGREGATE_OVERLAY_SLOT_ID else target
+        if remove and target != "overlay":
+            raise ValueError("only the overlay component may be removed")
+        if component is not None and target == "background":
+            raise ValueError("replace a background by applying a complete scene")
+
+        with self._scene_state_guard():
+            if not self._scene_mode or self._active_scene_state is None:
                 return False
-            self._scene_overlay = None
+            current_scene = self._active_scene_state
+            runtime = (
+                self._scene_background if target == "background" else self._scene_overlay
+            )
+            if remove:
+                if runtime is None:
+                    return False
+                self._scene_overlay = None
+                self._active_scene_state = SceneState(
+                    current_scene.revision + 1,
+                    current_scene.background,
+                    (),
+                    current_scene.known_python_fallback,
+                )
+                try:
+                    self._cleanup_scene_component(runtime)
+                except Exception as exc:
+                    print(f"⚠️ Overlay cleanup failed: {exc}")
+                return True
+
+            if target == "overlay" and runtime is None and component is None:
+                return False
             try:
-                self._cleanup_scene_component(component)
+                if target == "background":
+                    assert runtime is not None
+                    old_ref = current_scene.background
+                    requested = self._scene_parameter_payload(params)
+                    if not self._scene_allows_compatibility_components:
+                        self.plugin_loader.validate_component_parameters(
+                            old_ref.plugin_id,
+                            {**dict(old_ref.resolved_parameters), **requested},
+                        )
+                    resolved = dict(old_ref.resolved_parameters)
+                    resolved.update(requested)
+                    overrides = dict(old_ref.parameter_overrides)
+                    overrides.update(requested)
+                    new_ref = ComponentRef(
+                        plugin_id=old_ref.plugin_id,
+                        provider=old_ref.provider,
+                        preset_id=old_ref.preset_id,
+                        preset_fingerprint=old_ref.preset_fingerprint,
+                        parameter_overrides=overrides,
+                        resolved_parameters=resolved,
+                    )
+                    runtime['animation'].update_parameters(
+                        self._component_config(requested)
+                    )
+                    runtime['config'] = resolved
+                    runtime['ref'] = new_ref
+                    self._active_scene_state = SceneState(
+                        current_scene.revision + 1,
+                        new_ref,
+                        current_scene.overlays,
+                        current_scene.known_python_fallback,
+                    )
+                    if self.current_preset is not None:
+                        self.current_preset['is_dirty'] = bool(overrides)
+                    self._remember_active_state(
+                        new_ref.plugin_id, resolved, self.current_preset
+                    )
+                    return True
+
+                old_overlay = current_scene.overlays[0] if current_scene.overlays else None
+                if component is None:
+                    assert old_overlay is not None and runtime is not None
+                    new_component = old_overlay.component
+                else:
+                    new_component = (
+                        component if isinstance(component, ComponentRef)
+                        else ComponentRef.from_payload(component)
+                    )
+                requested = self._scene_parameter_payload(params)
+                if not self._scene_allows_compatibility_components:
+                    self.plugin_loader.validate_component_parameters(
+                        new_component.plugin_id,
+                        {**dict(new_component.resolved_parameters), **requested},
+                    )
+                resolved = dict(new_component.resolved_parameters)
+                resolved.update(requested)
+                overrides = dict(new_component.parameter_overrides)
+                overrides.update(requested)
+                new_component = ComponentRef(
+                    plugin_id=new_component.plugin_id,
+                    provider=new_component.provider,
+                    preset_id=new_component.preset_id,
+                    preset_fingerprint=new_component.preset_fingerprint,
+                    parameter_overrides=overrides,
+                    resolved_parameters=resolved,
+                )
+                old_placement = (
+                    old_overlay.placement if old_overlay else OverlayPlacement()
+                )
+                resolved_placement = (
+                    placement if isinstance(placement, OverlayPlacement)
+                    else OverlayPlacement.from_payload(placement)
+                    if placement is not None else old_placement
+                )
+                old_stale = (
+                    old_overlay.stale_policy
+                    if old_overlay else StalePolicy(ForegroundStalePolicy.HOLD)
+                )
+                resolved_stale = (
+                    stale_policy if isinstance(stale_policy, StalePolicy)
+                    else StalePolicy.from_payload(stale_policy)
+                    if stale_policy is not None else old_stale
+                )
+                overlay_ref = OverlayRef(
+                    slot_id=AGGREGATE_OVERLAY_SLOT_ID,
+                    component=new_component,
+                    enabled=(old_overlay.enabled if enabled is None and old_overlay else True)
+                    if enabled is None else enabled,
+                    opacity=(old_overlay.opacity if opacity is None and old_overlay else 255)
+                    if opacity is None else opacity,
+                    placement=resolved_placement,
+                    stale_policy=resolved_stale,
+                )
+                candidate = self._resolve_scene_state(
+                    SceneState(
+                        current_scene.revision + 1,
+                        current_scene.background,
+                        (overlay_ref,),
+                        current_scene.known_python_fallback,
+                    ),
+                    allow_compatibility_components=(
+                        self._scene_allows_compatibility_components
+                    ),
+                )
+                overlay_ref = candidate.overlays[0]
+
+                replacing = runtime is None or runtime['name'] != new_component.plugin_id
+                if replacing:
+                    animation_class = self.plugin_loader.get_plugin(
+                        overlay_ref.component.plugin_id
+                    )
+                    animation = animation_class(
+                        self.controller,
+                        self._component_config(dict(
+                            overlay_ref.component.resolved_parameters
+                        )),
+                    )
+                    new_runtime = None
+                    try:
+                        animation.start()
+                        new_runtime = self._new_scene_component(
+                            overlay_ref.component.plugin_id,
+                            animation,
+                            dict(overlay_ref.component.resolved_parameters),
+                            started_at=time.perf_counter(),
+                            ref=overlay_ref.component,
+                        )
+                        new_runtime.update({
+                            'enabled': overlay_ref.enabled,
+                            'opacity': overlay_ref.opacity,
+                            'strip_offset': overlay_ref.placement.strip_translation,
+                            'led_offset': overlay_ref.placement.led_translation,
+                            'stale_policy': overlay_ref.stale_policy,
+                        })
+                        with self._presentation_state_guard():
+                            self._render_scene_component(
+                                new_runtime,
+                                now=new_runtime['started_at'],
+                                resolved_vibe=self._resolved_vibe,
+                                operator_tempo=self.animation_speed_scale,
+                                overlay=True,
+                            )
+                    except Exception:
+                        if new_runtime is not None:
+                            self._cleanup_scene_component(new_runtime)
+                        else:
+                            animation.stop()
+                            animation.cleanup()
+                        raise
+                    old_runtime = runtime
+                    self._scene_overlay = new_runtime
+                    runtime = new_runtime
+                    if old_runtime is not None:
+                        self._cleanup_scene_component(old_runtime)
+                else:
+                    runtime['animation'].update_parameters(
+                        self._component_config(requested)
+                    )
+                    runtime['config'] = dict(overlay_ref.component.resolved_parameters)
+                    runtime['ref'] = overlay_ref.component
+                    runtime['enabled'] = overlay_ref.enabled
+                    runtime['opacity'] = overlay_ref.opacity
+                    runtime['strip_offset'] = overlay_ref.placement.strip_translation
+                    runtime['led_offset'] = overlay_ref.placement.led_translation
+                    runtime['stale_policy'] = overlay_ref.stale_policy
+                self._active_scene_state = candidate
+                return True
             except Exception as exc:
-                print(f"⚠️ Overlay cleanup failed: {exc}")
-            return True
+                print(f"✗ Failed to update scene {target}: {exc}")
+                return False
+
+    def apply_scene(self, scene_payload: Any) -> bool:
+        """Reconcile a scene, retaining matching live component instances."""
+        try:
+            scene = self._resolve_scene_state(scene_payload)
+        except (TypeError, ValueError) as exc:
+            print(f"✗ Invalid scene: {exc}")
+            return False
+        with self._scene_state_guard():
+            current = self._active_scene_state
+            active = self._scene_mode and current is not None
+        if not active or current.background.plugin_id != scene.background.plugin_id:
+            return self.start_scene(scene)
+        if not self.update_scene_component(
+            "background", params=dict(scene.background.resolved_parameters)
+        ):
+            return False
+        old_overlay = current.overlays[0] if current.overlays else None
+        new_overlay = scene.overlays[0] if scene.overlays else None
+        if new_overlay is None:
+            if old_overlay is not None and not self.remove_overlay():
+                return False
+        else:
+            if not self.update_scene_component(
+                "overlay",
+                params=dict(new_overlay.component.resolved_parameters),
+                component=(
+                    new_overlay.component
+                    if old_overlay is None
+                    or old_overlay.component.plugin_id != new_overlay.component.plugin_id
+                    else None
+                ),
+                enabled=new_overlay.enabled,
+                opacity=new_overlay.opacity,
+                placement=new_overlay.placement,
+                stale_policy=new_overlay.stale_policy,
+            ):
+                return False
+        with self._scene_state_guard():
+            self._active_scene_state = scene
+            if self._scene_background is not None:
+                self._scene_background['ref'] = scene.background
+            if self._scene_overlay is not None and scene.overlays:
+                self._scene_overlay['ref'] = scene.overlays[0].component
+        return True
 
     @staticmethod
     def _normalize_current_preset(
@@ -1456,7 +2006,8 @@ class AnimationManager:
     def get_current_status(self) -> Dict[str, Any]:
         """Get current animation status and performance info"""
         mode = (
-            'scene' if self.is_running and self._scene_mode
+            'animation' if self.is_running and self._scene_compatibility_mode
+            else 'scene' if self.is_running and self._scene_mode
             else 'animation' if self.is_running
             else 'painter' if self.painter_active
             else 'idle'
@@ -1514,8 +2065,10 @@ class AnimationManager:
             status['interaction_types'] = []
 
         scene_status = self._scene_status_snapshot()
-        if scene_status is not None:
+        if scene_status is not None and not self._scene_compatibility_mode:
             status['scene'] = scene_status
+        if self._scene_mode:
+            status['scene_state'] = self.get_scene_state()
 
         performance = self._get_perf_summary()
         if performance:
@@ -1547,6 +2100,13 @@ class AnimationManager:
                     'interaction_types': sorted(
                         background['animation'].INTERACTION_TYPES
                     ),
+                    'component': (
+                        background['ref'].to_dict() if background.get('ref') else None
+                    ),
+                    'preset': (
+                        self._component_preset_status(background['ref'])
+                        if background.get('ref') else None
+                    ),
                 },
                 'overlay': None if overlay is None else {
                     'name': overlay['name'],
@@ -1560,6 +2120,13 @@ class AnimationManager:
                     'render_count': overlay['render_count'],
                     'interaction_types': sorted(
                         overlay['animation'].INTERACTION_TYPES
+                    ),
+                    'component': (
+                        overlay['ref'].to_dict() if overlay.get('ref') else None
+                    ),
+                    'preset': (
+                        self._component_preset_status(overlay['ref'])
+                        if overlay.get('ref') else None
                     ),
                 },
             }
@@ -1668,7 +2235,8 @@ class AnimationManager:
 
         encoded_frame = encode_frame_data(frame_data)
         mode = (
-            'scene' if self.is_running and self._scene_mode
+            'animation' if self.is_running and self._scene_compatibility_mode
+            else 'scene' if self.is_running and self._scene_mode
             else 'animation' if self.is_running
             else 'painter' if self.painter_active
             else 'idle'
@@ -1691,7 +2259,10 @@ class AnimationManager:
             'is_running': self.is_running,
             'frame_count': self.frame_count,
             'current_animation': displayed_animation,
-            'scene': self._scene_status_snapshot(),
+            'scene': (
+                None if self._scene_compatibility_mode
+                else self._scene_status_snapshot()
+            ),
             'timestamp': time.time()
         }
 
@@ -1841,7 +2412,7 @@ class AnimationManager:
 
     def get_scene_preview(
         self,
-        background_name: str,
+        scene_payload: Any,
         background_config: Optional[Dict[str, Any]] = None,
         overlay_name: str = 'clock_overlay',
         overlay_config: Optional[Dict[str, Any]] = None,
@@ -1850,46 +2421,110 @@ class AnimationManager:
         led_offset: int = 0,
         *,
         vibe: Optional[Any] = None,
+        plant_modifiers: Optional[Any] = None,
         elapsed: float = 0.0,
+        elapsed_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Render one isolated fixed scene through the live composition order."""
+        """Render an isolated scene through the same resolver as live starts."""
+        if elapsed_seconds is not None:
+            elapsed = elapsed_seconds
         if not math.isfinite(float(elapsed)) or float(elapsed) < 0.0:
             raise ValueError("preview elapsed time must be finite and non-negative")
+        structured = isinstance(scene_payload, (SceneState, dict))
+        scene = None
+        if structured:
+            scene = self._resolve_scene_state(scene_payload)
+            background_name = scene.background.plugin_id
+            background_config = dict(scene.background.resolved_parameters)
+            overlay_ref = scene.overlays[0] if scene.overlays else None
+            overlay_name = (
+                overlay_ref.component.plugin_id if overlay_ref is not None else None
+            )
+            overlay_config = (
+                dict(overlay_ref.component.resolved_parameters)
+                if overlay_ref is not None else None
+            )
+            if overlay_ref is not None:
+                overlay_opacity = overlay_ref.opacity
+                strip_offset = overlay_ref.placement.strip_translation
+                led_offset = overlay_ref.placement.led_translation
+        else:
+            background_name = scene_payload
+            overlay_ref = None
         background_class = self.plugin_loader.get_plugin(background_name)
-        overlay_class = self.plugin_loader.get_plugin(overlay_name)
-        if background_class is None or self._plugin_role(background_name) != 'background':
+        overlay_class = (
+            self.plugin_loader.get_plugin(overlay_name) if overlay_name else None
+        )
+        if background_class is None or (
+            not structured and self._plugin_role(background_name) != 'background'
+        ):
             raise ValueError(f"invalid scene background {background_name!r}")
-        if overlay_class is None or self._plugin_role(overlay_name) != 'overlay':
+        if overlay_name and (
+            overlay_class is None
+            or (not structured and self._plugin_role(overlay_name) != 'overlay')
+        ):
             raise ValueError(f"invalid scene overlay {overlay_name!r}")
-        if issubclass(background_class, StatefulAnimationBase) or issubclass(
-            overlay_class, StatefulAnimationBase
+        if issubclass(background_class, StatefulAnimationBase) or (
+            overlay_class is not None
+            and issubclass(overlay_class, StatefulAnimationBase)
         ):
             raise TypeError("Stateful animations cannot participate in scene previews")
 
-        background = background_class(
-            self.preview_controller, self._component_config(background_config)
+        preview_plant_state = (
+            self.plant_modifier_state
+            if plant_modifiers is None
+            else PlantModifierState.from_payload(plant_modifiers)
         )
-        overlay_animation = overlay_class(
-            self.preview_controller, self._component_config(overlay_config)
+
+        def preview_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+            effective = dict(config or {})
+            effective['plant_aware'] = (
+                self.plant_aware
+                if plant_modifiers is None and self._legacy_plant_aware_bridge
+                else False
+            )
+            effective['plant_modifiers'] = preview_plant_state.to_dict()
+            return effective
+
+        background = background_class(
+            self.preview_controller, preview_config(background_config)
+        )
+        overlay_animation = (
+            overlay_class(self.preview_controller, preview_config(overlay_config))
+            if overlay_class is not None else None
         )
         components: List[Dict[str, Any]] = []
         try:
             background.start()
             background_component = self._new_scene_component(
-                background_name, background, background_config, started_at=0.0
+                background_name,
+                background,
+                background_config,
+                started_at=0.0,
+                ref=scene.background if scene else None,
             )
             components.append(background_component)
-            overlay_animation.start()
-            overlay_component = self._new_scene_component(
-                overlay_name, overlay_animation, overlay_config, started_at=0.0
-            )
-            overlay_component.update({
-                'enabled': True,
-                'opacity': overlay_opacity,
-                'strip_offset': strip_offset,
-                'led_offset': led_offset,
-            })
-            components.append(overlay_component)
+            overlay_component = None
+            if overlay_animation is not None:
+                overlay_animation.start()
+                overlay_component = self._new_scene_component(
+                    overlay_name,
+                    overlay_animation,
+                    overlay_config,
+                    started_at=0.0,
+                    ref=overlay_ref.component if overlay_ref else None,
+                )
+                overlay_component.update({
+                    'enabled': overlay_ref.enabled if overlay_ref else True,
+                    'opacity': overlay_opacity,
+                    'strip_offset': strip_offset,
+                    'led_offset': led_offset,
+                    'stale_policy': (
+                        overlay_ref.stale_policy if overlay_ref
+                        else StalePolicy(ForegroundStalePolicy.HOLD)
+                    ),
+                })
+                components.append(overlay_component)
             with self._presentation_state_guard():
                 resolved = (
                     self._resolved_vibe if vibe is None else self._canonical_vibe(vibe)
@@ -1906,6 +2541,7 @@ class AnimationManager:
                 now=float(elapsed),
                 resolved_vibe=resolved,
                 operator_tempo=operator_tempo,
+                plant_modifiers=preview_plant_state.to_dict(),
             )
             return {
                 'frame_data': frame.tolist(),
@@ -1962,6 +2598,7 @@ class AnimationManager:
         resolved_vibe: ResolvedVibe,
         operator_tempo: float,
         overlay: bool,
+        plant_modifiers: Optional[Dict[str, Any]] = None,
     ) -> BaseFrame | OverlayFrame:
         animation = component['animation']
         elapsed = max(0.0, float(now) - float(component['started_at']))
@@ -1979,6 +2616,7 @@ class AnimationManager:
             frame_index=component['frame_index'],
             resolved_vibe=resolved_vibe,
             operator_tempo_scale=operator_tempo,
+            plant_modifiers=plant_modifiers,
         )
         rendered = animation.generate_frame_with_context(context)
         component['calls'] += 1
@@ -2086,6 +2724,7 @@ class AnimationManager:
         resolved_vibe: ResolvedVibe,
         operator_tempo: float,
         force_refresh: bool = False,
+        plant_modifiers: Optional[Dict[str, Any]] = None,
     ) -> tuple[np.ndarray, bool, Optional[tuple[tuple[int, int], ...]]]:
         base = self._render_scene_component(
             background,
@@ -2093,6 +2732,7 @@ class AnimationManager:
             resolved_vibe=resolved_vibe,
             operator_tempo=operator_tempo,
             overlay=False,
+            plant_modifiers=plant_modifiers,
         )
         placed = ()
         if overlay is not None:
@@ -2103,6 +2743,7 @@ class AnimationManager:
                     resolved_vibe=resolved_vibe,
                     operator_tempo=operator_tempo,
                     overlay=True,
+                    plant_modifiers=plant_modifiers,
                 )
             else:
                 cached = overlay.get('cached_frame')

@@ -78,6 +78,9 @@
     .preview-preset-composer .form-control { min-width: 0; }
     .utility-accordion .accordion-button { font-weight: 700; color: #4c536b; background: white; }
     .utility-accordion .accordion-item { border-color: var(--show-border); }
+    .scene-editor-card { border: 1px solid #dfe3f1; border-radius: 18px; box-shadow: 0 8px 26px rgba(29, 39, 74, .06); }
+    .scene-editor-card fieldset { min-width: 0; }
+    .scene-editor-card .form-label { color: #3f4660; font-size: .82rem; }
     .test-animation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
     .test-animation-btn { text-align: left; border: 1px solid var(--show-border); background: white; border-radius: 12px; padding: .7rem; }
     .control-studio { border: 1px solid #e1e4f0; border-radius: 16px; background: linear-gradient(160deg, #fff 0%, #f9f9ff 100%); }

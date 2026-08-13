@@ -21,10 +21,21 @@ if str(REPO_ROOT) not in sys.path:
 from ipc.control_channel import FileControlChannel
 from animation.core.defaults import DEFAULT_PLANT_AWARE
 from animation.core.plant_awareness import PlantModifierState
+from animation.core.presentation_contracts import (
+    VibeState, component_preset_fingerprint, resolve_vibe,
+)
+from ipc.scene_contract import (
+    DESIRED_DISPLAY_SCHEMA,
+    DESIRED_DISPLAY_VERSION,
+    SceneValidationError,
+    background_only_scene,
+    normalize_scene_payload,
+)
 
 
 PRESET_ID = "before-deploy"
-STATE_VERSION = 4
+STATE_VERSION = 5
+UNKNOWN_INSTALLATION_PROFILE_DIGEST = "0" * 64
 
 
 def _positive_finite_number(value: Any) -> float | None:
@@ -133,6 +144,109 @@ def _current_preset(
     }
 
 
+def _preset_fingerprint(animation: str, preset_id: str, params: dict[str, Any]) -> str:
+    return component_preset_fingerprint(animation, preset_id, params)
+
+
+def _scene_from_status(
+    status: dict[str, Any], animation: str, params: dict[str, Any]
+) -> dict[str, Any]:
+    raw_scene = status.get("scene_state")
+    if not isinstance(raw_scene, dict):
+        raw_scene = status.get("scene")
+    if isinstance(raw_scene, dict) and raw_scene.get("schema"):
+        try:
+            return normalize_scene_payload(raw_scene)
+        except SceneValidationError as exc:
+            raise RuntimeError(f"Controller status has an invalid scene: {exc}") from exc
+    selected = _current_preset(status.get("current_preset"), animation)
+    preset_id = selected.get("preset_id") if selected else None
+    fingerprint = (
+        _preset_fingerprint(animation, preset_id, params)
+        if preset_id is not None else None
+    )
+    return background_only_scene(
+        animation, params,
+        preset_id=preset_id,
+        preset_fingerprint=fingerprint,
+    )
+
+
+def _canonical_persisted_vibe(status: dict[str, Any]) -> dict[str, Any]:
+    payload = _vibe_state(status)
+    if payload is None:
+        return resolve_vibe("neutral").state.to_dict()
+    try:
+        state = VibeState.from_payload(payload)
+        resolved = resolve_vibe(
+            state.vibe_id, revision=state.revision,
+            profile_version=state.profile_version,
+        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Controller status has an invalid vibe: {exc}") from exc
+    if resolved.state.resolved_profile_digest != state.resolved_profile_digest:
+        raise RuntimeError("Controller status vibe digest does not match registry")
+    return state.to_dict()
+
+
+def _desired_display_state(
+    status: dict[str, Any], scene: dict[str, Any], *, previous: Any = None
+) -> dict[str, Any]:
+    prior = previous if isinstance(previous, dict) else {}
+    if "plant_modifiers" in status:
+        modifier_payload = status["plant_modifiers"]
+    elif "plant_aware" in status:
+        modifier_payload = PlantModifierState.from_legacy(status["plant_aware"]).to_dict()
+    else:
+        modifier_payload = prior.get(
+            "plant_modifiers", {"version": 1, "active": [], "strengths": {}}
+        )
+    modifiers = PlantModifierState.from_payload(modifier_payload).to_dict()
+    prior_output = prior.get("output") if isinstance(prior.get("output"), dict) else {}
+    brightness = _brightness_level(status.get("brightness"))
+    if brightness is None:
+        previous_level = prior_output.get("master_brightness")
+        brightness = round(previous_level * 255) if isinstance(previous_level, (int, float)) else 255
+    tempo = (
+        _positive_finite_number(status.get("animation_speed_scale"))
+        or _positive_finite_number(prior_output.get("operator_tempo_scale"))
+        or 1.0
+    )
+    target_fps = (
+        _positive_int(status.get("target_fps"))
+        or _positive_int(prior_output.get("target_fps"))
+        or 200
+    )
+    prior_digest = (
+        previous.get("installation_profile_digest")
+        if isinstance(previous, dict) else None
+    )
+    digest = status.get("installation_profile_digest", prior_digest)
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        digest = UNKNOWN_INSTALLATION_PROFILE_DIGEST
+    return {
+        "schema": DESIRED_DISPLAY_SCHEMA,
+        "schema_version": DESIRED_DISPLAY_VERSION,
+        "revision": time.time_ns() & (2**64 - 1),
+        "scene": scene,
+        "vibe": (
+            _canonical_persisted_vibe(status)
+            if _vibe_state(status) is not None
+            else dict(prior.get("vibe") or resolve_vibe("neutral").state.to_dict())
+        ),
+        "plant_modifiers": modifiers,
+        "installation_profile_digest": digest,
+        "output": {
+            "master_brightness": brightness / 255.0,
+            "operator_tempo_scale": tempo,
+            "power": bool(status.get("is_running")),
+            # Preserve the existing operational cadence even though it is not
+            # presentation state in the frozen OutputState dataclass.
+            "target_fps": target_fps,
+        },
+    }
+
+
 def _apply_independent_status(
     status: dict[str, Any], state: dict[str, Any]
 ) -> None:
@@ -173,24 +287,29 @@ def save_status(
         # wall is stopped. Retain the last valid playable snapshot and update
         # only those controls so the next restart does not discard the choice.
         try:
-            state = _read_object(state_path)
-            animation = _safe_animation_name(state.get("animation"))
-            preset_path_value = state.get("preset_path")
-            if not animation or not isinstance(preset_path_value, str):
-                raise RuntimeError("saved state is incomplete")
-            preset = _read_object(Path(preset_path_value))
-            if (
-                preset.get("animation") != animation
-                or not isinstance(preset.get("params"), dict)
-            ):
-                raise RuntimeError("saved preset is invalid")
+            previous = load_saved_state(state_path)
+            animation = previous["animation"]
+            preset_path_value = previous.get("preset_path")
+            if isinstance(preset_path_value, str):
+                preset = _read_object(Path(preset_path_value))
+            else:
+                preset = {
+                    "animation": animation,
+                    "params": dict(previous.get("params") or {}),
+                }
         except RuntimeError as exc:
             raise RuntimeError(
                 "No running animation is available to preserve"
             ) from exc
-        state["version"] = STATE_VERSION
-        state["saved_at"] = time.time()
-        _apply_independent_status(status, state)
+        scene = previous["scene"]
+        state = _desired_display_state(status, scene, previous=previous)
+        state.update({
+            "version": STATE_VERSION,
+            "animation": animation,
+            "saved_at": time.time(),
+        })
+        if isinstance(preset_path_value, str):
+            state["preset_path"] = preset_path_value
         _atomic_write(state_path, state)
         return preset
 
@@ -211,16 +330,19 @@ def save_status(
         "updated_at": now,
     }
     _atomic_write(preset_path, preset)
-    state = {
+    scene = _scene_from_status(status, animation, params)
+    state = _desired_display_state(status, scene)
+    state.update({
+        # ``version`` and the legacy aliases keep older deploy coordinators able
+        # to identify the capture while the schema marks the new desired state.
         "version": STATE_VERSION,
         "animation": animation,
         "preset_path": str(preset_path),
         "saved_at": now,
-    }
+    })
     current_preset = _current_preset(status.get("current_preset"), animation)
     if current_preset is not None:
         state["current_preset"] = current_preset
-    _apply_independent_status(status, state)
     _atomic_write(state_path, state)
     return preset
 
@@ -232,6 +354,9 @@ def save(status_path: Path, presets_dir: Path, state_path: Path) -> dict[str, An
 def load_saved_state(state_path: Path) -> dict[str, Any]:
     """Load and validate the animation and parameters used for restart."""
     state = _read_object(state_path)
+    if "scene" in state or state.get("schema") == DESIRED_DISPLAY_SCHEMA:
+        return _load_desired_display_state(state)
+
     animation = _safe_animation_name(state.get("animation"))
     if not animation:
         raise RuntimeError("Saved deployment state has an invalid animation name")
@@ -286,6 +411,129 @@ def load_saved_state(state_path: Path) -> dict[str, Any]:
     return result
 
 
+def _known_python_fallback_scene(raw_scene: Any) -> dict[str, Any]:
+    if not isinstance(raw_scene, dict):
+        raise RuntimeError("Saved desired display state has no scene fallback")
+    fallback = raw_scene.get("known_python_fallback")
+    try:
+        return normalize_scene_payload({
+            "schema": "ledgrid.scene-state",
+            "schema_version": 1,
+            "revision": 0,
+            "background": fallback,
+            "overlays": [],
+            "known_python_fallback": fallback,
+        })
+    except (SceneValidationError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Saved desired display state has no valid Python fallback: {exc}"
+        ) from exc
+
+
+def _load_desired_display_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Validate the aggregate before exposing any values to controller startup."""
+    raw_scene = state.get("scene")
+    fallback_scene = _known_python_fallback_scene(raw_scene)
+    for alias, validator, message in (
+        ("animation_speed_scale", _positive_finite_number, "animation speed scale"),
+        ("target_fps", _positive_int, "target FPS"),
+        ("brightness", _brightness_level, "brightness"),
+    ):
+        if alias in state and validator(state[alias]) is None:
+            raise RuntimeError(f"Saved deployment state has an invalid {message}")
+    fallback_reason = None
+    if (
+        state.get("schema") != DESIRED_DISPLAY_SCHEMA
+        or state.get("schema_version") != DESIRED_DISPLAY_VERSION
+    ):
+        scene = fallback_scene
+        fallback_reason = (
+            f"unsupported desired display schema/version: "
+            f"{state.get('schema')!r}/{state.get('schema_version')!r}"
+        )
+    else:
+        try:
+            scene = normalize_scene_payload(raw_scene)
+        except (SceneValidationError, TypeError, ValueError) as exc:
+            scene = fallback_scene
+            fallback_reason = f"unsupported saved scene: {exc}"
+
+    revision = state.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or not 0 <= revision < 2**64:
+        raise RuntimeError("Saved desired display state has an invalid revision")
+    digest = state.get("installation_profile_digest")
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise RuntimeError(
+            "Saved desired display state has an invalid installation profile digest"
+        )
+    output = state.get("output")
+    if not isinstance(output, dict):
+        raise RuntimeError("Saved desired display state has invalid output controls")
+    allowed_output = {
+        "master_brightness", "operator_tempo_scale", "power", "target_fps"
+    }
+    unknown_output = sorted(set(output) - allowed_output)
+    if unknown_output:
+        raise RuntimeError(
+            f"Saved desired display output has unsupported fields: {', '.join(unknown_output)}"
+        )
+    master = output.get("master_brightness")
+    if (
+        isinstance(master, bool) or not isinstance(master, (int, float))
+        or not math.isfinite(float(master)) or not 0 <= float(master) <= 1
+    ):
+        raise RuntimeError("Saved desired display state has invalid master brightness")
+    tempo = _positive_finite_number(output.get("operator_tempo_scale"))
+    if tempo is None:
+        raise RuntimeError("Saved desired display state has invalid operator tempo")
+    power = output.get("power")
+    if not isinstance(power, bool):
+        raise RuntimeError("Saved desired display state has invalid power state")
+    target_fps = _positive_int(output.get("target_fps", 200))
+    if target_fps is None or target_fps > 200:
+        raise RuntimeError("Saved desired display state has invalid target FPS")
+    try:
+        modifiers = PlantModifierState.from_payload(state.get("plant_modifiers"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Saved desired display state has invalid plant modifiers: {exc}"
+        ) from exc
+    vibe = state.get("vibe")
+    if not isinstance(vibe, dict) or not vibe:
+        raise RuntimeError("Saved desired display state has invalid vibe")
+    resolved_vibe, vibe_fallback = _expected_restored_vibe(vibe)
+
+    background = scene["background"]
+    params = dict(background.get("resolved_parameters") or {})
+    params.update(background.get("parameter_overrides") or {})
+    result = dict(state)
+    result.update({
+        "scene": scene,
+        "fallback_scene": fallback_scene,
+        "animation": background["plugin_id"],
+        "params": params,
+        "animation_speed_scale": tempo,
+        "target_fps": target_fps,
+        "brightness": round(float(master) * 255),
+        "power": power,
+        "plant_modifiers": modifiers.to_dict(),
+        # Preserve the original persisted state for the manager's observable
+        # neutral-fallback diagnostic.  ``resolved_vibe`` is used only by the
+        # restore acknowledgement logic.
+        "vibe": dict(vibe),
+        "expected_vibe": resolved_vibe,
+    })
+    if fallback_reason is not None:
+        result["scene_fallback_reason"] = fallback_reason
+    if vibe_fallback:
+        result["vibe_fallback_reason"] = "unsupported saved vibe; using neutral"
+    if "current_preset" in state:
+        result["current_preset"] = _current_preset(
+            state["current_preset"], result["animation"], label="Saved current preset"
+        )
+    return result
+
+
 def _wait_for_fresh_controller(channel: FileControlChannel, started_at: float, timeout: float) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -303,6 +551,49 @@ def restore(status_path: Path, control_path: Path, state_path: Path, timeout: fl
 
     channel = FileControlChannel(str(control_path), str(status_path))
     _wait_for_fresh_controller(channel, restore_started_at, timeout)
+    if "scene" in state:
+        expected_vibe, expect_diagnostic = _expected_restored_vibe(state["vibe"])
+        command = channel.send_command("restore_display_state", state={
+            "schema": DESIRED_DISPLAY_SCHEMA,
+            "schema_version": DESIRED_DISPLAY_VERSION,
+            "revision": state["revision"],
+            "scene": state["scene"],
+            "vibe": state["vibe"],
+            "plant_modifiers": state["plant_modifiers"],
+            "installation_profile_digest": state["installation_profile_digest"],
+            "output": state["output"],
+        })
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            status = channel.read_status() or {}
+            scene_status = status.get("scene_state")
+            scene_background = (
+                scene_status.get("background", {}).get("plugin_id")
+                if isinstance(scene_status, dict) else status.get("current_animation")
+            )
+            power_matches = (
+                bool(status.get("is_running")) == bool(state.get("power", True))
+            )
+            if (
+                status.get("last_command_id") == command["command_id"]
+                and power_matches
+                and (not state.get("power", True) or scene_background == animation)
+                and _status_has_expected_vibe(
+                    status, expected_vibe, expect_diagnostic=expect_diagnostic
+                )
+            ):
+                return {
+                    "animation": animation,
+                    "scene": state["scene"],
+                    "params": state["params"],
+                    "vibe": expected_vibe,
+                    "vibe_fallback": expect_diagnostic,
+                    "scene_fallback": state.get("scene_fallback_reason"),
+                }
+            time.sleep(0.1)
+        raise RuntimeError(
+            f"Controller did not restore desired display {animation!r} before timeout"
+        )
     if "vibe" in state:
         expected_vibe, expect_diagnostic = _expected_restored_vibe(state["vibe"])
         vibe_command = channel.send_command("set_vibe", vibe=state["vibe"])
