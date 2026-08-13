@@ -65,6 +65,8 @@ std::size_t expected_header_bytes(std::uint8_t command) {
       return ledgrid::kOverlayClearHeaderBytes;
     case AnimationPipelineCommand::OverlayRenew:
       return ledgrid::kOverlayRenewHeaderBytes;
+    case AnimationPipelineCommand::OverlayPatchBatch:
+      return ledgrid::kOverlayPatchBatchHeaderBytes;
   }
   return 0;
 }
@@ -141,6 +143,12 @@ void test_generated_json_golden_vectors_match_firmware_exactly() {
   TEST_ASSERT_EQUAL_UINT32(kCrcBytes, ledgrid::kAnimationPipelineCrcBytes);
   TEST_ASSERT_EQUAL_UINT32(kMaxRgbaPixelsPerPatch,
                            ledgrid::kMaxRgbaPixelsPerPatch);
+  TEST_ASSERT_EQUAL_UINT32(kBatchSpanDescriptorBytes,
+                           ledgrid::kOverlayPatchBatchSpanHeaderBytes);
+  TEST_ASSERT_EQUAL_UINT32(kMaxRgbaPixelsPerSingleSpanBatch,
+                           ledgrid::kMaxRgbaPixelsPerBatchSpan);
+  TEST_ASSERT_EQUAL_UINT32(kMaxOnePixelSpansPerBatch,
+                           ledgrid::kMaxSinglePixelSpansPerBatch);
   TEST_ASSERT_EQUAL_UINT32(kLocalPixels, ledgrid::kContractLocalPixels);
   TEST_ASSERT_EQUAL_UINT8(
       kControllerSessionBeginCommand,
@@ -161,6 +169,10 @@ void test_generated_json_golden_vectors_match_firmware_exactly() {
   TEST_ASSERT_EQUAL_UINT8(
       kOverlayRenewCommand,
       static_cast<std::uint8_t>(ledgrid::AnimationPipelineCommand::OverlayRenew));
+  TEST_ASSERT_EQUAL_UINT8(
+      kOverlayPatchBatchCommand,
+      static_cast<std::uint8_t>(
+          ledgrid::AnimationPipelineCommand::OverlayPatchBatch));
   TEST_ASSERT_EQUAL_UINT32(kControllerSessionBeginHeaderBytes,
                            ledgrid::kControllerSessionBeginHeaderBytes);
   TEST_ASSERT_EQUAL_UINT32(kOverlayBeginHeaderBytes,
@@ -173,6 +185,8 @@ void test_generated_json_golden_vectors_match_firmware_exactly() {
                            ledgrid::kOverlayClearHeaderBytes);
   TEST_ASSERT_EQUAL_UINT32(kOverlayRenewHeaderBytes,
                            ledgrid::kOverlayRenewHeaderBytes);
+  TEST_ASSERT_EQUAL_UINT32(kOverlayPatchBatchHeaderBytes,
+                           ledgrid::kOverlayPatchBatchHeaderBytes);
 
   for (const auto& vector : kBlendVectors) {
     std::uint8_t actual[3] = {};
@@ -275,6 +289,13 @@ void test_generated_json_golden_vectors_match_firmware_exactly() {
         kFullSnapshotPatches[index].count,
         ledgrid::full_snapshot_patch_pixels(index));
   }
+  TEST_ASSERT_EQUAL_UINT32(
+      2, sizeof(kFullSnapshotBatchSpans) /
+             sizeof(kFullSnapshotBatchSpans[0]));
+  TEST_ASSERT_EQUAL_UINT16(0, kFullSnapshotBatchSpans[0].start);
+  TEST_ASSERT_EQUAL_UINT16(1015, kFullSnapshotBatchSpans[0].count);
+  TEST_ASSERT_EQUAL_UINT16(1015, kFullSnapshotBatchSpans[1].start);
+  TEST_ASSERT_EQUAL_UINT16(89, kFullSnapshotBatchSpans[1].count);
 }
 
 void test_state_and_command_values_are_frozen_without_runtime_wiring() {
@@ -302,6 +323,9 @@ void test_state_and_command_values_are_frozen_without_runtime_wiring() {
   TEST_ASSERT_EQUAL_HEX8(
       0x34,
       static_cast<std::uint8_t>(ledgrid::AnimationPipelineCommand::OverlayRenew));
+  TEST_ASSERT_EQUAL_HEX8(
+      0x35, static_cast<std::uint8_t>(
+                ledgrid::AnimationPipelineCommand::OverlayPatchBatch));
 }
 
 void test_wire_widths_and_exact_maximum_patch_are_frozen() {
@@ -313,7 +337,11 @@ void test_wire_widths_and_exact_maximum_patch_are_frozen() {
   TEST_ASSERT_EQUAL_UINT32(50, ledgrid::kOverlayCommitHeaderBytes);
   TEST_ASSERT_EQUAL_UINT32(34, ledgrid::kOverlayClearHeaderBytes);
   TEST_ASSERT_EQUAL_UINT32(30, ledgrid::kOverlayRenewHeaderBytes);
+  TEST_ASSERT_EQUAL_UINT32(28, ledgrid::kOverlayPatchBatchHeaderBytes);
+  TEST_ASSERT_EQUAL_UINT32(4, ledgrid::kOverlayPatchBatchSpanHeaderBytes);
   TEST_ASSERT_EQUAL_UINT32(1016, ledgrid::kMaxRgbaPixelsPerPatch);
+  TEST_ASSERT_EQUAL_UINT32(1015, ledgrid::kMaxRgbaPixelsPerBatchSpan);
+  TEST_ASSERT_EQUAL_UINT32(508, ledgrid::kMaxSinglePixelSpansPerBatch);
 
   const std::size_t maximum_packet =
       ledgrid::kOverlayPatchHeaderBytes +
@@ -390,7 +418,7 @@ void test_generated_wire_packets_match_exact_headers_payloads_and_crc() {
   using namespace ledgrid::golden_v1;
   bool saw_maximum_patch = false;
   bool saw_tail_patch = false;
-  std::size_t command_counts[6] = {};
+  std::size_t command_counts[7] = {};
 
   for (const auto& vector : kWirePacketVectors) {
     TEST_ASSERT_NOT_NULL_MESSAGE(vector.packet, vector.id);
@@ -471,14 +499,68 @@ void test_generated_wire_packets_match_exact_headers_payloads_and_crc() {
       case ledgrid::AnimationPipelineCommand::OverlayRenew:
         ++command_counts[5];
         break;
+      case ledgrid::AnimationPipelineCommand::OverlayPatchBatch: {
+        ++command_counts[6];
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+            ledgrid::kOverlayPatchBatchHeaderBytes,
+            vector.header_bytes, vector.id);
+        const std::uint16_t span_count = read_u16(vector.packet + 26U);
+        TEST_ASSERT_TRUE_MESSAGE(span_count > 0, vector.id);
+        std::size_t offset = ledgrid::kOverlayPatchBatchHeaderBytes;
+        std::uint32_t units = 0;
+        std::uint32_t prior_end = 0;
+        for (std::size_t span = 0; span < span_count; ++span) {
+          TEST_ASSERT_TRUE_MESSAGE(offset + 4U <= crc_offset, vector.id);
+          const std::uint16_t start = read_u16(vector.packet + offset);
+          const std::uint16_t count = read_u16(vector.packet + offset + 2U);
+          TEST_ASSERT_TRUE_MESSAGE(count > 0, vector.id);
+          TEST_ASSERT_TRUE_MESSAGE(span == 0 || start >= prior_end, vector.id);
+          TEST_ASSERT_TRUE_MESSAGE(
+              static_cast<std::uint32_t>(start) + count <=
+                  ledgrid::kContractLocalPixels,
+              vector.id);
+          units += static_cast<std::uint32_t>(count) + 1U;
+          offset += ledgrid::kOverlayPatchBatchSpanHeaderBytes;
+          for (std::size_t pixel = 0; pixel < count; ++pixel) {
+            const std::size_t rgba = offset + pixel * 4U;
+            TEST_ASSERT_TRUE_MESSAGE(rgba + 4U <= crc_offset, vector.id);
+            const std::uint8_t alpha = vector.packet[rgba + 3U];
+            TEST_ASSERT_TRUE_MESSAGE(vector.packet[rgba] <= alpha, vector.id);
+            TEST_ASSERT_TRUE_MESSAGE(vector.packet[rgba + 1U] <= alpha,
+                                     vector.id);
+            TEST_ASSERT_TRUE_MESSAGE(vector.packet[rgba + 2U] <= alpha,
+                                     vector.id);
+          }
+          offset += static_cast<std::size_t>(count) * 4U;
+          prior_end = static_cast<std::uint32_t>(start) + count;
+        }
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(crc_offset, offset, vector.id);
+        TEST_ASSERT_TRUE_MESSAGE(units <= 1016U, vector.id);
+        break;
+      }
     }
   }
 
   TEST_ASSERT_TRUE(saw_maximum_patch);
   TEST_ASSERT_TRUE(saw_tail_patch);
-  constexpr std::size_t kExpectedCommandCounts[] = {1, 2, 2, 1, 1, 1};
+  constexpr std::size_t kExpectedCommandCounts[] = {1, 2, 2, 1, 1, 1, 4};
   TEST_ASSERT_EQUAL_UINT32_ARRAY(
-      kExpectedCommandCounts, command_counts, 6);
+      kExpectedCommandCounts, command_counts, 7);
+}
+
+void test_generated_malformed_batch_packets_keep_crc_valid_for_runtime_rejection() {
+  using namespace ledgrid::golden_v1;
+  for (const auto& vector : kMalformedBatchPacketVectors) {
+    TEST_ASSERT_TRUE_MESSAGE(vector.packet_bytes >= 2U, vector.id);
+    const std::size_t crc_offset =
+        vector.packet_bytes - ledgrid::kAnimationPipelineCrcBytes;
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(
+        vector.expected_crc16,
+        ledgrid::animation_pipeline_crc16_ccitt(vector.packet, crc_offset),
+        vector.id);
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(
+        vector.expected_crc16, read_u16(vector.packet + crc_offset), vector.id);
+  }
 }
 
 void test_generated_receiver_slice_vectors_cover_four_boards_and_seams() {
@@ -823,6 +905,7 @@ int main(int, char**) {
   RUN_TEST(test_patch_header_encoding_is_big_endian_and_bounds_checked);
   RUN_TEST(test_crc_contract_matches_ccitt_false_and_exact_packet);
   RUN_TEST(test_generated_wire_packets_match_exact_headers_payloads_and_crc);
+  RUN_TEST(test_generated_malformed_batch_packets_keep_crc_valid_for_runtime_rejection);
   RUN_TEST(test_generated_receiver_slice_vectors_cover_four_boards_and_seams);
   RUN_TEST(test_generated_counter_generation_cas_and_lease_vectors_match_runtime);
   RUN_TEST(test_version_session_and_counter_order_reject_stale_inputs);

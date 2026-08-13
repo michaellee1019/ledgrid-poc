@@ -15,6 +15,7 @@ from drivers.spi_controller import (
     CAPABILITY_EXPLICIT_BASE_OWNERSHIP,
     CAPABILITY_PRESENTATION_CONTEXT_V1,
     CAPABILITY_SPARSE_OVERLAY_V1,
+    CAPABILITY_SPARSE_OVERLAY_BATCH_V1,
     CAPABILITY_STATIC_LOCAL_BACKGROUND,
     CAPABILITY_STATUS_V3,
     OVERLAY_UPDATE_DELTA,
@@ -28,6 +29,7 @@ ALL_CAPABILITIES = (
     | CAPABILITY_STATUS_V3
     | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
     | CAPABILITY_SPARSE_OVERLAY_V1
+    | CAPABILITY_SPARSE_OVERLAY_BATCH_V1
 )
 SESSION = bytes(range(16))
 
@@ -165,7 +167,7 @@ def transparent_wall():
 
 
 class ReceiverSparseOverlayOrchestrationTests(unittest.TestCase):
-    def test_full_snapshot_is_two_canonical_patches_per_receiver(self):
+    def test_full_snapshot_is_two_canonical_batch_spans_per_receiver(self):
         devices = [Device(index) for index in range(4)]
         item = controller(devices)
         pixels = transparent_wall()
@@ -190,7 +192,7 @@ class ReceiverSparseOverlayOrchestrationTests(unittest.TestCase):
             self.assertEqual(begin["expected_patches"], 2)
             patches = next(call[2] for call in device.calls if call[0] == "patches")
             self.assertEqual([(start, len(data)) for start, data in patches], [
-                (0, 1016), (1016, 88),
+                (0, 1015), (1015, 89),
             ])
             self.assertEqual(device.committed_generation, 1)
         self.assertEqual(
@@ -235,26 +237,31 @@ class ReceiverSparseOverlayOrchestrationTests(unittest.TestCase):
             self.assertEqual(device.committed_generation, 2)
 
     def test_preflight_rejects_missing_capability_without_mutation(self):
-        devices = [Device(index) for index in range(4)]
-        devices[2].capabilities &= ~CAPABILITY_SPARSE_OVERLAY_V1
-        item = controller(devices)
+        for missing in (
+            CAPABILITY_SPARSE_OVERLAY_V1,
+            CAPABILITY_SPARSE_OVERLAY_BATCH_V1,
+        ):
+            with self.subTest(missing=f"0x{missing:08x}"):
+                devices = [Device(index) for index in range(4)]
+                devices[2].capabilities &= ~missing
+                item = controller(devices)
 
-        self.assertFalse(item.publish_sparse_overlay(
-            transparent_wall(),
-            controller_session_id=SESSION,
-            generation=1,
-            prior_generation=0,
-            scene_revision=1,
-            scene_epoch=1,
-            base_revision=1,
-            lease_ms=3000,
-            present_at_scene_time_us=1,
-            full_snapshot=True,
-        ))
-        self.assertFalse(any(
-            call[0] != "status" for device in devices for call in device.calls
-        ))
-        self.assertEqual(item._local_background_status["state"], "degraded")
+                self.assertFalse(item.publish_sparse_overlay(
+                    transparent_wall(),
+                    controller_session_id=SESSION,
+                    generation=1,
+                    prior_generation=0,
+                    scene_revision=1,
+                    scene_epoch=1,
+                    base_revision=1,
+                    lease_ms=3000,
+                    present_at_scene_time_us=1,
+                    full_snapshot=True,
+                ))
+                self.assertFalse(any(
+                    call[0] != "status" for device in devices for call in device.calls
+                ))
+                self.assertEqual(item._local_background_status["state"], "degraded")
 
     def test_rejected_patch_clears_every_board_and_never_claims_success(self):
         devices = [Device(index) for index in range(4)]
@@ -400,6 +407,38 @@ class ReceiverSparseOverlayOrchestrationTests(unittest.TestCase):
             "foreground_repair_required",
         )
 
+        self.assertTrue(item.publish_sparse_overlay(
+            transparent_wall(),
+            controller_session_id=SESSION,
+            generation=5,
+            prior_generation=4,
+            scene_revision=1,
+            scene_epoch=1,
+            base_revision=1,
+            lease_ms=3000,
+            present_at_scene_time_us=2,
+            full_snapshot=True,
+        ))
+        self.assertTrue(all(device.committed_generation == 5 for device in devices))
+
+    def test_restart_requires_full_snapshot_before_new_session_delta(self):
+        devices = [Device(index) for index in range(4)]
+        item = controller(devices)
+        with self.assertRaisesRegex(ValueError, "new controller session"):
+            item.publish_sparse_overlay(
+                transparent_wall(),
+                controller_session_id=SESSION,
+                generation=1,
+                prior_generation=0,
+                scene_revision=1,
+                scene_epoch=1,
+                base_revision=1,
+                lease_ms=3000,
+                present_at_scene_time_us=1,
+                dirty_ranges=((0, 1),),
+            )
+        self.assertFalse(any(device.calls for device in devices))
+
     def test_partial_commit_and_failed_compensation_are_explicitly_degraded(self):
         devices = [Device(index) for index in range(4)]
         devices[2].reject.add("commit")
@@ -504,6 +543,7 @@ class ReceiverSparseOverlayOrchestrationTests(unittest.TestCase):
         item._sparse_overlay_session_id = SESSION
         item._sparse_overlay_generation = 4
         item._sparse_overlay_snapshot_digest = b"snapshot"
+        item._local_background_active = False
 
         item.set_all_pixels(np.zeros((4416, 3), dtype=np.uint8))
 
@@ -512,6 +552,10 @@ class ReceiverSparseOverlayOrchestrationTests(unittest.TestCase):
         self.assertIsNone(item._sparse_overlay_session_id)
         self.assertEqual(item._sparse_overlay_generation, 0)
         self.assertIsNone(item._sparse_overlay_snapshot_digest)
+        self.assertTrue(all(
+            sum(call[0] == "status" for call in device.calls) >= 2
+            for device in devices
+        ))
 
     def test_future_commit_is_healthy_only_when_every_receiver_is_scheduled(self):
         devices = [Device(index) for index in range(4)]

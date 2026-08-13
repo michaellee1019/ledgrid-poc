@@ -1341,10 +1341,10 @@ acceptance, and clean wall-deploy gate are complete. Phase 3A portable
 implementation and integrated repository gates are complete; a clean degraded
 deployment/baseline has passed, while strict all-four status and the restored
 one-receiver physical canary remain open. Phase 2D product work and the remaining
-Phase 3B0 product/payload/showcase work are the next visible-benefit tranche and
-do not require SPI1 MISO. The first Phase 3B0 contract, portable-runtime, and
-fake-wall slice is complete but stays feature-gated and is not yet a visible
-wall showcase**.
+Phase 3B0 product/showcase work are the next visible-benefit tranche and do not
+require SPI1 MISO. The Phase 3B0 contract, portable-runtime, fake-wall, and
+batch/ack payload slices are complete and both deterministic payload gates are
+green, but the feature stays gated and is not yet a visible wall showcase**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -2287,16 +2287,17 @@ Portable tests and a deliberately scheduled one-receiver canary are sufficient.
 
 Prove the core hybrid value before solving native artifact loading.
 
-Implementation status (2026-08-13): **first portable vertical slice complete;
-product integration, payload optimization, and visible canary/showcase remain
-open**. Generated cross-language wire/state vectors, host serializers and
-negotiated status-v4 parsing, fake four-board transactional publication,
-feature-on receiver state/composition, exact cleanup, and deterministic payload
-accounting now land together. Production remains feature-off and compatible.
-The real `clock_overlay` trace honestly misses both payload gates, so the next
-slice must amortize patch headers and exact-result acknowledgements before
-manager/dashboard wiring or wall mutation. Strict four-board acceptance and
-production enablement remain blocked by the separately documented return path.
+Implementation status (2026-08-13): **portable vertical slice and batch/ack
+payload optimization complete; product integration and visible
+canary/showcase remain open**. Generated cross-language wire/state vectors,
+host serializers and negotiated status-v4 parsing, fake four-board transactional
+publication, feature-on receiver state/composition, exact cleanup, atomic
+multi-span batch patches, and deterministic payload accounting now land
+together. Production remains feature-off and compatible. The representative
+`clock_overlay` tick and corrected 60-second trace pass both frozen payload
+gates. Manager/dashboard wiring and wall mutation remain deliberately out of
+scope for this slice. Strict four-board acceptance and production enablement
+remain blocked by the separately documented return path.
 
 #### Phase 3B0: next-context hybrid showcase
 
@@ -2384,17 +2385,18 @@ Portable-slice evidence and open gates (2026-08-13):
   compensation, failed compensation, scheduled-state disagreement, expiry
   repair, restart authority, and full-frame takeover without reporting a healthy
   mixed wall.
-- [ ] The current real-clock payload format does not meet the frozen thresholds.
-  A representative changed tick has 35 patches and 173 pixels: 1,812 bytes
-  including patch headers/CRC, or 13.6652% of the exact 13,260-byte complete wall
-  RGB transfer (four 3,315-byte receiver packets). The corrected 60-second trace
-  clocks 6,413,426 sparse bytes versus 47,736,000 complete-frame bytes, a saving
-  of 86.5648%. It includes aggregate publish/verification/renewal preflight,
-  two repair
-  snapshots, 240 renewals, one exact retry per receiver, 2,839 acknowledged
-  commands, and 14,915 status queries; status-query traffic is 97.2037% of the
-  sparse total. Keep both misses as release stops. The next protocol revision
-  must batch multiple short spans and amortize exact-result status proof.
+- [x] Atomic multi-span batches and one exact status-v4 proof per whole batch
+  meet both frozen thresholds while retaining byte-identical retry and legacy
+  sparse-patch fallback. The same representative 35-span, 173-pixel changed
+  clock tick now uses four receiver batches and 952 bytes including headers and
+  CRC, or 7.1795% of the exact 13,260-byte complete wall RGB transfer, down from
+  1,812 bytes and 13.6652%. The corrected deterministic 60-second trace now
+  clocks 2,468,816 sparse bytes versus 47,736,000 complete-frame bytes, a saving
+  of 94.8282%, up from 86.5648%. It counts 976 commands/acknowledgements, 5,600
+  status queries (4 status-v3 and 5,596 status-v4), 128,400 command bytes,
+  2,340,416 status-transfer bytes, and 4,937,632 full-duplex endpoint bytes.
+  Status traffic remains an honest 94.7991% of SPI-clocked sparse traffic, but
+  neither payload gate is red.
 - [ ] Manager, desired-display, dashboard/API, labeled preview, live vibe and
   clock controls, persistence/fallback, and exact lifecycle cleanup remain the
   next product slice. No code in this slice exposes the canary feature as an
@@ -2434,23 +2436,27 @@ benefit rather than only dormant protocol code:
    manually observed, explicitly incomplete, and never a substitute for the
    post-repair strict gate.
 
-Current handoff: items 1 and 2 are complete as a portable/fake-wall slice. Item
-4's repository-wide validation and ordinary clean deployment are complete for
-that slice, while its two payload thresholds remain red. Items 3 and 5 have not
-started. The next implementation work is therefore protocol batching/ack
-amortization to turn the deterministic payload trace green, followed by item 3;
-do not skip directly to a canary with the known inefficient wire shape.
+Current handoff: items 1 and 2 and the protocol batching/ack-amortization follow-up
+are complete as a portable/fake-wall slice. Item 4's settled-source local
+validation, both payload thresholds, and both ordinary deploy dry runs are
+green; the authoritative ordinary deployment receipt is the final evidence for
+the clean commit. Items 3 and 5 have not started. The next implementation work is
+therefore item 3, the feature-gated manager/dashboard/product lifecycle slice.
+Do not skip directly to a canary or expose the sparse receiver path as an
+ordinary selectable scene.
 
-Settled-source portable evidence on 2026-08-13: `just test` passed 887 Python
-tests and 1,179 subtests, 23 rendering tests and 3 subtests, all 54 native
-firmware cases, both pinned firmware builds, and 153 deployment tests plus 66
-subtests. The repeated rendering gate's slowest accepted installed-geometry p95
-was 3.4572 ms for `snake-max-density`, below 4 ms. The production image used
-50,720 bytes RAM and 272,193 bytes flash; the deliberate canary used 65,464
-bytes RAM and 277,421 bytes flash, a feature-on delta of 14,744 bytes RAM and
-5,228 bytes flash. Generator drift checks, the deterministic payload tool,
-Ruff, `git diff --check`, and both ordinary deploy dry runs pass. These are
-workstation/portable numbers, not Raspberry Pi or ESP32 runtime percentiles.
+Settled-source portable evidence on 2026-08-13: `just test` passed 897 Python
+tests and 1,198 subtests, 23 rendering tests and 3 subtests, all 59 native
+firmware cases (17 contract, 8 native-protocol, and 34 receiver-runtime), both
+pinned firmware builds, and 153 deployment tests plus 66 subtests. The repeated
+rendering gate's slowest accepted installed-geometry p95 was 3.4081 ms for
+`snake-max-density`, below 4 ms. The feature-off production image uses 50,720
+bytes RAM and 272,273 bytes flash; the deliberate canary uses 65,504 bytes RAM
+and 278,553 bytes flash, a feature-on delta of 14,784 bytes RAM and 6,280 bytes
+flash. Both generated-fixture drift checks, the deterministic payload tool,
+Ruff, Python compilation, `git diff --check`, and both ordinary deploy dry runs
+pass. These are workstation/portable numbers, not Raspberry Pi or ESP32 runtime
+percentiles.
 
 Keep the plan's implementation status, focused evidence, measured payload bytes,
 timing percentiles, cleanup result, and any newly discovered stop gate current as

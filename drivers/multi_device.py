@@ -20,8 +20,9 @@ from drivers.spi_controller import (
     CAPABILITY_STATIC_LOCAL_BACKGROUND,
     CAPABILITY_STATUS_V3,
     CAPABILITY_SPARSE_OVERLAY_V1,
+    CAPABILITY_SPARSE_OVERLAY_BATCH_V1,
     LEDController,
-    MAX_RGBA_PIXELS_PER_PATCH,
+    MAX_RGBA_PIXELS_PER_BATCH_SPAN,
     OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
     OVERLAY_UPDATE_DELTA,
     OVERLAY_UPDATE_FULL_SNAPSHOT,
@@ -40,7 +41,9 @@ LOCAL_BACKGROUND_REQUIRED_CAPABILITIES = (
     | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
 )
 SPARSE_OVERLAY_REQUIRED_CAPABILITIES = (
-    LOCAL_BACKGROUND_REQUIRED_CAPABILITIES | CAPABILITY_SPARSE_OVERLAY_V1
+    LOCAL_BACKGROUND_REQUIRED_CAPABILITIES
+    | CAPABILITY_SPARSE_OVERLAY_V1
+    | CAPABILITY_SPARSE_OVERLAY_BATCH_V1
 )
 
 
@@ -324,6 +327,9 @@ class MultiDeviceLEDController:
         """
         with self._controller_lock():
             was_local = self._local_background_active
+            had_sparse_authority = (
+                getattr(self, "_sparse_overlay_session_id", None) is not None
+            )
             # Split frame into per-device chunks. A complete SET_ALL is the
             # protocol's universal takeover path; no local STOP is required.
             device_frames = self._split_frame(colors)
@@ -341,7 +347,9 @@ class MultiDeviceLEDController:
                 for device_id, device_colors in enumerate(device_frames):
                     successful = self._send_to_device(device_id, device_colors) and successful
             self._logical_frames_sent += 1
-            if successful and (was_local or not self._display_ownership_known):
+            if successful and (
+                was_local or had_sparse_authority or not self._display_ownership_known
+            ):
                 try:
                     statuses = []
                     for device in self.devices:
@@ -599,8 +607,10 @@ class MultiDeviceLEDController:
         local_pixels = pixels[local_start:local_end]
         if update_kind == OVERLAY_UPDATE_FULL_SNAPSHOT:
             return [
-                (start, local_pixels[start:start + MAX_RGBA_PIXELS_PER_PATCH])
-                for start in range(0, len(local_pixels), MAX_RGBA_PIXELS_PER_PATCH)
+                (start, local_pixels[start:start + MAX_RGBA_PIXELS_PER_BATCH_SPAN])
+                for start in range(
+                    0, len(local_pixels), MAX_RGBA_PIXELS_PER_BATCH_SPAN
+                )
             ]
 
         ranges = []
@@ -618,7 +628,7 @@ class MultiDeviceLEDController:
         patches = []
         for start, end in ranges:
             while start < end:
-                patch_end = min(end, start + MAX_RGBA_PIXELS_PER_PATCH)
+                patch_end = min(end, start + MAX_RGBA_PIXELS_PER_BATCH_SPAN)
                 patches.append((start, local_pixels[start:patch_end]))
                 start = patch_end
         return patches
@@ -712,13 +722,12 @@ class MultiDeviceLEDController:
                 expected_patches=len(patches),
                 lease_ms=lease_ms,
             )
-            for start, rgba in patches:
-                LEDController.serialize_overlay_patch(
-                    controller_session_id=session,
-                    generation=overlay_generation,
-                    start=start,
-                    premultiplied_rgba=rgba,
-                )
+            LEDController.serialize_overlay_patch_batches(
+                controller_session_id=session,
+                generation=overlay_generation,
+                patches=patches,
+                update_kind=update_kind,
+            )
         LEDController.serialize_overlay_commit(
             controller_session_id=session,
             generation=overlay_generation,

@@ -102,6 +102,7 @@ Every command is followed by a big-endian CRC-16/CCITT-FALSE.
 | PRESENTATION_CONTEXT_BEGIN/SET/COMMIT | `0x21`–`0x23` | versioned staged context packets |
 | OVERLAY_BEGIN/PATCH/COMMIT | `0x30`–`0x32` | generation/CAS binding, sorted RGBA8 patches, scheduled commit |
 | OVERLAY_CLEAR/RENEW | `0x33`–`0x34` | generation/revision clear, or active-generation lease renewal |
+| OVERLAY_PATCH_BATCH | `0x35` | session/generation, span count, sorted `(start, count, RGBA)` entries |
 | PING | `0xFF` | none |
 
 SET_PIXEL and SET_RANGE modify the working frame. SHOW and CLEAR publish only
@@ -134,8 +135,10 @@ uses `last_processed_command` plus `operation_sequence` to bind later status to
 the exact CRC-valid operation. Status queries do not advance that sequence.
 
 When status-v3 advertises sparse-overlay capability bit `1<<4`, a new host may
-switch to a 416-byte query. The receiver then returns `LGS4`: bytes 5–319 retain
-the v3 layout, while bytes 320–415 report the exact foreground result,
+switch to a 416-byte query. Batch command `0x35` additionally requires bit
+`1<<5`; receivers without it retain the original one-span `0x31` command. The
+receiver then returns `LGS4`: bytes 5–319 retain the v3 layout, while bytes
+320–415 report the exact foreground result,
 update/patch progress, coverage, committed/staged generations, scene/base
 binding, scheduled presentation, lease/remaining time, controller session, and
 composition timing/counters. A 320-byte query always returns exact `LGS3`, so
@@ -165,18 +168,23 @@ one-receiver canary passes.
 The canary feature also owns one bounded aggregate foreground plane. Two fixed
 4,416-byte premultiplied-RGBA buffers and two fixed 1,104-byte coverage maps
 stage full snapshots or deltas transactionally; feature-off production builds
-do not allocate them. Full snapshots use canonical 1,016+88-pixel patches.
-Delta patches may move or clear content with alpha zero, and a zero-patch delta
-is a valid generation-agreement no-op. Scheduled commits retain the prior plane
-until their scene-time deadline. Each local base cadence tick recomposes the
-unchanged foreground; a foreground-only tick reuses the cached base and does
-not advance background cadence. Finite leases clear expired content while the
-local background continues. Local stop/failure, receiver restart, and complete
-`SET_ALL` takeover discard staged and committed foreground. Lease expiry also
-requires the next content update to be a full snapshot because the committed
-plane was destroyed. Complete host takeover additionally resets sparse session
-and generation authority, so later hybrid re-entry reconciles from a fresh
-session begin and full snapshot rather than inheriting pre-takeover counters.
+do not allocate them. Legacy full snapshots use canonical 1,016+88-pixel
+single-span patches. Batch-mode snapshots use 1,015+89-pixel spans because the
+28-byte packet header, four-byte span descriptor, and CRC share the 4,096-byte
+transaction ceiling. Batch `expected_patches` and status `accepted_patches`
+count logical spans; one operation-sequenced status-v4 result proves the entire
+CRC-bound batch. Delta spans may move or clear content with alpha zero, and a
+zero-patch delta is a valid generation-agreement no-op. Scheduled commits retain
+the prior plane until their scene-time deadline. Each local base cadence tick
+recomposes the unchanged foreground; a foreground-only tick reuses the cached
+base and does not advance background cadence. Finite leases clear expired
+content while the local background continues. Local stop/failure, receiver
+restart, and complete `SET_ALL` takeover discard staged and committed
+foreground. Lease expiry also requires the next content update to be a full
+snapshot because the committed plane was destroyed. Complete host takeover
+additionally resets sparse session and generation authority, so later hybrid
+re-entry reconciles from a fresh session begin and full snapshot rather than
+inheriting pre-takeover counters.
 
 Only `esp32-s3-devkitc-1-local-canary` advertises local/context/sparse capability
 bits and accepts these commands. The ordinary production image stays on status

@@ -88,6 +88,17 @@ def _premultiplied_payload(start: int, count: int) -> bytes:
     return bytes(payload)
 
 
+def _batch_entries(spans: Sequence[tuple[int, int]]) -> bytes:
+    """Encode sorted span descriptors and deterministic RGBA bodies."""
+
+    entries = bytearray()
+    for start, count in spans:
+        entries.extend(_u16(start))
+        entries.extend(_u16(count))
+        entries.extend(_premultiplied_payload(start, count))
+    return bytes(entries)
+
+
 def _receiver_slices(
     global_start: int,
     global_end: int,
@@ -207,6 +218,7 @@ def build_fixture() -> Dict[str, Any]:
         "overlay_commit": 0x32,
         "overlay_clear": 0x33,
         "overlay_renew": 0x34,
+        "overlay_patch_batch": 0x35,
     }
     header_bytes = {
         "controller_session_begin": 58,
@@ -215,6 +227,7 @@ def build_fixture() -> Dict[str, Any]:
         "overlay_commit": 50,
         "overlay_clear": 34,
         "overlay_renew": 30,
+        "overlay_patch_batch": 28,
     }
     session = bytes(range(0x10, 0x20))
     snapshot_digest = bytes(range(0x80, 0xA0))
@@ -255,6 +268,14 @@ def build_fixture() -> Dict[str, Any]:
             + _u64(generation)
             + _u16(start)
             + _u16(count)
+        )
+
+    def batch_header(span_count: int) -> bytes:
+        return (
+            bytes((command_ids["overlay_patch_batch"], FIXTURE_VERSION))
+            + session
+            + _u64(generation)
+            + _u16(span_count)
         )
 
     commit_header = (
@@ -347,6 +368,61 @@ def build_fixture() -> Dict[str, Any]:
             payload=_premultiplied_payload(1016, 88),
         ),
         _packet_vector(
+            "overlay_patch_batch_multiple_sorted",
+            command_ids["overlay_patch_batch"],
+            batch_header(3),
+            fields={
+                "controller_session_hex": session.hex(),
+                "generation": generation,
+                "span_count": 3,
+                "spans": [
+                    {"start": 0, "count": 2},
+                    {"start": 7, "count": 3},
+                    {"start": 1103, "count": 1},
+                ],
+            },
+            payload=_batch_entries(((0, 2), (7, 3), (1103, 1))),
+        ),
+        _packet_vector(
+            "overlay_patch_batch_maximum_pixels",
+            command_ids["overlay_patch_batch"],
+            batch_header(1),
+            fields={
+                "controller_session_hex": session.hex(),
+                "generation": generation,
+                "span_count": 1,
+                "spans": [{"start": 0, "count": 1015}],
+            },
+            payload=_batch_entries(((0, 1015),)),
+        ),
+        _packet_vector(
+            "overlay_patch_batch_maximum_spans",
+            command_ids["overlay_patch_batch"],
+            batch_header(508),
+            fields={
+                "controller_session_hex": session.hex(),
+                "generation": generation,
+                "span_count": 508,
+                "spans": [
+                    {"start": start, "count": 1}
+                    for start in range(0, 1016, 2)
+                ],
+            },
+            payload=_batch_entries(tuple((start, 1) for start in range(0, 1016, 2))),
+        ),
+        _packet_vector(
+            "overlay_patch_batch_full_snapshot_tail",
+            command_ids["overlay_patch_batch"],
+            batch_header(1),
+            fields={
+                "controller_session_hex": session.hex(),
+                "generation": generation,
+                "span_count": 1,
+                "spans": [{"start": 1015, "count": 89}],
+            },
+            payload=_batch_entries(((1015, 89),)),
+        ),
+        _packet_vector(
             "overlay_commit",
             command_ids["overlay_commit"],
             commit_header,
@@ -379,6 +455,41 @@ def build_fixture() -> Dict[str, Any]:
             },
         ),
     ]
+
+    malformed_batch_inputs = (
+        ("zero_spans", 0, b"", 5),
+        ("truncated_rgba", 1, _u16(5) + _u16(2) + _premultiplied_payload(5, 2)[:-1], 5),
+        (
+            "unsorted_spans",
+            2,
+            _batch_entries(((10, 1), (9, 1))),
+            12,
+        ),
+        (
+            "overlapping_spans",
+            2,
+            _batch_entries(((10, 2), (11, 1))),
+            13,
+        ),
+        ("out_of_bounds", 1, _batch_entries(((1103, 2),)), 6),
+        ("nonpremultiplied", 1, _u16(3) + _u16(1) + bytes((2, 0, 0, 1)), 4),
+        ("over_capacity", 1, _batch_entries(((0, 1016),)), 5),
+    )
+    malformed_batch_packet_vectors = []
+    for vector_id, span_count, entries, expected_result in malformed_batch_inputs:
+        vector = _packet_vector(
+            f"overlay_patch_batch_malformed_{vector_id}",
+            command_ids["overlay_patch_batch"],
+            batch_header(span_count),
+            fields={
+                "controller_session_hex": session.hex(),
+                "generation": generation,
+                "span_count": span_count,
+            },
+            payload=entries,
+        )
+        vector["expected_result"] = expected_result
+        malformed_batch_packet_vectors.append(vector)
     expected_headers = {command: size for command, size in header_bytes.items()}
     for vector in wire_packet_vectors:
         command_name = next(
@@ -617,12 +728,21 @@ def build_fixture() -> Dict[str, Any]:
             "command_ids": command_ids,
             "header_bytes": header_bytes,
             "max_rgba_pixels_per_patch": 1016,
+            "batch_span_descriptor_bytes": 4,
+            "max_rgba_pixels_per_single_span_batch": 1015,
+            "max_one_pixel_spans_per_batch": 508,
+            "batch_capacity_formula": "sum(pixel_counts) + span_count <= 1016",
             "local_pixels": 1104,
             "full_snapshot_patches": [
                 {"start": 0, "count": 1016},
                 {"start": 1016, "count": 88},
             ],
+            "full_snapshot_batch_spans": [
+                {"start": 0, "count": 1015},
+                {"start": 1015, "count": 89},
+            ],
             "wire_packet_vectors": wire_packet_vectors,
+            "malformed_batch_packet_vectors": malformed_batch_packet_vectors,
             "counter_order_vectors": counter_order_vectors,
             "generation_begin_vectors": generation_begin_vectors,
             "lease_commit_vectors": lease_commit_vectors,

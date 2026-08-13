@@ -35,6 +35,7 @@ enum class ReceiverCommand : std::uint8_t {
   OverlayCommit = 0x32,
   OverlayClear = 0x33,
   OverlayRenew = 0x34,
+  OverlayPatchBatch = 0x35,
   Ping = 0xFF,
 };
 
@@ -44,6 +45,7 @@ enum ReceiverCapability : std::uint32_t {
   kCapabilityStatusV3 = 1U << 2U,
   kCapabilityExplicitBaseOwnership = 1U << 3U,
   kCapabilitySparseOverlayV1 = 1U << 4U,
+  kCapabilitySparseOverlayBatchV1 = 1U << 5U,
 };
 
 enum class ReceiverOperationResult : std::uint8_t {

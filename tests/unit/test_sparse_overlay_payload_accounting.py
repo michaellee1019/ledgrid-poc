@@ -36,6 +36,14 @@ class SparseOverlayWireAccountingTests(unittest.TestCase):
                 accounting.OVERLAY_PATCH_HEADER_BYTES,
                 protocol.OVERLAY_PATCH_HEADER_BYTES,
             ),
+            (
+                accounting.OVERLAY_PATCH_BATCH_HEADER_BYTES,
+                protocol.OVERLAY_PATCH_BATCH_HEADER_BYTES,
+            ),
+            (
+                accounting.OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES,
+                protocol.OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES,
+            ),
             (accounting.OVERLAY_COMMIT_BYTES, protocol.OVERLAY_COMMIT_BYTES),
             (accounting.OVERLAY_RENEW_BYTES, protocol.OVERLAY_RENEW_BYTES),
             (
@@ -54,11 +62,16 @@ class SparseOverlayWireAccountingTests(unittest.TestCase):
                 accounting.MAX_RGBA_PIXELS_PER_PATCH,
                 protocol.MAX_RGBA_PIXELS_PER_PATCH,
             ),
+            (
+                accounting.MAX_RGBA_PIXELS_PER_BATCH_SPAN,
+                protocol.MAX_RGBA_PIXELS_PER_BATCH_SPAN,
+            ),
         )
         for benchmark_value, driver_value in pairs:
             with self.subTest(value=benchmark_value):
                 self.assertEqual(benchmark_value, driver_value)
         self.assertEqual(accounting.MAX_RGBA_PIXELS_PER_PATCH, 1016)
+        self.assertEqual(accounting.MAX_RGBA_PIXELS_PER_BATCH_SPAN, 1015)
         self.assertEqual(accounting.LOCAL_RGB_PACKET_BYTES, 3315)
         self.assertEqual(accounting.FULL_WALL_RGB_PACKET_BYTES, 13260)
         self.assertEqual(accounting.STATUS_V3_QUERY_TRANSFER_BYTES, 322)
@@ -76,24 +89,27 @@ class SparseOverlayWireAccountingTests(unittest.TestCase):
         self.assertEqual(result.to_dict()["bidirectional_endpoint_bytes"], 4252)
         self.assertEqual(result.acknowledgement_count, 1)
 
-    def test_full_snapshot_uses_exact_max_packet_and_eighty_eight_pixel_tail(self):
+    def test_full_snapshot_uses_two_exact_batched_spans_and_eighty_nine_pixel_tail(self):
         ranges = accounting._full_snapshot_ranges()
-        self.assertEqual(ranges, ((0, 1016), (1016, 1104)))
-        self.assertEqual(
-            accounting.patch_packet_bytes((ranges[0],)),
-            accounting.MAX_SPI_TRANSFER,
-        )
-        self.assertEqual(accounting.patch_packet_bytes((ranges[1],)), 384)
+        self.assertEqual(ranges, ((0, 1015), (1015, 1104)))
+        self.assertEqual(accounting.batch_packet_bytes((ranges[0],)), 4094)
+        self.assertEqual(accounting.batch_packet_bytes((ranges[1],)), 390)
+        self.assertEqual(accounting.batch_packet_bytes(ranges), 4484)
         self.assertEqual(accounting.patch_packet_bytes(ranges), 4480)
         self.assertEqual(
-            accounting.patch_packet_bytes(ranges) * accounting.RECEIVER_COUNT,
-            17920,
+            accounting.batch_packet_bytes(ranges) * accounting.RECEIVER_COUNT,
+            17936,
         )
 
     def test_invalid_patch_accounting_cannot_hide_zero_or_oversized_body(self):
         for ranges in (((0, 0),), ((0, 1017),), ((4, 3),)):
             with self.subTest(ranges=ranges), self.assertRaises(ValueError):
                 accounting.patch_packet_bytes(ranges)
+
+    def test_invalid_batch_accounting_cannot_hide_zero_or_oversized_body(self):
+        for ranges in (((0, 0),), ((0, 1016),), ((4, 3),)):
+            with self.subTest(ranges=ranges), self.assertRaises(ValueError):
+                accounting.batch_packet_bytes(ranges)
 
 
 class SparseOverlayPayloadTraceTests(unittest.TestCase):
@@ -102,27 +118,29 @@ class SparseOverlayPayloadTraceTests(unittest.TestCase):
         cls.report = accounting.build_report()
         accounting.validate_report(cls.report)
 
-    def test_real_fixed_clock_tick_exposes_current_patch_fragmentation(self):
+    def test_real_fixed_clock_tick_batches_every_receiver_below_ten_percent(self):
         tick = self.report["ordinary_changed_tick"]
         self.assertEqual(tick["second"], 1)
         self.assertEqual(tick["dirty_ranges"], 35)
         self.assertEqual(tick["patches"], 35)
+        self.assertEqual(tick["batch_packets"], 4)
         self.assertEqual(tick["patch_pixels"], 173)
         self.assertEqual(tick["rgba_body_bytes"], 692)
-        self.assertEqual(tick["patch_header_crc_bytes"], 1120)
-        self.assertEqual(tick["patch_packet_bytes_including_headers_crc"], 1812)
+        self.assertEqual(tick["batch_overhead_bytes"], 260)
+        self.assertEqual(tick["legacy_single_span_packet_bytes"], 1812)
+        self.assertEqual(tick["patch_packet_bytes_including_headers_crc"], 952)
         self.assertEqual(tick["full_wall_rgb_packet_bytes"], 13260)
-        self.assertAlmostEqual(tick["patch_ratio"], 0.136652, places=6)
-        self.assertFalse(tick["below_10_percent"])
-        # This explicitly distinguishes the plan's patch-only gate from total
-        # acknowledged traffic: five status queries per short patch dominate.
+        self.assertAlmostEqual(tick["patch_ratio"], 0.071795, places=6)
+        self.assertTrue(tick["below_10_percent"])
+        # The patch-only gate is distinct from total acknowledged traffic: each
+        # receiver batch still receives a complete queued-response proof.
         acknowledged = tick["acknowledged_generation_plus_renewal"]
-        self.assertEqual(acknowledged["command_count"], 47)
-        self.assertEqual(acknowledged["status_query_count"], 235)
-        self.assertEqual(acknowledged["spi_clocked_bytes"], 100650)
+        self.assertEqual(acknowledged["command_count"], 16)
+        self.assertEqual(acknowledged["status_query_count"], 80)
+        self.assertEqual(acknowledged["spi_clocked_bytes"], 35000)
         self.assertAlmostEqual(
             tick["acknowledged_ratio_to_one_full_wall_packet"],
-            7.590498,
+            2.639517,
             places=6,
         )
 
@@ -133,42 +151,45 @@ class SparseOverlayPayloadTraceTests(unittest.TestCase):
         self.assertEqual(trace["clock_changed_ticks"], 60)
         self.assertEqual(trace["repair_snapshots"], 2)
         self.assertEqual(events["controller_session_begin"], 4)
-        self.assertEqual(events["repair_patch"], 16)
-        self.assertEqual(events["delta_patch"], 2095)
+        self.assertEqual(events["repair_patch_batch"], 16)
+        self.assertEqual(events["delta_patch_batch"], 232)
         self.assertEqual(events["lease_renew"], 240)
-        self.assertEqual(events["exact_patch_retry"], 4)
+        self.assertEqual(events["exact_batch_retry"], 4)
         self.assertEqual(events["publish_preflight_query"], 240)
         self.assertEqual(events["publish_verification_query"], 240)
         self.assertEqual(events["renewal_preflight_query"], 240)
-        self.assertEqual(sparse["command_count"], 2839)
-        self.assertEqual(sparse["acknowledgement_count"], 2839)
-        self.assertEqual(sparse["status_query_count"], 14915)
+        self.assertEqual(sparse["command_count"], 976)
+        self.assertEqual(sparse["acknowledgement_count"], 976)
+        self.assertEqual(sparse["status_query_count"], 5600)
         self.assertEqual(events["status_v3_query"], 4)
-        self.assertEqual(events["status_v4_query"], 14911)
-        self.assertEqual(sparse["command_packet_bytes"], 179340)
-        self.assertEqual(sparse["status_query_transfer_bytes"], 6234086)
-        self.assertEqual(sparse["meaningful_status_response_bytes"], 6204256)
-        self.assertEqual(sparse["spi_clocked_bytes"], 6413426)
-        self.assertEqual(sparse["bidirectional_endpoint_bytes"], 12826852)
+        self.assertEqual(events["status_v4_query"], 5596)
+        self.assertEqual(sparse["command_packet_bytes"], 128400)
+        self.assertEqual(sparse["status_query_transfer_bytes"], 2340416)
+        self.assertEqual(sparse["meaningful_status_response_bytes"], 2329216)
+        self.assertEqual(sparse["spi_clocked_bytes"], 2468816)
+        self.assertEqual(sparse["mosi_bytes"], 2468816)
+        self.assertEqual(sparse["miso_bytes"], 2468816)
+        self.assertEqual(sparse["bidirectional_endpoint_bytes"], 4937632)
         self.assertEqual(trace["baseline_full_rgb_frames"], 3600)
         self.assertEqual(trace["baseline_spi_clocked_bytes"], 47736000)
-        self.assertAlmostEqual(trace["savings_ratio"], 0.865648, places=6)
-        self.assertFalse(trace["at_least_90_percent_savings"])
+        self.assertEqual(trace["baseline_bidirectional_endpoint_bytes"], 95472000)
+        self.assertAlmostEqual(trace["savings_ratio"], 0.948282, places=6)
+        self.assertTrue(trace["at_least_90_percent_savings"])
         cause = self.report["architectural_cause"]
-        self.assertAlmostEqual(cause["ordinary_header_crc_fraction"], 0.618102, places=6)
-        self.assertAlmostEqual(cause["trace_status_query_fraction"], 0.972037, places=6)
-        self.assertIn("batch multiple short spans", cause["required_direction"])
+        self.assertAlmostEqual(cause["ordinary_header_crc_fraction"], 0.273109, places=6)
+        self.assertAlmostEqual(cause["trace_status_query_fraction"], 0.947991, places=6)
+        self.assertIn("implemented: batch multiple sorted spans", cause["required_direction"])
 
-    def test_nonpassing_acceptance_is_stable_diagnostic_evidence(self):
+    def test_passing_acceptance_is_stable_evidence(self):
         acceptance = self.report["acceptance"]
         self.assertEqual(acceptance, {
-            "ordinary_changed_tick_below_10_percent": False,
-            "sixty_second_trace_at_least_90_percent_savings": False,
-            "all_gates_pass": False,
-            "nonpassing_result_is_diagnostic_not_process_failure": True,
+            "ordinary_changed_tick_below_10_percent": True,
+            "sixty_second_trace_at_least_90_percent_savings": True,
+            "all_gates_pass": True,
+            "check_enforces_acceptance_gates": True,
         })
-        self.assertIn("30-byte-header", self.report["diagnosis"])
-        self.assertIn("five 418-byte", self.report["diagnosis"])
+        self.assertIn("one 28-byte batch header", self.report["diagnosis"])
+        self.assertIn("one command/result proof", self.report["diagnosis"])
 
     def test_accounting_validator_detects_internal_category_drift(self):
         mutated = json.loads(json.dumps(self.report))
@@ -176,7 +197,16 @@ class SparseOverlayPayloadTraceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "queued acknowledgements"):
             accounting.validate_report(mutated)
 
-    def test_check_cli_returns_success_while_reporting_honest_gate_failure(self):
+    def test_accounting_validator_detects_omitted_retry_or_query(self):
+        for event in ("exact_batch_retry", "publish_verification_query"):
+            mutated = json.loads(json.dumps(self.report))
+            mutated["trace"]["sparse"]["event_counts"][event] -= 1
+            with self.subTest(event=event), self.assertRaisesRegex(
+                RuntimeError, "omitted or added|queued acknowledgements"
+            ):
+                accounting.validate_report(mutated)
+
+    def test_check_cli_returns_success_and_reports_both_green_gates(self):
         result = subprocess.run(
             [sys.executable, str(TOOL), "--check"],
             cwd=ROOT,
@@ -185,10 +215,8 @@ class SparseOverlayPayloadTraceTests(unittest.TestCase):
             text=True,
         )
         payload = json.loads(result.stdout)
-        self.assertFalse(payload["acceptance"]["all_gates_pass"])
-        self.assertTrue(
-            payload["acceptance"]["nonpassing_result_is_diagnostic_not_process_failure"]
-        )
+        self.assertTrue(payload["acceptance"]["all_gates_pass"])
+        self.assertTrue(payload["acceptance"]["check_enforces_acceptance_gates"])
 
 
 if __name__ == "__main__":

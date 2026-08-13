@@ -3,7 +3,7 @@
 ## Scope and authority
 
 This document freezes the names, bytes, state boundaries, and rollout gates
-needed by Phase 1 and activated incrementally through Phase 3A of
+needed by Phase 1 and activated incrementally through Phase 3B0 of
 [plan-revamped-animation-pipeline.md](plan-revamped-animation-pipeline.md).
 The scene/provider rollout flags remain off, while Phase 3A activates explicit
 receiver ownership and status v3. Ordinary production firmware keeps the
@@ -34,15 +34,18 @@ change; these identifiers and versions may not change in place.
 | Rollout flags | `ledgrid.animation-pipeline-feature-flags` | 1 |
 | Foreground protocol | `ledgrid.foreground-protocol` | 1 |
 | Receiver presentation context | `ledgrid.receiver-presentation-golden` | 1 |
-| Receiver status | `ledgrid.receiver-status` | 3 |
+| Receiver status | `ledgrid.receiver-status` | 4 (v3-compatible prefix) |
 | Native background ABI | `ledgrid.native-background-abi` | 2 (reserved) |
 | Unsigned native bundle | `ledgrid.native-background-bundle` | 1 (reserved) |
 | Installation profile | `ledgrid.installation-profile` | 1 (reserved) |
 
 Reserved contracts are deliberately not accepted by current runtime code.
-Status v3 is live and its first 64 bytes preserve every v2 counter offset, but
-uses `LGS3`; compatibility is intentionally new-host-to-old-firmware. An old
-host that accepts only `LGS2` is not compatible with new firmware.
+Status v4 is negotiated only after a legacy-safe v3 query exposes sparse
+foreground support. Its first 320 bytes preserve status v3 exactly apart from
+the `LGS4` magic/version. Status v3 preserves every v2 counter offset in its
+first 64 bytes but uses `LGS3`; compatibility is intentionally
+new-host-to-old-firmware. An old host that accepts only `LGS2` is not compatible
+with new firmware.
 
 ## Component and presentation state
 
@@ -355,6 +358,7 @@ build:
 | `OVERLAY_COMMIT` | `0x32` | 50 |
 | `OVERLAY_CLEAR` | `0x33` | 34 |
 | `OVERLAY_RENEW` | `0x34` | 30 |
+| `OVERLAY_PATCH_BATCH` | `0x35` | 28-byte fixed header plus span entries |
 
 Widths are fixed: session ID 16 bytes; generation, prior generation, scene
 revision, scene epoch, base revision, and presentation time `u64`; lease
@@ -375,6 +379,66 @@ overlap, gap where a full snapshot requires continuity, or out-of-order patch is
 rejected. Equal begin/commit operations are idempotent only when their complete
 operation digest is identical. Lower revisions/generations are stale, and
 `prior_generation` is a compare-and-swap precondition.
+
+`OVERLAY_PATCH_BATCH` is the smallest backward-compatible extension: receivers
+advertise `sparse_overlay_batch_v1 = 1<<5` in addition to the original
+`sparse_overlay_v1 = 1<<4`; without both bits the host sends the unchanged
+single-span `OVERLAY_PATCH`. The batch packet has this exact shape before the
+shared trailing CRC:
+
+| Offset | Field | Encoding |
+| ---: | --- | --- |
+| 0 | command | `u8 = 0x35` |
+| 1 | version | `u8 = 1` |
+| 2 | controller session | opaque `bytes[16]` |
+| 18 | foreground generation | `u64` |
+| 26 | span count | `u16`, at least one |
+| 28 | span entries | repeated `start:u16, count:u16, rgba:bytes[count*4]` |
+
+Each span count is nonzero, every RGBA body is premultiplied, and entries are
+sorted, non-overlapping, and in receiver-local bounds. Full snapshots are also
+contiguous from local pixel zero across packet boundaries. Including the
+28-byte fixed header, four bytes per span descriptor, and the two-byte CRC, the
+exact capacity rule is:
+
+```text
+sum(pixel_counts) + span_count <= 1016
+```
+
+Consequently one batch can contain at most 1,015 pixels in one span or 508
+one-pixel spans. The largest legal batch is 4,094 bytes; the two unused bytes at
+the 4,096-byte ceiling are unavoidable because both descriptors and pixels are
+four-byte units. A canonical batch-mode 1,104-pixel snapshot uses logical spans
+`[0, 1015)` and `[1015, 1104)` in two packets.
+
+`OVERLAY_BEGIN.expected_patches` and status-v4 `accepted_patches` count logical
+spans, not SPI packets: a legacy patch contributes one and a batch contributes
+its declared span count. The receiver validates the complete CRC-bound batch
+before mutating staging. A byte-exact retry of the latest accepted whole batch
+returns `Idempotent` without reapplying pixels or incrementing accepted spans;
+a same-position/count retry with any byte conflict returns `PatchConflict`.
+Unsorted, overlapping, out-of-bounds, truncated, over-capacity, and
+non-premultiplied batches retain the existing exact rejection vocabulary.
+
+Batching amortizes status traffic without weakening acknowledgement proof. One
+accepted batch advances the nonwrapping operation sequence once. After draining
+the real two-deep response queue, the host accepts the batch only when status v4
+reports command `0x35`, exactly the next operation sequence, and `Ok` or
+`Idempotent`; the CRC binds every descriptor and RGBA byte to that one result.
+Status v4 remains exactly 416 bytes and retains its existing offsets:
+
+| Offset | Bytes | Foreground proof field |
+| ---: | ---: | --- |
+| 320 | 1 | overlay operation result |
+| 321 | 1 | update kind |
+| 322 | 2 | expected logical spans |
+| 324 | 2 | accepted logical spans |
+| 326 | 2 | committed coverage pixels |
+| 328 | 8 | committed generation |
+| 336 | 8 | staged generation |
+| 344 | 40 | scene revision/epoch, base revision, scheduled time, lease |
+| 384 | 16 | controller session ID |
+| 400 | 16 | compositor/commit/expiration counters |
 
 `expected_patches=0` is valid only for a `Delta` update. Its commit advances the
 common foreground generation without changing pixels or coverage, allowing an

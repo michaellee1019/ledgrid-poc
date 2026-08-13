@@ -353,6 +353,9 @@ void ReceiverRuntime::discard_overlay_staging() {
   overlay_generation_order_.staged_generation = 0;
   overlay_generation_order_.staged_operation_digest = {};
   overlay_patch_order_ = {};
+  last_batch_digest_present_ = false;
+  last_batch_first_start_ = 0;
+  last_batch_span_count_ = 0;
   staged_scene_revision_ = 0;
   staged_scene_epoch_ = 0;
   staged_base_revision_ = 0;
@@ -495,6 +498,9 @@ ReceiverOperationResult ReceiverRuntime::overlay_begin(
   overlay_patch_order_ = {};
   overlay_patch_order_.expected_patches = expected;
   overlay_patch_order_.update_kind = kind;
+  last_batch_digest_present_ = false;
+  last_batch_first_start_ = 0;
+  last_batch_span_count_ = 0;
   staged_scene_revision_ = scene_revision;
   staged_scene_epoch_ = scene_epoch;
   staged_base_revision_ = base_revision;
@@ -562,6 +568,9 @@ ReceiverOperationResult ReceiverRuntime::overlay_patch(
   const OverlayOperationResult accepted = accept_overlay_patch(
       &overlay_patch_order_, start, count, digest);
   if (accepted != OverlayOperationResult::Ok) return finish_overlay(accepted);
+  last_batch_digest_present_ = false;
+  last_batch_first_start_ = 0;
+  last_batch_span_count_ = 0;
   for (std::size_t pixel = 0; pixel < count; ++pixel) {
     const std::size_t index = static_cast<std::size_t>(start) + pixel;
     const std::uint8_t* rgba = command + kOverlayPatchHeaderBytes + pixel * 4U;
@@ -572,6 +581,146 @@ ReceiverOperationResult ReceiverRuntime::overlay_patch(
     if (covered && !was_covered) ++staging_coverage_pixels_;
     if (!covered && was_covered) --staging_coverage_pixels_;
   }
+  return finish_overlay(OverlayOperationResult::Ok);
+#endif
+}
+
+ReceiverOperationResult ReceiverRuntime::overlay_patch_batch(
+    const std::uint8_t* command, std::size_t size) {
+#if !LEDGRID_ENABLE_LOCAL_BACKGROUND
+  (void)command;
+  (void)size;
+  return finish_overlay(OverlayOperationResult::InvalidState);
+#else
+  if (!local_background_enabled_) {
+    return finish(ReceiverOperationResult::Unsupported);
+  }
+  if (size < kOverlayPatchBatchHeaderBytes ||
+      size > kAnimationPipelineMaxTransactionBytes -
+                 kAnimationPipelineCrcBytes) {
+    return finish_overlay(OverlayOperationResult::InvalidSize);
+  }
+  if (command[1] != kAnimationPipelineProtocolVersion) {
+    return finish_overlay(OverlayOperationResult::UnsupportedVersion);
+  }
+  if (!controller_session_present_ ||
+      !equal_bytes(command + 2, controller_session_, kControllerSessionBytes)) {
+    return finish_overlay(OverlayOperationResult::StaleSession);
+  }
+  if (!overlay_generation_order_.has_staged_generation) {
+    return finish_overlay(OverlayOperationResult::InvalidState);
+  }
+  const std::uint64_t generation = read_u64(command + 18);
+  if (generation < overlay_generation_order_.staged_generation) {
+    return finish_overlay(OverlayOperationResult::StaleGeneration);
+  }
+  if (generation != overlay_generation_order_.staged_generation) {
+    return finish_overlay(OverlayOperationResult::InvalidState);
+  }
+
+  const std::uint16_t span_count = read_u16(command + 26);
+  if (span_count == 0 || span_count > kMaxSinglePixelSpansPerBatch) {
+    return finish_overlay(OverlayOperationResult::InvalidSize);
+  }
+
+  // Validate the complete CRC-bound batch before changing either the order
+  // proof or staging plane. This makes one command acknowledgement proof of an
+  // all-or-nothing update even when the final span is malformed.
+  std::size_t offset = kOverlayPatchBatchHeaderBytes;
+  std::uint32_t batch_units = 0;
+  std::uint16_t first_start = 0;
+  for (std::size_t span = 0; span < span_count; ++span) {
+    if (offset + kOverlayPatchBatchSpanHeaderBytes > size) {
+      return finish_overlay(OverlayOperationResult::InvalidSize);
+    }
+    const std::uint16_t start = read_u16(command + offset);
+    const std::uint16_t count = read_u16(command + offset + 2U);
+    if (span == 0) first_start = start;
+    if (count == 0 || count > kMaxRgbaPixelsPerBatchSpan) {
+      return finish_overlay(OverlayOperationResult::InvalidSize);
+    }
+    if (static_cast<std::uint32_t>(start) + count >
+        kContractLocalPixels) {
+      return finish_overlay(OverlayOperationResult::OutOfBounds);
+    }
+    batch_units += static_cast<std::uint32_t>(count) + 1U;
+    if (batch_units > 1016U) {
+      return finish_overlay(OverlayOperationResult::InvalidSize);
+    }
+    offset += kOverlayPatchBatchSpanHeaderBytes;
+    const std::size_t rgba_bytes =
+        static_cast<std::size_t>(count) * kPremultipliedRgbaBytesPerPixel;
+    if (offset + rgba_bytes > size) {
+      return finish_overlay(OverlayOperationResult::InvalidSize);
+    }
+    for (std::size_t pixel = 0; pixel < count; ++pixel) {
+      const std::uint8_t* rgba = command + offset + pixel * 4U;
+      if (rgba[0] > rgba[3] || rgba[1] > rgba[3] || rgba[2] > rgba[3]) {
+        return finish_overlay(OverlayOperationResult::UnsupportedFormat);
+      }
+    }
+    offset += rgba_bytes;
+  }
+  if (offset != size) {
+    return finish_overlay(OverlayOperationResult::InvalidSize);
+  }
+
+  const Digest256 batch_digest = command_digest(command, size);
+  if (last_batch_digest_present_ &&
+      first_start == last_batch_first_start_ &&
+      span_count == last_batch_span_count_) {
+    return finish_overlay(
+        digest_equal(batch_digest, last_batch_digest_)
+            ? OverlayOperationResult::Idempotent
+            : OverlayOperationResult::PatchConflict);
+  }
+
+  OverlayPatchOrderState candidate_order = overlay_patch_order_;
+  offset = kOverlayPatchBatchHeaderBytes;
+  for (std::size_t span = 0; span < span_count; ++span) {
+    const std::uint16_t start = read_u16(command + offset);
+    const std::uint16_t count = read_u16(command + offset + 2U);
+    offset += kOverlayPatchBatchSpanHeaderBytes;
+    const std::size_t rgba_bytes =
+        static_cast<std::size_t>(count) * kPremultipliedRgbaBytesPerPixel;
+    const Digest256 span_digest = command_digest(command + offset, rgba_bytes);
+    const OverlayOperationResult accepted = accept_overlay_patch(
+        &candidate_order, start, count, span_digest);
+    if (accepted != OverlayOperationResult::Ok) {
+      // Only a byte-exact retry of the complete latest batch is idempotent.
+      // A batch must not append work by embedding a legacy single-span retry.
+      return finish_overlay(
+          accepted == OverlayOperationResult::Idempotent
+              ? OverlayOperationResult::PatchConflict
+              : accepted);
+    }
+    offset += rgba_bytes;
+  }
+
+  offset = kOverlayPatchBatchHeaderBytes;
+  for (std::size_t span = 0; span < span_count; ++span) {
+    const std::uint16_t start = read_u16(command + offset);
+    const std::uint16_t count = read_u16(command + offset + 2U);
+    offset += kOverlayPatchBatchSpanHeaderBytes;
+    for (std::size_t pixel = 0; pixel < count; ++pixel) {
+      const std::size_t index = static_cast<std::size_t>(start) + pixel;
+      const std::uint8_t* rgba = command + offset + pixel * 4U;
+      const bool was_covered =
+          overlay_coverage_[staging_plane_][index] != 0;
+      const bool covered = rgba[3] != 0;
+      std::memcpy(overlay_rgba_[staging_plane_] + index * 4U, rgba, 4);
+      overlay_coverage_[staging_plane_][index] = covered ? 1U : 0U;
+      if (covered && !was_covered) ++staging_coverage_pixels_;
+      if (!covered && was_covered) --staging_coverage_pixels_;
+    }
+    offset += static_cast<std::size_t>(count) *
+              kPremultipliedRgbaBytesPerPixel;
+  }
+  overlay_patch_order_ = candidate_order;
+  last_batch_digest_ = batch_digest;
+  last_batch_digest_present_ = true;
+  last_batch_first_start_ = first_start;
+  last_batch_span_count_ = span_count;
   return finish_overlay(OverlayOperationResult::Ok);
 #endif
 }
@@ -812,6 +961,8 @@ ReceiverOperationResult ReceiverRuntime::process_command(
       return overlay_begin(command, size, local_monotonic_us);
     case ReceiverCommand::OverlayPatch:
       return overlay_patch(command, size);
+    case ReceiverCommand::OverlayPatchBatch:
+      return overlay_patch_batch(command, size);
     case ReceiverCommand::OverlayCommit:
       return overlay_commit(command, size, local_monotonic_us);
     case ReceiverCommand::OverlayClear:

@@ -452,12 +452,15 @@
     }
   ],
   "firmware_protocol": {
+    "batch_capacity_formula": "sum(pixel_counts) + span_count <= 1016",
+    "batch_span_descriptor_bytes": 4,
     "command_ids": {
       "controller_session_begin": 32,
       "overlay_begin": 48,
       "overlay_clear": 51,
       "overlay_commit": 50,
       "overlay_patch": 49,
+      "overlay_patch_batch": 53,
       "overlay_renew": 52
     },
     "commit_schedule_vectors": [
@@ -513,6 +516,16 @@
       }
     ],
     "crc_bytes": 2,
+    "full_snapshot_batch_spans": [
+      {
+        "count": 1015,
+        "start": 0
+      },
+      {
+        "count": 89,
+        "start": 1015
+      }
+    ],
     "full_snapshot_patches": [
       {
         "count": 1016,
@@ -1163,6 +1176,7 @@
       "overlay_clear": 34,
       "overlay_commit": 50,
       "overlay_patch": 30,
+      "overlay_patch_batch": 28,
       "overlay_renew": 30
     },
     "lease_commit_vectors": [
@@ -1240,7 +1254,116 @@
       }
     ],
     "local_pixels": 1104,
+    "malformed_batch_packet_vectors": [
+      {
+        "command": 53,
+        "expected_crc16": 40329,
+        "expected_result": 5,
+        "fields": {
+          "controller_session_hex": "101112131415161718191a1b1c1d1e1f",
+          "generation": 1230066625199609624,
+          "span_count": 0
+        },
+        "header_bytes": 28,
+        "id": "overlay_patch_batch_malformed_zero_spans",
+        "packet_bytes": 30,
+        "packet_hex": "3501101112131415161718191a1b1c1d1e1f111213141516171800009d89",
+        "payload_bytes": 0
+      },
+      {
+        "command": 53,
+        "expected_crc16": 54804,
+        "expected_result": 5,
+        "fields": {
+          "controller_session_hex": "101112131415161718191a1b1c1d1e1f",
+          "generation": 1230066625199609624,
+          "span_count": 1
+        },
+        "header_bytes": 28,
+        "id": "overlay_patch_batch_malformed_truncated_rgba",
+        "packet_bytes": 41,
+        "packet_hex": "3501101112131415161718191a1b1c1d1e1f1112131415161718000100050002285179a22f5f8fd614",
+        "payload_bytes": 11
+      },
+      {
+        "command": 53,
+        "expected_crc16": 55111,
+        "expected_result": 12,
+        "fields": {
+          "controller_session_hex": "101112131415161718191a1b1c1d1e1f",
+          "generation": 1230066625199609624,
+          "span_count": 2
+        },
+        "header_bytes": 28,
+        "id": "overlay_patch_batch_malformed_unsorted_spans",
+        "packet_bytes": 46,
+        "packet_hex": "3501101112131415161718191a1b1c1d1e1f11121314151617180002000a00010c19263300090001050b1016d747",
+        "payload_bytes": 16
+      },
+      {
+        "command": 53,
+        "expected_crc16": 24811,
+        "expected_result": 13,
+        "fields": {
+          "controller_session_hex": "101112131415161718191a1b1c1d1e1f",
+          "generation": 1230066625199609624,
+          "span_count": 2
+        },
+        "header_bytes": 28,
+        "id": "overlay_patch_batch_malformed_overlapping_spans",
+        "packet_bytes": 50,
+        "packet_hex": "3501101112131415161718191a1b1c1d1e1f11121314151617180002000a00020c19263314283c50000b000114283c5060eb",
+        "payload_bytes": 20
+      },
+      {
+        "command": 53,
+        "expected_crc16": 8780,
+        "expected_result": 6,
+        "fields": {
+          "controller_session_hex": "101112131415161718191a1b1c1d1e1f",
+          "generation": 1230066625199609624,
+          "span_count": 1
+        },
+        "header_bytes": 28,
+        "id": "overlay_patch_batch_malformed_out_of_bounds",
+        "packet_bytes": 42,
+        "packet_hex": "3501101112131415161718191a1b1c1d1e1f11121314151617180001044f00020102030408101821224c",
+        "payload_bytes": 12
+      },
+      {
+        "command": 53,
+        "expected_crc16": 29405,
+        "expected_result": 4,
+        "fields": {
+          "controller_session_hex": "101112131415161718191a1b1c1d1e1f",
+          "generation": 1230066625199609624,
+          "span_count": 1
+        },
+        "header_bytes": 28,
+        "id": "overlay_patch_batch_malformed_nonpremultiplied",
+        "packet_bytes": 38,
+        "packet_hex": "3501101112131415161718191a1b1c1d1e1f11121314151617180001000300010200000172dd",
+        "payload_bytes": 8
+      },
+      {
+        "command": 53,
+        "expected_crc16": 52778,
+        "expected_result": 5,
+        "fields": {
+          "controller_session_hex": "101112131415161718191a1b1c1d1e1f",
+          "generation": 1230066625199609624,
+          "span_count": 1
+        },
+        "header_bytes": 28,
+        "id": "overlay_patch_batch_malformed_over_capacity",
+        "packet_bytes": 4098,
+        "packet_hex": "3501101112131415161718191a1b1c1d1e1f11121314151617180001000003f804080c110b17222e1225384b1a344e6821426385285179a22f5f8fbf376ea5dc3e7cbaf9050b10160c19263314283c501b36516d2245678a29537da7316293c43870a8e13f7fbefe060d141b0e1c2a38152a3f551c39557223476b8f2b5681ac326496c93973ace600010203081018200f1e2d3d162d435a1d3b5977254a6f942c5884b133679ace3a75b0eb0204060809121b2510213142172f475f1f3e5d7c264c72992d5b88b634699ed33c78b4f00306090d0a151f2a1123354719324b6420406081274f769e2e5d8cbb366ca2d83d7ab7f504090d120b17232f1326394c1a344e692143648628517aa3306090c0376ea5dd3e7dbbfa050b11170d1a273414283c511b37526e2245688b2a547ea8316293c53871a9e23f7fbfff070e151c0e1c2a39152b40561c39567324486c902b5681ad326597ca3973ade701020304081018210f1f2e3e162d445b1e3c5a78254a6f952c5985b233679bcf3b76b1ec0204060909131c2610213243183048601f3e5d7d264d739a2d5b89b7356a9fd43c78b4f103070a0e0a15202b1224364819324b6520416182274f779f2f5e8dbc366ca2d93d7bb8f604090e130c1824301326394d1a354f6a2143658729527ba4306090c1376fa6de3e7dbcfb060c12180d1a273514293d521b37536f2346698c2a547ea9316394c63871aae300000000070e151d0e1d2b3a152b41571d3a577424486c912b5782ae326598cb3a74aee801020305081119220f1f2f3f172e455c1e3c5a79254b70962c5986b334689cd03b76b1ed0205070a09131d2711223344183048611f3f5e7e264d749b2e5c8ab8356a9fd53c79b5f203070b0f0b16212c1224364919334c6620416283285078a02f5e8dbd366da3da3d7bb9f7050a0f140c18243113273a4e1a35506b2244668829527ba5306191c2376fa7df3f7ebdfc060c12190d1b283614293e531c3854702346698d2a557faa316395c73972abe400000001070f161e0e1d2c3b162c42581d3a577524496d922b5783af336699cc3a74aee90103040608111a2310203040172e455d1e3d5b7a254b71972d5a87b434689cd13b77b2ee0205080b0a141e2811223345183149621f3f5f7f274e759c2e5c8ab9356ba0d63c79b6f304080c100b16212d1225374a19334d6721426384285078a12f5f8ebe366da4db3e7cbaf8050a0f150c19253213273b4f1b36516c2244668929537ca6306192c33870a8e03f7ebdfd060d131a0d1b2937152a3f541c38547123476a8e2a5580ab326496c83972abe500010102070f171f0f1e2d3c162c42591d3b587624496e932c5884b0336699cd3a75afea0103050709121b2410203041172f465e1e3d5c7b264c72982d5a87b534699dd23b77b3ef0306090c0a141e291123344618314a6320406080274e759d2e5d8bba356ba1d73d7ab7f404080c110b17222e1225384b1a344e6821426385285179a22f5f8fbf376ea5dc3e7cbaf9050b10160c19263314283c501b36516d2245678a29537da7316293c43870a8e13f7fbefe060d141b0e1c2a38152a3f551c39557223476b8f2b5681ac326496c93973ace600010203081018200f1e2d3d162d435a1d3b5977254a6f942c5884b133679ace3a75b0eb0204060809121b2510213142172f475f1f3e5d7c264c72992d5b88b634699ed33c78b4f00306090d0a151f2a1123354719324b6420406081274f769e2e5d8cbb366ca2d83d7ab7f504090d120b17232f1326394c1a344e692143648628517aa3306090c0376ea5dd3e7dbbfa050b11170d1a273414283c511b37526e2245688b2a547ea8316293c53871a9e23f7fbfff070e151c0e1c2a39152b40561c39567324486c902b5681ad326597ca3973ade701020304081018210f1f2e3e162d445b1e3c5a78254a6f952c5985b233679bcf3b76b1ec0204060909131c2610213243183048601f3e5d7d264d739a2d5b89b7356a9fd43c78b4f103070a0e0a15202b1224364819324b6520416182274f779f2f5e8dbc366ca2d93d7bb8f604090e130c1824301326394d1a354f6a2143658729527ba4306090c1376fa6de3e7dbcfb060c12180d1a273514293d521b37536f2346698c2a547ea9316394c63871aae300000000070e151d0e1d2b3a152b41571d3a577424486c912b5782ae326598cb3a74aee801020305081119220f1f2f3f172e455c1e3c5a79254b70962c5986b334689cd03b76b1ed0205070a09131d2711223344183048611f3f5e7e264d749b2e5c8ab8356a9fd53c79b5f203070b0f0b16212c1224364919334c6620416283285078a02f5e8dbd366da3da3d7bb9f7050a0f140c18243113273a4e1a35506b2244668829527ba5306191c2376fa7df3f7ebdfc060c12190d1b283614293e531c3854702346698d2a557faa316395c73972abe400000001070f161e0e1d2c3b162c42581d3a577524496d922b5783af336699cc3a74aee90103040608111a2310203040172e455d1e3d5b7a254b71972d5a87b434689cd13b77b2ee0205080b0a141e2811223345183149621f3f5f7f274e759c2e5c8ab9356ba0d63c79b6f304080c100b16212d1225374a19334d6721426384285078a12f5f8ebe366da4db3e7cbaf8050a0f150c19253213273b4f1b36516c2244668929537ca6306192c33870a8e03f7ebdfd060d131a0d1b2937152a3f541c38547123476a8e2a5580ab326496c83972abe500010102070f171f0f1e2d3c162c42591d3b587624496e932c5884b0336699cd3a75afea0103050709121b2410203041172f465e1e3d5c7b264c72982d5a87b534699dd23b77b3ef0306090c0a141e291123344618314a6320406080274e759d2e5d8bba356ba1d73d7ab7f404080c110b17222e1225384b1a344e6821426385285179a22f5f8fbf376ea5dc3e7cbaf9050b10160c19263314283c501b36516d2245678a29537da7316293c43870a8e13f7fbefe060d141b0e1c2a38152a3f551c39557223476b8f2b5681ac326496c93973ace600010203081018200f1e2d3d162d435a1d3b5977254a6f942c5884b133679ace3a75b0eb0204060809121b2510213142172f475f1f3e5d7c264c72992d5b88b634699ed33c78b4f00306090d0a151f2a1123354719324b6420406081274f769e2e5d8cbb366ca2d83d7ab7f504090d120b17232f1326394c1a344e692143648628517aa3306090c0376ea5dd3e7dbbfa050b11170d1a273414283c511b37526e2245688b2a547ea8316293c53871a9e23f7fbfff070e151c0e1c2a39152b40561c39567324486c902b5681ad326597ca3973ade701020304081018210f1f2e3e162d445b1e3c5a78254a6f952c5985b233679bcf3b76b1ec0204060909131c2610213243183048601f3e5d7d264d739a2d5b89b7356a9fd43c78b4f103070a0e0a15202b1224364819324b6520416182274f779f2f5e8dbc366ca2d93d7bb8f604090e130c1824301326394d1a354f6a2143658729527ba4306090c1376fa6de3e7dbcfb060c12180d1a273514293d521b37536f2346698c2a547ea9316394c63871aae300000000070e151d0e1d2b3a152b41571d3a577424486c912b5782ae326598cb3a74aee801020305081119220f1f2f3f172e455c1e3c5a79254b70962c5986b334689cd03b76b1ed0205070a09131d2711223344183048611f3f5e7e264d749b2e5c8ab8356a9fd53c79b5f203070b0f0b16212c1224364919334c6620416283285078a02f5e8dbd366da3da3d7bb9f7050a0f140c18243113273a4e1a35506b2244668829527ba5306191c2376fa7df3f7ebdfc060c12190d1b283614293e531c3854702346698d2a557faa316395c73972abe400000001070f161e0e1d2c3b162c42581d3a577524496d922b5783af336699cc3a74aee90103040608111a2310203040172e455d1e3d5b7a254b71972d5a87b434689cd13b77b2ee0205080b0a141e2811223345183149621f3f5f7f274e759c2e5c8ab9356ba0d63c79b6f304080c100b16212d1225374a19334d6721426384285078a12f5f8ebe366da4db3e7cbaf8050a0f150c19253213273b4f1b36516c2244668929537ca6306192c33870a8e03f7ebdfd060d131a0d1b2937152a3f541c38547123476a8e2a5580ab326496c83972abe500010102070f171f0f1e2d3c162c42591d3b587624496e932c5884b0336699cd3a75afea0103050709121b2410203041172f465e1e3d5c7b264c72982d5a87b534699dd23b77b3ef0306090c0a141e291123344618314a6320406080274e759d2e5d8bba356ba1d73d7ab7f404080c110b17222e1225384b1a344e6821426385285179a22f5f8fbf376ea5dc3e7cbaf9050b10160c19263314283c501b36516d2245678a29537da7316293c43870a8e13f7fbefe060d141b0e1c2a38152a3f551c39557223476b8f2b5681ac326496c93973ace600010203081018200f1e2d3d162d435a1d3b5977254a6f942c5884b133679ace3a75b0eb0204060809121b2510213142172f475f1f3e5d7c264c72992d5b88b634699ed33c78b4f00306090d0a151f2a1123354719324b6420406081274f769e2e5d8cbb366ca2d83d7ab7f504090d120b17232f1326394c1a344e692143648628517aa3306090c0376ea5dd3e7dbbfa050b11170d1a273414283c511b37526e2245688b2a547ea8316293c53871a9e23f7fbfff070e151c0e1c2a39152b40561c39567324486c902b5681ad326597ca3973ade701020304081018210f1f2e3e162d445b1e3c5a78254a6f952c5985b233679bcf3b76b1ec0204060909131c2610213243183048601f3e5d7d264d739a2d5b89b7356a9fd43c78b4f103070a0e0a15202b1224364819324b6520416182274f779f2f5e8dbc366ca2d93d7bb8f604090e130c1824301326394d1a354f6a2143658729527ba4306090c1376fa6de3e7dbcfb060c12180d1a273514293d521b37536f2346698c2a547ea9316394c63871aae300000000070e151d0e1d2b3a152b41571d3a577424486c912b5782ae326598cb3a74aee801020305081119220f1f2f3f172e455c1e3c5a79254b70962c5986b334689cd03b76b1ed0205070a09131d2711223344183048611f3f5e7e264d749b2e5c8ab8356a9fd53c79b5f203070b0f0b16212c1224364919334c6620416283285078a02f5e8dbd366da3da3d7bb9f7050a0f140c18243113273a4e1a35506b2244668829527ba5306191c2376fa7df3f7ebdfc060c12190d1b283614293e531c3854702346698d2a557faa316395c73972abe400000001070f161e0e1d2c3b162c42581d3a577524496d922b5783af336699cc3a74aee90103040608111a2310203040172e455d1e3d5b7a254b71972d5a87b434689cd13b77b2ee0205080b0a141e2811223345183149621f3f5f7f274e759c2e5c8ab9356ba0d63c79b6f304080c100b16212d1225374a19334d6721426384285078a12f5f8ebe366da4db3e7cbaf8050a0f150c19253213273b4f1b36516c2244668929537ca6306192c33870a8e03f7ebdfd060d131a0d1b2937152a3f541c38547123476a8e2a5580ab326496c83972abe500010102070f171f0f1e2d3c162c42591d3b587624496e932c5884b0336699cd3a75afea0103050709121b2410203041172f465e1e3d5c7b264c72982d5a87b534699dd23b77b3ef0306090cce2a",
+        "payload_bytes": 4068
+      }
+    ],
+    "max_one_pixel_spans_per_batch": 508,
     "max_rgba_pixels_per_patch": 1016,
+    "max_rgba_pixels_per_single_span_batch": 1015,
     "max_transaction_bytes": 4096,
     "receiver_slice_vectors": [
       {
@@ -1499,6 +1622,2122 @@
         "packet_bytes": 384,
         "packet_hex": "3101101112131415161718191a1b1c1d1e1f111213141516171803f800580a141e291123344618314a6320406080274e759d2e5d8bba356ba1d73d7ab7f404080c110b17222e1225384b1a344e6821426385285179a22f5f8fbf376ea5dc3e7cbaf9050b10160c19263314283c501b36516d2245678a29537da7316293c43870a8e13f7fbefe060d141b0e1c2a38152a3f551c39557223476b8f2b5681ac326496c93973ace600010203081018200f1e2d3d162d435a1d3b5977254a6f942c5884b133679ace3a75b0eb0204060809121b2510213142172f475f1f3e5d7c264c72992d5b88b634699ed33c78b4f00306090d0a151f2a1123354719324b6420406081274f769e2e5d8cbb366ca2d83d7ab7f504090d120b17232f1326394c1a344e692143648628517aa3306090c0376ea5dd3e7dbbfa050b11170d1a273414283c511b37526e2245688b2a547ea8316293c53871a9e23f7fbfff070e151c0e1c2a39152b40561c39567324486c902b5681ad326597ca3973ade701020304e847",
         "payload_bytes": 352
+      },
+      {
+        "command": 53,
+        "expected_crc16": 12051,
+        "fields": {
+          "controller_session_hex": "101112131415161718191a1b1c1d1e1f",
+          "generation": 1230066625199609624,
+          "span_count": 3,
+          "spans": [
+            {
+              "count": 2,
+              "start": 0
+            },
+            {
+              "count": 3,
+              "start": 7
+            },
+            {
+              "count": 1,
+              "start": 1103
+            }
+          ]
+        },
+        "header_bytes": 28,
+        "id": "overlay_patch_batch_multiple_sorted",
+        "packet_bytes": 66,
+        "packet_hex": "3501101112131415161718191a1b1c1d1e1f111213141516171800030000000204080c110b17222e00070003376ea5dc3e7cbaf9050b1016044f0001010203042f13",
+        "payload_bytes": 36
+      },
+      {
+        "command": 53,
+        "expected_crc16": 24056,
+        "fields": {
+          "controller_session_hex": "101112131415161718191a1b1c1d1e1f",
+          "generation": 1230066625199609624,
+          "span_count": 1,
+          "spans": [
+            {
+              "count": 1015,
+              "start": 0
+            }
+          ]
+        },
+        "header_bytes": 28,
+        "id": "overlay_patch_batch_maximum_pixels",
+        "packet_bytes": 4094,
+        "packet_hex": "3501101112131415161718191a1b1c1d1e1f11121314151617180001000003f704080c110b17222e1225384b1a344e6821426385285179a22f5f8fbf376ea5dc3e7cbaf9050b10160c19263314283c501b36516d2245678a29537da7316293c43870a8e13f7fbefe060d141b0e1c2a38152a3f551c39557223476b8f2b5681ac326496c93973ace600010203081018200f1e2d3d162d435a1d3b5977254a6f942c5884b133679ace3a75b0eb0204060809121b2510213142172f475f1f3e5d7c264c72992d5b88b634699ed33c78b4f00306090d0a151f2a1123354719324b6420406081274f769e2e5d8cbb366ca2d83d7ab7f504090d120b17232f1326394c1a344e692143648628517aa3306090c0376ea5dd3e7dbbfa050b11170d1a273414283c511b37526e2245688b2a547ea8316293c53871a9e23f7fbfff070e151c0e1c2a39152b40561c39567324486c902b5681ad326597ca3973ade701020304081018210f1f2e3e162d445b1e3c5a78254a6f952c5985b233679bcf3b76b1ec0204060909131c2610213243183048601f3e5d7d264d739a2d5b89b7356a9fd43c78b4f103070a0e0a15202b1224364819324b6520416182274f779f2f5e8dbc366ca2d93d7bb8f604090e130c1824301326394d1a354f6a2143658729527ba4306090c1376fa6de3e7dbcfb060c12180d1a273514293d521b37536f2346698c2a547ea9316394c63871aae300000000070e151d0e1d2b3a152b41571d3a577424486c912b5782ae326598cb3a74aee801020305081119220f1f2f3f172e455c1e3c5a79254b70962c5986b334689cd03b76b1ed0205070a09131d2711223344183048611f3f5e7e264d749b2e5c8ab8356a9fd53c79b5f203070b0f0b16212c1224364919334c6620416283285078a02f5e8dbd366da3da3d7bb9f7050a0f140c18243113273a4e1a35506b2244668829527ba5306191c2376fa7df3f7ebdfc060c12190d1b283614293e531c3854702346698d2a557faa316395c73972abe400000001070f161e0e1d2c3b162c42581d3a577524496d922b5783af336699cc3a74aee90103040608111a2310203040172e455d1e3d5b7a254b71972d5a87b434689cd13b77b2ee0205080b0a141e2811223345183149621f3f5f7f274e759c2e5c8ab9356ba0d63c79b6f304080c100b16212d1225374a19334d6721426384285078a12f5f8ebe366da4db3e7cbaf8050a0f150c19253213273b4f1b36516c2244668929537ca6306192c33870a8e03f7ebdfd060d131a0d1b2937152a3f541c38547123476a8e2a5580ab326496c83972abe500010102070f171f0f1e2d3c162c42591d3b587624496e932c5884b0336699cd3a75afea0103050709121b2410203041172f465e1e3d5c7b264c72982d5a87b534699dd23b77b3ef0306090c0a141e291123344618314a6320406080274e759d2e5d8bba356ba1d73d7ab7f404080c110b17222e1225384b1a344e6821426385285179a22f5f8fbf376ea5dc3e7cbaf9050b10160c19263314283c501b36516d2245678a29537da7316293c43870a8e13f7fbefe060d141b0e1c2a38152a3f551c39557223476b8f2b5681ac326496c93973ace600010203081018200f1e2d3d162d435a1d3b5977254a6f942c5884b133679ace3a75b0eb0204060809121b2510213142172f475f1f3e5d7c264c72992d5b88b634699ed33c78b4f00306090d0a151f2a1123354719324b6420406081274f769e2e5d8cbb366ca2d83d7ab7f504090d120b17232f1326394c1a344e692143648628517aa3306090c0376ea5dd3e7dbbfa050b11170d1a273414283c511b37526e2245688b2a547ea8316293c53871a9e23f7fbfff070e151c0e1c2a39152b40561c39567324486c902b5681ad326597ca3973ade701020304081018210f1f2e3e162d445b1e3c5a78254a6f952c5985b233679bcf3b76b1ec0204060909131c2610213243183048601f3e5d7d264d739a2d5b89b7356a9fd43c78b4f103070a0e0a15202b1224364819324b6520416182274f779f2f5e8dbc366ca2d93d7bb8f604090e130c1824301326394d1a354f6a2143658729527ba4306090c1376fa6de3e7dbcfb060c12180d1a273514293d521b37536f2346698c2a547ea9316394c63871aae300000000070e151d0e1d2b3a152b41571d3a577424486c912b5782ae326598cb3a74aee801020305081119220f1f2f3f172e455c1e3c5a79254b70962c5986b334689cd03b76b1ed0205070a09131d2711223344183048611f3f5e7e264d749b2e5c8ab8356a9fd53c79b5f203070b0f0b16212c1224364919334c6620416283285078a02f5e8dbd366da3da3d7bb9f7050a0f140c18243113273a4e1a35506b2244668829527ba5306191c2376fa7df3f7ebdfc060c12190d1b283614293e531c3854702346698d2a557faa316395c73972abe400000001070f161e0e1d2c3b162c42581d3a577524496d922b5783af336699cc3a74aee90103040608111a2310203040172e455d1e3d5b7a254b71972d5a87b434689cd13b77b2ee0205080b0a141e2811223345183149621f3f5f7f274e759c2e5c8ab9356ba0d63c79b6f304080c100b16212d1225374a19334d6721426384285078a12f5f8ebe366da4db3e7cbaf8050a0f150c19253213273b4f1b36516c2244668929537ca6306192c33870a8e03f7ebdfd060d131a0d1b2937152a3f541c38547123476a8e2a5580ab326496c83972abe500010102070f171f0f1e2d3c162c42591d3b587624496e932c5884b0336699cd3a75afea0103050709121b2410203041172f465e1e3d5c7b264c72982d5a87b534699dd23b77b3ef0306090c0a141e291123344618314a6320406080274e759d2e5d8bba356ba1d73d7ab7f404080c110b17222e1225384b1a344e6821426385285179a22f5f8fbf376ea5dc3e7cbaf9050b10160c19263314283c501b36516d2245678a29537da7316293c43870a8e13f7fbefe060d141b0e1c2a38152a3f551c39557223476b8f2b5681ac326496c93973ace600010203081018200f1e2d3d162d435a1d3b5977254a6f942c5884b133679ace3a75b0eb0204060809121b2510213142172f475f1f3e5d7c264c72992d5b88b634699ed33c78b4f00306090d0a151f2a1123354719324b6420406081274f769e2e5d8cbb366ca2d83d7ab7f504090d120b17232f1326394c1a344e692143648628517aa3306090c0376ea5dd3e7dbbfa050b11170d1a273414283c511b37526e2245688b2a547ea8316293c53871a9e23f7fbfff070e151c0e1c2a39152b40561c39567324486c902b5681ad326597ca3973ade701020304081018210f1f2e3e162d445b1e3c5a78254a6f952c5985b233679bcf3b76b1ec0204060909131c2610213243183048601f3e5d7d264d739a2d5b89b7356a9fd43c78b4f103070a0e0a15202b1224364819324b6520416182274f779f2f5e8dbc366ca2d93d7bb8f604090e130c1824301326394d1a354f6a2143658729527ba4306090c1376fa6de3e7dbcfb060c12180d1a273514293d521b37536f2346698c2a547ea9316394c63871aae300000000070e151d0e1d2b3a152b41571d3a577424486c912b5782ae326598cb3a74aee801020305081119220f1f2f3f172e455c1e3c5a79254b70962c5986b334689cd03b76b1ed0205070a09131d2711223344183048611f3f5e7e264d749b2e5c8ab8356a9fd53c79b5f203070b0f0b16212c1224364919334c6620416283285078a02f5e8dbd366da3da3d7bb9f7050a0f140c18243113273a4e1a35506b2244668829527ba5306191c2376fa7df3f7ebdfc060c12190d1b283614293e531c3854702346698d2a557faa316395c73972abe400000001070f161e0e1d2c3b162c42581d3a577524496d922b5783af336699cc3a74aee90103040608111a2310203040172e455d1e3d5b7a254b71972d5a87b434689cd13b77b2ee0205080b0a141e2811223345183149621f3f5f7f274e759c2e5c8ab9356ba0d63c79b6f304080c100b16212d1225374a19334d6721426384285078a12f5f8ebe366da4db3e7cbaf8050a0f150c19253213273b4f1b36516c2244668929537ca6306192c33870a8e03f7ebdfd060d131a0d1b2937152a3f541c38547123476a8e2a5580ab326496c83972abe500010102070f171f0f1e2d3c162c42591d3b587624496e932c5884b0336699cd3a75afea0103050709121b2410203041172f465e1e3d5c7b264c72982d5a87b534699dd23b77b3ef0306090c0a141e291123344618314a6320406080274e759d2e5d8bba356ba1d73d7ab7f404080c110b17222e1225384b1a344e6821426385285179a22f5f8fbf376ea5dc3e7cbaf9050b10160c19263314283c501b36516d2245678a29537da7316293c43870a8e13f7fbefe060d141b0e1c2a38152a3f551c39557223476b8f2b5681ac326496c93973ace600010203081018200f1e2d3d162d435a1d3b5977254a6f942c5884b133679ace3a75b0eb0204060809121b2510213142172f475f1f3e5d7c264c72992d5b88b634699ed33c78b4f00306090d0a151f2a1123354719324b6420406081274f769e2e5d8cbb366ca2d83d7ab7f504090d120b17232f1326394c1a344e692143648628517aa3306090c0376ea5dd3e7dbbfa050b11170d1a273414283c511b37526e2245688b2a547ea8316293c53871a9e23f7fbfff070e151c0e1c2a39152b40561c39567324486c902b5681ad326597ca3973ade701020304081018210f1f2e3e162d445b1e3c5a78254a6f952c5985b233679bcf3b76b1ec0204060909131c2610213243183048601f3e5d7d264d739a2d5b89b7356a9fd43c78b4f103070a0e0a15202b1224364819324b6520416182274f779f2f5e8dbc366ca2d93d7bb8f604090e130c1824301326394d1a354f6a2143658729527ba4306090c1376fa6de3e7dbcfb060c12180d1a273514293d521b37536f2346698c2a547ea9316394c63871aae300000000070e151d0e1d2b3a152b41571d3a577424486c912b5782ae326598cb3a74aee801020305081119220f1f2f3f172e455c1e3c5a79254b70962c5986b334689cd03b76b1ed0205070a09131d2711223344183048611f3f5e7e264d749b2e5c8ab8356a9fd53c79b5f203070b0f0b16212c1224364919334c6620416283285078a02f5e8dbd366da3da3d7bb9f7050a0f140c18243113273a4e1a35506b2244668829527ba5306191c2376fa7df3f7ebdfc060c12190d1b283614293e531c3854702346698d2a557faa316395c73972abe400000001070f161e0e1d2c3b162c42581d3a577524496d922b5783af336699cc3a74aee90103040608111a2310203040172e455d1e3d5b7a254b71972d5a87b434689cd13b77b2ee0205080b0a141e2811223345183149621f3f5f7f274e759c2e5c8ab9356ba0d63c79b6f304080c100b16212d1225374a19334d6721426384285078a12f5f8ebe366da4db3e7cbaf8050a0f150c19253213273b4f1b36516c2244668929537ca6306192c33870a8e03f7ebdfd060d131a0d1b2937152a3f541c38547123476a8e2a5580ab326496c83972abe500010102070f171f0f1e2d3c162c42591d3b587624496e932c5884b0336699cd3a75afea0103050709121b2410203041172f465e1e3d5c7b264c72982d5a87b534699dd23b77b3ef5df8",
+        "payload_bytes": 4064
+      },
+      {
+        "command": 53,
+        "expected_crc16": 12297,
+        "fields": {
+          "controller_session_hex": "101112131415161718191a1b1c1d1e1f",
+          "generation": 1230066625199609624,
+          "span_count": 508,
+          "spans": [
+            {
+              "count": 1,
+              "start": 0
+            },
+            {
+              "count": 1,
+              "start": 2
+            },
+            {
+              "count": 1,
+              "start": 4
+            },
+            {
+              "count": 1,
+              "start": 6
+            },
+            {
+              "count": 1,
+              "start": 8
+            },
+            {
+              "count": 1,
+              "start": 10
+            },
+            {
+              "count": 1,
+              "start": 12
+            },
+            {
+              "count": 1,
+              "start": 14
+            },
+            {
+              "count": 1,
+              "start": 16
+            },
+            {
+              "count": 1,
+              "start": 18
+            },
+            {
+              "count": 1,
+              "start": 20
+            },
+            {
+              "count": 1,
+              "start": 22
+            },
+            {
+              "count": 1,
+              "start": 24
+            },
+            {
+              "count": 1,
+              "start": 26
+            },
+            {
+              "count": 1,
+              "start": 28
+            },
+            {
+              "count": 1,
+              "start": 30
+            },
+            {
+              "count": 1,
+              "start": 32
+            },
+            {
+              "count": 1,
+              "start": 34
+            },
+            {
+              "count": 1,
+              "start": 36
+            },
+            {
+              "count": 1,
+              "start": 38
+            },
+            {
+              "count": 1,
+              "start": 40
+            },
+            {
+              "count": 1,
+              "start": 42
+            },
+            {
+              "count": 1,
+              "start": 44
+            },
+            {
+              "count": 1,
+              "start": 46
+            },
+            {
+              "count": 1,
+              "start": 48
+            },
+            {
+              "count": 1,
+              "start": 50
+            },
+            {
+              "count": 1,
+              "start": 52
+            },
+            {
+              "count": 1,
+              "start": 54
+            },
+            {
+              "count": 1,
+              "start": 56
+            },
+            {
+              "count": 1,
+              "start": 58
+            },
+            {
+              "count": 1,
+              "start": 60
+            },
+            {
+              "count": 1,
+              "start": 62
+            },
+            {
+              "count": 1,
+              "start": 64
+            },
+            {
+              "count": 1,
+              "start": 66
+            },
+            {
+              "count": 1,
+              "start": 68
+            },
+            {
+              "count": 1,
+              "start": 70
+            },
+            {
+              "count": 1,
+              "start": 72
+            },
+            {
+              "count": 1,
+              "start": 74
+            },
+            {
+              "count": 1,
+              "start": 76
+            },
+            {
+              "count": 1,
+              "start": 78
+            },
+            {
+              "count": 1,
+              "start": 80
+            },
+            {
+              "count": 1,
+              "start": 82
+            },
+            {
+              "count": 1,
+              "start": 84
+            },
+            {
+              "count": 1,
+              "start": 86
+            },
+            {
+              "count": 1,
+              "start": 88
+            },
+            {
+              "count": 1,
+              "start": 90
+            },
+            {
+              "count": 1,
+              "start": 92
+            },
+            {
+              "count": 1,
+              "start": 94
+            },
+            {
+              "count": 1,
+              "start": 96
+            },
+            {
+              "count": 1,
+              "start": 98
+            },
+            {
+              "count": 1,
+              "start": 100
+            },
+            {
+              "count": 1,
+              "start": 102
+            },
+            {
+              "count": 1,
+              "start": 104
+            },
+            {
+              "count": 1,
+              "start": 106
+            },
+            {
+              "count": 1,
+              "start": 108
+            },
+            {
+              "count": 1,
+              "start": 110
+            },
+            {
+              "count": 1,
+              "start": 112
+            },
+            {
+              "count": 1,
+              "start": 114
+            },
+            {
+              "count": 1,
+              "start": 116
+            },
+            {
+              "count": 1,
+              "start": 118
+            },
+            {
+              "count": 1,
+              "start": 120
+            },
+            {
+              "count": 1,
+              "start": 122
+            },
+            {
+              "count": 1,
+              "start": 124
+            },
+            {
+              "count": 1,
+              "start": 126
+            },
+            {
+              "count": 1,
+              "start": 128
+            },
+            {
+              "count": 1,
+              "start": 130
+            },
+            {
+              "count": 1,
+              "start": 132
+            },
+            {
+              "count": 1,
+              "start": 134
+            },
+            {
+              "count": 1,
+              "start": 136
+            },
+            {
+              "count": 1,
+              "start": 138
+            },
+            {
+              "count": 1,
+              "start": 140
+            },
+            {
+              "count": 1,
+              "start": 142
+            },
+            {
+              "count": 1,
+              "start": 144
+            },
+            {
+              "count": 1,
+              "start": 146
+            },
+            {
+              "count": 1,
+              "start": 148
+            },
+            {
+              "count": 1,
+              "start": 150
+            },
+            {
+              "count": 1,
+              "start": 152
+            },
+            {
+              "count": 1,
+              "start": 154
+            },
+            {
+              "count": 1,
+              "start": 156
+            },
+            {
+              "count": 1,
+              "start": 158
+            },
+            {
+              "count": 1,
+              "start": 160
+            },
+            {
+              "count": 1,
+              "start": 162
+            },
+            {
+              "count": 1,
+              "start": 164
+            },
+            {
+              "count": 1,
+              "start": 166
+            },
+            {
+              "count": 1,
+              "start": 168
+            },
+            {
+              "count": 1,
+              "start": 170
+            },
+            {
+              "count": 1,
+              "start": 172
+            },
+            {
+              "count": 1,
+              "start": 174
+            },
+            {
+              "count": 1,
+              "start": 176
+            },
+            {
+              "count": 1,
+              "start": 178
+            },
+            {
+              "count": 1,
+              "start": 180
+            },
+            {
+              "count": 1,
+              "start": 182
+            },
+            {
+              "count": 1,
+              "start": 184
+            },
+            {
+              "count": 1,
+              "start": 186
+            },
+            {
+              "count": 1,
+              "start": 188
+            },
+            {
+              "count": 1,
+              "start": 190
+            },
+            {
+              "count": 1,
+              "start": 192
+            },
+            {
+              "count": 1,
+              "start": 194
+            },
+            {
+              "count": 1,
+              "start": 196
+            },
+            {
+              "count": 1,
+              "start": 198
+            },
+            {
+              "count": 1,
+              "start": 200
+            },
+            {
+              "count": 1,
+              "start": 202
+            },
+            {
+              "count": 1,
+              "start": 204
+            },
+            {
+              "count": 1,
+              "start": 206
+            },
+            {
+              "count": 1,
+              "start": 208
+            },
+            {
+              "count": 1,
+              "start": 210
+            },
+            {
+              "count": 1,
+              "start": 212
+            },
+            {
+              "count": 1,
+              "start": 214
+            },
+            {
+              "count": 1,
+              "start": 216
+            },
+            {
+              "count": 1,
+              "start": 218
+            },
+            {
+              "count": 1,
+              "start": 220
+            },
+            {
+              "count": 1,
+              "start": 222
+            },
+            {
+              "count": 1,
+              "start": 224
+            },
+            {
+              "count": 1,
+              "start": 226
+            },
+            {
+              "count": 1,
+              "start": 228
+            },
+            {
+              "count": 1,
+              "start": 230
+            },
+            {
+              "count": 1,
+              "start": 232
+            },
+            {
+              "count": 1,
+              "start": 234
+            },
+            {
+              "count": 1,
+              "start": 236
+            },
+            {
+              "count": 1,
+              "start": 238
+            },
+            {
+              "count": 1,
+              "start": 240
+            },
+            {
+              "count": 1,
+              "start": 242
+            },
+            {
+              "count": 1,
+              "start": 244
+            },
+            {
+              "count": 1,
+              "start": 246
+            },
+            {
+              "count": 1,
+              "start": 248
+            },
+            {
+              "count": 1,
+              "start": 250
+            },
+            {
+              "count": 1,
+              "start": 252
+            },
+            {
+              "count": 1,
+              "start": 254
+            },
+            {
+              "count": 1,
+              "start": 256
+            },
+            {
+              "count": 1,
+              "start": 258
+            },
+            {
+              "count": 1,
+              "start": 260
+            },
+            {
+              "count": 1,
+              "start": 262
+            },
+            {
+              "count": 1,
+              "start": 264
+            },
+            {
+              "count": 1,
+              "start": 266
+            },
+            {
+              "count": 1,
+              "start": 268
+            },
+            {
+              "count": 1,
+              "start": 270
+            },
+            {
+              "count": 1,
+              "start": 272
+            },
+            {
+              "count": 1,
+              "start": 274
+            },
+            {
+              "count": 1,
+              "start": 276
+            },
+            {
+              "count": 1,
+              "start": 278
+            },
+            {
+              "count": 1,
+              "start": 280
+            },
+            {
+              "count": 1,
+              "start": 282
+            },
+            {
+              "count": 1,
+              "start": 284
+            },
+            {
+              "count": 1,
+              "start": 286
+            },
+            {
+              "count": 1,
+              "start": 288
+            },
+            {
+              "count": 1,
+              "start": 290
+            },
+            {
+              "count": 1,
+              "start": 292
+            },
+            {
+              "count": 1,
+              "start": 294
+            },
+            {
+              "count": 1,
+              "start": 296
+            },
+            {
+              "count": 1,
+              "start": 298
+            },
+            {
+              "count": 1,
+              "start": 300
+            },
+            {
+              "count": 1,
+              "start": 302
+            },
+            {
+              "count": 1,
+              "start": 304
+            },
+            {
+              "count": 1,
+              "start": 306
+            },
+            {
+              "count": 1,
+              "start": 308
+            },
+            {
+              "count": 1,
+              "start": 310
+            },
+            {
+              "count": 1,
+              "start": 312
+            },
+            {
+              "count": 1,
+              "start": 314
+            },
+            {
+              "count": 1,
+              "start": 316
+            },
+            {
+              "count": 1,
+              "start": 318
+            },
+            {
+              "count": 1,
+              "start": 320
+            },
+            {
+              "count": 1,
+              "start": 322
+            },
+            {
+              "count": 1,
+              "start": 324
+            },
+            {
+              "count": 1,
+              "start": 326
+            },
+            {
+              "count": 1,
+              "start": 328
+            },
+            {
+              "count": 1,
+              "start": 330
+            },
+            {
+              "count": 1,
+              "start": 332
+            },
+            {
+              "count": 1,
+              "start": 334
+            },
+            {
+              "count": 1,
+              "start": 336
+            },
+            {
+              "count": 1,
+              "start": 338
+            },
+            {
+              "count": 1,
+              "start": 340
+            },
+            {
+              "count": 1,
+              "start": 342
+            },
+            {
+              "count": 1,
+              "start": 344
+            },
+            {
+              "count": 1,
+              "start": 346
+            },
+            {
+              "count": 1,
+              "start": 348
+            },
+            {
+              "count": 1,
+              "start": 350
+            },
+            {
+              "count": 1,
+              "start": 352
+            },
+            {
+              "count": 1,
+              "start": 354
+            },
+            {
+              "count": 1,
+              "start": 356
+            },
+            {
+              "count": 1,
+              "start": 358
+            },
+            {
+              "count": 1,
+              "start": 360
+            },
+            {
+              "count": 1,
+              "start": 362
+            },
+            {
+              "count": 1,
+              "start": 364
+            },
+            {
+              "count": 1,
+              "start": 366
+            },
+            {
+              "count": 1,
+              "start": 368
+            },
+            {
+              "count": 1,
+              "start": 370
+            },
+            {
+              "count": 1,
+              "start": 372
+            },
+            {
+              "count": 1,
+              "start": 374
+            },
+            {
+              "count": 1,
+              "start": 376
+            },
+            {
+              "count": 1,
+              "start": 378
+            },
+            {
+              "count": 1,
+              "start": 380
+            },
+            {
+              "count": 1,
+              "start": 382
+            },
+            {
+              "count": 1,
+              "start": 384
+            },
+            {
+              "count": 1,
+              "start": 386
+            },
+            {
+              "count": 1,
+              "start": 388
+            },
+            {
+              "count": 1,
+              "start": 390
+            },
+            {
+              "count": 1,
+              "start": 392
+            },
+            {
+              "count": 1,
+              "start": 394
+            },
+            {
+              "count": 1,
+              "start": 396
+            },
+            {
+              "count": 1,
+              "start": 398
+            },
+            {
+              "count": 1,
+              "start": 400
+            },
+            {
+              "count": 1,
+              "start": 402
+            },
+            {
+              "count": 1,
+              "start": 404
+            },
+            {
+              "count": 1,
+              "start": 406
+            },
+            {
+              "count": 1,
+              "start": 408
+            },
+            {
+              "count": 1,
+              "start": 410
+            },
+            {
+              "count": 1,
+              "start": 412
+            },
+            {
+              "count": 1,
+              "start": 414
+            },
+            {
+              "count": 1,
+              "start": 416
+            },
+            {
+              "count": 1,
+              "start": 418
+            },
+            {
+              "count": 1,
+              "start": 420
+            },
+            {
+              "count": 1,
+              "start": 422
+            },
+            {
+              "count": 1,
+              "start": 424
+            },
+            {
+              "count": 1,
+              "start": 426
+            },
+            {
+              "count": 1,
+              "start": 428
+            },
+            {
+              "count": 1,
+              "start": 430
+            },
+            {
+              "count": 1,
+              "start": 432
+            },
+            {
+              "count": 1,
+              "start": 434
+            },
+            {
+              "count": 1,
+              "start": 436
+            },
+            {
+              "count": 1,
+              "start": 438
+            },
+            {
+              "count": 1,
+              "start": 440
+            },
+            {
+              "count": 1,
+              "start": 442
+            },
+            {
+              "count": 1,
+              "start": 444
+            },
+            {
+              "count": 1,
+              "start": 446
+            },
+            {
+              "count": 1,
+              "start": 448
+            },
+            {
+              "count": 1,
+              "start": 450
+            },
+            {
+              "count": 1,
+              "start": 452
+            },
+            {
+              "count": 1,
+              "start": 454
+            },
+            {
+              "count": 1,
+              "start": 456
+            },
+            {
+              "count": 1,
+              "start": 458
+            },
+            {
+              "count": 1,
+              "start": 460
+            },
+            {
+              "count": 1,
+              "start": 462
+            },
+            {
+              "count": 1,
+              "start": 464
+            },
+            {
+              "count": 1,
+              "start": 466
+            },
+            {
+              "count": 1,
+              "start": 468
+            },
+            {
+              "count": 1,
+              "start": 470
+            },
+            {
+              "count": 1,
+              "start": 472
+            },
+            {
+              "count": 1,
+              "start": 474
+            },
+            {
+              "count": 1,
+              "start": 476
+            },
+            {
+              "count": 1,
+              "start": 478
+            },
+            {
+              "count": 1,
+              "start": 480
+            },
+            {
+              "count": 1,
+              "start": 482
+            },
+            {
+              "count": 1,
+              "start": 484
+            },
+            {
+              "count": 1,
+              "start": 486
+            },
+            {
+              "count": 1,
+              "start": 488
+            },
+            {
+              "count": 1,
+              "start": 490
+            },
+            {
+              "count": 1,
+              "start": 492
+            },
+            {
+              "count": 1,
+              "start": 494
+            },
+            {
+              "count": 1,
+              "start": 496
+            },
+            {
+              "count": 1,
+              "start": 498
+            },
+            {
+              "count": 1,
+              "start": 500
+            },
+            {
+              "count": 1,
+              "start": 502
+            },
+            {
+              "count": 1,
+              "start": 504
+            },
+            {
+              "count": 1,
+              "start": 506
+            },
+            {
+              "count": 1,
+              "start": 508
+            },
+            {
+              "count": 1,
+              "start": 510
+            },
+            {
+              "count": 1,
+              "start": 512
+            },
+            {
+              "count": 1,
+              "start": 514
+            },
+            {
+              "count": 1,
+              "start": 516
+            },
+            {
+              "count": 1,
+              "start": 518
+            },
+            {
+              "count": 1,
+              "start": 520
+            },
+            {
+              "count": 1,
+              "start": 522
+            },
+            {
+              "count": 1,
+              "start": 524
+            },
+            {
+              "count": 1,
+              "start": 526
+            },
+            {
+              "count": 1,
+              "start": 528
+            },
+            {
+              "count": 1,
+              "start": 530
+            },
+            {
+              "count": 1,
+              "start": 532
+            },
+            {
+              "count": 1,
+              "start": 534
+            },
+            {
+              "count": 1,
+              "start": 536
+            },
+            {
+              "count": 1,
+              "start": 538
+            },
+            {
+              "count": 1,
+              "start": 540
+            },
+            {
+              "count": 1,
+              "start": 542
+            },
+            {
+              "count": 1,
+              "start": 544
+            },
+            {
+              "count": 1,
+              "start": 546
+            },
+            {
+              "count": 1,
+              "start": 548
+            },
+            {
+              "count": 1,
+              "start": 550
+            },
+            {
+              "count": 1,
+              "start": 552
+            },
+            {
+              "count": 1,
+              "start": 554
+            },
+            {
+              "count": 1,
+              "start": 556
+            },
+            {
+              "count": 1,
+              "start": 558
+            },
+            {
+              "count": 1,
+              "start": 560
+            },
+            {
+              "count": 1,
+              "start": 562
+            },
+            {
+              "count": 1,
+              "start": 564
+            },
+            {
+              "count": 1,
+              "start": 566
+            },
+            {
+              "count": 1,
+              "start": 568
+            },
+            {
+              "count": 1,
+              "start": 570
+            },
+            {
+              "count": 1,
+              "start": 572
+            },
+            {
+              "count": 1,
+              "start": 574
+            },
+            {
+              "count": 1,
+              "start": 576
+            },
+            {
+              "count": 1,
+              "start": 578
+            },
+            {
+              "count": 1,
+              "start": 580
+            },
+            {
+              "count": 1,
+              "start": 582
+            },
+            {
+              "count": 1,
+              "start": 584
+            },
+            {
+              "count": 1,
+              "start": 586
+            },
+            {
+              "count": 1,
+              "start": 588
+            },
+            {
+              "count": 1,
+              "start": 590
+            },
+            {
+              "count": 1,
+              "start": 592
+            },
+            {
+              "count": 1,
+              "start": 594
+            },
+            {
+              "count": 1,
+              "start": 596
+            },
+            {
+              "count": 1,
+              "start": 598
+            },
+            {
+              "count": 1,
+              "start": 600
+            },
+            {
+              "count": 1,
+              "start": 602
+            },
+            {
+              "count": 1,
+              "start": 604
+            },
+            {
+              "count": 1,
+              "start": 606
+            },
+            {
+              "count": 1,
+              "start": 608
+            },
+            {
+              "count": 1,
+              "start": 610
+            },
+            {
+              "count": 1,
+              "start": 612
+            },
+            {
+              "count": 1,
+              "start": 614
+            },
+            {
+              "count": 1,
+              "start": 616
+            },
+            {
+              "count": 1,
+              "start": 618
+            },
+            {
+              "count": 1,
+              "start": 620
+            },
+            {
+              "count": 1,
+              "start": 622
+            },
+            {
+              "count": 1,
+              "start": 624
+            },
+            {
+              "count": 1,
+              "start": 626
+            },
+            {
+              "count": 1,
+              "start": 628
+            },
+            {
+              "count": 1,
+              "start": 630
+            },
+            {
+              "count": 1,
+              "start": 632
+            },
+            {
+              "count": 1,
+              "start": 634
+            },
+            {
+              "count": 1,
+              "start": 636
+            },
+            {
+              "count": 1,
+              "start": 638
+            },
+            {
+              "count": 1,
+              "start": 640
+            },
+            {
+              "count": 1,
+              "start": 642
+            },
+            {
+              "count": 1,
+              "start": 644
+            },
+            {
+              "count": 1,
+              "start": 646
+            },
+            {
+              "count": 1,
+              "start": 648
+            },
+            {
+              "count": 1,
+              "start": 650
+            },
+            {
+              "count": 1,
+              "start": 652
+            },
+            {
+              "count": 1,
+              "start": 654
+            },
+            {
+              "count": 1,
+              "start": 656
+            },
+            {
+              "count": 1,
+              "start": 658
+            },
+            {
+              "count": 1,
+              "start": 660
+            },
+            {
+              "count": 1,
+              "start": 662
+            },
+            {
+              "count": 1,
+              "start": 664
+            },
+            {
+              "count": 1,
+              "start": 666
+            },
+            {
+              "count": 1,
+              "start": 668
+            },
+            {
+              "count": 1,
+              "start": 670
+            },
+            {
+              "count": 1,
+              "start": 672
+            },
+            {
+              "count": 1,
+              "start": 674
+            },
+            {
+              "count": 1,
+              "start": 676
+            },
+            {
+              "count": 1,
+              "start": 678
+            },
+            {
+              "count": 1,
+              "start": 680
+            },
+            {
+              "count": 1,
+              "start": 682
+            },
+            {
+              "count": 1,
+              "start": 684
+            },
+            {
+              "count": 1,
+              "start": 686
+            },
+            {
+              "count": 1,
+              "start": 688
+            },
+            {
+              "count": 1,
+              "start": 690
+            },
+            {
+              "count": 1,
+              "start": 692
+            },
+            {
+              "count": 1,
+              "start": 694
+            },
+            {
+              "count": 1,
+              "start": 696
+            },
+            {
+              "count": 1,
+              "start": 698
+            },
+            {
+              "count": 1,
+              "start": 700
+            },
+            {
+              "count": 1,
+              "start": 702
+            },
+            {
+              "count": 1,
+              "start": 704
+            },
+            {
+              "count": 1,
+              "start": 706
+            },
+            {
+              "count": 1,
+              "start": 708
+            },
+            {
+              "count": 1,
+              "start": 710
+            },
+            {
+              "count": 1,
+              "start": 712
+            },
+            {
+              "count": 1,
+              "start": 714
+            },
+            {
+              "count": 1,
+              "start": 716
+            },
+            {
+              "count": 1,
+              "start": 718
+            },
+            {
+              "count": 1,
+              "start": 720
+            },
+            {
+              "count": 1,
+              "start": 722
+            },
+            {
+              "count": 1,
+              "start": 724
+            },
+            {
+              "count": 1,
+              "start": 726
+            },
+            {
+              "count": 1,
+              "start": 728
+            },
+            {
+              "count": 1,
+              "start": 730
+            },
+            {
+              "count": 1,
+              "start": 732
+            },
+            {
+              "count": 1,
+              "start": 734
+            },
+            {
+              "count": 1,
+              "start": 736
+            },
+            {
+              "count": 1,
+              "start": 738
+            },
+            {
+              "count": 1,
+              "start": 740
+            },
+            {
+              "count": 1,
+              "start": 742
+            },
+            {
+              "count": 1,
+              "start": 744
+            },
+            {
+              "count": 1,
+              "start": 746
+            },
+            {
+              "count": 1,
+              "start": 748
+            },
+            {
+              "count": 1,
+              "start": 750
+            },
+            {
+              "count": 1,
+              "start": 752
+            },
+            {
+              "count": 1,
+              "start": 754
+            },
+            {
+              "count": 1,
+              "start": 756
+            },
+            {
+              "count": 1,
+              "start": 758
+            },
+            {
+              "count": 1,
+              "start": 760
+            },
+            {
+              "count": 1,
+              "start": 762
+            },
+            {
+              "count": 1,
+              "start": 764
+            },
+            {
+              "count": 1,
+              "start": 766
+            },
+            {
+              "count": 1,
+              "start": 768
+            },
+            {
+              "count": 1,
+              "start": 770
+            },
+            {
+              "count": 1,
+              "start": 772
+            },
+            {
+              "count": 1,
+              "start": 774
+            },
+            {
+              "count": 1,
+              "start": 776
+            },
+            {
+              "count": 1,
+              "start": 778
+            },
+            {
+              "count": 1,
+              "start": 780
+            },
+            {
+              "count": 1,
+              "start": 782
+            },
+            {
+              "count": 1,
+              "start": 784
+            },
+            {
+              "count": 1,
+              "start": 786
+            },
+            {
+              "count": 1,
+              "start": 788
+            },
+            {
+              "count": 1,
+              "start": 790
+            },
+            {
+              "count": 1,
+              "start": 792
+            },
+            {
+              "count": 1,
+              "start": 794
+            },
+            {
+              "count": 1,
+              "start": 796
+            },
+            {
+              "count": 1,
+              "start": 798
+            },
+            {
+              "count": 1,
+              "start": 800
+            },
+            {
+              "count": 1,
+              "start": 802
+            },
+            {
+              "count": 1,
+              "start": 804
+            },
+            {
+              "count": 1,
+              "start": 806
+            },
+            {
+              "count": 1,
+              "start": 808
+            },
+            {
+              "count": 1,
+              "start": 810
+            },
+            {
+              "count": 1,
+              "start": 812
+            },
+            {
+              "count": 1,
+              "start": 814
+            },
+            {
+              "count": 1,
+              "start": 816
+            },
+            {
+              "count": 1,
+              "start": 818
+            },
+            {
+              "count": 1,
+              "start": 820
+            },
+            {
+              "count": 1,
+              "start": 822
+            },
+            {
+              "count": 1,
+              "start": 824
+            },
+            {
+              "count": 1,
+              "start": 826
+            },
+            {
+              "count": 1,
+              "start": 828
+            },
+            {
+              "count": 1,
+              "start": 830
+            },
+            {
+              "count": 1,
+              "start": 832
+            },
+            {
+              "count": 1,
+              "start": 834
+            },
+            {
+              "count": 1,
+              "start": 836
+            },
+            {
+              "count": 1,
+              "start": 838
+            },
+            {
+              "count": 1,
+              "start": 840
+            },
+            {
+              "count": 1,
+              "start": 842
+            },
+            {
+              "count": 1,
+              "start": 844
+            },
+            {
+              "count": 1,
+              "start": 846
+            },
+            {
+              "count": 1,
+              "start": 848
+            },
+            {
+              "count": 1,
+              "start": 850
+            },
+            {
+              "count": 1,
+              "start": 852
+            },
+            {
+              "count": 1,
+              "start": 854
+            },
+            {
+              "count": 1,
+              "start": 856
+            },
+            {
+              "count": 1,
+              "start": 858
+            },
+            {
+              "count": 1,
+              "start": 860
+            },
+            {
+              "count": 1,
+              "start": 862
+            },
+            {
+              "count": 1,
+              "start": 864
+            },
+            {
+              "count": 1,
+              "start": 866
+            },
+            {
+              "count": 1,
+              "start": 868
+            },
+            {
+              "count": 1,
+              "start": 870
+            },
+            {
+              "count": 1,
+              "start": 872
+            },
+            {
+              "count": 1,
+              "start": 874
+            },
+            {
+              "count": 1,
+              "start": 876
+            },
+            {
+              "count": 1,
+              "start": 878
+            },
+            {
+              "count": 1,
+              "start": 880
+            },
+            {
+              "count": 1,
+              "start": 882
+            },
+            {
+              "count": 1,
+              "start": 884
+            },
+            {
+              "count": 1,
+              "start": 886
+            },
+            {
+              "count": 1,
+              "start": 888
+            },
+            {
+              "count": 1,
+              "start": 890
+            },
+            {
+              "count": 1,
+              "start": 892
+            },
+            {
+              "count": 1,
+              "start": 894
+            },
+            {
+              "count": 1,
+              "start": 896
+            },
+            {
+              "count": 1,
+              "start": 898
+            },
+            {
+              "count": 1,
+              "start": 900
+            },
+            {
+              "count": 1,
+              "start": 902
+            },
+            {
+              "count": 1,
+              "start": 904
+            },
+            {
+              "count": 1,
+              "start": 906
+            },
+            {
+              "count": 1,
+              "start": 908
+            },
+            {
+              "count": 1,
+              "start": 910
+            },
+            {
+              "count": 1,
+              "start": 912
+            },
+            {
+              "count": 1,
+              "start": 914
+            },
+            {
+              "count": 1,
+              "start": 916
+            },
+            {
+              "count": 1,
+              "start": 918
+            },
+            {
+              "count": 1,
+              "start": 920
+            },
+            {
+              "count": 1,
+              "start": 922
+            },
+            {
+              "count": 1,
+              "start": 924
+            },
+            {
+              "count": 1,
+              "start": 926
+            },
+            {
+              "count": 1,
+              "start": 928
+            },
+            {
+              "count": 1,
+              "start": 930
+            },
+            {
+              "count": 1,
+              "start": 932
+            },
+            {
+              "count": 1,
+              "start": 934
+            },
+            {
+              "count": 1,
+              "start": 936
+            },
+            {
+              "count": 1,
+              "start": 938
+            },
+            {
+              "count": 1,
+              "start": 940
+            },
+            {
+              "count": 1,
+              "start": 942
+            },
+            {
+              "count": 1,
+              "start": 944
+            },
+            {
+              "count": 1,
+              "start": 946
+            },
+            {
+              "count": 1,
+              "start": 948
+            },
+            {
+              "count": 1,
+              "start": 950
+            },
+            {
+              "count": 1,
+              "start": 952
+            },
+            {
+              "count": 1,
+              "start": 954
+            },
+            {
+              "count": 1,
+              "start": 956
+            },
+            {
+              "count": 1,
+              "start": 958
+            },
+            {
+              "count": 1,
+              "start": 960
+            },
+            {
+              "count": 1,
+              "start": 962
+            },
+            {
+              "count": 1,
+              "start": 964
+            },
+            {
+              "count": 1,
+              "start": 966
+            },
+            {
+              "count": 1,
+              "start": 968
+            },
+            {
+              "count": 1,
+              "start": 970
+            },
+            {
+              "count": 1,
+              "start": 972
+            },
+            {
+              "count": 1,
+              "start": 974
+            },
+            {
+              "count": 1,
+              "start": 976
+            },
+            {
+              "count": 1,
+              "start": 978
+            },
+            {
+              "count": 1,
+              "start": 980
+            },
+            {
+              "count": 1,
+              "start": 982
+            },
+            {
+              "count": 1,
+              "start": 984
+            },
+            {
+              "count": 1,
+              "start": 986
+            },
+            {
+              "count": 1,
+              "start": 988
+            },
+            {
+              "count": 1,
+              "start": 990
+            },
+            {
+              "count": 1,
+              "start": 992
+            },
+            {
+              "count": 1,
+              "start": 994
+            },
+            {
+              "count": 1,
+              "start": 996
+            },
+            {
+              "count": 1,
+              "start": 998
+            },
+            {
+              "count": 1,
+              "start": 1000
+            },
+            {
+              "count": 1,
+              "start": 1002
+            },
+            {
+              "count": 1,
+              "start": 1004
+            },
+            {
+              "count": 1,
+              "start": 1006
+            },
+            {
+              "count": 1,
+              "start": 1008
+            },
+            {
+              "count": 1,
+              "start": 1010
+            },
+            {
+              "count": 1,
+              "start": 1012
+            },
+            {
+              "count": 1,
+              "start": 1014
+            }
+          ]
+        },
+        "header_bytes": 28,
+        "id": "overlay_patch_batch_maximum_spans",
+        "packet_bytes": 4094,
+        "packet_hex": "3501101112131415161718191a1b1c1d1e1f111213141516171801fc0000000104080c11000200011225384b0004000121426385000600012f5f8fbf000800013e7cbaf9000a00010c192633000c00011b36516d000e000129537da7001000013870a8e100120001060d141b00140001152a3f550016000123476b8f00180001326496c9001a000100010203001c00010f1e2d3d001e00011d3b5977002000012c5884b1002200013a75b0eb0024000109121b2500260001172f475f00280001264c7299002a000134699ed3002c00010306090d002e0001112335470030000120406081003200012e5d8cbb003400013d7ab7f5003600010b17232f003800011a344e69003a000128517aa3003c0001376ea5dd003e0001050b11170040000114283c51004200012245688b00440001316293c5004600013f7fbfff004800010e1c2a39004a00011c395673004c00012b5681ad004e00013973ade7005000010810182100520001162d445b00540001254a6f950056000133679bcf0058000102040609005a000110213243005c00011f3e5d7d005e00012d5b89b7006000013c78b4f1006200010a15202b0064000119324b6500660001274f779f00680001366ca2d9006a000104090e13006c00011326394d006e00012143658700700001306090c1007200013e7dbcfb007400010d1a2735007600011b37536f007800012a547ea9007a00013871aae3007c0001070e151d007e0001152b41570080000124486c9100820001326598cb0084000101020305008600010f1f2f3f008800011e3c5a79008a00012c5986b3008c00013b76b1ed008e000109131d27009000011830486100920001264d749b00940001356a9fd50096000103070b0f0098000112243649009a000120416283009c00012f5e8dbd009e00013d7bb9f700a000010c18243100a200011a35506b00a4000129527ba500a60001376fa7df00a80001060c121900aa000114293e5300ac00012346698d00ae0001316395c700b000010000000100b200010e1d2c3b00b400011d3a577500b600012b5783af00b800013a74aee900ba000108111a2300bc0001172e455d00be0001254b719700c0000134689cd100c200010205080b00c400011122334500c600011f3f5f7f00c800012e5c8ab900ca00013c79b6f300cc00010b16212d00ce000119334d6700d00001285078a100d20001366da4db00d40001050a0f1500d6000113273b4f00d800012244668900da0001306192c300dc00013f7ebdfd00de00010d1b293700e000011c38547100e200012a5580ab00e400013972abe500e60001070f171f00e80001162c425900ea000124496e9300ec0001336699cd00ee00010103050700f000011020304100f200011e3d5c7b00f400012d5a87b500f600013b77b3ef00f800010a141e2900fa000118314a6300fc0001274e759d00fe0001356ba1d70100000104080c11010200011225384b0104000121426385010600012f5f8fbf010800013e7cbaf9010a00010c192633010c00011b36516d010e000129537da7011000013870a8e101120001060d141b01140001152a3f550116000123476b8f01180001326496c9011a000100010203011c00010f1e2d3d011e00011d3b5977012000012c5884b1012200013a75b0eb0124000109121b2501260001172f475f01280001264c7299012a000134699ed3012c00010306090d012e0001112335470130000120406081013200012e5d8cbb013400013d7ab7f5013600010b17232f013800011a344e69013a000128517aa3013c0001376ea5dd013e0001050b11170140000114283c51014200012245688b01440001316293c5014600013f7fbfff014800010e1c2a39014a00011c395673014c00012b5681ad014e00013973ade7015000010810182101520001162d445b01540001254a6f950156000133679bcf0158000102040609015a000110213243015c00011f3e5d7d015e00012d5b89b7016000013c78b4f1016200010a15202b0164000119324b6501660001274f779f01680001366ca2d9016a000104090e13016c00011326394d016e00012143658701700001306090c1017200013e7dbcfb017400010d1a2735017600011b37536f017800012a547ea9017a00013871aae3017c0001070e151d017e0001152b41570180000124486c9101820001326598cb0184000101020305018600010f1f2f3f018800011e3c5a79018a00012c5986b3018c00013b76b1ed018e000109131d27019000011830486101920001264d749b01940001356a9fd50196000103070b0f0198000112243649019a000120416283019c00012f5e8dbd019e00013d7bb9f701a000010c18243101a200011a35506b01a4000129527ba501a60001376fa7df01a80001060c121901aa000114293e5301ac00012346698d01ae0001316395c701b000010000000101b200010e1d2c3b01b400011d3a577501b600012b5783af01b800013a74aee901ba000108111a2301bc0001172e455d01be0001254b719701c0000134689cd101c200010205080b01c400011122334501c600011f3f5f7f01c800012e5c8ab901ca00013c79b6f301cc00010b16212d01ce000119334d6701d00001285078a101d20001366da4db01d40001050a0f1501d6000113273b4f01d800012244668901da0001306192c301dc00013f7ebdfd01de00010d1b293701e000011c38547101e200012a5580ab01e400013972abe501e60001070f171f01e80001162c425901ea000124496e9301ec0001336699cd01ee00010103050701f000011020304101f200011e3d5c7b01f400012d5a87b501f600013b77b3ef01f800010a141e2901fa000118314a6301fc0001274e759d01fe0001356ba1d70200000104080c11020200011225384b0204000121426385020600012f5f8fbf020800013e7cbaf9020a00010c192633020c00011b36516d020e000129537da7021000013870a8e102120001060d141b02140001152a3f550216000123476b8f02180001326496c9021a000100010203021c00010f1e2d3d021e00011d3b5977022000012c5884b1022200013a75b0eb0224000109121b2502260001172f475f02280001264c7299022a000134699ed3022c00010306090d022e0001112335470230000120406081023200012e5d8cbb023400013d7ab7f5023600010b17232f023800011a344e69023a000128517aa3023c0001376ea5dd023e0001050b11170240000114283c51024200012245688b02440001316293c5024600013f7fbfff024800010e1c2a39024a00011c395673024c00012b5681ad024e00013973ade7025000010810182102520001162d445b02540001254a6f950256000133679bcf0258000102040609025a000110213243025c00011f3e5d7d025e00012d5b89b7026000013c78b4f1026200010a15202b0264000119324b6502660001274f779f02680001366ca2d9026a000104090e13026c00011326394d026e00012143658702700001306090c1027200013e7dbcfb027400010d1a2735027600011b37536f027800012a547ea9027a00013871aae3027c0001070e151d027e0001152b41570280000124486c9102820001326598cb0284000101020305028600010f1f2f3f028800011e3c5a79028a00012c5986b3028c00013b76b1ed028e000109131d27029000011830486102920001264d749b02940001356a9fd50296000103070b0f0298000112243649029a000120416283029c00012f5e8dbd029e00013d7bb9f702a000010c18243102a200011a35506b02a4000129527ba502a60001376fa7df02a80001060c121902aa000114293e5302ac00012346698d02ae0001316395c702b000010000000102b200010e1d2c3b02b400011d3a577502b600012b5783af02b800013a74aee902ba000108111a2302bc0001172e455d02be0001254b719702c0000134689cd102c200010205080b02c400011122334502c600011f3f5f7f02c800012e5c8ab902ca00013c79b6f302cc00010b16212d02ce000119334d6702d00001285078a102d20001366da4db02d40001050a0f1502d6000113273b4f02d800012244668902da0001306192c302dc00013f7ebdfd02de00010d1b293702e000011c38547102e200012a5580ab02e400013972abe502e60001070f171f02e80001162c425902ea000124496e9302ec0001336699cd02ee00010103050702f000011020304102f200011e3d5c7b02f400012d5a87b502f600013b77b3ef02f800010a141e2902fa000118314a6302fc0001274e759d02fe0001356ba1d70300000104080c11030200011225384b0304000121426385030600012f5f8fbf030800013e7cbaf9030a00010c192633030c00011b36516d030e000129537da7031000013870a8e103120001060d141b03140001152a3f550316000123476b8f03180001326496c9031a000100010203031c00010f1e2d3d031e00011d3b5977032000012c5884b1032200013a75b0eb0324000109121b2503260001172f475f03280001264c7299032a000134699ed3032c00010306090d032e0001112335470330000120406081033200012e5d8cbb033400013d7ab7f5033600010b17232f033800011a344e69033a000128517aa3033c0001376ea5dd033e0001050b11170340000114283c51034200012245688b03440001316293c5034600013f7fbfff034800010e1c2a39034a00011c395673034c00012b5681ad034e00013973ade7035000010810182103520001162d445b03540001254a6f950356000133679bcf0358000102040609035a000110213243035c00011f3e5d7d035e00012d5b89b7036000013c78b4f1036200010a15202b0364000119324b6503660001274f779f03680001366ca2d9036a000104090e13036c00011326394d036e00012143658703700001306090c1037200013e7dbcfb037400010d1a2735037600011b37536f037800012a547ea9037a00013871aae3037c0001070e151d037e0001152b41570380000124486c9103820001326598cb0384000101020305038600010f1f2f3f038800011e3c5a79038a00012c5986b3038c00013b76b1ed038e000109131d27039000011830486103920001264d749b03940001356a9fd50396000103070b0f0398000112243649039a000120416283039c00012f5e8dbd039e00013d7bb9f703a000010c18243103a200011a35506b03a4000129527ba503a60001376fa7df03a80001060c121903aa000114293e5303ac00012346698d03ae0001316395c703b000010000000103b200010e1d2c3b03b400011d3a577503b600012b5783af03b800013a74aee903ba000108111a2303bc0001172e455d03be0001254b719703c0000134689cd103c200010205080b03c400011122334503c600011f3f5f7f03c800012e5c8ab903ca00013c79b6f303cc00010b16212d03ce000119334d6703d00001285078a103d20001366da4db03d40001050a0f1503d6000113273b4f03d800012244668903da0001306192c303dc00013f7ebdfd03de00010d1b293703e000011c38547103e200012a5580ab03e400013972abe503e60001070f171f03e80001162c425903ea000124496e9303ec0001336699cd03ee00010103050703f000011020304103f200011e3d5c7b03f400012d5a87b503f600013b77b3ef3009",
+        "payload_bytes": 4064
+      },
+      {
+        "command": 53,
+        "expected_crc16": 17227,
+        "fields": {
+          "controller_session_hex": "101112131415161718191a1b1c1d1e1f",
+          "generation": 1230066625199609624,
+          "span_count": 1,
+          "spans": [
+            {
+              "count": 89,
+              "start": 1015
+            }
+          ]
+        },
+        "header_bytes": 28,
+        "id": "overlay_patch_batch_full_snapshot_tail",
+        "packet_bytes": 390,
+        "packet_hex": "3501101112131415161718191a1b1c1d1e1f1112131415161718000103f700590306090c0a141e291123344618314a6320406080274e759d2e5d8bba356ba1d73d7ab7f404080c110b17222e1225384b1a344e6821426385285179a22f5f8fbf376ea5dc3e7cbaf9050b10160c19263314283c501b36516d2245678a29537da7316293c43870a8e13f7fbefe060d141b0e1c2a38152a3f551c39557223476b8f2b5681ac326496c93973ace600010203081018200f1e2d3d162d435a1d3b5977254a6f942c5884b133679ace3a75b0eb0204060809121b2510213142172f475f1f3e5d7c264c72992d5b88b634699ed33c78b4f00306090d0a151f2a1123354719324b6420406081274f769e2e5d8cbb366ca2d83d7ab7f504090d120b17232f1326394c1a344e692143648628517aa3306090c0376ea5dd3e7dbbfa050b11170d1a273414283c511b37526e2245688b2a547ea8316293c53871a9e23f7fbfff070e151c0e1c2a39152b40561c39567324486c902b5681ad326597ca3973ade701020304434b",
+        "payload_bytes": 360
       },
       {
         "command": 50,

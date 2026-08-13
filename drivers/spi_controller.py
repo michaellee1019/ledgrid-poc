@@ -117,6 +117,7 @@ CMD_OVERLAY_PATCH = 0x31
 CMD_OVERLAY_COMMIT = 0x32
 CMD_OVERLAY_CLEAR = 0x33
 CMD_OVERLAY_RENEW = 0x34
+CMD_OVERLAY_PATCH_BATCH = 0x35
 CMD_PING = 0xFF
 
 LOCAL_BACKGROUND_RAINBOW = 1
@@ -136,12 +137,20 @@ OVERLAY_PATCH_HEADER_BYTES = 30
 OVERLAY_COMMIT_BYTES = 50
 OVERLAY_CLEAR_BYTES = 34
 OVERLAY_RENEW_BYTES = 30
+OVERLAY_PATCH_BATCH_HEADER_BYTES = 28
+OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES = 4
 OVERLAY_FORMAT_PREMULTIPLIED_RGBA8 = 1
 OVERLAY_UPDATE_FULL_SNAPSHOT = 1
 OVERLAY_UPDATE_DELTA = 2
 OVERLAY_LOCAL_PIXELS = 8 * 138
 MAX_RGBA_PIXELS_PER_PATCH = (
     MAX_SPI_TRANSFER - OVERLAY_PATCH_HEADER_BYTES - CRC_BYTES
+) // 4
+MAX_RGBA_PIXELS_PER_BATCH_SPAN = (
+    MAX_SPI_TRANSFER
+    - OVERLAY_PATCH_BATCH_HEADER_BYTES
+    - OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
+    - CRC_BYTES
 ) // 4
 OVERLAY_OPERATION_RESULT_NAMES = {
     0: "none",
@@ -174,6 +183,7 @@ CAPABILITY_PRESENTATION_CONTEXT_V1 = 1 << 1
 CAPABILITY_STATUS_V3 = 1 << 2
 CAPABILITY_EXPLICIT_BASE_OWNERSHIP = 1 << 3
 CAPABILITY_SPARSE_OVERLAY_V1 = 1 << 4
+CAPABILITY_SPARSE_OVERLAY_BATCH_V1 = 1 << 5
 
 
 class LEDController:
@@ -396,7 +406,7 @@ class LEDController:
         return cls._fixed_bytes("controller_session_id", value, CONTROLLER_SESSION_BYTES)
 
     @staticmethod
-    def _premultiplied_rgba_bytes(value):
+    def _premultiplied_rgba_bytes(value, *, maximum=MAX_RGBA_PIXELS_PER_PATCH):
         if isinstance(value, np.ndarray):
             if value.dtype != np.uint8:
                 raise TypeError("premultiplied_rgba must have dtype uint8")
@@ -412,9 +422,9 @@ class LEDController:
         if not rgba or len(rgba) % 4:
             raise ValueError("premultiplied_rgba must contain one or more RGBA pixels")
         count = len(rgba) // 4
-        if count > MAX_RGBA_PIXELS_PER_PATCH:
+        if count > maximum:
             raise ValueError(
-                f"premultiplied_rgba may contain at most {MAX_RGBA_PIXELS_PER_PATCH} pixels"
+                f"premultiplied_rgba may contain at most {maximum} pixels"
             )
         channels = memoryview(rgba).cast("B")
         for offset in range(0, len(channels), 4):
@@ -829,6 +839,140 @@ class LEDController:
         ) + rgba
 
     @classmethod
+    def serialize_overlay_patch_batch(
+        cls, *, controller_session_id, generation, spans
+    ):
+        """Serialize one atomic, ordered multi-span foreground patch packet."""
+        session = cls._controller_session(controller_session_id)
+        overlay_generation = cls._bounded_uint(
+            "generation", generation, 0xFFFFFFFFFFFFFFFF
+        )
+        try:
+            span_items = tuple(spans)
+        except TypeError as exc:
+            raise TypeError("spans must be an iterable of (start, RGBA) pairs") from exc
+        if not span_items:
+            raise ValueError("an overlay patch batch must contain at least one span")
+
+        encoded = []
+        prior_end = 0
+        packet_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES + CRC_BYTES
+        for index, item in enumerate(span_items):
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                raise ValueError("each batch span must be a (start, RGBA) pair")
+            first_pixel = cls._bounded_uint("start", item[0], 0xFFFF)
+            rgba, count = cls._premultiplied_rgba_bytes(
+                item[1], maximum=MAX_RGBA_PIXELS_PER_BATCH_SPAN
+            )
+            if first_pixel + count > OVERLAY_LOCAL_PIXELS:
+                raise ValueError(
+                    f"overlay batch span [{first_pixel}, {first_pixel + count}) "
+                    f"exceeds the {OVERLAY_LOCAL_PIXELS}-pixel receiver"
+                )
+            if index and first_pixel < prior_end:
+                raise ValueError(
+                    "overlay batch spans must be sorted and non-overlapping"
+                )
+            packet_bytes += OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES + len(rgba)
+            if packet_bytes > MAX_SPI_TRANSFER:
+                raise ValueError(
+                    f"overlay patch batch exceeds the {MAX_SPI_TRANSFER}-byte "
+                    "SPI transaction ceiling including CRC"
+                )
+            encoded.append((first_pixel, count, rgba))
+            prior_end = first_pixel + count
+
+        header = struct.pack(
+            ">BB16sQH",
+            CMD_OVERLAY_PATCH_BATCH,
+            SPARSE_OVERLAY_PROTOCOL_VERSION,
+            session,
+            overlay_generation,
+            len(encoded),
+        )
+        body = bytearray()
+        for first_pixel, count, rgba in encoded:
+            body.extend(struct.pack(">HH", first_pixel, count))
+            body.extend(rgba)
+        return header + body
+
+    @classmethod
+    def serialize_overlay_patch_batches(
+        cls, *, controller_session_id, generation, patches, update_kind
+    ):
+        """Validate and greedily pack ordered spans into atomic batch packets."""
+        kind = cls._bounded_uint("update_kind", update_kind, 0xFF)
+        if kind not in (OVERLAY_UPDATE_FULL_SNAPSHOT, OVERLAY_UPDATE_DELTA):
+            raise ValueError("update_kind must be full snapshot (1) or delta (2)")
+        try:
+            patch_items = tuple(patches)
+        except TypeError as exc:
+            raise TypeError("patches must be an iterable of (start, RGBA) pairs") from exc
+
+        normalized = []
+        prior_end = 0
+        for index, item in enumerate(patch_items):
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                raise ValueError("each patch must be a (start, RGBA) pair")
+            first_pixel = cls._bounded_uint("start", item[0], 0xFFFF)
+            rgba, count = cls._premultiplied_rgba_bytes(
+                item[1], maximum=OVERLAY_LOCAL_PIXELS
+            )
+            if first_pixel + count > OVERLAY_LOCAL_PIXELS:
+                raise ValueError(
+                    f"overlay patch [{first_pixel}, {first_pixel + count}) exceeds "
+                    f"the {OVERLAY_LOCAL_PIXELS}-pixel receiver"
+                )
+            if index and first_pixel < prior_end:
+                raise ValueError("overlay patches must be sorted and non-overlapping")
+            if kind == OVERLAY_UPDATE_FULL_SNAPSHOT and first_pixel != prior_end:
+                raise ValueError(
+                    "full-snapshot patches must be contiguous from pixel zero"
+                )
+            offset = 0
+            while offset < count:
+                span_count = min(MAX_RGBA_PIXELS_PER_BATCH_SPAN, count - offset)
+                byte_start = offset * 4
+                byte_end = byte_start + span_count * 4
+                normalized.append((
+                    first_pixel + offset,
+                    rgba[byte_start:byte_end],
+                ))
+                offset += span_count
+            prior_end = first_pixel + count
+
+        if kind == OVERLAY_UPDATE_FULL_SNAPSHOT:
+            if not normalized or prior_end != OVERLAY_LOCAL_PIXELS:
+                raise ValueError(
+                    "full-snapshot patches must cover every receiver pixel exactly"
+                )
+        if not normalized:
+            return ()
+
+        packets = []
+        packet_spans = []
+        packet_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES + CRC_BYTES
+        for span in normalized:
+            span_bytes = OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES + len(span[1])
+            if packet_spans and packet_bytes + span_bytes > MAX_SPI_TRANSFER:
+                packets.append(cls.serialize_overlay_patch_batch(
+                    controller_session_id=controller_session_id,
+                    generation=generation,
+                    spans=packet_spans,
+                ))
+                packet_spans = []
+                packet_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES + CRC_BYTES
+            packet_spans.append(span)
+            packet_bytes += span_bytes
+        if packet_spans:
+            packets.append(cls.serialize_overlay_patch_batch(
+                controller_session_id=controller_session_id,
+                generation=generation,
+                spans=packet_spans,
+            ))
+        return tuple(packets)
+
+    @classmethod
     def serialize_overlay_commit(
         cls, *, controller_session_id, generation, scene_epoch,
         base_revision, present_at_scene_time_us
@@ -889,6 +1033,18 @@ class LEDController:
     def renew_overlay(self, **kwargs):
         return self._overlay_command_status(self.serialize_overlay_renew(**kwargs))
 
+    def send_overlay_patch_batch(self, **kwargs):
+        if not (
+            int(getattr(self, "_receiver_capabilities", 0) or 0)
+            & CAPABILITY_SPARSE_OVERLAY_BATCH_V1
+        ):
+            raise RuntimeError(
+                "receiver has not advertised sparse-overlay batch-v1 support"
+            )
+        return self._overlay_command_status(
+            self.serialize_overlay_patch_batch(**kwargs)
+        )
+
     def _overlay_command_status(self, payload):
         status = self._command_status(payload, required_status_version=4)
         if int(status.get("receiver_status_version", 0) or 0) < 4:
@@ -907,38 +1063,30 @@ class LEDController:
     def send_overlay_patches(
         self, *, controller_session_id, generation, patches, update_kind
     ):
-        """Validate an ordered patch set completely before sending any packet."""
-        kind = self._bounded_uint("update_kind", update_kind, 0xFF)
-        if kind not in (OVERLAY_UPDATE_FULL_SNAPSHOT, OVERLAY_UPDATE_DELTA):
-            raise ValueError("update_kind must be full snapshot (1) or delta (2)")
-        try:
-            patch_items = tuple(patches)
-        except TypeError as exc:
-            raise TypeError("patches must be an iterable of (start, RGBA) pairs") from exc
-        packets = []
-        prior_end = 0
-        for index, item in enumerate(patch_items):
-            if not isinstance(item, (tuple, list)) or len(item) != 2:
-                raise ValueError("each patch must be a (start, RGBA) pair")
-            packet = self.serialize_overlay_patch(
-                controller_session_id=controller_session_id,
-                generation=generation,
-                start=item[0],
-                premultiplied_rgba=item[1],
-            )
-            start = self._response_u16(packet, 26)
-            count = self._response_u16(packet, 28)
-            if index and start < prior_end:
-                raise ValueError("overlay patches must be sorted and non-overlapping")
-            if kind == OVERLAY_UPDATE_FULL_SNAPSHOT and start != prior_end:
-                raise ValueError("full-snapshot patches must be contiguous from pixel zero")
-            prior_end = start + count
-            packets.append(packet)
-        if kind == OVERLAY_UPDATE_FULL_SNAPSHOT:
-            if not packets or prior_end != OVERLAY_LOCAL_PIXELS:
-                raise ValueError(
-                    "full-snapshot patches must cover every receiver pixel exactly"
+        """Validate all spans before I/O and acknowledge each atomic batch once."""
+        patch_items = tuple(patches)
+        packets = self.serialize_overlay_patch_batches(
+            controller_session_id=controller_session_id,
+            generation=generation,
+            patches=patch_items,
+            update_kind=update_kind,
+        )
+        if not (
+            int(getattr(self, "_receiver_capabilities", 0) or 0)
+            & CAPABILITY_SPARSE_OVERLAY_BATCH_V1
+        ):
+            # A sparse-v1 receiver can still consume the original single-span
+            # packets. The batch serializer above performs the complete
+            # ordering/full-coverage preflight before any legacy packet is sent.
+            packets = tuple(
+                self.serialize_overlay_patch(
+                    controller_session_id=controller_session_id,
+                    generation=generation,
+                    start=start,
+                    premultiplied_rgba=rgba,
                 )
+                for start, rgba in patch_items
+            )
         statuses = []
         for packet in packets:
             statuses.append(self._overlay_command_status(packet))

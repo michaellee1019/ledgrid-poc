@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import binascii
+import json
+from pathlib import Path
 import struct
 import sys
 import types
@@ -64,7 +66,10 @@ class FakeSparseSpi:
             | protocol.CAPABILITY_EXPLICIT_BASE_OWNERSHIP
         )
         if self.sparse_capable:
-            capabilities |= protocol.CAPABILITY_SPARSE_OVERLAY_V1
+            capabilities |= (
+                protocol.CAPABILITY_SPARSE_OVERLAY_V1
+                | protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
+            )
         response[64:68] = capabilities.to_bytes(4, "big")
         response[313] = state[0]
         response[316:320] = state[1].to_bytes(4, "big")
@@ -233,6 +238,100 @@ class SparseOverlaySerializerTests(unittest.TestCase):
             protocol.LEDController.serialize_overlay_begin(
                 **common, update_kind=protocol.OVERLAY_UPDATE_FULL_SNAPSHOT
             )
+
+    def test_multi_span_batch_is_exact_big_endian_bytes(self):
+        packet = protocol.LEDController.serialize_overlay_patch_batch(
+            controller_session_id=SESSION,
+            generation=0x0102030405060708,
+            spans=(
+                (0x0010, bytes((1, 2, 3, 4))),
+                (0x0200, bytes((5, 6, 7, 8, 0, 0, 0, 0))),
+            ),
+        )
+        self.assertEqual(
+            packet,
+            b"\x35\x01" + SESSION
+            + bytes.fromhex("0102030405060708 0002")
+            + bytes.fromhex("0010 0001") + bytes((1, 2, 3, 4))
+            + bytes.fromhex("0200 0002") + bytes((5, 6, 7, 8, 0, 0, 0, 0)),
+        )
+        self.assertEqual(len(packet), 48)
+
+    def test_generated_batch_packets_match_host_serializer_and_crc(self):
+        fixture_path = (
+            Path(__file__).resolve().parents[1]
+            / "fixtures"
+            / "animation_pipeline_v1.json"
+        )
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        vectors = [
+            item for item in fixture["firmware_protocol"]["wire_packet_vectors"]
+            if item["command"] == protocol.CMD_OVERLAY_PATCH_BATCH
+        ]
+        self.assertGreaterEqual(len(vectors), 4)
+        for vector in vectors:
+            with self.subTest(vector=vector["id"]):
+                expected = bytes.fromhex(vector["packet_hex"])
+                span_count = int.from_bytes(expected[26:28], "big")
+                offset = protocol.OVERLAY_PATCH_BATCH_HEADER_BYTES
+                spans = []
+                for _ in range(span_count):
+                    start, count = struct.unpack(">HH", expected[offset:offset + 4])
+                    offset += protocol.OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
+                    rgba_end = offset + count * 4
+                    spans.append((start, expected[offset:rgba_end]))
+                    offset = rgba_end
+                self.assertEqual(offset, len(expected) - protocol.CRC_BYTES)
+                packet = protocol.LEDController.serialize_overlay_patch_batch(
+                    controller_session_id=expected[2:18],
+                    generation=int.from_bytes(expected[18:26], "big"),
+                    spans=spans,
+                )
+                self.assertEqual(packet, expected[:-2])
+                self.assertEqual(
+                    binascii.crc_hqx(packet, 0xFFFF).to_bytes(2, "big"),
+                    expected[-2:],
+                )
+
+    def test_batch_packer_fills_maximum_packet_and_splits_tail(self):
+        packets = protocol.LEDController.serialize_overlay_patch_batches(
+            controller_session_id=SESSION,
+            generation=1,
+            patches=(
+                (0, zeros(protocol.MAX_RGBA_PIXELS_PER_BATCH_SPAN)),
+                (
+                    protocol.MAX_RGBA_PIXELS_PER_BATCH_SPAN,
+                    zeros(
+                        protocol.OVERLAY_LOCAL_PIXELS
+                        - protocol.MAX_RGBA_PIXELS_PER_BATCH_SPAN
+                    ),
+                ),
+            ),
+            update_kind=protocol.OVERLAY_UPDATE_FULL_SNAPSHOT,
+        )
+        self.assertEqual(len(packets), 2)
+        self.assertEqual(
+            len(packets[0]) + protocol.CRC_BYTES,
+            protocol.MAX_SPI_TRANSFER - 2,
+        )
+        self.assertEqual(packets[0][26:28], b"\x00\x01")
+        self.assertEqual(packets[0][28:32], b"\x00\x00\x03\xf7")
+        self.assertEqual(packets[1][28:32], b"\x03\xf7\x00\x59")
+
+    def test_batch_rejects_empty_unsorted_overlap_out_of_bounds_and_overflow(self):
+        common = dict(controller_session_id=SESSION, generation=1)
+        invalid = (
+            (),
+            ((5, zeros(1)), (4, zeros(1))),
+            ((5, zeros(2)), (6, zeros(1))),
+            ((1104, zeros(1)),),
+            tuple((index * 2, zeros(1)) for index in range(509)),
+        )
+        for spans in invalid:
+            with self.subTest(spans=len(spans)), self.assertRaises(ValueError):
+                protocol.LEDController.serialize_overlay_patch_batch(
+                    **common, spans=spans
+                )
 
     def test_maximum_patch_exactly_fills_transfer_after_crc(self):
         item = controller()
@@ -471,6 +570,35 @@ class SparseOverlayDriverTests(unittest.TestCase):
         self.assertEqual(first["receiver_operation_sequence"], 1)
         self.assertEqual(second["receiver_operation_sequence"], 2)
 
+    def test_exact_batch_retry_produces_identical_wire_and_one_result_each(self):
+        item = controller()
+        item._receiver_capabilities |= protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
+        arguments = dict(
+            controller_session_id=SESSION,
+            generation=9,
+            spans=((12, bytes((1, 0, 1, 1))), (20, bytes((2, 2, 2, 2)))),
+        )
+        first = item.send_overlay_patch_batch(**arguments)
+        second = item.send_overlay_patch_batch(**arguments)
+        packets = [
+            packet for packet in item.spi.packets
+            if packet[0] == protocol.CMD_OVERLAY_PATCH_BATCH
+        ]
+        self.assertEqual(packets, [packets[0], packets[0]])
+        self.assertEqual(first["receiver_operation_sequence"], 1)
+        self.assertEqual(second["receiver_operation_sequence"], 2)
+
+    def test_direct_batch_send_requires_negotiated_capability_without_io(self):
+        item = controller()
+        before = len(item.spi.packets)
+        with self.assertRaisesRegex(RuntimeError, "has not advertised"):
+            item.send_overlay_patch_batch(
+                controller_session_id=SESSION,
+                generation=1,
+                spans=((0, zeros(1)),),
+            )
+        self.assertEqual(len(item.spi.packets), before)
+
     def test_lost_or_wrong_ack_is_not_accepted(self):
         item = controller(acknowledge=False)
         with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
@@ -513,6 +641,30 @@ class SparseOverlayDriverTests(unittest.TestCase):
             update_kind=protocol.OVERLAY_UPDATE_FULL_SNAPSHOT,
         )
         self.assertEqual(len(statuses), 2)
+        self.assertEqual(
+            len([
+                packet for packet in item.spi.packets
+                if packet[0] == protocol.CMD_OVERLAY_PATCH
+            ]),
+            2,
+        )
+        self.assertFalse(any(
+            packet[0] == protocol.CMD_OVERLAY_PATCH_BATCH
+            for packet in item.spi.packets
+        ))
+        item._receiver_capabilities |= protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
+        statuses = item.send_overlay_patches(
+            controller_session_id=SESSION,
+            generation=2,
+            patches=[(0, zeros(1015)), (1015, zeros(89))],
+            update_kind=protocol.OVERLAY_UPDATE_FULL_SNAPSHOT,
+        )
+        self.assertEqual(len(statuses), 2)
+        batch_packets = [
+            packet for packet in item.spi.packets
+            if packet[0] == protocol.CMD_OVERLAY_PATCH_BATCH
+        ]
+        self.assertEqual(len(batch_packets), 2)
         self.assertEqual(
             item.send_overlay_patches(
                 controller_session_id=SESSION,

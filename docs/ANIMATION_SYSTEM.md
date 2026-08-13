@@ -319,9 +319,24 @@ premultiplied-RGBA foreground state, sparse four-board host orchestration,
 leases, scheduled commit, and fixed-point receiver composition behind that same
 canary flag. The ordinary production image keeps both local playback and sparse
 foreground compiled off, and a complete host RGB frame remains the accepted
-wall path and immediate takeover mechanism. Manager/dashboard integration,
-payload-gate optimization, and physical canary evidence remain later Phase 3B0
-work.
+wall path and immediate takeover mechanism. Manager/dashboard integration and
+physical canary evidence remain later Phase 3B0 work.
+
+The follow-on Phase 3B0 slice adds capability-gated sparse batch command `0x35`.
+Its 28-byte fixed header carries the session, generation, and logical span
+count; each sorted span adds `start:u16`, `count:u16`, and premultiplied RGBA.
+`OVERLAY_BEGIN.expected_patches` and status-v4 `accepted_patches` count spans,
+not packets. One CRC and one queued-response command/result proof therefore
+cover all spans in a batch, while receivers without capability bit `1<<5`
+continue using the original `0x31` packets. The exact wire layout, 4,096-byte
+capacity rule, retry semantics, and malformed vectors are frozen in
+[ANIMATION_PIPELINE_CONTRACT_V1.md](ANIMATION_PIPELINE_CONTRACT_V1.md).
+On the frozen 32×138 clock trace this changes the representative patch payload
+from 1,812 to 952 bytes (7.1795% of a 13,260-byte wall frame) and the complete
+60-second SPI trace from 6,413,426 to 2,468,816 clocked bytes (94.8282% saved
+versus 47,736,000 dense bytes). The accounting also reports 4,937,632 aggregate
+MOSI+MISO endpoint bytes; SPI responses share command/query clocks rather than
+adding a second transfer.
 
 Receiver playback is not an `AnimationBase`, does not weaken the Python manifest
 allowlist, and does not introduce another catalog. The Pi continues to resolve

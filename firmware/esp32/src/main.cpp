@@ -390,7 +390,8 @@ ledgrid::ReceiverStatusV4 status_snapshot() {
   if (receiver_runtime.local_background_enabled()) {
     status.capabilities |= ledgrid::kCapabilityStaticLocalBackground |
                            ledgrid::kCapabilityPresentationContextV1 |
-                           ledgrid::kCapabilitySparseOverlayV1;
+                           ledgrid::kCapabilitySparseOverlayV1 |
+                           ledgrid::kCapabilitySparseOverlayBatchV1;
   }
   status.base_mode = static_cast<std::uint8_t>(receiver_runtime.base_mode());
   status.foreground_state =

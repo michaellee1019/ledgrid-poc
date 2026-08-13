@@ -41,6 +41,8 @@ CRC_BYTES = 2
 CONTROLLER_SESSION_BEGIN_BYTES = 58
 OVERLAY_BEGIN_BYTES = 66
 OVERLAY_PATCH_HEADER_BYTES = 30
+OVERLAY_PATCH_BATCH_HEADER_BYTES = 28
+OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES = 4
 OVERLAY_COMMIT_BYTES = 50
 OVERLAY_RENEW_BYTES = 30
 RECEIVER_STATUS_BYTES_V3 = 320
@@ -49,6 +51,12 @@ SPI_RESPONSE_QUEUE_DEPTH = 2
 MAX_SPI_TRANSFER = 4096
 MAX_RGBA_PIXELS_PER_PATCH = (
     MAX_SPI_TRANSFER - OVERLAY_PATCH_HEADER_BYTES - CRC_BYTES
+) // 4
+MAX_RGBA_PIXELS_PER_BATCH_SPAN = (
+    MAX_SPI_TRANSFER
+    - OVERLAY_PATCH_BATCH_HEADER_BYTES
+    - OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
+    - CRC_BYTES
 ) // 4
 LOCAL_RGB_PACKET_BYTES = 1 + LOCAL_PIXELS * 3 + CRC_BYTES
 FULL_WALL_RGB_PACKET_BYTES = RECEIVER_COUNT * LOCAL_RGB_PACKET_BYTES
@@ -105,6 +113,8 @@ class WireAccount:
     def to_dict(self) -> dict:
         return {
             "spi_clocked_bytes": self.spi_clocked_bytes,
+            "mosi_bytes": self.spi_clocked_bytes,
+            "miso_bytes": self.spi_clocked_bytes,
             "bidirectional_endpoint_bytes": self.spi_clocked_bytes * 2,
             "command_packet_bytes": self.command_packet_bytes,
             "status_query_transfer_bytes": self.status_query_transfer_bytes,
@@ -152,7 +162,7 @@ def _local_patch_ranges(
     patches: list[tuple[int, int]] = []
     for start, end in ranges:
         while start < end:
-            patch_end = min(end, start + MAX_RGBA_PIXELS_PER_PATCH)
+            patch_end = min(end, start + MAX_RGBA_PIXELS_PER_BATCH_SPAN)
             patches.append((start, patch_end))
             start = patch_end
     return tuple(patches)
@@ -160,18 +170,57 @@ def _local_patch_ranges(
 
 def _full_snapshot_ranges() -> tuple[tuple[int, int], ...]:
     return tuple(
-        (start, min(LOCAL_PIXELS, start + MAX_RGBA_PIXELS_PER_PATCH))
-        for start in range(0, LOCAL_PIXELS, MAX_RGBA_PIXELS_PER_PATCH)
+        (start, min(LOCAL_PIXELS, start + MAX_RGBA_PIXELS_PER_BATCH_SPAN))
+        for start in range(0, LOCAL_PIXELS, MAX_RGBA_PIXELS_PER_BATCH_SPAN)
     )
 
 
 def patch_packet_bytes(ranges: Iterable[Sequence[int]]) -> int:
+    """Return legacy v1 single-span packet bytes for before/after evidence."""
+
     total = 0
     for start, end in ranges:
         count = int(end) - int(start)
         if not 1 <= count <= MAX_RGBA_PIXELS_PER_PATCH:
             raise ValueError("patch count is outside the frozen wire bound")
         total += OVERLAY_PATCH_HEADER_BYTES + count * 4 + CRC_BYTES
+    return total
+
+
+def _batch_packets(
+    ranges: Iterable[Sequence[int]],
+) -> tuple[tuple[tuple[int, int], ...], ...]:
+    """Greedily mirror the live host's ordered batch packing policy."""
+
+    packets: list[tuple[tuple[int, int], ...]] = []
+    packet: list[tuple[int, int]] = []
+    packet_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES + CRC_BYTES
+    for raw_start, raw_end in ranges:
+        start = int(raw_start)
+        end = int(raw_end)
+        count = end - start
+        if not 1 <= count <= MAX_RGBA_PIXELS_PER_BATCH_SPAN:
+            raise ValueError("batch span count is outside the frozen wire bound")
+        span_bytes = OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES + count * 4
+        if packet and packet_bytes + span_bytes > MAX_SPI_TRANSFER:
+            packets.append(tuple(packet))
+            packet = []
+            packet_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES + CRC_BYTES
+        packet.append((start, end))
+        packet_bytes += span_bytes
+    if packet:
+        packets.append(tuple(packet))
+    return tuple(packets)
+
+
+def batch_packet_bytes(ranges: Iterable[Sequence[int]]) -> int:
+    total = 0
+    for packet in _batch_packets(ranges):
+        total += OVERLAY_PATCH_BATCH_HEADER_BYTES + CRC_BYTES
+        total += sum(
+            OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES + (end - start) * 4
+            for start, end in packet
+        )
     return total
 
 
@@ -214,8 +263,12 @@ def _render_trace(seconds: int) -> list[dict]:
             "dirty_ranges": tuple(rendered.dirty_ranges),
             "local_patches": local,
             "patch_count": sum(len(item) for item in local),
+            "batch_count": sum(len(_batch_packets(item)) for item in local),
             "patch_pixels": sum(end - start for item in local for start, end in item),
-            "patch_packet_bytes": sum(patch_packet_bytes(item) for item in local),
+            "legacy_patch_packet_bytes": sum(
+                patch_packet_bytes(item) for item in local
+            ),
+            "batch_packet_bytes": sum(batch_packet_bytes(item) for item in local),
         })
     return frames
 
@@ -233,16 +286,27 @@ def _add_generation(
             f"{event_prefix}_begin", OVERLAY_BEGIN_BYTES
         )
     for receiver_patches in patches_by_receiver:
-        for start, end in receiver_patches:
+        packets = _batch_packets(receiver_patches)
+        for packet in packets:
             account.add_acknowledged_command(
-                f"{event_prefix}_patch",
-                OVERLAY_PATCH_HEADER_BYTES + (int(end) - int(start)) * 4,
+                f"{event_prefix}_patch_batch",
+                OVERLAY_PATCH_BATCH_HEADER_BYTES
+                + sum(
+                    OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
+                    + (int(end) - int(start)) * 4
+                    for start, end in packet
+                ),
             )
-        if retry_latest_patch and receiver_patches:
-            start, end = receiver_patches[-1]
+        if retry_latest_patch and packets:
+            packet = packets[-1]
             account.add_acknowledged_command(
-                "exact_patch_retry",
-                OVERLAY_PATCH_HEADER_BYTES + (int(end) - int(start)) * 4,
+                "exact_batch_retry",
+                OVERLAY_PATCH_BATCH_HEADER_BYTES
+                + sum(
+                    OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
+                    + (int(end) - int(start)) * 4
+                    for start, end in packet
+                ),
             )
     for _ in range(RECEIVER_COUNT):
         account.add_acknowledged_command(
@@ -267,7 +331,7 @@ def build_report(
 
     frames = _render_trace(seconds)
     ordinary = frames[1]
-    ordinary_patch_ratio = ordinary["patch_packet_bytes"] / FULL_WALL_RGB_PACKET_BYTES
+    ordinary_patch_ratio = ordinary["batch_packet_bytes"] / FULL_WALL_RGB_PACKET_BYTES
     ordinary_account = WireAccount()
     _add_generation(
         ordinary_account,
@@ -327,10 +391,15 @@ def build_report(
     trace_savings = 1.0 - account.spi_clocked_bytes / baseline_spi_bytes
     ordinary_rgba_bytes = ordinary["patch_pixels"] * 4
     ordinary_header_crc_bytes = (
-        ordinary["patch_count"] * (OVERLAY_PATCH_HEADER_BYTES + CRC_BYTES)
+        ordinary["batch_count"] * (OVERLAY_PATCH_BATCH_HEADER_BYTES + CRC_BYTES)
+        + ordinary["patch_count"] * OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
     )
 
-    patch_bytes = [frame["patch_packet_bytes"] for frame in frames if frame["second"] not in repair_seconds]
+    patch_bytes = [
+        frame["batch_packet_bytes"]
+        for frame in frames
+        if frame["second"] not in repair_seconds
+    ]
     patch_counts = [frame["patch_count"] for frame in frames if frame["second"] not in repair_seconds]
     return {
         "$schema": "ledgrid.sparse-overlay-payload-accounting",
@@ -346,6 +415,10 @@ def build_report(
         "wire_contract": {
             "crc_bytes": CRC_BYTES,
             "max_rgba_pixels_per_patch": MAX_RGBA_PIXELS_PER_PATCH,
+            "overlay_patch_batch_header_bytes": OVERLAY_PATCH_BATCH_HEADER_BYTES,
+            "overlay_patch_batch_span_header_bytes": OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES,
+            "max_rgba_pixels_per_batch_span": MAX_RGBA_PIXELS_PER_BATCH_SPAN,
+            "batch_capacity_formula": "sum(pixel_counts) + span_count <= 1016",
             "status_response_queue_depth": SPI_RESPONSE_QUEUE_DEPTH,
             "status_transfers_per_acknowledged_command": ACK_STATUS_TRANSFERS,
             "status_v3_query_transfer_bytes": STATUS_V3_QUERY_TRANSFER_BYTES,
@@ -376,7 +449,7 @@ def build_report(
             "repair_interval_seconds": repair_interval_seconds,
             "repair_seconds": sorted(repair_seconds),
             "retry_policy": (
-                "one exact retry of each receiver's latest accepted patch at "
+                "one exact retry of each receiver's latest accepted batch at "
                 f"second {retry_second}"
             ),
         },
@@ -384,10 +457,12 @@ def build_report(
             "second": ordinary["second"],
             "dirty_ranges": len(ordinary["dirty_ranges"]),
             "patches": ordinary["patch_count"],
+            "batch_packets": ordinary["batch_count"],
             "patch_pixels": ordinary["patch_pixels"],
             "rgba_body_bytes": ordinary_rgba_bytes,
-            "patch_header_crc_bytes": ordinary_header_crc_bytes,
-            "patch_packet_bytes_including_headers_crc": ordinary["patch_packet_bytes"],
+            "batch_overhead_bytes": ordinary_header_crc_bytes,
+            "legacy_single_span_packet_bytes": ordinary["legacy_patch_packet_bytes"],
+            "patch_packet_bytes_including_headers_crc": ordinary["batch_packet_bytes"],
             "full_wall_rgb_packet_bytes": FULL_WALL_RGB_PACKET_BYTES,
             "patch_ratio": round(ordinary_patch_ratio, 6),
             "below_10_percent": ordinary_patch_ratio < 0.10,
@@ -411,6 +486,7 @@ def build_report(
             "repair_snapshots": len(repair_seconds),
             "baseline_full_rgb_frames": baseline_frames,
             "baseline_spi_clocked_bytes": baseline_spi_bytes,
+            "baseline_bidirectional_endpoint_bytes": baseline_spi_bytes * 2,
             "sparse": account.to_dict(),
             "savings_ratio": round(trace_savings, 6),
             "at_least_90_percent_savings": trace_savings >= 0.90,
@@ -419,27 +495,24 @@ def build_report(
             "ordinary_changed_tick_below_10_percent": ordinary_patch_ratio < 0.10,
             "sixty_second_trace_at_least_90_percent_savings": trace_savings >= 0.90,
             "all_gates_pass": ordinary_patch_ratio < 0.10 and trace_savings >= 0.90,
-            "nonpassing_result_is_diagnostic_not_process_failure": True,
+            "check_enforces_acceptance_gates": True,
         },
         "diagnosis": (
-            "Each short dirty run is a separate 30-byte-header patch command, and "
-            "each acknowledged command clocks five 418-byte status-v4 transfers. "
-            "The current fragmentation and acknowledgement granularity dominate "
-            "the clock's small RGBA body."
+            "Sorted dirty runs share one 28-byte batch header per receiver, and "
+            "one command/result proof now acknowledges every span in that batch."
         ),
         "architectural_cause": {
             "ordinary_rgba_body_bytes": ordinary_rgba_bytes,
-            "ordinary_patch_header_crc_bytes": ordinary_header_crc_bytes,
+            "ordinary_batch_overhead_bytes": ordinary_header_crc_bytes,
             "ordinary_header_crc_fraction": round(
-                ordinary_header_crc_bytes / ordinary["patch_packet_bytes"], 6
+                ordinary_header_crc_bytes / ordinary["batch_packet_bytes"], 6
             ),
             "trace_status_query_fraction": round(
                 account.status_query_transfer_bytes / account.spi_clocked_bytes, 6
             ),
             "required_direction": (
-                "batch multiple short spans under one acknowledged command or use "
-                "a compact sparse encoding, and amortize acknowledgement status "
-                "queries without weakening exact command/result sequencing"
+                "implemented: batch multiple sorted spans under one CRC-bound, "
+                "operation-sequenced acknowledgement without weakening result proof"
             ),
         },
     }
@@ -451,7 +524,7 @@ def validate_report(report: dict) -> None:
         raise RuntimeError("receiver-local RGB accounting drifted")
     if contract["full_wall_rgb_packet_bytes"] != 13260:
         raise RuntimeError("full-wall RGB accounting drifted")
-    if contract["full_snapshot_local_patch_pixels"] != [1016, 88]:
+    if contract["full_snapshot_local_patch_pixels"] != [1015, 89]:
         raise RuntimeError("full-snapshot chunking drifted")
     sparse = report["trace"]["sparse"]
     orchestration_queries = sum(
@@ -472,6 +545,34 @@ def validate_report(report: dict) -> None:
         sparse["command_packet_bytes"] + sparse["status_query_transfer_bytes"]
     ):
         raise RuntimeError("SPI transfer categories do not sum to the trace total")
+    events = sparse["event_counts"]
+    duration = report["policy"]["duration_seconds"]
+    repair_count = len(report["policy"]["repair_seconds"])
+    renewal_count = len(
+        range(0, duration, report["policy"]["renewal_interval_seconds"])
+    )
+    exact_counts = {
+        "controller_session_begin": RECEIVER_COUNT,
+        "repair_begin": RECEIVER_COUNT * repair_count,
+        "repair_commit": RECEIVER_COUNT * repair_count,
+        "delta_begin": RECEIVER_COUNT * (duration - repair_count),
+        "delta_commit": RECEIVER_COUNT * (duration - repair_count),
+        "lease_renew": RECEIVER_COUNT * renewal_count,
+        "exact_batch_retry": RECEIVER_COUNT,
+        "publish_preflight_query": RECEIVER_COUNT * duration,
+        "publish_verification_query": RECEIVER_COUNT * duration,
+        "renewal_preflight_query": RECEIVER_COUNT * renewal_count,
+        "status_v3_query": RECEIVER_COUNT,
+        "status_v4_query": sparse["status_query_count"] - RECEIVER_COUNT,
+    }
+    for name, expected in exact_counts.items():
+        if events.get(name, 0) != expected:
+            raise RuntimeError(
+                f"deterministic trace omitted or added {name}: "
+                f"expected {expected}, got {events.get(name, 0)}"
+            )
+    if not report["acceptance"]["all_gates_pass"]:
+        raise RuntimeError("sparse-overlay payload acceptance gates failed")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -485,8 +586,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--check",
         action="store_true",
         help=(
-            "validate accounting invariants; acceptance gates remain reported "
-            "data and do not make an honest nonpassing measurement exit nonzero"
+            "validate accounting invariants and enforce both frozen acceptance gates"
         ),
     )
     args = parser.parse_args(argv)

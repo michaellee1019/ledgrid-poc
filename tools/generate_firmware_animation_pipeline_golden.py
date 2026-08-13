@@ -82,7 +82,9 @@ def render_header(fixture: Mapping[str, Any]) -> str:
     commands = protocol["command_ids"]
     headers = protocol["header_bytes"]
     patches = protocol["full_snapshot_patches"]
+    batch_spans = protocol["full_snapshot_batch_spans"]
     wire_packets = protocol["wire_packet_vectors"]
+    malformed_batch_packets = protocol["malformed_batch_packet_vectors"]
     receiver_slices = protocol["receiver_slice_vectors"]
     counter_orders = protocol["counter_order_vectors"]
     generation_begins = protocol["generation_begin_vectors"]
@@ -137,6 +139,9 @@ def render_header(fixture: Mapping[str, Any]) -> str:
         for board in boards
     )
     patch_rows = _rows(f"{{{patch['start']}, {patch['count']}}}" for patch in patches)
+    batch_span_rows = _rows(
+        f"{{{span['start']}, {span['count']}}}" for span in batch_spans
+    )
     wire_packet_declarations = "\n\n".join(
         f"constexpr std::uint8_t kWirePacket{index}[] = {{\n"
         f"{_byte_rows(bytes.fromhex(vector['packet_hex']))}\n"
@@ -147,6 +152,18 @@ def render_header(fixture: Mapping[str, Any]) -> str:
         f'{{"{vector["id"]}", {vector["command"]}, {vector["header_bytes"]}, '
         f"kWirePacket{index}, sizeof(kWirePacket{index}), {vector['expected_crc16']}}}"
         for index, vector in enumerate(wire_packets)
+    )
+    malformed_batch_packet_declarations = "\n\n".join(
+        f"constexpr std::uint8_t kMalformedBatchPacket{index}[] = {{\n"
+        f"{_byte_rows(bytes.fromhex(vector['packet_hex']))}\n"
+        "};"
+        for index, vector in enumerate(malformed_batch_packets)
+    )
+    malformed_batch_packet_rows = _rows(
+        f'{{"{vector["id"]}", kMalformedBatchPacket{index}, '
+        f"sizeof(kMalformedBatchPacket{index}), {vector['expected_crc16']}, "
+        f"{vector['expected_result']}}}"
+        for index, vector in enumerate(malformed_batch_packets)
     )
     receiver_slice_rows = _rows(
         f'{{"{vector["id"]}", {vector["global_start"]}, {vector["global_end"]}, '
@@ -269,6 +286,14 @@ struct WirePacketVector {{
   std::uint16_t expected_crc16;
 }};
 
+struct MalformedBatchPacketVector {{
+  const char* id;
+  const std::uint8_t* packet;
+  std::size_t packet_bytes;
+  std::uint16_t expected_crc16;
+  std::uint8_t expected_result;
+}};
+
 struct ReceiverSlice {{
   std::uint8_t board_index;
   std::uint32_t global_start;
@@ -329,6 +354,9 @@ constexpr std::uint8_t kProtocolVersion = {protocol["version"]};
 constexpr std::size_t kMaxTransactionBytes = {protocol["max_transaction_bytes"]};
 constexpr std::size_t kCrcBytes = {protocol["crc_bytes"]};
 constexpr std::size_t kMaxRgbaPixelsPerPatch = {protocol["max_rgba_pixels_per_patch"]};
+constexpr std::size_t kBatchSpanDescriptorBytes = {protocol["batch_span_descriptor_bytes"]};
+constexpr std::size_t kMaxRgbaPixelsPerSingleSpanBatch = {protocol["max_rgba_pixels_per_single_span_batch"]};
+constexpr std::size_t kMaxOnePixelSpansPerBatch = {protocol["max_one_pixel_spans_per_batch"]};
 constexpr std::size_t kLocalPixels = {protocol["local_pixels"]};
 
 constexpr std::uint8_t kControllerSessionBeginCommand = {commands["controller_session_begin"]};
@@ -337,6 +365,7 @@ constexpr std::uint8_t kOverlayPatchCommand = {commands["overlay_patch"]};
 constexpr std::uint8_t kOverlayCommitCommand = {commands["overlay_commit"]};
 constexpr std::uint8_t kOverlayClearCommand = {commands["overlay_clear"]};
 constexpr std::uint8_t kOverlayRenewCommand = {commands["overlay_renew"]};
+constexpr std::uint8_t kOverlayPatchBatchCommand = {commands["overlay_patch_batch"]};
 
 constexpr std::size_t kControllerSessionBeginHeaderBytes = {headers["controller_session_begin"]};
 constexpr std::size_t kOverlayBeginHeaderBytes = {headers["overlay_begin"]};
@@ -344,6 +373,7 @@ constexpr std::size_t kOverlayPatchHeaderBytes = {headers["overlay_patch"]};
 constexpr std::size_t kOverlayCommitHeaderBytes = {headers["overlay_commit"]};
 constexpr std::size_t kOverlayClearHeaderBytes = {headers["overlay_clear"]};
 constexpr std::size_t kOverlayRenewHeaderBytes = {headers["overlay_renew"]};
+constexpr std::size_t kOverlayPatchBatchHeaderBytes = {headers["overlay_patch_batch"]};
 
 constexpr BlendVector kBlendVectors[] = {{
 {blend_rows}
@@ -373,10 +403,20 @@ constexpr SnapshotPatchVector kFullSnapshotPatches[] = {{
 {patch_rows}
 }};
 
+constexpr SnapshotPatchVector kFullSnapshotBatchSpans[] = {{
+{batch_span_rows}
+}};
+
 {wire_packet_declarations}
 
 constexpr WirePacketVector kWirePacketVectors[] = {{
 {wire_packet_rows}
+}};
+
+{malformed_batch_packet_declarations}
+
+constexpr MalformedBatchPacketVector kMalformedBatchPacketVectors[] = {{
+{malformed_batch_packet_rows}
 }};
 
 constexpr ReceiverSliceVector kReceiverSliceVectors[] = {{

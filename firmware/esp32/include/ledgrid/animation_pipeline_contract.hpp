@@ -71,6 +71,7 @@ enum class AnimationPipelineCommand : std::uint8_t {
   OverlayCommit = 0x32,
   OverlayClear = 0x33,
   OverlayRenew = 0x34,
+  OverlayPatchBatch = 0x35,
 };
 
 enum class OverlayFormat : std::uint8_t {
@@ -134,6 +135,10 @@ enum class CounterRelation : std::int8_t {
 //   scene_revision:u64
 // OVERLAY_RENEW:
 //   command:u8, version:u8, session:bytes[16], generation:u64, lease_ms:u32
+// OVERLAY_PATCH_BATCH:
+//   command:u8, version:u8, session:bytes[16], generation:u64,
+//   span_count:u16, repeated(start:u16, count:u16,
+//   premultiplied_rgba:bytes[count * 4])
 constexpr std::size_t kControllerSessionBeginHeaderBytes =
     kWireCommandBytes + kWireVersionBytes + kControllerSessionBytes +
     kWireU64Bytes + kSnapshotDigestBytes;
@@ -152,6 +157,10 @@ constexpr std::size_t kOverlayClearHeaderBytes =
 constexpr std::size_t kOverlayRenewHeaderBytes =
     kWireCommandBytes + kWireVersionBytes + kControllerSessionBytes +
     kWireU64Bytes + kWireU32Bytes;
+constexpr std::size_t kOverlayPatchBatchHeaderBytes =
+    kWireCommandBytes + kWireVersionBytes + kControllerSessionBytes +
+    kWireU64Bytes + kWireU16Bytes;
+constexpr std::size_t kOverlayPatchBatchSpanHeaderBytes = 2U * kWireU16Bytes;
 
 constexpr std::size_t kMaxRgbaPixelsPerPatch =
     (kAnimationPipelineMaxTransactionBytes - kOverlayPatchHeaderBytes -
@@ -160,6 +169,14 @@ constexpr std::size_t kMaxRgbaPixelsPerPatch =
 constexpr std::size_t kContractFullSnapshotPatchCount =
     (kContractLocalPixels + kMaxRgbaPixelsPerPatch - 1U) /
     kMaxRgbaPixelsPerPatch;
+constexpr std::size_t kMaxRgbaPixelsPerBatchSpan =
+    (kAnimationPipelineMaxTransactionBytes - kOverlayPatchBatchHeaderBytes -
+     kOverlayPatchBatchSpanHeaderBytes - kAnimationPipelineCrcBytes) /
+    kPremultipliedRgbaBytesPerPixel;
+constexpr std::size_t kMaxSinglePixelSpansPerBatch =
+    (kAnimationPipelineMaxTransactionBytes - kOverlayPatchBatchHeaderBytes -
+     kAnimationPipelineCrcBytes) /
+    (kOverlayPatchBatchSpanHeaderBytes + kPremultipliedRgbaBytesPerPixel);
 
 static_assert(kAnimationPipelineCrcBytes == 2, "wire CRC width changed");
 static_assert(kControllerSessionBeginHeaderBytes == 58,
@@ -169,7 +186,15 @@ static_assert(kOverlayPatchHeaderBytes == 30, "patch wire header changed");
 static_assert(kOverlayCommitHeaderBytes == 50, "commit wire header changed");
 static_assert(kOverlayClearHeaderBytes == 34, "clear wire header changed");
 static_assert(kOverlayRenewHeaderBytes == 30, "renew wire header changed");
+static_assert(kOverlayPatchBatchHeaderBytes == 28,
+              "batch wire header changed");
+static_assert(kOverlayPatchBatchSpanHeaderBytes == 4,
+              "batch span header changed");
 static_assert(kMaxRgbaPixelsPerPatch == 1016, "patch ceiling changed");
+static_assert(kMaxRgbaPixelsPerBatchSpan == 1015,
+              "batch span ceiling changed");
+static_assert(kMaxSinglePixelSpansPerBatch == 508,
+              "batch span-count ceiling changed");
 static_assert(kContractLocalPixels == 1104, "receiver geometry changed");
 static_assert(kContractLocalRgbaBytes == 4416, "receiver RGBA size changed");
 static_assert(kContractFullSnapshotPatchCount == 2,

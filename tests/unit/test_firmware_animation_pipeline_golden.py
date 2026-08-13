@@ -58,6 +58,10 @@ def test_wire_packets_are_complete_exact_and_crc_valid():
         "overlay_begin_delta_noop",
         "overlay_patch_maximum",
         "overlay_patch_tail",
+        "overlay_patch_batch_multiple_sorted",
+        "overlay_patch_batch_maximum_pixels",
+        "overlay_patch_batch_maximum_spans",
+        "overlay_patch_batch_full_snapshot_tail",
         "overlay_commit",
         "overlay_clear",
         "overlay_renew",
@@ -69,6 +73,10 @@ def test_wire_packets_are_complete_exact_and_crc_valid():
         "overlay_begin_delta_noop": "overlay_begin",
         "overlay_patch_maximum": "overlay_patch",
         "overlay_patch_tail": "overlay_patch",
+        "overlay_patch_batch_multiple_sorted": "overlay_patch_batch",
+        "overlay_patch_batch_maximum_pixels": "overlay_patch_batch",
+        "overlay_patch_batch_maximum_spans": "overlay_patch_batch",
+        "overlay_patch_batch_full_snapshot_tail": "overlay_patch_batch",
         "overlay_commit": "overlay_commit",
         "overlay_clear": "overlay_clear",
         "overlay_renew": "overlay_renew",
@@ -103,6 +111,76 @@ def test_wire_packets_are_complete_exact_and_crc_valid():
                 payload[0::4], payload[1::4], payload[2::4], payload[3::4]
             )
         )
+
+    batch_ids = (
+        "overlay_patch_batch_multiple_sorted",
+        "overlay_patch_batch_maximum_pixels",
+        "overlay_patch_batch_maximum_spans",
+        "overlay_patch_batch_full_snapshot_tail",
+    )
+    for vector_id in batch_ids:
+        vector = vectors[vector_id]
+        packet = bytes.fromhex(vector["packet_hex"])
+        cursor = vector["header_bytes"]
+        spans = []
+        for _ in range(vector["fields"]["span_count"]):
+            start = int.from_bytes(packet[cursor : cursor + 2], "big")
+            count = int.from_bytes(packet[cursor + 2 : cursor + 4], "big")
+            cursor += protocol["batch_span_descriptor_bytes"]
+            rgba = packet[cursor : cursor + count * 4]
+            cursor += len(rgba)
+            assert len(rgba) == count * 4
+            assert all(
+                red <= alpha and green <= alpha and blue <= alpha
+                for red, green, blue, alpha in zip(
+                    rgba[0::4], rgba[1::4], rgba[2::4], rgba[3::4]
+                )
+            )
+            spans.append({"start": start, "count": count})
+        assert cursor == len(packet) - protocol["crc_bytes"]
+        assert spans == vector["fields"]["spans"]
+
+    multi = vectors["overlay_patch_batch_multiple_sorted"]
+    assert multi["packet_bytes"] == 66
+    maximum_pixels = vectors["overlay_patch_batch_maximum_pixels"]
+    assert maximum_pixels["packet_bytes"] == 4094
+    assert maximum_pixels["fields"]["spans"][0]["count"] == 1015
+    maximum_spans = vectors["overlay_patch_batch_maximum_spans"]
+    assert maximum_spans["packet_bytes"] == 4094
+    assert maximum_spans["fields"]["span_count"] == 508
+    batch_tail = vectors["overlay_patch_batch_full_snapshot_tail"]
+    assert batch_tail["fields"]["spans"] == [{"start": 1015, "count": 89}]
+
+
+def test_malformed_batch_packets_are_crc_valid_and_pin_exact_rejections():
+    protocol = build_fixture()["firmware_protocol"]
+    vectors = {
+        vector["id"]: vector
+        for vector in protocol["malformed_batch_packet_vectors"]
+    }
+    assert set(vectors) == {
+        "overlay_patch_batch_malformed_zero_spans",
+        "overlay_patch_batch_malformed_truncated_rgba",
+        "overlay_patch_batch_malformed_unsorted_spans",
+        "overlay_patch_batch_malformed_overlapping_spans",
+        "overlay_patch_batch_malformed_out_of_bounds",
+        "overlay_patch_batch_malformed_nonpremultiplied",
+        "overlay_patch_batch_malformed_over_capacity",
+    }
+    assert {vector["expected_result"] for vector in vectors.values()} == {
+        4,
+        5,
+        6,
+        12,
+        13,
+    }
+    for vector in vectors.values():
+        packet = bytes.fromhex(vector["packet_hex"])
+        assert packet[0] == protocol["command_ids"]["overlay_patch_batch"]
+        assert packet[1] == protocol["version"]
+        assert int.from_bytes(packet[-2:], "big") == vector["expected_crc16"]
+        assert binascii.crc_hqx(packet[:-2], 0xFFFF) == vector["expected_crc16"]
+    assert vectors["overlay_patch_batch_malformed_over_capacity"]["packet_bytes"] == 4098
 
 
 def test_receiver_slicing_vectors_cover_each_board_and_every_seam():

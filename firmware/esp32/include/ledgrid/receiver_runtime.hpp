@@ -212,6 +212,8 @@ class ReceiverRuntime {
       std::uint64_t local_monotonic_us);
   ReceiverOperationResult overlay_patch(
       const std::uint8_t* command, std::size_t size);
+  ReceiverOperationResult overlay_patch_batch(
+      const std::uint8_t* command, std::size_t size);
   ReceiverOperationResult overlay_commit(
       const std::uint8_t* command, std::size_t size,
       std::uint64_t local_monotonic_us);
@@ -263,8 +265,12 @@ class ReceiverRuntime {
   OverlayPatchOrderState overlay_patch_order_{};
   Digest256 last_commit_digest_{};
   Digest256 last_clear_digest_{};
+  Digest256 last_batch_digest_{};
+  std::uint16_t last_batch_first_start_ = 0;
+  std::uint16_t last_batch_span_count_ = 0;
   bool last_commit_digest_present_ = false;
   bool last_clear_digest_present_ = false;
+  bool last_batch_digest_present_ = false;
   bool committed_overlay_present_ = false;
   bool pending_overlay_present_ = false;
   std::uint64_t staged_scene_revision_ = 0;

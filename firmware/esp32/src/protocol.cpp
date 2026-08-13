@@ -230,6 +230,7 @@ ReceiverDispatchDecision classify_receiver_dispatch(
     case ReceiverCommand::OverlayCommit:
     case ReceiverCommand::OverlayClear:
     case ReceiverCommand::OverlayRenew:
+    case ReceiverCommand::OverlayPatchBatch:
       break;
     default:
       return reject(ReceiverOperationResult::InvalidCommand);
@@ -275,6 +276,18 @@ ReceiverDispatchDecision classify_receiver_dispatch(
     case ReceiverCommand::OverlayRenew:
       expected = kOverlayRenewHeaderBytes;
       break;
+    case ReceiverCommand::OverlayPatchBatch: {
+      // The runtime owns detailed span/result validation so every CRC-valid,
+      // bounded batch reports the exact OverlayOperationResult in status-v4.
+      // It validates the whole packet before mutating its staging plane.
+      if (size < kOverlayPatchBatchHeaderBytes ||
+          size > kAnimationPipelineMaxTransactionBytes -
+                     kAnimationPipelineCrcBytes) {
+        return reject(ReceiverOperationResult::InvalidSize);
+      }
+      expected = size;
+      break;
+    }
     default: break;
   }
   return exact(expected, ReceiverDispatchRoute::Runtime, false,
