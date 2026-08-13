@@ -619,6 +619,53 @@ class TargetProvisioningTests(unittest.TestCase):
         ensure_unit.assert_called_once_with(root, user="ledgridwall")
 
 
+class TargetFirmwareBuildTests(unittest.TestCase):
+    def test_ordinary_target_build_selects_only_feature_off_production_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            workspace = root / "workspace"
+            firmware = workspace / "firmware/esp32"
+            firmware.mkdir(parents=True)
+            commands: list[tuple[str, ...]] = []
+
+            def command(args, **_kwargs):
+                commands.append(tuple(args))
+                if args[-1] == "--version":
+                    return subprocess.CompletedProcess(
+                        args, 0, "PlatformIO Core, version 6.1.19\n", "",
+                    )
+                binary = (
+                    firmware
+                    / ".pio/build/esp32-s3-devkitc-1/firmware.bin"
+                )
+                binary.parent.mkdir(parents=True)
+                binary.write_bytes(b"production feature-off firmware")
+                return subprocess.CompletedProcess(args, 0, "build passed\n", "")
+
+            with (
+                patch.object(
+                    deploy_target,
+                    "_copy_support_workspace",
+                    return_value=(workspace, False),
+                ),
+                patch.object(deploy_target.shutil, "which", return_value="/fake/pio"),
+                patch.object(deploy_target, "_command", side_effect=command),
+            ):
+                result = deploy_target.build_firmware(root, "a" * 64)
+
+            self.assertEqual(result["outcome"], "executed")
+            self.assertEqual(
+                commands,
+                [
+                    ("/fake/pio", "--version"),
+                    ("/fake/pio", "run", "-e", "esp32-s3-devkitc-1"),
+                ],
+            )
+            self.assertFalse(
+                (firmware / ".pio/build/esp32-s3-devkitc-1-local-canary").exists(),
+            )
+
+
 class TargetFirmwareFailureTests(unittest.TestCase):
     def test_flash_failure_exit_or_failure_marker_never_becomes_success(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

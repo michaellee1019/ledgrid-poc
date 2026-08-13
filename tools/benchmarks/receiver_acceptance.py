@@ -9,6 +9,21 @@ import math
 import time
 from urllib import request
 
+if __package__:
+    from tools.benchmarks.live_display_state import (
+        capture_scene,
+        capture_target_fps,
+        restore_scene,
+        restore_target_fps,
+    )
+else:  # Direct script execution from the documented Just recipes.
+    from live_display_state import (
+        capture_scene,
+        capture_target_fps,
+        restore_scene,
+        restore_target_fps,
+    )
+
 
 CAPABILITY_STATIC_LOCAL_BACKGROUND = 1 << 0
 CAPABILITY_PRESENTATION_CONTEXT_V1 = 1 << 1
@@ -177,6 +192,12 @@ def _post_json(url, payload):
         return json.load(response)
 
 
+def _delete_json(url):
+    req = request.Request(url, method="DELETE")
+    with request.urlopen(req, timeout=5) as response:
+        return json.load(response)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://ledgridwall.local:5000")
@@ -193,6 +214,10 @@ def main():
     parser.add_argument("--animation", default="rainbow")
     parser.add_argument("--min-displayed-fps", type=float, default=180.0)
     parser.add_argument(
+        "--target-fps", type=int, default=200,
+        help="temporary streamed test cadence; the exact prior value is restored",
+    )
+    parser.add_argument(
         "--phase3a-status-only",
         action="store_true",
         help="check fresh v3 ownership capability and receiver-reported identities",
@@ -203,6 +228,19 @@ def main():
         help="also require static-background/context capabilities on this receiver",
     )
     args = parser.parse_args()
+
+    if not math.isfinite(args.duration) or args.duration <= 0:
+        parser.error("--duration must be finite and greater than zero")
+    if not math.isfinite(args.interval) or args.interval <= 0:
+        parser.error("--interval must be finite and greater than zero")
+    if not math.isfinite(args.warmup) or args.warmup < 0:
+        parser.error("--warmup must be finite and non-negative")
+    if not math.isfinite(args.min_displayed_fps) or args.min_displayed_fps <= 0:
+        parser.error("--min-displayed-fps must be finite and greater than zero")
+    if isinstance(args.target_fps, bool) or not 1 <= args.target_fps <= 200:
+        parser.error("--target-fps must be between 1 and 200")
+    if args.min_displayed_fps > args.target_fps:
+        parser.error("--min-displayed-fps cannot exceed --target-fps")
 
     base_url = args.base_url.rstrip("/")
     if args.phase3a_status_only:
@@ -231,38 +269,81 @@ def main():
         )
         print(json.dumps(result, indent=2, sort_keys=True))
         raise SystemExit(0 if result["passed"] else 1)
-    if args.animation:
-        _post_json(f"{base_url}/api/start/{args.animation}", {})
-    time.sleep(args.warmup)
-
-    devices_to_check = args.devices or [0]
-    samples = {device: [] for device in devices_to_check}
-    started = time.monotonic()
-    while time.monotonic() - started < args.duration:
-        metrics = _get_json(f"{base_url}/api/metrics")
-        devices = metrics.get("driver", {}).get("devices", [])
-        for device in devices_to_check:
-            if device >= len(devices):
-                raise SystemExit(
-                    f"device index {device} is unavailable; metrics has {len(devices)} devices"
-                )
-            samples[device].append(devices[device])
-        time.sleep(args.interval)
-
-    elapsed = time.monotonic() - started
-    device_results = {
-        str(device): evaluate_samples(
-            device_samples, elapsed, min_displayed_fps=args.min_displayed_fps
+    snapshot = capture_scene(base_url, _get_json)
+    original_target_fps = capture_target_fps(base_url, _get_json)
+    run_failure = None
+    target_fps_cleanup_failure = None
+    scene_cleanup_failure = None
+    result = None
+    try:
+        restore_target_fps(
+            base_url, args.target_fps, get_json=_get_json, post_json=_post_json,
         )
-        for device, device_samples in samples.items()
-    }
-    if len(device_results) == 1:
-        result = next(iter(device_results.values()))
-    else:
-        result = {
-            "passed": all(item["passed"] for item in device_results.values()),
-            "devices": device_results,
+        if args.animation:
+            _post_json(f"{base_url}/api/start/{args.animation}", {})
+        time.sleep(args.warmup)
+
+        devices_to_check = args.devices or [0]
+        samples = {device: [] for device in devices_to_check}
+        started = time.monotonic()
+        while time.monotonic() - started < args.duration:
+            metrics = _get_json(f"{base_url}/api/metrics")
+            devices = metrics.get("driver", {}).get("devices", [])
+            for device in devices_to_check:
+                if device >= len(devices):
+                    raise RuntimeError(
+                        f"device index {device} is unavailable; metrics has {len(devices)} devices"
+                    )
+                samples[device].append(devices[device])
+            time.sleep(args.interval)
+
+        elapsed = time.monotonic() - started
+        device_results = {
+            str(device): evaluate_samples(
+                device_samples, elapsed, min_displayed_fps=args.min_displayed_fps
+            )
+            for device, device_samples in samples.items()
         }
+        if len(device_results) == 1:
+            result = next(iter(device_results.values()))
+        else:
+            result = {
+                "passed": all(item["passed"] for item in device_results.values()),
+                "devices": device_results,
+            }
+    except Exception as exc:
+        run_failure = str(exc)
+    finally:
+        try:
+            restore_target_fps(
+                base_url, original_target_fps, get_json=_get_json,
+                post_json=_post_json,
+            )
+        except Exception as exc:
+            target_fps_cleanup_failure = str(exc)
+        try:
+            restore_scene(
+                base_url, snapshot, get_json=_get_json, post_json=_post_json,
+                delete_json=_delete_json,
+            )
+        except Exception as exc:
+            scene_cleanup_failure = str(exc)
+
+    if run_failure:
+        result = {"passed": False, "failures": [run_failure]}
+    assert result is not None
+    result["scene_restored"] = scene_cleanup_failure is None
+    result["target_fps_restored"] = target_fps_cleanup_failure is None
+    cleanup_failures = []
+    if target_fps_cleanup_failure:
+        cleanup_failures.append(f"target FPS: {target_fps_cleanup_failure}")
+    if scene_cleanup_failure:
+        cleanup_failures.append(f"scene: {scene_cleanup_failure}")
+    if cleanup_failures:
+        result["passed"] = False
+        result.setdefault("failures", []).append(
+            f"cleanup failed: {'; '.join(cleanup_failures)}"
+        )
     print(json.dumps(result, indent=2, sort_keys=True))
     raise SystemExit(0 if result["passed"] else 1)
 

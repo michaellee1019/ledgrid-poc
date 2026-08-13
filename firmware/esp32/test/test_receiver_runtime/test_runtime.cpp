@@ -419,6 +419,66 @@ void test_scene_time_is_common_across_different_receiver_boot_clocks() {
   TEST_ASSERT_EQUAL_MEMORY(a.data(), b.data(), a.size());
 }
 
+void test_staging_replacement_context_preserves_active_scene_time_until_commit() {
+  const auto& original =
+      ledgrid::golden_presentation_v1::kPresentationVectors[0];
+  auto original_begin = from_hex(original.begin_hex);
+  auto original_set = from_hex(original.set_hex);
+  auto original_commit = from_hex(original.commit_hex);
+  ledgrid::ReceiverRuntime runtime(true);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(original_begin.data(), original_begin.size())));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(original_set.data(), original_set.size())));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      original_commit.data(), original_commit.size(), 1000000)));
+  auto start = start_command(
+      30, 8, 42, runtime.active_context().scene_epoch);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(start.data(), start.size())));
+
+  const std::uint64_t before_staging = runtime.scene_time_us(1500000);
+  const auto& replacement =
+      ledgrid::golden_presentation_v1::kPresentationVectors[1];
+  auto replacement_begin = from_hex(replacement.begin_hex);
+  auto replacement_set = from_hex(replacement.set_hex);
+  auto replacement_commit = from_hex(replacement.commit_hex);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      replacement_begin.data(), replacement_begin.size(), 1500000)));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::PresentationContextState::Staging),
+      static_cast<std::uint8_t>(runtime.context_state()));
+  TEST_ASSERT_EQUAL_MEMORY(
+      original_commit.data() + 42,
+      runtime.active_context().context_digest,
+      32);
+  TEST_ASSERT_EQUAL_UINT64(
+      before_staging + 250000,
+      runtime.scene_time_us(1750000));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      replacement_set.data(), replacement_set.size(), 1750000)));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::PresentationContextState::Ready),
+      static_cast<std::uint8_t>(runtime.context_state()));
+  TEST_ASSERT_EQUAL_UINT64(
+      before_staging + 500000,
+      runtime.scene_time_us(2000000));
+
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      replacement_commit.data(), replacement_commit.size(), 2000000)));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::PresentationContextState::Active),
+      static_cast<std::uint8_t>(runtime.context_state()));
+  const std::uint64_t replacement_scene_time =
+      runtime.active_context().present_at_scene_time_us;
+  TEST_ASSERT_EQUAL_UINT64(
+      replacement_scene_time,
+      runtime.scene_time_us(2000000));
+  TEST_ASSERT_EQUAL_UINT64(
+      replacement_scene_time + 250000,
+      runtime.scene_time_us(2250000));
+}
+
 void test_cadence_has_no_integer_period_drift_over_thirty_minutes() {
   ledgrid::ReceiverRuntime runtime(true);
   activate_neutral_context(&runtime);
@@ -749,6 +809,7 @@ int main(int, char**) {
   RUN_TEST(test_status_query_is_exact_zero_padded_and_non_owning);
   RUN_TEST(test_config_identity_is_backward_compatible_and_fail_closed);
   RUN_TEST(test_scene_time_is_common_across_different_receiver_boot_clocks);
+  RUN_TEST(test_staging_replacement_context_preserves_active_scene_time_until_commit);
   RUN_TEST(test_cadence_has_no_integer_period_drift_over_thirty_minutes);
   RUN_TEST(test_local_render_generation_prevents_stale_frame_submission);
   RUN_TEST(test_stale_render_and_dma_completions_cannot_mutate_newer_ownership);

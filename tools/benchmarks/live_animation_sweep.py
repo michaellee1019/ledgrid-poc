@@ -5,8 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import time
 from urllib import request
+
+if __package__:
+    from tools.benchmarks.live_display_state import capture_scene, restore_scene
+else:  # Direct script execution from the documented Just recipes.
+    from live_display_state import capture_scene, restore_scene
 
 
 ERROR_COUNTERS = (
@@ -31,6 +37,12 @@ def _post_json(url, payload):
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    with request.urlopen(req, timeout=5) as response:
+        return json.load(response)
+
+
+def _delete_json(url):
+    req = request.Request(url, method="DELETE")
     with request.urlopen(req, timeout=5) as response:
         return json.load(response)
 
@@ -64,62 +76,90 @@ def main():
     parser.add_argument("--animation", action="append", dest="animations")
     args = parser.parse_args()
 
+    if not math.isfinite(args.seconds) or args.seconds <= 0:
+        parser.error("--seconds must be finite and greater than zero")
+
     base_url = args.base_url.rstrip("/")
-    registry = _get_json(f"{base_url}/api/animations")
-    animations = args.animations or sorted(
-        item["plugin_name"] for item in registry if item.get("plugin_name")
-    )
+    snapshot = capture_scene(base_url, _get_json)
     results = []
-
-    for animation in animations:
-        _post_json(f"{base_url}/api/start/{animation}", {})
-        status = _wait_until_running(base_url, animation)
-        failures = []
-        if not status.get("is_running") or status.get("current_animation") != animation:
-            failures.append(
-                f"did not enter running state (current={status.get('current_animation')!r})"
-            )
-
-        first_metrics = _get_json(f"{base_url}/api/metrics")
-        time.sleep(max(0.1, args.seconds))
-        last_metrics = _get_json(f"{base_url}/api/metrics")
-        first_driver = first_metrics.get("driver", {})
-        last_driver = last_metrics.get("driver", {})
-        host_errors = (
-            int(last_driver.get("aggregate", {}).get("errors", 0) or 0)
-            - int(first_driver.get("aggregate", {}).get("errors", 0) or 0)
+    run_failure = None
+    cleanup_failure = None
+    try:
+        registry = _get_json(f"{base_url}/api/animations")
+        animations = args.animations or sorted(
+            item["plugin_name"] for item in registry if item.get("plugin_name")
         )
-        if host_errors:
-            failures.append(f"host SPI errors increased by {host_errors}")
 
-        observable = 0
-        for index, (first, last) in enumerate(zip(
-            first_driver.get("devices", []), last_driver.get("devices", [])
-        )):
-            if int(last.get("receiver_status_version", 0) or 0) < 2:
-                continue
-            observable += 1
-            failures.extend(
-                f"receiver {index}: {failure}"
-                for failure in receiver_failures(first, last)
+        for animation in animations:
+            _post_json(f"{base_url}/api/start/{animation}", {})
+            status = _wait_until_running(base_url, animation)
+            failures = []
+            if not status.get("is_running") or status.get("current_animation") != animation:
+                failures.append(
+                    f"did not enter running state (current={status.get('current_animation')!r})"
+                )
+
+            first_metrics = _get_json(f"{base_url}/api/metrics")
+            time.sleep(max(0.1, args.seconds))
+            last_metrics = _get_json(f"{base_url}/api/metrics")
+            first_driver = first_metrics.get("driver", {})
+            last_driver = last_metrics.get("driver", {})
+            host_errors = (
+                int(last_driver.get("aggregate", {}).get("errors", 0) or 0)
+                - int(first_driver.get("aggregate", {}).get("errors", 0) or 0)
             )
-        if observable == 0:
-            failures.append("no receiver status v2+ telemetry was observable")
+            if host_errors:
+                failures.append(f"host SPI errors increased by {host_errors}")
 
-        performance = last_metrics.get("performance", {})
-        results.append({
-            "animation": animation,
-            "passed": not failures,
-            "failures": failures,
-            "actual_fps": round(
-                float(last_metrics.get("animation", {}).get("actual_fps", 0) or 0), 2
-            ),
-            "generate_p95_ms": round(float(performance.get("p95_generate_ms", 0) or 0), 3),
-            "host_spi_errors_delta": host_errors,
-            "observable_receivers": observable,
-        })
+            observable = 0
+            for index, (first, last) in enumerate(zip(
+                first_driver.get("devices", []), last_driver.get("devices", [])
+            )):
+                if int(last.get("receiver_status_version", 0) or 0) < 2:
+                    continue
+                observable += 1
+                failures.extend(
+                    f"receiver {index}: {failure}"
+                    for failure in receiver_failures(first, last)
+                )
+            if observable == 0:
+                failures.append("no receiver status v2+ telemetry was observable")
 
-    output = {"passed": all(item["passed"] for item in results), "animations": results}
+            performance = last_metrics.get("performance", {})
+            results.append({
+                "animation": animation,
+                "passed": not failures,
+                "failures": failures,
+                "actual_fps": round(
+                    float(last_metrics.get("animation", {}).get("actual_fps", 0) or 0), 2
+                ),
+                "generate_p95_ms": round(float(performance.get("p95_generate_ms", 0) or 0), 3),
+                "host_spi_errors_delta": host_errors,
+                "observable_receivers": observable,
+            })
+    except Exception as exc:
+        run_failure = str(exc)
+    finally:
+        try:
+            restore_scene(
+                base_url, snapshot, get_json=_get_json, post_json=_post_json,
+                delete_json=_delete_json,
+            )
+        except Exception as exc:
+            cleanup_failure = str(exc)
+
+    output = {
+        "passed": (
+            all(item["passed"] for item in results)
+            and run_failure is None and cleanup_failure is None
+        ),
+        "animations": results,
+        "scene_restored": cleanup_failure is None,
+    }
+    if run_failure:
+        output["failure"] = run_failure
+    if cleanup_failure:
+        output["cleanup_failure"] = cleanup_failure
     print(json.dumps(output, indent=2, sort_keys=True))
     raise SystemExit(0 if output["passed"] else 1)
 

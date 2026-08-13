@@ -173,6 +173,7 @@ class ReceiverRuntime {
   LocalRenderStats render_stats_{};
   PresentationContext staged_context_{};
   PresentationContext active_context_{};
+  bool active_context_present_ = false;
   std::uint64_t cadence_origin_us_ = 0;
   std::uint64_t next_cadence_index_ = 0;
   bool cadence_initialized_ = false;

@@ -289,6 +289,7 @@ ReceiverOperationResult ReceiverRuntime::context_commit(
   staged_context_.scene_epoch = read_u64(command + 26);
   staged_context_.present_at_scene_time_us = read_u64(command + 34);
   active_context_ = staged_context_;
+  active_context_present_ = true;
   if (base_mode_ == BaseMode::LocalBackground) {
     local_.scene_epoch = active_context_.scene_epoch;
   }
@@ -352,6 +353,7 @@ void ReceiverRuntime::receiver_restart() {
   context_state_ = PresentationContextState::None;
   staged_context_ = {};
   active_context_ = {};
+  active_context_present_ = false;
   cadence_initialized_ = false;
   context_committed_local_us_ = 0;
 }
@@ -367,6 +369,7 @@ bool ReceiverRuntime::local_render_failed_if_current(
   context_state_ = PresentationContextState::None;
   staged_context_ = {};
   active_context_ = {};
+  active_context_present_ = false;
   cadence_initialized_ = false;
   return true;
 }
@@ -423,7 +426,10 @@ void ReceiverRuntime::request_local_refresh() {
 
 std::uint64_t ReceiverRuntime::scene_time_us(
     std::uint64_t local_monotonic_us) const {
-  if (context_state_ != PresentationContextState::Active)
+  // A newer context may be staging while the prior committed context remains
+  // authoritative. Do not suspend or rewind receiver-local playback until the
+  // replacement commits atomically.
+  if (!active_context_present_)
     return 0;
   if (local_monotonic_us <= context_committed_local_us_)
     return active_context_.present_at_scene_time_us;

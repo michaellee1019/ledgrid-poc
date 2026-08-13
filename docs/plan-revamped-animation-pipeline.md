@@ -1932,9 +1932,15 @@ read-only target connection because the configured wall host is offline.
 - [x] Portable firmware and host tests cover the full command-ownership matrix,
   malformed/bounds cases, old status versions, takeover, fallback, cadence, and
   four-board mixed-context/partial-failure rejection.
-- [ ] Full Python/rendering/deployment regressions, native firmware tests, the
-  pinned production build, deployment recipe compatibility, and clean wall
-  deployment pass before Phase 3A is marked complete.
+- [x] Full Python/rendering/deployment regressions, native firmware tests, both
+  pinned firmware builds, and deployment recipe compatibility pass together.
+- [ ] A clean `just deploy` completes against the wall and fresh Phase 3A status
+  proves all four receivers remain on the production feature-off image.
+- [ ] The dense streamed-frame baseline and animation sweep pass after that
+  deployment without receiver integrity, cadence, or takeover regressions.
+- [ ] Exactly one deliberately flashed receiver passes the local-background
+  disconnect/live-update/host-takeover canary, is restored to the production
+  image, and the full streamed baseline passes again before Phase 3A closes.
 
 Portable/integrated evidence on 2026-08-13:
 
@@ -1963,6 +1969,42 @@ Portable/integrated evidence on 2026-08-13:
   `192.168.1.62` also timed out over HTTP and reported `Host is down` over SSH.
   No release, service, firmware, or wall state changed; deployment, streamed
   acceptance, and the restored one-receiver canary remain open stop gates.
+- Closure resumed from clean commit `67d2b3e` on 2026-08-13. The active gate
+  order is clean deployment and fresh feature-off status, dense streamed
+  acceptance, one-receiver canary with mandatory complete-host-frame cleanup,
+  production-image restoration, and a final streamed acceptance rerun. Phase 3B
+  remains blocked until every item is evidenced here; failures produce focused
+  regression coverage before the affected gate is repeated.
+- The resumed read-only wall probe reached `ledgridwall.local` and confirmed
+  logical receivers 0 and 1 at status v3 with the expected feature-off
+  capability set and IDs. Logical receivers 2 and 3 returned no usable status or
+  identity on the SPI1 return path. This is current H0 evidence for the already
+  documented MISO/MOSI fault, so the clean deployment may be exercised but the
+  streamed and local-background physical gates cannot pass until that electrical
+  path is repaired and all four fresh identities are observed.
+- The resumed code audit found that beginning a replacement presentation context
+  temporarily hid the committed context from the receiver clock before COMMIT.
+  `active_context_present` now keeps the prior scene-time anchor advancing
+  through `Staging` and `Ready`, then switches atomically at COMMIT; a native
+  regression covers the complete replacement sequence. The audit also locked
+  ordinary deployment to the feature-off PlatformIO environment with a
+  behavioral target-build test.
+- Physical acceptance tools now snapshot and verify restoration of the exact
+  prior scene, and the output-rate sweep also restores its exact prior manager
+  cadence. Preflight identity/capability rejection in the single-receiver
+  canary is observation-only: it does not configure the addressed board or send
+  a black takeover frame. Focused cleanup tests cover active and idle restore,
+  asynchronous observation, timeouts, body failures, and cleanup failures; a
+  canonical all-four dense streamed recipe removes the former device-0-only
+  default from the full-wall gate.
+- Final settled-source portable gate on 2026-08-13: `just test` passed 813
+  Python tests and 1,113 subtests, 21 rendering tests and 3 subtests, all 44
+  native firmware cases, both pinned ESP32-S3 builds, and 149 deployment tests
+  plus 66 subtests. The slowest accepted 32 x 138 p95 was 3.625 ms for
+  `snake-max-density`, below the 4 ms gate. Production and canary images each
+  used 270,729 bytes flash and 50,696 bytes RAM; the deployment regression
+  proves only the feature-off production environment is eligible for ordinary
+  `just deploy`.
 
 - Replace `pi_connected` with explicit base, foreground, and maintenance state.
 - Add a new backward-capable status/capability version and host parser.

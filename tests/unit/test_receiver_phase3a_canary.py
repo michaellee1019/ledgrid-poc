@@ -75,11 +75,12 @@ class FakeClock:
 class FakeReceiver:
     def __init__(self, config):
         self.config = config
-        self.status = status_v3()
+        self.status = status_v3(logical_id=config.logical_id)
         self.staged_context = None
         self.controller_opens = 0
         self.controller_closes = 0
         self.black_takeovers = 0
+        self.configurations = 0
         self.fail_at = None
         self.bad_ack_at = None
         self.ignore_parameter_update = False
@@ -120,6 +121,7 @@ class FakeController:
         return dict(self.receiver.status)
 
     def configure(self):
+        self.receiver.configurations += 1
         self.receiver.status["receiver_logical_device"] = self.receiver.config.logical_id
 
     def begin_presentation_context(self, context):
@@ -373,12 +375,25 @@ class CanaryRunnerTests(unittest.TestCase):
         self.assertEqual(self.receiver.black_takeovers, 1)
         self.assertTrue(result["finally_black_takeover"])
 
-    def test_capability_failure_is_mutation_free_except_final_black_takeover(self):
+    def test_capability_preflight_failure_closes_without_any_mutation(self):
         self.receiver.status["receiver_capabilities"] &= ~1
         result = self.runner().run()
         self.assertFalse(result["passed"])
-        self.assertIn("exact local-canary capability set", result["failure"])
-        self.assertEqual(self.receiver.black_takeovers, 1)
+        self.assertIn("receiver capabilities", result["failure"])
+        self.assertTrue(result["preflight_non_mutating"])
+        self.assertEqual(self.receiver.configurations, 0)
+        self.assertEqual(self.receiver.black_takeovers, 0)
+        self.assertEqual(self.receiver.controller_opens, 1)
+        self.assertEqual(self.receiver.controller_closes, 1)
+
+    def test_wrong_physical_binding_is_not_reprovisioned_or_blacked(self):
+        self.receiver.status["receiver_logical_device"] = 0
+        result = self.runner().run()
+        self.assertFalse(result["passed"])
+        self.assertIn("expected 3", result["failure"])
+        self.assertTrue(result["preflight_non_mutating"])
+        self.assertEqual(self.receiver.configurations, 0)
+        self.assertEqual(self.receiver.black_takeovers, 0)
 
     def test_cleanup_failure_cannot_be_reported_as_passed(self):
         self.receiver.fail_at = "set_all"
@@ -395,6 +410,17 @@ class CanaryRunnerTests(unittest.TestCase):
         self.assertIn('disconnect_seconds="60"', recipe)
         self.assertNotIn("systemctl", recipe)
         self.assertNotIn("flash", recipe.lower())
+
+    def test_streamed_wall_recipe_names_every_receiver_and_a_bounded_duration(self):
+        justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
+        recipe = justfile.split("receiver-streamed-wall-acceptance", 1)[1].split(
+            "\n\n", 1
+        )[0]
+        self.assertIn('duration="60"', recipe)
+        self.assertIn('target_fps="200"', recipe)
+        self.assertIn("--device 0 --device 1 --device 2 --device 3", recipe)
+        self.assertIn("--duration {{duration}}", recipe)
+        self.assertIn("--target-fps {{target_fps}}", recipe)
 
 
 if __name__ == "__main__":

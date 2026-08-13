@@ -330,14 +330,17 @@ class SingleReceiverPhase3ACanary:
         }
         failure = None
         cleanup_error = None
+        mutation_started = False
         try:
             controller = self.controller_factory()
             status = self._fresh_status(controller)
-            # Identity CONFIG is capability-gated inside LEDController.
-            if _int(status, "receiver_status_version") != 3:
-                raise CanaryFailure("preflight requires receiver status v3")
-            if _int(status, "receiver_capabilities") != REQUIRED_CAPABILITIES:
-                raise CanaryFailure("preflight requires the exact local-canary capability set")
+            # Prove the exact physical binding before CONFIG or any other
+            # state-changing packet. A bad address must remain observation-only.
+            self._require(
+                "receiver identity/capability preflight",
+                evaluate_identity_status(status, self.config.logical_id),
+            )
+            mutation_started = True
             controller.configure()
             status = self._fresh_status(controller)
             self._require(
@@ -437,12 +440,12 @@ class SingleReceiverPhase3ACanary:
         except Exception as exc:
             failure = str(exc)
         finally:
-            if controller is None:
+            if mutation_started and controller is None:
                 try:
                     controller = self.controller_factory()
                 except Exception as exc:
                     cleanup_error = f"SPI reopen for black takeover failed: {exc}"
-            if controller is not None:
+            if mutation_started and controller is not None:
                 try:
                     self._black_takeover(controller)
                     report["finally_black_takeover"] = True
@@ -453,6 +456,12 @@ class SingleReceiverPhase3ACanary:
                         controller.close()
                     except Exception as exc:
                         cleanup_error = cleanup_error or f"controller close failed: {exc}"
+            elif controller is not None:
+                report["preflight_non_mutating"] = True
+                try:
+                    controller.close()
+                except Exception as exc:
+                    cleanup_error = f"controller close failed: {exc}"
 
         if failure:
             report["failure"] = failure
