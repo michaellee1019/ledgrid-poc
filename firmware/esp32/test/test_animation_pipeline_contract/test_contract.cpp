@@ -1,6 +1,7 @@
 #include <unity.h>
 
 #include <array>
+#include <cstring>
 #include <cstdint>
 #include <vector>
 
@@ -41,6 +42,31 @@ ledgrid::Digest256 digest(std::uint8_t seed) {
     value.bytes[index] = static_cast<std::uint8_t>(seed + index);
   }
   return value;
+}
+
+ledgrid::Digest256 digest_from(const std::uint8_t input[32]) {
+  ledgrid::Digest256 value{};
+  std::memcpy(value.bytes, input, sizeof(value.bytes));
+  return value;
+}
+
+std::size_t expected_header_bytes(std::uint8_t command) {
+  using ledgrid::AnimationPipelineCommand;
+  switch (static_cast<AnimationPipelineCommand>(command)) {
+    case AnimationPipelineCommand::ControllerSessionBegin:
+      return ledgrid::kControllerSessionBeginHeaderBytes;
+    case AnimationPipelineCommand::OverlayBegin:
+      return ledgrid::kOverlayBeginHeaderBytes;
+    case AnimationPipelineCommand::OverlayPatch:
+      return ledgrid::kOverlayPatchHeaderBytes;
+    case AnimationPipelineCommand::OverlayCommit:
+      return ledgrid::kOverlayCommitHeaderBytes;
+    case AnimationPipelineCommand::OverlayClear:
+      return ledgrid::kOverlayClearHeaderBytes;
+    case AnimationPipelineCommand::OverlayRenew:
+      return ledgrid::kOverlayRenewHeaderBytes;
+  }
+  return 0;
 }
 
 bool union_fixture_dirty_ranges(
@@ -360,6 +386,188 @@ void test_crc_contract_matches_ccitt_false_and_exact_packet() {
   TEST_ASSERT_EQUAL_UINT16(crc, read_u16(packet.data() + crc_offset));
 }
 
+void test_generated_wire_packets_match_exact_headers_payloads_and_crc() {
+  using namespace ledgrid::golden_v1;
+  bool saw_maximum_patch = false;
+  bool saw_tail_patch = false;
+  std::size_t command_counts[6] = {};
+
+  for (const auto& vector : kWirePacketVectors) {
+    TEST_ASSERT_NOT_NULL_MESSAGE(vector.packet, vector.id);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+        expected_header_bytes(vector.command), vector.header_bytes, vector.id);
+    TEST_ASSERT_TRUE_MESSAGE(
+        vector.packet_bytes >= vector.header_bytes + ledgrid::kAnimationPipelineCrcBytes,
+        vector.id);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(vector.command, vector.packet[0], vector.id);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+        ledgrid::kAnimationPipelineProtocolVersion, vector.packet[1], vector.id);
+
+    const std::size_t crc_offset =
+        vector.packet_bytes - ledgrid::kAnimationPipelineCrcBytes;
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(
+        vector.expected_crc16,
+        ledgrid::animation_pipeline_crc16_ccitt(vector.packet, crc_offset),
+        vector.id);
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(
+        vector.expected_crc16, read_u16(vector.packet + crc_offset), vector.id);
+
+    switch (static_cast<ledgrid::AnimationPipelineCommand>(vector.command)) {
+      case ledgrid::AnimationPipelineCommand::ControllerSessionBegin:
+        ++command_counts[0];
+        break;
+      case ledgrid::AnimationPipelineCommand::OverlayBegin:
+        ++command_counts[1];
+        if (vector.packet[59] ==
+            static_cast<std::uint8_t>(ledgrid::OverlayUpdateKind::Delta)) {
+          TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+              0, read_u16(vector.packet + 60U), vector.id);
+        }
+        break;
+      case ledgrid::AnimationPipelineCommand::OverlayPatch: {
+        ++command_counts[2];
+        ledgrid::OverlayPatchHeader header{};
+        std::memcpy(
+            header.controller_session,
+            vector.packet + 2U,
+            ledgrid::kControllerSessionBytes);
+        header.generation = read_u64(vector.packet + 18U);
+        header.start = read_u16(vector.packet + 26U);
+        header.count = read_u16(vector.packet + 28U);
+        std::array<std::uint8_t, ledgrid::kOverlayPatchHeaderBytes> actual{};
+        TEST_ASSERT_TRUE_MESSAGE(
+            ledgrid::encode_overlay_patch_header(
+                header, actual.data(), actual.size()),
+            vector.id);
+        TEST_ASSERT_EQUAL_UINT8_ARRAY_MESSAGE(
+            vector.packet, actual.data(), actual.size(), vector.id);
+        for (std::size_t index = vector.header_bytes;
+             index < crc_offset;
+             index += ledgrid::kPremultipliedRgbaBytesPerPixel) {
+          const std::uint8_t alpha = vector.packet[index + 3U];
+          TEST_ASSERT_TRUE_MESSAGE(vector.packet[index] <= alpha, vector.id);
+          TEST_ASSERT_TRUE_MESSAGE(vector.packet[index + 1U] <= alpha, vector.id);
+          TEST_ASSERT_TRUE_MESSAGE(vector.packet[index + 2U] <= alpha, vector.id);
+        }
+        if (vector.packet_bytes == ledgrid::kAnimationPipelineMaxTransactionBytes) {
+          saw_maximum_patch = true;
+          TEST_ASSERT_EQUAL_UINT16(0, header.start);
+          TEST_ASSERT_EQUAL_UINT16(ledgrid::kMaxRgbaPixelsPerPatch, header.count);
+        } else {
+          saw_tail_patch = true;
+          TEST_ASSERT_EQUAL_UINT16(1016, header.start);
+          TEST_ASSERT_EQUAL_UINT16(88, header.count);
+          TEST_ASSERT_EQUAL_UINT16(
+              ledgrid::kContractLocalPixels, header.start + header.count);
+        }
+        break;
+      }
+      case ledgrid::AnimationPipelineCommand::OverlayCommit:
+        ++command_counts[3];
+        break;
+      case ledgrid::AnimationPipelineCommand::OverlayClear:
+        ++command_counts[4];
+        break;
+      case ledgrid::AnimationPipelineCommand::OverlayRenew:
+        ++command_counts[5];
+        break;
+    }
+  }
+
+  TEST_ASSERT_TRUE(saw_maximum_patch);
+  TEST_ASSERT_TRUE(saw_tail_patch);
+  constexpr std::size_t kExpectedCommandCounts[] = {1, 2, 2, 1, 1, 1};
+  TEST_ASSERT_EQUAL_UINT32_ARRAY(
+      kExpectedCommandCounts, command_counts, 6);
+}
+
+void test_generated_receiver_slice_vectors_cover_four_boards_and_seams() {
+  using namespace ledgrid::golden_v1;
+  constexpr std::uint32_t kPixelsPerBoard = ledgrid::kContractLocalPixels;
+  for (const auto& vector : kReceiverSliceVectors) {
+    std::size_t actual_count = 0;
+    std::uint32_t represented_pixels = 0;
+    for (std::uint8_t board = 0; board < 4U; ++board) {
+      const std::uint32_t board_start = board * kPixelsPerBoard;
+      const std::uint32_t board_end = board_start + kPixelsPerBoard;
+      const std::uint32_t clipped_start =
+          vector.global_start > board_start ? vector.global_start : board_start;
+      const std::uint32_t clipped_end =
+          vector.global_end < board_end ? vector.global_end : board_end;
+      if (clipped_start >= clipped_end) continue;
+
+      TEST_ASSERT_TRUE_MESSAGE(actual_count < vector.expected_count, vector.id);
+      const auto& expected = vector.expected_slices[actual_count];
+      TEST_ASSERT_EQUAL_UINT8_MESSAGE(board, expected.board_index, vector.id);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+          clipped_start, expected.global_start, vector.id);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(clipped_end, expected.global_end, vector.id);
+      TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+          clipped_start - board_start, expected.local_start, vector.id);
+      TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+          clipped_end - board_start, expected.local_end, vector.id);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+          clipped_start - vector.global_start, expected.source_offset, vector.id);
+      represented_pixels += clipped_end - clipped_start;
+      ++actual_count;
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(vector.expected_count, actual_count, vector.id);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+        vector.global_end - vector.global_start, represented_pixels, vector.id);
+  }
+}
+
+void test_generated_counter_generation_cas_and_lease_vectors_match_runtime() {
+  using namespace ledgrid::golden_v1;
+  for (const auto& vector : kCounterOrderVectors) {
+    TEST_ASSERT_EQUAL_INT8_MESSAGE(
+        vector.expected_relation,
+        static_cast<std::int8_t>(ledgrid::compare_monotonic_counter(
+            vector.candidate, vector.current)),
+        vector.id);
+  }
+
+  for (const auto& vector : kGenerationBeginVectors) {
+    ledgrid::OverlayGenerationOrderState state{};
+    state.committed_generation = vector.committed_generation;
+    state.has_staged_generation = vector.has_staged_generation;
+    state.staged_generation = vector.staged_generation;
+    state.staged_operation_digest =
+        digest_from(vector.staged_operation_digest);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+        vector.expected_result,
+        static_cast<std::uint8_t>(ledgrid::validate_overlay_generation_begin(
+            state,
+            vector.generation,
+            vector.prior_generation,
+            digest_from(vector.operation_digest))),
+        vector.id);
+  }
+
+  for (const auto& vector : kLeaseCommitVectors) {
+    ledgrid::OverlayPatchOrderState state{};
+    state.expected_patches = vector.expected_patches;
+    state.accepted_patches = vector.accepted_patches;
+    state.last_start = vector.last_start;
+    state.last_count = vector.last_count;
+    state.update_kind =
+        static_cast<ledgrid::OverlayUpdateKind>(vector.update_kind);
+    state.has_last_patch = vector.has_last_patch;
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+        vector.expected_result,
+        static_cast<std::uint8_t>(ledgrid::validate_overlay_commit(
+            state, vector.base_binding_matches, vector.lease_expired)),
+        vector.id);
+  }
+
+  for (const auto& vector : kCommitScheduleVectors) {
+    TEST_ASSERT_EQUAL_MESSAGE(
+        vector.should_present,
+        vector.current_scene_time >= vector.present_at_scene_time,
+        vector.id);
+  }
+}
+
 void test_version_session_and_counter_order_reject_stale_inputs() {
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::Ok),
@@ -519,6 +727,21 @@ void test_delta_patches_allow_gaps_but_reject_reverse_order_and_bounds() {
           ledgrid::accept_overlay_patch(&bounds, 1100, 5, first_patch)));
 }
 
+void test_zero_patch_delta_is_generation_agreement_noop_only() {
+  ledgrid::OverlayPatchOrderState delta{};
+  delta.update_kind = ledgrid::OverlayUpdateKind::Delta;
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::Ok),
+      static_cast<std::uint8_t>(
+          ledgrid::validate_overlay_commit(delta, true, false)));
+  ledgrid::OverlayPatchOrderState snapshot{};
+  snapshot.update_kind = ledgrid::OverlayUpdateKind::FullSnapshot;
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::Incomplete),
+      static_cast<std::uint8_t>(
+          ledgrid::validate_overlay_commit(snapshot, true, false)));
+}
+
 void test_fixed_point_alpha_endpoints_rounding_saturation_and_fold_order() {
   TEST_ASSERT_EQUAL_UINT8(0, ledgrid::scale_u8_fixed(255, 0));
   TEST_ASSERT_EQUAL_UINT8(255, ledgrid::scale_u8_fixed(255, 255));
@@ -599,10 +822,14 @@ int main(int, char**) {
   RUN_TEST(test_full_receiver_snapshot_has_canonical_two_patch_fixture);
   RUN_TEST(test_patch_header_encoding_is_big_endian_and_bounds_checked);
   RUN_TEST(test_crc_contract_matches_ccitt_false_and_exact_packet);
+  RUN_TEST(test_generated_wire_packets_match_exact_headers_payloads_and_crc);
+  RUN_TEST(test_generated_receiver_slice_vectors_cover_four_boards_and_seams);
+  RUN_TEST(test_generated_counter_generation_cas_and_lease_vectors_match_runtime);
   RUN_TEST(test_version_session_and_counter_order_reject_stale_inputs);
   RUN_TEST(test_generation_begin_enforces_cas_and_exact_idempotency);
   RUN_TEST(test_full_snapshot_patch_order_retry_and_commit_are_transactional);
   RUN_TEST(test_delta_patches_allow_gaps_but_reject_reverse_order_and_bounds);
+  RUN_TEST(test_zero_patch_delta_is_generation_agreement_noop_only);
   RUN_TEST(test_fixed_point_alpha_endpoints_rounding_saturation_and_fold_order);
   RUN_TEST(test_logical_to_local_coordinates_cover_all_board_boundaries);
   return UNITY_END();

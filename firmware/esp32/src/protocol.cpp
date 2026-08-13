@@ -115,6 +115,36 @@ bool encode_receiver_status_v3(
   return true;
 }
 
+bool encode_receiver_status_v4(
+    const ReceiverStatusV4& status,
+    std::uint8_t* output,
+    std::size_t output_size) {
+  if (output == nullptr || output_size < kStatusBytesV4) return false;
+  if (!encode_receiver_status_v3(status, output, output_size)) return false;
+  std::memcpy(output, "LGS4", 4);
+  output[4] = kStatusProtocolVersionV4;
+  output[320] = static_cast<std::uint8_t>(status.overlay_result);
+  output[321] = static_cast<std::uint8_t>(status.overlay_update_kind);
+  write_u16(output + 322, status.overlay_expected_patches);
+  write_u16(output + 324, status.overlay_accepted_patches);
+  write_u16(output + 326, status.overlay_committed_coverage_pixels);
+  write_u64(output + 328, status.overlay_committed_generation);
+  write_u64(output + 336, status.overlay_staged_generation);
+  write_u64(output + 344, status.foreground_scene_revision);
+  write_u64(output + 352, status.foreground_scene_epoch);
+  write_u64(output + 360, status.foreground_base_revision);
+  write_u64(output + 368, status.foreground_present_at_scene_time_us);
+  write_u32(output + 376, status.overlay_lease_ms);
+  write_u32(output + 380, status.overlay_lease_remaining_ms);
+  std::memcpy(output + 384, status.overlay_session, kControllerSessionBytes);
+  write_u32(output + 400, status.overlay_composite_frames);
+  write_u16(output + 404, status.overlay_last_composite_us);
+  write_u16(output + 406, status.overlay_max_composite_us);
+  write_u32(output + 408, status.overlay_commits);
+  write_u32(output + 412, status.overlay_expirations);
+  return true;
+}
+
 bool command_may_claim_base(ReceiverCommand command) {
   return command == ReceiverCommand::SetAll ||
          command == ReceiverCommand::LocalBackgroundStart;
@@ -181,16 +211,25 @@ ReceiverDispatchDecision classify_receiver_dispatch(
                                       ReceiverOperationResult::None, false,
                                       false};
     case ReceiverCommand::StatusQuery:
-      return exact(kStatusBytesV3, ReceiverDispatchRoute::StatusQuery, false,
-                   false);
-    case ReceiverCommand::ControllerSessionBegin:
-      return reject(ReceiverOperationResult::Unsupported);
+      if (size == kStatusBytesV3 ||
+          (local_background_enabled && size == kStatusBytesV4)) {
+        return ReceiverDispatchDecision{ReceiverDispatchRoute::StatusQuery,
+                                        ReceiverOperationResult::None, false,
+                                        false};
+      }
+      return reject(ReceiverOperationResult::InvalidSize);
     case ReceiverCommand::LocalBackgroundStart:
     case ReceiverCommand::LocalBackgroundStop:
     case ReceiverCommand::LocalBackgroundParameters:
     case ReceiverCommand::PresentationContextBegin:
     case ReceiverCommand::PresentationContextSet:
     case ReceiverCommand::PresentationContextCommit:
+    case ReceiverCommand::ControllerSessionBegin:
+    case ReceiverCommand::OverlayBegin:
+    case ReceiverCommand::OverlayPatch:
+    case ReceiverCommand::OverlayCommit:
+    case ReceiverCommand::OverlayClear:
+    case ReceiverCommand::OverlayRenew:
       break;
     default:
       return reject(ReceiverOperationResult::InvalidCommand);
@@ -211,6 +250,30 @@ ReceiverDispatchDecision classify_receiver_dispatch(
         return reject(ReceiverOperationResult::InvalidSize);
       }
       expected = 145U + static_cast<std::size_t>(command[144]) * 3U;
+      break;
+    case ReceiverCommand::ControllerSessionBegin:
+      expected = kControllerSessionBeginHeaderBytes;
+      break;
+    case ReceiverCommand::OverlayBegin:
+      expected = kOverlayBeginHeaderBytes;
+      break;
+    case ReceiverCommand::OverlayPatch:
+      if (size < kOverlayPatchHeaderBytes) {
+        return reject(ReceiverOperationResult::InvalidSize);
+      }
+      expected = kOverlayPatchHeaderBytes +
+          static_cast<std::size_t>(
+              (static_cast<std::uint16_t>(command[28]) << 8U) | command[29]) *
+              kPremultipliedRgbaBytesPerPixel;
+      break;
+    case ReceiverCommand::OverlayCommit:
+      expected = kOverlayCommitHeaderBytes;
+      break;
+    case ReceiverCommand::OverlayClear:
+      expected = kOverlayClearHeaderBytes;
+      break;
+    case ReceiverCommand::OverlayRenew:
+      expected = kOverlayRenewHeaderBytes;
       break;
     default: break;
   }
@@ -238,7 +301,16 @@ bool receiver_packet_crc_valid(
 }
 
 bool valid_status_query(const std::uint8_t* command, std::size_t size) {
-  if (command == nullptr || size != kStatusBytesV3 ||
+  return valid_status_query(command, size, false);
+}
+
+bool valid_status_query(
+    const std::uint8_t* command,
+    std::size_t size,
+    bool sparse_overlay_enabled) {
+  if (command == nullptr ||
+      (size != kStatusBytesV3 &&
+       !(sparse_overlay_enabled && size == kStatusBytesV4)) ||
       command[0] != static_cast<std::uint8_t>(ReceiverCommand::StatusQuery)) {
     return false;
   }

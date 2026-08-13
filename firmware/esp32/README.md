@@ -94,11 +94,14 @@ Every command is followed by a big-endian CRC-16/CCITT-FALSE.
 | SET_RANGE | `0x05` | start high, start low, count, RGB bytes |
 | SET_ALL | `0x06` | tightly packed RGB bytes; publishes inline |
 | CONFIG | `0x07` | strips, length high, length low, optional debug byte |
-| STATUS_QUERY | `0x08` | exactly 320 bytes, bytes 1–319 zero |
+| STATUS_QUERY | `0x08` | 320-byte v3 query, or negotiated 416-byte v4 query; all bytes after ID zero |
 | LOCAL_BACKGROUND_START | `0x10` | component u16, cadence u16, global offset u32, seed u32, scene epoch u64 |
 | LOCAL_BACKGROUND_STOP | `0x11` | none |
 | LOCAL_BACKGROUND_PARAMETERS | `0x12` | cadence u16, global offset u32, seed u32 |
+| CONTROLLER_SESSION_BEGIN | `0x20` | version, 16-byte session, desired revision, snapshot digest |
 | PRESENTATION_CONTEXT_BEGIN/SET/COMMIT | `0x21`–`0x23` | versioned staged context packets |
+| OVERLAY_BEGIN/PATCH/COMMIT | `0x30`–`0x32` | generation/CAS binding, sorted RGBA8 patches, scheduled commit |
+| OVERLAY_CLEAR/RENEW | `0x33`–`0x34` | generation/revision clear, or active-generation lease renewal |
 | PING | `0xFF` | none |
 
 SET_PIXEL and SET_RANGE modify the working frame. SHOW and CLEAR publish only
@@ -130,6 +133,14 @@ Because SPI responses are queued before the command they accompany, the host
 uses `last_processed_command` plus `operation_sequence` to bind later status to
 the exact CRC-valid operation. Status queries do not advance that sequence.
 
+When status-v3 advertises sparse-overlay capability bit `1<<4`, a new host may
+switch to a 416-byte query. The receiver then returns `LGS4`: bytes 5–319 retain
+the v3 layout, while bytes 320–415 report the exact foreground result,
+update/patch progress, coverage, committed/staged generations, scene/base
+binding, scheduled presentation, lease/remaining time, controller session, and
+composition timing/counters. A 320-byte query always returns exact `LGS3`, so
+discovery remains compatible with v3-only firmware.
+
 The host exposes these fields through `/api/status` and `/api/metrics`. Run the
 automated canary gate with:
 
@@ -150,6 +161,27 @@ and fixed-point vibe luminance. Receiver hardware brightness remains the final
 output limit, so vibe luminance and master brightness are each applied once.
 Production keeps this feature compiled off until a deliberately scheduled
 one-receiver canary passes.
+
+The canary feature also owns one bounded aggregate foreground plane. Two fixed
+4,416-byte premultiplied-RGBA buffers and two fixed 1,104-byte coverage maps
+stage full snapshots or deltas transactionally; feature-off production builds
+do not allocate them. Full snapshots use canonical 1,016+88-pixel patches.
+Delta patches may move or clear content with alpha zero, and a zero-patch delta
+is a valid generation-agreement no-op. Scheduled commits retain the prior plane
+until their scene-time deadline. Each local base cadence tick recomposes the
+unchanged foreground; a foreground-only tick reuses the cached base and does
+not advance background cadence. Finite leases clear expired content while the
+local background continues. Local stop/failure, receiver restart, and complete
+`SET_ALL` takeover discard staged and committed foreground. Lease expiry also
+requires the next content update to be a full snapshot because the committed
+plane was destroyed. Complete host takeover additionally resets sparse session
+and generation authority, so later hybrid re-entry reconciles from a fresh
+session begin and full snapshot rather than inheriting pre-takeover counters.
+
+Only `esp32-s3-devkitc-1-local-canary` advertises local/context/sparse capability
+bits and accepts these commands. The ordinary production image stays on status
+v3, advertises only status/explicit-ownership capabilities, rejects the feature
+surface, and remains the image selected by ordinary deployment.
 
 The `native-animations` branch is the organ donor for the loader-capable ESP-IDF
 baseline, ABI, asset upload/cache, typed parameters, receiver control, status,

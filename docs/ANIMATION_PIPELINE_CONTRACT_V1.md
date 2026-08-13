@@ -339,11 +339,13 @@ endpoints, both sides of the half-up boundary, current profile quantization,
 multiple vibes, multiple modifier sets, high counter values, exact packet
 bytes, and all three digests.
 
-## Dormant foreground wire contract
+## Feature-gated foreground wire contract
 
 All integers are big-endian. Every foreground command carries protocol version
 1 and a trailing CRC-16/CCITT-FALSE. The transaction ceiling remains 4,096
-bytes. These IDs are reserved and are not dispatched in Phase 1:
+bytes. These IDs were reserved but not dispatched in Phase 1; the Phase 3B0
+portable receiver now accepts them only in the deliberate feature-on canary
+build:
 
 | Command | ID | Exact bytes before CRC |
 | --- | ---: | ---: |
@@ -373,6 +375,13 @@ overlap, gap where a full snapshot requires continuity, or out-of-order patch is
 rejected. Equal begin/commit operations are idempotent only when their complete
 operation digest is identical. Lower revisions/generations are stale, and
 `prior_generation` is a compare-and-swap precondition.
+
+`expected_patches=0` is valid only for a `Delta` update. Its commit advances the
+common foreground generation without changing pixels or coverage, allowing an
+unaffected receiver to agree with the other receivers in one wall transaction.
+A zero-patch `FullSnapshot` remains incomplete. The delta no-op commit is still
+subject to the normal session, scene-revision, prior-generation, base-binding,
+lease, and scheduled-presentation checks; it is not an ordering bypass.
 
 The frozen rejection vocabulary distinguishes unsupported version/format,
 bounds/size, stale session/revision/generation, failed compare-and-swap,

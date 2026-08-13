@@ -53,6 +53,132 @@ std::vector<std::uint8_t> start_command(
   return result;
 }
 
+std::vector<std::uint8_t> session_command(
+    const ledgrid::ReceiverRuntime& runtime, std::uint64_t revision = 1,
+    std::uint8_t digest_byte = 0xA5) {
+  std::vector<std::uint8_t> result{0x20, 1};
+  result.insert(result.end(), runtime.active_context().session,
+                runtime.active_context().session + 16);
+  append_u64(&result, revision);
+  result.insert(result.end(), 32, digest_byte);
+  return result;
+}
+
+std::vector<std::uint8_t> overlay_begin_command(
+    const ledgrid::ReceiverRuntime& runtime,
+    std::uint64_t generation,
+    std::uint64_t prior_generation,
+    ledgrid::OverlayUpdateKind kind,
+    std::uint16_t expected_patches,
+    std::uint32_t lease_ms) {
+  std::vector<std::uint8_t> result{0x30, 1};
+  result.insert(result.end(), runtime.active_context().session,
+                runtime.active_context().session + 16);
+  append_u64(&result, generation);
+  append_u64(&result, prior_generation);
+  append_u64(&result, runtime.active_context().scene_revision);
+  append_u64(&result, runtime.active_context().scene_epoch);
+  append_u64(&result, runtime.active_context().scene_revision);
+  result.push_back(1);
+  result.push_back(static_cast<std::uint8_t>(kind));
+  append_u16(&result, expected_patches);
+  append_u32(&result, lease_ms);
+  return result;
+}
+
+std::vector<std::uint8_t> overlay_patch_command(
+    const ledgrid::ReceiverRuntime& runtime,
+    std::uint64_t generation,
+    std::uint16_t start,
+    const std::vector<std::uint8_t>& rgba) {
+  std::vector<std::uint8_t> result{0x31, 1};
+  result.insert(result.end(), runtime.active_context().session,
+                runtime.active_context().session + 16);
+  append_u64(&result, generation);
+  append_u16(&result, start);
+  append_u16(&result, static_cast<std::uint16_t>(rgba.size() / 4U));
+  result.insert(result.end(), rgba.begin(), rgba.end());
+  return result;
+}
+
+std::vector<std::uint8_t> overlay_commit_command(
+    const ledgrid::ReceiverRuntime& runtime,
+    std::uint64_t generation,
+    std::uint64_t present_at_scene_time_us) {
+  std::vector<std::uint8_t> result{0x32, 1};
+  result.insert(result.end(), runtime.active_context().session,
+                runtime.active_context().session + 16);
+  append_u64(&result, generation);
+  append_u64(&result, runtime.active_context().scene_epoch);
+  append_u64(&result, runtime.active_context().scene_revision);
+  append_u64(&result, present_at_scene_time_us);
+  return result;
+}
+
+std::vector<std::uint8_t> overlay_clear_command(
+    const ledgrid::ReceiverRuntime& runtime,
+    std::uint64_t generation) {
+  std::vector<std::uint8_t> result{0x33, 1};
+  result.insert(result.end(), runtime.active_context().session,
+                runtime.active_context().session + 16);
+  append_u64(&result, generation);
+  append_u64(&result, runtime.active_context().scene_revision);
+  return result;
+}
+
+std::vector<std::uint8_t> overlay_renew_command(
+    const ledgrid::ReceiverRuntime& runtime,
+    std::uint64_t generation,
+    std::uint32_t lease_ms) {
+  std::vector<std::uint8_t> result{0x34, 1};
+  result.insert(result.end(), runtime.active_context().session,
+                runtime.active_context().session + 16);
+  append_u64(&result, generation);
+  append_u32(&result, lease_ms);
+  return result;
+}
+
+void activate_neutral_context(ledgrid::ReceiverRuntime* runtime);
+
+void activate_local_hybrid(
+    ledgrid::ReceiverRuntime* runtime,
+    std::uint64_t local_monotonic_us = 1000000) {
+  activate_neutral_context(runtime);
+  auto start = start_command(
+      60, 0, 42, runtime->active_context().scene_epoch);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime->process_command(start.data(), start.size(), local_monotonic_us)));
+  auto session = session_command(*runtime);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime->process_command(
+      session.data(), session.size(), local_monotonic_us)));
+}
+
+void publish_full_snapshot(
+    ledgrid::ReceiverRuntime* runtime,
+    std::uint64_t generation,
+    std::uint64_t prior_generation,
+    std::uint32_t lease_ms,
+    std::uint64_t local_monotonic_us) {
+  auto begin = overlay_begin_command(
+      *runtime, generation, prior_generation,
+      ledgrid::OverlayUpdateKind::FullSnapshot, 2, lease_ms);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime->process_command(begin.data(), begin.size(), local_monotonic_us)));
+  std::vector<std::uint8_t> first(1016U * 4U, 0);
+  first[3] = 255;
+  auto first_patch = overlay_patch_command(*runtime, generation, 0, first);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime->process_command(
+      first_patch.data(), first_patch.size(), local_monotonic_us)));
+  std::vector<std::uint8_t> tail(88U * 4U, 0);
+  auto tail_patch = overlay_patch_command(*runtime, generation, 1016, tail);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime->process_command(
+      tail_patch.data(), tail_patch.size(), local_monotonic_us)));
+  auto commit = overlay_commit_command(
+      *runtime, generation, runtime->scene_time_us(local_monotonic_us));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime->process_command(
+      commit.data(), commit.size(), local_monotonic_us)));
+}
+
 std::vector<std::uint8_t> canonical_dispatch_command(std::uint8_t command) {
   std::size_t size = 1;
   switch (static_cast<ledgrid::ReceiverCommand>(command)) {
@@ -70,6 +196,11 @@ std::vector<std::uint8_t> canonical_dispatch_command(std::uint8_t command) {
     case ledgrid::ReceiverCommand::PresentationContextBegin: size = 58; break;
     case ledgrid::ReceiverCommand::PresentationContextSet: size = 145; break;
     case ledgrid::ReceiverCommand::PresentationContextCommit: size = 74; break;
+    case ledgrid::ReceiverCommand::OverlayBegin: size = 66; break;
+    case ledgrid::ReceiverCommand::OverlayPatch: size = 30; break;
+    case ledgrid::ReceiverCommand::OverlayCommit: size = 50; break;
+    case ledgrid::ReceiverCommand::OverlayClear: size = 34; break;
+    case ledgrid::ReceiverCommand::OverlayRenew: size = 30; break;
     default: break;
   }
   std::vector<std::uint8_t> result(size, 0);
@@ -630,6 +761,12 @@ void test_live_dispatch_policy_is_exhaustive_and_feature_gated() {
         case ledgrid::ReceiverCommand::PresentationContextBegin:
         case ledgrid::ReceiverCommand::PresentationContextSet:
         case ledgrid::ReceiverCommand::PresentationContextCommit:
+        case ledgrid::ReceiverCommand::ControllerSessionBegin:
+        case ledgrid::ReceiverCommand::OverlayBegin:
+        case ledgrid::ReceiverCommand::OverlayPatch:
+        case ledgrid::ReceiverCommand::OverlayCommit:
+        case ledgrid::ReceiverCommand::OverlayClear:
+        case ledgrid::ReceiverCommand::OverlayRenew:
           expected = ledgrid::ReceiverDispatchRoute::Runtime;
           break;
         default: break;
@@ -788,6 +925,406 @@ void test_operation_sequence_saturates_and_fails_closed_at_boundary() {
   TEST_ASSERT_EQUAL_HEX8(0x06, tracker.last_processed_command());
 }
 
+void test_sparse_full_snapshot_schedules_composites_and_delta_clears() {
+  ledgrid::ReceiverRuntime runtime(true);
+  activate_local_hybrid(&runtime);
+  const std::uint64_t now = 1000000;
+  const std::uint64_t present = runtime.scene_time_us(now) + 1000;
+  auto begin = overlay_begin_command(
+      runtime, 1, 0, ledgrid::OverlayUpdateKind::FullSnapshot, 2, 3000);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(begin.data(), begin.size(), now)));
+  // Staging is not visible when there is no prior committed foreground.
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ForegroundState::Staging),
+      static_cast<std::uint8_t>(runtime.foreground_state()));
+  const auto staged_status = runtime.overlay_status(now);
+  TEST_ASSERT_EQUAL_UINT64(0, staged_status.committed_generation);
+  TEST_ASSERT_EQUAL_UINT64(1, staged_status.staged_generation);
+  TEST_ASSERT_EQUAL_UINT64(runtime.active_context().scene_revision,
+                           staged_status.scene_revision);
+  TEST_ASSERT_EQUAL_UINT64(runtime.active_context().scene_epoch,
+                           staged_status.scene_epoch);
+  TEST_ASSERT_EQUAL_UINT64(runtime.active_context().scene_revision,
+                           staged_status.base_revision);
+  TEST_ASSERT_EQUAL_UINT64(0, staged_status.present_at_scene_time_us);
+  TEST_ASSERT_EQUAL_UINT32(3000, staged_status.lease_ms);
+  TEST_ASSERT_EQUAL_UINT32(3000, staged_status.lease_remaining_ms);
+  TEST_ASSERT_EQUAL_UINT16(0,
+                           staged_status.committed_coverage_pixels);
+
+  std::vector<std::uint8_t> first(1016U * 4U, 0);
+  first[0] = 0; first[1] = 0; first[2] = 0; first[3] = 255;  // black
+  first[4] = 64; first[5] = 0; first[6] = 0; first[7] = 128;
+  auto patch0 = overlay_patch_command(runtime, 1, 0, first);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      patch0.data(), patch0.size(), now)));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      patch0.data(), patch0.size(), now)));
+  TEST_ASSERT_EQUAL_UINT8(2, static_cast<std::uint8_t>(
+      runtime.last_overlay_result()));
+  auto conflicting = patch0;
+  conflicting[30] = 1;
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ReceiverOperationResult::Conflict),
+      static_cast<std::uint8_t>(runtime.process_command(
+          conflicting.data(), conflicting.size(), now)));
+
+  std::vector<std::uint8_t> tail(88U * 4U, 0);
+  tail[tail.size() - 4] = 0;
+  tail[tail.size() - 3] = 255;
+  tail[tail.size() - 2] = 0;
+  tail[tail.size() - 1] = 255;
+  auto patch1 = overlay_patch_command(runtime, 1, 1016, tail);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      patch1.data(), patch1.size(), now)));
+  auto commit = overlay_commit_command(runtime, 1, present);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      commit.data(), commit.size(), now)));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ForegroundState::Staging),
+      static_cast<std::uint8_t>(runtime.foreground_state()));
+  const auto pending_status = runtime.overlay_status(now);
+  TEST_ASSERT_EQUAL_UINT64(1, pending_status.staged_generation);
+  TEST_ASSERT_EQUAL_UINT64(runtime.active_context().scene_revision,
+                           pending_status.scene_revision);
+  TEST_ASSERT_EQUAL_UINT64(runtime.active_context().scene_epoch,
+                           pending_status.scene_epoch);
+  TEST_ASSERT_EQUAL_UINT64(runtime.active_context().scene_revision,
+                           pending_status.base_revision);
+  TEST_ASSERT_EQUAL_UINT64(present,
+                           pending_status.present_at_scene_time_us);
+  TEST_ASSERT_EQUAL_UINT32(3000, pending_status.lease_ms);
+  TEST_ASSERT_EQUAL_UINT32(3000, pending_status.lease_remaining_ms);
+  TEST_ASSERT_EQUAL_UINT16(0,
+                           pending_status.committed_coverage_pixels);
+  TEST_ASSERT_FALSE(runtime.service_foreground(now + 999));
+  TEST_ASSERT_TRUE(runtime.service_foreground(now + 1000));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ForegroundState::Active),
+      static_cast<std::uint8_t>(runtime.foreground_state()));
+  TEST_ASSERT_EQUAL_UINT16(3,
+      runtime.overlay_status(now + 1000).committed_coverage_pixels);
+  const auto active_status = runtime.overlay_status(now + 1000);
+  TEST_ASSERT_EQUAL_UINT64(0, active_status.staged_generation);
+  TEST_ASSERT_EQUAL_UINT64(present,
+                           active_status.present_at_scene_time_us);
+  TEST_ASSERT_EQUAL_UINT32(3000, active_status.lease_ms);
+
+  std::vector<std::uint8_t> base(ledgrid::kContractLocalPixels * 3U, 100);
+  std::vector<std::uint8_t> composite(base.size(), 0);
+  TEST_ASSERT_TRUE(runtime.composite_foreground(
+      base.data(), ledgrid::kContractLocalPixels,
+      composite.data(), composite.size()));
+  TEST_ASSERT_EQUAL_UINT8(0, composite[0]);
+  TEST_ASSERT_EQUAL_UINT8(0, composite[1]);
+  TEST_ASSERT_EQUAL_UINT8(0, composite[2]);
+  TEST_ASSERT_EQUAL_UINT8(114, composite[3]);
+  TEST_ASSERT_EQUAL_UINT8(50, composite[4]);
+  TEST_ASSERT_EQUAL_UINT8(50, composite[5]);
+  TEST_ASSERT_EQUAL_UINT8(0, composite[composite.size() - 3]);
+  TEST_ASSERT_EQUAL_UINT8(255, composite[composite.size() - 2]);
+  TEST_ASSERT_EQUAL_UINT8(0, composite[composite.size() - 1]);
+
+  const auto base_stats = runtime.render_stats();
+  auto noop = overlay_begin_command(
+      runtime, 2, 1, ledgrid::OverlayUpdateKind::Delta, 0, 3000);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      noop.data(), noop.size(), now + 1100)));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ForegroundState::Staging),
+      static_cast<std::uint8_t>(runtime.foreground_state()));
+  const auto replacement_status = runtime.overlay_status(now + 1100);
+  TEST_ASSERT_EQUAL_UINT64(2, replacement_status.staged_generation);
+  TEST_ASSERT_EQUAL_UINT16(3,
+                           replacement_status.committed_coverage_pixels);
+  // Staging is observable while the prior committed plane remains visible.
+  runtime.composite_foreground(base.data(), ledgrid::kContractLocalPixels,
+                               composite.data(), composite.size());
+  TEST_ASSERT_EQUAL_UINT8(0, composite[0]);
+  auto noop_commit = overlay_commit_command(runtime, 2,
+      runtime.scene_time_us(now + 1100));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      noop_commit.data(), noop_commit.size(), now + 1100)));
+  TEST_ASSERT_EQUAL_UINT64(2,
+      runtime.overlay_status(now + 1100).committed_generation);
+  TEST_ASSERT_EQUAL_UINT32(base_stats.rendered_frames,
+                           runtime.render_stats().rendered_frames);
+
+  auto delta = overlay_begin_command(
+      runtime, 3, 2, ledgrid::OverlayUpdateKind::Delta, 1, 3000);
+  runtime.process_command(delta.data(), delta.size(), now + 1200);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ForegroundState::Staging),
+      static_cast<std::uint8_t>(runtime.foreground_state()));
+  std::vector<std::uint8_t> moved(5U * 4U, 0);
+  moved[16] = 0; moved[17] = 0; moved[18] = 0; moved[19] = 255;
+  auto moved_patch = overlay_patch_command(runtime, 3, 0, moved);
+  runtime.process_command(moved_patch.data(), moved_patch.size(), now + 1200);
+  auto moved_commit = overlay_commit_command(
+      runtime, 3, runtime.scene_time_us(now + 1200));
+  runtime.process_command(moved_commit.data(), moved_commit.size(), now + 1200);
+  runtime.composite_foreground(base.data(), ledgrid::kContractLocalPixels,
+                               composite.data(), composite.size());
+  TEST_ASSERT_EQUAL_UINT8(100, composite[0]);
+  TEST_ASSERT_EQUAL_UINT8(0, composite[12]);
+  TEST_ASSERT_EQUAL_UINT16(2,
+      runtime.overlay_status(now + 1200).committed_coverage_pixels);
+  TEST_ASSERT_EQUAL_UINT32(base_stats.rendered_frames,
+                           runtime.render_stats().rendered_frames);
+}
+
+void test_sparse_order_interruption_session_lease_restart_and_takeover() {
+  ledgrid::ReceiverRuntime runtime(true);
+  activate_local_hybrid(&runtime);
+  const std::uint64_t now = 5000000;
+  auto begin = overlay_begin_command(
+      runtime, 1, 0, ledgrid::OverlayUpdateKind::FullSnapshot, 2, 10);
+  runtime.process_command(begin.data(), begin.size(), now);
+  std::vector<std::uint8_t> tail(88U * 4U, 0);
+  auto out_of_order = overlay_patch_command(runtime, 1, 1016, tail);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ReceiverOperationResult::InvalidState),
+      static_cast<std::uint8_t>(runtime.process_command(
+          out_of_order.data(), out_of_order.size(), now)));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::PatchOrder),
+      static_cast<std::uint8_t>(runtime.last_overlay_result()));
+
+  // Clear aborts interrupted staging without ever revealing it.
+  auto clear = overlay_clear_command(runtime, 2);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      clear.data(), clear.size(), now)));
+  TEST_ASSERT_EQUAL_UINT8(0, static_cast<std::uint8_t>(runtime.foreground_state()));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      clear.data(), clear.size(), now)));
+  TEST_ASSERT_EQUAL_UINT8(2, static_cast<std::uint8_t>(
+      runtime.last_overlay_result()));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::StaleGeneration),
+      static_cast<std::uint8_t>(runtime.process_command(
+          begin.data(), begin.size(), now)));
+
+  auto delta = overlay_begin_command(
+      runtime, 3, 2, ledgrid::OverlayUpdateKind::Delta, 1, 2);
+  runtime.process_command(delta.data(), delta.size(), now);
+  std::vector<std::uint8_t> black{0, 0, 0, 255};
+  auto black_patch = overlay_patch_command(runtime, 3, 7, black);
+  runtime.process_command(black_patch.data(), black_patch.size(), now);
+  auto commit = overlay_commit_command(runtime, 3, runtime.scene_time_us(now));
+  runtime.process_command(commit.data(), commit.size(), now);
+  auto renew = overlay_renew_command(runtime, 3, 4);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      renew.data(), renew.size(), now + 1000)));
+  TEST_ASSERT_FALSE(runtime.service_foreground(now + 4999));
+  TEST_ASSERT_TRUE(runtime.service_foreground(now + 5000));
+  TEST_ASSERT_EQUAL_UINT8(0, static_cast<std::uint8_t>(runtime.foreground_state()));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::LeaseExpired),
+      static_cast<std::uint8_t>(runtime.last_overlay_result()));
+
+  auto post_expiry_clear = overlay_clear_command(runtime, 4);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      post_expiry_clear.data(), post_expiry_clear.size(), now + 5500)));
+  auto held = overlay_begin_command(
+      runtime, 5, 4, ledgrid::OverlayUpdateKind::Delta, 1, 0);
+  runtime.process_command(held.data(), held.size(), now + 6000);
+  auto held_patch = overlay_patch_command(runtime, 5, 8, black);
+  runtime.process_command(held_patch.data(), held_patch.size(), now + 6000);
+  auto held_commit = overlay_commit_command(
+      runtime, 5, runtime.scene_time_us(now + 6000));
+  runtime.process_command(held_commit.data(), held_commit.size(), now + 6000);
+  TEST_ASSERT_FALSE(runtime.service_foreground(now + 1000000));
+
+  // Compensation uses a new generation. Reusing a committed content
+  // generation for a different CLEAR operation is a conflict.
+  auto same_generation_clear = overlay_clear_command(runtime, 5);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ReceiverOperationResult::Conflict),
+      static_cast<std::uint8_t>(runtime.process_command(
+          same_generation_clear.data(), same_generation_clear.size(),
+          now + 6500)));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::GenerationConflict),
+      static_cast<std::uint8_t>(runtime.last_overlay_result()));
+  auto compensation = overlay_clear_command(runtime, 6);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      compensation.data(), compensation.size(), now + 6500)));
+  TEST_ASSERT_EQUAL_UINT8(0, static_cast<std::uint8_t>(runtime.foreground_state()));
+
+  auto replacement_foreground = overlay_begin_command(
+      runtime, 7, 6, ledgrid::OverlayUpdateKind::Delta, 1, 0);
+  runtime.process_command(replacement_foreground.data(),
+                          replacement_foreground.size(), now + 6600);
+  auto replacement_patch = overlay_patch_command(runtime, 7, 8, black);
+  runtime.process_command(replacement_patch.data(), replacement_patch.size(),
+                          now + 6600);
+  auto replacement_commit = overlay_commit_command(
+      runtime, 7, runtime.scene_time_us(now + 6600));
+  runtime.process_command(replacement_commit.data(), replacement_commit.size(),
+                          now + 6600);
+
+  auto replacement = session_command(runtime, 2, 0xBB);
+  replacement[2] ^= 0x80;
+  runtime.process_command(replacement.data(), replacement.size(), now + 7000);
+  TEST_ASSERT_EQUAL_UINT8(2, static_cast<std::uint8_t>(runtime.foreground_state()));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ReceiverOperationResult::InvalidState),
+      static_cast<std::uint8_t>(runtime.process_command(
+          renew.data(), renew.size(), now + 7000)));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::StaleSession),
+      static_cast<std::uint8_t>(runtime.last_overlay_result()));
+  runtime.complete_host_frame();
+  TEST_ASSERT_EQUAL_UINT8(0, static_cast<std::uint8_t>(runtime.foreground_state()));
+  TEST_ASSERT_EQUAL_UINT8(2, static_cast<std::uint8_t>(runtime.base_mode()));
+  runtime.receiver_restart();
+  TEST_ASSERT_EQUAL_UINT8(0, static_cast<std::uint8_t>(runtime.base_mode()));
+  TEST_ASSERT_EQUAL_UINT64(0,
+      runtime.overlay_status(now + 7000).committed_generation);
+}
+
+void test_sparse_generation_counter_exhaustion_is_fail_closed() {
+  ledgrid::ReceiverRuntime runtime(true);
+  activate_local_hybrid(&runtime);
+  auto maximum_clear = overlay_clear_command(runtime, UINT64_MAX);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      maximum_clear.data(), maximum_clear.size(), 1000000)));
+  auto exhausted = overlay_begin_command(
+      runtime, UINT64_MAX, UINT64_MAX,
+      ledgrid::OverlayUpdateKind::Delta, 0, 0);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ReceiverOperationResult::InvalidState),
+      static_cast<std::uint8_t>(runtime.process_command(
+          exhausted.data(), exhausted.size(), 1000000)));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::CounterExhausted),
+      static_cast<std::uint8_t>(runtime.last_overlay_result()));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX,
+      runtime.overlay_status(1000000).committed_generation);
+}
+
+void test_sparse_lease_expiry_requires_full_snapshot_repair() {
+  ledgrid::ReceiverRuntime runtime(true);
+  const std::uint64_t now = 5000000;
+  activate_local_hybrid(&runtime, now);
+  publish_full_snapshot(&runtime, 1, 0, 1, now);
+  TEST_ASSERT_FALSE(runtime.service_foreground(now + 999));
+  TEST_ASSERT_TRUE(runtime.service_foreground(now + 1000));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::LeaseExpired),
+      static_cast<std::uint8_t>(runtime.last_overlay_result()));
+
+  auto invalid_delta = overlay_begin_command(
+      runtime, 2, 1, ledgrid::OverlayUpdateKind::Delta, 0, 0);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ReceiverOperationResult::InvalidState),
+      static_cast<std::uint8_t>(runtime.process_command(
+          invalid_delta.data(), invalid_delta.size(), now + 1000)));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::InvalidState),
+      static_cast<std::uint8_t>(runtime.last_overlay_result()));
+
+  auto repair = overlay_begin_command(
+      runtime, 2, 1, ledgrid::OverlayUpdateKind::FullSnapshot, 2, 0);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      repair.data(), repair.size(), now + 1000)));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ForegroundState::Staging),
+      static_cast<std::uint8_t>(runtime.foreground_state()));
+}
+
+void test_host_takeover_invalidates_sparse_controller_authority() {
+  ledgrid::ReceiverRuntime runtime(true);
+  const std::uint64_t now = 7000000;
+  activate_local_hybrid(&runtime, now);
+  const auto original_session = session_command(runtime);
+  auto authoritative_clear = overlay_clear_command(runtime, 9);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      authoritative_clear.data(), authoritative_clear.size(), now)));
+  TEST_ASSERT_EQUAL_UINT64(9,
+      runtime.overlay_status(now).committed_generation);
+
+  runtime.complete_host_frame();
+  const auto after_takeover = runtime.overlay_status(now);
+  TEST_ASSERT_EQUAL_UINT64(0, after_takeover.committed_generation);
+  TEST_ASSERT_EQUAL_UINT64(0, after_takeover.scene_revision);
+  TEST_ASSERT_EQUAL_UINT64(0, after_takeover.scene_epoch);
+  TEST_ASSERT_EQUAL_UINT64(0, after_takeover.base_revision);
+  TEST_ASSERT_EQUAL_UINT16(0, after_takeover.committed_coverage_pixels);
+  const std::uint8_t zero_session[ledgrid::kControllerSessionBytes] = {};
+  TEST_ASSERT_EQUAL_MEMORY(zero_session, after_takeover.session,
+                           ledgrid::kControllerSessionBytes);
+
+  auto restart_local = start_command(
+      60, 0, 42, runtime.active_context().scene_epoch);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      restart_local.data(), restart_local.size(), now + 1000)));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(runtime.process_command(
+      original_session.data(), original_session.size(), now + 1000)));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::OverlayOperationResult::Ok),
+      static_cast<std::uint8_t>(runtime.last_overlay_result()));
+  auto delta_before_repair = overlay_begin_command(
+      runtime, 1, 0, ledgrid::OverlayUpdateKind::Delta, 0, 0);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ReceiverOperationResult::InvalidState),
+      static_cast<std::uint8_t>(runtime.process_command(
+          delta_before_repair.data(), delta_before_repair.size(), now + 1000)));
+}
+
+void test_status_v4_negotiates_after_exact_v3_prefix() {
+  ledgrid::ReceiverStatusV4 status{};
+  status.capabilities = ledgrid::kCapabilityStatusV3 |
+                        ledgrid::kCapabilitySparseOverlayV1;
+  status.overlay_result = ledgrid::OverlayOperationResult::PatchConflict;
+  status.overlay_update_kind = ledgrid::OverlayUpdateKind::Delta;
+  status.overlay_expected_patches = 3;
+  status.overlay_accepted_patches = 2;
+  status.overlay_committed_coverage_pixels = 17;
+  status.overlay_committed_generation = 0x0102030405060708ULL;
+  status.overlay_staged_generation = 9;
+  status.foreground_scene_revision = 10;
+  status.foreground_scene_epoch = 11;
+  status.foreground_base_revision = 10;
+  status.foreground_present_at_scene_time_us = 12;
+  status.overlay_lease_ms = 3000;
+  status.overlay_lease_remaining_ms = 999;
+  status.overlay_session[0] = 0xAA;
+  status.overlay_composite_frames = 13;
+  status.overlay_last_composite_us = 14;
+  status.overlay_max_composite_us = 15;
+  status.overlay_commits = 16;
+  status.overlay_expirations = 17;
+  std::array<std::uint8_t, ledgrid::kStatusBytesV4> encoded{};
+  TEST_ASSERT_TRUE(ledgrid::encode_receiver_status_v4(
+      status, encoded.data(), encoded.size()));
+  TEST_ASSERT_EQUAL_STRING_LEN("LGS4", reinterpret_cast<char*>(encoded.data()), 4);
+  TEST_ASSERT_EQUAL_UINT8(4, encoded[4]);
+  TEST_ASSERT_EQUAL_UINT8(14, encoded[320]);
+  TEST_ASSERT_EQUAL_UINT8(2, encoded[321]);
+  TEST_ASSERT_EQUAL_UINT8(17, encoded[327]);
+  TEST_ASSERT_EQUAL_UINT8(0x01, encoded[328]);
+  TEST_ASSERT_EQUAL_UINT8(0x08, encoded[335]);
+  TEST_ASSERT_EQUAL_UINT8(0xAA, encoded[384]);
+  TEST_ASSERT_EQUAL_UINT8(17, encoded[415]);
+  std::array<std::uint8_t, ledgrid::kStatusBytesV3> legacy{};
+  TEST_ASSERT_TRUE(ledgrid::encode_receiver_status_v3(
+      status, legacy.data(), legacy.size()));
+  TEST_ASSERT_EQUAL_STRING_LEN("LGS3", reinterpret_cast<char*>(legacy.data()), 4);
+  std::array<std::uint8_t, ledgrid::kStatusBytesV4> query{};
+  query[0] = 0x08;
+  TEST_ASSERT_TRUE(ledgrid::valid_status_query(
+      query.data(), ledgrid::kStatusBytesV3, false));
+  TEST_ASSERT_FALSE(ledgrid::valid_status_query(
+      query.data(), query.size(), false));
+  TEST_ASSERT_TRUE(ledgrid::valid_status_query(
+      query.data(), query.size(), true));
+  query[400] = 1;
+  TEST_ASSERT_FALSE(ledgrid::valid_status_query(
+      query.data(), query.size(), true));
+}
+
 }  // namespace
 
 void setUp() {}
@@ -819,5 +1356,11 @@ int main(int, char**) {
   RUN_TEST(test_render_set_all_submit_interleaving_has_one_linearization_point);
   RUN_TEST(test_config_and_brightness_interleavings_invalidate_render_tickets);
   RUN_TEST(test_operation_sequence_saturates_and_fails_closed_at_boundary);
+  RUN_TEST(test_sparse_full_snapshot_schedules_composites_and_delta_clears);
+  RUN_TEST(test_sparse_order_interruption_session_lease_restart_and_takeover);
+  RUN_TEST(test_sparse_generation_counter_exhaustion_is_fail_closed);
+  RUN_TEST(test_sparse_lease_expiry_requires_full_snapshot_repair);
+  RUN_TEST(test_host_takeover_invalidates_sparse_controller_authority);
+  RUN_TEST(test_status_v4_negotiates_after_exact_v3_prefix);
   return UNITY_END();
 }

@@ -33,6 +33,16 @@ bool equal_bytes(const std::uint8_t* left, const std::uint8_t* right,
   return std::memcmp(left, right, size) == 0;
 }
 
+bool digest_equal(const Digest256& left, const Digest256& right) {
+  return equal_bytes(left.bytes, right.bytes, kSnapshotDigestBytes);
+}
+
+Digest256 command_digest(const std::uint8_t* command, std::size_t size) {
+  Digest256 digest{};
+  sha256(command, size, digest.bytes);
+  return digest;
+}
+
 bool valid_cadence(std::uint16_t cadence) {
   return cadence >= kMinLocalCadenceHz && cadence <= kMaxLocalCadenceHz;
 }
@@ -94,6 +104,30 @@ ReceiverOperationResult ReceiverRuntime::finish(ReceiverOperationResult result) 
   return result;
 }
 
+ReceiverOperationResult ReceiverRuntime::finish_overlay(
+    OverlayOperationResult result) {
+  last_overlay_result_ = result;
+  switch (result) {
+    case OverlayOperationResult::Ok:
+    case OverlayOperationResult::Idempotent:
+      return finish(ReceiverOperationResult::Ok);
+    case OverlayOperationResult::UnsupportedVersion:
+    case OverlayOperationResult::UnsupportedFormat:
+      return finish(ReceiverOperationResult::Unsupported);
+    case OverlayOperationResult::InvalidSize:
+    case OverlayOperationResult::OutOfBounds:
+      return finish(ReceiverOperationResult::InvalidSize);
+    case OverlayOperationResult::StaleRevision:
+    case OverlayOperationResult::StaleGeneration:
+      return finish(ReceiverOperationResult::StaleRevision);
+    case OverlayOperationResult::GenerationConflict:
+    case OverlayOperationResult::PatchConflict:
+      return finish(ReceiverOperationResult::Conflict);
+    default:
+      return finish(ReceiverOperationResult::InvalidState);
+  }
+}
+
 ReceiverOperationResult ReceiverRuntime::start_local(
     const std::uint8_t* command, std::size_t size) {
   if (!local_background_enabled_) return finish(ReceiverOperationResult::Unsupported);
@@ -115,6 +149,10 @@ ReceiverOperationResult ReceiverRuntime::start_local(
     return finish(ReceiverOperationResult::InvalidState);
   }
   local_ = candidate;
+  clear_foreground_visibility(true);
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  session_requires_snapshot_ = true;
+#endif
   ++render_generation_;
   base_mode_ = BaseMode::LocalBackground;
   foreground_state_ = ForegroundState::Cleared;
@@ -290,6 +328,15 @@ ReceiverOperationResult ReceiverRuntime::context_commit(
   staged_context_.present_at_scene_time_us = read_u64(command + 34);
   active_context_ = staged_context_;
   active_context_present_ = true;
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  if ((committed_overlay_present_ &&
+       committed_base_revision_ != active_context_.scene_revision) ||
+      (overlay_generation_order_.has_staged_generation &&
+       staged_base_revision_ != active_context_.scene_revision)) {
+    clear_foreground_visibility(true);
+    session_requires_snapshot_ = true;
+  }
+#endif
   if (base_mode_ == BaseMode::LocalBackground) {
     local_.scene_epoch = active_context_.scene_epoch;
   }
@@ -299,17 +346,447 @@ ReceiverOperationResult ReceiverRuntime::context_commit(
   return finish(ReceiverOperationResult::Ok);
 }
 
+void ReceiverRuntime::discard_overlay_staging() {
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  pending_overlay_present_ = false;
+  overlay_generation_order_.has_staged_generation = false;
+  overlay_generation_order_.staged_generation = 0;
+  overlay_generation_order_.staged_operation_digest = {};
+  overlay_patch_order_ = {};
+  staged_scene_revision_ = 0;
+  staged_scene_epoch_ = 0;
+  staged_base_revision_ = 0;
+  staged_lease_ms_ = 0;
+  staged_started_local_us_ = 0;
+  pending_present_at_scene_time_us_ = 0;
+  foreground_state_ = committed_overlay_present_ ? ForegroundState::Active
+                                                  : ForegroundState::Cleared;
+#endif
+}
+
+void ReceiverRuntime::clear_foreground_visibility(bool discard_staging) {
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  const bool changed = committed_overlay_present_;
+  committed_overlay_present_ = false;
+  committed_coverage_pixels_ = 0;
+  committed_has_lease_ = false;
+  committed_lease_ms_ = 0;
+  committed_lease_deadline_us_ = 0;
+  committed_scene_revision_ = 0;
+  committed_scene_epoch_ = 0;
+  committed_base_revision_ = 0;
+  committed_present_at_scene_time_us_ = 0;
+  std::memset(overlay_rgba_[committed_plane_], 0, kContractLocalRgbaBytes);
+  std::memset(overlay_coverage_[committed_plane_], 0, kContractLocalPixels);
+  if (discard_staging) discard_overlay_staging();
+  foreground_state_ = pending_overlay_present_ ? ForegroundState::Staging
+                                                : ForegroundState::Cleared;
+  if (changed) {
+    ++foreground_revision_;
+    foreground_refresh_pending_ = base_mode_ == BaseMode::LocalBackground;
+  } else if (base_mode_ != BaseMode::LocalBackground) {
+    foreground_refresh_pending_ = false;
+  }
+#else
+  (void)discard_staging;
+#endif
+}
+
+ReceiverOperationResult ReceiverRuntime::controller_session_begin(
+    const std::uint8_t* command, std::size_t size) {
+#if !LEDGRID_ENABLE_LOCAL_BACKGROUND
+  (void)command; (void)size;
+  return finish_overlay(OverlayOperationResult::InvalidState);
+#else
+  if (!local_background_enabled_) {
+    return finish(ReceiverOperationResult::Unsupported);
+  }
+  if (size != kControllerSessionBeginHeaderBytes) {
+    return finish_overlay(OverlayOperationResult::InvalidSize);
+  }
+  if (command[1] != kAnimationPipelineProtocolVersion) {
+    return finish_overlay(OverlayOperationResult::UnsupportedVersion);
+  }
+  const std::uint64_t revision = read_u64(command + 18);
+  Digest256 digest{};
+  std::memcpy(digest.bytes, command + 26, kSnapshotDigestBytes);
+  if (controller_session_present_ &&
+      equal_bytes(command + 2, controller_session_, kControllerSessionBytes)) {
+    if (revision < controller_desired_revision_) {
+      return finish_overlay(OverlayOperationResult::StaleRevision);
+    }
+    if (revision == controller_desired_revision_) {
+      return finish_overlay(
+          digest_equal(digest, controller_snapshot_digest_)
+              ? OverlayOperationResult::Idempotent
+              : OverlayOperationResult::GenerationConflict);
+    }
+  }
+  std::memcpy(controller_session_, command + 2, kControllerSessionBytes);
+  controller_desired_revision_ = revision;
+  controller_snapshot_digest_ = digest;
+  controller_session_present_ = true;
+  discard_overlay_staging();
+  overlay_generation_order_ = {};
+  session_requires_snapshot_ = true;
+  last_commit_digest_present_ = false;
+  last_clear_digest_present_ = false;
+  return finish_overlay(OverlayOperationResult::Ok);
+#endif
+}
+
+ReceiverOperationResult ReceiverRuntime::overlay_begin(
+    const std::uint8_t* command, std::size_t size,
+    std::uint64_t local_monotonic_us) {
+#if !LEDGRID_ENABLE_LOCAL_BACKGROUND
+  (void)command; (void)size; (void)local_monotonic_us;
+  return finish_overlay(OverlayOperationResult::InvalidState);
+#else
+  if (!local_background_enabled_) return finish(ReceiverOperationResult::Unsupported);
+  if (size != kOverlayBeginHeaderBytes) {
+    return finish_overlay(OverlayOperationResult::InvalidSize);
+  }
+  const auto format = static_cast<OverlayFormat>(command[58]);
+  const OverlayOperationResult version =
+      validate_overlay_version_format(command[1], format);
+  if (version != OverlayOperationResult::Ok) return finish_overlay(version);
+  if (!controller_session_present_ ||
+      !equal_bytes(command + 2, controller_session_, kControllerSessionBytes)) {
+    return finish_overlay(OverlayOperationResult::StaleSession);
+  }
+  const auto kind = static_cast<OverlayUpdateKind>(command[59]);
+  if (kind != OverlayUpdateKind::FullSnapshot &&
+      kind != OverlayUpdateKind::Delta) {
+    return finish_overlay(OverlayOperationResult::UnsupportedFormat);
+  }
+  const std::uint16_t expected = read_u16(command + 60);
+  if ((kind == OverlayUpdateKind::FullSnapshot &&
+       expected != kContractFullSnapshotPatchCount) ||
+      (kind == OverlayUpdateKind::Delta && expected > kContractLocalPixels)) {
+    return finish_overlay(OverlayOperationResult::InvalidSize);
+  }
+  if (session_requires_snapshot_ && kind != OverlayUpdateKind::FullSnapshot) {
+    return finish_overlay(OverlayOperationResult::InvalidState);
+  }
+  const std::uint64_t scene_revision = read_u64(command + 34);
+  const std::uint64_t scene_epoch = read_u64(command + 42);
+  const std::uint64_t base_revision = read_u64(command + 50);
+  if (context_state_ != PresentationContextState::Active ||
+      base_mode_ != BaseMode::LocalBackground) {
+    return finish_overlay(OverlayOperationResult::BaseBindingMismatch);
+  }
+  if (scene_revision < active_context_.scene_revision) {
+    return finish_overlay(OverlayOperationResult::StaleRevision);
+  }
+  if (scene_revision != active_context_.scene_revision ||
+      scene_epoch != active_context_.scene_epoch ||
+      base_revision != active_context_.scene_revision) {
+    return finish_overlay(OverlayOperationResult::BaseBindingMismatch);
+  }
+  const Digest256 digest = command_digest(command, size);
+  const OverlayOperationResult ordering = validate_overlay_generation_begin(
+      overlay_generation_order_, read_u64(command + 18),
+      read_u64(command + 26), digest);
+  if (ordering != OverlayOperationResult::Ok) return finish_overlay(ordering);
+
+  overlay_generation_order_.has_staged_generation = true;
+  overlay_generation_order_.staged_generation = read_u64(command + 18);
+  overlay_generation_order_.staged_operation_digest = digest;
+  overlay_patch_order_ = {};
+  overlay_patch_order_.expected_patches = expected;
+  overlay_patch_order_.update_kind = kind;
+  staged_scene_revision_ = scene_revision;
+  staged_scene_epoch_ = scene_epoch;
+  staged_base_revision_ = base_revision;
+  staged_lease_ms_ = read_u32(command + 62);
+  staged_started_local_us_ = local_monotonic_us;
+  staging_coverage_pixels_ = 0;
+  if (kind == OverlayUpdateKind::FullSnapshot) {
+    std::memset(overlay_rgba_[staging_plane_], 0, kContractLocalRgbaBytes);
+    std::memset(overlay_coverage_[staging_plane_], 0, kContractLocalPixels);
+  } else {
+    std::memcpy(overlay_rgba_[staging_plane_], overlay_rgba_[committed_plane_],
+                kContractLocalRgbaBytes);
+    std::memcpy(overlay_coverage_[staging_plane_],
+                overlay_coverage_[committed_plane_], kContractLocalPixels);
+    staging_coverage_pixels_ = committed_coverage_pixels_;
+  }
+  foreground_state_ = ForegroundState::Staging;
+  return finish_overlay(OverlayOperationResult::Ok);
+#endif
+}
+
+ReceiverOperationResult ReceiverRuntime::overlay_patch(
+    const std::uint8_t* command, std::size_t size) {
+#if !LEDGRID_ENABLE_LOCAL_BACKGROUND
+  (void)command; (void)size;
+  return finish_overlay(OverlayOperationResult::InvalidState);
+#else
+  if (!local_background_enabled_) return finish(ReceiverOperationResult::Unsupported);
+  if (size < kOverlayPatchHeaderBytes ||
+      command[1] != kAnimationPipelineProtocolVersion) {
+    return finish_overlay(size < kOverlayPatchHeaderBytes
+        ? OverlayOperationResult::InvalidSize
+        : OverlayOperationResult::UnsupportedVersion);
+  }
+  if (!controller_session_present_ ||
+      !equal_bytes(command + 2, controller_session_, kControllerSessionBytes)) {
+    return finish_overlay(OverlayOperationResult::StaleSession);
+  }
+  if (!overlay_generation_order_.has_staged_generation) {
+    return finish_overlay(OverlayOperationResult::InvalidState);
+  }
+  const std::uint64_t generation = read_u64(command + 18);
+  if (generation < overlay_generation_order_.staged_generation) {
+    return finish_overlay(OverlayOperationResult::StaleGeneration);
+  }
+  if (generation != overlay_generation_order_.staged_generation) {
+    return finish_overlay(OverlayOperationResult::InvalidState);
+  }
+  const std::uint16_t start = read_u16(command + 26);
+  const std::uint16_t count = read_u16(command + 28);
+  if (size != kOverlayPatchHeaderBytes +
+                  static_cast<std::size_t>(count) *
+                      kPremultipliedRgbaBytesPerPixel) {
+    return finish_overlay(OverlayOperationResult::InvalidSize);
+  }
+  for (std::size_t pixel = 0; pixel < count; ++pixel) {
+    const std::uint8_t* rgba = command + kOverlayPatchHeaderBytes + pixel * 4U;
+    if (rgba[0] > rgba[3] || rgba[1] > rgba[3] || rgba[2] > rgba[3]) {
+      return finish_overlay(OverlayOperationResult::UnsupportedFormat);
+    }
+  }
+  const Digest256 digest = command_digest(
+      command + kOverlayPatchHeaderBytes,
+      size - kOverlayPatchHeaderBytes);
+  const OverlayOperationResult accepted = accept_overlay_patch(
+      &overlay_patch_order_, start, count, digest);
+  if (accepted != OverlayOperationResult::Ok) return finish_overlay(accepted);
+  for (std::size_t pixel = 0; pixel < count; ++pixel) {
+    const std::size_t index = static_cast<std::size_t>(start) + pixel;
+    const std::uint8_t* rgba = command + kOverlayPatchHeaderBytes + pixel * 4U;
+    const bool was_covered = overlay_coverage_[staging_plane_][index] != 0;
+    const bool covered = rgba[3] != 0;
+    std::memcpy(overlay_rgba_[staging_plane_] + index * 4U, rgba, 4);
+    overlay_coverage_[staging_plane_][index] = covered ? 1U : 0U;
+    if (covered && !was_covered) ++staging_coverage_pixels_;
+    if (!covered && was_covered) --staging_coverage_pixels_;
+  }
+  return finish_overlay(OverlayOperationResult::Ok);
+#endif
+}
+
+void ReceiverRuntime::activate_pending_overlay(
+    std::uint64_t local_monotonic_us) {
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  if (!pending_overlay_present_) return;
+  std::swap(committed_plane_, staging_plane_);
+  committed_overlay_present_ = true;
+  committed_coverage_pixels_ = staging_coverage_pixels_;
+  committed_scene_revision_ = staged_scene_revision_;
+  committed_scene_epoch_ = staged_scene_epoch_;
+  committed_base_revision_ = staged_base_revision_;
+  committed_present_at_scene_time_us_ = pending_present_at_scene_time_us_;
+  committed_lease_ms_ = staged_lease_ms_;
+  committed_has_lease_ = committed_lease_ms_ != 0;
+  if (committed_has_lease_) {
+    const std::uint64_t duration =
+        static_cast<std::uint64_t>(committed_lease_ms_) * 1000ULL;
+    committed_lease_deadline_us_ =
+        UINT64_MAX - local_monotonic_us < duration
+            ? UINT64_MAX : local_monotonic_us + duration;
+  } else {
+    committed_lease_deadline_us_ = 0;
+  }
+  overlay_generation_order_.committed_generation =
+      overlay_generation_order_.staged_generation;
+  overlay_generation_order_.has_staged_generation = false;
+  overlay_generation_order_.staged_generation = 0;
+  pending_overlay_present_ = false;
+  session_requires_snapshot_ = false;
+  foreground_state_ = ForegroundState::Active;
+  ++foreground_revision_;
+  foreground_refresh_pending_ = base_mode_ == BaseMode::LocalBackground;
+#else
+  (void)local_monotonic_us;
+#endif
+}
+
+ReceiverOperationResult ReceiverRuntime::overlay_commit(
+    const std::uint8_t* command, std::size_t size,
+    std::uint64_t local_monotonic_us) {
+#if !LEDGRID_ENABLE_LOCAL_BACKGROUND
+  (void)command; (void)size; (void)local_monotonic_us;
+  return finish_overlay(OverlayOperationResult::InvalidState);
+#else
+  if (!local_background_enabled_) return finish(ReceiverOperationResult::Unsupported);
+  if (size != kOverlayCommitHeaderBytes) {
+    return finish_overlay(OverlayOperationResult::InvalidSize);
+  }
+  if (command[1] != kAnimationPipelineProtocolVersion) {
+    return finish_overlay(OverlayOperationResult::UnsupportedVersion);
+  }
+  if (!controller_session_present_ ||
+      !equal_bytes(command + 2, controller_session_, kControllerSessionBytes)) {
+    return finish_overlay(OverlayOperationResult::StaleSession);
+  }
+  const std::uint64_t generation = read_u64(command + 18);
+  const Digest256 digest = command_digest(command, size);
+  if (!overlay_generation_order_.has_staged_generation) {
+    if (generation == overlay_generation_order_.committed_generation &&
+        last_commit_digest_present_ && digest_equal(digest, last_commit_digest_)) {
+      return finish_overlay(OverlayOperationResult::Idempotent);
+    }
+    return finish_overlay(generation < overlay_generation_order_.committed_generation
+        ? OverlayOperationResult::StaleGeneration
+        : OverlayOperationResult::InvalidState);
+  }
+  if (pending_overlay_present_) {
+    return finish_overlay(
+        generation == overlay_generation_order_.staged_generation &&
+                last_commit_digest_present_ &&
+                digest_equal(digest, last_commit_digest_)
+            ? OverlayOperationResult::Idempotent
+            : OverlayOperationResult::GenerationConflict);
+  }
+  if (generation < overlay_generation_order_.staged_generation) {
+    return finish_overlay(OverlayOperationResult::StaleGeneration);
+  }
+  if (generation != overlay_generation_order_.staged_generation) {
+    return finish_overlay(OverlayOperationResult::InvalidState);
+  }
+  const bool binding = base_mode_ == BaseMode::LocalBackground &&
+      context_state_ == PresentationContextState::Active &&
+      read_u64(command + 26) == staged_scene_epoch_ &&
+      read_u64(command + 34) == staged_base_revision_ &&
+      active_context_.scene_epoch == staged_scene_epoch_ &&
+      active_context_.scene_revision == staged_base_revision_;
+  const bool lease_expired = staged_lease_ms_ != 0 &&
+      local_monotonic_us >= staged_started_local_us_ &&
+      local_monotonic_us - staged_started_local_us_ >=
+          static_cast<std::uint64_t>(staged_lease_ms_) * 1000ULL;
+  const OverlayOperationResult valid = validate_overlay_commit(
+      overlay_patch_order_, binding, lease_expired);
+  if (valid != OverlayOperationResult::Ok) return finish_overlay(valid);
+  last_commit_digest_ = digest;
+  last_commit_digest_present_ = true;
+  last_clear_digest_present_ = false;
+  pending_present_at_scene_time_us_ = read_u64(command + 42);
+  pending_overlay_present_ = true;
+  overlay_stats_.commits = saturating_increment(overlay_stats_.commits);
+  const std::uint64_t current_scene_time = scene_time_us(local_monotonic_us);
+  if (pending_present_at_scene_time_us_ <= current_scene_time) {
+    activate_pending_overlay(local_monotonic_us);
+  } else {
+    foreground_state_ = ForegroundState::Staging;
+  }
+  return finish_overlay(OverlayOperationResult::Ok);
+#endif
+}
+
+ReceiverOperationResult ReceiverRuntime::overlay_clear(
+    const std::uint8_t* command, std::size_t size) {
+#if !LEDGRID_ENABLE_LOCAL_BACKGROUND
+  (void)command; (void)size;
+  return finish_overlay(OverlayOperationResult::InvalidState);
+#else
+  if (!local_background_enabled_) return finish(ReceiverOperationResult::Unsupported);
+  if (size != kOverlayClearHeaderBytes) {
+    return finish_overlay(OverlayOperationResult::InvalidSize);
+  }
+  if (command[1] != kAnimationPipelineProtocolVersion) {
+    return finish_overlay(OverlayOperationResult::UnsupportedVersion);
+  }
+  if (!controller_session_present_ ||
+      !equal_bytes(command + 2, controller_session_, kControllerSessionBytes)) {
+    return finish_overlay(OverlayOperationResult::StaleSession);
+  }
+  const std::uint64_t generation = read_u64(command + 18);
+  const Digest256 digest = command_digest(command, size);
+  if (generation < overlay_generation_order_.committed_generation ||
+      (overlay_generation_order_.has_staged_generation &&
+       generation < overlay_generation_order_.staged_generation)) {
+    return finish_overlay(OverlayOperationResult::StaleGeneration);
+  }
+  if (generation == overlay_generation_order_.committed_generation) {
+    return finish_overlay(last_clear_digest_present_ &&
+                                  digest_equal(digest, last_clear_digest_)
+                              ? OverlayOperationResult::Idempotent
+                              : OverlayOperationResult::GenerationConflict);
+  }
+  const std::uint64_t revision = read_u64(command + 26);
+  if (context_state_ != PresentationContextState::Active ||
+      revision != active_context_.scene_revision) {
+    return finish_overlay(revision < active_context_.scene_revision
+        ? OverlayOperationResult::StaleRevision
+        : OverlayOperationResult::BaseBindingMismatch);
+  }
+  discard_overlay_staging();
+  overlay_generation_order_.committed_generation = generation;
+  last_clear_digest_ = digest;
+  last_clear_digest_present_ = true;
+  last_commit_digest_present_ = false;
+  session_requires_snapshot_ = false;
+  clear_foreground_visibility(false);
+  return finish_overlay(OverlayOperationResult::Ok);
+#endif
+}
+
+ReceiverOperationResult ReceiverRuntime::overlay_renew(
+    const std::uint8_t* command, std::size_t size,
+    std::uint64_t local_monotonic_us) {
+#if !LEDGRID_ENABLE_LOCAL_BACKGROUND
+  (void)command; (void)size; (void)local_monotonic_us;
+  return finish_overlay(OverlayOperationResult::InvalidState);
+#else
+  if (!local_background_enabled_) return finish(ReceiverOperationResult::Unsupported);
+  if (size != kOverlayRenewHeaderBytes) {
+    return finish_overlay(OverlayOperationResult::InvalidSize);
+  }
+  if (command[1] != kAnimationPipelineProtocolVersion) {
+    return finish_overlay(OverlayOperationResult::UnsupportedVersion);
+  }
+  if (!controller_session_present_ ||
+      !equal_bytes(command + 2, controller_session_, kControllerSessionBytes)) {
+    return finish_overlay(OverlayOperationResult::StaleSession);
+  }
+  service_foreground(local_monotonic_us);
+  const std::uint64_t generation = read_u64(command + 18);
+  if (generation < overlay_generation_order_.committed_generation) {
+    return finish_overlay(OverlayOperationResult::StaleGeneration);
+  }
+  if (!committed_overlay_present_ ||
+      generation != overlay_generation_order_.committed_generation) {
+    return finish_overlay(OverlayOperationResult::InvalidState);
+  }
+  const std::uint32_t lease = read_u32(command + 26);
+  if (lease == 0) return finish_overlay(OverlayOperationResult::InvalidSize);
+  const std::uint64_t duration = static_cast<std::uint64_t>(lease) * 1000ULL;
+  committed_lease_ms_ = lease;
+  committed_has_lease_ = true;
+  committed_lease_deadline_us_ = UINT64_MAX - local_monotonic_us < duration
+      ? UINT64_MAX : local_monotonic_us + duration;
+  return finish_overlay(OverlayOperationResult::Ok);
+#endif
+}
+
 ReceiverOperationResult ReceiverRuntime::process_command(
     const std::uint8_t* command,
     std::size_t size,
     std::uint64_t local_monotonic_us) {
   if (command == nullptr || size == 0) return finish(ReceiverOperationResult::InvalidSize);
   switch (static_cast<ReceiverCommand>(command[0])) {
+    case ReceiverCommand::ControllerSessionBegin:
+      return controller_session_begin(command, size);
     case ReceiverCommand::LocalBackgroundStart:
       return start_local(command, size);
     case ReceiverCommand::LocalBackgroundStop:
       if (!local_background_enabled_) return finish(ReceiverOperationResult::Unsupported);
       if (size != kLocalBackgroundStopBytes) return finish(ReceiverOperationResult::InvalidSize);
+      clear_foreground_visibility(true);
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+      session_requires_snapshot_ = true;
+#endif
       base_mode_ = BaseMode::StartupFallback;
       ++render_generation_;
       foreground_state_ = ForegroundState::Cleared;
@@ -331,12 +808,33 @@ ReceiverOperationResult ReceiverRuntime::process_command(
         }
         return result;
       }
+    case ReceiverCommand::OverlayBegin:
+      return overlay_begin(command, size, local_monotonic_us);
+    case ReceiverCommand::OverlayPatch:
+      return overlay_patch(command, size);
+    case ReceiverCommand::OverlayCommit:
+      return overlay_commit(command, size, local_monotonic_us);
+    case ReceiverCommand::OverlayClear:
+      return overlay_clear(command, size);
+    case ReceiverCommand::OverlayRenew:
+      return overlay_renew(command, size, local_monotonic_us);
     default:
       return finish(ReceiverOperationResult::InvalidCommand);
   }
 }
 
 void ReceiverRuntime::complete_host_frame() {
+  clear_foreground_visibility(true);
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  controller_session_present_ = false;
+  std::memset(controller_session_, 0, sizeof(controller_session_));
+  controller_desired_revision_ = 0;
+  controller_snapshot_digest_ = {};
+  overlay_generation_order_ = {};
+  session_requires_snapshot_ = true;
+  last_commit_digest_present_ = false;
+  last_clear_digest_present_ = false;
+#endif
   base_mode_ = BaseMode::HostFullScene;
   ++render_generation_;
   foreground_state_ = ForegroundState::Cleared;
@@ -345,6 +843,10 @@ void ReceiverRuntime::complete_host_frame() {
 }
 
 void ReceiverRuntime::receiver_restart() {
+  clear_foreground_visibility(true);
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  session_requires_snapshot_ = true;
+#endif
   base_mode_ = BaseMode::StartupFallback;
   ++render_generation_;
   foreground_state_ = ForegroundState::Cleared;
@@ -356,11 +858,25 @@ void ReceiverRuntime::receiver_restart() {
   active_context_present_ = false;
   cadence_initialized_ = false;
   context_committed_local_us_ = 0;
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  controller_session_present_ = false;
+  std::memset(controller_session_, 0, sizeof(controller_session_));
+  controller_desired_revision_ = 0;
+  controller_snapshot_digest_ = {};
+  overlay_generation_order_ = {};
+  session_requires_snapshot_ = true;
+  last_commit_digest_present_ = false;
+  last_clear_digest_present_ = false;
+#endif
 }
 
 bool ReceiverRuntime::local_render_failed_if_current(
     std::uint32_t generation) {
   if (!local_render_still_valid(generation)) return false;
+  clear_foreground_visibility(true);
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  session_requires_snapshot_ = true;
+#endif
   base_mode_ = BaseMode::StartupFallback;
   ++render_generation_;
   foreground_state_ = ForegroundState::Cleared;
@@ -424,6 +940,129 @@ void ReceiverRuntime::request_local_refresh() {
   if (base_mode_ == BaseMode::LocalBackground) force_local_refresh_ = true;
 }
 
+bool ReceiverRuntime::service_foreground(std::uint64_t local_monotonic_us) {
+#if !LEDGRID_ENABLE_LOCAL_BACKGROUND
+  (void)local_monotonic_us;
+  return false;
+#else
+  bool changed = false;
+  if (pending_overlay_present_ &&
+      pending_present_at_scene_time_us_ <= scene_time_us(local_monotonic_us)) {
+    activate_pending_overlay(local_monotonic_us);
+    changed = true;
+  }
+  if (committed_overlay_present_ && committed_has_lease_ &&
+      local_monotonic_us >= committed_lease_deadline_us_) {
+    clear_foreground_visibility(false);
+    // Expiry destroys the authoritative committed pixels, so deltas cannot
+    // resume until a full snapshot (or a newer authoritative clear) arrives.
+    session_requires_snapshot_ = true;
+    last_overlay_result_ = OverlayOperationResult::LeaseExpired;
+    overlay_stats_.expirations = saturating_increment(overlay_stats_.expirations);
+    changed = true;
+  }
+  return changed;
+#endif
+}
+
+SparseOverlayStatus ReceiverRuntime::overlay_status(
+    std::uint64_t local_monotonic_us) const {
+  SparseOverlayStatus status{};
+  status.result = last_overlay_result_;
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  status.update_kind = overlay_patch_order_.update_kind;
+  status.expected_patches = overlay_patch_order_.expected_patches;
+  status.accepted_patches = overlay_patch_order_.accepted_patches;
+  // Coverage describes the plane that is currently visible, never the staged
+  // replacement. Staged binding/schedule fields below remain independently
+  // observable while the prior committed coverage is being composited.
+  status.committed_coverage_pixels = committed_coverage_pixels_;
+  status.committed_generation = overlay_generation_order_.committed_generation;
+  const bool staged = overlay_generation_order_.has_staged_generation;
+  status.staged_generation =
+      staged ? overlay_generation_order_.staged_generation : 0;
+  if (staged) {
+    status.scene_revision = staged_scene_revision_;
+    status.scene_epoch = staged_scene_epoch_;
+    status.base_revision = staged_base_revision_;
+    status.present_at_scene_time_us =
+        pending_overlay_present_ ? pending_present_at_scene_time_us_ : 0;
+    status.lease_ms = staged_lease_ms_;
+    if (staged_lease_ms_ != 0) {
+      if (pending_overlay_present_) {
+        // The visible lease starts atomically with scheduled activation.
+        status.lease_remaining_ms = staged_lease_ms_;
+      } else {
+        const std::uint64_t lease_us =
+            static_cast<std::uint64_t>(staged_lease_ms_) * 1000ULL;
+        const std::uint64_t deadline =
+            UINT64_MAX - staged_started_local_us_ < lease_us
+                ? UINT64_MAX : staged_started_local_us_ + lease_us;
+        if (deadline > local_monotonic_us) {
+          status.lease_remaining_ms = static_cast<std::uint32_t>(
+              std::min<std::uint64_t>(
+                  UINT32_MAX,
+                  (deadline - local_monotonic_us + 999U) / 1000U));
+        }
+      }
+    }
+  } else {
+    status.scene_revision = committed_scene_revision_;
+    status.scene_epoch = committed_scene_epoch_;
+    status.base_revision = committed_base_revision_;
+    status.present_at_scene_time_us = committed_present_at_scene_time_us_;
+    status.lease_ms = committed_lease_ms_;
+    if (committed_overlay_present_ && committed_has_lease_ &&
+        committed_lease_deadline_us_ > local_monotonic_us) {
+      const std::uint64_t remaining_us =
+          committed_lease_deadline_us_ - local_monotonic_us;
+      status.lease_remaining_ms = static_cast<std::uint32_t>(
+          std::min<std::uint64_t>(UINT32_MAX,
+                                  (remaining_us + 999U) / 1000U));
+    }
+  }
+  if (controller_session_present_) {
+    std::memcpy(status.session, controller_session_, kControllerSessionBytes);
+  }
+#else
+  (void)local_monotonic_us;
+#endif
+  return status;
+}
+
+bool ReceiverRuntime::composite_foreground(
+    const std::uint8_t* base,
+    std::size_t pixels,
+    std::uint8_t* output,
+    std::size_t output_size) const {
+  if (base == nullptr || output == nullptr || pixels == 0 ||
+      pixels > kContractLocalPixels || output_size < pixels * 3U) {
+    return false;
+  }
+  std::memcpy(output, base, pixels * 3U);
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  if (!committed_overlay_present_) return true;
+  for (std::size_t pixel = 0; pixel < pixels; ++pixel) {
+    if (overlay_coverage_[committed_plane_][pixel] == 0) continue;
+    const std::uint8_t* rgba = overlay_rgba_[committed_plane_] + pixel * 4U;
+    const PremultipliedRgba8 foreground{rgba[0], rgba[1], rgba[2], rgba[3]};
+    source_over_opaque_rgb8(base + pixel * 3U, foreground,
+                            output + pixel * 3U);
+  }
+#endif
+  return true;
+}
+
+void ReceiverRuntime::foreground_composited(std::uint32_t composite_us) {
+  foreground_refresh_pending_ = false;
+  overlay_stats_.composite_frames =
+      saturating_increment(overlay_stats_.composite_frames);
+  overlay_stats_.last_composite_us = static_cast<std::uint16_t>(
+      std::min<std::uint32_t>(composite_us, UINT16_MAX));
+  overlay_stats_.max_composite_us = std::max(
+      overlay_stats_.max_composite_us, overlay_stats_.last_composite_us);
+}
+
 std::uint64_t ReceiverRuntime::scene_time_us(
     std::uint64_t local_monotonic_us) const {
   // A newer context may be staging while the prior committed context remains
@@ -485,6 +1124,7 @@ ReceiverRenderTicket capture_render_ticket(
   ReceiverRenderTicket ticket{};
   ticket.owner = runtime.base_mode();
   ticket.ownership_generation = runtime.render_generation();
+  ticket.foreground_revision = runtime.foreground_revision();
   ticket.output_revision = output.revision();
   ticket.output = output.configuration();
   return ticket;
@@ -498,6 +1138,7 @@ bool render_ticket_still_current(
           ticket.owner == BaseMode::LocalBackground) &&
          runtime.base_mode() == ticket.owner &&
          runtime.render_generation() == ticket.ownership_generation &&
+         runtime.foreground_revision() == ticket.foreground_revision &&
          output.revision() == ticket.output_revision;
 }
 

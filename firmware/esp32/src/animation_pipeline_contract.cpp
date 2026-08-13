@@ -155,6 +155,13 @@ OverlayOperationResult validate_overlay_commit(
     return OverlayOperationResult::BaseBindingMismatch;
   }
   if (lease_expired) return OverlayOperationResult::LeaseExpired;
+  // A delta with no patches is an intentional generation-agreement no-op.
+  // Full snapshots still require canonical continuous coverage.
+  if (state.update_kind == OverlayUpdateKind::Delta &&
+      state.expected_patches == 0 && state.accepted_patches == 0 &&
+      !state.has_last_patch) {
+    return OverlayOperationResult::Ok;
+  }
   if (state.expected_patches == 0 ||
       state.accepted_patches != state.expected_patches ||
       !state.has_last_patch) {

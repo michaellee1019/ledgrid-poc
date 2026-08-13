@@ -34,9 +34,11 @@ CRC_BYTES = 2
 RECEIVER_STATUS_MAGIC = (ord('L'), ord('G'), ord('S'), ord('1'))
 RECEIVER_STATUS_MAGIC_V2 = (ord('L'), ord('G'), ord('S'), ord('2'))
 RECEIVER_STATUS_MAGIC_V3 = (ord('L'), ord('G'), ord('S'), ord('3'))
+RECEIVER_STATUS_MAGIC_V4 = (ord('L'), ord('G'), ord('S'), ord('4'))
 RECEIVER_STATUS_BYTES = 29
 RECEIVER_STATUS_BYTES_V2 = 64
 RECEIVER_STATUS_BYTES_V3 = 320
+RECEIVER_STATUS_BYTES_V4 = 416
 # The ESP32 slave keeps two response buffers queued. A command's result is
 # therefore observable after two complete status-query transfers.
 SPI_RESPONSE_QUEUE_DEPTH = 2
@@ -106,9 +108,15 @@ CMD_STATUS_QUERY = 0x08
 CMD_LOCAL_BACKGROUND_START = 0x10
 CMD_LOCAL_BACKGROUND_STOP = 0x11
 CMD_LOCAL_BACKGROUND_PARAMS = 0x12
+CMD_CONTROLLER_SESSION_BEGIN = 0x20
 CMD_PRESENTATION_CONTEXT_BEGIN = 0x21
 CMD_PRESENTATION_CONTEXT_SET = 0x22
 CMD_PRESENTATION_CONTEXT_COMMIT = 0x23
+CMD_OVERLAY_BEGIN = 0x30
+CMD_OVERLAY_PATCH = 0x31
+CMD_OVERLAY_COMMIT = 0x32
+CMD_OVERLAY_CLEAR = 0x33
+CMD_OVERLAY_RENEW = 0x34
 CMD_PING = 0xFF
 
 LOCAL_BACKGROUND_RAINBOW = 1
@@ -119,13 +127,53 @@ PRESENTATION_CONTEXT_BEGIN_BYTES = 58
 PRESENTATION_CONTEXT_SET_MIN_BYTES = 145
 PRESENTATION_CONTEXT_SET_MAX_BYTES = 187
 PRESENTATION_CONTEXT_COMMIT_BYTES = 74
+SPARSE_OVERLAY_PROTOCOL_VERSION = 1
+CONTROLLER_SESSION_BYTES = 16
+SNAPSHOT_DIGEST_BYTES = 32
+CONTROLLER_SESSION_BEGIN_BYTES = 58
+OVERLAY_BEGIN_BYTES = 66
+OVERLAY_PATCH_HEADER_BYTES = 30
+OVERLAY_COMMIT_BYTES = 50
+OVERLAY_CLEAR_BYTES = 34
+OVERLAY_RENEW_BYTES = 30
+OVERLAY_FORMAT_PREMULTIPLIED_RGBA8 = 1
+OVERLAY_UPDATE_FULL_SNAPSHOT = 1
+OVERLAY_UPDATE_DELTA = 2
+OVERLAY_LOCAL_PIXELS = 8 * 138
+MAX_RGBA_PIXELS_PER_PATCH = (
+    MAX_SPI_TRANSFER - OVERLAY_PATCH_HEADER_BYTES - CRC_BYTES
+) // 4
+OVERLAY_OPERATION_RESULT_NAMES = {
+    0: "none",
+    1: "ok",
+    2: "idempotent",
+    3: "unsupported_version",
+    4: "unsupported_format",
+    5: "invalid_size",
+    6: "out_of_bounds",
+    7: "stale_session",
+    8: "stale_revision",
+    9: "stale_generation",
+    10: "generation_conflict",
+    11: "prior_generation_mismatch",
+    12: "patch_order",
+    13: "patch_overlap",
+    14: "patch_conflict",
+    15: "base_binding_mismatch",
+    16: "incomplete",
+    17: "lease_expired",
+    18: "invalid_state",
+    19: "counter_exhausted",
+}
 
-# Status-v3 capability bit. This is intentionally checked by the four-board
+# Receiver capability bits. The Phase 3A bits remain independent of sparse
+# overlay support so legacy local-background checks do not require Phase 3B.
 # coordinator before any local-playback command is issued.
 CAPABILITY_STATIC_LOCAL_BACKGROUND = 1 << 0
 CAPABILITY_PRESENTATION_CONTEXT_V1 = 1 << 1
 CAPABILITY_STATUS_V3 = 1 << 2
 CAPABILITY_EXPLICIT_BASE_OWNERSHIP = 1 << 3
+CAPABILITY_SPARSE_OVERLAY_V1 = 1 << 4
 
 
 class LEDController:
@@ -223,6 +271,26 @@ class LEDController:
         self._receiver_logical_device = None
         self._receiver_last_processed_command = 0
         self._receiver_operation_sequence = 0
+        self._receiver_overlay_operation_result = 0
+        self._receiver_overlay_update_kind = 0
+        self._receiver_overlay_expected_patches = 0
+        self._receiver_overlay_accepted_patches = 0
+        self._receiver_overlay_committed_coverage_pixels = 0
+        self._receiver_overlay_committed_generation = 0
+        self._receiver_overlay_staged_generation = 0
+        self._receiver_foreground_scene_revision = 0
+        self._receiver_foreground_scene_epoch = 0
+        self._receiver_foreground_base_revision = 0
+        self._receiver_foreground_present_at_scene_time_us = 0
+        self._receiver_overlay_lease_ms = 0
+        self._receiver_overlay_lease_remaining_ms = 0
+        self._receiver_overlay_session_id = None
+        self._receiver_overlay_composite_frames = 0
+        self._receiver_overlay_last_composite_us = 0
+        self._receiver_overlay_max_composite_us = 0
+        self._receiver_overlay_commits = 0
+        self._receiver_overlay_expirations = 0
+        self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V3
         self._presentation_commit_context_cache = {}
         self._monotonic_ns = time.monotonic_ns
         self._frame_packet = bytearray(1 + self.total_leds * 3 + CRC_BYTES)
@@ -315,6 +383,50 @@ class LEDController:
             return None
         return cls._bounded_uint("logical_device_id", value, 3)
 
+    @staticmethod
+    def _fixed_bytes(name, value, size):
+        if not isinstance(value, bytes):
+            raise TypeError(f"{name} must be bytes")
+        if len(value) != size:
+            raise ValueError(f"{name} must be exactly {size} bytes")
+        return value
+
+    @classmethod
+    def _controller_session(cls, value):
+        return cls._fixed_bytes("controller_session_id", value, CONTROLLER_SESSION_BYTES)
+
+    @staticmethod
+    def _premultiplied_rgba_bytes(value):
+        if isinstance(value, np.ndarray):
+            if value.dtype != np.uint8:
+                raise TypeError("premultiplied_rgba must have dtype uint8")
+            if value.ndim != 2 or value.shape[1] != 4:
+                raise ValueError("premultiplied_rgba must have shape (N, 4)")
+            if not value.flags.c_contiguous:
+                raise ValueError("premultiplied_rgba must be C-contiguous")
+            rgba = value.tobytes()
+        elif isinstance(value, bytes):
+            rgba = value
+        else:
+            raise TypeError("premultiplied_rgba must be bytes or a numpy uint8 array")
+        if not rgba or len(rgba) % 4:
+            raise ValueError("premultiplied_rgba must contain one or more RGBA pixels")
+        count = len(rgba) // 4
+        if count > MAX_RGBA_PIXELS_PER_PATCH:
+            raise ValueError(
+                f"premultiplied_rgba may contain at most {MAX_RGBA_PIXELS_PER_PATCH} pixels"
+            )
+        channels = memoryview(rgba).cast("B")
+        for offset in range(0, len(channels), 4):
+            alpha = channels[offset + 3]
+            if (
+                channels[offset] > alpha
+                or channels[offset + 1] > alpha
+                or channels[offset + 2] > alpha
+            ):
+                raise ValueError("premultiplied RGBA requires every RGB channel <= alpha")
+        return rgba, count
+
     @classmethod
     def _local_background_fields(
         cls, preferred_cadence_hz, global_strip_offset, common_seed
@@ -349,6 +461,9 @@ class LEDController:
             return
 
         magic = tuple(int(response[index]) for index in range(4))
+        if magic == RECEIVER_STATUS_MAGIC_V4 and len(response) >= RECEIVER_STATUS_BYTES_V4:
+            self._update_receiver_status_v4(response)
+            return
         if magic == RECEIVER_STATUS_MAGIC_V3 and len(response) >= RECEIVER_STATUS_BYTES_V3:
             self._update_receiver_status_v3(response)
             return
@@ -470,15 +585,80 @@ class LEDController:
         self._receiver_logical_device = int(response[312])
         self._receiver_last_processed_command = int(response[313])
         self._receiver_operation_sequence = self._response_u32(response, 316)
+        if self._receiver_capabilities & CAPABILITY_SPARSE_OVERLAY_V1:
+            # Status v4 preserves this entire prefix. Discover support through
+            # the legacy-safe 320-byte query before asking for the extension.
+            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V4
+        else:
+            # A receiver may restart into a feature-off image while this host
+            # process survives. Return to the universally supported v3 query.
+            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V3
+            self._clear_receiver_overlay_status()
+
+    def _clear_receiver_overlay_status(self):
+        """Drop v4-only telemetry after a live downgrade to status v3."""
+        self._receiver_overlay_operation_result = 0
+        self._receiver_overlay_update_kind = 0
+        self._receiver_overlay_expected_patches = 0
+        self._receiver_overlay_accepted_patches = 0
+        self._receiver_overlay_committed_coverage_pixels = 0
+        self._receiver_overlay_committed_generation = 0
+        self._receiver_overlay_staged_generation = 0
+        self._receiver_foreground_scene_revision = 0
+        self._receiver_foreground_scene_epoch = 0
+        self._receiver_foreground_base_revision = 0
+        self._receiver_foreground_present_at_scene_time_us = 0
+        self._receiver_overlay_lease_ms = 0
+        self._receiver_overlay_lease_remaining_ms = 0
+        self._receiver_overlay_session_id = None
+        self._receiver_overlay_composite_frames = 0
+        self._receiver_overlay_last_composite_us = 0
+        self._receiver_overlay_max_composite_us = 0
+        self._receiver_overlay_commits = 0
+        self._receiver_overlay_expirations = 0
+
+    def _update_receiver_status_v4(self, response):
+        """Parse the status-v4 sparse-overlay extension after its v3 prefix."""
+        self._update_receiver_status_v3(response)
+        self._receiver_overlay_operation_result = int(response[320])
+        self._receiver_overlay_update_kind = int(response[321])
+        self._receiver_overlay_expected_patches = self._response_u16(response, 322)
+        self._receiver_overlay_accepted_patches = self._response_u16(response, 324)
+        self._receiver_overlay_committed_coverage_pixels = self._response_u16(
+            response, 326
+        )
+        self._receiver_overlay_committed_generation = self._response_u64(response, 328)
+        self._receiver_overlay_staged_generation = self._response_u64(response, 336)
+        self._receiver_foreground_scene_revision = self._response_u64(response, 344)
+        self._receiver_foreground_scene_epoch = self._response_u64(response, 352)
+        self._receiver_foreground_base_revision = self._response_u64(response, 360)
+        self._receiver_foreground_present_at_scene_time_us = self._response_u64(
+            response, 368
+        )
+        self._receiver_overlay_lease_ms = self._response_u32(response, 376)
+        self._receiver_overlay_lease_remaining_ms = self._response_u32(response, 380)
+        session = bytes(response[384:400])
+        # Session IDs are opaque 16-byte values, so the all-zero value is valid
+        # and must not be collapsed into the no-status sentinel.
+        self._receiver_overlay_session_id = session.hex()
+        self._receiver_overlay_composite_frames = self._response_u32(response, 400)
+        self._receiver_overlay_last_composite_us = self._response_u16(response, 404)
+        self._receiver_overlay_max_composite_us = self._response_u16(response, 406)
+        self._receiver_overlay_commits = self._response_u32(response, 408)
+        self._receiver_overlay_expirations = self._response_u32(response, 412)
 
     def query_receiver_status(self):
-        """Clock out one complete status-v3 snapshot without changing ownership."""
-        payload = bytearray(RECEIVER_STATUS_BYTES_V3)
+        """Clock out the newest discovered status snapshot without changing ownership."""
+        payload = bytearray(
+            getattr(self, "_receiver_status_query_bytes", RECEIVER_STATUS_BYTES_V3)
+        )
         payload[0] = CMD_STATUS_QUERY
         self._xfer(payload)
         return self.get_stats()
 
-    def _command_status(self, payload, *, command=None):
+    def _command_status(
+        self, payload, *, command=None, required_status_version=3
+    ):
         """Send a command and prove its exact acknowledgement, never a stale OK."""
         transport_lock = getattr(self, "_transport_lock", None)
         if transport_lock is None:
@@ -504,10 +684,23 @@ class LEDController:
                 if not payload or int(payload[0]) != command:
                     raise ValueError("deferred serializer returned the wrong command")
             self._xfer(payload)
+            required_version = self._bounded_uint(
+                "required_status_version", required_status_version, 0xFF
+            )
+            if required_version < 3 or required_version > 4:
+                raise ValueError("required_status_version must be 3 or 4")
+            # The slave has to queue a response before it knows the length of
+            # the master's next transfer. A sparse command therefore leaves
+            # one legacy-safe v3 snapshot in the two-deep queue; clock one
+            # additional query to receive the requested v4 extension.
+            post_queries = SPI_RESPONSE_QUEUE_DEPTH + (required_version == 4)
             status = None
-            for _ in range(SPI_RESPONSE_QUEUE_DEPTH):
+            for _ in range(post_queries):
                 status = self.query_receiver_status()
             if (
+                int(status.get("receiver_status_version", 0) or 0)
+                < required_version
+                or
                 int(status.get("receiver_last_processed_command", -1)) != command
                 or int(status.get("receiver_operation_sequence", -1))
                 != prior_sequence + 1
@@ -557,6 +750,199 @@ class LEDController:
 
     def update_local_background_params(self, **kwargs):
         return self._command_status(self.serialize_local_background_params(**kwargs))
+
+    @classmethod
+    def serialize_controller_session_begin(
+        cls, *, controller_session_id, desired_revision,
+        authoritative_snapshot_digest
+    ):
+        session = cls._controller_session(controller_session_id)
+        revision = cls._bounded_uint(
+            "desired_revision", desired_revision, 0xFFFFFFFFFFFFFFFF
+        )
+        digest = cls._fixed_bytes(
+            "authoritative_snapshot_digest",
+            authoritative_snapshot_digest,
+            SNAPSHOT_DIGEST_BYTES,
+        )
+        return struct.pack(
+            ">BB16sQ32s", CMD_CONTROLLER_SESSION_BEGIN,
+            SPARSE_OVERLAY_PROTOCOL_VERSION, session, revision, digest,
+        )
+
+    @classmethod
+    def serialize_overlay_begin(
+        cls, *, controller_session_id, generation, prior_generation,
+        scene_revision, scene_epoch, base_revision,
+        format=OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
+        update_kind, expected_patches, lease_ms
+    ):
+        session = cls._controller_session(controller_session_id)
+        integers = (
+            cls._bounded_uint("generation", generation, 0xFFFFFFFFFFFFFFFF),
+            cls._bounded_uint(
+                "prior_generation", prior_generation, 0xFFFFFFFFFFFFFFFF
+            ),
+            cls._bounded_uint(
+                "scene_revision", scene_revision, 0xFFFFFFFFFFFFFFFF
+            ),
+            cls._bounded_uint("scene_epoch", scene_epoch, 0xFFFFFFFFFFFFFFFF),
+            cls._bounded_uint("base_revision", base_revision, 0xFFFFFFFFFFFFFFFF),
+        )
+        wire_format = cls._bounded_uint("format", format, 0xFF)
+        if wire_format != OVERLAY_FORMAT_PREMULTIPLIED_RGBA8:
+            raise ValueError(
+                f"format must be {OVERLAY_FORMAT_PREMULTIPLIED_RGBA8}"
+            )
+        kind = cls._bounded_uint("update_kind", update_kind, 0xFF)
+        if kind not in (OVERLAY_UPDATE_FULL_SNAPSHOT, OVERLAY_UPDATE_DELTA):
+            raise ValueError("update_kind must be full snapshot (1) or delta (2)")
+        patch_count = cls._bounded_uint("expected_patches", expected_patches, 0xFFFF)
+        if kind == OVERLAY_UPDATE_FULL_SNAPSHOT and patch_count == 0:
+            raise ValueError("a full snapshot must declare at least one patch")
+        lease = cls._bounded_uint("lease_ms", lease_ms, 0xFFFFFFFF)
+        return struct.pack(
+            ">BB16sQQQQQBBHI", CMD_OVERLAY_BEGIN,
+            SPARSE_OVERLAY_PROTOCOL_VERSION, session, *integers,
+            wire_format, kind, patch_count, lease,
+        )
+
+    @classmethod
+    def serialize_overlay_patch(
+        cls, *, controller_session_id, generation, start,
+        premultiplied_rgba
+    ):
+        session = cls._controller_session(controller_session_id)
+        overlay_generation = cls._bounded_uint(
+            "generation", generation, 0xFFFFFFFFFFFFFFFF
+        )
+        first_pixel = cls._bounded_uint("start", start, 0xFFFF)
+        rgba, count = cls._premultiplied_rgba_bytes(premultiplied_rgba)
+        if first_pixel + count > OVERLAY_LOCAL_PIXELS:
+            raise ValueError(
+                f"overlay patch [{first_pixel}, {first_pixel + count}) exceeds "
+                f"the {OVERLAY_LOCAL_PIXELS}-pixel receiver"
+            )
+        return struct.pack(
+            ">BB16sQHH", CMD_OVERLAY_PATCH, SPARSE_OVERLAY_PROTOCOL_VERSION,
+            session, overlay_generation, first_pixel, count,
+        ) + rgba
+
+    @classmethod
+    def serialize_overlay_commit(
+        cls, *, controller_session_id, generation, scene_epoch,
+        base_revision, present_at_scene_time_us
+    ):
+        return struct.pack(
+            ">BB16sQQQQ", CMD_OVERLAY_COMMIT, SPARSE_OVERLAY_PROTOCOL_VERSION,
+            cls._controller_session(controller_session_id),
+            cls._bounded_uint("generation", generation, 0xFFFFFFFFFFFFFFFF),
+            cls._bounded_uint("scene_epoch", scene_epoch, 0xFFFFFFFFFFFFFFFF),
+            cls._bounded_uint("base_revision", base_revision, 0xFFFFFFFFFFFFFFFF),
+            cls._bounded_uint(
+                "present_at_scene_time_us", present_at_scene_time_us,
+                0xFFFFFFFFFFFFFFFF,
+            ),
+        )
+
+    @classmethod
+    def serialize_overlay_clear(
+        cls, *, controller_session_id, generation, scene_revision
+    ):
+        return struct.pack(
+            ">BB16sQQ", CMD_OVERLAY_CLEAR, SPARSE_OVERLAY_PROTOCOL_VERSION,
+            cls._controller_session(controller_session_id),
+            cls._bounded_uint("generation", generation, 0xFFFFFFFFFFFFFFFF),
+            cls._bounded_uint(
+                "scene_revision", scene_revision, 0xFFFFFFFFFFFFFFFF
+            ),
+        )
+
+    @classmethod
+    def serialize_overlay_renew(
+        cls, *, controller_session_id, generation, lease_ms
+    ):
+        return struct.pack(
+            ">BB16sQI", CMD_OVERLAY_RENEW, SPARSE_OVERLAY_PROTOCOL_VERSION,
+            cls._controller_session(controller_session_id),
+            cls._bounded_uint("generation", generation, 0xFFFFFFFFFFFFFFFF),
+            cls._bounded_uint("lease_ms", lease_ms, 0xFFFFFFFF),
+        )
+
+    def begin_controller_session(self, **kwargs):
+        return self._overlay_command_status(
+            self.serialize_controller_session_begin(**kwargs)
+        )
+
+    def begin_overlay(self, **kwargs):
+        return self._overlay_command_status(self.serialize_overlay_begin(**kwargs))
+
+    def send_overlay_patch(self, **kwargs):
+        return self._overlay_command_status(self.serialize_overlay_patch(**kwargs))
+
+    def commit_overlay(self, **kwargs):
+        return self._overlay_command_status(self.serialize_overlay_commit(**kwargs))
+
+    def clear_overlay(self, **kwargs):
+        return self._overlay_command_status(self.serialize_overlay_clear(**kwargs))
+
+    def renew_overlay(self, **kwargs):
+        return self._overlay_command_status(self.serialize_overlay_renew(**kwargs))
+
+    def _overlay_command_status(self, payload):
+        status = self._command_status(payload, required_status_version=4)
+        if int(status.get("receiver_status_version", 0) or 0) < 4:
+            raise RuntimeError("receiver status v4 is required for sparse-overlay results")
+        result = int(status.get("receiver_overlay_operation_result", 0) or 0)
+        if result not in (1, 2):
+            result_name = OVERLAY_OPERATION_RESULT_NAMES.get(
+                result, f"unknown_{result}"
+            )
+            raise RuntimeError(
+                f"receiver rejected sparse-overlay command 0x{payload[0]:02x} "
+                f"with result {result_name} ({result})"
+            )
+        return status
+
+    def send_overlay_patches(
+        self, *, controller_session_id, generation, patches, update_kind
+    ):
+        """Validate an ordered patch set completely before sending any packet."""
+        kind = self._bounded_uint("update_kind", update_kind, 0xFF)
+        if kind not in (OVERLAY_UPDATE_FULL_SNAPSHOT, OVERLAY_UPDATE_DELTA):
+            raise ValueError("update_kind must be full snapshot (1) or delta (2)")
+        try:
+            patch_items = tuple(patches)
+        except TypeError as exc:
+            raise TypeError("patches must be an iterable of (start, RGBA) pairs") from exc
+        packets = []
+        prior_end = 0
+        for index, item in enumerate(patch_items):
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                raise ValueError("each patch must be a (start, RGBA) pair")
+            packet = self.serialize_overlay_patch(
+                controller_session_id=controller_session_id,
+                generation=generation,
+                start=item[0],
+                premultiplied_rgba=item[1],
+            )
+            start = self._response_u16(packet, 26)
+            count = self._response_u16(packet, 28)
+            if index and start < prior_end:
+                raise ValueError("overlay patches must be sorted and non-overlapping")
+            if kind == OVERLAY_UPDATE_FULL_SNAPSHOT and start != prior_end:
+                raise ValueError("full-snapshot patches must be contiguous from pixel zero")
+            prior_end = start + count
+            packets.append(packet)
+        if kind == OVERLAY_UPDATE_FULL_SNAPSHOT:
+            if not packets or prior_end != OVERLAY_LOCAL_PIXELS:
+                raise ValueError(
+                    "full-snapshot patches must cover every receiver pixel exactly"
+                )
+        statuses = []
+        for packet in packets:
+            statuses.append(self._overlay_command_status(packet))
+        return statuses
 
     @staticmethod
     def _validate_presentation_packet(payload, command, minimum, maximum=None):
@@ -926,6 +1312,66 @@ class LEDController:
             'receiver_logical_device': self._receiver_logical_device,
             'receiver_last_processed_command': self._receiver_last_processed_command,
             'receiver_operation_sequence': self._receiver_operation_sequence,
+            'receiver_overlay_operation_result': getattr(
+                self, '_receiver_overlay_operation_result', 0
+            ),
+            'receiver_overlay_operation_result_name': OVERLAY_OPERATION_RESULT_NAMES.get(
+                getattr(self, '_receiver_overlay_operation_result', 0), 'unknown'
+            ),
+            'receiver_overlay_update_kind': getattr(
+                self, '_receiver_overlay_update_kind', 0
+            ),
+            'receiver_overlay_expected_patches': getattr(
+                self, '_receiver_overlay_expected_patches', 0
+            ),
+            'receiver_overlay_accepted_patches': getattr(
+                self, '_receiver_overlay_accepted_patches', 0
+            ),
+            'receiver_overlay_committed_coverage_pixels': getattr(
+                self, '_receiver_overlay_committed_coverage_pixels', 0
+            ),
+            'receiver_overlay_committed_generation': getattr(
+                self, '_receiver_overlay_committed_generation', 0
+            ),
+            'receiver_overlay_staged_generation': getattr(
+                self, '_receiver_overlay_staged_generation', 0
+            ),
+            'receiver_foreground_scene_revision': getattr(
+                self, '_receiver_foreground_scene_revision', 0
+            ),
+            'receiver_foreground_scene_epoch': getattr(
+                self, '_receiver_foreground_scene_epoch', 0
+            ),
+            'receiver_foreground_base_revision': getattr(
+                self, '_receiver_foreground_base_revision', 0
+            ),
+            'receiver_foreground_present_at_scene_time_us': getattr(
+                self, '_receiver_foreground_present_at_scene_time_us', 0
+            ),
+            'receiver_overlay_lease_ms': getattr(
+                self, '_receiver_overlay_lease_ms', 0
+            ),
+            'receiver_overlay_lease_remaining_ms': getattr(
+                self, '_receiver_overlay_lease_remaining_ms', 0
+            ),
+            'receiver_overlay_session_id': getattr(
+                self, '_receiver_overlay_session_id', None
+            ),
+            'receiver_overlay_composite_frames': getattr(
+                self, '_receiver_overlay_composite_frames', 0
+            ),
+            'receiver_overlay_last_composite_us': getattr(
+                self, '_receiver_overlay_last_composite_us', 0
+            ),
+            'receiver_overlay_max_composite_us': getattr(
+                self, '_receiver_overlay_max_composite_us', 0
+            ),
+            'receiver_overlay_commits': getattr(
+                self, '_receiver_overlay_commits', 0
+            ),
+            'receiver_overlay_expirations': getattr(
+                self, '_receiver_overlay_expirations', 0
+            ),
         }
 
 

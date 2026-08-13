@@ -58,6 +58,11 @@ spi_slave_transaction_t spi_transactions[kSpiQueueDepth] = {};
 
 std::uint8_t working_frame[kMaxRgbBytes] = {};
 std::uint8_t startup_frame[kMaxRgbBytes] = {};
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+std::uint8_t composite_frame[kMaxRgbBytes] = {};
+#else
+std::uint8_t* const composite_frame = startup_frame;
+#endif
 std::uint8_t mailbox_frames[ledgrid::kFrameMailboxSlots][kMaxRgbBytes] = {};
 ledgrid::LatestFrameMailbox frame_mailbox;
 portMUX_TYPE mailbox_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -159,14 +164,19 @@ void display_task(void*) {
     ledgrid::LocalBackgroundParameters parameters{};
     std::uint16_t luminance = ledgrid::kQ8_8One;
     std::uint64_t scene_time = 0;
-    bool due = false;
+    bool base_due = false;
+    bool foreground_due = false;
+    bool has_rendered_base = false;
     lock_runtime();
+    receiver_runtime.service_foreground(now_us);
     ticket = ledgrid::capture_render_ticket(receiver_runtime, receiver_output);
     if (ticket.owner == ledgrid::BaseMode::LocalBackground) {
-      due = receiver_runtime.local_frame_due(now_us);
+      base_due = receiver_runtime.local_frame_due(now_us);
+      foreground_due = receiver_runtime.foreground_refresh_pending();
       parameters = receiver_runtime.local_parameters();
       luminance = receiver_runtime.active_context().luminance_q8_8;
       scene_time = receiver_runtime.scene_time_us(now_us);
+      has_rendered_base = receiver_runtime.render_stats().rendered_frames != 0;
     }
     unlock_runtime();
 
@@ -212,29 +222,51 @@ void display_task(void*) {
     }
 
     if (ticket.owner == ledgrid::BaseMode::LocalBackground) {
-      if (!due) {
+      if (!base_due && !foreground_due) {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1));
         continue;
       }
-      const std::uint64_t render_started = esp_timer_get_time();
-      const bool rendered = ledgrid::render_compiled_rainbow(
-          scene_time, parameters, luminance, ticket.output.strip_count,
-          ticket.output.leds_per_strip, startup_frame, sizeof(startup_frame));
-      const std::uint32_t render_us = static_cast<std::uint32_t>(
-          esp_timer_get_time() - render_started);
-      if (!rendered) {
+      std::uint32_t render_us = 0;
+      if (base_due) {
+        const std::uint64_t render_started = esp_timer_get_time();
+        const bool rendered = ledgrid::render_compiled_rainbow(
+            scene_time, parameters, luminance, ticket.output.strip_count,
+            ticket.output.leds_per_strip, startup_frame, sizeof(startup_frame));
+        render_us = static_cast<std::uint32_t>(
+            esp_timer_get_time() - render_started);
+        if (!rendered) {
+          lock_runtime();
+          const bool failure_applied = ledgrid::render_ticket_still_current(
+              receiver_runtime, receiver_output, ticket) &&
+              receiver_runtime.local_render_failed_if_current(
+                  ticket.ownership_generation);
+          unlock_runtime();
+          if (failure_applied) ++display_errors;
+          continue;
+        }
+      }
+      if (!base_due && !has_rendered_base) {
         lock_runtime();
-        const bool failure_applied = ledgrid::render_ticket_still_current(
-            receiver_runtime, receiver_output, ticket) &&
-            receiver_runtime.local_render_failed_if_current(
-                ticket.ownership_generation);
+        receiver_runtime.request_local_refresh();
         unlock_runtime();
-        if (failure_applied) ++display_errors;
         continue;
       }
+      const std::uint64_t composite_started = esp_timer_get_time();
+      lock_runtime();
+      const bool composed = ledgrid::render_ticket_still_current(
+          receiver_runtime, receiver_output, ticket) &&
+          receiver_runtime.composite_foreground(
+              startup_frame, ticket.output.total_leds(), composite_frame,
+              sizeof(composite_frame));
+      if (composed) {
+        receiver_runtime.foreground_composited(static_cast<std::uint32_t>(
+            esp_timer_get_time() - composite_started));
+      }
+      unlock_runtime();
+      if (!composed) continue;
       const std::uint32_t sequence =
           next_sequence.fetch_add(1, std::memory_order_relaxed);
-      PhysicalSubmitContext submit_context{startup_frame, sequence};
+      PhysicalSubmitContext submit_context{composite_frame, sequence};
       lock_runtime();
       const auto submit_result = ledgrid::submit_rendered_frame_if_current(
           receiver_runtime, receiver_output, ticket, submit_physical_frame,
@@ -256,11 +288,13 @@ void display_task(void*) {
       lock_runtime();
       const bool completion_applied = ledgrid::render_ticket_still_current(
           receiver_runtime, receiver_output, ticket) &&
-          (completed
+          (completed && base_due
                ? receiver_runtime.local_frame_rendered_if_current(
                      ticket.ownership_generation, now_us, scene_time, render_us)
-               : receiver_runtime.local_render_failed_if_current(
-                     ticket.ownership_generation));
+               : completed
+                     ? true
+                     : receiver_runtime.local_render_failed_if_current(
+                           ticket.ownership_generation));
       unlock_runtime();
       if (completion_applied) {
         if (completed) last_displayed_sequence = sequence;
@@ -325,9 +359,9 @@ void display_task(void*) {
   }
 }
 
-ledgrid::ReceiverStatusV3 status_snapshot() {
+ledgrid::ReceiverStatusV4 status_snapshot() {
   const auto counters = mailbox_counters();
-  ledgrid::ReceiverStatusV3 status{};
+  ledgrid::ReceiverStatusV4 status{};
   status.flags = 0x01U | (led_driver.in_flight() ? 0x02U : 0U);
   status.queued_transactions = queued_transactions.load(std::memory_order_relaxed);
   status.packets = packets_received.load(std::memory_order_relaxed);
@@ -355,7 +389,8 @@ ledgrid::ReceiverStatusV3 status_snapshot() {
                         ledgrid::kCapabilityExplicitBaseOwnership;
   if (receiver_runtime.local_background_enabled()) {
     status.capabilities |= ledgrid::kCapabilityStaticLocalBackground |
-                           ledgrid::kCapabilityPresentationContextV1;
+                           ledgrid::kCapabilityPresentationContextV1 |
+                           ledgrid::kCapabilitySparseOverlayV1;
   }
   status.base_mode = static_cast<std::uint8_t>(receiver_runtime.base_mode());
   status.foreground_state =
@@ -395,14 +430,44 @@ ledgrid::ReceiverStatusV3 status_snapshot() {
   status.last_frame_scene_time_us = stats.last_frame_scene_time_us;
   status.last_processed_command = operation_tracker.last_processed_command();
   status.operation_sequence = operation_tracker.sequence();
+  const auto overlay = receiver_runtime.overlay_status(
+      static_cast<std::uint64_t>(esp_timer_get_time()));
+  status.overlay_result = overlay.result;
+  status.overlay_update_kind = overlay.update_kind;
+  status.overlay_expected_patches = overlay.expected_patches;
+  status.overlay_accepted_patches = overlay.accepted_patches;
+  status.overlay_committed_coverage_pixels = overlay.committed_coverage_pixels;
+  status.overlay_committed_generation = overlay.committed_generation;
+  status.overlay_staged_generation = overlay.staged_generation;
+  status.foreground_scene_revision = overlay.scene_revision;
+  status.foreground_scene_epoch = overlay.scene_epoch;
+  status.foreground_base_revision = overlay.base_revision;
+  status.foreground_present_at_scene_time_us =
+      overlay.present_at_scene_time_us;
+  status.overlay_lease_ms = overlay.lease_ms;
+  status.overlay_lease_remaining_ms = overlay.lease_remaining_ms;
+  std::memcpy(status.overlay_session, overlay.session,
+              ledgrid::kControllerSessionBytes);
+  const auto& overlay_stats = receiver_runtime.overlay_stats();
+  status.overlay_composite_frames = overlay_stats.composite_frames;
+  status.overlay_last_composite_us = overlay_stats.last_composite_us;
+  status.overlay_max_composite_us = overlay_stats.max_composite_us;
+  status.overlay_commits = overlay_stats.commits;
+  status.overlay_expirations = overlay_stats.expirations;
   unlock_runtime();
   status.logical_receiver_id = logical_receiver_id.load(std::memory_order_relaxed);
   return status;
 }
 
-bool queue_spi_transaction(std::size_t index) {
-  ledgrid::encode_receiver_status_v3(
-      status_snapshot(), spi_tx_buffers[index], kSpiBufferSize);
+bool queue_spi_transaction(std::size_t index, bool status_v4 = false) {
+  const auto status = status_snapshot();
+  if (status_v4 && receiver_runtime.local_background_enabled()) {
+    ledgrid::encode_receiver_status_v4(
+        status, spi_tx_buffers[index], kSpiBufferSize);
+  } else {
+    ledgrid::encode_receiver_status_v3(
+        status, spi_tx_buffers[index], kSpiBufferSize);
+  }
   auto& transaction = spi_transactions[index];
   transaction = {};
   transaction.length = kSpiBufferSize * 8U;
@@ -434,20 +499,22 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
           LEDGRID_ENABLE_LOCAL_BACKGROUND != 0);
 
   if (decision.route == ledgrid::ReceiverDispatchRoute::Reject) {
-    lock_runtime();
-    receiver_runtime.set_last_result(decision.result);
-    unlock_runtime();
+    if (command != ledgrid::ReceiverCommand::StatusQuery) {
+      lock_runtime();
+      receiver_runtime.set_last_result(decision.result);
+      unlock_runtime();
+    }
     return false;
   }
 
   if (decision.route == ledgrid::ReceiverDispatchRoute::StatusQuery)
-    return ledgrid::valid_status_query(data, length);
+    return ledgrid::valid_status_query(
+        data, length, LEDGRID_ENABLE_LOCAL_BACKGROUND != 0);
   if (decision.route == ledgrid::ReceiverDispatchRoute::Runtime) {
     ledgrid::ReceiverOperationResult result =
         ledgrid::ReceiverOperationResult::Unsupported;
     lock_runtime();
-    if (command != ledgrid::ReceiverCommand::ControllerSessionBegin &&
-        logical_receiver_id.load(std::memory_order_relaxed) <= 3) {
+    if (logical_receiver_id.load(std::memory_order_relaxed) <= 3) {
       result = receiver_runtime.process_command(
           data, length, static_cast<std::uint64_t>(esp_timer_get_time()));
     } else {
@@ -679,6 +746,7 @@ extern "C" void app_main() {
     const std::size_t index = reinterpret_cast<std::size_t>(completed->user);
     const std::size_t bytes = completed->trans_len / 8U;
     const std::uint8_t* packet = spi_rx_buffers[index];
+    bool request_v4 = false;
 
     if (bytes < 1U + kCrcBytes) {
       ++crc_errors;
@@ -705,6 +773,8 @@ extern "C" void app_main() {
         }
         const bool accepted = dispatch_allowed &&
             process_command(packet, payload_bytes);
+        request_v4 = status_query && accepted &&
+            payload_bytes == ledgrid::kStatusBytesV4;
         if (!status_query && dispatch_allowed) {
           lock_runtime();
           if (packet[0] < 0x10 || packet[0] == 0xFF) {
@@ -716,6 +786,6 @@ extern "C" void app_main() {
         }
       }
     }
-    queue_spi_transaction(index);
+    queue_spi_transaction(index, request_v4);
   }
 }

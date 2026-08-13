@@ -11,6 +11,8 @@ constexpr std::uint8_t kStatusProtocolVersion = 2;
 constexpr std::size_t kStatusBytesV2 = 64;
 constexpr std::uint8_t kStatusProtocolVersionV3 = 3;
 constexpr std::size_t kStatusBytesV3 = 320;
+constexpr std::uint8_t kStatusProtocolVersionV4 = 4;
+constexpr std::size_t kStatusBytesV4 = 416;
 
 enum class ReceiverCommand : std::uint8_t {
   SetPixel = 0x01,
@@ -28,6 +30,11 @@ enum class ReceiverCommand : std::uint8_t {
   PresentationContextBegin = 0x21,
   PresentationContextSet = 0x22,
   PresentationContextCommit = 0x23,
+  OverlayBegin = 0x30,
+  OverlayPatch = 0x31,
+  OverlayCommit = 0x32,
+  OverlayClear = 0x33,
+  OverlayRenew = 0x34,
   Ping = 0xFF,
 };
 
@@ -36,6 +43,7 @@ enum ReceiverCapability : std::uint32_t {
   kCapabilityPresentationContextV1 = 1U << 1U,
   kCapabilityStatusV3 = 1U << 2U,
   kCapabilityExplicitBaseOwnership = 1U << 3U,
+  kCapabilitySparseOverlayV1 = 1U << 4U,
 };
 
 enum class ReceiverOperationResult : std::uint8_t {
@@ -168,6 +176,30 @@ struct ReceiverStatusV3 : ReceiverStatusV2 {
   std::uint32_t operation_sequence = 0;
 };
 
+// Status v4 is negotiated only after a legacy-safe v3 query exposes the
+// sparse-overlay capability. Bytes 0..319 remain an exact status-v3 prefix.
+struct ReceiverStatusV4 : ReceiverStatusV3 {
+  OverlayOperationResult overlay_result = OverlayOperationResult::None;
+  OverlayUpdateKind overlay_update_kind = OverlayUpdateKind::FullSnapshot;
+  std::uint16_t overlay_expected_patches = 0;
+  std::uint16_t overlay_accepted_patches = 0;
+  std::uint16_t overlay_committed_coverage_pixels = 0;
+  std::uint64_t overlay_committed_generation = 0;
+  std::uint64_t overlay_staged_generation = 0;
+  std::uint64_t foreground_scene_revision = 0;
+  std::uint64_t foreground_scene_epoch = 0;
+  std::uint64_t foreground_base_revision = 0;
+  std::uint64_t foreground_present_at_scene_time_us = 0;
+  std::uint32_t overlay_lease_ms = 0;
+  std::uint32_t overlay_lease_remaining_ms = 0;
+  std::uint8_t overlay_session[kControllerSessionBytes] = {};
+  std::uint32_t overlay_composite_frames = 0;
+  std::uint16_t overlay_last_composite_us = 0;
+  std::uint16_t overlay_max_composite_us = 0;
+  std::uint32_t overlay_commits = 0;
+  std::uint32_t overlay_expirations = 0;
+};
+
 bool encode_receiver_status_v2(
     const ReceiverStatusV2& status,
     std::uint8_t* output,
@@ -175,6 +207,10 @@ bool encode_receiver_status_v2(
 
 bool encode_receiver_status_v3(
     const ReceiverStatusV3& status,
+    std::uint8_t* output,
+    std::size_t output_size);
+bool encode_receiver_status_v4(
+    const ReceiverStatusV4& status,
     std::uint8_t* output,
     std::size_t output_size);
 
@@ -190,6 +226,10 @@ bool receiver_packet_crc_valid(
     std::size_t packet_size,
     std::uint16_t* computed_crc = nullptr);
 bool valid_status_query(const std::uint8_t* command, std::size_t size);
+bool valid_status_query(
+    const std::uint8_t* command,
+    std::size_t size,
+    bool sparse_overlay_enabled);
 bool parse_logical_receiver_id(
     const std::uint8_t* command,
     std::size_t size,

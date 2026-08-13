@@ -6,6 +6,10 @@
 #include "ledgrid/animation_pipeline_contract.hpp"
 #include "ledgrid/protocol.hpp"
 
+#ifndef LEDGRID_ENABLE_LOCAL_BACKGROUND
+#define LEDGRID_ENABLE_LOCAL_BACKGROUND 0
+#endif
+
 namespace ledgrid {
 
 constexpr std::uint16_t kCompiledRainbowComponentId = 1;
@@ -38,6 +42,31 @@ struct LocalRenderStats {
   std::uint16_t last_render_us = 0;
   std::uint16_t max_render_us = 0;
   std::uint64_t last_frame_scene_time_us = 0;
+};
+
+struct SparseOverlayStats {
+  std::uint32_t composite_frames = 0;
+  std::uint16_t last_composite_us = 0;
+  std::uint16_t max_composite_us = 0;
+  std::uint32_t commits = 0;
+  std::uint32_t expirations = 0;
+};
+
+struct SparseOverlayStatus {
+  OverlayOperationResult result = OverlayOperationResult::None;
+  OverlayUpdateKind update_kind = OverlayUpdateKind::FullSnapshot;
+  std::uint16_t expected_patches = 0;
+  std::uint16_t accepted_patches = 0;
+  std::uint16_t committed_coverage_pixels = 0;
+  std::uint64_t committed_generation = 0;
+  std::uint64_t staged_generation = 0;
+  std::uint64_t scene_revision = 0;
+  std::uint64_t scene_epoch = 0;
+  std::uint64_t base_revision = 0;
+  std::uint64_t present_at_scene_time_us = 0;
+  std::uint32_t lease_ms = 0;
+  std::uint32_t lease_remaining_ms = 0;
+  std::uint8_t session[kControllerSessionBytes] = {};
 };
 
 struct PresentationContext {
@@ -94,6 +123,7 @@ class ReceiverOutputState {
 struct ReceiverRenderTicket {
   BaseMode owner = BaseMode::StartupFallback;
   std::uint32_t ownership_generation = 0;
+  std::uint32_t foreground_revision = 0;
   std::uint64_t output_revision = 0;
   ReceiverOutputConfiguration output{};
 };
@@ -120,6 +150,11 @@ class ReceiverRuntime {
   bool local_background_enabled() const { return local_background_enabled_; }
   const LocalBackgroundParameters& local_parameters() const { return local_; }
   const LocalRenderStats& render_stats() const { return render_stats_; }
+  const SparseOverlayStats& overlay_stats() const { return overlay_stats_; }
+  OverlayOperationResult last_overlay_result() const {
+    return last_overlay_result_;
+  }
+  SparseOverlayStatus overlay_status(std::uint64_t local_monotonic_us) const;
   const PresentationContext& active_context() const { return active_context_; }
   std::uint64_t staged_context_scene_revision() const {
     return staged_context_.scene_revision;
@@ -146,6 +181,15 @@ class ReceiverRuntime {
       std::uint64_t frame_scene_time_us,
       std::uint32_t render_us);
   void request_local_refresh();
+  bool service_foreground(std::uint64_t local_monotonic_us);
+  bool foreground_refresh_pending() const { return foreground_refresh_pending_; }
+  std::uint32_t foreground_revision() const { return foreground_revision_; }
+  bool composite_foreground(
+      const std::uint8_t* base,
+      std::size_t pixels,
+      std::uint8_t* output,
+      std::size_t output_size) const;
+  void foreground_composited(std::uint32_t composite_us);
   std::uint64_t scene_time_us(std::uint64_t local_monotonic_us) const;
   std::uint32_t render_generation() const { return render_generation_; }
   bool local_render_still_valid(std::uint32_t generation) const {
@@ -161,6 +205,25 @@ class ReceiverRuntime {
   ReceiverOperationResult context_begin(const std::uint8_t* command, std::size_t size);
   ReceiverOperationResult context_set(const std::uint8_t* command, std::size_t size);
   ReceiverOperationResult context_commit(const std::uint8_t* command, std::size_t size);
+  ReceiverOperationResult controller_session_begin(
+      const std::uint8_t* command, std::size_t size);
+  ReceiverOperationResult overlay_begin(
+      const std::uint8_t* command, std::size_t size,
+      std::uint64_t local_monotonic_us);
+  ReceiverOperationResult overlay_patch(
+      const std::uint8_t* command, std::size_t size);
+  ReceiverOperationResult overlay_commit(
+      const std::uint8_t* command, std::size_t size,
+      std::uint64_t local_monotonic_us);
+  ReceiverOperationResult overlay_clear(
+      const std::uint8_t* command, std::size_t size);
+  ReceiverOperationResult overlay_renew(
+      const std::uint8_t* command, std::size_t size,
+      std::uint64_t local_monotonic_us);
+  ReceiverOperationResult finish_overlay(OverlayOperationResult result);
+  void discard_overlay_staging();
+  void clear_foreground_visibility(bool discard_staging);
+  void activate_pending_overlay(std::uint64_t local_monotonic_us);
 
   bool local_background_enabled_ = false;
   BaseMode base_mode_ = BaseMode::StartupFallback;
@@ -180,6 +243,44 @@ class ReceiverRuntime {
   bool force_local_refresh_ = false;
   std::uint64_t context_committed_local_us_ = 0;
   std::uint32_t render_generation_ = 0;
+  std::uint32_t foreground_revision_ = 0;
+  bool foreground_refresh_pending_ = false;
+  OverlayOperationResult last_overlay_result_ = OverlayOperationResult::None;
+  SparseOverlayStats overlay_stats_{};
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  std::uint8_t overlay_rgba_[2][kContractLocalRgbaBytes] = {};
+  std::uint8_t overlay_coverage_[2][kContractLocalPixels] = {};
+  std::uint8_t committed_plane_ = 0;
+  std::uint8_t staging_plane_ = 1;
+  std::uint16_t staging_coverage_pixels_ = 0;
+  std::uint16_t committed_coverage_pixels_ = 0;
+  std::uint8_t controller_session_[kControllerSessionBytes] = {};
+  Digest256 controller_snapshot_digest_{};
+  std::uint64_t controller_desired_revision_ = 0;
+  bool controller_session_present_ = false;
+  bool session_requires_snapshot_ = true;
+  OverlayGenerationOrderState overlay_generation_order_{};
+  OverlayPatchOrderState overlay_patch_order_{};
+  Digest256 last_commit_digest_{};
+  Digest256 last_clear_digest_{};
+  bool last_commit_digest_present_ = false;
+  bool last_clear_digest_present_ = false;
+  bool committed_overlay_present_ = false;
+  bool pending_overlay_present_ = false;
+  std::uint64_t staged_scene_revision_ = 0;
+  std::uint64_t staged_scene_epoch_ = 0;
+  std::uint64_t staged_base_revision_ = 0;
+  std::uint32_t staged_lease_ms_ = 0;
+  std::uint64_t staged_started_local_us_ = 0;
+  std::uint64_t pending_present_at_scene_time_us_ = 0;
+  std::uint64_t committed_scene_revision_ = 0;
+  std::uint64_t committed_scene_epoch_ = 0;
+  std::uint64_t committed_base_revision_ = 0;
+  std::uint64_t committed_present_at_scene_time_us_ = 0;
+  std::uint32_t committed_lease_ms_ = 0;
+  std::uint64_t committed_lease_deadline_us_ = 0;
+  bool committed_has_lease_ = false;
+#endif
 };
 
 std::uint8_t apply_luminance_q8_8(

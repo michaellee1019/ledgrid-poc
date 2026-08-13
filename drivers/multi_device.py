@@ -4,6 +4,7 @@ Multi-Device LED Grid Controller - SPI version
 Controls multiple ESP32 devices via SPI with different CS pins
 """
 
+import hashlib
 import os
 import sys
 import threading
@@ -18,7 +19,12 @@ from drivers.spi_controller import (
     CAPABILITY_PRESENTATION_CONTEXT_V1,
     CAPABILITY_STATIC_LOCAL_BACKGROUND,
     CAPABILITY_STATUS_V3,
+    CAPABILITY_SPARSE_OVERLAY_V1,
     LEDController,
+    MAX_RGBA_PIXELS_PER_PATCH,
+    OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
+    OVERLAY_UPDATE_DELTA,
+    OVERLAY_UPDATE_FULL_SNAPSHOT,
     SPI_RESPONSE_QUEUE_DEPTH,
     SPI_BUS,
     SPI_MODE,
@@ -32,6 +38,9 @@ LOCAL_BACKGROUND_REQUIRED_CAPABILITIES = (
     | CAPABILITY_PRESENTATION_CONTEXT_V1
     | CAPABILITY_STATUS_V3
     | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
+)
+SPARSE_OVERLAY_REQUIRED_CAPABILITIES = (
+    LOCAL_BACKGROUND_REQUIRED_CAPABILITIES | CAPABILITY_SPARSE_OVERLAY_V1
 )
 
 
@@ -53,6 +62,10 @@ class MultiDeviceLEDController:
             # Objects constructed before Phase 3A are already host-frame-only;
             # preserve their partial-update behavior.
             self._display_ownership_known = True
+        if not hasattr(self, "_sparse_overlay_session_id"):
+            self._sparse_overlay_session_id = None
+            self._sparse_overlay_generation = 0
+            self._sparse_overlay_snapshot_digest = None
         return self._transport_lock
     
     def __init__(self, 
@@ -105,6 +118,9 @@ class MultiDeviceLEDController:
             "errors": ["no explicit receiver-status refresh has completed"],
         }
         self._display_ownership_known = False
+        self._sparse_overlay_session_id = None
+        self._sparse_overlay_generation = 0
+        self._sparse_overlay_snapshot_digest = None
         self._monotonic_ns = time.monotonic_ns
         
         # For compatibility with animation system
@@ -327,7 +343,12 @@ class MultiDeviceLEDController:
             self._logical_frames_sent += 1
             if successful and (was_local or not self._display_ownership_known):
                 try:
-                    statuses = [device.query_receiver_status() for device in self.devices]
+                    statuses = []
+                    for device in self.devices:
+                        status = None
+                        for _ in range(SPI_RESPONSE_QUEUE_DEPTH):
+                            status = device.query_receiver_status()
+                        statuses.append(status)
                     versions = [
                         int(status.get("receiver_status_version", 0) or 0)
                         if isinstance(status, dict) else 0
@@ -358,6 +379,9 @@ class MultiDeviceLEDController:
                 self._local_background_active = False
                 self._local_background_context_digest = None
                 self._local_background_parameters = {}
+                self._sparse_overlay_session_id = None
+                self._sparse_overlay_generation = 0
+                self._sparse_overlay_snapshot_digest = None
                 self._local_background_status = {
                     "state": "host_full_scene", "operation": "set_all_takeover"
                 }
@@ -476,7 +500,13 @@ class MultiDeviceLEDController:
         result = int(status.get("receiver_last_result", 0) or 0)
         return result in ((0, 1) if allow_none else (1,))
 
-    def _receiver_statuses(self, *, require_capability=False, require_identity=True):
+    def _receiver_statuses(
+        self,
+        *,
+        require_capability=False,
+        require_identity=True,
+        required_capabilities=None,
+    ):
         statuses = []
         for index, device in enumerate(self.devices):
             status = device.query_receiver_status()
@@ -486,10 +516,15 @@ class MultiDeviceLEDController:
                     and int(status.get("receiver_status_version", 0) or 0) < 3):
                 raise RuntimeError(f"receiver {index} does not expose status v3")
             capabilities = int(status.get("receiver_capabilities", 0) or 0)
-            missing = LOCAL_BACKGROUND_REQUIRED_CAPABILITIES & ~capabilities
+            required = (
+                LOCAL_BACKGROUND_REQUIRED_CAPABILITIES
+                if required_capabilities is None
+                else int(required_capabilities)
+            )
+            missing = required & ~capabilities
             if require_capability and missing:
                 raise RuntimeError(
-                    f"receiver {index} lacks required local-background capabilities "
+                    f"receiver {index} lacks required receiver capabilities "
                     f"0x{missing:08x}"
                 )
             if (require_capability and require_identity
@@ -500,6 +535,559 @@ class MultiDeviceLEDController:
                 )
             statuses.append(status)
         return statuses
+
+    @staticmethod
+    def _overlay_snapshot_digest(pixels: np.ndarray) -> bytes:
+        return hashlib.sha256(memoryview(pixels).cast("B")).digest()
+
+    def _normalize_overlay_pixels(self, pixels) -> np.ndarray:
+        array = np.asarray(pixels)
+        if array.shape != (self.total_leds, 4):
+            raise ValueError(
+                "aggregate foreground must have shape "
+                f"({self.total_leds}, 4), got {array.shape}"
+            )
+        if array.dtype != np.uint8:
+            raise TypeError("aggregate foreground must use uint8 premultiplied RGBA")
+        array = np.ascontiguousarray(array)
+        if np.any(array[:, :3] > array[:, 3, None]):
+            raise ValueError("aggregate foreground RGB must not exceed alpha")
+        return array
+
+    def _normalize_overlay_dirty_ranges(self, dirty_ranges):
+        if dirty_ranges is None:
+            raise ValueError("delta foreground publication requires dirty_ranges")
+        normalized = []
+        prior_end = 0
+        for index, item in enumerate(dirty_ranges):
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                raise TypeError(
+                    f"dirty range {index} must be a (start, end) pair"
+                )
+            start, end = item
+            if (
+                isinstance(start, bool)
+                or not isinstance(start, (int, np.integer))
+                or isinstance(end, bool)
+                or not isinstance(end, (int, np.integer))
+            ):
+                raise TypeError(f"dirty range {index} bounds must be integers")
+            start = int(start)
+            end = int(end)
+            if start < 0 or end > self.total_leds or start >= end:
+                raise ValueError(
+                    f"dirty range {index} [{start}, {end}) is outside "
+                    f"[0, {self.total_leds}) or empty"
+                )
+            if normalized and start < prior_end:
+                raise ValueError(
+                    "dirty ranges must be sorted and non-overlapping"
+                )
+            normalized.append((start, end))
+            prior_end = end
+        return tuple(normalized)
+
+    @staticmethod
+    def _local_overlay_patches(
+        pixels: np.ndarray,
+        *,
+        local_start: int,
+        local_end: int,
+        update_kind: int,
+        dirty_ranges,
+    ):
+        local_pixels = pixels[local_start:local_end]
+        if update_kind == OVERLAY_UPDATE_FULL_SNAPSHOT:
+            return [
+                (start, local_pixels[start:start + MAX_RGBA_PIXELS_PER_PATCH])
+                for start in range(0, len(local_pixels), MAX_RGBA_PIXELS_PER_PATCH)
+            ]
+
+        ranges = []
+        for start, end in dirty_ranges or ():
+            clipped_start = max(local_start, start)
+            clipped_end = min(local_end, end)
+            if clipped_start >= clipped_end:
+                continue
+            local_first = clipped_start - local_start
+            local_last = clipped_end - local_start
+            if ranges and local_first <= ranges[-1][1]:
+                ranges[-1] = (ranges[-1][0], max(ranges[-1][1], local_last))
+            else:
+                ranges.append((local_first, local_last))
+        patches = []
+        for start, end in ranges:
+            while start < end:
+                patch_end = min(end, start + MAX_RGBA_PIXELS_PER_PATCH)
+                patches.append((start, local_pixels[start:patch_end]))
+                start = patch_end
+        return patches
+
+    def publish_sparse_overlay(
+        self,
+        pixels,
+        *,
+        controller_session_id,
+        generation,
+        prior_generation,
+        scene_revision,
+        scene_epoch,
+        base_revision,
+        lease_ms,
+        present_at_scene_time_us,
+        dirty_ranges=None,
+        full_snapshot=False,
+    ):
+        """Stage and schedule one authoritative aggregate foreground generation."""
+        overlay = self._normalize_overlay_pixels(pixels)
+        session = LEDController._controller_session(controller_session_id)
+        overlay_generation = LEDController._bounded_uint(
+            "generation", generation, 0xFFFFFFFFFFFFFFFF
+        )
+        previous_generation = LEDController._bounded_uint(
+            "prior_generation", prior_generation, 0xFFFFFFFFFFFFFFFF
+        )
+        if overlay_generation == 0 or overlay_generation <= previous_generation:
+            raise ValueError("generation must be newer than prior_generation")
+        if overlay_generation == 0xFFFFFFFFFFFFFFFF:
+            raise ValueError(
+                "generation must leave one counter value for partial-wall compensation"
+            )
+        update_kind = (
+            OVERLAY_UPDATE_FULL_SNAPSHOT if full_snapshot
+            else OVERLAY_UPDATE_DELTA
+        )
+        normalized_ranges = (
+            None if full_snapshot
+            else self._normalize_overlay_dirty_ranges(dirty_ranges)
+        )
+        digest = self._overlay_snapshot_digest(overlay)
+        prior_session = getattr(self, "_sparse_overlay_session_id", None)
+        new_session = prior_session != session
+        if new_session and not full_snapshot:
+            raise ValueError(
+                "a new controller session must begin with a full foreground snapshot"
+            )
+        if new_session and previous_generation != 0:
+            raise ValueError("a new controller session must start at prior_generation 0")
+        if (
+            not new_session
+            and previous_generation != self._sparse_overlay_generation
+        ):
+            raise ValueError(
+                "prior_generation does not match the controller's committed generation"
+            )
+
+        per_device_patches = []
+        for index in range(self.num_devices):
+            local_start = index * self.leds_per_device
+            per_device_patches.append(self._local_overlay_patches(
+                overlay,
+                local_start=local_start,
+                local_end=local_start + self.leds_per_device,
+                update_kind=update_kind,
+                dirty_ranges=normalized_ranges,
+            ))
+
+        # Serialize the complete transaction before the first receiver command.
+        # Device methods repeat these checks immediately before I/O; this
+        # aggregate preflight prevents malformed later commands from leaving a
+        # controller session or staged generation behind.
+        if new_session:
+            LEDController.serialize_controller_session_begin(
+                controller_session_id=session,
+                desired_revision=scene_revision,
+                authoritative_snapshot_digest=digest,
+            )
+        for patches in per_device_patches:
+            LEDController.serialize_overlay_begin(
+                controller_session_id=session,
+                generation=overlay_generation,
+                prior_generation=previous_generation,
+                scene_revision=scene_revision,
+                scene_epoch=scene_epoch,
+                base_revision=base_revision,
+                format=OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
+                update_kind=update_kind,
+                expected_patches=len(patches),
+                lease_ms=lease_ms,
+            )
+            for start, rgba in patches:
+                LEDController.serialize_overlay_patch(
+                    controller_session_id=session,
+                    generation=overlay_generation,
+                    start=start,
+                    premultiplied_rgba=rgba,
+                )
+        LEDController.serialize_overlay_commit(
+            controller_session_id=session,
+            generation=overlay_generation,
+            scene_epoch=scene_epoch,
+            base_revision=base_revision,
+            present_at_scene_time_us=present_at_scene_time_us,
+        )
+        compensation_generation = overlay_generation + 1
+        LEDController.serialize_overlay_clear(
+            controller_session_id=session,
+            generation=compensation_generation,
+            scene_revision=scene_revision,
+        )
+
+        with self._controller_lock():
+            touched = False
+            try:
+                statuses = self._receiver_statuses(
+                    require_capability=True,
+                    required_capabilities=SPARSE_OVERLAY_REQUIRED_CAPABILITIES,
+                )
+                if any(int(status.get("receiver_base_mode", -1)) != 1 for status in statuses):
+                    raise RuntimeError("sparse foreground requires local background ownership")
+                if not new_session:
+                    expected_session = session.hex()
+                    for index, status in enumerate(statuses):
+                        if status.get("receiver_overlay_session_id") != expected_session:
+                            raise RuntimeError(
+                                f"receiver {index} lost foreground session authority"
+                            )
+                        if int(status.get(
+                            "receiver_overlay_committed_generation", -1
+                        )) != previous_generation:
+                            raise RuntimeError(
+                                f"receiver {index} disagrees on committed foreground "
+                                f"generation {previous_generation}"
+                            )
+                        if int(status.get(
+                            "receiver_overlay_staged_generation", 0
+                        )) != 0:
+                            raise RuntimeError(
+                                f"receiver {index} still has a staged foreground"
+                            )
+                    if (
+                        update_kind == OVERLAY_UPDATE_DELTA
+                        and any(int(status.get(
+                            "receiver_foreground_state", -1
+                        )) != 2 for status in statuses)
+                    ):
+                        self._local_background_status = {
+                            "state": "foreground_repair_required",
+                            "operation": "foreground_delta_preflight",
+                            "error": (
+                                "a receiver has no active foreground; publish a "
+                                "complete authoritative snapshot before deltas"
+                            ),
+                            "foreground_generation": previous_generation,
+                        }
+                        return False
+
+                if new_session:
+                    for index, device in enumerate(self.devices):
+                        touched = True
+                        status = device.begin_controller_session(
+                            controller_session_id=session,
+                            desired_revision=scene_revision,
+                            authoritative_snapshot_digest=digest,
+                        )
+                        self._require_overlay_ack(
+                            status, "foreground session", index
+                        )
+
+                for index, (device, patches) in enumerate(zip(
+                    self.devices, per_device_patches
+                )):
+                    touched = True
+                    status = device.begin_overlay(
+                        controller_session_id=session,
+                        generation=overlay_generation,
+                        prior_generation=previous_generation,
+                        scene_revision=scene_revision,
+                        scene_epoch=scene_epoch,
+                        base_revision=base_revision,
+                        format=OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
+                        update_kind=update_kind,
+                        expected_patches=len(patches),
+                        lease_ms=lease_ms,
+                    )
+                    self._require_overlay_ack(status, "foreground begin", index)
+
+                for index, (device, patches) in enumerate(zip(
+                    self.devices, per_device_patches
+                )):
+                    for status in device.send_overlay_patches(
+                        controller_session_id=session,
+                        generation=overlay_generation,
+                        patches=patches,
+                        update_kind=update_kind,
+                    ):
+                        self._require_overlay_ack(status, "foreground patch", index)
+
+                for index, device in enumerate(self.devices):
+                    status = device.commit_overlay(
+                        controller_session_id=session,
+                        generation=overlay_generation,
+                        scene_epoch=scene_epoch,
+                        base_revision=base_revision,
+                        present_at_scene_time_us=present_at_scene_time_us,
+                    )
+                    self._require_overlay_ack(status, "foreground commit", index)
+
+                committed = self._receiver_statuses(
+                    require_capability=True,
+                    required_capabilities=SPARSE_OVERLAY_REQUIRED_CAPABILITIES,
+                )
+                receiver_states = []
+                for index, status in enumerate(committed):
+                    committed_generation = int(
+                        status.get("receiver_overlay_committed_generation", -1)
+                    )
+                    staged_generation = int(
+                        status.get("receiver_overlay_staged_generation", -1)
+                    )
+                    if committed_generation == overlay_generation:
+                        state = "active"
+                    elif staged_generation == overlay_generation:
+                        state = "scheduled"
+                    else:
+                        raise RuntimeError(
+                            f"receiver {index} retained neither committed nor staged "
+                            f"foreground generation {overlay_generation}"
+                        )
+                    receiver_states.append(state)
+                    if status.get("receiver_overlay_session_id") != session.hex():
+                        raise RuntimeError(
+                            f"receiver {index} did not retain the foreground session"
+                        )
+                    expected_binding = {
+                        "receiver_foreground_scene_revision": scene_revision,
+                        "receiver_foreground_scene_epoch": scene_epoch,
+                        "receiver_foreground_base_revision": base_revision,
+                        "receiver_foreground_present_at_scene_time_us": (
+                            present_at_scene_time_us
+                        ),
+                    }
+                    for key, expected in expected_binding.items():
+                        if int(status.get(key, -1)) != expected:
+                            raise RuntimeError(
+                                f"receiver {index} disagrees on {key}: "
+                                f"expected {expected}, got {status.get(key)!r}"
+                            )
+                if len(set(receiver_states)) != 1:
+                    raise RuntimeError(
+                        "receivers disagree on scheduled foreground activation"
+                    )
+            except Exception as exc:
+                cleanup_errors = []
+                if touched:
+                    for index, device in enumerate(self.devices):
+                        try:
+                            status = device.clear_overlay(
+                                controller_session_id=session,
+                                generation=compensation_generation,
+                                scene_revision=scene_revision,
+                            )
+                            self._require_overlay_ack(
+                                status, "foreground compensation clear", index
+                            )
+                        except Exception as cleanup_exc:
+                            cleanup_errors.append({
+                                "logical_device": index,
+                                "error": str(cleanup_exc),
+                            })
+                self._local_background_status = {
+                    "state": (
+                        "degraded" if cleanup_errors or not touched
+                        else "foreground_cleared"
+                    ),
+                    "operation": "foreground_publish_failed",
+                    "error": str(exc),
+                    "cleanup_errors": cleanup_errors,
+                }
+                self._sparse_overlay_session_id = (
+                    None if cleanup_errors else session
+                )
+                self._sparse_overlay_generation = (
+                    0 if cleanup_errors else compensation_generation
+                )
+                self._sparse_overlay_snapshot_digest = None
+                return False
+
+            self._sparse_overlay_session_id = session
+            self._sparse_overlay_generation = overlay_generation
+            self._sparse_overlay_snapshot_digest = digest
+            self._local_background_status = {
+                "state": receiver_states[0],
+                "operation": (
+                    "foreground_publish" if receiver_states[0] == "active"
+                    else "foreground_scheduled"
+                ),
+                "foreground_generation": overlay_generation,
+                "foreground_snapshot_digest": digest.hex(),
+                "foreground_patch_counts": [len(items) for items in per_device_patches],
+            }
+            return True
+
+    def renew_sparse_overlay(
+        self, *, controller_session_id, generation, lease_ms
+    ):
+        """Renew one committed foreground lease only when every board agrees."""
+        session = LEDController._controller_session(controller_session_id)
+        renewal_generation = LEDController._bounded_uint(
+            "generation", generation, 0xFFFFFFFFFFFFFFFF
+        )
+        if renewal_generation == 0xFFFFFFFFFFFFFFFF:
+            raise ValueError(
+                "generation must leave one counter value for renewal compensation"
+            )
+        LEDController.serialize_overlay_renew(
+            controller_session_id=session,
+            generation=renewal_generation,
+            lease_ms=lease_ms,
+        )
+        with self._controller_lock():
+            touched = False
+            scene_revision = None
+            try:
+                if (
+                    session != getattr(self, "_sparse_overlay_session_id", None)
+                    or renewal_generation
+                    != getattr(self, "_sparse_overlay_generation", 0)
+                ):
+                    raise ValueError(
+                        "foreground renew must match the committed session/generation"
+                    )
+                statuses = self._receiver_statuses(
+                    require_capability=True,
+                    required_capabilities=SPARSE_OVERLAY_REQUIRED_CAPABILITIES,
+                )
+                revisions = {
+                    int(status.get("receiver_foreground_scene_revision", -1))
+                    for status in statuses
+                }
+                if len(revisions) != 1:
+                    raise RuntimeError(
+                        "receivers disagree on foreground scene revision"
+                    )
+                scene_revision = revisions.pop()
+                for index, status in enumerate(statuses):
+                    if (
+                        int(status.get("receiver_foreground_state", -1)) != 2
+                        or status.get("receiver_overlay_session_id") != session.hex()
+                        or int(status.get(
+                            "receiver_overlay_committed_generation", -1
+                        )) != renewal_generation
+                        or int(status.get(
+                            "receiver_overlay_staged_generation", 0
+                        )) != 0
+                    ):
+                        raise RuntimeError(
+                            f"receiver {index} is not on the active renewable foreground"
+                        )
+                for index, device in enumerate(self.devices):
+                    touched = True
+                    status = device.renew_overlay(
+                        controller_session_id=session,
+                        generation=renewal_generation,
+                        lease_ms=lease_ms,
+                    )
+                    self._require_overlay_ack(status, "foreground renew", index)
+            except Exception as exc:
+                cleanup_errors = []
+                compensation_generation = renewal_generation + 1
+                if touched and scene_revision is not None:
+                    for index, device in enumerate(self.devices):
+                        try:
+                            status = device.clear_overlay(
+                                controller_session_id=session,
+                                generation=compensation_generation,
+                                scene_revision=scene_revision,
+                            )
+                            self._require_overlay_ack(
+                                status, "foreground renew compensation clear", index
+                            )
+                        except Exception as cleanup_exc:
+                            cleanup_errors.append({
+                                "logical_device": index,
+                                "error": str(cleanup_exc),
+                            })
+                if touched and not cleanup_errors:
+                    self._sparse_overlay_generation = compensation_generation
+                    self._sparse_overlay_snapshot_digest = None
+                self._local_background_status = {
+                    "state": (
+                        "degraded" if cleanup_errors or not touched
+                        else "foreground_cleared"
+                    ),
+                    "operation": "foreground_renew_failed",
+                    "error": str(exc),
+                    "cleanup_errors": cleanup_errors,
+                }
+                return False
+            self._local_background_status.update({
+                "state": "active",
+                "operation": "foreground_renew",
+                "foreground_generation": renewal_generation,
+            })
+            return True
+
+    def clear_sparse_overlay(
+        self, *, controller_session_id, generation, scene_revision
+    ):
+        """Clear the aggregate foreground everywhere and verify agreement."""
+        session = LEDController._controller_session(controller_session_id)
+        clear_generation = LEDController._bounded_uint(
+            "generation", generation, 0xFFFFFFFFFFFFFFFF
+        )
+        LEDController.serialize_overlay_clear(
+            controller_session_id=session,
+            generation=clear_generation,
+            scene_revision=scene_revision,
+        )
+        with self._controller_lock():
+            errors = []
+            if session != getattr(self, "_sparse_overlay_session_id", None):
+                raise ValueError("foreground clear must match the committed session")
+            for index, device in enumerate(self.devices):
+                try:
+                    status = device.clear_overlay(
+                        controller_session_id=session,
+                        generation=clear_generation,
+                        scene_revision=scene_revision,
+                    )
+                    self._require_overlay_ack(status, "foreground clear", index)
+                except Exception as exc:
+                    errors.append({"logical_device": index, "error": str(exc)})
+            if not errors:
+                try:
+                    statuses = self._receiver_statuses(
+                        require_capability=True,
+                        required_capabilities=SPARSE_OVERLAY_REQUIRED_CAPABILITIES,
+                    )
+                    for index, status in enumerate(statuses):
+                        if int(status.get("receiver_foreground_state", -1)) != 0:
+                            raise RuntimeError(
+                                f"receiver {index} retained foreground state"
+                            )
+                        if int(status.get(
+                            "receiver_overlay_committed_generation", -1
+                        )) != clear_generation:
+                            raise RuntimeError(
+                                f"receiver {index} did not commit foreground clear "
+                                f"generation {clear_generation}"
+                            )
+                except Exception as exc:
+                    errors.append({"logical_device": -1, "error": str(exc)})
+            self._local_background_status = {
+                "state": "degraded" if errors else "active",
+                "operation": "foreground_clear",
+                **({"errors": errors} if errors else {}),
+            }
+            if errors:
+                self._sparse_overlay_session_id = None
+                self._sparse_overlay_generation = 0
+                self._sparse_overlay_snapshot_digest = None
+            else:
+                self._sparse_overlay_generation = clear_generation
+                self._sparse_overlay_snapshot_digest = None
+            return not errors
 
     def _provision_local_identities(self):
         """Provision physical host mapping before any context is staged."""
@@ -569,6 +1157,19 @@ class MultiDeviceLEDController:
                 f"(result={result!r})"
             )
 
+    @classmethod
+    def _require_overlay_ack(cls, status, operation, logical_device):
+        cls._require_ack(status, operation, logical_device)
+        overlay_result = (
+            status.get("receiver_overlay_operation_result")
+            if isinstance(status, dict) else None
+        )
+        if overlay_result not in (1, 2):
+            raise RuntimeError(
+                f"receiver {logical_device} rejected {operation} "
+                f"(overlay_result={overlay_result!r})"
+            )
+
     def _stop_local_background_best_effort(self, operation):
         errors = []
         for index, device in enumerate(self.devices):
@@ -591,6 +1192,9 @@ class MultiDeviceLEDController:
             self._display_ownership_known = True
             self._local_background_context_digest = None
             self._local_background_parameters = {}
+            self._sparse_overlay_session_id = None
+            self._sparse_overlay_generation = 0
+            self._sparse_overlay_snapshot_digest = None
         self._local_background_status = {
             "state": "degraded" if errors else "fallback",
             "operation": operation,
@@ -696,6 +1300,9 @@ class MultiDeviceLEDController:
             self._local_background_active = True
             self._display_ownership_known = True
             self._local_background_context_digest = context.context_digest.hex()
+            self._sparse_overlay_session_id = None
+            self._sparse_overlay_generation = 0
+            self._sparse_overlay_snapshot_digest = None
             self._local_background_parameters = {
                 "component_id": component_id,
                 "preferred_cadence_hz": preferred_cadence_hz,

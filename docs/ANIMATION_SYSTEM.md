@@ -314,15 +314,20 @@ fixed-scene product contract. Phase 3A of the
 [unified roadmap](plan-revamped-animation-pipeline.md) now provides explicit
 receiver ownership, status v3, a staged host-authoritative presentation context,
 and a statically linked rainbow behind a dedicated firmware canary flag. The
-ordinary production image keeps local playback disabled, and a complete host RGB
-frame remains the accepted wall path and immediate takeover mechanism. Phase 3B
-adds the first sparse foreground only after the one-receiver Phase 3A canary.
+first Phase 3B0 portable slice adds a negotiated status-v4 extension, bounded
+premultiplied-RGBA foreground state, sparse four-board host orchestration,
+leases, scheduled commit, and fixed-point receiver composition behind that same
+canary flag. The ordinary production image keeps both local playback and sparse
+foreground compiled off, and a complete host RGB frame remains the accepted
+wall path and immediate takeover mechanism. Manager/dashboard integration,
+payload-gate optimization, and physical canary evidence remain later Phase 3B0
+work.
 
 Receiver playback is not an `AnimationBase`, does not weaken the Python manifest
 allowlist, and does not introduce another catalog. The Pi continues to resolve
 vibe and plant-modifier presentation state and transmits exact fixed-point values
 and digests; firmware does not perform local profile lookup or receive calibrated
-plant geometry in Phase 3A.
+plant geometry in Phase 3A/3B0.
 
 The `native-animations` branch remains an organ donor for the roadmap's later
 receiver phases. Reuse its ABI/build validation, host preview harness, ESP-IDF
