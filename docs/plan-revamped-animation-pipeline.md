@@ -2004,7 +2004,7 @@ Portable/integrated evidence on 2026-08-13:
   may sample while the parallel SPI workers are mid-presentation, so the sweep
   now accepts at most one in-flight frame of host-counter spread and fails a
   spread of two or more. This bounded correction has explicit regression tests;
-  the sweep remains open until repeated.
+  the sweep remained open until repeated.
 - The first target-160 rerun exposed a benchmark denominator defect: 9,156
   accepted/displayed frames were divided by 62.643 seconds even though the
   counter snapshots covered roughly the requested 60-second interval. Initial
@@ -2012,6 +2012,19 @@ Portable/integrated evidence on 2026-08-13:
   now runs until the monotonic first-to-last sample interval itself reaches 60
   seconds and evaluates that exact counter window; cleanup remained exact on
   the failed run.
+- Final clean commit `87bf91a` deployed through ordinary `just deploy` with the
+  dedicated key and activated immutable release
+  `21b95fd5878e79ab069249de89432a5929ce2e5f404fc9f2bdbb4b836a02be49`;
+  health readiness observed the same release in two stable samples. Degraded
+  status again passed the exact readable 0/1 and write-only 2/3 topology. The
+  corrected 60-second streamed gate passed on both readable receivers at 154.53
+  displayed FPS: 9,403 accepted, 9,403 displayed, zero superseded or integrity
+  errors, encode p95 at most 494 us, and show p95 4,442 us. Plant modifiers,
+  target FPS, and the prior scene all restored exactly. The final degraded live
+  sweep passed all 50 registered animations with zero failed plugin or host SPI
+  error delta and restored the prior `living_stained_glass` scene. Telemetry is
+  still explicitly incomplete and visual verification is still required for
+  receivers 2 and 3; none of this closes the strict MISO-dependent gates.
 - The installed dense target-200 saturation run reported receiver encode p95
   490 us, display p95 4,442 us, and 9,362 accepted plus 9,362 displayed frames
   over 60.279 seconds (155.31 FPS), with no superseded frame or integrity error.
