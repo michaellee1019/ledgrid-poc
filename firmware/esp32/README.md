@@ -33,16 +33,16 @@ The Raspberry Pi and ESP32 must share ground. WS2812 power is supplied separatel
 
 The receiver deliberately separates transport and display work:
 
-1. As soon as the parallel LED driver is ready, the display task renders a
-   firmware-resident 45-degree rainbow continuously with no software frame
-   cap. The field moves up and right and completes one spectrum cycle per
-   second.
+1. Boot enters explicit `StartupFallback` and renders the firmware-resident
+   45-degree rainbow. `LocalBackground` and `HostFullScene` are separate base
+   ownership states; foreground and maintenance state remain orthogonal.
 2. Two SPI slave DMA transactions are kept queued.
-3. The Arduino loop consumes completed packets, checks CRC-16, and updates a
+3. The ESP-IDF `app_main` task consumes completed packets, checks CRC-16, and updates a
    compact RGB working frame.
-4. The first valid Pi command (normally the initialization PING) stops the
-   startup animation. Complete host frames are then published to a three-slot
-   latest-frame-wins mailbox.
+4. Only a complete valid `SET_ALL` takes host ownership. PING, configuration,
+   brightness, status, partial RGB, and presentation-context traffic never
+   claims the base. The production build keeps local playback disabled; the
+   explicit canary environment enables it for scheduled one-receiver work.
 5. A FreeRTOS display task on the other core converts RGB to an eight-bit parallel
    WS2812 waveform.
 6. ESP-IDF LCD/I80 DMA emits all eight strips concurrently.
@@ -62,13 +62,18 @@ pio test -e native
 # Exact production target
 pio run -e esp32-s3-devkitc-1
 
+# Deliberate one-receiver canary image (never used by ordinary deployment)
+pio run -e esp32-s3-devkitc-1-local-canary
+
 # Upload one controller
 pio run -e esp32-s3-devkitc-1 -t upload --upload-port /dev/ttyACM0
 ```
 
-The production target uses the pioarduino stable platform with Arduino 3.3.9 and
-ESP-IDF 5.5.4. The board target must remain `esp32-s3-devkitc1-n16r8` so PSRAM and
-flash timing match the installed controllers.
+The production target uses the pinned pioarduino platform with ESP-IDF 5.5.4
+and the managed `espressif/elf_loader` 1.3.2 component present but disabled.
+Dynamic loading and its command surface remain absent. The board target must
+remain `esp32-s3-devkitc1-n16r8` so PSRAM and flash timing match the installed
+controllers.
 
 ## SPI commands
 
@@ -83,15 +88,26 @@ Every command is followed by a big-endian CRC-16/CCITT-FALSE.
 | SET_RANGE | `0x05` | start high, start low, count, RGB bytes |
 | SET_ALL | `0x06` | tightly packed RGB bytes; publishes inline |
 | CONFIG | `0x07` | strips, length high, length low, optional debug byte |
+| STATUS_QUERY | `0x08` | exactly 320 bytes, bytes 1–319 zero |
+| LOCAL_BACKGROUND_START | `0x10` | component u16, cadence u16, global offset u32, seed u32, scene epoch u64 |
+| LOCAL_BACKGROUND_STOP | `0x11` | none |
+| LOCAL_BACKGROUND_PARAMETERS | `0x12` | cadence u16, global offset u32, seed u32 |
+| PRESENTATION_CONTEXT_BEGIN/SET/COMMIT | `0x21`–`0x23` | versioned staged context packets |
 | PING | `0xFF` | none |
 
-SET_PIXEL and SET_RANGE modify the working frame. SHOW publishes their combined
-result. SET_ALL, CLEAR, brightness changes, and geometry changes publish inline.
+SET_PIXEL and SET_RANGE modify the working frame. SHOW and CLEAR publish only
+when the receiver is already in `HostFullScene`; they cannot take ownership.
+Brightness requests refresh the current owner without changing it. Only a
+complete accepted SET_ALL publishes and takes host ownership.
 
-## Receiver status v2
+Legacy CONFIG packets remain four or five bytes. Six-byte CONFIG appends a
+logical receiver ID at byte 5 (0–3); local playback fails closed until this ID
+is provisioned. Byte 4 remains the legacy debug byte.
 
-The ESP32 returns a 64-byte `LGS2` snapshot over MISO alongside normal writes.
-It includes:
+## Receiver status v3
+
+The ESP32 returns a 320-byte `LGS3` snapshot over MISO. Bytes 5–63 preserve the
+complete status-v2 field layout and counters. Extended fields include:
 
 - SPI packets, valid CRCs, and CRC errors;
 - currently queued transactions;
@@ -99,6 +115,14 @@ It includes:
 - SPI queue and display errors;
 - CRC, frame-copy, waveform-encode, and LCD/I80 DMA timings;
 - last accepted and displayed sequence numbers.
+- explicit base/foreground/maintenance state and transition reason;
+- local component, global offset, common seed, scene epoch, cadence and misses;
+- active/staged presentation revisions, controller sessions, and full digests;
+- logical receiver identity and command/result acknowledgement correlation.
+
+Because SPI responses are queued before the command they accompany, the host
+uses `last_processed_command` plus `operation_sequence` to bind later status to
+the exact CRC-valid operation. Status queries do not advance that sequence.
 
 The host exposes these fields through `/api/status` and `/api/metrics`. Run the
 automated canary gate with:
@@ -112,12 +136,14 @@ python tools/benchmarks/receiver_acceptance.py \
 See [rendering acceptance](../../docs/RENDERING_PIPELINE_ACCEPTANCE.md) for the
 required thresholds and rollback conditions.
 
-## Planned local-background work
+## Local-background rollout boundary
 
-This file describes current deployed firmware. The
-[unified roadmap](../../docs/plan-revamped-animation-pipeline.md) first replaces
-the one-way first-command transition with explicit display ownership, then adds
-a statically linked background and sparse RGBA foreground before dynamic modules.
+The statically linked rainbow accepts a host-authoritative committed context,
+global strip offset, common seed, scene epoch, live cadence/offset/seed updates,
+and fixed-point vibe luminance. Receiver hardware brightness remains the final
+output limit, so vibe luminance and master brightness are each applied once.
+Production keeps this feature compiled off until a deliberately scheduled
+one-receiver canary passes.
 
 The `native-animations` branch is the organ donor for the loader-capable ESP-IDF
 baseline, ABI, asset upload/cache, typed parameters, receiver control, status,

@@ -200,10 +200,21 @@ must not be curated.
 3. For transport or firmware changes, run:
 
    ```bash
+   just receiver-phase3a-status
    just receiver-acceptance
    just live-animation-sweep
    just output-rate-sweep
    ```
+
+   The Phase 3A status gate is intentionally separate from generic deployment
+   health so a rollback to v2 firmware remains possible. It asks the controller
+   process to drain fresh serialized status responses from every receiver and
+   rejects cached/mismatched refresh evidence, missing status-v3 or ownership
+   capabilities, unavailable boards, and wrong receiver-reported identities.
+   During the scheduled one-receiver local canary, use
+   `just receiver-phase3a-canary-status <logical-device>` to additionally
+   require the static-background and presentation-context capability bits on
+   exactly that receiver.
 
 4. Visually inspect every controller and lane. Clean CRC/DMA counters cannot
    detect faults after the receiver output peripheral.

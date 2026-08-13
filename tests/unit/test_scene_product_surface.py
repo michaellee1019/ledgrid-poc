@@ -133,6 +133,16 @@ def _scene(*, overlay=True, provider="python"):
 
 
 class SceneProductSurfaceTests(unittest.TestCase):
+    def test_receiver_status_refresh_route_issues_versioned_read_only_command(self):
+        response = self.client.post("/api/v1/receivers/status/refresh", json={})
+        self.assertEqual(response.status_code, 202)
+        payload = response.get_json()
+        self.assertTrue(payload["accepted"])
+        self.assertTrue(payload["request_id"].startswith("phase3a-"))
+        command = self.channel.commands[-1]
+        self.assertEqual(command["action"], "refresh_receiver_status")
+        self.assertEqual(command["data"]["request_id"], payload["request_id"])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.channel = _Channel()

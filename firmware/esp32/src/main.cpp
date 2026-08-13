@@ -1,5 +1,3 @@
-#include <Arduino.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstring>
@@ -8,21 +6,29 @@
 #include "driver/spi_common.h"
 #include "driver/spi_slave.h"
 #include "esp_timer.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "ledgrid/frame_mailbox.hpp"
 #include "ledgrid/parallel_led_driver.hpp"
 #include "ledgrid/protocol.hpp"
+#include "ledgrid/receiver_runtime.hpp"
 #include "ledgrid/startup_animation.hpp"
 #include "ledgrid/ws2812_encoder.hpp"
 
 namespace {
 
+#ifndef LEDGRID_ENABLE_LOCAL_BACKGROUND
+#define LEDGRID_ENABLE_LOCAL_BACKGROUND 0
+#endif
+
 constexpr gpio_num_t kSpiMosi = GPIO_NUM_11;
 constexpr gpio_num_t kSpiMiso = GPIO_NUM_13;
 constexpr gpio_num_t kSpiClock = GPIO_NUM_12;
 constexpr gpio_num_t kSpiChipSelect = GPIO_NUM_10;
-constexpr std::uint8_t kStatusLed = 48;
+constexpr gpio_num_t kStatusLed = GPIO_NUM_48;
+constexpr const char* kLogTag = "ledgrid";
 
 constexpr std::uint8_t kMaxStrips = 8;
 // Keep capacity at 140 for transport/mailbox/DMA buffers while allowing the
@@ -35,20 +41,16 @@ constexpr std::uint16_t kDefaultLedsPerStrip = 138;
 constexpr std::uint8_t kDefaultBrightness = 50;
 constexpr int kLedPins[kMaxStrips] = {18, 17, 16, 15, 7, 6, 5, 4};
 
-constexpr std::uint8_t kCmdSetPixel = 0x01;
-constexpr std::uint8_t kCmdSetBrightness = 0x02;
-constexpr std::uint8_t kCmdShow = 0x03;
-constexpr std::uint8_t kCmdClear = 0x04;
-constexpr std::uint8_t kCmdSetRange = 0x05;
-constexpr std::uint8_t kCmdSetAll = 0x06;
-constexpr std::uint8_t kCmdConfig = 0x07;
-constexpr std::uint8_t kCmdPing = 0xFF;
-
 constexpr std::size_t kCrcBytes = 2;
 constexpr std::size_t kSpiFrameBytes = 1 + kMaxRgbBytes + kCrcBytes;
 constexpr std::size_t kSpiBufferSize =
-    ((kSpiFrameBytes + 63U) / 64U) * 64U;
+    ledgrid::kAnimationPipelineMaxTransactionBytes;
 constexpr std::size_t kSpiQueueDepth = 2;
+static_assert(kSpiBufferSize == 4096, "transport contract changed");
+static_assert(kSpiFrameBytes <= kSpiBufferSize,
+              "maximum RGB frame plus CRC exceeds transport buffer");
+static_assert(ledgrid::kStatusBytesV3 + kCrcBytes <= kSpiBufferSize,
+              "status query plus CRC exceeds transport buffer");
 
 DMA_ATTR std::uint8_t spi_rx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
 DMA_ATTR std::uint8_t spi_tx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
@@ -59,14 +61,16 @@ std::uint8_t startup_frame[kMaxRgbBytes] = {};
 std::uint8_t mailbox_frames[ledgrid::kFrameMailboxSlots][kMaxRgbBytes] = {};
 ledgrid::LatestFrameMailbox frame_mailbox;
 portMUX_TYPE mailbox_mux = portMUX_INITIALIZER_UNLOCKED;
+SemaphoreHandle_t runtime_mutex = nullptr;
 TaskHandle_t display_task_handle = nullptr;
 ledgrid::ParallelLedDriver led_driver;
+ledgrid::ReceiverRuntime receiver_runtime(LEDGRID_ENABLE_LOCAL_BACKGROUND != 0);
+ledgrid::ReceiverOutputState receiver_output(
+    kDefaultStrips, kDefaultLedsPerStrip, kDefaultBrightness);
+ledgrid::ReceiverOperationTracker operation_tracker;
 
-std::uint8_t active_strips = kDefaultStrips;
-std::uint16_t leds_per_strip = kDefaultLedsPerStrip;
-std::uint8_t brightness = kDefaultBrightness;
 std::atomic<std::uint32_t> next_sequence{1};
-std::atomic<bool> pi_connected{false};
+std::atomic<std::uint8_t> logical_receiver_id{0xFF};
 
 std::atomic<std::uint32_t> packets_received{0};
 std::atomic<std::uint32_t> crc_errors{0};
@@ -79,31 +83,16 @@ std::atomic<std::uint16_t> last_copy_us{0};
 std::atomic<std::uint32_t> last_accepted_sequence{0};
 std::atomic<std::uint32_t> last_displayed_sequence{0};
 
-constexpr std::uint16_t kCrc16NibbleTable[16] = {
-    0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7,
-    0x8108, 0x9129, 0xA14A, 0xB16B, 0xC18C, 0xD1AD, 0xE1CE, 0xF1EF,
-};
-
 std::uint16_t duration_u16(std::uint32_t value) {
   return value > UINT16_MAX ? UINT16_MAX : static_cast<std::uint16_t>(value);
 }
 
-std::size_t total_leds() {
-  return static_cast<std::size_t>(active_strips) * leds_per_strip;
+void lock_runtime() {
+  if (runtime_mutex != nullptr) xSemaphoreTake(runtime_mutex, portMAX_DELAY);
 }
 
-std::size_t active_rgb_bytes() { return total_leds() * 3U; }
-
-std::uint16_t crc16_ccitt(const std::uint8_t* data, std::size_t length) {
-  std::uint16_t crc = 0xFFFF;
-  for (std::size_t i = 0; i < length; ++i) {
-    crc ^= static_cast<std::uint16_t>(data[i]) << 8;
-    crc = static_cast<std::uint16_t>(
-        (crc << 4) ^ kCrc16NibbleTable[crc >> 12]);
-    crc = static_cast<std::uint16_t>(
-        (crc << 4) ^ kCrc16NibbleTable[crc >> 12]);
-  }
-  return crc;
+void unlock_runtime() {
+  if (runtime_mutex != nullptr) xSemaphoreGive(runtime_mutex);
 }
 
 ledgrid::FrameMailboxCounters mailbox_counters() {
@@ -113,14 +102,17 @@ ledgrid::FrameMailboxCounters mailbox_counters() {
   return counters;
 }
 
-bool publish_working_frame() {
+// The caller holds runtime_mutex, making the output configuration and mailbox
+// publication one coherent command-side snapshot.
+bool publish_working_frame_locked(
+    const ledgrid::ReceiverOutputConfiguration& output) {
   int slot = -1;
   portENTER_CRITICAL(&mailbox_mux);
   slot = frame_mailbox.begin_write();
   portEXIT_CRITICAL(&mailbox_mux);
   if (slot < 0) return false;
 
-  const std::size_t bytes = active_rgb_bytes();
+  const std::size_t bytes = output.rgb_bytes();
   const std::uint32_t copy_started =
       static_cast<std::uint32_t>(esp_timer_get_time());
   std::memcpy(mailbox_frames[slot], working_frame, bytes);
@@ -130,9 +122,9 @@ bool publish_working_frame() {
   ledgrid::FrameMetadata metadata{};
   metadata.sequence = next_sequence.fetch_add(1, std::memory_order_relaxed);
   metadata.byte_count = bytes;
-  metadata.strip_count = active_strips;
-  metadata.leds_per_strip = leds_per_strip;
-  metadata.brightness = brightness;
+  metadata.strip_count = output.strip_count;
+  metadata.leds_per_strip = output.leds_per_strip;
+  metadata.brightness = output.brightness;
 
   portENTER_CRITICAL(&mailbox_mux);
   const bool committed = frame_mailbox.commit_write(slot, metadata);
@@ -144,40 +136,140 @@ bool publish_working_frame() {
   return true;
 }
 
+struct PhysicalSubmitContext {
+  const std::uint8_t* frame = nullptr;
+  std::uint32_t sequence = 0;
+};
+
+bool submit_physical_frame(
+    void* raw_context,
+    const ledgrid::ReceiverOutputConfiguration& output) {
+  const auto* context = static_cast<const PhysicalSubmitContext*>(raw_context);
+  return context != nullptr && context->frame != nullptr &&
+         led_driver.submit(
+             context->frame, output.rgb_bytes(), output.strip_count,
+             output.leds_per_strip, output.brightness, context->sequence);
+}
+
 void display_task(void*) {
   const std::uint64_t animation_started_us = esp_timer_get_time();
-  while (!pi_connected.load(std::memory_order_acquire)) {
+  while (true) {
     const std::uint64_t now_us = esp_timer_get_time();
-    if (!ledgrid::render_startup_rainbow(
+    ledgrid::ReceiverRenderTicket ticket{};
+    ledgrid::LocalBackgroundParameters parameters{};
+    std::uint16_t luminance = ledgrid::kQ8_8One;
+    std::uint64_t scene_time = 0;
+    bool due = false;
+    lock_runtime();
+    ticket = ledgrid::capture_render_ticket(receiver_runtime, receiver_output);
+    if (ticket.owner == ledgrid::BaseMode::LocalBackground) {
+      due = receiver_runtime.local_frame_due(now_us);
+      parameters = receiver_runtime.local_parameters();
+      luminance = receiver_runtime.active_context().luminance_q8_8;
+      scene_time = receiver_runtime.scene_time_us(now_us);
+    }
+    unlock_runtime();
+
+    if (ticket.owner == ledgrid::BaseMode::StartupFallback) {
+      if (!ledgrid::render_startup_rainbow(
             now_us - animation_started_us,
-            kDefaultStrips,
-            kDefaultLedsPerStrip,
+            ticket.output.strip_count,
+            ticket.output.leds_per_strip,
             startup_frame,
             sizeof(startup_frame))) {
-      ++display_errors;
-      break;
+        lock_runtime();
+        const bool current = ledgrid::render_ticket_still_current(
+            receiver_runtime, receiver_output, ticket);
+        unlock_runtime();
+        if (current) ++display_errors;
+        vTaskDelay(pdMS_TO_TICKS(10));
+        continue;
+      }
+      const std::uint32_t sequence =
+          next_sequence.fetch_add(1, std::memory_order_relaxed);
+      PhysicalSubmitContext submit_context{startup_frame, sequence};
+      lock_runtime();
+      const auto submit_result = ledgrid::submit_rendered_frame_if_current(
+          receiver_runtime, receiver_output, ticket, submit_physical_frame,
+          &submit_context);
+      unlock_runtime();
+      if (submit_result == ledgrid::PhysicalSubmitResult::Stale) continue;
+      if (submit_result == ledgrid::PhysicalSubmitResult::DriverRejected) {
+        ++display_errors;
+        continue;
+      }
+      const bool completed =
+          led_driver.wait_for_done(pdMS_TO_TICKS(100));
+      lock_runtime();
+      const bool completion_current = ledgrid::render_ticket_still_current(
+          receiver_runtime, receiver_output, ticket);
+      unlock_runtime();
+      if (completion_current) {
+        if (completed) last_displayed_sequence = sequence;
+        else ++display_errors;
+      }
+      continue;
     }
 
-    const std::uint32_t sequence =
-        next_sequence.fetch_add(1, std::memory_order_relaxed);
-    const bool submitted = led_driver.submit(
-        startup_frame,
-        static_cast<std::size_t>(kDefaultStrips) * kDefaultLedsPerStrip * 3U,
-        kDefaultStrips,
-        kDefaultLedsPerStrip,
-        kDefaultBrightness,
-        sequence);
-    const bool completed =
-        submitted && led_driver.wait_for_done(pdMS_TO_TICKS(100));
-    if (completed) {
-      last_displayed_sequence = sequence;
-    } else {
-      ++display_errors;
+    if (ticket.owner == ledgrid::BaseMode::LocalBackground) {
+      if (!due) {
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1));
+        continue;
+      }
+      const std::uint64_t render_started = esp_timer_get_time();
+      const bool rendered = ledgrid::render_compiled_rainbow(
+          scene_time, parameters, luminance, ticket.output.strip_count,
+          ticket.output.leds_per_strip, startup_frame, sizeof(startup_frame));
+      const std::uint32_t render_us = static_cast<std::uint32_t>(
+          esp_timer_get_time() - render_started);
+      if (!rendered) {
+        lock_runtime();
+        const bool failure_applied = ledgrid::render_ticket_still_current(
+            receiver_runtime, receiver_output, ticket) &&
+            receiver_runtime.local_render_failed_if_current(
+                ticket.ownership_generation);
+        unlock_runtime();
+        if (failure_applied) ++display_errors;
+        continue;
+      }
+      const std::uint32_t sequence =
+          next_sequence.fetch_add(1, std::memory_order_relaxed);
+      PhysicalSubmitContext submit_context{startup_frame, sequence};
+      lock_runtime();
+      const auto submit_result = ledgrid::submit_rendered_frame_if_current(
+          receiver_runtime, receiver_output, ticket, submit_physical_frame,
+          &submit_context);
+      unlock_runtime();
+      if (submit_result == ledgrid::PhysicalSubmitResult::Stale) continue;
+      if (submit_result == ledgrid::PhysicalSubmitResult::DriverRejected) {
+        lock_runtime();
+        const bool failure_applied = ledgrid::render_ticket_still_current(
+            receiver_runtime, receiver_output, ticket) &&
+            receiver_runtime.local_render_failed_if_current(
+                ticket.ownership_generation);
+        unlock_runtime();
+        if (failure_applied) ++display_errors;
+        continue;
+      }
+      const bool completed =
+          led_driver.wait_for_done(pdMS_TO_TICKS(100));
+      lock_runtime();
+      const bool completion_applied = ledgrid::render_ticket_still_current(
+          receiver_runtime, receiver_output, ticket) &&
+          (completed
+               ? receiver_runtime.local_frame_rendered_if_current(
+                     ticket.ownership_generation, now_us, scene_time, render_us)
+               : receiver_runtime.local_render_failed_if_current(
+                     ticket.ownership_generation));
+      unlock_runtime();
+      if (completion_applied) {
+        if (completed) last_displayed_sequence = sequence;
+        else ++display_errors;
+      }
+      continue;
     }
-  }
 
-  while (true) {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
     while (true) {
       ledgrid::FrameMetadata metadata{};
       int slot = -1;
@@ -186,39 +278,57 @@ void display_task(void*) {
       portEXIT_CRITICAL(&mailbox_mux);
       if (slot < 0) break;
 
-      const bool submitted = led_driver.submit(
-          mailbox_frames[slot],
-          metadata.byte_count,
-          metadata.strip_count,
-          metadata.leds_per_strip,
-          metadata.brightness,
-          metadata.sequence);
-      const bool completed =
-          submitted && led_driver.wait_for_done(pdMS_TO_TICKS(100));
+      lock_runtime();
+      const auto current_output = receiver_output.configuration();
+      const bool current =
+          receiver_runtime.base_mode() == ledgrid::BaseMode::HostFullScene &&
+          metadata.byte_count == current_output.rgb_bytes() &&
+          metadata.strip_count == current_output.strip_count &&
+          metadata.leds_per_strip == current_output.leds_per_strip &&
+          metadata.brightness == current_output.brightness;
+      const bool submitted = current && led_driver.submit(
+          mailbox_frames[slot], metadata.byte_count, metadata.strip_count,
+          metadata.leds_per_strip, metadata.brightness, metadata.sequence);
+      unlock_runtime();
+      if (!current) {
+        portENTER_CRITICAL(&mailbox_mux);
+        frame_mailbox.cancel_read(slot);
+        portEXIT_CRITICAL(&mailbox_mux);
+        break;
+      }
+      const bool completed = submitted &&
+          led_driver.wait_for_done(pdMS_TO_TICKS(100));
+      lock_runtime();
+      const auto completed_output = receiver_output.configuration();
+      const bool completion_current =
+          receiver_runtime.base_mode() == ledgrid::BaseMode::HostFullScene &&
+          metadata.byte_count == completed_output.rgb_bytes() &&
+          metadata.strip_count == completed_output.strip_count &&
+          metadata.leds_per_strip == completed_output.leds_per_strip &&
+          metadata.brightness == completed_output.brightness;
+      unlock_runtime();
 
       portENTER_CRITICAL(&mailbox_mux);
-      if (completed) {
+      if (completed && completion_current) {
         frame_mailbox.finish_read(slot);
       } else {
         frame_mailbox.cancel_read(slot);
       }
       portEXIT_CRITICAL(&mailbox_mux);
 
-      if (completed) {
+      if (completed && completion_current) {
         last_displayed_sequence = metadata.sequence;
-      } else {
+      } else if (completion_current) {
         ++display_errors;
       }
     }
   }
 }
 
-ledgrid::ReceiverStatusV2 status_snapshot() {
+ledgrid::ReceiverStatusV3 status_snapshot() {
   const auto counters = mailbox_counters();
-  ledgrid::ReceiverStatusV2 status{};
+  ledgrid::ReceiverStatusV3 status{};
   status.flags = 0x01U | (led_driver.in_flight() ? 0x02U : 0U);
-  status.active_strips = active_strips;
-  status.leds_per_strip = leds_per_strip;
   status.queued_transactions = queued_transactions.load(std::memory_order_relaxed);
   status.packets = packets_received.load(std::memory_order_relaxed);
   status.crc_errors = crc_errors.load(std::memory_order_relaxed);
@@ -237,11 +347,61 @@ ledgrid::ReceiverStatusV2 status_snapshot() {
   status.last_displayed_sequence =
       last_displayed_sequence.load(std::memory_order_relaxed);
   status.display_errors = display_errors.load(std::memory_order_relaxed);
+  lock_runtime();
+  const auto output = receiver_output.configuration();
+  status.active_strips = output.strip_count;
+  status.leds_per_strip = output.leds_per_strip;
+  status.capabilities = ledgrid::kCapabilityStatusV3 |
+                        ledgrid::kCapabilityExplicitBaseOwnership;
+  if (receiver_runtime.local_background_enabled()) {
+    status.capabilities |= ledgrid::kCapabilityStaticLocalBackground |
+                           ledgrid::kCapabilityPresentationContextV1;
+  }
+  status.base_mode = static_cast<std::uint8_t>(receiver_runtime.base_mode());
+  status.foreground_state =
+      static_cast<std::uint8_t>(receiver_runtime.foreground_state());
+  status.maintenance_state =
+      static_cast<std::uint8_t>(receiver_runtime.maintenance_state());
+  status.transition_reason = receiver_runtime.transition_reason();
+  status.last_result = receiver_runtime.last_result();
+  status.context_state = receiver_runtime.context_state();
+  const auto& local = receiver_runtime.local_parameters();
+  status.component_id = local.component_id;
+  status.preferred_cadence_hz = local.preferred_cadence_hz;
+  status.global_strip_offset = local.global_strip_offset;
+  status.common_seed = local.common_seed;
+  status.scene_epoch = local.scene_epoch;
+  const auto& context = receiver_runtime.active_context();
+  status.luminance_q8_8 = context.luminance_q8_8;
+  status.active_context_scene_revision = context.scene_revision;
+  status.active_vibe_revision = context.vibe_revision;
+  status.active_modifier_revision = context.modifier_revision;
+  std::memcpy(status.active_context_digest, context.context_digest, 32);
+  std::memcpy(status.active_vibe_digest, context.vibe_digest, 32);
+  std::memcpy(status.active_modifier_digest, context.modifier_digest, 32);
+  std::memcpy(status.active_controller_session, context.session, 16);
+  status.staged_context_scene_revision =
+      receiver_runtime.staged_context_scene_revision();
+  std::memcpy(status.staged_context_digest,
+              receiver_runtime.staged_context_digest(), 32);
+  std::memcpy(status.staged_controller_session,
+              receiver_runtime.staged_controller_session(), 16);
+  const auto& stats = receiver_runtime.render_stats();
+  status.cadence_deadlines = stats.cadence_deadlines;
+  status.rendered_frames = stats.rendered_frames;
+  status.missed_cadence = stats.missed_cadence;
+  status.last_render_us = stats.last_render_us;
+  status.max_render_us = stats.max_render_us;
+  status.last_frame_scene_time_us = stats.last_frame_scene_time_us;
+  status.last_processed_command = operation_tracker.last_processed_command();
+  status.operation_sequence = operation_tracker.sequence();
+  unlock_runtime();
+  status.logical_receiver_id = logical_receiver_id.load(std::memory_order_relaxed);
   return status;
 }
 
 bool queue_spi_transaction(std::size_t index) {
-  ledgrid::encode_receiver_status_v2(
+  ledgrid::encode_receiver_status_v3(
       status_snapshot(), spi_tx_buffers[index], kSpiBufferSize);
   auto& transaction = spi_transactions[index];
   transaction = {};
@@ -261,47 +421,103 @@ bool queue_spi_transaction(std::size_t index) {
 
 bool process_command(const std::uint8_t* data, std::size_t length) {
   if (data == nullptr || length == 0) return false;
+  const auto command = static_cast<ledgrid::ReceiverCommand>(data[0]);
+  ledgrid::ReceiverOutputConfiguration output{};
+  ledgrid::BaseMode current_mode = ledgrid::BaseMode::StartupFallback;
+  lock_runtime();
+  output = receiver_output.configuration();
+  current_mode = receiver_runtime.base_mode();
+  unlock_runtime();
+  const ledgrid::ReceiverDispatchDecision decision =
+      ledgrid::classify_receiver_dispatch(
+          data, length, output.rgb_bytes(), current_mode,
+          LEDGRID_ENABLE_LOCAL_BACKGROUND != 0);
 
-  switch (data[0]) {
-    case kCmdPing:
+  if (decision.route == ledgrid::ReceiverDispatchRoute::Reject) {
+    lock_runtime();
+    receiver_runtime.set_last_result(decision.result);
+    unlock_runtime();
+    return false;
+  }
+
+  if (decision.route == ledgrid::ReceiverDispatchRoute::StatusQuery)
+    return ledgrid::valid_status_query(data, length);
+  if (decision.route == ledgrid::ReceiverDispatchRoute::Runtime) {
+    ledgrid::ReceiverOperationResult result =
+        ledgrid::ReceiverOperationResult::Unsupported;
+    lock_runtime();
+    if (command != ledgrid::ReceiverCommand::ControllerSessionBegin &&
+        logical_receiver_id.load(std::memory_order_relaxed) <= 3) {
+      result = receiver_runtime.process_command(
+          data, length, static_cast<std::uint64_t>(esp_timer_get_time()));
+    } else {
+      receiver_runtime.set_last_result(result);
+    }
+    unlock_runtime();
+    if (display_task_handle != nullptr) xTaskNotifyGive(display_task_handle);
+    return result == ledgrid::ReceiverOperationResult::Ok;
+  }
+
+  switch (command) {
+    case ledgrid::ReceiverCommand::Ping:
       if (length != 1) return false;
-      digitalWrite(kStatusLed, !digitalRead(kStatusLed));
+      gpio_set_level(kStatusLed, !gpio_get_level(kStatusLed));
       return true;
 
-    case kCmdSetPixel: {
+    case ledgrid::ReceiverCommand::SetPixel: {
       if (length != 6) return false;
       const std::uint16_t pixel =
           (static_cast<std::uint16_t>(data[1]) << 8) | data[2];
-      if (pixel >= total_leds()) return false;
+      if (pixel >= output.total_leds()) return false;
       const std::size_t offset = static_cast<std::size_t>(pixel) * 3U;
       std::memcpy(working_frame + offset, data + 3, 3);
       return true;
     }
 
-    case kCmdSetBrightness:
+    case ledgrid::ReceiverCommand::SetBrightness: {
       if (length != 2) return false;
-      brightness = data[1];
-      publish_working_frame();
-      return true;
+      lock_runtime();
+      const bool updated = receiver_output.set_brightness(data[1]);
+      receiver_runtime.request_local_refresh();
+      if (updated &&
+          receiver_runtime.base_mode() == ledgrid::BaseMode::HostFullScene) {
+        publish_working_frame_locked(receiver_output.configuration());
+      }
+      unlock_runtime();
+      if (display_task_handle != nullptr) xTaskNotifyGive(display_task_handle);
+      return updated;
+    }
 
-    case kCmdShow:
+    case ledgrid::ReceiverCommand::Show: {
       if (length != 1) return false;
-      publish_working_frame();
+      lock_runtime();
+      if (receiver_runtime.base_mode() == ledgrid::BaseMode::HostFullScene) {
+        publish_working_frame_locked(receiver_output.configuration());
+      }
+      unlock_runtime();
       return true;
+    }
 
-    case kCmdClear:
+    case ledgrid::ReceiverCommand::Clear: {
       if (length != 1) return false;
-      std::memset(working_frame, 0, active_rgb_bytes());
-      publish_working_frame();
+      lock_runtime();
+      const auto current_output = receiver_output.configuration();
+      std::memset(working_frame, 0, current_output.rgb_bytes());
+      if (receiver_runtime.base_mode() == ledgrid::BaseMode::HostFullScene) {
+        publish_working_frame_locked(current_output);
+      }
+      unlock_runtime();
       return true;
+    }
 
-    case kCmdSetRange: {
+    case ledgrid::ReceiverCommand::SetRange: {
       if (length < 4) return false;
       const std::uint16_t start =
           (static_cast<std::uint16_t>(data[1]) << 8) | data[2];
       std::uint16_t count = data[3];
-      if (start >= total_leds()) return false;
-      count = std::min<std::uint16_t>(count, total_leds() - start);
+      if (start >= output.total_leds()) return false;
+      count = static_cast<std::uint16_t>(std::min<std::size_t>(
+          count, output.total_leds() - start));
       const std::size_t expected = 4U + static_cast<std::size_t>(count) * 3U;
       if (length != expected) return false;
       std::memcpy(
@@ -311,28 +527,51 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
       return true;
     }
 
-    case kCmdSetAll: {
-      const std::size_t expected = 1U + active_rgb_bytes();
+    case ledgrid::ReceiverCommand::SetAll: {
+      const std::size_t expected = 1U + output.rgb_bytes();
       if (length != expected) return false;
-      std::memcpy(working_frame, data + 1, active_rgb_bytes());
-      publish_working_frame();
+      lock_runtime();
+      const auto current_output = receiver_output.configuration();
+      if (current_output.rgb_bytes() != output.rgb_bytes()) {
+        unlock_runtime();
+        return false;
+      }
+      std::memcpy(working_frame, data + 1, current_output.rgb_bytes());
+      if (!publish_working_frame_locked(current_output)) {
+        unlock_runtime();
+        return false;
+      }
+      receiver_runtime.complete_host_frame();
+      unlock_runtime();
+      if (display_task_handle != nullptr) xTaskNotifyGive(display_task_handle);
       return true;
     }
 
-    case kCmdConfig: {
-      if (length < 4 || length > 5) return false;
+    case ledgrid::ReceiverCommand::Config: {
+      std::uint8_t new_logical_id = 0xFF;
+      if (!ledgrid::parse_logical_receiver_id(
+              data, length,
+              logical_receiver_id.load(std::memory_order_relaxed),
+              &new_logical_id)) return false;
       const std::uint8_t new_strips = data[1];
       const std::uint16_t new_leds =
           (static_cast<std::uint16_t>(data[2]) << 8) | data[3];
       if (new_strips != kMaxStrips || new_leds == 0 || new_leds > kMaxLedsPerStrip) {
         return false;
       }
-      if (new_strips != active_strips || new_leds != leds_per_strip) {
-        active_strips = new_strips;
-        leds_per_strip = new_leds;
+      lock_runtime();
+      const auto prior_output = receiver_output.configuration();
+      const bool configured = receiver_output.configure(new_strips, new_leds);
+      if (configured &&
+          (new_strips != prior_output.strip_count ||
+           new_leds != prior_output.leds_per_strip)) {
         std::memset(working_frame, 0, sizeof(working_frame));
-        publish_working_frame();
       }
+      receiver_runtime.request_local_refresh();
+      unlock_runtime();
+      if (!configured) return false;
+      logical_receiver_id.store(new_logical_id, std::memory_order_release);
+      if (display_task_handle != nullptr) xTaskNotifyGive(display_task_handle);
       return true;
     }
 
@@ -370,29 +609,35 @@ void initialize_spi() {
   const esp_err_t result = spi_slave_initialize(
       SPI2_HOST, &bus_config, &slave_config, SPI_DMA_CH_AUTO);
   if (result != ESP_OK) {
-    Serial.printf("SPI initialization failed: %d\n", result);
-    while (true) delay(1000);
+    ESP_LOGE(kLogTag, "SPI initialization failed: %d", result);
+    while (true) vTaskDelay(pdMS_TO_TICKS(1000));
   }
 
   for (std::size_t i = 0; i < kSpiQueueDepth; ++i) {
     if (!queue_spi_transaction(i)) {
-      Serial.printf("SPI queue initialization failed for slot %u\n",
-                    static_cast<unsigned>(i));
-      while (true) delay(1000);
+      ESP_LOGE(kLogTag, "SPI queue initialization failed for slot %u",
+               static_cast<unsigned>(i));
+      while (true) vTaskDelay(pdMS_TO_TICKS(1000));
     }
   }
 }
 
 }  // namespace
 
-void setup() {
-  Serial.begin(115200);
-  pinMode(kStatusLed, OUTPUT);
-  digitalWrite(kStatusLed, LOW);
+extern "C" void app_main() {
+  gpio_reset_pin(kStatusLed);
+  gpio_set_direction(kStatusLed, GPIO_MODE_OUTPUT);
+  gpio_set_level(kStatusLed, 0);
+
+  runtime_mutex = xSemaphoreCreateMutex();
+  if (runtime_mutex == nullptr) {
+    ESP_LOGE(kLogTag, "receiver runtime mutex allocation failed");
+    while (true) vTaskDelay(pdMS_TO_TICKS(1000));
+  }
 
   if (!led_driver.begin(kLedPins, kMaxStrips, kMaxLedsPerStrip)) {
-    Serial.println("LCD/I80 parallel LED driver initialization failed");
-    while (true) delay(1000);
+    ESP_LOGE(kLogTag, "LCD/I80 parallel LED driver initialization failed");
+    while (true) vTaskDelay(pdMS_TO_TICKS(1000));
   }
 
   if (xTaskCreatePinnedToCore(
@@ -403,61 +648,74 @@ void setup() {
           3,
           &display_task_handle,
           0) != pdPASS) {
-    Serial.println("Display task creation failed");
-    while (true) delay(1000);
+    ESP_LOGE(kLogTag, "Display task creation failed");
+    while (true) vTaskDelay(pdMS_TO_TICKS(1000));
   }
 
-  Serial.println("LED Grid native ESP32-S3 parallel receiver v2");
+  ESP_LOGI(kLogTag, "LED Grid ESP32-S3 parallel receiver v3");
   initialize_spi();
-  Serial.printf(
-      "Ready: %u strips x %u LEDs, SPI queue=%u, encoded frame=%u bytes\n",
-      active_strips,
-      leds_per_strip,
+  lock_runtime();
+  const auto initial_output = receiver_output.configuration();
+  unlock_runtime();
+  ESP_LOGI(kLogTag,
+      "Ready: %u strips x %u LEDs, SPI queue=%u, encoded frame=%u bytes",
+      initial_output.strip_count,
+      initial_output.leds_per_strip,
       static_cast<unsigned>(kSpiQueueDepth),
-      static_cast<unsigned>(ledgrid::ws2812_encoded_size(leds_per_strip)));
-}
+      static_cast<unsigned>(
+          ledgrid::ws2812_encoded_size(initial_output.leds_per_strip)));
+  while (true) {
+    spi_slave_transaction_t* completed = nullptr;
+    const esp_err_t result = spi_slave_get_trans_result(
+        SPI2_HOST, &completed, pdMS_TO_TICKS(100));
+    if (result == ESP_ERR_TIMEOUT) continue;
+    if (result != ESP_OK || completed == nullptr) {
+      ++spi_queue_errors;
+      continue;
+    }
 
-void loop() {
-  spi_slave_transaction_t* completed = nullptr;
-  const esp_err_t result = spi_slave_get_trans_result(
-      SPI2_HOST, &completed, pdMS_TO_TICKS(100));
-  if (result == ESP_ERR_TIMEOUT) return;
-  if (result != ESP_OK || completed == nullptr) {
-    ++spi_queue_errors;
-    return;
-  }
+    if (queued_transactions > 0) --queued_transactions;
+    ++packets_received;
+    const std::size_t index = reinterpret_cast<std::size_t>(completed->user);
+    const std::size_t bytes = completed->trans_len / 8U;
+    const std::uint8_t* packet = spi_rx_buffers[index];
 
-  if (queued_transactions > 0) --queued_transactions;
-  ++packets_received;
-  const std::size_t index = reinterpret_cast<std::size_t>(completed->user);
-  const std::size_t bytes = completed->trans_len / 8U;
-  const std::uint8_t* packet = spi_rx_buffers[index];
-
-  if (bytes < 1U + kCrcBytes) {
-    ++crc_errors;
-  } else {
-    const std::size_t payload_bytes = bytes - kCrcBytes;
-    const std::uint16_t received_crc =
-        (static_cast<std::uint16_t>(packet[bytes - 2]) << 8) |
-        packet[bytes - 1];
-    const std::uint32_t crc_started =
-        static_cast<std::uint32_t>(esp_timer_get_time());
-    const std::uint16_t computed_crc = crc16_ccitt(packet, payload_bytes);
-    last_crc_us = duration_u16(
-        static_cast<std::uint32_t>(esp_timer_get_time()) - crc_started);
-    if (received_crc != computed_crc) {
+    if (bytes < 1U + kCrcBytes) {
       ++crc_errors;
     } else {
-      ++crc_ok_packets;
-      if (process_command(packet, payload_bytes)) {
-        const bool was_connected =
-            pi_connected.exchange(true, std::memory_order_acq_rel);
-        if (!was_connected && display_task_handle != nullptr) {
-          xTaskNotifyGive(display_task_handle);
+      const std::size_t payload_bytes = bytes - kCrcBytes;
+      const std::uint32_t crc_started =
+          static_cast<std::uint32_t>(esp_timer_get_time());
+      const bool crc_valid =
+          ledgrid::receiver_packet_crc_valid(packet, bytes);
+      last_crc_us = duration_u16(
+          static_cast<std::uint32_t>(esp_timer_get_time()) - crc_started);
+      if (!crc_valid) {
+        ++crc_errors;
+      } else {
+        ++crc_ok_packets;
+        const bool status_query =
+            packet[0] == static_cast<std::uint8_t>(
+                             ledgrid::ReceiverCommand::StatusQuery);
+        bool dispatch_allowed = true;
+        if (!status_query) {
+          lock_runtime();
+          dispatch_allowed = operation_tracker.begin(packet[0]);
+          unlock_runtime();
+        }
+        const bool accepted = dispatch_allowed &&
+            process_command(packet, payload_bytes);
+        if (!status_query && dispatch_allowed) {
+          lock_runtime();
+          if (packet[0] < 0x10 || packet[0] == 0xFF) {
+            receiver_runtime.set_last_result(
+                accepted ? ledgrid::ReceiverOperationResult::Ok
+                         : ledgrid::ReceiverOperationResult::InvalidCommand);
+          }
+          unlock_runtime();
         }
       }
     }
+    queue_spi_transaction(index);
   }
-
-  queue_spi_transaction(index);
 }

@@ -29,8 +29,8 @@ for a nominal 4.44 ms display transaction.
 
 All of these must pass before a hardware flash:
 
-- Host unit tests pass, including both receiver-status versions and frame-counter
-  aggregation.
+- Host unit tests pass, including receiver-status v1/v2/v3 compatibility,
+  acknowledgement correlation, logical identity, and frame-counter aggregation.
 - Host transport tests prove SPI0 and SPI1 bus groups overlap while chip selects
   sharing one bus remain serialized; live telemetry reports the complete logical
   device-to-bus/chip-select map.
@@ -61,7 +61,45 @@ All of these must pass before a hardware flash:
   - deterministic accounting of accepted, displayed, and superseded frames.
 - The production firmware builds for `esp32-s3-devkitc1-n16r8` using the pinned
   pioarduino/ESP-IDF 5 toolchain.
+- The dedicated local-canary image builds from the same pinned inputs with only
+  `LEDGRID_ENABLE_LOCAL_BACKGROUND=1`; compilation evidence proves the ordinary
+  production image uses `0` and the canary uses `1`.
 - The production image uses no FastLED symbols or dependency.
+
+## Phase 3A one-receiver local canary
+
+Run this only after the feature-off production image passes the ordinary
+streamed-frame gates on all four receivers. Flash the named feature-on image to
+one explicitly recorded serial port, leave the other three on production, and
+prepare the production image and restore command before stopping the service.
+
+The canary passes only when:
+
+- a controller-requested fresh serialized status drain reports v3 plus the
+  status-v3 and explicit-ownership capabilities, and receiver-reported logical
+  IDs 0 through 3 on the full wall; only the selected receiver must advertise
+  the static-background and presentation-context capabilities;
+- exact staged context plus explicit start enters `LocalBackground`, then frame
+  and cadence counters advance for at least 60 seconds after the Pi/controller
+  connection is closed, with no render miss, transition failure, DMA failure,
+  reset, panic, or watchdog evidence;
+- a live cadence/offset/seed update preserves the active scene binding and the
+  next frame uses the new values; an exact retry is idempotent while stale or
+  conflicting context and parameter updates fail closed;
+- a complete host frame reclaims `HostFullScene` without reboot or flash, while
+  status/config/brightness and partial frame commands never claim ownership;
+- receiver restart returns to `StartupFallback`, and restarting the ordinary
+  controller service presents a complete host frame and restores the desired
+  Python scene;
+- the selected receiver is reflashed with the feature-off production image and
+  the full-wall status, dense 60-second streamed canary, and animation sweep pass
+  again before the canary is closed.
+
+The portable four-board compensation test must sample every receiver at one
+shared host instant and keep scene-time skew at or below 5 ms. That bound is a
+protocol/orchestration gate, not a claim that sequential SPI commands activate
+on the same microsecond. Visual lane/seam inspection remains mandatory because
+receiver telemetry cannot observe downstream LED wiring.
 
 ## Single-controller electronic capacity gates
 
@@ -109,12 +147,12 @@ After all four controllers are flashed:
 Keep the previously validated firmware binaries until full-wall acceptance passes.
 A failed canary is restored before further firmware changes are deployed.
 
-## Future receiver-native modes
+## Later receiver-native modes
 
-The [unified roadmap](plan-revamped-animation-pipeline.md) adds acceptance for a
-compiled local-background canary, sparse RGBA foreground, installation profile,
-and eventually trusted unsigned native modules. Those gates extend this file's
-streamed-frame requirements; they never replace or lower them.
+The [unified roadmap](plan-revamped-animation-pipeline.md) next adds sparse RGBA
+foreground, an installation profile, and eventually trusted unsigned native
+modules. Those gates extend this file's streamed-frame requirements; they never
+replace or lower them.
 
 The `native-animations` branch remains an organ donor for portable ABI/loader,
 package-validation, status, timing, cache, quarantine, and four-board

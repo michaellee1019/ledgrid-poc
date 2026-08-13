@@ -24,7 +24,14 @@ from drivers.multi_device import MultiDeviceLEDController
 from drivers.spi_controller import CRC_BYTES, LEDController
 from drivers.spi_controller import RECEIVER_STATUS_BYTES
 from drivers.spi_controller import RECEIVER_STATUS_BYTES_V2
-from tools.benchmarks.receiver_acceptance import evaluate_samples
+from tools.benchmarks.receiver_acceptance import (
+    CAPABILITY_EXPLICIT_BASE_OWNERSHIP,
+    CAPABILITY_PRESENTATION_CONTEXT_V1,
+    CAPABILITY_STATIC_LOCAL_BACKGROUND,
+    CAPABILITY_STATUS_V3,
+    evaluate_phase3a_status,
+    evaluate_samples,
+)
 from tools.benchmarks.live_animation_sweep import receiver_failures
 
 
@@ -408,6 +415,88 @@ class MultiDevicePartialTests(unittest.TestCase):
 
 
 class ReceiverAcceptanceTests(unittest.TestCase):
+    def test_phase3a_status_gate_requires_v3_ownership_and_exact_identities(self):
+        devices = [
+            {
+                "receiver_status_version": 3,
+                "receiver_capabilities": (
+                    CAPABILITY_STATUS_V3 | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
+                ),
+                "receiver_logical_device": index,
+            }
+            for index in range(4)
+        ]
+        self.assertTrue(evaluate_phase3a_status(devices)["passed"])
+
+        cases = (
+            (0, "receiver_status_version", 2, "status v2"),
+            (1, "receiver_capabilities", 0, "status capabilities"),
+            (2, "receiver_logical_device", 3, "logical identity"),
+        )
+        for index, key, value, message in cases:
+            with self.subTest(key=key):
+                broken = [dict(item) for item in devices]
+                broken[index][key] = value
+                result = evaluate_phase3a_status(broken)
+                self.assertFalse(result["passed"])
+                self.assertTrue(any(message in failure for failure in result["failures"]))
+        self.assertFalse(evaluate_phase3a_status(devices[:-1])["passed"])
+
+    def test_phase3a_canary_gate_requires_local_context_capabilities_only_there(self):
+        devices = [
+            {
+                "receiver_status_version": 3,
+                "receiver_capabilities": (
+                    CAPABILITY_STATUS_V3 | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
+                ),
+                "receiver_logical_device": index,
+            }
+            for index in range(4)
+        ]
+        canary_bits = (
+            CAPABILITY_STATIC_LOCAL_BACKGROUND
+            | CAPABILITY_PRESENTATION_CONTEXT_V1
+        )
+        devices[2]["receiver_capabilities"] |= canary_bits
+        self.assertTrue(
+            evaluate_phase3a_status(devices, local_canary_device=2)["passed"]
+        )
+        devices[2]["receiver_capabilities"] &= ~CAPABILITY_PRESENTATION_CONTEXT_V1
+        result = evaluate_phase3a_status(devices, local_canary_device=2)
+        self.assertFalse(result["passed"])
+        self.assertTrue(any("local-canary capabilities" in item for item in result["failures"]))
+
+    def test_phase3a_status_gate_rejects_stale_or_failed_refresh_proof(self):
+        devices = [
+            {
+                "receiver_status_version": 3,
+                "receiver_capabilities": (
+                    CAPABILITY_STATUS_V3 | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
+                ),
+                "receiver_logical_device": index,
+            }
+            for index in range(4)
+        ]
+        fresh = {
+            "request_id": "fresh-2", "completed_at": 123.5,
+            "passed": True, "errors": [],
+        }
+        self.assertTrue(evaluate_phase3a_status(
+            devices, refresh=fresh, expected_refresh_id="fresh-2"
+        )["passed"])
+        stale = evaluate_phase3a_status(
+            devices, refresh={**fresh, "request_id": "old-1"},
+            expected_refresh_id="fresh-2",
+        )
+        self.assertFalse(stale["passed"])
+        self.assertTrue(any("stale" in item for item in stale["failures"]))
+        failed = evaluate_phase3a_status(
+            devices, refresh={**fresh, "passed": False},
+            expected_refresh_id="fresh-2",
+        )
+        self.assertFalse(failed["passed"])
+        self.assertTrue(any("did not pass" in item for item in failed["failures"]))
+
     def test_live_sweep_evaluator_checks_only_integrity_counter_deltas(self):
         first = {
             'receiver_status_version': 2,
@@ -425,6 +514,9 @@ class ReceiverAcceptanceTests(unittest.TestCase):
             receiver_failures(first, last),
             ['display errors increased by 2'],
         )
+
+        v3_first = dict(first, receiver_status_version=3)
+        self.assertEqual(receiver_failures(v3_first, dict(v3_first)), [])
 
     def test_acceptance_evaluator_passes_accounted_180fps_pipeline(self):
         first = {
@@ -453,6 +545,12 @@ class ReceiverAcceptanceTests(unittest.TestCase):
 
         self.assertTrue(result['passed'], result['failures'])
         self.assertEqual(result['displayed_fps'], 185.0)
+
+        v3_result = evaluate_samples([
+            dict(first, receiver_status_version=3),
+            dict(last, receiver_status_version=3),
+        ], 10.0)
+        self.assertTrue(v3_result['passed'], v3_result['failures'])
 
     def test_acceptance_evaluator_reports_integrity_and_timing_failures(self):
         first = {

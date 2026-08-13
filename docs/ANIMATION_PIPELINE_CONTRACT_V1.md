@@ -3,16 +3,18 @@
 ## Scope and authority
 
 This document freezes the names, bytes, state boundaries, and rollout gates
-needed by Phase 1 of
+needed by Phase 1 and activated incrementally through Phase 3A of
 [plan-revamped-animation-pipeline.md](plan-revamped-animation-pipeline.md).
-It is a reference contract, not an active scene or receiver implementation.
-All six rollout flags remain off, so the current Python manager, API,
-persistence, preview, SPI protocol, and receiver behavior remain authoritative.
+The scene/provider rollout flags remain off, while Phase 3A activates explicit
+receiver ownership and status v3. Ordinary production firmware keeps the
+statically linked local-background capability disabled until its one-receiver
+canary; complete host frames remain the accepted wall path.
 
 Machine-readable reference vectors live in
-`tests/fixtures/animation_pipeline_v1.json`. Python and portable C++ tests must
-consume or reproduce those exact values before a later phase can activate the
-corresponding behavior.
+`tests/fixtures/animation_pipeline_v1.json`. Phase 3A receiver-presentation
+vectors live in `tests/fixtures/receiver_presentation_v1.json`. Python and
+portable C++ tests must consume or reproduce those exact values before the
+corresponding behavior is activated.
 
 ## Frozen schema and protocol identities
 
@@ -31,13 +33,16 @@ change; these identifiers and versions may not change in place.
 | Pipeline golden vectors | `ledgrid.animation-pipeline-golden` | 1 |
 | Rollout flags | `ledgrid.animation-pipeline-feature-flags` | 1 |
 | Foreground protocol | `ledgrid.foreground-protocol` | 1 |
-| Receiver status | `ledgrid.receiver-status` | 3 (reserved) |
+| Receiver presentation context | `ledgrid.receiver-presentation-golden` | 1 |
+| Receiver status | `ledgrid.receiver-status` | 3 |
 | Native background ABI | `ledgrid.native-background-abi` | 2 (reserved) |
 | Unsigned native bundle | `ledgrid.native-background-bundle` | 1 (reserved) |
 | Installation profile | `ledgrid.installation-profile` | 1 (reserved) |
 
 Reserved contracts are deliberately not accepted by current runtime code.
-Receiver status v2 remains the only live receiver status contract in Phase 1.
+Status v3 is live and its first 64 bytes preserve every v2 counter offset, but
+uses `LGS3`; compatibility is intentionally new-host-to-old-firmware. An old
+host that accepts only `LGS2` is not compatible with new firmware.
 
 ## Component and presentation state
 
@@ -102,6 +107,65 @@ Version 1 does not claim strict receiver v-sync. Physical acceptance requires:
 Failure of either bound keeps hybrid playback experimental and leaves complete
 host frames as the accepted path.
 
+## Phase 3A receiver ownership and status v3
+
+The live base states are `StartupFallback=0`, `LocalBackground=1`, and
+`HostFullScene=2`. Foreground is `Cleared=0` in this phase and maintenance is
+`Inactive=0`. `PING`, `CONFIG`, `STATUS_QUERY`, brightness, partial RGB,
+`SHOW`, `CLEAR`, and presentation-context traffic never claim the base. Only an
+accepted complete `SET_ALL` or `LOCAL_BACKGROUND_START` can do so. With the
+local feature disabled, local/context commands return `Unsupported`; SET_ALL
+retains the same host takeover path.
+
+Local command bytes, before the shared trailing CRC-16, are:
+
+| Command | ID | Exact fields after ID | Exact bytes |
+| --- | ---: | --- | ---: |
+| `LOCAL_BACKGROUND_START` | `0x10` | component `u16`, cadence Hz `u16`, global strip offset `u32`, common seed `u32`, scene epoch `u64` | 21 |
+| `LOCAL_BACKGROUND_STOP` | `0x11` | none | 1 |
+| `LOCAL_BACKGROUND_PARAMETERS` | `0x12` | cadence Hz `u16`, global strip offset `u32`, common seed `u32` | 11 |
+
+Component `1` is the compiled rainbow; cadence is 1–200 Hz. START requires an
+active context with the same scene epoch. CONFIG remains exactly four or five
+bytes for legacy callers; its six-byte form appends a logical receiver ID 0–3.
+Unprovisioned identity is `0xff`, and local commands fail closed until the host
+has capability-gated and verified that identity.
+
+`STATUS_QUERY` is ID `0x08` followed by 319 zero bytes. The response is the
+following exact 320-byte, big-endian `LGS3` snapshot:
+
+| Offset | Bytes | Field |
+| ---: | ---: | --- |
+| 0 | 4 | magic `LGS3` |
+| 4 | 1 | version `3` |
+| 5 | 59 | complete status-v2 fields at their original offsets |
+| 64 | 4 | capability bits |
+| 68 | 6 | base, foreground, maintenance, transition reason, result, context state |
+| 74 | 6 | component ID, cadence Hz, luminance Q8.8 (`u16` each) |
+| 80 | 8 | global strip offset and common seed (`u32` each) |
+| 88 | 32 | scene epoch and active scene/vibe/modifier revisions (`u64` each) |
+| 120 | 16 | cadence deadlines, rendered frames, misses (`u32`); last/max render (`u16`) |
+| 136 | 8 | last rendered scene time in microseconds |
+| 144 | 96 | active context, vibe, and modifier SHA-256 digests |
+| 240 | 40 | staged scene revision and staged context digest |
+| 280 | 32 | active and staged controller session IDs |
+| 312 | 1 | logical receiver ID |
+| 313 | 1 | last processed non-query command ID |
+| 314 | 2 | reserved zero |
+| 316 | 4 | operation sequence |
+
+Capability bits are static local background `1<<0`, presentation context v1
+`1<<1`, status v3 `1<<2`, and explicit ownership `1<<3`. The ordinary image
+advertises status/ownership only; the named canary image also advertises the
+local/context bits.
+
+Every CRC-valid dispatched non-status command advances the nonwrapping
+operation sequence exactly once and records its command/result. CRC failures
+and STATUS_QUERY do not advance it. Because the ESP32 keeps two SPI response
+buffers queued, the host serializes transfers, drains twice before and after a
+command, and accepts an acknowledgement only when both command ID and the next
+operation sequence match.
+
 ## Frame, alpha, opacity, and coordinate rules
 
 `BaseFrame` is contiguous `uint8 (total_leds, 3)` RGB. `OverlayFrame` is
@@ -134,6 +198,146 @@ transforms do not cross this boundary.
 Dirty ranges are sorted, non-overlapping, half-open ranges. Movement/removal
 uses the union of old and new coverage. A complete clear covers every formerly
 covered pixel even when the new overlay contains no nonzero alpha.
+
+## Phase 3A staged presentation-context wire contract
+
+The Pi is authoritative for the resolved presentation context. A receiver does
+not look up a vibe by ID, infer a plant-modifier default, or receive calibrated
+plant geometry through this contract. It stages the exact resolved values from
+the host and activates them only after a matching commit.
+
+All integers are unsigned big-endian. Each command starts with its command ID
+and protocol version `1`. The byte counts below include that two-byte prefix but
+exclude the transport's trailing CRC-16/CCITT-FALSE. The context serializer
+returns pre-CRC bytes; the existing SPI transport adds and verifies the CRC.
+
+| Command | ID | Exact bytes before CRC |
+| --- | ---: | ---: |
+| `PRESENTATION_CONTEXT_BEGIN` | `0x21` | 58 |
+| `PRESENTATION_CONTEXT_SET` | `0x22` | `145 + 3 × modifier_count` (maximum 187) |
+| `PRESENTATION_CONTEXT_COMMIT` | `0x23` | 74 |
+
+`PRESENTATION_CONTEXT_BEGIN` freezes one expected staged body:
+
+| Offset | Field | Encoding |
+| ---: | --- | --- |
+| 0 | command | `u8 = 0x21` |
+| 1 | version | `u8 = 1` |
+| 2 | controller session ID | opaque `bytes[16]` |
+| 18 | scene revision | `u64` |
+| 26 | expected context digest | opaque SHA-256 `bytes[32]` |
+
+`PRESENTATION_CONTEXT_SET` carries the complete context. The eight palette
+roles are packed as RGB8 in this fixed order: `background_low`,
+`background_mid`, `background_high`, `primary`, `secondary`, `accent`, `hud`,
+`warning`.
+
+| Offset | Field | Encoding |
+| ---: | --- | --- |
+| 0 | command | `u8 = 0x22` |
+| 1 | version | `u8 = 1` |
+| 2 | controller session ID | opaque `bytes[16]` |
+| 18 | scene revision | `u64` |
+| 26 | canonical vibe ID | `u8` |
+| 27 | vibe profile version | `u32` |
+| 31 | vibe revision | `u64` |
+| 39 | resolved vibe-profile digest | opaque SHA-256 `bytes[32]` |
+| 71 | resolved palette | eight canonical RGB8 roles, `bytes[24]` |
+| 95 | resolved tempo scale | unsigned Q8.8 `u16` |
+| 97 | resolved luminance scale | unsigned Q8.8 `u16`, range 0 through 256 |
+| 99 | resolved chroma scale | unsigned Q8.8 `u16` |
+| 101 | resolved energy | unsigned Q8.8 `u16` |
+| 103 | plant-modifier state version | `u8 = 1` |
+| 104 | plant-modifier revision | `u64` |
+| 112 | resolved plant-modifier digest | opaque SHA-256 `bytes[32]` |
+| 144 | modifier count | `u8`, maximum 14 |
+| 145 | canonical modifier entries | repeated `(modifier_id:u8, strength_q8_8:u16)` |
+
+Vibe IDs have fixed numeric values: `neutral=1`, `quiet=2`, `cozy=3`,
+`vivid=4`, and `celebration=5`. Plant modifier numeric values are one-based in
+the frozen `PLANT_MODIFIER_IDS` order:
+
+```text
+illuminate, shadow, refract, hue_shift, liquid_glass,
+attractor, repulsor, slow_zone, obstacle, portal, bumper,
+hazard, habitat, emitter
+```
+
+Every active modifier appears once, in that order, with an explicit resolved
+strength; SET never asks firmware to supply a default. The modifier digest is:
+
+```text
+SHA256(state_version:u8 || modifier_count:u8 || canonical_modifier_entries)
+```
+
+The context digest in BEGIN and COMMIT is:
+
+```text
+SHA256(SET bytes from offset 18 through the final modifier entry)
+```
+
+It therefore binds the scene revision, resolved vibe identity/version/revision,
+resolved vibe digest, exact palette and scalar bytes, plant state
+version/revision/digest, and every modifier entry. It deliberately excludes the
+command/version, controller session, scene epoch, and scheduled commit time.
+BEGIN and SET independently bind the staging operation to the session; COMMIT
+binds the same digest to its schedule. Equal revisions are idempotent only when
+the complete digest also matches.
+
+`PRESENTATION_CONTEXT_COMMIT` activates only the matching staged body:
+
+| Offset | Field | Encoding |
+| ---: | --- | --- |
+| 0 | command | `u8 = 0x23` |
+| 1 | version | `u8 = 1` |
+| 2 | controller session ID | opaque `bytes[16]` |
+| 18 | scene revision | `u64` |
+| 26 | scene epoch | `u64` |
+| 34 | presentation time since scene epoch | `u64` microseconds |
+| 42 | context digest | opaque SHA-256 `bytes[32]` |
+
+Sequential board commits compensate transport time from one host monotonic
+anchor. If the requested base scene time is `S0` at host time `T0`, the host
+drains that board's two queued acknowledgements, samples `Ti`, and serializes
+`S0 + (Ti - T0)` in microseconds. The receiver advances from that value using
+elapsed time since its local command receipt. Thus every board estimates the
+same scene time at a later real instant, apart from the bounded command-transfer
+interval; portable acceptance requires the resulting scene/pixel skew to remain
+at or below 5 ms. The host caches only the latest adjusted COMMIT per receiver,
+keyed by session, scene revision, and context digest, so an active retry is
+byte-identical without retaining one schedule per historical scene. Compensation
+does not alter the context digest.
+
+### Fixed-point and luminance rule
+
+All resolved presentation scalars use unsigned Q8.8. A finite non-negative
+host scalar is quantized with round-half-up:
+
+```text
+q8_8 = floor(value * 256 + 0.5)
+```
+
+Values that exceed `u16`, negative or non-finite values, booleans, unknown IDs
+or fields, incomplete/reordered palette roles, duplicate/out-of-order modifier
+entries, noncanonical plant combinations, and counters outside `u64` are
+rejected rather than clamped or ignored. Luminance and plant strength are
+additionally bounded to `[0, 256]` after quantization.
+
+Receiver-local RGB luminance is applied exactly once, after the local renderer
+has produced its authored RGB and before the separate physical master-
+brightness/output step:
+
+```text
+presented_u8 = min(255, (authored_u8 * luminance_q8_8 + 128) // 256)
+```
+
+Thus luminance zero is exact black, `128` rounds one-half upward, and unity
+`256` is an exact byte-for-byte no-op. The host must not pre-apply vibe
+luminance to receiver-local content, and firmware must not apply it once per
+layer or again at display output. The shared fixture includes zero/unity
+endpoints, both sides of the half-up boundary, current profile quantization,
+multiple vibes, multiple modifier sets, high counter values, exact packet
+bytes, and all three digests.
 
 ## Dormant foreground wire contract
 

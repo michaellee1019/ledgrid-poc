@@ -307,14 +307,22 @@ preview frames from the same channel. Hot reload is suitable for local plugin
 iteration, but production changes should go through the normal deploy and
 acceptance flow.
 
-## Planned evolution and prototype reference
+## Receiver boundary and planned evolution
 
 This document describes the current Python host-rendered plugin, catalog, and
-fixed-scene product contract. The
-[unified roadmap](plan-revamped-animation-pipeline.md) next establishes explicit
-receiver ownership with a statically linked native background. Do not implement
-that future state by treating firmware playback as an `AnimationBase` or by
-weakening the current manifest allowlist.
+fixed-scene product contract. Phase 3A of the
+[unified roadmap](plan-revamped-animation-pipeline.md) now provides explicit
+receiver ownership, status v3, a staged host-authoritative presentation context,
+and a statically linked rainbow behind a dedicated firmware canary flag. The
+ordinary production image keeps local playback disabled, and a complete host RGB
+frame remains the accepted wall path and immediate takeover mechanism. Phase 3B
+adds the first sparse foreground only after the one-receiver Phase 3A canary.
+
+Receiver playback is not an `AnimationBase`, does not weaken the Python manifest
+allowlist, and does not introduce another catalog. The Pi continues to resolve
+vibe and plant-modifier presentation state and transmits exact fixed-point values
+and digests; firmware does not perform local profile lookup or receive calibrated
+plant geometry in Phase 3A.
 
 The `native-animations` branch remains an organ donor for the roadmap's later
 receiver phases. Reuse its ABI/build validation, host preview harness, ESP-IDF

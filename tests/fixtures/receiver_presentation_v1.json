@@ -1,0 +1,417 @@
+{
+  "$schema": "ledgrid.receiver-presentation-golden",
+  "fixed_point": {
+    "format": "unsigned_q8_8",
+    "luminance_apply_once": "min(255, (channel_u8 * factor_q8_8 + 128) // 256)",
+    "luminance_range": [
+      0,
+      256
+    ],
+    "quantize": "floor(value * 256 + 0.5)",
+    "unity": 256
+  },
+  "luminance_vectors": [
+    {
+      "channel_u8": 255,
+      "expected_u8": 0,
+      "factor_q8_8": 0,
+      "id": "zero_endpoint"
+    },
+    {
+      "channel_u8": 1,
+      "expected_u8": 0,
+      "factor_q8_8": 127,
+      "id": "below_half_rounds_down"
+    },
+    {
+      "channel_u8": 1,
+      "expected_u8": 1,
+      "factor_q8_8": 128,
+      "id": "half_rounds_up"
+    },
+    {
+      "channel_u8": 255,
+      "expected_u8": 128,
+      "factor_q8_8": 128,
+      "id": "half_max_channel"
+    },
+    {
+      "channel_u8": 17,
+      "expected_u8": 13,
+      "factor_q8_8": 192,
+      "id": "cozy_three_quarters"
+    },
+    {
+      "channel_u8": 255,
+      "expected_u8": 140,
+      "factor_q8_8": 141,
+      "id": "quiet_quantized"
+    },
+    {
+      "channel_u8": 255,
+      "expected_u8": 255,
+      "factor_q8_8": 256,
+      "id": "unity_endpoint"
+    }
+  ],
+  "presentation_vectors": [
+    {
+      "expected": {
+        "begin_bytes": 58,
+        "begin_hex": "210100112233445566778899aabbccddeeff00000000000000013b9d004f64202f812a5a13882e4e3395a27e44d126b5d1bbcd584303307beb95",
+        "commit_bytes": 74,
+        "commit_hex": "230100112233445566778899aabbccddeeff0000000000000001010203040506070800000000000000003b9d004f64202f812a5a13882e4e3395a27e44d126b5d1bbcd584303307beb95",
+        "context_digest_hex": "3b9d004f64202f812a5a13882e4e3395a27e44d126b5d1bbcd584303307beb95",
+        "plant_digest_hex": "47dc540c94ceb704a23875c11273e16bb0b8a87aed84de911f2133568115f254",
+        "set_bytes": 145,
+        "set_hex": "220100112233445566778899aabbccddeeff000000000000000101000000010000000000000000fe8ea498bb95fe03ef018c3fdd996a6d540e82dfe45ac246aa322744ab2db01e080a102026345c6880e0e4ec98a4b8ffb848f0f4fcff4840010001000100008001000000000000000047dc540c94ceb704a23875c11273e16bb0b8a87aed84de911f2133568115f25400"
+      },
+      "id": "neutral_empty",
+      "input": {
+        "controller_session_id_hex": "00112233445566778899aabbccddeeff",
+        "plant_modifiers": {
+          "active": [],
+          "strengths": {},
+          "version": 1
+        },
+        "plant_revision": 0,
+        "present_at_scene_time_us": 0,
+        "scene_epoch": 72623859790382856,
+        "scene_revision": 1,
+        "vibe": {
+          "palette_roles": {
+            "accent": [
+              255,
+              184,
+              72
+            ],
+            "background_high": [
+              92,
+              104,
+              128
+            ],
+            "background_low": [
+              8,
+              10,
+              16
+            ],
+            "background_mid": [
+              32,
+              38,
+              52
+            ],
+            "hud": [
+              240,
+              244,
+              252
+            ],
+            "primary": [
+              224,
+              228,
+              236
+            ],
+            "secondary": [
+              152,
+              164,
+              184
+            ],
+            "warning": [
+              255,
+              72,
+              64
+            ]
+          },
+          "profile_version": 1,
+          "resolved_profile_digest": "fe8ea498bb95fe03ef018c3fdd996a6d540e82dfe45ac246aa322744ab2db01e",
+          "revision": 0,
+          "scalars": {
+            "chroma_scale": 1.0,
+            "energy": 0.5,
+            "luminance_scale": 1.0,
+            "tempo_scale": 1.0
+          },
+          "vibe_id": "neutral"
+        }
+      }
+    },
+    {
+      "expected": {
+        "begin_bytes": 58,
+        "begin_hex": "2101ffeeddccbbaa998877665544332211000102030405060708aae86681bd2c98e4c71e1e14934e5c93e327a44da92568b761b62e5ec563ae36",
+        "commit_bytes": 74,
+        "commit_hex": "2301ffeeddccbbaa998877665544332211000102030405060708102030405060708000000000004c4b41aae86681bd2c98e4c71e1e14934e5c93e327a44da92568b761b62e5ec563ae36",
+        "context_digest_hex": "aae86681bd2c98e4c71e1e14934e5c93e327a44da92568b761b62e5ec563ae36",
+        "plant_digest_hex": "cd58bfabaea318928e2d5245169753fcb996daf1b894201c05888829c70e4088",
+        "set_bytes": 160,
+        "set_hex": "2201ffeeddccbbaa998877665544332211000102030405060708020000000100000000000000093574930f117a3f7e8e9828d4f2162e9ce29f656434c8185581fc80fb37e6275205090e111e282f48527ea6aa5b7b84978e74b2cac9c06c6000a6008d009f002e010000000000000011cd58bfabaea318928e2d5245169753fcb996daf1b894201c05888829c70e4088050100800400400600c00901000e0020"
+      },
+      "id": "quiet_plants",
+      "input": {
+        "controller_session_id_hex": "ffeeddccbbaa99887766554433221100",
+        "plant_modifiers": {
+          "active": [
+            "illuminate",
+            "hue_shift",
+            "attractor",
+            "obstacle",
+            "emitter"
+          ],
+          "strengths": {
+            "attractor": 0.75,
+            "emitter": 0.125,
+            "hue_shift": 0.25,
+            "illuminate": 0.5,
+            "obstacle": 1.0
+          },
+          "version": 1
+        },
+        "plant_revision": 17,
+        "present_at_scene_time_us": 5000001,
+        "scene_epoch": 1161981756646125696,
+        "scene_revision": 72623859790382856,
+        "vibe": {
+          "palette_roles": {
+            "accent": [
+              151,
+              142,
+              116
+            ],
+            "background_high": [
+              47,
+              72,
+              82
+            ],
+            "background_low": [
+              5,
+              9,
+              14
+            ],
+            "background_mid": [
+              17,
+              30,
+              40
+            ],
+            "hud": [
+              178,
+              202,
+              201
+            ],
+            "primary": [
+              126,
+              166,
+              170
+            ],
+            "secondary": [
+              91,
+              123,
+              132
+            ],
+            "warning": [
+              192,
+              108,
+              96
+            ]
+          },
+          "profile_version": 1,
+          "resolved_profile_digest": "3574930f117a3f7e8e9828d4f2162e9ce29f656434c8185581fc80fb37e62752",
+          "revision": 9,
+          "scalars": {
+            "chroma_scale": 0.62,
+            "energy": 0.18,
+            "luminance_scale": 0.55,
+            "tempo_scale": 0.65
+          },
+          "vibe_id": "quiet"
+        }
+      }
+    },
+    {
+      "expected": {
+        "begin_bytes": 58,
+        "begin_hex": "2101808182838485868788898a8b8c8d8e8ffffffffffffffffe4481c93a2cd0242aad6f00baca2c4d97f7941d5c2667bb8a51aead69408fb556",
+        "commit_bytes": 74,
+        "commit_hex": "2301808182838485868788898a8b8c8d8e8ffffffffffffffffefffffffffffffffdfffffffffffffffc4481c93a2cd0242aad6f00baca2c4d97f7941d5c2667bb8a51aead69408fb556",
+        "context_digest_hex": "4481c93a2cd0242aad6f00baca2c4d97f7941d5c2667bb8a51aead69408fb556",
+        "plant_digest_hex": "056020fe47e63eebc024d9237dd8fad974d5ddf4e99d3dd2e5d2029105b2a565",
+        "set_bytes": 160,
+        "set_hex": "2201808182838485868788898a8b8c8d8e8ffffffffffffffffe0500000001fffffffffffffffb721e52f4cd8d96b53b60c54c99042923d46c76edd897853b01d7fe516456a48b0c0314350f5070209dff4eae2ce0f2ffd323fffae2ff353c015a0100015a010001fffffffffffffffa056020fe47e63eebc024d9237dd8fad974d5ddf4e99d3dd2e5d2029105b2a5650502000003001a0500550700e60a0100"
+      },
+      "id": "celebration_glass_portal",
+      "input": {
+        "controller_session_id_hex": "808182838485868788898a8b8c8d8e8f",
+        "plant_modifiers": {
+          "active": [
+            "shadow",
+            "refract",
+            "liquid_glass",
+            "repulsor",
+            "portal"
+          ],
+          "strengths": {
+            "liquid_glass": 0.333,
+            "portal": 1.0,
+            "refract": 0.1,
+            "repulsor": 0.9,
+            "shadow": 0.0
+          },
+          "version": 1
+        },
+        "plant_revision": 18446744073709551610,
+        "present_at_scene_time_us": 18446744073709551612,
+        "scene_epoch": 18446744073709551613,
+        "scene_revision": 18446744073709551614,
+        "vibe": {
+          "palette_roles": {
+            "accent": [
+              255,
+              211,
+              35
+            ],
+            "background_high": [
+              112,
+              32,
+              157
+            ],
+            "background_low": [
+              12,
+              3,
+              20
+            ],
+            "background_mid": [
+              53,
+              15,
+              80
+            ],
+            "hud": [
+              255,
+              250,
+              226
+            ],
+            "primary": [
+              255,
+              78,
+              174
+            ],
+            "secondary": [
+              44,
+              224,
+              242
+            ],
+            "warning": [
+              255,
+              53,
+              60
+            ]
+          },
+          "profile_version": 1,
+          "resolved_profile_digest": "721e52f4cd8d96b53b60c54c99042923d46c76edd897853b01d7fe516456a48b",
+          "revision": 18446744073709551611,
+          "scalars": {
+            "chroma_scale": 1.35,
+            "energy": 1.0,
+            "luminance_scale": 1.0,
+            "tempo_scale": 1.35
+          },
+          "vibe_id": "celebration"
+        }
+      }
+    }
+  ],
+  "scalar_vectors": [
+    {
+      "expected_q8_8": 0,
+      "id": "zero",
+      "input": 0.0
+    },
+    {
+      "expected_q8_8": 0,
+      "id": "below_half_lsb",
+      "input": 0.001953124
+    },
+    {
+      "expected_q8_8": 1,
+      "id": "half_lsb_up",
+      "input": 0.001953125
+    },
+    {
+      "expected_q8_8": 1,
+      "id": "above_half_lsb",
+      "input": 0.001953126
+    },
+    {
+      "expected_q8_8": 141,
+      "id": "quiet_luminance",
+      "input": 0.55
+    },
+    {
+      "expected_q8_8": 256,
+      "id": "unity",
+      "input": 1.0
+    },
+    {
+      "expected_q8_8": 346,
+      "id": "celebration_tempo",
+      "input": 1.35
+    },
+    {
+      "expected_q8_8": 25600,
+      "id": "large_bounded",
+      "input": 100.0
+    }
+  ],
+  "version": 1,
+  "wire": {
+    "byte_order": "big_endian",
+    "command_ids": {
+      "presentation_context_begin": 33,
+      "presentation_context_commit": 35,
+      "presentation_context_set": 34
+    },
+    "digests": {
+      "context": "sha256(set_packet[18:]); bytes start at scene_revision and end after the last canonical plant entry",
+      "plant": "sha256(version_u8 || count_u8 || canonical_entries)"
+    },
+    "packet_bytes": {
+      "begin": 58,
+      "commit": 74,
+      "set_base": 145,
+      "set_max": 187,
+      "set_per_modifier": 3
+    },
+    "packet_bytes_exclude": "trailing_crc16_ccitt_false",
+    "palette_role_order": [
+      "background_low",
+      "background_mid",
+      "background_high",
+      "primary",
+      "secondary",
+      "accent",
+      "hud",
+      "warning"
+    ],
+    "plant_modifier_ids": {
+      "attractor": 6,
+      "bumper": 11,
+      "emitter": 14,
+      "habitat": 13,
+      "hazard": 12,
+      "hue_shift": 4,
+      "illuminate": 1,
+      "liquid_glass": 5,
+      "obstacle": 9,
+      "portal": 10,
+      "refract": 3,
+      "repulsor": 7,
+      "shadow": 2,
+      "slow_zone": 8
+    },
+    "version": 1,
+    "vibe_ids": {
+      "celebration": 5,
+      "cozy": 3,
+      "neutral": 1,
+      "quiet": 2,
+      "vivid": 4
+    }
+  }
+}

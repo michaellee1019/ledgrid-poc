@@ -1316,8 +1316,9 @@ coordinator cutover, and Phase 1 contract freeze/portable baseline are complete.
 Phase 2A top-level vibe, portable acceptance, and clean wall-deploy gate are
 complete. Phase 2B fixed host composition, portable acceptance, and clean
 wall-deploy gate are complete. Phase 2C scene/catalog productization, portable
-acceptance, and clean wall-deploy gate are complete; Phase 3A is the next
-independently shippable lane**.
+acceptance, and clean wall-deploy gate are complete. Phase 3A portable
+implementation and integrated repository gates are complete; its clean-deployment
+and one-receiver physical canary gates are in progress**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -1905,6 +1906,56 @@ provider or receiver transaction abstraction before a receiver backend exists.
 ### Phase 3A: Explicit Receiver Ownership and Statically Linked Background
 
 Establish safe receiver-local playback without packages, cache, or dynamic code.
+
+Implementation status (2026-08-13): **portable implementation and integrated
+gates complete; physical gates in progress**. Three parallel contract-first lanes
+landed portable/live receiver ownership and the static canary; backward-capable
+Pi protocol/status plus deterministic fake four-board orchestration; and generated
+language-neutral presentation-context/luminance vectors. The full repository
+regression suite, native firmware tests, both pinned production and canary builds,
+deployment recipe checks, focused host/orchestration tests, and cross-language
+vectors pass. The ordinary production image keeps receiver-local playback
+disabled. Completion still requires an actual clean `just deploy`, fresh Phase 3A
+wall status, streamed wall acceptance, and the deliberately restored one-receiver
+physical canary.
+
+- [x] Explicit orthogonal receiver ownership replaces implicit first-command
+  takeover while preserving the complete-host-frame kill path and all legacy
+  streamed behavior when receiver-local playback is disabled.
+- [x] Status v3/capabilities, static-background commands, staged presentation
+  context, fixed-point luminance, cadence, transition, and failure contracts are
+  byte-exact across firmware and Pi implementations.
+- [x] The compiled rainbow supports explicit start, stop, live parameters,
+  fallback, restart, global offsets, common seed/epoch, and bounded declared
+  cadence without packages, cache, geometry profiles, or dynamic loading.
+- [x] Portable firmware and host tests cover the full command-ownership matrix,
+  malformed/bounds cases, old status versions, takeover, fallback, cadence, and
+  four-board mixed-context/partial-failure rejection.
+- [ ] Full Python/rendering/deployment regressions, native firmware tests, the
+  pinned production build, deployment recipe compatibility, and clean wall
+  deployment pass before Phase 3A is marked complete.
+
+Portable/integrated evidence on 2026-08-13:
+
+- `just test` passed 800 Python tests and 1,105 subtests, 21 rendering tests and
+  3 subtests, 43 portable firmware cases, and 148 deployment tests and 66
+  subtests. The slowest accepted installed-geometry p95 was 3.266 ms, below the
+  4 ms gate.
+- ESP-IDF 5.5.4 built both the production feature-off image and named feature-on
+  canary from the `elf_loader` 1.3.2 pinned baseline with loading disabled.
+  Compile evidence reports `LEDGRID_ENABLE_LOCAL_BACKGROUND=0` and `=1`
+  respectively. Each image uses 270,709 bytes flash and 50,688 bytes RAM.
+- Generated JSON and C++ presentation fixtures are drift-checked. Focused tests
+  cover exact wire bytes/digests, old status versions, stale acknowledgement
+  rejection, a shared-time fake four-board bound of at most 5 ms, partial-failure
+  compensation, render/SET_ALL and geometry/brightness interleavings, nonwrapping
+  operation-sequence exhaustion, and queued fresh-status proof.
+- The physical canary runner requires an explicit SPI address and logical ID,
+  closes and reopens the controller for a default 60-second disconnect window,
+  verifies exact binding/cadence/scene-time progress with zero new receiver
+  faults, post-verifies live parameters, and always attempts a complete black
+  host-frame takeover in `finally`. It never flashes firmware or manages the
+  service.
 
 - Replace `pi_connected` with explicit base, foreground, and maintenance state.
 - Add a new backward-capable status/capability version and host parser.

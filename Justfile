@@ -118,6 +118,7 @@ test-rendering:
 test-firmware:
 	uv run --frozen --group firmware pio test -d firmware/esp32 -e native
 	uv run --frozen --group firmware pio run -d firmware/esp32 -e esp32-s3-devkitc-1
+	uv run --frozen --group firmware pio run -d firmware/esp32 -e esp32-s3-devkitc-1-local-canary
 	if rg -n 'FastLED|fastled' firmware/esp32/src firmware/esp32/include firmware/esp32/platformio.ini; then exit 1; fi
 
 # Run deployment behavior tests and validate every maintained shell script.
@@ -139,6 +140,20 @@ deploy-precheck: test
 # Run the receiver-side timed hardware gates against one controller.
 receiver-acceptance device="0" duration="60" min_fps="180":
 	{{python_env}} python tools/benchmarks/receiver_acceptance.py --device {{device}} --duration {{duration}} --min-displayed-fps {{min_fps}} --animation rainbow
+
+# Verify deployed Phase 3A status/ownership/identity without changing display state.
+receiver-phase3a-status:
+	{{python_env}} python tools/benchmarks/receiver_acceptance.py --phase3a-status-only
+
+# Require local/background context capability on the deliberately flashed canary.
+receiver-phase3a-canary-status device:
+	{{python_env}} python tools/benchmarks/receiver_acceptance.py --phase3a-status-only --local-canary-device {{device}}
+
+# Run with ledgrid.service already stopped; this recipe never manages services or flashes.
+receiver-phase3a-physical-canary bus device logical_id disconnect_seconds="60":
+	{{python_env}} python tools/benchmarks/phase3a_single_receiver_canary.py \
+		--bus {{bus}} --device {{device}} --logical-id {{logical_id}} \
+		--disconnect-seconds {{disconnect_seconds}}
 
 # Exercise every live plugin while checking host and receiver integrity counters.
 live-animation-sweep seconds="2":

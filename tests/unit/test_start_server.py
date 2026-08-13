@@ -10,6 +10,7 @@ class _Manager:
         self.calls = []
         self.current_animation = None
         self.is_running = False
+        self.controller = self
 
     def start_animation(self, animation, config, preset=None):
         self.calls.append(("start", animation, config, preset))
@@ -73,6 +74,10 @@ class _Manager:
     def set_vibe(self, value):
         self.calls.append(("vibe", value))
         return value if isinstance(value, dict) else {"vibe_id": value}
+
+    def refresh_receiver_status(self, request_id):
+        self.calls.append(("refresh_receiver_status", request_id))
+        return {"request_id": request_id, "passed": True}
 
     def clear_painter_frame(self):
         self.calls.append(("clear",))
@@ -149,6 +154,13 @@ class StartServerTests(unittest.TestCase):
         self.assertFalse(handle_command(manager, "unknown", {}))
 
         self.assertEqual(manager.calls[-2:], [("stop",), ("clear",)])
+
+    def test_receiver_status_refresh_is_read_only_and_controller_owned(self):
+        manager = _Manager()
+        self.assertFalse(handle_command(
+            manager, "refresh_receiver_status", {"request_id": "fresh-1"}
+        ))
+        self.assertEqual(manager.calls, [("refresh_receiver_status", "fresh-1")])
 
     def test_brightness_and_compound_state_commands_dispatch_once(self):
         manager = _Manager()

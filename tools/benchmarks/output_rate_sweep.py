@@ -59,7 +59,7 @@ def main():
             last_devices = last.get("driver", {}).get("devices", [])
             receivers = []
             for index, (before, after) in enumerate(zip(first_devices, last_devices)):
-                if int(after.get("receiver_status_version", 0) or 0) != 2:
+                if int(after.get("receiver_status_version", 0) or 0) < 2:
                     continue
                 elapsed = max(1.0, args.seconds)
                 receivers.append({

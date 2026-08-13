@@ -78,10 +78,12 @@ implementation. Bulk `SET_ALL` is the normal frame path; `SET_PIXEL`,
 `SET_RANGE`, `SHOW`, `CLEAR`, `SET_BRIGHTNESS`, and `CONFIG` support incremental
 or control operations.
 
-The receiver returns an `LGS2` status snapshot over MISO with packet, CRC,
-mailbox, frame, and display timing counters. These counters cover the path only
-through ESP32 output DMA. WS2812 lanes have no return channel, so visual output
-still requires physical acceptance.
+The receiver returns a 320-byte `LGS3` status snapshot over MISO. Its first 64
+bytes preserve the v2 packet, CRC, mailbox, frame, and display timing offsets;
+the extension reports explicit ownership, capabilities, context digests,
+receiver identity, cadence, and command-correlated results. These counters
+cover the path only through ESP32 output DMA. WS2812 lanes have no return
+channel, so visual output still requires physical acceptance.
 
 ## State and presets
 

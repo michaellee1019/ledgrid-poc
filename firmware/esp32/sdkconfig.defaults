@@ -1,0 +1,9 @@
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_COMPILER_CXX_EXCEPTIONS=n
+CONFIG_COMPILER_CXX_RTTI=n
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# The pinned loader component is present in the baseline, but executable module
+# loading remains disabled until the later audited module phase.
+# CONFIG_ELF_LOADER is not set

@@ -1,5 +1,6 @@
 #include "ledgrid/protocol.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 namespace ledgrid {
@@ -17,19 +18,14 @@ void write_u32(std::uint8_t* output, std::uint32_t value) {
   output[3] = static_cast<std::uint8_t>(value);
 }
 
-}  // namespace
+void write_u64(std::uint8_t* output, std::uint64_t value) {
+  for (std::size_t index = 0; index < 8; ++index) {
+    output[index] = static_cast<std::uint8_t>(value >> (56U - index * 8U));
+  }
+}
 
-bool encode_receiver_status_v2(
-    const ReceiverStatusV2& status,
-    std::uint8_t* output,
-    std::size_t output_size) {
-  if (output == nullptr || output_size < kStatusBytesV2) return false;
-  std::memset(output, 0, kStatusBytesV2);
-  output[0] = 'L';
-  output[1] = 'G';
-  output[2] = 'S';
-  output[3] = '2';
-  output[4] = kStatusProtocolVersion;
+void encode_v2_fields(
+    const ReceiverStatusV2& status, std::uint8_t* output) {
   output[5] = status.flags;
   output[6] = status.active_strips;
   write_u16(output + 8, status.leds_per_strip);
@@ -49,6 +45,221 @@ bool encode_receiver_status_v2(
   write_u32(output + 52, status.last_accepted_sequence);
   write_u32(output + 56, status.last_displayed_sequence);
   write_u32(output + 60, status.display_errors);
+}
+
+}  // namespace
+
+bool ReceiverOperationTracker::begin(std::uint8_t command) {
+  if (sequence_ == UINT32_MAX) return false;
+  ++sequence_;
+  last_processed_command_ = command;
+  return true;
+}
+
+bool encode_receiver_status_v2(
+    const ReceiverStatusV2& status,
+    std::uint8_t* output,
+    std::size_t output_size) {
+  if (output == nullptr || output_size < kStatusBytesV2) return false;
+  std::memset(output, 0, kStatusBytesV2);
+  output[0] = 'L';
+  output[1] = 'G';
+  output[2] = 'S';
+  output[3] = '2';
+  output[4] = kStatusProtocolVersion;
+  encode_v2_fields(status, output);
+  return true;
+}
+
+bool encode_receiver_status_v3(
+    const ReceiverStatusV3& status,
+    std::uint8_t* output,
+    std::size_t output_size) {
+  if (output == nullptr || output_size < kStatusBytesV3) return false;
+  std::memset(output, 0, kStatusBytesV3);
+  std::memcpy(output, "LGS3", 4);
+  output[4] = kStatusProtocolVersionV3;
+  encode_v2_fields(status, output);
+  write_u32(output + 64, status.capabilities);
+  output[68] = status.base_mode;
+  output[69] = status.foreground_state;
+  output[70] = status.maintenance_state;
+  output[71] = static_cast<std::uint8_t>(status.transition_reason);
+  output[72] = static_cast<std::uint8_t>(status.last_result);
+  output[73] = static_cast<std::uint8_t>(status.context_state);
+  write_u16(output + 74, status.component_id);
+  write_u16(output + 76, status.preferred_cadence_hz);
+  write_u16(output + 78, status.luminance_q8_8);
+  write_u32(output + 80, status.global_strip_offset);
+  write_u32(output + 84, status.common_seed);
+  write_u64(output + 88, status.scene_epoch);
+  write_u64(output + 96, status.active_context_scene_revision);
+  write_u64(output + 104, status.active_vibe_revision);
+  write_u64(output + 112, status.active_modifier_revision);
+  write_u32(output + 120, status.cadence_deadlines);
+  write_u32(output + 124, status.rendered_frames);
+  write_u32(output + 128, status.missed_cadence);
+  write_u16(output + 132, status.last_render_us);
+  write_u16(output + 134, status.max_render_us);
+  write_u64(output + 136, status.last_frame_scene_time_us);
+  std::memcpy(output + 144, status.active_context_digest, 32);
+  std::memcpy(output + 176, status.active_vibe_digest, 32);
+  std::memcpy(output + 208, status.active_modifier_digest, 32);
+  write_u64(output + 240, status.staged_context_scene_revision);
+  std::memcpy(output + 248, status.staged_context_digest, 32);
+  std::memcpy(output + 280, status.active_controller_session, 16);
+  std::memcpy(output + 296, status.staged_controller_session, 16);
+  output[312] = status.logical_receiver_id;
+  output[313] = status.last_processed_command;
+  write_u32(output + 316, status.operation_sequence);
+  return true;
+}
+
+bool command_may_claim_base(ReceiverCommand command) {
+  return command == ReceiverCommand::SetAll ||
+         command == ReceiverCommand::LocalBackgroundStart;
+}
+
+ReceiverDispatchDecision classify_receiver_dispatch(
+    const std::uint8_t* command,
+    std::size_t size,
+    std::size_t active_rgb_bytes,
+    BaseMode base_mode,
+    bool local_background_enabled) {
+  const auto reject = [](ReceiverOperationResult result) {
+    return ReceiverDispatchDecision{
+        ReceiverDispatchRoute::Reject, result, false, false};
+  };
+  if (command == nullptr || size == 0) {
+    return reject(ReceiverOperationResult::InvalidSize);
+  }
+  const ReceiverCommand id = static_cast<ReceiverCommand>(command[0]);
+  const auto exact = [&](std::size_t expected, ReceiverDispatchRoute route,
+                         bool publishes, bool claims) {
+    if (size != expected) {
+      return reject(ReceiverOperationResult::InvalidSize);
+    }
+    return ReceiverDispatchDecision{
+        route, ReceiverOperationResult::None, publishes, claims};
+  };
+
+  switch (id) {
+    case ReceiverCommand::Ping:
+      return exact(1, ReceiverDispatchRoute::Operational, false, false);
+    case ReceiverCommand::SetPixel:
+      return exact(6, ReceiverDispatchRoute::Operational, false, false);
+    case ReceiverCommand::SetBrightness:
+      return exact(2, ReceiverDispatchRoute::Operational,
+                   base_mode == BaseMode::HostFullScene, false);
+    case ReceiverCommand::Show:
+    case ReceiverCommand::Clear:
+      return exact(1, ReceiverDispatchRoute::Operational,
+                   base_mode == BaseMode::HostFullScene, false);
+    case ReceiverCommand::SetRange: {
+      if (size < 4 || active_rgb_bytes % 3U != 0) {
+        return reject(ReceiverOperationResult::InvalidSize);
+      }
+      const std::size_t pixels = active_rgb_bytes / 3U;
+      const std::size_t start =
+          (static_cast<std::size_t>(command[1]) << 8U) | command[2];
+      if (start >= pixels) {
+        return reject(ReceiverOperationResult::InvalidCommand);
+      }
+      const std::size_t count =
+          std::min<std::size_t>(command[3], pixels - start);
+      return exact(4U + count * 3U, ReceiverDispatchRoute::Operational,
+                   false, false);
+    }
+    case ReceiverCommand::SetAll:
+      return exact(1U + active_rgb_bytes,
+                   ReceiverDispatchRoute::HostFullFrame, true, true);
+    case ReceiverCommand::Config:
+      if (size != 4 && size != 5 && size != 6) {
+        return reject(ReceiverOperationResult::InvalidSize);
+      }
+      return ReceiverDispatchDecision{ReceiverDispatchRoute::Operational,
+                                      ReceiverOperationResult::None, false,
+                                      false};
+    case ReceiverCommand::StatusQuery:
+      return exact(kStatusBytesV3, ReceiverDispatchRoute::StatusQuery, false,
+                   false);
+    case ReceiverCommand::ControllerSessionBegin:
+      return reject(ReceiverOperationResult::Unsupported);
+    case ReceiverCommand::LocalBackgroundStart:
+    case ReceiverCommand::LocalBackgroundStop:
+    case ReceiverCommand::LocalBackgroundParameters:
+    case ReceiverCommand::PresentationContextBegin:
+    case ReceiverCommand::PresentationContextSet:
+    case ReceiverCommand::PresentationContextCommit:
+      break;
+    default:
+      return reject(ReceiverOperationResult::InvalidCommand);
+  }
+
+  if (!local_background_enabled) {
+    return reject(ReceiverOperationResult::Unsupported);
+  }
+  std::size_t expected = 0;
+  switch (id) {
+    case ReceiverCommand::LocalBackgroundStart: expected = 21; break;
+    case ReceiverCommand::LocalBackgroundStop: expected = 1; break;
+    case ReceiverCommand::LocalBackgroundParameters: expected = 11; break;
+    case ReceiverCommand::PresentationContextBegin: expected = 58; break;
+    case ReceiverCommand::PresentationContextCommit: expected = 74; break;
+    case ReceiverCommand::PresentationContextSet:
+      if (size < 145 || size > 187) {
+        return reject(ReceiverOperationResult::InvalidSize);
+      }
+      expected = 145U + static_cast<std::size_t>(command[144]) * 3U;
+      break;
+    default: break;
+  }
+  return exact(expected, ReceiverDispatchRoute::Runtime, false,
+               id == ReceiverCommand::LocalBackgroundStart);
+}
+
+bool receiver_packet_crc_valid(
+    const std::uint8_t* packet,
+    std::size_t packet_size,
+    std::uint16_t* computed_crc) {
+  if (packet == nullptr || packet_size < 1U + kAnimationPipelineCrcBytes ||
+      packet_size > kAnimationPipelineMaxTransactionBytes) {
+    return false;
+  }
+  const std::size_t payload_size =
+      packet_size - kAnimationPipelineCrcBytes;
+  const std::uint16_t calculated =
+      animation_pipeline_crc16_ccitt(packet, payload_size);
+  if (computed_crc != nullptr) *computed_crc = calculated;
+  const std::uint16_t received = static_cast<std::uint16_t>(
+      (static_cast<std::uint16_t>(packet[payload_size]) << 8U) |
+      packet[payload_size + 1U]);
+  return received == calculated;
+}
+
+bool valid_status_query(const std::uint8_t* command, std::size_t size) {
+  if (command == nullptr || size != kStatusBytesV3 ||
+      command[0] != static_cast<std::uint8_t>(ReceiverCommand::StatusQuery)) {
+    return false;
+  }
+  for (std::size_t index = 1; index < size; ++index) {
+    if (command[index] != 0) return false;
+  }
+  return true;
+}
+
+bool parse_logical_receiver_id(
+    const std::uint8_t* command,
+    std::size_t size,
+    std::uint8_t current_id,
+    std::uint8_t* logical_receiver_id) {
+  if (command == nullptr || logical_receiver_id == nullptr ||
+      (size != 4 && size != 5 && size != 6) ||
+      command[0] != static_cast<std::uint8_t>(ReceiverCommand::Config)) {
+    return false;
+  }
+  if (size == 6 && command[5] > 3) return false;
+  *logical_receiver_id = size == 6 ? command[5] : current_id;
   return true;
 }
 

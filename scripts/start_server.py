@@ -373,6 +373,21 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
             return True
         except (TypeError, ValueError):
             print(f"⚠️ Invalid vibe: {requested!r}")
+    elif action == 'refresh_receiver_status':
+        request_id = data.get('request_id')
+        refresher = getattr(manager.controller, 'refresh_receiver_status', None)
+        if not callable(refresher):
+            print("⚠️ Receiver status refresh is unavailable")
+            return False
+        try:
+            result = refresher(request_id)
+            print(
+                "📡 Receiver status refresh "
+                f"{request_id}: {'complete' if result.get('passed') else 'failed'}"
+            )
+        except (RuntimeError, TypeError, ValueError) as exc:
+            print(f"⚠️ Receiver status refresh rejected: {exc}")
+        return False
     elif action == 'refresh_plugins':
         animation = data.get('animation')
         if animation:

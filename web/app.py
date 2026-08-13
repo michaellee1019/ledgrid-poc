@@ -578,6 +578,21 @@ class AnimationWebInterface:
                 'system': {},
             })
 
+        @self.app.route('/api/v1/receivers/status/refresh', methods=['POST'])
+        def api_refresh_receiver_status():
+            """Request a fresh controller-side SPI status drain on every receiver."""
+            request_id = f"phase3a-{time.time_ns():x}"
+            command = self.control_channel.send_command(
+                'refresh_receiver_status', request_id=request_id
+            )
+            return jsonify({
+                'accepted': True,
+                'request_id': request_id,
+                'command_id': (
+                    command.get('command_id') if isinstance(command, dict) else None
+                ),
+            }), 202
+
         @self.app.route('/api/config/target-fps', methods=['POST'])
         def api_set_target_fps():
             payload = request.get_json(silent=True) or {}

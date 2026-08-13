@@ -37,8 +37,8 @@ def _post_json(url, payload):
 
 def receiver_failures(first, last):
     failures = []
-    if int(last.get("receiver_status_version", 0) or 0) != 2:
-        return ["receiver status v2 unavailable"]
+    if int(last.get("receiver_status_version", 0) or 0) < 2:
+        return ["receiver status v2+ unavailable"]
     for key, label in ERROR_COUNTERS:
         delta = int(last.get(key, 0) or 0) - int(first.get(key, 0) or 0)
         if delta:
@@ -96,7 +96,7 @@ def main():
         for index, (first, last) in enumerate(zip(
             first_driver.get("devices", []), last_driver.get("devices", [])
         )):
-            if int(last.get("receiver_status_version", 0) or 0) != 2:
+            if int(last.get("receiver_status_version", 0) or 0) < 2:
                 continue
             observable += 1
             failures.extend(
@@ -104,7 +104,7 @@ def main():
                 for failure in receiver_failures(first, last)
             )
         if observable == 0:
-            failures.append("no receiver status v2 telemetry was observable")
+            failures.append("no receiver status v2+ telemetry was observable")
 
         performance = last_metrics.get("performance", {})
         results.append({

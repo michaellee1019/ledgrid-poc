@@ -8,8 +8,11 @@ import time
 import colorsys
 import argparse
 import binascii
+from dataclasses import replace
+import struct
 import spidev
 import sys
+import threading
 
 import numpy as np
 
@@ -30,8 +33,13 @@ MAX_SPI_TRANSFER = 4096
 CRC_BYTES = 2
 RECEIVER_STATUS_MAGIC = (ord('L'), ord('G'), ord('S'), ord('1'))
 RECEIVER_STATUS_MAGIC_V2 = (ord('L'), ord('G'), ord('S'), ord('2'))
+RECEIVER_STATUS_MAGIC_V3 = (ord('L'), ord('G'), ord('S'), ord('3'))
 RECEIVER_STATUS_BYTES = 29
 RECEIVER_STATUS_BYTES_V2 = 64
+RECEIVER_STATUS_BYTES_V3 = 320
+# The ESP32 slave keeps two response buffers queued. A command's result is
+# therefore observable after two complete status-query transfers.
+SPI_RESPONSE_QUEUE_DEPTH = 2
 MAX_PIXELS_SET_ALL = (MAX_SPI_TRANSFER - 1 - CRC_BYTES) // 3
 MAX_PIXELS_PER_RANGE = min(255, (MAX_SPI_TRANSFER - 4 - CRC_BYTES) // 3)
 
@@ -94,7 +102,30 @@ CMD_CLEAR = 0x04
 CMD_SET_RANGE = 0x05
 CMD_SET_ALL = 0x06
 CMD_CONFIG = 0x07
+CMD_STATUS_QUERY = 0x08
+CMD_LOCAL_BACKGROUND_START = 0x10
+CMD_LOCAL_BACKGROUND_STOP = 0x11
+CMD_LOCAL_BACKGROUND_PARAMS = 0x12
+CMD_PRESENTATION_CONTEXT_BEGIN = 0x21
+CMD_PRESENTATION_CONTEXT_SET = 0x22
+CMD_PRESENTATION_CONTEXT_COMMIT = 0x23
 CMD_PING = 0xFF
+
+LOCAL_BACKGROUND_RAINBOW = 1
+MIN_LOCAL_BACKGROUND_CADENCE_HZ = 1
+MAX_LOCAL_BACKGROUND_CADENCE_HZ = 200
+PRESENTATION_CONTEXT_VERSION = 1
+PRESENTATION_CONTEXT_BEGIN_BYTES = 58
+PRESENTATION_CONTEXT_SET_MIN_BYTES = 145
+PRESENTATION_CONTEXT_SET_MAX_BYTES = 187
+PRESENTATION_CONTEXT_COMMIT_BYTES = 74
+
+# Status-v3 capability bit. This is intentionally checked by the four-board
+# coordinator before any local-playback command is issued.
+CAPABILITY_STATIC_LOCAL_BACKGROUND = 1 << 0
+CAPABILITY_PRESENTATION_CONTEXT_V1 = 1 << 1
+CAPABILITY_STATUS_V3 = 1 << 2
+CAPABILITY_EXPLICIT_BASE_OWNERSHIP = 1 << 3
 
 
 class LEDController:
@@ -102,10 +133,11 @@ class LEDController:
     
     def __init__(self, bus=SPI_BUS, device=SPI_DEVICE, speed=SPI_SPEED, mode=SPI_MODE,
                  strips=DEFAULT_NUM_STRIPS, leds_per_strip=DEFAULT_LED_PER_STRIP,
-                 debug=False):
+                 debug=False, logical_device_id=None):
         self.debug = debug
         self.bus = bus
         self.device = device
+        self.logical_device_id = self._optional_logical_device_id(logical_device_id)
         self.spi = spidev.SpiDev()
         self.spi.open(bus, device)
         self.spi.max_speed_hz = speed
@@ -117,6 +149,7 @@ class LEDController:
                 "If this is SPI1, try setting LEDGRID_SPI1_MODE to a different value and restart."
             ) from exc
         self.spi.bits_per_word = 8
+        self._transport_lock = threading.RLock()
 
         self.strip_count = strips
         self.leds_per_strip = leds_per_strip
@@ -158,6 +191,40 @@ class LEDController:
         self._receiver_last_encode_us = 0
         self._receiver_last_accepted_sequence = 0
         self._receiver_last_displayed_sequence = 0
+        self._receiver_capabilities = 0
+        self._receiver_base_mode = 0
+        self._receiver_foreground_state = 0
+        self._receiver_maintenance_state = 0
+        self._receiver_last_result = 0
+        self._receiver_transition_reason = 0
+        self._receiver_context_state = 0
+        self._receiver_component_id = 0
+        self._receiver_declared_cadence_hz = 0
+        self._receiver_luminance_q8_8 = 256
+        self._receiver_global_strip_offset = 0
+        self._receiver_common_seed = 0
+        self._receiver_scene_epoch = 0
+        self._receiver_active_scene_revision = 0
+        self._receiver_local_frames_rendered = 0
+        self._receiver_local_cadence_deadlines = 0
+        self._receiver_local_missed_deadlines = 0
+        self._receiver_last_local_render_us = 0
+        self._receiver_max_local_render_us = 0
+        self._receiver_last_frame_scene_time_us = 0
+        self._receiver_active_context_digest = None
+        self._receiver_staged_context_digest = None
+        self._receiver_staged_scene_revision = 0
+        self._receiver_vibe_revision = 0
+        self._receiver_vibe_digest = None
+        self._receiver_plant_modifier_revision = 0
+        self._receiver_plant_modifier_digest = None
+        self._receiver_active_session_id = None
+        self._receiver_staged_session_id = None
+        self._receiver_logical_device = None
+        self._receiver_last_processed_command = 0
+        self._receiver_operation_sequence = 0
+        self._presentation_commit_context_cache = {}
+        self._monotonic_ns = time.monotonic_ns
         self._frame_packet = bytearray(1 + self.total_leds * 3 + CRC_BYTES)
         
         if self.debug:
@@ -190,19 +257,29 @@ class LEDController:
 
     def _xfer_packet(self, buf, payload_length):
         """Finalize and transfer a packet whose CRC storage is preallocated."""
-        crc = _crc16_ccitt(memoryview(buf)[:payload_length])
-        buf[payload_length] = (crc >> 8) & 0xFF
-        buf[payload_length + 1] = crc & 0xFF
-        self._bytes_sent += len(buf)
-        self._crc_bytes_sent += CRC_BYTES
-        self._spi_transfers += 1
-        try:
-            response = self.spi.xfer2(buf)
-            self._update_receiver_status(response)
-            return response
-        except Exception:
-            self._errors += 1
-            raise
+        transport_lock = getattr(self, "_transport_lock", None)
+        if transport_lock is None:
+            transport_lock = self._transport_lock = threading.RLock()
+        with transport_lock:
+            if payload_length < 1 or payload_length + CRC_BYTES > MAX_SPI_TRANSFER:
+                raise ValueError(
+                    f"SPI transaction must be 1..{MAX_SPI_TRANSFER} bytes including CRC"
+                )
+            if len(buf) != payload_length + CRC_BYTES:
+                raise ValueError("packet buffer must contain exactly payload plus CRC storage")
+            crc = _crc16_ccitt(memoryview(buf)[:payload_length])
+            buf[payload_length] = (crc >> 8) & 0xFF
+            buf[payload_length + 1] = crc & 0xFF
+            self._bytes_sent += len(buf)
+            self._crc_bytes_sent += CRC_BYTES
+            self._spi_transfers += 1
+            try:
+                response = self.spi.xfer2(buf)
+                self._update_receiver_status(response)
+                return response
+            except Exception:
+                self._errors += 1
+                raise
 
     @staticmethod
     def _response_u16(response, offset):
@@ -215,6 +292,46 @@ class LEDController:
             | (int(response[offset + 1]) << 16)
             | (int(response[offset + 2]) << 8)
             | int(response[offset + 3])
+        )
+
+    @staticmethod
+    def _response_u64(response, offset):
+        value = 0
+        for index in range(8):
+            value = (value << 8) | int(response[offset + index])
+        return value
+
+    @staticmethod
+    def _bounded_uint(name, value, maximum):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"{name} must be an integer")
+        if value < 0 or value > maximum:
+            raise ValueError(f"{name} must be between 0 and {maximum}")
+        return value
+
+    @classmethod
+    def _optional_logical_device_id(cls, value):
+        if value is None:
+            return None
+        return cls._bounded_uint("logical_device_id", value, 3)
+
+    @classmethod
+    def _local_background_fields(
+        cls, preferred_cadence_hz, global_strip_offset, common_seed
+    ):
+        cadence = cls._bounded_uint(
+            "preferred_cadence_hz", preferred_cadence_hz, 0xFFFF
+        )
+        if not MIN_LOCAL_BACKGROUND_CADENCE_HZ <= cadence <= MAX_LOCAL_BACKGROUND_CADENCE_HZ:
+            raise ValueError(
+                "preferred_cadence_hz must be between "
+                f"{MIN_LOCAL_BACKGROUND_CADENCE_HZ} and "
+                f"{MAX_LOCAL_BACKGROUND_CADENCE_HZ}"
+            )
+        return (
+            cadence,
+            cls._bounded_uint("global_strip_offset", global_strip_offset, 0xFFFFFFFF),
+            cls._bounded_uint("common_seed", common_seed, 0xFFFFFFFF),
         )
 
     def _update_receiver_status(self, response):
@@ -232,6 +349,10 @@ class LEDController:
             return
 
         magic = tuple(int(response[index]) for index in range(4))
+        if magic == RECEIVER_STATUS_MAGIC_V3 and len(response) >= RECEIVER_STATUS_BYTES_V3:
+            self._update_receiver_status_v3(response)
+            return
+
         if magic == RECEIVER_STATUS_MAGIC_V2 and len(response) >= RECEIVER_STATUS_BYTES_V2:
             self._receiver_status_seen = True
             self._receiver_status_version = int(response[4])
@@ -275,6 +396,251 @@ class LEDController:
         self._receiver_active_strips = int(response[26])
         self._receiver_leds_per_strip = self._response_u16(response, 27)
 
+    def _update_receiver_status_v3(self, response):
+        """Parse status v3 after the firmware-defined layout is available."""
+        # Phase 3A deliberately retains the complete v2 prefix so old counters
+        # and operational dashboards do not disappear when local playback is
+        # enabled. The extension offsets below are synchronized with
+        # firmware/esp32/include/ledgrid/protocol.hpp.
+        self._receiver_status_seen = True
+        self._receiver_status_version = int(response[4])
+        self._receiver_status_responses = getattr(self, '_receiver_status_responses', 0) + 1
+        self._receiver_active_strips = int(response[6])
+        self._receiver_leds_per_strip = self._response_u16(response, 8)
+        self._receiver_queued_transactions = self._response_u16(response, 10)
+        self._receiver_packets = self._response_u32(response, 12)
+        self._receiver_crc_errors = self._response_u32(response, 16)
+        self._receiver_crc_ok_packets = self._response_u32(response, 20)
+        self._receiver_frames_accepted = self._response_u32(response, 24)
+        self._receiver_frames_displayed = self._response_u32(response, 28)
+        self._receiver_frames_rendered = self._receiver_frames_displayed
+        self._receiver_frames_superseded = self._response_u32(response, 32)
+        self._receiver_publish_drops = self._response_u32(response, 36)
+        self._receiver_spi_queue_errors = self._response_u32(response, 40)
+        self._receiver_last_crc_us = self._response_u16(response, 44)
+        self._receiver_last_copy_us = self._response_u16(response, 46)
+        self._receiver_last_encode_us = self._response_u16(response, 48)
+        self._receiver_last_show_us = self._response_u16(response, 50)
+        self._receiver_last_accepted_sequence = self._response_u32(response, 52)
+        self._receiver_last_displayed_sequence = self._response_u32(response, 56)
+        self._receiver_display_errors = self._response_u32(response, 60)
+        self._receiver_capabilities = self._response_u32(response, 64)
+        self._receiver_base_mode = int(response[68])
+        self._receiver_foreground_state = int(response[69])
+        self._receiver_maintenance_state = int(response[70])
+        self._receiver_transition_reason = int(response[71])
+        self._receiver_last_result = int(response[72])
+        self._receiver_context_state = int(response[73])
+        self._receiver_component_id = self._response_u16(response, 74)
+        self._receiver_declared_cadence_hz = self._response_u16(response, 76)
+        self._receiver_luminance_q8_8 = self._response_u16(response, 78)
+        self._receiver_global_strip_offset = self._response_u32(response, 80)
+        self._receiver_common_seed = self._response_u32(response, 84)
+        self._receiver_scene_epoch = self._response_u64(response, 88)
+        self._receiver_active_scene_revision = self._response_u64(response, 96)
+        self._receiver_vibe_revision = self._response_u64(response, 104)
+        self._receiver_plant_modifier_revision = self._response_u64(response, 112)
+        self._receiver_local_cadence_deadlines = self._response_u32(response, 120)
+        self._receiver_local_frames_rendered = self._response_u32(response, 124)
+        self._receiver_local_missed_deadlines = self._response_u32(response, 128)
+        self._receiver_last_local_render_us = self._response_u16(response, 132)
+        self._receiver_max_local_render_us = self._response_u16(response, 134)
+        self._receiver_last_frame_scene_time_us = self._response_u64(response, 136)
+        digest_fields = (
+            ("_receiver_active_context_digest", 144),
+            ("_receiver_vibe_digest", 176),
+            ("_receiver_plant_modifier_digest", 208),
+        )
+        for name, offset in digest_fields:
+            digest = bytes(response[offset:offset + 32])
+            setattr(self, name, digest.hex() if any(digest) else None)
+        self._receiver_staged_scene_revision = self._response_u64(response, 240)
+        staged_digest = bytes(response[248:280])
+        self._receiver_staged_context_digest = (
+            staged_digest.hex() if any(staged_digest) else None
+        )
+        active_session = bytes(response[280:296])
+        staged_session = bytes(response[296:312])
+        self._receiver_active_session_id = (
+            active_session.hex() if any(active_session) else None
+        )
+        self._receiver_staged_session_id = (
+            staged_session.hex() if any(staged_session) else None
+        )
+        self._receiver_logical_device = int(response[312])
+        self._receiver_last_processed_command = int(response[313])
+        self._receiver_operation_sequence = self._response_u32(response, 316)
+
+    def query_receiver_status(self):
+        """Clock out one complete status-v3 snapshot without changing ownership."""
+        payload = bytearray(RECEIVER_STATUS_BYTES_V3)
+        payload[0] = CMD_STATUS_QUERY
+        self._xfer(payload)
+        return self.get_stats()
+
+    def _command_status(self, payload, *, command=None):
+        """Send a command and prove its exact acknowledgement, never a stale OK."""
+        transport_lock = getattr(self, "_transport_lock", None)
+        if transport_lock is None:
+            transport_lock = self._transport_lock = threading.RLock()
+        with transport_lock:
+            payload_factory = payload if callable(payload) else None
+            if payload_factory is None:
+                command = int(payload[0])
+            elif command is None:
+                raise ValueError("deferred command serialization requires a command ID")
+            else:
+                command = self._bounded_uint("command", command, 0xFF)
+            prior = None
+            for _ in range(SPI_RESPONSE_QUEUE_DEPTH):
+                prior = self.query_receiver_status()
+            if int(prior.get("receiver_status_version", 0) or 0) < 3:
+                raise RuntimeError("receiver status v3 is required for command acknowledgement")
+            prior_sequence = int(prior.get("receiver_operation_sequence", 0) or 0)
+            if prior_sequence >= 0xFFFFFFFF:
+                raise RuntimeError("receiver operation sequence is exhausted")
+            if payload_factory is not None:
+                payload = payload_factory()
+                if not payload or int(payload[0]) != command:
+                    raise ValueError("deferred serializer returned the wrong command")
+            self._xfer(payload)
+            status = None
+            for _ in range(SPI_RESPONSE_QUEUE_DEPTH):
+                status = self.query_receiver_status()
+            if (
+                int(status.get("receiver_last_processed_command", -1)) != command
+                or int(status.get("receiver_operation_sequence", -1))
+                != prior_sequence + 1
+            ):
+                raise RuntimeError(
+                    f"receiver did not acknowledge command 0x{command:02x} "
+                    "with the next operation sequence"
+                )
+            return status
+
+    @classmethod
+    def serialize_local_background_start(
+        cls,
+        *,
+        component_id=LOCAL_BACKGROUND_RAINBOW,
+        preferred_cadence_hz,
+        global_strip_offset,
+        common_seed,
+        scene_epoch,
+    ):
+        component = cls._bounded_uint("component_id", component_id, 0xFFFF)
+        if component != LOCAL_BACKGROUND_RAINBOW:
+            raise ValueError(
+                f"component_id must be {LOCAL_BACKGROUND_RAINBOW} for the static rainbow"
+            )
+        cadence, offset, seed = cls._local_background_fields(
+            preferred_cadence_hz, global_strip_offset, common_seed
+        )
+        epoch = cls._bounded_uint("scene_epoch", scene_epoch, 0xFFFFFFFFFFFFFFFF)
+        return struct.pack(">BHHIIQ", CMD_LOCAL_BACKGROUND_START, component,
+                           cadence, offset, seed, epoch)
+
+    @classmethod
+    def serialize_local_background_params(
+        cls, *, preferred_cadence_hz, global_strip_offset, common_seed
+    ):
+        cadence, offset, seed = cls._local_background_fields(
+            preferred_cadence_hz, global_strip_offset, common_seed
+        )
+        return struct.pack(">BHII", CMD_LOCAL_BACKGROUND_PARAMS, cadence, offset, seed)
+
+    def start_local_background(self, **kwargs):
+        return self._command_status(self.serialize_local_background_start(**kwargs))
+
+    def stop_local_background(self):
+        return self._command_status(bytes((CMD_LOCAL_BACKGROUND_STOP,)))
+
+    def update_local_background_params(self, **kwargs):
+        return self._command_status(self.serialize_local_background_params(**kwargs))
+
+    @staticmethod
+    def _validate_presentation_packet(payload, command, minimum, maximum=None):
+        try:
+            packet = bytes(payload)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("presentation context packet must be bytes-like") from exc
+        maximum = minimum if maximum is None else maximum
+        if not minimum <= len(packet) <= maximum:
+            expected = str(minimum) if minimum == maximum else f"{minimum}..{maximum}"
+            raise ValueError(f"presentation context packet must be {expected} bytes")
+        if packet[0] != command or packet[1] != PRESENTATION_CONTEXT_VERSION:
+            raise ValueError("presentation context command/version mismatch")
+        return packet
+
+    def begin_presentation_context(self, context):
+        from animation.core.receiver_presentation import encode_presentation_context_begin
+
+        packet = self._validate_presentation_packet(
+            encode_presentation_context_begin(context),
+            CMD_PRESENTATION_CONTEXT_BEGIN,
+            PRESENTATION_CONTEXT_BEGIN_BYTES,
+        )
+        return self._command_status(packet)
+
+    def set_presentation_context(self, context):
+        from animation.core.receiver_presentation import encode_presentation_context_set
+
+        packet = self._validate_presentation_packet(
+            encode_presentation_context_set(context),
+            CMD_PRESENTATION_CONTEXT_SET,
+            PRESENTATION_CONTEXT_SET_MIN_BYTES,
+            PRESENTATION_CONTEXT_SET_MAX_BYTES,
+        )
+        return self._command_status(packet)
+
+    def commit_presentation_context(
+        self, context, *, host_monotonic_anchor_ns=None
+    ):
+        from animation.core.receiver_presentation import encode_presentation_context_commit
+
+        monotonic_ns = getattr(self, "_monotonic_ns", time.monotonic_ns)
+        commit_cache = getattr(self, "_presentation_commit_context_cache", None)
+        if commit_cache is None:
+            commit_cache = self._presentation_commit_context_cache = {}
+        if host_monotonic_anchor_ns is None:
+            host_monotonic_anchor_ns = monotonic_ns()
+        anchor = self._bounded_uint(
+            "host_monotonic_anchor_ns", host_monotonic_anchor_ns, 0xFFFFFFFFFFFFFFFF
+        )
+        cache_key = (
+            context.controller_session_id,
+            context.scene_revision,
+            context.context_digest,
+        )
+
+        def packet_after_ack_drain():
+            cached = commit_cache.get(cache_key)
+            if cached is None:
+                now_ns = monotonic_ns()
+                if now_ns < anchor:
+                    raise RuntimeError("host monotonic clock moved before the commit anchor")
+                elapsed_host_us = (now_ns - anchor) // 1000
+                present_at = context.present_at_scene_time_us + elapsed_host_us
+                if present_at > 0xFFFFFFFFFFFFFFFF:
+                    raise ValueError("compensated presentation scene time exceeds uint64")
+                cached = replace(
+                    context, present_at_scene_time_us=present_at
+                )
+                # Only the latest scene can be actively retried. Retaining old
+                # compensated schedules would grow once per scene for the
+                # controller process lifetime without a valid replay use-case.
+                commit_cache.clear()
+                commit_cache[cache_key] = cached
+            return self._validate_presentation_packet(
+                encode_presentation_context_commit(cached),
+                CMD_PRESENTATION_CONTEXT_COMMIT,
+                PRESENTATION_CONTEXT_COMMIT_BYTES,
+            )
+
+        return self._command_status(
+            packet_after_ack_drain, command=CMD_PRESENTATION_CONTEXT_COMMIT
+        )
+
     def _refresh_configuration(self, force=False):
         now = time.time()
         
@@ -290,6 +656,15 @@ class LEDController:
                 self.leds_per_strip & 0xFF,
                 1 if self.debug else 0,
             ]
+            logical_device_id = self._optional_logical_device_id(
+                getattr(self, "logical_device_id", None)
+            )
+            if (
+                logical_device_id is not None
+                and getattr(self, "_receiver_status_version", 0) >= 3
+                and getattr(self, "_receiver_capabilities", 0) & CAPABILITY_STATUS_V3
+            ):
+                cfg.append(logical_device_id)
             self._xfer(cfg)
             self._last_config_refresh = now
             self._last_sent_config = current_config
@@ -519,6 +894,38 @@ class LEDController:
             'receiver_last_displayed_sequence': self._receiver_last_displayed_sequence,
             'receiver_active_strips': self._receiver_active_strips,
             'receiver_leds_per_strip': self._receiver_leds_per_strip,
+            'receiver_capabilities': self._receiver_capabilities,
+            'receiver_base_mode': self._receiver_base_mode,
+            'receiver_foreground_state': self._receiver_foreground_state,
+            'receiver_maintenance_state': self._receiver_maintenance_state,
+            'receiver_last_result': self._receiver_last_result,
+            'receiver_transition_reason': self._receiver_transition_reason,
+            'receiver_context_state': self._receiver_context_state,
+            'receiver_component_id': self._receiver_component_id,
+            'receiver_declared_cadence_hz': self._receiver_declared_cadence_hz,
+            'receiver_luminance_q8_8': self._receiver_luminance_q8_8,
+            'receiver_global_strip_offset': self._receiver_global_strip_offset,
+            'receiver_common_seed': self._receiver_common_seed,
+            'receiver_scene_epoch': self._receiver_scene_epoch,
+            'receiver_active_scene_revision': self._receiver_active_scene_revision,
+            'receiver_local_frames_rendered': self._receiver_local_frames_rendered,
+            'receiver_local_cadence_deadlines': self._receiver_local_cadence_deadlines,
+            'receiver_local_missed_deadlines': self._receiver_local_missed_deadlines,
+            'receiver_last_local_render_us': self._receiver_last_local_render_us,
+            'receiver_max_local_render_us': self._receiver_max_local_render_us,
+            'receiver_last_frame_scene_time_us': self._receiver_last_frame_scene_time_us,
+            'receiver_active_context_digest': self._receiver_active_context_digest,
+            'receiver_staged_context_digest': self._receiver_staged_context_digest,
+            'receiver_staged_scene_revision': self._receiver_staged_scene_revision,
+            'receiver_vibe_revision': self._receiver_vibe_revision,
+            'receiver_vibe_digest': self._receiver_vibe_digest,
+            'receiver_plant_modifier_revision': self._receiver_plant_modifier_revision,
+            'receiver_plant_modifier_digest': self._receiver_plant_modifier_digest,
+            'receiver_active_session_id': self._receiver_active_session_id,
+            'receiver_staged_session_id': self._receiver_staged_session_id,
+            'receiver_logical_device': self._receiver_logical_device,
+            'receiver_last_processed_command': self._receiver_last_processed_command,
+            'receiver_operation_sequence': self._receiver_operation_sequence,
         }
 
 
