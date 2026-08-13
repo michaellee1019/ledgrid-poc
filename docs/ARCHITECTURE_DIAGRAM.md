@@ -101,7 +101,8 @@ untracked unless deliberately promoted into the owning plugin.
 - `firmware/esp32/`: receiver capacity, pins, waveform, and protocol
 - `config/`: calibrated wall projection and plant/globe masks
 - environment variables and CLI flags: deployment-specific addresses, rates,
-  brightness, and optional HAT layout
+  brightness, and the alternate, non-installed HAT compatibility layout; the
+  repository does not include that carrier's hardware design
 
 Do not duplicate these constants in documentation or plugin code when a runtime
 source already exists.

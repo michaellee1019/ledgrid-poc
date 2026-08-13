@@ -52,7 +52,8 @@ All of these must pass before a hardware flash:
 ## Single-controller electronic capacity gates
 
 Run a dense, changing animation for at least 60 seconds at a 200 FPS host target.
-This proves pipeline capacity; it does not qualify the hand-wired strip links.
+This proves pipeline capacity; it does not qualify the downstream physical strip
+links.
 The capacity gate passes only when receiver telemetry shows:
 
 - no reset, panic, watchdog, or service failure;
@@ -70,7 +71,7 @@ WS2812 lanes have no return channel. Receiver CRC and DMA telemetry therefore
 cannot detect a flash caused by a marginal data/power connection downstream of
 the ESP32. After the electronic gates pass, run `just output-rate-sweep` while
 watching the affected strips. Retain the highest target with no visible flash;
-the installed hand-wired wall defaults to 160 FPS until that qualification is
+the installed wall defaults to 160 FPS until that qualification is
 complete. A rate is not accepted merely because receiver counters are clean.
 
 If any integrity criterion fails, do not roll out. Timing thresholds may be revised

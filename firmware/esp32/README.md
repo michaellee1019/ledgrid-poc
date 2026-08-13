@@ -1,11 +1,12 @@
 # ESP32-S3 LED Receiver Firmware
 
-Firmware for an ESP32-S3-N16R8 that receives RGB frames from a Raspberry Pi
-over 20 MHz SPI and drives eight WS2812 lanes in parallel.
+Firmware built for the PlatformIO `esp32-s3-devkitc1-n16r8` target. Each receiver
+accepts RGB frames from a Raspberry Pi over 20 MHz, mode-0 SPI and drives eight
+WS2812-compatible lanes in parallel.
 
-## Hardware
+## Firmware hardware contract
 
-- Board: ESP32-S3-DevKitC-1-N16R8V
+- PlatformIO board target: `esp32-s3-devkitc1-n16r8`
 - Flash: 16 MB
 - PSRAM: 8 MB
 - Installed default geometry: 8 strips × 138 LEDs
@@ -28,6 +29,9 @@ over 20 MHz SPI and drives eight WS2812 lanes in parallel.
 | Status LED | 48 |
 
 The Raspberry Pi and ESP32 must share ground. WS2812 power is supplied separately.
+The exact physical DevKitC revision/module suffix and the carrier electronics are
+not recorded in this repository. See [hardware and wiring](../../docs/HARDWARE.md)
+for the documented boundary and missing as-built information.
 
 ## Architecture
 
@@ -67,8 +71,10 @@ pio run -e esp32-s3-devkitc-1 -t upload --upload-port /dev/ttyACM0
 ```
 
 The production target uses the pioarduino stable platform with Arduino 3.3.9 and
-ESP-IDF 5.5.4. The board target must remain `esp32-s3-devkitc1-n16r8` so PSRAM and
-flash timing match the installed controllers.
+ESP-IDF 5.5.4. The board target must remain `esp32-s3-devkitc1-n16r8` unless a
+replacement receiver has been
+physically identified and separately qualified; the repository does not carry
+an as-built receiver inventory that justifies another target.
 
 ## SPI commands
 

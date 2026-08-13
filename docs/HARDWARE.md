@@ -1,12 +1,37 @@
 # Hardware and wiring
 
-The installed wall uses a Raspberry Pi and four ESP32-S3-DevKitC-1-N16R8
-receivers. Each receiver drives eight WS2812 lanes of 138 LEDs. Firmware keeps a
-140-LED-per-lane buffer ceiling, but the installed host geometry is 32 x 138.
+This document records the software-visible hardware contract for the installed
+wall. It is sufficient to configure, flash, and troubleshoot known assembled
+hardware; it is not a schematic, PCB design package, BOM, or complete as-built
+record.
+
+## Documentation status and sources of truth
+
+The supported installed-wall configuration (`LEDGRID_HAT=0`) uses one Raspberry
+Pi host and four ESP32-S3 receivers. Each receiver drives eight WS2812-compatible
+lanes of 138 LEDs, for a camera-verified logical geometry of 32 x 138 (4,416
+pixels). Receiver buffers retain capacity for 140 LEDs per lane.
+
+Use the runtime sources below when a copied value in prose disagrees:
+
+| Contract | Authoritative source |
+| --- | --- |
+| Installed geometry | [`drivers/led_layout.py`](../drivers/led_layout.py) and production calibration under [`config/`](../config/) |
+| Receiver SPI and LED GPIOs | [`firmware/esp32/src/main.cpp`](../firmware/esp32/src/main.cpp) |
+| Receiver build target | [`firmware/esp32/platformio.ini`](../firmware/esp32/platformio.ini) |
+| SPI speed and mode | [`drivers/spi_controller.py`](../drivers/spi_controller.py) |
+| Logical receiver-to-`spidev` mapping | [`drivers/multi_device.py`](../drivers/multi_device.py), overridden by `LEDGRID_DEVICE_MAP`; the live `device_map` metric is authoritative for a running installation |
+
+The production build target is PlatformIO board
+`esp32-s3-devkitc1-n16r8`, configured for 16 MB flash and 8 MB PSRAM. The
+repository does not contain an as-built inventory or photographs that verify the
+exact DevKitC PCB revision, module marking, or previously used `N16R8V` suffix.
+Treat the PlatformIO name as the required firmware target, not as a complete BOM
+entry for the physical receiver.
 
 ## Receiver pins
 
-All four receivers run the same firmware.
+All four receivers run the same firmware and GPIO map.
 
 | Function | ESP32-S3 GPIO |
 | --- | ---: |
@@ -17,14 +42,18 @@ All four receivers run the same firmware.
 | LED lanes 0-7 | 18, 17, 16, 15, 7, 6, 5, 4 |
 | Status LED | 48 |
 
-The board target is `esp32-s3-devkitc1-n16r8` with 16 MB flash and 8 MB PSRAM.
-See [receiver firmware](../firmware/esp32/README.md) for build and protocol
-details.
+The production host transport is SPI mode 0 at 20 MHz. CRC-16 protects command
+and frame payloads but does not replace signal-integrity qualification.
+
+See [receiver firmware](../firmware/esp32/README.md) for the build, waveform, and
+protocol details.
 
 ## Raspberry Pi buses
 
-Boards on the same bus share clock, MOSI, and optional MISO; each board has its
-own chip select. All grounds must be common.
+Boards on the same bus share clock, MOSI, and MISO; each board has its own chip
+select. MOSI, clock, chip select, and common ground are required for display
+traffic. MISO is required for `LGS3` status, receiver identity, and the full
+acceptance gates; only explicitly degraded write-only operation can omit it.
 
 | Bus signal | Pi GPIO | Physical pin |
 | --- | ---: | ---: |
@@ -39,7 +68,7 @@ own chip select. All grounds must be common.
 | SPI1 CE0 | 18 | 12 |
 | SPI1 CE1 | 17 | 11 |
 
-The four-device layout expects:
+The four-device layout expects these device nodes:
 
 ```text
 /dev/spidev0.0
@@ -48,25 +77,70 @@ The four-device layout expects:
 /dev/spidev1.1
 ```
 
-The host may enumerate the two SPI1 receivers in an installation-specific
-order; use the live `device_map` metric as the authoritative logical mapping.
-The full deployment configures `dtparam=spi=on` and `dtoverlay=spi1-2cs`
-idempotently. A boot-config change requires a Pi reboot before all four device
-nodes appear.
+For the expected topology, when `/dev/spidev0.2` is absent, SPI1 is present, and
+`LEDGRID_DEVICE_MAP` is unset, the host maps logical receivers 0-3 to
+`spidev0.0`, `spidev0.1`, `spidev1.1`, and `spidev1.0`, respectively. A custom
+device-node topology can select a different fallback. No software default is
+proof of physical board labels or cable order; use the live `device_map` metric
+and a lane-order test for the running installation. The full deployment
+configures `dtparam=spi=on` and `dtoverlay=spi1-2cs` idempotently. A boot-config
+change requires a Pi reboot before all four device nodes appear.
 
-## Power and signal integrity
+## Alternate HAT compatibility mode
+
+The repository also retains an alternate `LEDGRID_HAT=1` software mode. It
+configures two receivers on SPI0 CE0/CE1 and exposes 16 lanes. It is not the
+32-lane installed-wall configuration described above. No HAT schematic, PCB
+layout, connector pinout, BOM, or fabrication output is checked in, so the code
+and diagnostic utility establish only the host-side software mapping. Do not use
+them as manufacturing documentation for a carrier board.
+
+## Power and signal integrity requirements
+
+The following are design and operating requirements, not a verified description
+of the parts currently assembled.
 
 Do not power the wall from the ESP32 USB or Pi header. Supply the LED strips from
 a separately fused 5 V distribution system sized for the installation, and join
 the Pi, receivers, level shifters, and LED supply grounds.
 
-WS2812 data is nominally 5 V logic. Use a 3.3-to-5 V logic buffer such as a
-74AHCT125 near each receiver and keep data/ground pairs short. Long unpaired
-wires, missing ground reference, or marginal connectors can produce visible
-flashes even when SPI CRC and receiver counters are clean.
+The ESP32 outputs 3.3 V logic while the LED lanes use a 5 V supply. Provide
+enough 3.3-to-5 V, AHCT-compatible buffer channels for all eight lanes near each
+receiver and keep data/ground pairs short. For example, an eight-lane receiver
+would require two four-channel 74AHCT125 packages; the repository does not
+establish whether that is the circuit actually installed. Long unpaired wires,
+missing ground reference, or marginal connectors can produce visible flashes
+even when SPI CRC and receiver counters are clean.
 
 Never use maximum-white current as an ordinary operating condition. Apply both
 hardware current protection and conservative software brightness limits.
+
+## Missing physical design information
+
+The repository does not contain:
+
+- a schematic or netlist;
+- PCB source files, board stack-up, design rules, or a confirmed board revision;
+- Gerbers, drill files, fabrication drawings, or pick-and-place data;
+- a BOM with manufacturer part numbers and substitutions;
+- an assembly drawing, connector pinout, cable schedule, or as-built photographs;
+- the Raspberry Pi model/revision or exact ESP32 module markings;
+- the LED strip manufacturer/part number, connector family, wire gauges, or cable
+  lengths;
+- power-supply ratings, fuse types/values, branch-current allocation, power
+  injection locations, grounding topology, or decoupling details; or
+- the installed level-shifter circuit, channel count, enable wiring, series
+  resistors, or protection components.
+
+Git history contains commit messages referring to a "PCB v4" and a "latest
+PCB," but no EDA or fabrication artifacts for those boards are present in the
+current tree or other reachable Git objects. An older `WIRING.md` in history
+describes a seven-lane Seeed XIAO ESP32-S3 prototype and is not applicable to the
+current four-receiver pin map.
+
+Do not infer any of the missing electrical or mechanical details from firmware
+GPIO assignments. Capture them from the physical installation before repairing,
+reproducing, or replacing a carrier or power assembly.
 
 ## Bring-up
 

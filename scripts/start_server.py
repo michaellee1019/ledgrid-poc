@@ -69,7 +69,7 @@ def run_controller_mode(args):
     # Multi-device controller expects total strips, single-device expects strips per device
     if hasattr(LEDController, '__name__') and 'Multi' in LEDController.__name__:
         # Multi-device controller - calculate number of devices from strip count
-        strips_per_device = 8  # ESP32-S3 DevKitC has 8 strips
+        strips_per_device = 8  # The receiver firmware contract exposes 8 lanes.
         num_devices = device_count_for_strips(args.strips, strips_per_device)
         controller = LEDController(
             num_devices=num_devices,

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Quick check that both HAT ESP32 modules respond over SPI0."""
+"""Check the two receivers in the alternate HAT software mode over SPI0.
+
+This verifies host communication only; the HAT hardware design is not included
+in this repository.
+"""
 
 from __future__ import annotations
 
