@@ -523,9 +523,10 @@ def main():
 
         devices_to_check = args.devices or [0]
         samples = {device: [] for device in devices_to_check}
-        started = time.monotonic()
-        while time.monotonic() - started < args.duration:
+        sample_times = []
+        while True:
             metrics = _get_json(f"{base_url}/api/metrics")
+            sampled_at = time.monotonic()
             devices = metrics.get("driver", {}).get("devices", [])
             for device in devices_to_check:
                 if device >= len(devices):
@@ -533,9 +534,12 @@ def main():
                         f"device index {device} is unavailable; metrics has {len(devices)} devices"
                     )
                 samples[device].append(devices[device])
+            sample_times.append(sampled_at)
+            if sampled_at - sample_times[0] >= args.duration:
+                break
             time.sleep(args.interval)
 
-        elapsed = time.monotonic() - started
+        elapsed = sample_times[-1] - sample_times[0]
         write_only_devices = []
         device_results = {}
         for device, device_samples in samples.items():

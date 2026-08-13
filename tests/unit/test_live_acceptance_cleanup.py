@@ -195,13 +195,13 @@ class AcceptanceCommandCleanupTests(unittest.TestCase):
             "active": ["hue_shift"],
             "strengths": {"hue_shift": 0.5},
         }
-        times = iter([0.0, 0.0, 0.005, 0.02, 0.02])
+        clock = FakeClock()
         metrics = iter([self._receiver_metrics(0), self._receiver_metrics(4)])
         restore = Mock(side_effect=scene_restore_side_effect)
         restore_fps = Mock(side_effect=fps_restore_side_effect)
         restore_modifiers = Mock(side_effect=modifier_restore_side_effect)
         argv = [
-            "receiver_acceptance.py", "--device", "0", "--duration", "0.01",
+            "receiver_acceptance.py", "--device", "0", "--duration", "0.001",
             "--interval", "0.001", "--warmup", "0", "--min-displayed-fps", "1",
             "--target-fps", "160",
         ]
@@ -220,8 +220,8 @@ class AcceptanceCommandCleanupTests(unittest.TestCase):
             ),
             patch.object(receiver_acceptance, "_post_json", return_value={}),
             patch.object(receiver_acceptance, "_get_json", side_effect=lambda _url: next(metrics)),
-            patch.object(receiver_acceptance.time, "monotonic", side_effect=lambda: next(times)),
-            patch.object(receiver_acceptance.time, "sleep", return_value=None),
+            patch.object(receiver_acceptance.time, "monotonic", side_effect=clock),
+            patch.object(receiver_acceptance.time, "sleep", side_effect=clock.sleep),
             patch("sys.stdout", new_callable=io.StringIO) as stdout,
         ):
             with self.assertRaises(SystemExit) as exited:

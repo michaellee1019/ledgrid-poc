@@ -416,6 +416,29 @@ class MultiDevicePartialTests(unittest.TestCase):
 
 
 class ReceiverAcceptanceTests(unittest.TestCase):
+    def test_acceptance_rate_uses_the_counter_sample_window(self):
+        first = {
+            'receiver_status_version': 3,
+            'receiver_frames_accepted': 0,
+            'receiver_frames_displayed': 0,
+            'receiver_frames_superseded': 0,
+            'receiver_crc_errors': 0,
+            'receiver_publish_drops': 0,
+            'receiver_spi_queue_errors': 0,
+            'receiver_display_errors': 0,
+            'receiver_status_misses': 0,
+            'receiver_last_encode_us': 500,
+            'receiver_last_show_us': 4400,
+        }
+        last = dict(first, receiver_frames_accepted=1500,
+                    receiver_frames_displayed=1500)
+
+        result = evaluate_samples([first, last], 10.0)
+
+        self.assertTrue(result['passed'], result['failures'])
+        self.assertEqual(result['elapsed_seconds'], 10.0)
+        self.assertEqual(result['displayed_fps'], 150.0)
+
     def test_phase3a_status_gate_requires_v3_ownership_and_exact_identities(self):
         devices = [
             {

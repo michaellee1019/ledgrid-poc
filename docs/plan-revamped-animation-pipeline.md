@@ -1998,6 +1998,13 @@ Portable/integrated evidence on 2026-08-13:
   all four lanes, including a valid all-zero delta, while dense acceptance still
   requires positive traffic. Exact scene restoration succeeded on the failed
   run; the corrected sweep remains to be repeated after deployment.
+- The first target-160 rerun exposed a benchmark denominator defect: 9,156
+  accepted/displayed frames were divided by 62.643 seconds even though the
+  counter snapshots covered roughly the requested 60-second interval. Initial
+  metrics-request and trailing-sleep time were incorrectly included. Acceptance
+  now runs until the monotonic first-to-last sample interval itself reaches 60
+  seconds and evaluates that exact counter window; cleanup remained exact on
+  the failed run.
 - The installed dense target-200 saturation run reported receiver encode p95
   490 us, display p95 4,442 us, and 9,362 accepted plus 9,362 displayed frames
   over 60.279 seconds (155.31 FPS), with no superseded frame or integrity error.

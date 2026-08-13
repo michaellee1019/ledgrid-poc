@@ -112,6 +112,9 @@ temporarily neutralizes manager-global plant modifiers so operator optics cannot
 turn a transport measurement into an animation-cost measurement, then restores
 and verifies the exact prior target, modifier state, and scene after either
 success or failure.
+The reported rate uses the monotonic interval between the first and last
+receiver-counter samples; HTTP request time before the first sample and cleanup
+time cannot dilute the measured cadence.
 
 The installed timing budget is explicit. One receiver SET_ALL is 3,315 bytes
 (one command byte, 8 x 138 x RGB8, and two CRC bytes), or 1,326 us at 20 MHz.
