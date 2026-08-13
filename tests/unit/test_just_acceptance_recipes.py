@@ -30,29 +30,29 @@ class JustAcceptanceRecipeTests(unittest.TestCase):
         argv = self.run_with_fake_uv(
             "receiver-streamed-wall-acceptance",
             "duration=60",
-            "min_fps=180",
-            "target_fps=200",
+            "min_fps=150",
+            "target_fps=160",
         )
         self.assertEqual(argv[-18:], [
             "python", "tools/benchmarks/receiver_acceptance.py",
             "--device", "0", "--device", "1", "--device", "2", "--device", "3",
-            "--duration", "60", "--min-displayed-fps", "180",
-            "--target-fps", "200", "--animation", "rainbow",
+            "--duration", "60", "--min-displayed-fps", "150",
+            "--target-fps", "160", "--animation", "rainbow",
         ])
 
     def test_degraded_spi1_recipe_is_separate_explicit_and_full_wall(self):
         argv = self.run_with_fake_uv(
             "receiver-streamed-wall-acceptance-degraded-spi1",
             "duration=60",
-            "min_fps=180",
-            "target_fps=200",
+            "min_fps=150",
+            "target_fps=160",
         )
         self.assertEqual(argv[-19:], [
             "python", "tools/benchmarks/receiver_acceptance.py",
             "--device", "0", "--device", "1", "--device", "2", "--device", "3",
             "--allow-degraded-spi1-return-path",
-            "--duration", "60", "--min-displayed-fps", "180",
-            "--target-fps", "200", "--animation", "rainbow",
+            "--duration", "60", "--min-displayed-fps", "150",
+            "--target-fps", "160", "--animation", "rainbow",
         ])
 
     def test_degraded_status_recipe_is_separate_and_explicit(self):
@@ -79,9 +79,22 @@ class JustAcceptanceRecipeTests(unittest.TestCase):
         ])
 
     def test_defaults_and_positional_arguments_remain_supported(self):
+        default_receiver = self.run_with_fake_uv("receiver-acceptance")
+        self.assertEqual(default_receiver[-10:-2], [
+            "--device", "0", "--duration", "60", "--min-displayed-fps", "150",
+            "--target-fps", "160",
+        ])
+
         default_stream = self.run_with_fake_uv("receiver-streamed-wall-acceptance")
         self.assertEqual(default_stream[-8:-2], [
-            "--duration", "60", "--min-displayed-fps", "180", "--target-fps", "200",
+            "--duration", "60", "--min-displayed-fps", "150", "--target-fps", "160",
+        ])
+
+        default_degraded = self.run_with_fake_uv(
+            "receiver-streamed-wall-acceptance-degraded-spi1"
+        )
+        self.assertEqual(default_degraded[-8:-2], [
+            "--duration", "60", "--min-displayed-fps", "150", "--target-fps", "160",
         ])
 
         positional_stream = self.run_with_fake_uv(

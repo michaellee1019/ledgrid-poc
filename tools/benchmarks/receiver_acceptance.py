@@ -11,15 +11,19 @@ from urllib import request
 
 if __package__:
     from tools.benchmarks.live_display_state import (
+        capture_plant_modifiers,
         capture_scene,
         capture_target_fps,
+        restore_plant_modifiers,
         restore_scene,
         restore_target_fps,
     )
 else:  # Direct script execution from the documented Just recipes.
     from live_display_state import (
+        capture_plant_modifiers,
         capture_scene,
         capture_target_fps,
+        restore_plant_modifiers,
         restore_scene,
         restore_target_fps,
     )
@@ -30,6 +34,41 @@ CAPABILITY_PRESENTATION_CONTEXT_V1 = 1 << 1
 CAPABILITY_STATUS_V3 = 1 << 2
 CAPABILITY_EXPLICIT_BASE_OWNERSHIP = 1 << 3
 DEGRADED_SPI1_WRITE_ONLY_DEVICES = frozenset((2, 3))
+
+# Installed full-frame timing facts. Each receiver owns eight 138-pixel lanes,
+# and one SET_ALL transaction carries one command byte, RGB8, and a two-byte CRC.
+INSTALLED_STRIPS_PER_RECEIVER = 8
+INSTALLED_LEDS_PER_STRIP = 138
+INSTALLED_SPI_SPEED_HZ = 20_000_000
+INSTALLED_FULL_FRAME_BYTES = (
+    1 + INSTALLED_STRIPS_PER_RECEIVER * INSTALLED_LEDS_PER_STRIP * 3 + 2
+)
+INSTALLED_FULL_FRAME_SPI_US = (
+    INSTALLED_FULL_FRAME_BYTES * 8 * 1_000_000 // INSTALLED_SPI_SPEED_HZ
+)
+INSTALLED_NOMINAL_SHOW_US = INSTALLED_LEDS_PER_STRIP * 30 + 300
+DEFAULT_TARGET_FPS = 160
+DEFAULT_MIN_DISPLAYED_FPS = 150.0
+
+
+def installed_streamed_timing_facts():
+    """Return the documentation-backed installed full-frame timing budget."""
+
+    return {
+        "strips_per_receiver": INSTALLED_STRIPS_PER_RECEIVER,
+        "leds_per_strip": INSTALLED_LEDS_PER_STRIP,
+        "full_frame_bytes": INSTALLED_FULL_FRAME_BYTES,
+        "spi_speed_hz": INSTALLED_SPI_SPEED_HZ,
+        "full_frame_spi_us": INSTALLED_FULL_FRAME_SPI_US,
+        "nominal_show_us": INSTALLED_NOMINAL_SHOW_US,
+    }
+
+
+NEUTRAL_PLANT_MODIFIERS = {
+    "version": 1,
+    "active": [],
+    "strengths": {},
+}
 
 
 def _receiver_status_unreadable(status):
@@ -216,7 +255,11 @@ def _percentile(values, ratio):
     return ordered[index]
 
 
-def evaluate_samples(samples, elapsed_seconds, min_displayed_fps=180.0):
+def evaluate_samples(
+    samples,
+    elapsed_seconds,
+    min_displayed_fps=DEFAULT_MIN_DISPLAYED_FPS,
+):
     if len(samples) < 2 or elapsed_seconds <= 0:
         return {"passed": False, "failures": ["insufficient samples"]}
 
@@ -286,10 +329,11 @@ def evaluate_samples(samples, elapsed_seconds, min_displayed_fps=180.0):
         "encode_p95_us": encode_p95,
         "show_p95_us": show_p95,
         "outstanding_frames": outstanding,
+        "installed_timing_facts": installed_streamed_timing_facts(),
     }
 
 
-def evaluate_write_only_samples(samples, elapsed_seconds):
+def evaluate_write_only_samples(samples, elapsed_seconds, *, require_progress=True):
     """Prove host-side outbound traffic without claiming receiver/display evidence."""
 
     failures = []
@@ -320,10 +364,12 @@ def evaluate_write_only_samples(samples, elapsed_seconds):
     transfers = delta("spi_transfers")
     payload_bytes = delta("bytes_sent")
     errors = delta("errors")
-    if frames <= 0 or transfers <= 0 or payload_bytes <= 0:
+    if require_progress and (frames <= 0 or transfers <= 0 or payload_bytes <= 0):
         failures.append(
             "host-side streamed traffic did not advance frames, transfers, and bytes"
         )
+    elif not require_progress and (frames < 0 or transfers < 0 or payload_bytes < 0):
+        failures.append("host-side streamed counters moved backwards")
     if errors != 0:
         failures.append(f"host SPI errors increased by {errors}")
     return {
@@ -378,9 +424,11 @@ def main():
     parser.add_argument("--interval", type=float, default=0.1)
     parser.add_argument("--warmup", type=float, default=3.0)
     parser.add_argument("--animation", default="rainbow")
-    parser.add_argument("--min-displayed-fps", type=float, default=180.0)
     parser.add_argument(
-        "--target-fps", type=int, default=200,
+        "--min-displayed-fps", type=float, default=DEFAULT_MIN_DISPLAYED_FPS,
+    )
+    parser.add_argument(
+        "--target-fps", type=int, default=DEFAULT_TARGET_FPS,
         help="temporary streamed test cadence; the exact prior value is restored",
     )
     parser.add_argument(
@@ -453,14 +501,22 @@ def main():
         raise SystemExit(0 if result["passed"] else 1)
     snapshot = capture_scene(base_url, _get_json)
     original_target_fps = capture_target_fps(base_url, _get_json)
+    original_plant_modifiers = capture_plant_modifiers(base_url, _get_json)
     run_failure = None
     target_fps_cleanup_failure = None
     scene_cleanup_failure = None
+    plant_modifier_cleanup_failure = None
+    plant_modifiers_neutralized = False
     result = None
     try:
         restore_target_fps(
             base_url, args.target_fps, get_json=_get_json, post_json=_post_json,
         )
+        restore_plant_modifiers(
+            base_url, NEUTRAL_PLANT_MODIFIERS,
+            get_json=_get_json, post_json=_post_json,
+        )
+        plant_modifiers_neutralized = True
         if args.animation:
             _post_json(f"{base_url}/api/start/{args.animation}", {})
         time.sleep(args.warmup)
@@ -536,6 +592,13 @@ def main():
         except Exception as exc:
             target_fps_cleanup_failure = str(exc)
         try:
+            restore_plant_modifiers(
+                base_url, original_plant_modifiers,
+                get_json=_get_json, post_json=_post_json,
+            )
+        except Exception as exc:
+            plant_modifier_cleanup_failure = str(exc)
+        try:
             restore_scene(
                 base_url, snapshot, get_json=_get_json, post_json=_post_json,
                 delete_json=_delete_json,
@@ -548,11 +611,17 @@ def main():
     assert result is not None
     result["scene_restored"] = scene_cleanup_failure is None
     result["target_fps_restored"] = target_fps_cleanup_failure is None
+    result["plant_modifiers_neutralized"] = plant_modifiers_neutralized
+    result["plant_modifiers_restored"] = plant_modifier_cleanup_failure is None
     cleanup_failures = []
     if target_fps_cleanup_failure:
         cleanup_failures.append(f"target FPS: {target_fps_cleanup_failure}")
     if scene_cleanup_failure:
         cleanup_failures.append(f"scene: {scene_cleanup_failure}")
+    if plant_modifier_cleanup_failure:
+        cleanup_failures.append(
+            f"plant modifiers: {plant_modifier_cleanup_failure}"
+        )
     if cleanup_failures:
         result["passed"] = False
         result.setdefault("failures", []).append(

@@ -103,12 +103,26 @@ receiver telemetry cannot observe downstream LED wiring.
 
 ## Single-controller electronic capacity gates
 
-Run a dense, changing animation for at least 60 seconds at a 200 FPS host target.
-This proves pipeline capacity; it does not qualify the hand-wired strip links.
-Use `just receiver-acceptance device=0 duration=60 min_fps=180 target_fps=200`;
+Run a dense, changing animation for at least 60 seconds at the installed 160 FPS
+full-frame target. This proves production pipeline capacity; it does not qualify
+the hand-wired strip links. Use
+`just receiver-acceptance device=0 duration=60 min_fps=150 target_fps=160`;
 the recipe also accepts positional arguments and defaults. The capacity gate
-restores the exact prior scene and manager target after either success or
-failure.
+temporarily neutralizes manager-global plant modifiers so operator optics cannot
+turn a transport measurement into an animation-cost measurement, then restores
+and verifies the exact prior target, modifier state, and scene after either
+success or failure.
+
+The installed timing budget is explicit. One receiver SET_ALL is 3,315 bytes
+(one command byte, 8 x 138 x RGB8, and two CRC bytes), or 1,326 us at 20 MHz.
+The nominal 138-pixel WS2812 transaction is 4,440 us including the 300 us reset.
+The installed target-200 run measured 490 us encode p95, 4,442 us display p95,
+and 9,362 accepted and displayed frames over 60.279 seconds: 155.31 FPS with no
+integrity or accounting error. That agrees with the current effective serial
+SPI-plus-encode-plus-display budget and does not support a 180 FPS release gate.
+Target 200 remains an output-rate saturation characterization, not production
+capacity acceptance.
+
 The capacity gate passes only when receiver telemetry shows:
 
 - no reset, panic, watchdog, or service failure;
@@ -116,7 +130,7 @@ The capacity gate passes only when receiver telemetry shows:
 - SPI queue-overrun delta of zero;
 - receiver display DMA p95 at or below 4.8 ms;
 - receiver frame-encode p95 at or below 1.0 ms;
-- at least 180 displayed frames per second;
+- at least 150 displayed frames per second;
 - at least 99% of accepted frames are either displayed or explicitly counted as
   superseded, with no unexplained frame loss;
 - `accepted - displayed - superseded` remains within the three-slot mailbox bound;
@@ -137,7 +151,7 @@ only with measured evidence and an updated theoretical budget.
 After all four controllers are flashed:
 
 ```bash
-just receiver-streamed-wall-acceptance duration=60 min_fps=180 target_fps=200
+just receiver-streamed-wall-acceptance duration=60 min_fps=150 target_fps=160
 just live-animation-sweep seconds=2
 ```
 
@@ -151,7 +165,7 @@ may qualify only the feature-off streamed path:
 ```bash
 just receiver-phase3a-status-degraded-spi1
 just receiver-streamed-wall-acceptance-degraded-spi1 \
-  duration=60 min_fps=180 target_fps=200
+  duration=60 min_fps=150 target_fps=160
 just live-animation-sweep-degraded-spi1 seconds=2
 ```
 

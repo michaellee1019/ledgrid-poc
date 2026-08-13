@@ -85,7 +85,13 @@ def evaluate_receiver_topology(
 
     observable = []
     write_only = []
+    frame_deltas = []
     for index, (first, last) in enumerate(zip(first_devices, last_devices)):
+        frame_delta = (
+            int(last.get("frames_sent", 0) or 0)
+            - int(first.get("frames_sent", 0) or 0)
+        )
+        frame_deltas.append(frame_delta)
         first_version = int(first.get("receiver_status_version", 0) or 0)
         last_version = int(last.get("receiver_status_version", 0) or 0)
         if first_version >= 2 and last_version >= 2:
@@ -102,7 +108,9 @@ def evaluate_receiver_topology(
             continue
 
         if allow_degraded_spi1 and index in DEGRADED_SPI1_WRITE_ONLY_DEVICES:
-            result = evaluate_write_only_samples([first, last], 1.0)
+            result = evaluate_write_only_samples(
+                [first, last], 1.0, require_progress=False,
+            )
             if result["known_write_only_state"]:
                 write_only.append(index)
             if not result["passed"]:
@@ -124,6 +132,11 @@ def evaluate_receiver_topology(
         failures.append(
             "degraded SPI1 return-path policy requires the exact write-only "
             "logical-device pair 2 and 3"
+        )
+    if allow_degraded_spi1 and len(set(frame_deltas)) != 1:
+        failures.append(
+            "host frame deltas differ across logical receivers: "
+            f"{frame_deltas!r}"
         )
     return {
         "failures": failures,

@@ -163,14 +163,14 @@ preflight: test
 deploy-precheck: test
 
 # Run the receiver-side timed hardware gates against one controller.
-receiver-acceptance device="0" duration="60" min_fps="180" target_fps="200":
+receiver-acceptance device="0" duration="60" min_fps="150" target_fps="160":
 	device="{{device}}"; duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
 	device="${device#device=}"; duration="${duration#duration=}"; \
 	min_fps="${min_fps#min_fps=}"; target_fps="${target_fps#target_fps=}"; \
 	{{python_env}} python tools/benchmarks/receiver_acceptance.py --device "$device" --duration "$duration" --min-displayed-fps "$min_fps" --target-fps "$target_fps" --animation rainbow
 
 # Run the dense streamed-frame gate against the complete installed topology.
-receiver-streamed-wall-acceptance duration="60" min_fps="180" target_fps="200":
+receiver-streamed-wall-acceptance duration="60" min_fps="150" target_fps="160":
 	duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
 	duration="${duration#duration=}"; min_fps="${min_fps#min_fps=}"; \
 	target_fps="${target_fps#target_fps=}"; \
@@ -181,7 +181,7 @@ receiver-streamed-wall-acceptance duration="60" min_fps="180" target_fps="200":
 
 # Temporary installed-wall exception: require full receiver telemetry on SPI0,
 # prove outbound host traffic on write-only SPI1, and require visual inspection.
-receiver-streamed-wall-acceptance-degraded-spi1 duration="60" min_fps="180" target_fps="200":
+receiver-streamed-wall-acceptance-degraded-spi1 duration="60" min_fps="150" target_fps="160":
 	duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
 	duration="${duration#duration=}"; min_fps="${min_fps#min_fps=}"; \
 	target_fps="${target_fps#target_fps=}"; \

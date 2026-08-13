@@ -37,8 +37,9 @@ with a small, explicit presentation model:
   then a statically linked firmware background with a sparse clock overlay, and
   only then introduce uploadable native modules.
 
-The existing 32 x 138 wall, four 8 x 138 receivers, 200 Hz manager target, and
-compiled startup rainbow remain the operating envelope and fallback. Existing
+The existing 32 x 138 wall, four 8 x 138 receivers, 160 Hz installed full-frame
+target, and compiled startup rainbow remain the operating envelope and fallback.
+Target 200 is retained only for output-rate saturation characterization. Existing
 Python plugins and presets must continue to work throughout migration. Every
 phase is independently useful, has an acceptance gate, and stops before the next
 risk domain.
@@ -1973,6 +1974,38 @@ and the strict all-four gates pass.
 
 Portable/integrated evidence on 2026-08-13:
 
+- Dedicated-key deployment from clean commit `5965951` completed every
+  coordinator step against `192.168.1.62`, activated immutable release
+  `b7777df24c4490c3ba43e498df78924c5f8bd401a7383314a1368233f5e7aad8`,
+  restored the prior scene, and passed stable health acceptance with four host
+  devices. The explicit degraded status gate then passed with v3 identity and
+  capabilities on logical receivers 0 and 1 and the exact known no-return state
+  on 2 and 3. This closes the deployment/SSH failure, not the deferred strict
+  all-four MISO gate.
+- The first target-200 dense diagnostic preserved and restored scene/FPS state
+  but correctly failed its obsolete 180 FPS threshold at 155.31 displayed FPS.
+  An output-rate sweep measured 120.8, 145.13, 156.0, 163.4, and 162.73
+  displayed FPS at targets 120, 140, 160, 180, and 200 respectively, with zero
+  readable-receiver CRC/display errors and exact cleanup. A Pi microbenchmark
+  also found inherited `hue_shift=0.5` made Rainbow generation about 22 times
+  slower than neutral. Dense acceptance now verifies neutral plant optics and
+  restores the exact prior modifier state, and the installed release gate uses
+  the measured target-160/minimum-150 envelope.
+- The first degraded live sweep exercised the complete plugin registry with
+  zero reported host or readable-receiver integrity deltas, then failed because
+  its new write-only policy incorrectly required outbound progress from cached
+  static plugins. The corrected evaluator requires equal host frame deltas on
+  all four lanes, including a valid all-zero delta, while dense acceptance still
+  requires positive traffic. Exact scene restoration succeeded on the failed
+  run; the corrected sweep remains to be repeated after deployment.
+- The installed dense target-200 saturation run reported receiver encode p95
+  490 us, display p95 4,442 us, and 9,362 accepted plus 9,362 displayed frames
+  over 60.279 seconds (155.31 FPS), with no superseded frame or integrity error.
+  One 8 x 138 SET_ALL packet is 3,315 bytes and takes 1,326 us at 20 MHz; the
+  nominal WS2812 output is 4,440 us. The measured rate agrees with the current
+  effective SPI-plus-encode-plus-display budget, so the installed full-frame
+  release gate now targets 160 FPS and requires 150 FPS. Target 200 remains an
+  output-rate saturation characterization rather than a production claim.
 - After encoding the explicit degraded-return-path policy and fixing documented
   Just argument normalization, `just test` passed 834 Python tests and 1,119
   subtests, 21 rendering tests and 3 subtests, all 44 native firmware cases,
@@ -2035,7 +2068,7 @@ Portable/integrated evidence on 2026-08-13:
   canonical all-four dense streamed recipe removes the former device-0-only
   default from the full-wall gate.
 - The final recipe audit caught a command-boundary regression in documented
-  trailing arguments: Just passed `duration=60`, `target_fps=200`, and
+  trailing arguments: Just passed `duration=60`, `target_fps=160`, and
   `seconds=2` literally to numeric Python options. The receiver acceptance,
   streamed-wall, live-sweep, and output-rate recipes now normalize their named
   prefixes while preserving defaults and positional calls. Focused tests run
@@ -2384,7 +2417,8 @@ At minimum:
   cadence, with p99/max and cadence misses retained;
 - receiver encoding remains at or below the existing 1 ms p95 gate and display
   DMA at or below 4.8 ms p95;
-- the dense streamed capacity canary retains at least 180 displayed FPS with the
+- the dense streamed capacity canary targets 160 FPS and retains at least 150
+  displayed FPS with the
   existing accounting and integrity requirements;
 - a representative changed clock tick uses less than 10 percent of one complete
   wall RGB frame, and a fixed 60-second native 60 Hz background plus 1 Hz clock

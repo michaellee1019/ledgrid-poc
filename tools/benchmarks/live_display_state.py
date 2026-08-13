@@ -91,6 +91,33 @@ def capture_target_fps(base_url: str, get_json: Callable[[str], Any]) -> int:
     return value
 
 
+def capture_plant_modifiers(
+    base_url: str, get_json: Callable[[str], Any]
+) -> dict[str, Any]:
+    """Capture manager-global plant optics from the public status payload."""
+    payload = get_json(f"{base_url}/api/status")
+    value = payload.get("plant_modifiers") if isinstance(payload, Mapping) else None
+    if not isinstance(value, Mapping):
+        raise DisplayStateError(
+            "live plant modifier snapshot is unavailable or malformed"
+        )
+    active = value.get("active")
+    strengths = value.get("strengths")
+    version = value.get("version")
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version < 1
+        or not isinstance(active, list)
+        or not all(isinstance(item, str) and item for item in active)
+        or not isinstance(strengths, Mapping)
+    ):
+        raise DisplayStateError(
+            "live plant modifier snapshot is unavailable or malformed"
+        )
+    return deepcopy(dict(value))
+
+
 def restore_target_fps(
     base_url: str,
     target_fps: int,
@@ -118,4 +145,40 @@ def restore_target_fps(
     raise DisplayStateError(
         f"target FPS restoration was not observed: expected {target_fps}, "
         f"observed {observed!r}"
+    )
+
+
+def restore_plant_modifiers(
+    base_url: str,
+    plant_modifiers: Mapping[str, Any],
+    *,
+    get_json: Callable[[str], Any],
+    post_json: Callable[[str, Any], Any],
+    timeout: float = 5.0,
+    poll_interval: float = 0.1,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> None:
+    """Apply and verify manager-global plant optics through the public API."""
+    expected = deepcopy(dict(plant_modifiers))
+    post_json(
+        f"{base_url}/api/config/plant-modifiers",
+        {"plant_modifiers": expected},
+    )
+    deadline = clock() + timeout
+    observed = None
+    while True:
+        payload = get_json(f"{base_url}/api/status")
+        observed = (
+            payload.get("plant_modifiers")
+            if isinstance(payload, Mapping) else None
+        )
+        if observed == expected:
+            return
+        if clock() >= deadline:
+            break
+        sleeper(poll_interval)
+    raise DisplayStateError(
+        "plant modifier restoration was not observed: "
+        f"expected {expected!r}, observed {observed!r}"
     )

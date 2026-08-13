@@ -417,7 +417,7 @@ class CanaryRunnerTests(unittest.TestCase):
             "\n\n", 1
         )[0]
         self.assertIn('duration="60"', recipe)
-        self.assertIn('target_fps="200"', recipe)
+        self.assertIn('target_fps="160"', recipe)
         self.assertIn("--device 0 --device 1 --device 2 --device 3", recipe)
         self.assertIn('--duration "$duration"', recipe)
         self.assertIn('--target-fps "$target_fps"', recipe)

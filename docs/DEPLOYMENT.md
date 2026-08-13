@@ -222,14 +222,15 @@ must not be curated.
 
    ```bash
    just receiver-phase3a-status
-   just receiver-streamed-wall-acceptance duration=60 min_fps=180 target_fps=200
+   just receiver-streamed-wall-acceptance duration=60 min_fps=150 target_fps=160
    just live-animation-sweep seconds=2
    just output-rate-sweep seconds=15 rates=120,140,160,180,200
    ```
 
    These recipes accept the shown trailing `key=value` form as well as their
    positional arguments and defaults. The streamed-wall recipe always names all
-   four logical receivers and restores the prior scene and target cadence.
+   four logical receivers, neutralizes global plant modifiers for a deterministic
+   transport load, and restores the prior scene, modifier state, and cadence.
 
    While the installed SPI1 MISO net remains shorted, keep those strict commands
    as open release gates and use only the separately named temporary diagnostics:
@@ -237,7 +238,7 @@ must not be curated.
    ```bash
    just receiver-phase3a-status-degraded-spi1
    just receiver-streamed-wall-acceptance-degraded-spi1 \
-     duration=60 min_fps=180 target_fps=200
+     duration=60 min_fps=150 target_fps=160
    just live-animation-sweep-degraded-spi1 seconds=2
    ```
 

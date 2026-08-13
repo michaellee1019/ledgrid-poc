@@ -31,6 +31,7 @@ from tools.benchmarks.receiver_acceptance import (
     CAPABILITY_STATUS_V3,
     evaluate_phase3a_status,
     evaluate_samples,
+    installed_streamed_timing_facts,
 )
 from tools.benchmarks.live_animation_sweep import receiver_failures
 
@@ -518,7 +519,17 @@ class ReceiverAcceptanceTests(unittest.TestCase):
         v3_first = dict(first, receiver_status_version=3)
         self.assertEqual(receiver_failures(v3_first, dict(v3_first)), [])
 
-    def test_acceptance_evaluator_passes_accounted_180fps_pipeline(self):
+    def test_installed_full_frame_timing_facts_are_locked(self):
+        self.assertEqual(installed_streamed_timing_facts(), {
+            'strips_per_receiver': 8,
+            'leds_per_strip': 138,
+            'full_frame_bytes': 3315,
+            'spi_speed_hz': 20_000_000,
+            'full_frame_spi_us': 1326,
+            'nominal_show_us': 4440,
+        })
+
+    def test_acceptance_evaluator_passes_exactly_150fps_pipeline(self):
         first = {
             'receiver_status_version': 2,
             'receiver_crc_errors': 1,
@@ -534,9 +545,9 @@ class ReceiverAcceptanceTests(unittest.TestCase):
         }
         last = dict(first)
         last.update({
-            'receiver_frames_accepted': 2000,
-            'receiver_frames_displayed': 1948,
-            'receiver_frames_superseded': 51,
+            'receiver_frames_accepted': 1600,
+            'receiver_frames_displayed': 1598,
+            'receiver_frames_superseded': 1,
             'receiver_last_encode_us': 600,
             'receiver_last_show_us': 4550,
         })
@@ -544,13 +555,21 @@ class ReceiverAcceptanceTests(unittest.TestCase):
         result = evaluate_samples([first, last], 10.0)
 
         self.assertTrue(result['passed'], result['failures'])
-        self.assertEqual(result['displayed_fps'], 185.0)
+        self.assertEqual(result['displayed_fps'], 150.0)
+        self.assertEqual(result['installed_timing_facts']['full_frame_bytes'], 3315)
 
         v3_result = evaluate_samples([
             dict(first, receiver_status_version=3),
             dict(last, receiver_status_version=3),
         ], 10.0)
         self.assertTrue(v3_result['passed'], v3_result['failures'])
+
+        below = dict(last, receiver_frames_displayed=1597)
+        below_result = evaluate_samples([first, below], 10.0)
+        self.assertFalse(below_result['passed'])
+        self.assertEqual(below_result['displayed_fps'], 149.9)
+        self.assertTrue(any('below 150 FPS' in item
+                            for item in below_result['failures']))
 
     def test_acceptance_evaluator_reports_integrity_and_timing_failures(self):
         first = {

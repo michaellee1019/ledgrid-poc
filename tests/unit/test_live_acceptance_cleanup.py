@@ -11,8 +11,10 @@ from tools.benchmarks import live_animation_sweep, output_rate_sweep, receiver_a
 from tools.benchmarks.live_display_state import (
     DisplayStateError,
     SceneSnapshot,
+    capture_plant_modifiers,
     capture_scene,
     capture_target_fps,
+    restore_plant_modifiers,
     restore_scene,
     restore_target_fps,
 )
@@ -116,6 +118,51 @@ class LiveDisplayStateTests(unittest.TestCase):
                 timeout=0.2, poll_interval=0.1, clock=clock, sleeper=clock.sleep,
             )
 
+    def test_plant_modifier_capture_restore_and_timeout(self):
+        source = {
+            "version": 1,
+            "active": ["hue_shift"],
+            "strengths": {"hue_shift": 0.5},
+        }
+        captured = capture_plant_modifiers(
+            "http://wall", lambda _url: {"plant_modifiers": source}
+        )
+        source["active"].clear()
+        self.assertEqual(captured["active"], ["hue_shift"])
+        for value in (None, [], {}, {"version": True, "active": [], "strengths": {}}):
+            with self.subTest(value=value), self.assertRaises(DisplayStateError):
+                capture_plant_modifiers(
+                    "http://wall",
+                    lambda _url, item=value: {"plant_modifiers": item},
+                )
+
+        expected = {"version": 1, "active": [], "strengths": {}}
+        posts = []
+        responses = iter([
+            {"plant_modifiers": captured},
+            {"plant_modifiers": expected},
+        ])
+        clock = FakeClock()
+        restore_plant_modifiers(
+            "http://wall", expected,
+            get_json=lambda _url: next(responses),
+            post_json=lambda url, body: posts.append((url, body)),
+            clock=clock, sleeper=clock.sleep,
+        )
+        self.assertEqual(posts, [(
+            "http://wall/api/config/plant-modifiers",
+            {"plant_modifiers": expected},
+        )])
+
+        clock = FakeClock()
+        with self.assertRaisesRegex(DisplayStateError, "not observed"):
+            restore_plant_modifiers(
+                "http://wall", expected,
+                get_json=lambda _url: {"plant_modifiers": captured},
+                post_json=lambda _url, _body: None,
+                timeout=0.2, poll_interval=0.1, clock=clock, sleeper=clock.sleep,
+            )
+
 
 class AcceptanceCommandCleanupTests(unittest.TestCase):
     @staticmethod
@@ -137,23 +184,40 @@ class AcceptanceCommandCleanupTests(unittest.TestCase):
         }
 
     def _run_receiver_acceptance(
-        self, scene_restore_side_effect=None, fps_restore_side_effect=None
+        self,
+        scene_restore_side_effect=None,
+        fps_restore_side_effect=None,
+        modifier_restore_side_effect=None,
     ):
         snapshot = SceneSnapshot(True, {"schema": "scene"})
+        plant_modifiers = {
+            "version": 1,
+            "active": ["hue_shift"],
+            "strengths": {"hue_shift": 0.5},
+        }
         times = iter([0.0, 0.0, 0.005, 0.02, 0.02])
         metrics = iter([self._receiver_metrics(0), self._receiver_metrics(4)])
         restore = Mock(side_effect=scene_restore_side_effect)
         restore_fps = Mock(side_effect=fps_restore_side_effect)
+        restore_modifiers = Mock(side_effect=modifier_restore_side_effect)
         argv = [
             "receiver_acceptance.py", "--device", "0", "--duration", "0.01",
             "--interval", "0.001", "--warmup", "0", "--min-displayed-fps", "1",
+            "--target-fps", "160",
         ]
         with (
             patch.object(sys, "argv", argv),
             patch.object(receiver_acceptance, "capture_scene", return_value=snapshot),
-            patch.object(receiver_acceptance, "capture_target_fps", return_value=160),
+            patch.object(receiver_acceptance, "capture_target_fps", return_value=144),
+            patch.object(
+                receiver_acceptance, "capture_plant_modifiers",
+                return_value=plant_modifiers,
+            ),
             patch.object(receiver_acceptance, "restore_scene", restore),
             patch.object(receiver_acceptance, "restore_target_fps", restore_fps),
+            patch.object(
+                receiver_acceptance, "restore_plant_modifiers", restore_modifiers,
+            ),
             patch.object(receiver_acceptance, "_post_json", return_value={}),
             patch.object(receiver_acceptance, "_get_json", side_effect=lambda _url: next(metrics)),
             patch.object(receiver_acceptance.time, "monotonic", side_effect=lambda: next(times)),
@@ -162,21 +226,44 @@ class AcceptanceCommandCleanupTests(unittest.TestCase):
         ):
             with self.assertRaises(SystemExit) as exited:
                 receiver_acceptance.main()
-        return exited.exception.code, stdout.getvalue(), restore, restore_fps
+        return (
+            exited.exception.code,
+            stdout.getvalue(),
+            restore,
+            restore_fps,
+            restore_modifiers,
+        )
 
     def test_receiver_acceptance_restores_scene_on_success(self):
-        code, output, restore, restore_fps = self._run_receiver_acceptance()
+        code, output, restore, restore_fps, restore_modifiers = (
+            self._run_receiver_acceptance()
+        )
         self.assertEqual(code, 0, output)
         self.assertIn('"scene_restored": true', output)
         self.assertIn('"target_fps_restored": true', output)
+        self.assertIn('"plant_modifiers_neutralized": true', output)
+        self.assertIn('"plant_modifiers_restored": true', output)
         restore.assert_called_once()
         self.assertEqual(
-            [call.args[1] for call in restore_fps.call_args_list], [200, 160]
+            [call.args[1] for call in restore_fps.call_args_list], [160, 144]
+        )
+        self.assertEqual(
+            [call.args[1] for call in restore_modifiers.call_args_list],
+            [
+                receiver_acceptance.NEUTRAL_PLANT_MODIFIERS,
+                {
+                    "version": 1,
+                    "active": ["hue_shift"],
+                    "strengths": {"hue_shift": 0.5},
+                },
+            ],
         )
 
     def test_receiver_acceptance_cleanup_failure_overrides_measurement_pass(self):
-        code, output, restore, restore_fps = self._run_receiver_acceptance(
-            scene_restore_side_effect=DisplayStateError("restore rejected")
+        code, output, restore, restore_fps, _restore_modifiers = (
+            self._run_receiver_acceptance(
+                scene_restore_side_effect=DisplayStateError("restore rejected")
+            )
         )
         self.assertEqual(code, 1)
         self.assertIn("cleanup failed: scene: restore rejected", output)
@@ -184,12 +271,14 @@ class AcceptanceCommandCleanupTests(unittest.TestCase):
         self.assertIn('"target_fps_restored": true', output)
         restore.assert_called_once()
         self.assertEqual(
-            [call.args[1] for call in restore_fps.call_args_list], [200, 160]
+            [call.args[1] for call in restore_fps.call_args_list], [160, 144]
         )
 
     def test_receiver_acceptance_fps_cleanup_failure_does_not_misreport_scene(self):
-        code, output, restore, restore_fps = self._run_receiver_acceptance(
-            fps_restore_side_effect=[None, DisplayStateError("FPS restore rejected")]
+        code, output, restore, restore_fps, _restore_modifiers = (
+            self._run_receiver_acceptance(
+                fps_restore_side_effect=[None, DisplayStateError("FPS restore rejected")]
+            )
         )
         self.assertEqual(code, 1)
         self.assertIn("cleanup failed: target FPS: FPS restore rejected", output)
@@ -197,8 +286,27 @@ class AcceptanceCommandCleanupTests(unittest.TestCase):
         self.assertIn('"target_fps_restored": false', output)
         restore.assert_called_once()
         self.assertEqual(
-            [call.args[1] for call in restore_fps.call_args_list], [200, 160]
+            [call.args[1] for call in restore_fps.call_args_list], [160, 144]
         )
+
+    def test_receiver_acceptance_modifier_cleanup_failure_overrides_pass(self):
+        code, output, restore, restore_fps, restore_modifiers = (
+            self._run_receiver_acceptance(
+                modifier_restore_side_effect=[
+                    None,
+                    DisplayStateError("modifier restore rejected"),
+                ]
+            )
+        )
+        self.assertEqual(code, 1)
+        self.assertIn(
+            "cleanup failed: plant modifiers: modifier restore rejected", output
+        )
+        self.assertIn('"plant_modifiers_neutralized": true', output)
+        self.assertIn('"plant_modifiers_restored": false', output)
+        restore.assert_called_once()
+        self.assertEqual(restore_fps.call_count, 2)
+        self.assertEqual(restore_modifiers.call_count, 2)
 
     def test_live_sweep_restores_scene_after_body_failure(self):
         snapshot = SceneSnapshot(True, {"schema": "scene"})

@@ -278,8 +278,31 @@ class DegradedLiveSweepTests(unittest.TestCase):
         failed = live_animation_sweep.evaluate_receiver_topology(
             first, last, allow_degraded_spi1=True,
         )
-        self.assertTrue(any("receiver 3" in item for item in failed["failures"]))
+        self.assertTrue(any("frame deltas differ" in item
+                            for item in failed["failures"]))
         self.assertEqual(failed["write_only_receivers"], [2, 3])
+
+    def test_degraded_sweep_accepts_matching_zero_delta_for_cached_plugin(self):
+        first, last = self.samples()
+        first = [dict(item, frames_sent=10) for item in first]
+        last = [dict(item, frames_sent=10) for item in last]
+        for before, after in zip(first, last):
+            before["spi_transfers"] = after["spi_transfers"] = 20
+            before["bytes_sent"] = after["bytes_sent"] = 1000
+        result = live_animation_sweep.evaluate_receiver_topology(
+            first, last, allow_degraded_spi1=True,
+        )
+        self.assertEqual(result["failures"], [])
+        self.assertEqual(result["write_only_receivers"], [2, 3])
+
+    def test_degraded_sweep_rejects_mismatched_host_lane_frame_deltas(self):
+        first, last = self.samples()
+        last[3]["frames_sent"] -= 1
+        result = live_animation_sweep.evaluate_receiver_topology(
+            first, last, allow_degraded_spi1=True,
+        )
+        self.assertTrue(any("frame deltas differ" in item
+                            for item in result["failures"]))
 
     def test_sweep_requires_exact_four_device_topology(self):
         first, last = self.samples()
