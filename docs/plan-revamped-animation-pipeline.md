@@ -1311,10 +1311,12 @@ a loader-capable baseline. Host-only contract and prototype work may be develope
 locally, but no later phase is production-ready until its relevant Phase 0
 prerequisite passes.
 
-Implementation status (2026-08-12): **Phase 0 delivery foundation,
+Implementation status (2026-08-13): **Phase 0 delivery foundation,
 coordinator cutover, and Phase 1 contract freeze/portable baseline are complete.
 Phase 2A top-level vibe, portable acceptance, and clean wall-deploy gate are
-complete. Phase 2B is the active independently shippable host-side lane**.
+complete. Phase 2B fixed host composition, portable acceptance, and clean
+wall-deploy gate are complete; Phase 2C is the next independently shippable
+productization lane**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -1712,15 +1714,14 @@ Do not rewrite all palettes, add scene presets, or send vibe to firmware yet.
 
 Prove layer semantics entirely on the Pi.
 
-Implementation status (2026-08-12): **portable acceptance complete; an actual
-clean wall deployment remains before phase closure**. Three contract-first,
+Implementation status (2026-08-13): **complete**. Three contract-first,
 non-overlapping lanes delivered reusable
 fixed-point host composition and dirty-coverage semantics; shared clock-face
 helpers plus the transparent `clock_overlay` component; and manager-owned
 lifecycle, semantic-cadence caching, preview, transport, and benchmark
 integration. Cross-review also added run-generation/controller-I/O ownership so
-a blocked old presentation cannot rejoin a restarted scene. Phase 2B remains
-host-only: the existing
+a blocked old presentation cannot rejoin a restarted scene. Portable gates and
+an actual clean wall deployment both pass. Phase 2B remains host-only: the existing
 complete RGB transport is authoritative and no firmware protocol, dashboard
 product surface, scene persistence, or receiver ownership changes are in scope.
 
@@ -1779,7 +1780,13 @@ Portable evidence on 2026-08-12 (development Mac, not Pi/ESP32 timing evidence):
   The deployment suite passed 145 tests plus 66 subtests.
 - `git diff --check`, Python compilation, compatibility-inventory regeneration,
   both ordinary deploy dry runs, and the authoritative dirty source plan pass.
-  The remaining gate is an actual clean `just deploy` from the committed tree.
+- Actual clean `just deploy` passed from commit `8791d1a` with deployment receipt
+  `d7b2315d780341dca5b3a5be5d29cf4e`. The coordinator ran the complete local
+  gate, staged and activated immutable app release
+  `2d10f0edb109f1f0b4e08a3995f104887dc87449e91afdc2c5f53700642eda40`,
+  skipped unchanged receiver firmware and host provisioning, restored display
+  state, and observed that exact desired release across two stable fresh-health
+  samples at 32 x 138 with all four receivers.
 
 #### Acceptance
 
