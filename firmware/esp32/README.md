@@ -73,10 +73,11 @@ pio run -e esp32-s3-devkitc-1-local-canary
 pio run -e esp32-s3-devkitc-1 -t upload --upload-port /dev/ttyACM0
 ```
 
-The production target uses the pinned pioarduino platform with ESP-IDF 5.5.4
-and the managed `espressif/elf_loader` 1.3.2 component present but disabled.
-Dynamic loading and its command surface remain absent. The board target must
-remain `esp32-s3-devkitc1-n16r8` unless a replacement receiver has been
+The production target uses the pinned pioarduino 55.03.39 platform with the
+`espidf` framework and ESP-IDF 5.5.4. The managed `espressif/elf_loader` 1.3.2
+component is present but disabled; dynamic loading and its command surface
+remain absent. The board target must remain `esp32-s3-devkitc1-n16r8` unless a
+replacement receiver has been
 physically identified and separately qualified; the repository does not carry
 an as-built receiver inventory that justifies another target.
 
