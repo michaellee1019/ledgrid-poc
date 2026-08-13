@@ -44,6 +44,15 @@ Python plugins and presets must continue to work throughout migration. Every
 phase is independently useful, has an acceptance gate, and stops before the next
 risk domain.
 
+The installed SPI1 MISO fault limits evidence, not outbound presentation. MOSI,
+chip select, host transfer accounting, and the complete-host-frame fallback still
+work on all four receivers. Host UX, semantic-palette migration, portable sparse
+foreground and geometry work, repository-native build/library work, strict
+one-receiver canaries on readable SPI0, and an explicitly degraded visual
+four-wall showcase may therefore proceed. The fault still blocks strict
+acknowledgement-based all-board acceptance, transactional activation claims, and
+production enablement of receiver-local features.
+
 ## Plan Authority and Resolved Decisions
 
 - This is the sole forward-looking `docs/plan*` document. It consolidates the
@@ -67,6 +76,11 @@ risk domain.
   ones.
 - [ANIMATION_SYSTEM.md](ANIMATION_SYSTEM.md) remains the current Python contract
   until each phase explicitly updates it.
+- Implementation readiness and release readiness are separate gates. A later
+  portable or host-product lane may begin once its software contracts are frozen,
+  even while an earlier physical gate is unavailable. Every such feature remains
+  default-off, preserves complete RGB takeover, and cannot be called accepted or
+  production-ready until its own strict hardware gates pass.
 
 ### `native-animations` branch as an organ donor
 
@@ -1275,9 +1289,12 @@ only process that mutates receiver state.
 ## Phased Delivery
 
 Each phase must be independently useful, gated behind explicit capability or
-feature state, and retain the previous complete-frame path. Do not begin a later
-phase merely because earlier code exists; its acceptance and stop boundary must
-be satisfied. Subphases within Phase 0 ship separately in their listed order.
+feature state, and retain the previous complete-frame path. Do not cross a
+phase's release boundary merely because its code exists. Portable implementation,
+host UX, preview, fake orchestration, and a deliberately labeled degraded canary
+may proceed when their prerequisite software contracts are complete, but they do
+not close or waive unavailable physical acceptance. Subphases within Phase 0
+ship separately in their listed order.
 
 Dependency outline:
 
@@ -1295,12 +1312,15 @@ Phase 0 delivery foundation
       ├── Phase 2A vibe
       └── Phase 2B host composition
               └── Phase 2C scene/catalog productization
+                      ├── Phase 2D semantic-palette/hybrid UX rollout
                       ├── Phase 3A receiver ownership/static background
-                      │       └── Phase 3B sparse foreground
-                      │               └── Phase 3C geometry profile
+                      │       └── Phase 3B portable sparse foreground
+                      │               └── Phase 3C portable geometry profile
                       └── Phase 3D native peer build/library
 
-Phases 3A + 3B + 3C + 3D
+Phase 2D + portable Phase 3A → default-off Phase 3B hybrid showcase
+
+Repaired return path + strict Phase 3A + accepted Phases 3B + 3C + 3D
   → Phase 4 dynamic loader and wall release
       → Phase 5 evidence-driven expansion
 ```
@@ -1318,8 +1338,10 @@ Phase 2A top-level vibe, portable acceptance, and clean wall-deploy gate are
 complete. Phase 2B fixed host composition, portable acceptance, and clean
 wall-deploy gate are complete. Phase 2C scene/catalog productization, portable
 acceptance, and clean wall-deploy gate are complete. Phase 3A portable
-implementation and integrated repository gates are complete; its clean-deployment
-and one-receiver physical canary gates are in progress**.
+implementation and integrated repository gates are complete; a clean degraded
+deployment/baseline has passed, while strict all-four status and the restored
+one-receiver physical canary remain open. Phase 2D and the Phase 3B hybrid
+showcase are the next visible-benefit tranche and do not require SPI1 MISO**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -1904,22 +1926,84 @@ Portable evidence on 2026-08-13 (development Mac, not Pi/ESP32 timing evidence):
 Support only Python providers in live scenes. Do not build a generic artifact
 provider or receiver transaction abstraction before a receiver backend exists.
 
+### Phase 2D: Semantic Palette and Hybrid UX Benefit Rollout
+
+Turn the accepted vibe, scene, catalog, preview, and persistence foundations into
+an obvious everyday product benefit while the receiver return path is awaiting
+repair. This host/product lane depends only on Phase 2C and may run in parallel
+with portable Phases 3B and 3D.
+
+Implementation status (2026-08-13): **not started; authorized under the temporary
+SPI1 return-path constraint**. Phase 2A proved the contract with four pilots and
+Phase 2C shipped the global vibe control and scene editor. This phase expands the
+benefit deliberately rather than treating the pilot mappings as the finished
+palette product.
+
+- Classify every shipped component as `semantic`, `grade`, or `preserve` color
+  policy and make the policy visible in its descriptor. Preserve-color assets,
+  flags, diagnostics, and calibration components are complete when they declare
+  and prove preservation; they must not be recolored merely to satisfy a count.
+- Convert every palette-capable procedural family to semantic roles or a
+  documented temporary legacy bridge. Prioritize the most-used duplicated
+  palette tables, then remove a bridge only after its curated presets pass
+  neutral and non-neutral visual comparison.
+- Keep vibe one global control. Suppress plugin-local palette, mood, saturation,
+  or value controls only when their authored meaning is fully represented; do
+  not silently discard a preset parameter or mutate selected preset identity.
+- Extend the fixed scene editor with a feature-gated receiver-static background
+  choice and the existing Python `clock_overlay`. Show provider/role badges,
+  receiver agreement or degraded-return status, and an explicit **preview** label
+  because there is no receiver framebuffer readback.
+- Preview the compiled receiver background with the same resolved semantic role
+  bytes, luminance, cadence, global offsets, fixed-point overlay blend, and scene
+  layout used by the wire contract. Vibe and overlay edits must not mutate the
+  live wall until the operator starts the candidate scene.
+- Preserve desired scene, vibe, component parameters/presets, known Python
+  fallback, and output controls through restart, deployment, and app rollback.
+
+#### Acceptance
+
+- A generated inventory proves every shipped component has one explicit color
+  policy and every claimed vibe capability changes visibly under at least one
+  non-neutral profile; preserve components remain byte-exact apart from separately
+  declared luminance support.
+- Paired seeded runs across every migrated stateful component retain identical
+  logical state, RNG state, event history, and source cadence under different
+  presentation-only vibes.
+- Every curated preset for a migrated family validates, renders, and retains its
+  selected identity. A labeled 32 x 138 contact sheet covers neutral plus every
+  canonical vibe for representative migrated families and the hybrid scene.
+- Dashboard, API, IPC, preview, desired-display persistence, deploy preservation,
+  and fallback tests cover both a Python scene and the feature-gated receiver
+  background plus clock overlay without exposing unsupported arbitrary uploads.
+- Neutral remains compatible with the accepted authored baseline, default/stress
+  paths remain inside the 4 ms host generation/composition p95 gate, and the
+  feature-disabled path is behaviorally unchanged.
+
+#### Stop boundary
+
+Do not turn vibe into a generic theme system, recolor preserve-policy content,
+add provider-specific galleries, or enable a receiver-local feature by default.
+Palette productization may finish before the MISO repair; receiver acceptance may
+not.
+
 ### Phase 3A: Explicit Receiver Ownership and Statically Linked Background
 
 Establish safe receiver-local playback without packages, cache, or dynamic code.
 
 Implementation status (2026-08-13): **portable implementation and integrated
-gates complete; physical gates in progress**. Three parallel contract-first lanes
-landed portable/live receiver ownership and the static canary; backward-capable
-Pi protocol/status plus deterministic fake four-board orchestration; and generated
-language-neutral presentation-context/luminance vectors. The full repository
-regression suite, native firmware tests, both pinned production and canary builds,
-deployment recipe checks, focused host/orchestration tests, and cross-language
-vectors pass. The ordinary production image keeps receiver-local playback
-disabled. Completion still requires an actual clean `just deploy`, fresh Phase 3A
-wall status, streamed wall acceptance, and the deliberately restored one-receiver
-physical canary. The first clean deployment attempt is safely blocked at the
-read-only target connection because the configured wall host is offline.
+gates complete; degraded deployment and streamed evidence pass; strict physical
+gates remain open**. Three parallel contract-first lanes landed portable/live
+receiver ownership and the static canary; backward-capable Pi protocol/status
+plus deterministic fake four-board orchestration; and generated language-neutral
+presentation-context/luminance vectors. The full repository regression suite,
+native firmware tests, both pinned production and canary builds, deployment
+recipe checks, focused host/orchestration tests, and cross-language vectors pass.
+The ordinary production image keeps receiver-local playback disabled. A clean
+dedicated-key deployment and the explicitly degraded status, dense-streamed, and
+animation-sweep gates have passed. Completion still requires repaired return
+telemetry, strict all-four status/streamed acceptance, and the deliberately
+restored one-receiver physical canary followed by strict streamed reacceptance.
 
 - [x] Explicit orthogonal receiver ownership replaces implicit first-command
   takeover while preserving the complete-host-frame kill path and all legacy
@@ -1935,10 +2019,14 @@ read-only target connection because the configured wall host is offline.
   four-board mixed-context/partial-failure rejection.
 - [x] Full Python/rendering/deployment regressions, native firmware tests, both
   pinned firmware builds, and deployment recipe compatibility pass together.
-- [ ] A clean `just deploy` completes against the wall and fresh Phase 3A status
-  proves all four receivers remain on the production feature-off image.
-- [ ] The dense streamed-frame baseline and animation sweep pass after that
-  deployment without receiver integrity, cadence, or takeover regressions.
+- [x] A clean dedicated-key `just deploy` completes against the wall, with exact
+  release health and scene restoration; the separately named degraded status,
+  dense streamed-frame baseline, and full animation sweep pass on the known
+  readable/write-only topology without pretending telemetry is complete.
+- [ ] After the wire repair, fresh strict Phase 3A status proves all four
+  receivers remain on the production feature-off image and the strict dense
+  streamed-frame baseline plus animation sweep pass without receiver integrity,
+  cadence, or takeover regressions.
 - [ ] Exactly one deliberately flashed receiver passes the local-background
   disconnect/live-update/host-takeover canary, is restored to the production
   image, and the full streamed baseline passes again before Phase 3A closes.
@@ -1966,11 +2054,21 @@ skips a receiver; only the explicit degraded sweep applies this temporary pair.
 
 This policy does not waive or close any MISO-dependent gate. The single-receiver
 local-background canary must target a readable receiver with strict v3 command
-acknowledgements or remain blocked. All-four identity/capability proof, receiver
-telemetry for logical receivers 2 and 3, SPI1 local-background acceptance, and
-later all-board sparse-foreground, geometry-profile, upload, native-module, and
-transactional activation work remain backburnered until the short is repaired
-and the strict all-four gates pass.
+acknowledgements. All-four identity/capability proof, receiver telemetry for
+logical receivers 2 and 3, strict SPI1 local-background/foreground/profile proof,
+verified uploads, native-module activation, transactional compensation, and
+production enablement remain backburnered until the short is repaired and the
+strict all-four gates pass.
+
+The fault does **not** backburner Phase 2D, portable Phase 3B/3C/3D work, fake
+four-board failure coverage, strict one-receiver work on logical receiver 0 or 1,
+or an explicit operator-started degraded hybrid showcase. A degraded showcase
+may write the same idempotent context and foreground generations to all four
+receivers, require full acknowledgement and timing proof from 0 and 1, require
+host transfer/error evidence plus visual inspection for 2 and 3, and always keep
+complete RGB takeover available. It must report `telemetry_complete: false`, may
+not install or mutate cached native artifacts, may not survive as an automatic
+startup default, and is demonstration evidence rather than release acceptance.
 
 Portable/integrated evidence on 2026-08-13:
 
@@ -2069,15 +2167,16 @@ Portable/integrated evidence on 2026-08-13:
 - Closure resumed from clean commit `67d2b3e` on 2026-08-13. The active gate
   order is clean deployment and fresh feature-off status, dense streamed
   acceptance, one-receiver canary with mandatory complete-host-frame cleanup,
-  production-image restoration, and a final streamed acceptance rerun. Phase 3B
-  remains blocked until every item is evidenced here; failures produce focused
-  regression coverage before the affected gate is repeated.
+  production-image restoration, and a final streamed acceptance rerun. At that
+  point Phase 3B was treated as wholly blocked; the updated plan now preserves
+  that sequence for strict release closure while allowing the portable and
+  explicitly degraded Phase 3B0 showcase defined below.
 - The resumed read-only wall probe reached `ledgridwall.local` and confirmed
   logical receivers 0 and 1 at status v3 with the expected feature-off
   capability set and IDs. Logical receivers 2 and 3 returned no usable status or
-  identity on the SPI1 return path. This is current H0 evidence for the already
-  documented MISO/MOSI fault, so the clean deployment may be exercised but the
-  streamed and local-background physical gates cannot pass until that electrical
+  identity on the SPI1 return path. This was H0 evidence for the already
+  documented MISO/MOSI fault, so strict streamed and local-background physical
+  gates could not pass until that electrical
   path is repaired and all four fresh identities are observed.
 - The resumed code audit found that beginning a replacement presentation context
   temporarily hid the committed context from the receiver clock before COMMIT.
@@ -2185,6 +2284,116 @@ Portable tests and a deliberately scheduled one-receiver canary are sufficient.
 
 Prove the core hybrid value before solving native artifact loading.
 
+Implementation status (2026-08-13): **next implementation phase; portable,
+product-surface, readable-receiver, and explicitly degraded showcase lanes are
+authorized before the SPI1 repair**. Strict four-board acceptance and production
+enablement remain blocked. The first delivery must be a visible vertical slice,
+not a protocol-only landing.
+
+#### Phase 3B0: next-context hybrid showcase
+
+The next context begins here. Reuse the already accepted compiled rainbow,
+resolved vibe context, `clock_overlay`, scene editor, preview compositor, and
+complete-host-frame takeover. Do not begin with dynamic modules or a new visual
+family.
+
+1. Implement the complete foreground state machine in portable firmware and the
+   host driver: RGBA8 full snapshot, sorted non-overlapping patches, coverage,
+   session/revision/generation compare-and-swap, staged commit, clear, lease
+   renew/expiry, status, and idempotent retries. Keep all buffer and wire bounds
+   explicit and generated from the frozen contract.
+2. Composite the committed foreground over each receiver's newly rendered local
+   base using the shared fixed-point source-over vectors, then encode/display the
+   result. A base cadence tick must recomposite unchanged foreground; a foreground
+   tick must not advance background simulation.
+3. Add host slicing and one aggregate foreground publisher for the existing
+   `clock_overlay`. Send a complete authoritative snapshot at session start and
+   after controller restart, sparse dirty-union patches on changed clock ticks,
+   bounded lease renewals while unchanged, and periodic repair snapshots. A full
+   RGB frame remains immediate takeover and bypasses/clears foreground state.
+4. Connect the feature-gated receiver-static background to the existing unified
+   catalog, scene editor, desired-display persistence, global vibe selector, and
+   labeled host preview. The operator should be able to choose the compiled
+   background, toggle/configure the clock, and switch `neutral`, `quiet`, `cozy`,
+   `vivid`, or `celebration` without restarting either component.
+5. Add a strict one-readable-receiver canary and a separately named degraded
+   four-wall showcase. The degraded command must preflight the exact 0/1-readable,
+   2/3-write-only topology; reject any other missing/partial telemetry shape;
+   forbid cached-artifact operations; publish loud incomplete-telemetry status;
+   require visual confirmation; and restore the exact prior desired display in
+   `finally` through a complete host frame.
+
+The user-visible demonstration is: the rainbow continues to animate on ESPs,
+the Pi clock appears and moves over it using sparse foreground traffic, changing
+vibe visibly affects the declared background/clock presentation without resetting
+their semantic clocks, stopping the Pi expires the clock according to policy
+while the receiver background continues, and selecting a normal Python scene
+reclaims the complete wall without reboot or flash.
+
+#### Phase 3B0 acceptance
+
+- Feature-off production streaming remains byte/ownership compatible and all
+  existing deployment, Python, rendering, native-firmware, and production-build
+  gates remain green.
+- Cross-language goldens cover alpha 0/255, black, rounding, saturation, ordered
+  folds, dirty movement/clear, every receiver boundary, maximum-size packets,
+  session/revision/generation ordering, and lease expiry.
+- Focused failure tests cover duplicate, stale, interrupted, out-of-order, prior
+  generation mismatch, receiver restart, controller restart, partial fake-wall
+  staging, failed compensation, and full-host takeover at every intermediate
+  state. The manager never reports a healthy mixed wall.
+- Local dashboard/API tests prove catalog discovery, preview, start, live vibe,
+  overlay update/toggle, persistence, fallback, and exact cleanup. Preview is
+  explicitly labeled and does not mutate live state.
+- A representative changed clock tick remains below 10 percent of one full wall
+  RGB frame including headers and CRC. A deterministic 60-second 60 Hz local
+  background plus 1 Hz clock trace reduces total Pi animation bytes by at least
+  90 percent versus 60 Hz full RGB streaming after renewals, status, retries,
+  acknowledgements, and repair snapshots are counted.
+- On logical receiver 0 or 1, strict status proves local base cadence, committed
+  foreground generation, lease age, composite/encode/display timing, zero new
+  faults, Pi-disconnect expiry, and complete-host takeover. The optional degraded
+  four-wall run reports receivers 2/3 as visually unverified and cannot close this
+  strict physical item.
+- Default and maximum work record host and receiver p50/p95/p99/max. Native base,
+  composition, and encode remain inside the declared receiver cadence with no
+  missed deadlines; the existing 4 ms host generation/composition p95 gate remains
+  intact for Python fallback and preview paths.
+
+#### Next-context execution and handoff
+
+Implement the vertical slice in this order so the next handoff contains a visible
+benefit rather than only dormant protocol code:
+
+1. Extend the generated foreground vectors and add focused host/firmware state
+   machine tests. Expected focused ownership is
+   `tests/unit/test_receiver_sparse_overlay_protocol.py`,
+   `tests/unit/test_receiver_sparse_overlay_orchestration.py`, and portable
+   receiver-runtime cases; reuse existing generated fixtures instead of creating
+   a second blend oracle.
+2. Land the firmware compositor and fake four-board publisher behind
+   `receiver_sparse_overlay=false`, including complete-host-frame takeover, before
+   integrating manager lifecycle. Build both production feature-off and deliberate
+   canary variants and prove the ordinary deploy target cannot select the canary.
+3. Connect the existing `clock_overlay`, receiver-static descriptor/preview,
+   scene lifecycle, vibe updates, desired-display restoration, and dashboard in
+   one product slice. Add `tests/unit/test_hybrid_scene_product_surface.py` for
+   API/IPC/UI-facing state, preview isolation, feature-off rejection, fallback,
+   and cleanup.
+4. Run focused suites first, then `just test`, `just test-rendering`,
+   `pio test -d firmware/esp32 -e native`, both pinned firmware builds,
+   `just test-deployment`, and both ordinary deploy dry runs. The 32 x 138
+   default/stress benchmark and deterministic payload trace are required before
+   any wall mutation.
+5. Demonstrate the local dashboard preview and state round trip. Only then run a
+   strict readable-receiver canary; the degraded four-wall showcase is optional,
+   manually observed, explicitly incomplete, and never a substitute for the
+   post-repair strict gate.
+
+Keep the plan's implementation status, focused evidence, measured payload bytes,
+timing percentiles, cleanup result, and any newly discovered stop gate current as
+each numbered item lands.
+
 - Implement staged RGBA8 foreground buffers, coverage tracking, fixed-point
   source-over composition, lease expiry, full snapshot, sparse patch, commit,
   clear, and status.
@@ -2226,6 +2435,10 @@ receiver-rendered overlays, multiple blend modes, or general layer graphs.
 ### Phase 3C: Versioned Installation Geometry and Receiver-Safe Optics
 
 Move only geometry and transforms justified by hybrid rendering.
+
+Portable compiler, golden-vector, profile-library, host-preview, and fake-wall
+work may proceed before the SPI1 repair. Strict profile activation, digest
+agreement, receiver timing, and physical seam acceptance remain release-blocked.
 
 - Add a deterministic compiler from current calibration evidence to the bounded
   binary installation profile.
@@ -2356,9 +2569,9 @@ foregrounds, or general artifact-provider abstractions.
 
 Broaden the system after the vertical slice is production-accepted.
 
-- Convert the easiest duplicated procedural palette families to semantic roles
-  and remove manifest-local vibe bridges only when their presets remain visually
-  accepted.
+- Remove remaining temporary vibe bridges only when Phase 2D evidence and
+  ordinary use show their procedural families retain preset intent; palette
+  migration itself is no longer delayed until this phase.
 - Add two or three analytic native backgrounds with materially different work
   profiles and geometry use.
 - Add another sparse overlay only if the aggregate foreground contract supports
@@ -2457,7 +2670,11 @@ At minimum:
 ## Physical Acceptance and Release Gates
 
 Hardware work is never implied by code completion. Schedule it explicitly after
-portable tests pass.
+portable tests pass. These gates control release claims and default enablement,
+not host UX, portable implementation, preview, fake orchestration, or an
+explicitly degraded visual showcase. Before the SPI1 repair, strict canaries may
+target readable receiver 0 or 1; write-only receivers 2 and 3 can contribute only
+host-counter plus visual demonstration evidence.
 
 ### Gate H0: wiring and streamed baseline
 
@@ -2528,10 +2745,12 @@ be enabled by default or described as production-ready.
    single-animation round trips.
 4. Enable vibe and host composition independently; either can be disabled
    without firmware changes.
-5. Qualify the explicit receiver-mode baseline on one receiver, then all four,
-   while local playback remains off by default.
-6. Enable the compiled background canary, then sparse foreground, then geometry,
-   as separate gates.
+5. Implement and qualify the explicit receiver-mode baseline plus sparse
+   foreground portably, then exercise a strict readable one-receiver canary;
+   local playback remains off by default.
+6. Use the explicitly degraded hybrid showcase only for visual/product evidence.
+   After return-path repair, qualify all four and enable the compiled background,
+   sparse foreground, and geometry as separate strict gates.
 7. Publish and install the native pilot without auto-start. Verify all hashes,
    identities, cache entries, and rollback artifacts.
 8. Opt into dynamic native playback only after unanimous receiver readiness.
