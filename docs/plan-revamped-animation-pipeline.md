@@ -1315,8 +1315,9 @@ Implementation status (2026-08-13): **Phase 0 delivery foundation,
 coordinator cutover, and Phase 1 contract freeze/portable baseline are complete.
 Phase 2A top-level vibe, portable acceptance, and clean wall-deploy gate are
 complete. Phase 2B fixed host composition, portable acceptance, and clean
-wall-deploy gate are complete. Phase 2C scene/catalog productization and its
-portable acceptance are complete; its clean wall-deploy gate is pending**.
+wall-deploy gate are complete. Phase 2C scene/catalog productization, portable
+acceptance, and clean wall-deploy gate are complete; Phase 3A is the next
+independently shippable lane**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -1818,12 +1819,12 @@ clock execution, or receiver protocol changes.
 
 Productize the host composition contract before adding another execution backend.
 
-Implementation status (2026-08-13): **implementation and portable acceptance
-complete; clean wall deployment pending**. Work landed through three parallel
-lanes: versioned descriptors and compatibility discovery; versioned scene state
-and manager lifecycle; and IPC/API/dashboard/persistence productization. Phase
-2C remains host-only and preserves the complete-frame transport, legacy
-animation/preset API, painter isolation, and clean deployment path.
+Implementation status (2026-08-13): **complete**. Work landed through three
+parallel lanes: versioned descriptors and compatibility discovery; versioned
+scene state and manager lifecycle; and IPC/API/dashboard/persistence
+productization. Phase 2C remains host-only and preserves the complete-frame
+transport, legacy animation/preset API, painter isolation, and clean deployment
+path.
 
 - [x] Versioned component descriptors scan without importing implementations,
   expose one provider/role-filterable catalog, and retain explicit compatibility
@@ -1841,7 +1842,7 @@ animation/preset API, painter isolation, and clean deployment path.
   single-animation snapshots and the new desired-display/scene shape, validate
   before mutation, and fall back to the recorded Python component on incompatible
   schema/provider state.
-- [ ] Focused contract, lifecycle, web/IPC, persistence, migration, and negative
+- [x] Focused contract, lifecycle, web/IPC, persistence, migration, and negative
   tests pass together with the full Python, rendering, deployment, portable
   firmware, pinned production-build, dry-run, source-plan, and clean wall deploy
   gates required by the inherited Phase 2B closure standard.
@@ -1860,8 +1861,16 @@ Portable evidence on 2026-08-13 (development Mac, not Pi/ESP32 timing evidence):
   simulated 200 Hz polls and reported 180 dirty pixels across 32 ranges.
 - Both ordinary deployment dry runs invoked the authoritative coordinator once.
   The full dirty source plan accounted for the new catalog, scene contracts,
-  shared runtime adapter, API/UI, tests, and documentation; the clean wall
-  deployment remains the only open Phase 2C gate.
+  shared runtime adapter, API/UI, tests, and documentation.
+- Actual clean `just deploy` passed from commit `6550f59` with deployment receipt
+  `24033c7bb11444deaf762bcd47c78917`. The coordinator staged and activated app
+  release `23d55113d9b62341e84760281502b8d68e6c6f7d3937c01fc4c07b1743be5dd4`,
+  reused the pinned runtime and support release, skipped unchanged provisioning
+  and receiver firmware, captured and restored the Gradient desired display,
+  and accepted two fresh stable exact-release health samples at 32 x 138 with
+  all four receivers. Read-only live probes then returned the versioned unified
+  catalog with `clock_overlay` as the sole selectable Python overlay and the
+  restored background-only Gradient `SceneState` from `/api/v1/scene`.
 
 - Add versioned `SceneState`, component/scene preset separation, targeted live
   updates, manager status, IPC/API commands, and fixed-slot dashboard controls.
