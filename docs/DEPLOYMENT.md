@@ -222,10 +222,29 @@ must not be curated.
 
    ```bash
    just receiver-phase3a-status
-   just receiver-acceptance
-   just live-animation-sweep
-   just output-rate-sweep
+   just receiver-streamed-wall-acceptance duration=60 min_fps=180 target_fps=200
+   just live-animation-sweep seconds=2
+   just output-rate-sweep seconds=15 rates=120,140,160,180,200
    ```
+
+   These recipes accept the shown trailing `key=value` form as well as their
+   positional arguments and defaults. The streamed-wall recipe always names all
+   four logical receivers and restores the prior scene and target cadence.
+
+   While the installed SPI1 MISO net remains shorted, keep those strict commands
+   as open release gates and use only the separately named temporary diagnostics:
+
+   ```bash
+   just receiver-phase3a-status-degraded-spi1
+   just receiver-streamed-wall-acceptance-degraded-spi1 \
+     duration=60 min_fps=180 target_fps=200
+   just live-animation-sweep-degraded-spi1 seconds=2
+   ```
+
+   These require complete telemetry on logical receivers 0 and 1, the exact
+   known no-return state plus advancing outbound host traffic on 2 and 3, and
+   visual inspection of every SPI1 lane. They report incomplete telemetry and
+   cannot close MISO-dependent Phase 3A or later receiver-native gates.
 
    The Phase 3A status gate is intentionally separate from generic deployment
    health so a rollback to v2 firmware remains possible. It asks the controller

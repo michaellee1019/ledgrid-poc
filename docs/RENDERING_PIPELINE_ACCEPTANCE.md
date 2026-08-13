@@ -105,6 +105,10 @@ receiver telemetry cannot observe downstream LED wiring.
 
 Run a dense, changing animation for at least 60 seconds at a 200 FPS host target.
 This proves pipeline capacity; it does not qualify the hand-wired strip links.
+Use `just receiver-acceptance device=0 duration=60 min_fps=180 target_fps=200`;
+the recipe also accepts positional arguments and defaults. The capacity gate
+restores the exact prior scene and manager target after either success or
+failure.
 The capacity gate passes only when receiver telemetry shows:
 
 - no reset, panic, watchdog, or service failure;
@@ -131,6 +135,46 @@ only with measured evidence and an updated theoretical budget.
 ## Full-wall gates
 
 After all four controllers are flashed:
+
+```bash
+just receiver-streamed-wall-acceptance duration=60 min_fps=180 target_fps=200
+just live-animation-sweep seconds=2
+```
+
+The trailing `key=value` arguments are normalized by the Just recipes; literal
+strings such as `duration=60` are never forwarded to the Python parsers.
+
+The strict commands above remain the release gates. While the installed SPI1
+MISO net is physically shorted to MOSI, this separate temporary diagnostic gate
+may qualify only the feature-off streamed path:
+
+```bash
+just receiver-phase3a-status-degraded-spi1
+just receiver-streamed-wall-acceptance-degraded-spi1 \
+  duration=60 min_fps=180 target_fps=200
+just live-animation-sweep-degraded-spi1 seconds=2
+```
+
+That explicit policy requires full v3 identity, capability, integrity, timing,
+and accounting acceptance from readable logical receivers 0 and 1. Logical
+receivers 2 and 3 must both remain in the exact known write-only state—status
+v0, no parsed status, no capability, and no identity—and must show advancing
+host frame, transfer, and byte counters with zero new host SPI errors. The JSON
+report names `temporary_degraded_spi1_return_path`, sets
+`telemetry_complete: false`, lists the write-only receivers, and states that
+their receiver integrity and physical display output are unverified. A human
+must visually inspect all SPI1 lanes throughout the run; outbound host counters
+do not prove that an ESP32 received, decoded, or displayed a frame.
+
+The separately named degraded live sweep applies that same exact topology on
+every animation. Strict `live-animation-sweep` requires telemetry from all four
+receivers and never silently skips a missing return path.
+
+This temporary gate cannot satisfy the strict all-four status or telemetry
+gates, cannot qualify a local-background canary on a write-only receiver, and
+cannot authorize all-board receiver-native, sparse-overlay, upload, or other
+MISO-acknowledged work. Repair the return path and rerun the strict commands to
+close those gates.
 
 - run the dense canary load for 60 seconds, then the complete animation sweep;
 - the live animation sweep starts every registered plugin and observes no host

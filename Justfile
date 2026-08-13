@@ -164,18 +164,41 @@ deploy-precheck: test
 
 # Run the receiver-side timed hardware gates against one controller.
 receiver-acceptance device="0" duration="60" min_fps="180" target_fps="200":
-	{{python_env}} python tools/benchmarks/receiver_acceptance.py --device {{device}} --duration {{duration}} --min-displayed-fps {{min_fps}} --target-fps {{target_fps}} --animation rainbow
+	device="{{device}}"; duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
+	device="${device#device=}"; duration="${duration#duration=}"; \
+	min_fps="${min_fps#min_fps=}"; target_fps="${target_fps#target_fps=}"; \
+	{{python_env}} python tools/benchmarks/receiver_acceptance.py --device "$device" --duration "$duration" --min-displayed-fps "$min_fps" --target-fps "$target_fps" --animation rainbow
 
 # Run the dense streamed-frame gate against the complete installed topology.
 receiver-streamed-wall-acceptance duration="60" min_fps="180" target_fps="200":
+	duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
+	duration="${duration#duration=}"; min_fps="${min_fps#min_fps=}"; \
+	target_fps="${target_fps#target_fps=}"; \
 	{{python_env}} python tools/benchmarks/receiver_acceptance.py \
 		--device 0 --device 1 --device 2 --device 3 \
-		--duration {{duration}} --min-displayed-fps {{min_fps}} \
-		--target-fps {{target_fps}} --animation rainbow
+		--duration "$duration" --min-displayed-fps "$min_fps" \
+		--target-fps "$target_fps" --animation rainbow
+
+# Temporary installed-wall exception: require full receiver telemetry on SPI0,
+# prove outbound host traffic on write-only SPI1, and require visual inspection.
+receiver-streamed-wall-acceptance-degraded-spi1 duration="60" min_fps="180" target_fps="200":
+	duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
+	duration="${duration#duration=}"; min_fps="${min_fps#min_fps=}"; \
+	target_fps="${target_fps#target_fps=}"; \
+	{{python_env}} python tools/benchmarks/receiver_acceptance.py \
+		--device 0 --device 1 --device 2 --device 3 \
+		--allow-degraded-spi1-return-path \
+		--duration "$duration" --min-displayed-fps "$min_fps" \
+		--target-fps "$target_fps" --animation rainbow
 
 # Verify deployed Phase 3A status/ownership/identity without changing display state.
 receiver-phase3a-status:
 	{{python_env}} python tools/benchmarks/receiver_acceptance.py --phase3a-status-only
+
+# Temporary installed-wall status proof: strict on SPI0, exact no-return state on SPI1.
+receiver-phase3a-status-degraded-spi1:
+	{{python_env}} python tools/benchmarks/receiver_acceptance.py \
+		--phase3a-status-only --allow-degraded-spi1-return-path
 
 # Require local/background context capability on the deliberately flashed canary.
 receiver-phase3a-canary-status device:
@@ -189,11 +212,20 @@ receiver-phase3a-physical-canary bus device logical_id disconnect_seconds="60":
 
 # Exercise every live plugin while checking host and receiver integrity counters.
 live-animation-sweep seconds="2":
-	{{python_env}} python tools/benchmarks/live_animation_sweep.py --seconds {{seconds}}
+	seconds="{{seconds}}"; seconds="${seconds#seconds=}"; \
+	{{python_env}} python tools/benchmarks/live_animation_sweep.py --seconds "$seconds"
+
+# Temporary installed-wall sweep with exact SPI1 write-only reporting.
+live-animation-sweep-degraded-spi1 seconds="2":
+	seconds="{{seconds}}"; seconds="${seconds#seconds=}"; \
+	{{python_env}} python tools/benchmarks/live_animation_sweep.py \
+		--allow-degraded-spi1-return-path --seconds "$seconds"
 
 # Step physical output rates; visually note flashes and retain the highest clean rate.
 output-rate-sweep seconds="15" rates="120,140,160,180,200":
-	{{python_env}} python tools/benchmarks/output_rate_sweep.py --seconds {{seconds}} --rates {{rates}}
+	seconds="{{seconds}}"; rates="{{rates}}"; \
+	seconds="${seconds#seconds=}"; rates="${rates#rates=}"; \
+	{{python_env}} python tools/benchmarks/output_rate_sweep.py --seconds "$seconds" --rates "$rates"
 
 # Diagnose the deploy host (API + logs). Outputs to diagnostics/remote_diagnostics.out.
 diagnose-remote:

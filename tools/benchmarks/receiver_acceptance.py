@@ -29,6 +29,39 @@ CAPABILITY_STATIC_LOCAL_BACKGROUND = 1 << 0
 CAPABILITY_PRESENTATION_CONTEXT_V1 = 1 << 1
 CAPABILITY_STATUS_V3 = 1 << 2
 CAPABILITY_EXPLICIT_BASE_OWNERSHIP = 1 << 3
+DEGRADED_SPI1_WRITE_ONLY_DEVICES = frozenset((2, 3))
+
+
+def _receiver_status_unreadable(status):
+    """Recognize only the exact no-return-path state; never waive partial telemetry."""
+
+    return (
+        isinstance(status, dict)
+        and "receiver_status_version" in status
+        and "receiver_status_seen" in status
+        and "receiver_capabilities" in status
+        and "receiver_logical_device" in status
+        and int(status.get("receiver_status_version", 0) or 0) == 0
+        and status.get("receiver_status_seen") is False
+        and int(status.get("receiver_capabilities", 0) or 0) == 0
+        and status.get("receiver_logical_device") is None
+    )
+
+
+def _acceptance_policy(*, enabled, readable_devices, write_only_devices):
+    return {
+        "name": (
+            "temporary_degraded_spi1_return_path"
+            if enabled else "strict_all_receiver_telemetry"
+        ),
+        "enabled": bool(enabled),
+        "telemetry_complete": not write_only_devices,
+        "readable_devices": sorted(readable_devices),
+        "known_write_only_devices": sorted(write_only_devices),
+        "write_only_streaming_proves_display_output": False,
+        "visual_verification_required": bool(write_only_devices),
+        "miso_dependent_gates_deferred": bool(write_only_devices),
+    }
 
 
 def evaluate_phase3a_status(
@@ -38,18 +71,19 @@ def evaluate_phase3a_status(
     expected_refresh_id=None,
     receiver_count=4,
     local_canary_device=None,
+    allow_degraded_spi1_return_path=False,
 ):
     """Evaluate fresh receiver-reported Phase 3A identity and capabilities."""
 
     failures = []
+    warnings = []
+    receiver_results = {}
     if expected_refresh_id is not None:
         if not isinstance(refresh, dict):
             failures.append("fresh receiver-status proof is unavailable")
         else:
             if refresh.get("request_id") != expected_refresh_id:
                 failures.append("receiver-status proof is stale")
-            if not refresh.get("passed"):
-                failures.append("fresh receiver-status query did not pass on every board")
             if not isinstance(refresh.get("completed_at"), (int, float)):
                 failures.append("receiver-status proof has no completion timestamp")
     if not isinstance(devices, list) or len(devices) != receiver_count:
@@ -61,24 +95,53 @@ def evaluate_phase3a_status(
     if local_canary_device is not None and not 0 <= local_canary_device < receiver_count:
         failures.append("local canary device is outside the receiver topology")
 
+    readable_devices = []
+    write_only_devices = []
     for index, status in enumerate(devices[:receiver_count]):
         if not isinstance(status, dict):
             failures.append(f"receiver {index} status is unavailable")
+            receiver_results[str(index)] = {
+                "accepted": False, "telemetry": "unavailable",
+            }
             continue
+        if (
+            allow_degraded_spi1_return_path
+            and index in DEGRADED_SPI1_WRITE_ONLY_DEVICES
+            and _receiver_status_unreadable(status)
+        ):
+            write_only_devices.append(index)
+            receiver_results[str(index)] = {
+                "accepted": True,
+                "telemetry": "known_write_only_no_miso_return",
+                "status_version": 0,
+                "logical_identity_verified": False,
+                "capabilities_verified": False,
+            }
+            if index == local_canary_device:
+                failures.append(
+                    f"receiver {index} is write-only and cannot be used for the "
+                    "local-background canary"
+                )
+            continue
+
+        readable_devices.append(index)
         version = int(status.get("receiver_status_version", 0) or 0)
         capabilities = int(status.get("receiver_capabilities", 0) or 0)
         logical_id = status.get("receiver_logical_device")
+        device_failures = []
         if version < 3:
-            failures.append(f"receiver {index} reports status v{version}; v3 is required")
+            device_failures.append(
+                f"receiver {index} reports status v{version}; v3 is required"
+            )
         required_status = CAPABILITY_STATUS_V3 | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
         missing_status = required_status & ~capabilities
         if missing_status:
-            failures.append(
+            device_failures.append(
                 f"receiver {index} lacks Phase 3A status capabilities "
                 f"0x{missing_status:08x}"
             )
         if logical_id != index:
-            failures.append(
+            device_failures.append(
                 f"receiver {index} reports logical identity {logical_id!r}"
             )
         if index == local_canary_device:
@@ -88,10 +151,61 @@ def evaluate_phase3a_status(
             )
             missing = required & ~capabilities
             if missing:
-                failures.append(
+                device_failures.append(
                     f"receiver {index} lacks local-canary capabilities 0x{missing:08x}"
                 )
-    return {"passed": not failures, "failures": failures}
+        failures.extend(device_failures)
+        receiver_results[str(index)] = {
+            "accepted": not device_failures,
+            "telemetry": "readable",
+            "status_version": version,
+            "logical_identity_verified": logical_id == index,
+            "capabilities_verified": missing_status == 0,
+            **({"failures": device_failures} if device_failures else {}),
+        }
+
+    if expected_refresh_id is not None and isinstance(refresh, dict):
+        refresh_errors = refresh.get("errors", [])
+        refresh_error_devices = {
+            item.get("logical_device")
+            for item in refresh_errors
+            if isinstance(item, dict)
+        } if isinstance(refresh_errors, list) else set()
+        if not refresh.get("passed"):
+            if (
+                not allow_degraded_spi1_return_path
+                or not write_only_devices
+                or refresh_error_devices != set(write_only_devices)
+            ):
+                failures.append(
+                    "fresh receiver-status query did not pass on every required readable board"
+                )
+        elif refresh_errors:
+            failures.append("receiver-status refresh reports errors despite passing")
+
+    if write_only_devices:
+        if set(write_only_devices) != set(DEGRADED_SPI1_WRITE_ONLY_DEVICES):
+            failures.append(
+                "degraded SPI1 return-path policy requires the exact write-only "
+                "logical-device pair 2 and 3"
+            )
+        warnings.append(
+            "DEGRADED ACCEPTANCE: receivers 2 and 3 have no usable MISO return; "
+            "their identity, capabilities, receiver counters, and physical display "
+            "output are unverified"
+        )
+    policy = _acceptance_policy(
+        enabled=allow_degraded_spi1_return_path,
+        readable_devices=readable_devices,
+        write_only_devices=write_only_devices,
+    )
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "warnings": warnings,
+        "acceptance_policy": policy,
+        "receivers": receiver_results,
+    }
 
 
 def _percentile(values, ratio):
@@ -175,6 +289,58 @@ def evaluate_samples(samples, elapsed_seconds, min_displayed_fps=180.0):
     }
 
 
+def evaluate_write_only_samples(samples, elapsed_seconds):
+    """Prove host-side outbound traffic without claiming receiver/display evidence."""
+
+    failures = []
+    if len(samples) < 2 or elapsed_seconds <= 0:
+        return {
+            "passed": False,
+            "failures": ["insufficient samples"],
+            "telemetry": "known_write_only_no_miso_return",
+            "known_write_only_state": False,
+            "receiver_telemetry_verified": False,
+            "physical_display_verified": False,
+        }
+    known_write_only_state = all(
+        _receiver_status_unreadable(sample) for sample in samples
+    )
+    if not known_write_only_state:
+        failures.append(
+            "write-only exemption requires exact status v0/no-identity/no-capability samples"
+        )
+
+    first = samples[0]
+    last = samples[-1]
+
+    def delta(key):
+        return int(last.get(key, 0) or 0) - int(first.get(key, 0) or 0)
+
+    frames = delta("frames_sent")
+    transfers = delta("spi_transfers")
+    payload_bytes = delta("bytes_sent")
+    errors = delta("errors")
+    if frames <= 0 or transfers <= 0 or payload_bytes <= 0:
+        failures.append(
+            "host-side streamed traffic did not advance frames, transfers, and bytes"
+        )
+    if errors != 0:
+        failures.append(f"host SPI errors increased by {errors}")
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "telemetry": "known_write_only_no_miso_return",
+        "known_write_only_state": known_write_only_state,
+        "receiver_telemetry_verified": False,
+        "physical_display_verified": False,
+        "visual_verification_required": True,
+        "host_frames_delta": frames,
+        "host_transfers_delta": transfers,
+        "host_bytes_delta": payload_bytes,
+        "host_errors_delta": errors,
+    }
+
+
 def _get_json(url):
     with request.urlopen(url, timeout=5) as response:
         return json.load(response)
@@ -227,6 +393,14 @@ def main():
         type=int,
         help="also require static-background/context capabilities on this receiver",
     )
+    parser.add_argument(
+        "--allow-degraded-spi1-return-path",
+        action="store_true",
+        help=(
+            "temporary installed-wall policy: permit only exact no-return status "
+            "on logical receivers 2 and 3 while requiring full telemetry from 0 and 1"
+        ),
+    )
     args = parser.parse_args()
 
     if not math.isfinite(args.duration) or args.duration <= 0:
@@ -241,6 +415,13 @@ def main():
         parser.error("--target-fps must be between 1 and 200")
     if args.min_displayed_fps > args.target_fps:
         parser.error("--min-displayed-fps cannot exceed --target-fps")
+    if args.allow_degraded_spi1_return_path and not args.phase3a_status_only:
+        requested_devices = set(args.devices or ())
+        if requested_devices != {0, 1, 2, 3}:
+            parser.error(
+                "--allow-degraded-spi1-return-path requires exactly "
+                "--device 0 --device 1 --device 2 --device 3"
+            )
 
     base_url = args.base_url.rstrip("/")
     if args.phase3a_status_only:
@@ -266,6 +447,7 @@ def main():
             refresh=refresh,
             expected_refresh_id=request_id,
             local_canary_device=args.local_canary_device,
+            allow_degraded_spi1_return_path=args.allow_degraded_spi1_return_path,
         )
         print(json.dumps(result, indent=2, sort_keys=True))
         raise SystemExit(0 if result["passed"] else 1)
@@ -298,12 +480,23 @@ def main():
             time.sleep(args.interval)
 
         elapsed = time.monotonic() - started
-        device_results = {
-            str(device): evaluate_samples(
-                device_samples, elapsed, min_displayed_fps=args.min_displayed_fps
-            )
-            for device, device_samples in samples.items()
-        }
+        write_only_devices = []
+        device_results = {}
+        for device, device_samples in samples.items():
+            if (
+                args.allow_degraded_spi1_return_path
+                and device in DEGRADED_SPI1_WRITE_ONLY_DEVICES
+                and all(_receiver_status_unreadable(sample) for sample in device_samples)
+            ):
+                write_only_devices.append(device)
+                device_results[str(device)] = evaluate_write_only_samples(
+                    device_samples, elapsed
+                )
+            else:
+                device_results[str(device)] = evaluate_samples(
+                    device_samples, elapsed,
+                    min_displayed_fps=args.min_displayed_fps,
+                )
         if len(device_results) == 1:
             result = next(iter(device_results.values()))
         else:
@@ -311,6 +504,27 @@ def main():
                 "passed": all(item["passed"] for item in device_results.values()),
                 "devices": device_results,
             }
+        if args.allow_degraded_spi1_return_path:
+            readable_devices = sorted(set(samples) - set(write_only_devices))
+            if (
+                write_only_devices
+                and set(write_only_devices) != set(DEGRADED_SPI1_WRITE_ONLY_DEVICES)
+            ):
+                result["passed"] = False
+                result.setdefault("failures", []).append(
+                    "degraded SPI1 return-path policy requires the exact "
+                    "write-only logical-device pair 2 and 3"
+                )
+            result["acceptance_policy"] = _acceptance_policy(
+                enabled=True,
+                readable_devices=readable_devices,
+                write_only_devices=write_only_devices,
+            )
+            result["warnings"] = ([
+                "DEGRADED ACCEPTANCE: SPI1 receivers are verified only through "
+                "host-side outbound counters; receiver integrity and physical "
+                "display output require visual verification and remain unproven"
+            ] if write_only_devices else [])
     except Exception as exc:
         run_failure = str(exc)
     finally:

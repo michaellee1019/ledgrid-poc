@@ -1942,7 +1942,44 @@ read-only target connection because the configured wall host is offline.
   disconnect/live-update/host-takeover canary, is restored to the production
   image, and the full streamed baseline passes again before Phase 3A closes.
 
+Temporary installed-wall return-path policy (2026-08-13): the confirmed SPI1
+MISO-to-MOSI short is a physical constraint, not a software compatibility case.
+The strict all-four `receiver-phase3a-status` and streamed acceptance commands
+remain unchanged and deferred until repair. A separately named
+`receiver-phase3a-status-degraded-spi1` records strict SPI0 proof plus the exact
+known SPI1 no-return state. Then
+`receiver-streamed-wall-acceptance-degraded-spi1` may be used only for the
+feature-off production streamed path, followed by the separately named
+`live-animation-sweep-degraded-spi1`. They require full v3 identity, capability,
+integrity, timing, and accounting acceptance on readable logical receivers 0
+and 1; logical receivers 2 and 3 must both match the exact known status-v0,
+no-status, no-capability, no-identity state and show advancing host frame,
+transfer, and byte counters with zero new host SPI errors. Its JSON is required
+to name the temporary degraded policy, set `telemetry_complete: false`, list
+receivers 2 and 3 as write-only, state that receiver/display proof is absent,
+and require visual inspection of every SPI1 lane. This is not evidence that either
+write-only receiver accepted or displayed a frame.
+
+Strict live sweep acceptance requires all four return paths and never silently
+skips a receiver; only the explicit degraded sweep applies this temporary pair.
+
+This policy does not waive or close any MISO-dependent gate. The single-receiver
+local-background canary must target a readable receiver with strict v3 command
+acknowledgements or remain blocked. All-four identity/capability proof, receiver
+telemetry for logical receivers 2 and 3, SPI1 local-background acceptance, and
+later all-board sparse-foreground, geometry-profile, upload, native-module, and
+transactional activation work remain backburnered until the short is repaired
+and the strict all-four gates pass.
+
 Portable/integrated evidence on 2026-08-13:
+
+- After encoding the explicit degraded-return-path policy and fixing documented
+  Just argument normalization, `just test` passed 834 Python tests and 1,119
+  subtests, 21 rendering tests and 3 subtests, all 44 native firmware cases,
+  both production and canary ESP32-S3 builds, and 153 deployment tests plus 66
+  subtests. The slowest accepted installed-geometry p95 was 3.366 ms, below the
+  4 ms gate. Strict recipes remain strict; the three separately named degraded
+  recipes are the only temporary SPI1 exception.
 
 - `just test` passed 800 Python tests and 1,105 subtests, 21 rendering tests and
   3 subtests, 43 portable firmware cases, and 148 deployment tests and 66
@@ -1997,6 +2034,13 @@ Portable/integrated evidence on 2026-08-13:
   asynchronous observation, timeouts, body failures, and cleanup failures; a
   canonical all-four dense streamed recipe removes the former device-0-only
   default from the full-wall gate.
+- The final recipe audit caught a command-boundary regression in documented
+  trailing arguments: Just passed `duration=60`, `target_fps=200`, and
+  `seconds=2` literally to numeric Python options. The receiver acceptance,
+  streamed-wall, live-sweep, and output-rate recipes now normalize their named
+  prefixes while preserving defaults and positional calls. Focused tests run
+  the exact Just recipes with `uv` replaced by an argv recorder, proving the
+  command boundary without importing the tools or contacting the wall.
 - Final settled-source portable gate on 2026-08-13: `just test` passed 813
   Python tests and 1,113 subtests, 21 rendering tests and 3 subtests, all 44
   native firmware cases, both pinned ESP32-S3 builds, and 149 deployment tests
