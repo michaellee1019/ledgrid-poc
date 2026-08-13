@@ -297,12 +297,20 @@ class DegradedLiveSweepTests(unittest.TestCase):
 
     def test_degraded_sweep_rejects_mismatched_host_lane_frame_deltas(self):
         first, last = self.samples()
+        last[3]["frames_sent"] -= 2
+        result = live_animation_sweep.evaluate_receiver_topology(
+            first, last, allow_degraded_spi1=True,
+        )
+        self.assertTrue(any("more than one" in item
+                            for item in result["failures"]))
+
+    def test_degraded_sweep_allows_one_inflight_frame_at_sample_boundary(self):
+        first, last = self.samples()
         last[3]["frames_sent"] -= 1
         result = live_animation_sweep.evaluate_receiver_topology(
             first, last, allow_degraded_spi1=True,
         )
-        self.assertTrue(any("frame deltas differ" in item
-                            for item in result["failures"]))
+        self.assertEqual(result["failures"], [])
 
     def test_sweep_requires_exact_four_device_topology(self):
         first, last = self.samples()

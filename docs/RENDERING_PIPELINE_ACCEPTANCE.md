@@ -186,6 +186,9 @@ do not prove that an ESP32 received, decoded, or displayed a frame.
 The separately named degraded live sweep applies that same exact topology on
 every animation. Strict `live-animation-sweep` requires telemetry from all four
 receivers and never silently skips a missing return path.
+Because metrics can be sampled while the parallel SPI workers are presenting a
+frame, per-device host frame deltas may differ by one at a sample boundary; a
+spread greater than one fails the degraded sweep.
 
 This temporary gate cannot satisfy the strict all-four status or telemetry
 gates, cannot qualify a local-background canary on a write-only receiver, and

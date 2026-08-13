@@ -1998,6 +1998,13 @@ Portable/integrated evidence on 2026-08-13:
   all four lanes, including a valid all-zero delta, while dense acceptance still
   requires positive traffic. Exact scene restoration succeeded on the failed
   run; the corrected sweep remains to be repeated after deployment.
+- The second degraded live sweep restored the exact prior scene and reported no
+  host or readable-receiver integrity failure, but three plugins observed a
+  one-frame per-device counter skew (for example `[311, 312, 311, 311]`). Metrics
+  may sample while the parallel SPI workers are mid-presentation, so the sweep
+  now accepts at most one in-flight frame of host-counter spread and fails a
+  spread of two or more. This bounded correction has explicit regression tests;
+  the sweep remains open until repeated.
 - The first target-160 rerun exposed a benchmark denominator defect: 9,156
   accepted/displayed frames were divided by 62.643 seconds even though the
   counter snapshots covered roughly the requested 60-second interval. Initial

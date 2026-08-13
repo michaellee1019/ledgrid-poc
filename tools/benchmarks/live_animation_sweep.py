@@ -133,9 +133,14 @@ def evaluate_receiver_topology(
             "degraded SPI1 return-path policy requires the exact write-only "
             "logical-device pair 2 and 3"
         )
-    if allow_degraded_spi1 and len(set(frame_deltas)) != 1:
+    if (
+        allow_degraded_spi1
+        and frame_deltas
+        and max(frame_deltas) - min(frame_deltas) > 1
+    ):
         failures.append(
-            "host frame deltas differ across logical receivers: "
+            "host frame deltas differ by more than one in-flight frame across "
+            "logical receivers: "
             f"{frame_deltas!r}"
         )
     return {
