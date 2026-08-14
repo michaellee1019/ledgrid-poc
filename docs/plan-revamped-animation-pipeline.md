@@ -2425,7 +2425,14 @@ Portable-slice evidence and open gates (2026-08-13):
   272,273 bytes flash; the named canary uses 65,504 bytes RAM and 278,553 bytes
   flash. The final repeated 32 x 138 `snake-max-density` render stays below the
   4 ms p95 gate at 3.2268 ms. The authoritative ordinary clean deployment
-  receipt remains the terminal gate after the clean commit.
+  receipt is recorded below.
+- [x] Ordinary clean `just deploy` passed from commit `d8212af` with deployment
+  ID `a21fba2c1b3a40f6a5e05f6cd7a6fd2a` and app release
+  `7c0c34f330f08c82d77ceb75248de4ca7ff1ba2e9bf8a4a75740f3a71f9db982`.
+  All 14 coordinator phases completed in 2m28s; unchanged provisioning and
+  production firmware were skipped, `living_stained_glass/before-deploy` was
+  restored, and two stable health samples agreed on the desired/observed release
+  across all four receivers. The source policy was clean with no dirty diff.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground
