@@ -3,7 +3,8 @@
 ## Scope and authority
 
 This document freezes the names, bytes, state boundaries, and rollout gates
-needed by Phase 1 and activated incrementally through Phase 3B0 of
+needed by Phase 1 and activated incrementally through the portable half of
+Phase 3C of
 [plan-revamped-animation-pipeline.md](plan-revamped-animation-pipeline.md).
 The scene/provider rollout flags remain off, while Phase 3A activates explicit
 receiver ownership and status v3. Ordinary production firmware keeps the
@@ -37,9 +38,12 @@ change; these identifiers and versions may not change in place.
 | Receiver status | `ledgrid.receiver-status` | 4 (v3-compatible prefix) |
 | Native background ABI | `ledgrid.native-background-abi` | 2 (reserved) |
 | Unsigned native bundle | `ledgrid.native-background-bundle` | 1 (reserved) |
-| Installation profile | `ledgrid.installation-profile` | 1 (reserved) |
+| Installation profile | `ledgrid.installation-profile` | 1 (portable golden; runtime reserved) |
 
-Reserved contracts are deliberately not accepted by current runtime code.
+Contracts marked runtime-reserved are deliberately not accepted by current
+receiver runtime code. The installation-profile v1 bytes are frozen for the
+portable compiler, decoder, topology slicer, and golden tests only; there are no
+profile transfer, activation, status, or receiver-optics commands in this phase.
 Status v4 is negotiated only after a legacy-safe v3 query exposes sparse
 foreground support. Its first 320 bytes preserve status v3 exactly apart from
 the `LGS4` magic/version. Status v3 preserves every v2 counter offset in its
@@ -197,6 +201,92 @@ The installed wall is 32×138. Receivers own global strip offsets 0, 8, 16, and
 24, each with 1,104 local pixels. A receiver-local index is
 `(global_strip - strip_offset) * 138 + led`. Canvas coordinates and wiring/color
 transforms do not cross this boundary.
+
+## Phase 3C portable installation-profile contract
+
+The canonical profile is compiled globally before receiver slicing. Its payload
+never contains SPI routes, logical-to-physical receiver assignment, host-frame
+strip reversal, or receiver-native strip reversal. A separate topology adapter
+applies the physical lane permutation and native local-strip direction exactly
+once when it creates receiver views. Transport routes and host/native directions
+remain independently named even when two installed values happen to match.
+
+Version 1 is a bounded big-endian binary with a 112-byte fixed header followed
+by nine 24-byte section entries and contiguous section payloads. The maximum
+complete profile is 65,535 bytes. Reserved bytes and flag bits are zero. Header
+fields are:
+
+| Offset | Bytes | Field |
+| ---: | ---: | --- |
+| 0 | 4 | magic `LGIP` |
+| 4 | 2 | format version `1` |
+| 6 | 2 | fixed-header bytes `112` |
+| 8 | 4 | flags; bit 0 means local strip payload order is reversed |
+| 12 | 2 | canonical global strip count |
+| 14 | 2 | LEDs per strip |
+| 16 | 2 | first physical global strip represented by this view |
+| 18 | 2 | represented strip count |
+| 20 | 4 | represented pixel count, exactly `strip_count * leds_per_strip` |
+| 24 | 1 | 8-neighbor clearance radius, range 0 through 4 |
+| 25 | 1 | stable globe-region vocabulary count, exactly 7 |
+| 26 | 2 | section count, exactly 9 |
+| 28 | 2 | section-entry bytes, exactly 24 |
+| 30 | 2 | reserved zero |
+| 32 | 4 | complete profile bytes |
+| 36 | 32 | canonical calibration-input SHA-256 |
+| 68 | 32 | profile content SHA-256 |
+| 100 | 12 | reserved zero |
+
+Each section entry is `(id:u16, encoding:u8, element_width:u8,
+element_count:u32, offset:u32, length:u32, crc32:u32, reserved:u32)`. Entries
+use the exact ascending ID order below, have one byte per represented pixel,
+start immediately after the complete header/table, and are contiguous without
+gaps or overlap. Encoding IDs are `1=unsigned enum byte`, `2=unsigned boolean
+byte`, `3=unsigned byte`, and `4=signed byte`; `element_width` is exactly `1`
+for every v1 section.
+
+| ID | Name | Encoding | Values |
+| ---: | --- | --- | --- |
+| 1 | `category` | unsigned enum byte | `0=empty`, `1=foliage`, `2=globe` |
+| 2 | `clearance` | unsigned boolean byte | `0` or `1` |
+| 3 | `foliage_edge` | unsigned boolean byte | `0` or `1` |
+| 4 | `globe_edge` | unsigned boolean byte | `0` or `1` |
+| 5 | `obstacle_edge` | unsigned boolean byte | `0` or `1` |
+| 6 | `globe_region` | unsigned enum byte | `0` or stable region ID `1..7` |
+| 7 | `distance` | unsigned byte | exact 8-neighbor/Chebyshev obstacle distance |
+| 8 | `normal_x` | signed byte | normalized strip-axis gradient in signed Q0.7 |
+| 9 | `normal_y` | signed byte | normalized LED-axis gradient in signed Q0.7 |
+
+The stable one-based region order is `top_left`, `top_right`, `upper_middle`,
+`middle_left`, `middle_right`, `lower_left`, `lower_right`. Every region byte is
+zero outside exact globe pixels. Globes take category precedence if foliage and
+globe evidence overlap. Region overlap, a globe without exactly one known
+region, or a region pixel outside the globe category is invalid.
+
+Clearance is derived globally by applying the recorded number of non-wrapping
+8-neighbor dilations to `foliage | globe`. Edge fields are non-wrapping
+four-neighbor inner edges. Distance is the exact integer expansion step from the
+combined obstacle. Normals are the normalized NumPy-compatible one-sided/central
+gradient of that distance with axis 0 as global strips and axis 1 as LEDs;
+finite values are quantized as `sign(value) * floor(abs(value) * 127 + 0.5)`.
+These globally derived bytes are sliced without recomputation so receiver
+boundaries cannot introduce seams.
+
+The calibration digest is SHA-256 over a canonical compact JSON object containing
+the four role-named parsed calibration inputs (`foliage`, `globes`, `regions`,
+and measured `wall`). Object keys are sorted; array order is preserved and must
+already satisfy each input's canonical ascending or stable-region order. The
+content digest is SHA-256 of the complete profile with bytes 68 through 99
+replaced by zero. Each payload uses standard IEEE CRC-32. A decoder validates
+all sizes, offsets, encodings, counts, reserved values, CRCs, digests, category
+and region bounds before exposing a view.
+
+The global golden has origin 0, all 32 strips, and canonical ascending strip
+order. A receiver view has eight strips and its physical lane origin; bit 0 is
+set only when its payload rows are stored in descending physical strip order.
+Reassembly uses the origin and flag to recover canonical global order. The
+portable Phase 3C stop boundary forbids staging, activation, receiver status,
+firmware optics, and wall mutation.
 
 Dirty ranges are sorted, non-overlapping, half-open ranges. Movement/removal
 uses the union of old and new coverage. A complete clear covers every formerly

@@ -1333,26 +1333,27 @@ a loader-capable baseline. Host-only contract and prototype work may be develope
 locally, but no later phase is production-ready until its relevant Phase 0
 prerequisite passes.
 
-Implementation status (2026-08-13): **Phase 0 delivery foundation,
+Implementation status (2026-08-14): **Phase 0 delivery foundation,
 coordinator cutover, and Phase 1 contract freeze/portable baseline are complete.
 Phase 2A top-level vibe, portable acceptance, and clean wall-deploy gate are
 complete. Phase 2B fixed host composition, portable acceptance, and clean
 wall-deploy gate are complete. Phase 2C scene/catalog productization, portable
 acceptance, and clean wall-deploy gate are complete. Phase 3A portable
-implementation and integrated repository gates are complete; a clean degraded
-deployment/baseline has passed, while strict all-four status and the restored
-one-receiver physical canary remain open. Phase 2D's explicit color-policy
+implementation and integrated repository gates are complete; clean degraded
+deployment and readable-receiver physical canaries have passed, while strict
+all-four status remains blocked by the SPI1 return-path fault. Phase 2D's
+explicit color-policy
 inventory is complete across the unified 53-component selectable catalog, while
 semantic palette migration and visual product work remain open. Phase 3B0's
 contract, portable runtime, fake wall, batch/ack payload, product lifecycle,
 strict readable-receiver runner, and explicitly degraded showcase runner are
-complete and both deterministic payload gates are green. The strict physical
-Phase 3B canary has now executed on one readable receiver and exposed a
-receiver-task scheduling defect after proving compiled local playback. A
-dual-core scheduling fix is portable-green but still awaits deployment and a
-physical repeat. The receiver feature therefore stays gated; the degraded
-four-wall showcase has not run, and there is still no accepted wall-showcase or
-foreground timing/expiry evidence**.
+complete and both deterministic payload gates are green. Strict readable-0/1
+Phase 3B canaries, the explicitly degraded four-wall showcase, installed
+orientation correction, ordinary deployment restoration, and camera evidence
+have passed without claiming release acceptance for write-only receivers 2/3.
+Phase 3C's deterministic portable profile compiler/codec, checked-in golden,
+and identity/installed topology round trip are complete. Profile library/runtime
+work and strict physical acceptance remain open**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -2838,7 +2839,7 @@ Portable-slice evidence and open gates (2026-08-13):
   degraded four-wall camera showcase remain useful evidence but do not close
   this all-four release gate.
 
-#### Cold-session handoff: begin the Phase 3C portable profile slice
+#### Cold-session handoff: Phase 3C portable profile slice complete
 
 Phase 3B's portable/product work and the explicitly degraded installed showcase
 are complete enough to move to Phase 3C without changing the running wall. Do
@@ -2869,9 +2870,9 @@ Current installed state to preserve:
   but degraded, telemetry-incomplete, unhealthy by release semantics, and not
   release-acceptable.
 
-The next bounded objective is the **portable half of Phase 3C's deterministic
-installation-profile compiler and golden contract**. It must not stage or
-activate a profile on receivers. Start by reading:
+The completed bounded objective was the **portable half of Phase 3C's
+deterministic installation-profile compiler and golden contract**. It did not
+stage or activate a profile on receivers. The implementation used:
 
 - `config/README.md` and the four canonical 32×138 calibration inputs it names;
 - `animation/core/plant_awareness.py`, especially `PlantMaskGeometry`, edge,
@@ -2884,7 +2885,7 @@ activate a profile on receivers. Start by reading:
   `drivers/degraded_receiver_hybrid.py` only to preserve the coordinate-domain
   boundary, not to add profile activation yet.
 
-Execute the slice in this order:
+The slice was executed in this order:
 
 1. Freeze a versioned, bounded profile schema with explicit magic/version,
    geometry, section counts/offsets, digest semantics, category encoding, globe
@@ -2910,14 +2911,54 @@ Execute the slice in this order:
    deploy dry-run/plan. Update this handoff with exact counts, artifact bytes,
    section sizes, and test evidence.
 
-Acceptance for this first Phase 3C slice is portable only: identical semantic
-inputs produce identical bytes; the golden round-trips every required category
-and region; both topology fixtures reassemble exactly; malformed/bounds cases
-fail before output or mutation; and existing Python rendering remains unchanged.
-The stop boundary is strict: do not add receiver profile commands, storage,
-activation/status, firmware optics, live `hue_shift`, service flags, or wall
-mutation in this slice. Those begin only after the portable artifact and slicing
-contract are reviewed.
+Acceptance for this first Phase 3C slice is portable only and is now complete:
+identical semantic inputs produce identical bytes; the golden round-trips every
+required category and region; both topology fixtures reassemble exactly;
+malformed/bounds cases fail before output or mutation; and existing Python
+rendering remains unchanged.
+
+Portable evidence captured on 2026-08-14 (development Mac, not Pi/receiver
+timing evidence):
+
+- `animation/core/installation_profile.py` compiles and strictly validates the
+  four canonical inputs, exposes immutable decoded views, and implements the
+  fixed 112-byte header, nine-entry section table, CRC-32 checks, calibration
+  digest, zeroed-field content digest, and 65,535-byte fail-closed bound.
+- `animation/core/installation_profile_topology.py` retains transport routes,
+  physical lane order, host direction, and native direction as independent
+  domains. Identity and installed `(0,1,3,2)`/right-reversed slices both
+  reassemble all nine arrays and the encoded global bytes exactly; changing
+  transport or host direction alone leaves profile slices unchanged.
+- The checked-in `tests/fixtures/installation_profile_v1.bin` is 40,072 bytes:
+  a 328-byte header/table plus nine 4,416-byte sections. File SHA-256 is
+  `3469bd38200b72b0c050d4cf01285c031b84a4a3de318be9bbb1fc3a315e3e13`,
+  calibration digest is
+  `580aca497078fe64a6b182e6ff0de9c92c58ab14a039062e95ece1961415ffe3`,
+  and profile content digest is
+  `cc7a21b2e5a630af74424d2b1a1fd960a6bf8f68463077025b7286938755acea`.
+- The golden freezes 3,681 empty, 379 foliage, and 356 globe pixels; 1,257
+  clearance pixels; foliage/globe/obstacle edge counts 284/140/345; maximum
+  distance 30; and stable region counts 52/52/52/52/48/52/48. Every field,
+  including signed-Q0.7 normals, matches `PlantMaskGeometry` derivation.
+- Focused profile, topology, fixture, and plant-awareness acceptance passed 48
+  tests and 101 subtests. `just test` passed 1,106 Python/plugin tests and 1,637
+  subtests, 23 rendering tests and 3 subtests, the 4 ms rendering benchmark,
+  60 native firmware tests, both production/canary ESP32-S3 builds, and 168
+  deployment tests with 88 subtests. The highest observed 32×138 rendering p95
+  was 3.4955 ms for `snake-max-density` at a 0.62 changed ratio; these are Mac
+  proxy numbers, not Raspberry Pi timings.
+- The explicit `just test-rendering` rerun passed the same 23 tests and 4 ms
+  gate with a highest p95 of 3.2233 ms. Golden `--check`, `git diff --check`,
+  `just --dry-run deploy`, and read-only `just deploy-plan` passed; the plan
+  accounts for both new core modules and the generator in the immutable app
+  release while preserving the ordinary clean-source deployment policy.
+
+The implemented stop boundary remains strict: there are no receiver profile
+commands, cache/storage, activation/status, firmware optics, live `hue_shift`,
+service flags, or wall mutation. The next bounded Phase 3C host lane may add the
+content-addressed Pi profile library, read-only preview view, and fake-wall
+stage/rollback model without activating installed receivers. Firmware protocol,
+real activation, and physical seam acceptance remain separate later gates.
 
 Parallel physical work remains open but is not the next portable phase: repair
 SPI1 MISO/MOSI, rerun strict all-four streamed and Phase 3B gates, and collect
@@ -2972,6 +3013,33 @@ Move only geometry and transforms justified by hybrid rendering.
 Portable compiler, golden-vector, profile-library, host-preview, and fake-wall
 work may proceed before the SPI1 repair. Strict profile activation, digest
 agreement, receiver timing, and physical seam acceptance remain release-blocked.
+
+Implementation status (2026-08-14): **portable deterministic-profile slice
+complete; profile library, fake-wall staging, receiver runtime, optics, and
+physical acceptance remain open**.
+The v1 binary schema, digest domains, category/region encodings, fixed global
+derivatives, receiver-view orientation, strict decoder bounds, and 65,535-byte
+maximum are frozen in `ANIMATION_PIPELINE_CONTRACT_V1.md`. Compiler/codec,
+topology round-trip, and generated-golden lanes passed independently and as one
+integrated repository gate against that shared contract.
+
+- [x] Freeze the portable v1 header, section table, section vocabulary,
+  canonical ordering, CRC/content/calibration digests, global-derivative rules,
+  normal quantization, and receiver-view orientation without adding runtime
+  acceptance.
+- [x] Compile and strictly validate the four canonical 32×138 calibration
+  inputs, preserving globe precedence and the stable seven-region vocabulary.
+- [x] Encode/decode the bounded global artifact and fail closed on malformed
+  inputs, wrong geometry, noncanonical ordering, bad bounds/offsets/overlap,
+  invalid values, CRC drift, and digest drift.
+- [x] Slice every globally derived section through an explicit topology adapter
+  and byte-round-trip identity plus the installed `(0,1,3,2)` topology with
+  right-side native reversal.
+- [x] Check in one deterministic binary golden, prove regeneration equality and
+  Python `PlantMaskGeometry` semantic parity, and record exact artifact/section
+  evidence.
+- [x] Pass focused, plant-awareness, full project, rendering, fixture-drift,
+  deploy dry-run/plan, and whitespace gates before closing the portable slice.
 
 - Add a deterministic compiler from current calibration evidence to the bounded
   binary installation profile.
