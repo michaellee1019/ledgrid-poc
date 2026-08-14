@@ -4,10 +4,18 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from animation.core.receiver_static_component import (
+    COMPILED_RAINBOW_BUNDLE_DIGEST,
+    COMPILED_RAINBOW_EXPECTED_PAYLOAD_DIGEST,
+)
+from ipc.scene_contract import SceneProviderPolicy
 
 from tools.deployment.preserve_deploy_settings import (
     _expected_restored_vibe,
     load_saved_state,
+    receiver_hybrid_canary_enabled,
     record_deploy,
     restore,
     save,
@@ -21,6 +29,54 @@ class PreserveDeploySettingsTests(unittest.TestCase):
         from animation.core.presentation_contracts import resolve_vibe
 
         return resolve_vibe(vibe_id).state.to_dict()
+
+    @staticmethod
+    def _native_scene(common_seed=7):
+        fallback = {
+            "plugin_id": "rainbow",
+            "provider": "python",
+            "parameter_overrides": {"speed": 0.65},
+            "resolved_parameters": {"speed": 0.65},
+        }
+        return {
+            "schema": "ledgrid.scene-state",
+            "schema_version": 1,
+            "revision": 91,
+            "background": {
+                "plugin_id": "compiled_rainbow",
+                "provider": "receiver_native",
+                "parameter_overrides": {"common_seed": common_seed},
+                "resolved_parameters": {
+                    "preferred_cadence_hz": 30,
+                    "common_seed": common_seed,
+                },
+                "bundle_digest": COMPILED_RAINBOW_BUNDLE_DIGEST,
+                "expected_payload_digest": (
+                    COMPILED_RAINBOW_EXPECTED_PAYLOAD_DIGEST
+                ),
+            },
+            "overlays": [],
+            "known_python_fallback": fallback,
+        }
+
+    @staticmethod
+    def _enabled_policy():
+        return SceneProviderPolicy(
+            receiver_local_background=True,
+            receiver_sparse_overlay=True,
+        )
+
+    def test_receiver_hybrid_canary_is_explicit_and_disabled_by_default(self):
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertFalse(receiver_hybrid_canary_enabled())
+        for value in (True, "1", "TRUE", "yes", "on"):
+            with self.subTest(value=value):
+                self.assertTrue(receiver_hybrid_canary_enabled(value))
+        for value in (False, "0", "false", "no", "off", ""):
+            with self.subTest(value=value):
+                self.assertFalse(receiver_hybrid_canary_enabled(value))
+        with self.assertRaisesRegex(ValueError, "must be a boolean switch"):
+            receiver_hybrid_canary_enabled("maybe")
 
     def test_record_deploy_updates_timestamp(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -145,6 +201,103 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             self.assertEqual(loaded["animation_speed_scale"], 1.6)
             self.assertEqual(loaded["target_fps"], 120)
             self.assertEqual(loaded["vibe"], vibe)
+
+    def test_native_scene_round_trips_only_with_canary_and_needs_no_python_preset(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            vibe = self._vibe("cozy")
+            scene = self._native_scene(common_seed=37)
+            save_status({
+                "is_running": True,
+                "current_animation": "compiled_rainbow",
+                "scene_state": scene,
+                "feature_flags": {
+                    "receiver_local_background": True,
+                    "receiver_sparse_overlay": True,
+                },
+                "animation_speed_scale": 1.35,
+                "target_fps": 144,
+                "brightness": 93,
+                "plant_modifiers": {
+                    "version": 1,
+                    "active": ["shadow"],
+                    "strengths": {"shadow": 0.6},
+                },
+                "vibe": {"state": vibe},
+            }, root / "presets", root / "state.json")
+
+            raw = json.loads((root / "state.json").read_text())
+            self.assertEqual(raw["scene"], scene)
+            self.assertNotIn("preset_path", raw)
+            self.assertFalse(
+                (root / "presets" / "compiled_rainbow" / "before-deploy.json").exists()
+            )
+
+            enabled = load_saved_state(
+                root / "state.json", provider_policy=self._enabled_policy()
+            )
+            self.assertEqual(enabled["animation"], "compiled_rainbow")
+            self.assertEqual(enabled["params"], {
+                "preferred_cadence_hz": 30,
+                "common_seed": 37,
+            })
+            self.assertNotIn("scene_fallback_reason", enabled)
+            self.assertEqual(enabled["brightness"], 93)
+            self.assertEqual(enabled["animation_speed_scale"], 1.35)
+            self.assertEqual(enabled["target_fps"], 144)
+            self.assertEqual(enabled["plant_modifiers"]["active"], ["shadow"])
+            self.assertEqual(enabled["vibe"], vibe)
+
+            ordinary = load_saved_state(root / "state.json")
+            self.assertEqual(ordinary["animation"], "rainbow")
+            self.assertEqual(ordinary["params"], {"speed": 0.65})
+            self.assertIn("unsupported saved scene", ordinary["scene_fallback_reason"])
+            self.assertEqual(ordinary["brightness"], enabled["brightness"])
+            self.assertEqual(ordinary["plant_modifiers"], enabled["plant_modifiers"])
+            self.assertEqual(ordinary["vibe"], enabled["vibe"])
+
+    def test_idle_canary_update_preserves_native_scene_and_independent_state(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            flags = {
+                "receiver_local_background": True,
+                "receiver_sparse_overlay": True,
+            }
+            save_status({
+                "is_running": True,
+                "current_animation": "compiled_rainbow",
+                "scene_state": self._native_scene(common_seed=99),
+                "feature_flags": flags,
+                "brightness": 80,
+                "vibe": {"state": self._vibe("neutral")},
+            }, root / "presets", root / "state.json")
+
+            quiet = self._vibe("quiet")
+            save_status({
+                "is_running": False,
+                "current_animation": None,
+                "feature_flags": flags,
+                "brightness": 41,
+                "animation_speed_scale": 0.75,
+                "target_fps": 72,
+                "plant_modifiers": {
+                    "version": 1,
+                    "active": ["illuminate"],
+                    "strengths": {"illuminate": 0.4},
+                },
+                "vibe": {"state": quiet},
+            }, root / "presets", root / "state.json")
+
+            loaded = load_saved_state(
+                root / "state.json", provider_policy=self._enabled_policy()
+            )
+            self.assertEqual(loaded["animation"], "compiled_rainbow")
+            self.assertEqual(loaded["params"]["common_seed"], 99)
+            self.assertEqual(loaded["brightness"], 41)
+            self.assertEqual(loaded["animation_speed_scale"], 0.75)
+            self.assertEqual(loaded["target_fps"], 72)
+            self.assertEqual(loaded["plant_modifiers"]["active"], ["illuminate"])
+            self.assertEqual(loaded["vibe"], quiet)
 
     def test_unsupported_desired_scene_falls_back_only_to_recorded_python_component(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -408,6 +561,63 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             controller.join()
 
             self.assertEqual(preset["params"], {"brightness": 0.7})
+
+    def test_canary_restore_sends_versioned_native_scene_not_receiver_commands(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            status_path = root / "status.json"
+            control_path = root / "control.json"
+            state_path = root / "state.json"
+            vibe = self._vibe("cozy")
+            scene = self._native_scene(common_seed=123)
+            save_status({
+                "is_running": True,
+                "current_animation": "compiled_rainbow",
+                "scene_state": scene,
+                "feature_flags": {
+                    "receiver_local_background": True,
+                    "receiver_sparse_overlay": True,
+                },
+                "vibe": {"state": vibe},
+            }, root / "presets", state_path)
+            status_path.write_text(json.dumps({"updated_at": 1}))
+            observed = []
+
+            def simulate_controller():
+                time.sleep(0.03)
+                status_path.write_text(json.dumps({"updated_at": time.time()}))
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
+                    if not control_path.exists():
+                        time.sleep(0.01)
+                        continue
+                    command = json.loads(control_path.read_text())
+                    observed.append(command)
+                    status_path.write_text(json.dumps({
+                        "updated_at": time.time(),
+                        "last_command_id": command["command_id"],
+                        "current_animation": "compiled_rainbow",
+                        "is_running": True,
+                        "scene_state": scene,
+                        "vibe": {"state": vibe},
+                    }))
+                    return
+
+            controller = threading.Thread(target=simulate_controller)
+            controller.start()
+            restored = restore(
+                status_path,
+                control_path,
+                state_path,
+                1,
+                receiver_hybrid_canary=True,
+            )
+            controller.join()
+
+            self.assertEqual(restored["animation"], "compiled_rainbow")
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(observed[0]["action"], "restore_display_state")
+            self.assertEqual(observed[0]["data"]["state"]["scene"], scene)
 
     def test_restore_acknowledges_vibe_before_start_and_rechecks_final_state(self):
         with tempfile.TemporaryDirectory() as temporary_dir:

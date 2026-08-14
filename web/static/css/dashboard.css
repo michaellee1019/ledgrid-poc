@@ -81,6 +81,15 @@
     .scene-editor-card { border: 1px solid #dfe3f1; border-radius: 18px; box-shadow: 0 8px 26px rgba(29, 39, 74, .06); }
     .scene-editor-card fieldset { min-width: 0; }
     .scene-editor-card .form-label { color: #3f4660; font-size: .82rem; }
+    .receiver-hybrid-status { padding: .85rem; border: 1px solid #dbe0ef; border-radius: 14px; background: #f8f9fd; }
+    .receiver-state-badge { background: #e9ebf3; color: #50576d; }
+    .receiver-state-badge[data-state="healthy"] { background: #d9f5e7; color: #0f6842; }
+    .receiver-state-badge[data-state="degraded"] { background: #fde3e3; color: #9b2929; }
+    .receiver-state-badge[data-state="waiting"] { background: #fff1c7; color: #755700; }
+    .receiver-status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; }
+    .receiver-status-grid > div { min-width: 0; padding: .55rem .65rem; border-radius: 10px; background: white; }
+    .receiver-status-grid dt { color: var(--show-muted); font-size: .65rem; letter-spacing: .045em; text-transform: uppercase; }
+    .receiver-status-grid dd { overflow-wrap: anywhere; margin: .1rem 0 0; font-size: .78rem; font-weight: 750; }
     .test-animation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
     .test-animation-btn { text-align: left; border: 1px solid var(--show-border); background: white; border-radius: 12px; padding: .7rem; }
     .control-studio { border: 1px solid #e1e4f0; border-radius: 16px; background: linear-gradient(160deg, #fff 0%, #f9f9ff 100%); }
@@ -110,6 +119,7 @@
     @media (max-width: 767.98px) {
         .animation-grid { grid-template-columns: 1fr; }
         .preset-strip, .parameter-grid { grid-template-columns: 1fr; }
+        .receiver-status-grid { grid-template-columns: 1fr; }
         .dashboard-heading { font-size: 1.8rem; }
         .speed-value-input { width: 3.7rem; font-size: 1.25rem; }
         .mobile-speed-card { box-shadow: 0 12px 28px rgba(79,67,216,.24); }

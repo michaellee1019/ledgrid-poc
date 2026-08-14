@@ -150,7 +150,11 @@
                         <h2 class="h5 mb-1" id="sceneEditorHeading">Background + clock overlay</h2>
                         <p class="small text-muted mb-0">Scene presets store components and layout only. Global vibe and plant controls remain independent.</p>
                     </div>
+                    {% if receiver_hybrid_enabled %}
+                    <span class="badge bg-light text-dark border">Host + receiver providers · fixed slots</span>
+                    {% else %}
                     <span class="badge bg-light text-dark border">Python provider · fixed slots</span>
+                    {% endif %}
                 </div>
                 <fieldset>
                     <legend class="visually-hidden">Fixed scene component slots</legend>
@@ -173,12 +177,49 @@
                                 <button class="btn btn-outline-primary" type="button" onclick="applyScenePreset()">Apply</button>
                             </div>
                         </div>
+                        {% if receiver_hybrid_enabled %}
+                        <div class="col-md-7" id="scenePythonFallbackField" hidden>
+                            <label class="form-label fw-bold" for="scenePythonFallbackSelect">Python fallback</label>
+                            <select class="form-select" id="scenePythonFallbackSelect">
+                                {% for component in component_catalog if component.provider == 'python' and 'background' in component.scene_compatibility.slots %}
+                                <option value="{{ component.plugin_id }}">{{ component.name or component.plugin_id }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Runs automatically if receiver agreement or its foreground lease degrades.</div>
+                        </div>
+                        <div class="col-md-5" id="sceneReceiverParameters" hidden>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <label class="form-label" for="sceneReceiverCadence">Receiver FPS</label>
+                                    <input class="form-control" id="sceneReceiverCadence" type="number" min="1" max="200" value="30">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label" for="sceneReceiverSeed">Shared seed</label>
+                                    <input class="form-control" id="sceneReceiverSeed" type="number" min="0" max="4294967295" value="0">
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
                         <div class="col-12">
                             <div class="form-check form-switch">
                                 <input class="form-check-input" id="sceneOverlayEnabled" type="checkbox" role="switch" checked>
                                 <label class="form-check-label fw-bold" for="sceneOverlayEnabled">Clock overlay</label>
                             </div>
                         </div>
+                        {% if receiver_hybrid_enabled %}
+                        <div class="col-md-3">
+                            <div class="form-check form-switch mt-md-4">
+                                <input class="form-check-input" id="sceneClockShowSeconds" type="checkbox" role="switch" checked>
+                                <label class="form-check-label" for="sceneClockShowSeconds">Show seconds</label>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-check form-switch mt-md-4">
+                                <input class="form-check-input" id="sceneClock24Hour" type="checkbox" role="switch">
+                                <label class="form-check-label" for="sceneClock24Hour">24-hour time</label>
+                            </div>
+                        </div>
+                        {% endif %}
                         <div class="col-md-4">
                             <label class="form-label" for="sceneOverlayOpacity">Opacity</label>
                             <input class="form-range" id="sceneOverlayOpacity" type="range" min="0" max="255" value="255">
@@ -207,7 +248,29 @@
                         </div>
                     </div>
                 </fieldset>
+                {% if receiver_hybrid_enabled %}
+                <div class="small text-muted mt-2" id="sceneCompatibilityHelp" role="status">Only policy-enabled providers with the matching role are selectable. Compatibility full scenes remain in the animation gallery.</div>
+                <div class="alert alert-info py-2 px-3 mt-3 mb-0" id="scenePreviewNotice" role="status" hidden>
+                    <strong>Preview:</strong> <span id="scenePreviewLabel">Host simulation — not receiver framebuffer readback.</span>
+                </div>
+                <section class="receiver-hybrid-status mt-3" id="receiverHybridStatus" aria-labelledby="receiverHybridStatusHeading">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <div>
+                            <div class="section-kicker">Receiver execution</div>
+                            <h3 class="h6 mb-0" id="receiverHybridStatusHeading">Agreement and foreground lease</h3>
+                        </div>
+                        <span class="badge receiver-state-badge" id="receiverAgreementState">Awaiting receiver proof</span>
+                    </div>
+                    <dl class="receiver-status-grid mb-0 mt-2">
+                        <div><dt>Foreground lease</dt><dd id="receiverForegroundLease">--</dd></div>
+                        <div><dt>Generation</dt><dd id="receiverForegroundGeneration">--</dd></div>
+                        <div><dt>Python fallback</dt><dd id="receiverFallbackState">No</dd></div>
+                        <div><dt>Agreement context</dt><dd id="receiverHybridDetail">--</dd></div>
+                    </dl>
+                </section>
+                {% else %}
                 <div class="small text-muted mt-2" id="sceneCompatibilityHelp" role="status">Only components declaring the matching Python role are selectable. Compatibility full scenes remain in the animation gallery.</div>
+                {% endif %}
                 <div class="d-flex flex-wrap gap-2 mt-3">
                     <button class="btn btn-primary" type="button" onclick="startEditedScene()"><i class="fas fa-play me-1"></i> Start scene</button>
                     <button class="btn btn-outline-primary" type="button" onclick="previewEditedScene()"><i class="fas fa-eye me-1"></i> Preview scene</button>

@@ -2288,16 +2288,18 @@ Portable tests and a deliberately scheduled one-receiver canary are sufficient.
 Prove the core hybrid value before solving native artifact loading.
 
 Implementation status (2026-08-13): **portable vertical slice and batch/ack
-payload optimization complete; product integration and visible
-canary/showcase remain open**. Generated cross-language wire/state vectors,
+payload optimization and the feature-gated product lifecycle slice complete;
+visible canary/showcase remain open**. Generated cross-language wire/state vectors,
 host serializers and negotiated status-v4 parsing, fake four-board transactional
 publication, feature-on receiver state/composition, exact cleanup, atomic
 multi-span batch patches, and deterministic payload accounting now land
-together. Production remains feature-off and compatible. The representative
+together with the manager publisher, receiver-static catalog and byte-exact
+preview, desired-display fallback, and dashboard/API controls. Production and
+ordinary deployment remain feature-off and compatible. The representative
 `clock_overlay` tick and corrected 60-second trace pass both frozen payload
-gates. Manager/dashboard wiring and wall mutation remain deliberately out of
-scope for this slice. Strict four-board acceptance and production enablement
-remain blocked by the separately documented return path.
+gates. Wall mutation remains deliberately out of scope for the portable product
+slice. Strict four-board acceptance and production enablement remain blocked by
+the separately documented return path.
 
 #### Phase 3B0: next-context hybrid showcase
 
@@ -2397,10 +2399,33 @@ Portable-slice evidence and open gates (2026-08-13):
   2,340,416 status-transfer bytes, and 4,937,632 full-duplex endpoint bytes.
   Status traffic remains an honest 94.7991% of SPI-clocked sparse traffic, but
   neither payload gate is red.
-- [ ] Manager, desired-display, dashboard/API, labeled preview, live vibe and
-  clock controls, persistence/fallback, and exact lifecycle cleanup remain the
-  next product slice. No code in this slice exposes the canary feature as an
-  ordinary selectable scene.
+- [x] Manager, desired-display, dashboard/API, labeled preview, live vibe and
+  clock controls, persistence/fallback, and exact lifecycle cleanup are complete
+  as one explicitly gated product slice. `ReceiverSparsePublisher` owns fresh
+  sessions, generation/CAS ordering, 3-second leases, bounded renewal, 30-second
+  authoritative repair, and fail-closed status. The manager stages the compiled
+  base before the first complete foreground snapshot, preserves overlay semantic
+  clocks across vibe/plant context transactions, and uses complete RGB
+  `set_all_pixels` for stop, Python-scene switch, or any unproven receiver state.
+  The dashboard exposes cadence/seed, clock controls, host-simulation labeling,
+  fallback selection, and receiver agreement/lease/degraded status. Desired
+  state retains the exact native reference plus Python fallback when enabled and
+  resolves that fallback before hardware mutation when disabled. The single
+  `LEDGRID_RECEIVER_HYBRID_CANARY` switch maps to both required typed gates;
+  production systemd and ordinary deployment pass neither, so the component is
+  absent and handcrafted native scenes fail closed by default.
+- [x] Product-slice portable evidence is green: 18 sparse-publisher tests, 9
+  receiver-hybrid manager lifecycle tests, 9 compiled-renderer/catalog tests,
+  exact foreground placement/opacity/clear coverage tests, and the broader
+  API/IPC/UI/persistence suites. The settled complete project gate passes 970
+  tests plus 1,264 subtests, rendering passes 23
+  tests plus 3 subtests, native firmware passes all 59 cases, and deployment
+  acceptance passes 162 tests plus 77 subtests. Both pinned builds remain inside
+  their accepted envelopes: production feature-off uses 50,720 bytes RAM and
+  272,273 bytes flash; the named canary uses 65,504 bytes RAM and 278,553 bytes
+  flash. The final repeated 32 x 138 `snake-max-density` render stays below the
+  4 ms p95 gate at 3.2268 ms. The authoritative ordinary clean deployment
+  receipt remains the terminal gate after the clean commit.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground
@@ -2436,21 +2461,22 @@ benefit rather than only dormant protocol code:
    manually observed, explicitly incomplete, and never a substitute for the
    post-repair strict gate.
 
-Current handoff: items 1 and 2 and the protocol batching/ack-amortization follow-up
-are complete as a portable/fake-wall slice. Item 4's settled-source local
-validation, both payload thresholds, and both ordinary deploy dry runs are
-green; the authoritative ordinary deployment receipt is the final evidence for
-the clean commit. Items 3 and 5 have not started. The next implementation work is
-therefore item 3, the feature-gated manager/dashboard/product lifecycle slice.
-Do not skip directly to a canary or expose the sparse receiver path as an
-ordinary selectable scene.
+Current handoff: items 1 through 4 and the protocol batching/ack-amortization
+follow-up are complete as a portable/fake-wall/product slice. The receiver-native
+scene is available only under the deliberately named host canary switch and the
+named feature-on firmware build; ordinary production remains Python-only. Item 5
+has not started. The next implementation work is therefore the scheduled strict
+readable-receiver canary and optional explicitly degraded showcase, followed by
+complete-host-frame cleanup and restored streamed acceptance. Do not interpret
+portable completion as physical acceptance or enable the receiver path by
+default while the documented SPI1 return-path fault remains.
 
-Settled-source portable evidence on 2026-08-13: `just test` passed 897 Python
-tests and 1,198 subtests, 23 rendering tests and 3 subtests, all 59 native
+Settled-source portable evidence on 2026-08-13: `just test` passed 970 Python
+tests and 1,264 subtests, 23 rendering tests and 3 subtests, all 59 native
 firmware cases (17 contract, 8 native-protocol, and 34 receiver-runtime), both
-pinned firmware builds, and 153 deployment tests plus 66 subtests. The repeated
-rendering gate's slowest accepted installed-geometry p95 was 3.4081 ms for
-`snake-max-density`, below 4 ms. The feature-off production image uses 50,720
+pinned firmware builds, and 162 deployment tests plus 77 subtests. The final
+repeated `snake-max-density` installed-geometry p95 was 3.2268 ms, below 4 ms.
+The feature-off production image uses 50,720
 bytes RAM and 272,273 bytes flash; the deliberate canary uses 65,504 bytes RAM
 and 278,553 bytes flash, a feature-on delta of 14,784 bytes RAM and 6,280 bytes
 flash. Both generated-fixture drift checks, the deterministic payload tool,

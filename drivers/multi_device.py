@@ -1126,6 +1126,91 @@ class MultiDeviceLEDController:
             statuses.append(status)
         return statuses
 
+    def update_presentation_context(self, context):
+        """Atomically replace receiver presentation context without restarting base.
+
+        A successful context commit intentionally invalidates the committed
+        foreground on the receivers.  The caller must follow this operation
+        with a complete authoritative foreground snapshot before reporting a
+        healthy hybrid scene.
+        """
+        with self._controller_lock():
+            if not self._local_background_active:
+                raise RuntimeError("presentation context requires an active local background")
+            touched = False
+            try:
+                statuses = self._receiver_statuses(require_capability=True)
+                if any(int(status.get("receiver_base_mode", -1)) != 1 for status in statuses):
+                    raise RuntimeError(
+                        "presentation context requires local background ownership everywhere"
+                    )
+                operations = (
+                    ("presentation begin", "begin_presentation_context"),
+                    ("presentation set", "set_presentation_context"),
+                )
+                for operation, method_name in operations:
+                    for index, device in enumerate(self.devices):
+                        touched = True
+                        status = getattr(device, method_name)(context)
+                        self._require_ack(status, operation, index)
+                self._commit_presentation_contexts(context)
+                committed = self._receiver_statuses(require_capability=True)
+                self._validate_presentation_agreement(committed, context)
+                expected_digest = context.context_digest.hex()
+                for index, status in enumerate(committed):
+                    expected = {
+                        "receiver_base_mode": 1,
+                        "receiver_active_scene_revision": context.scene_revision,
+                        "receiver_active_context_digest": expected_digest,
+                        "receiver_active_session_id": context.controller_session_id.hex(),
+                        "receiver_logical_device": index,
+                    }
+                    for key, expected_value in expected.items():
+                        if status.get(key) != expected_value:
+                            raise RuntimeError(
+                                f"receiver {index} reported unexpected {key}: "
+                                f"{status.get(key)!r}"
+                            )
+            except Exception as exc:
+                self._local_background_status = {
+                    "state": "degraded",
+                    "operation": "presentation_context_update_failed",
+                    "error": str(exc),
+                    "receivers_touched": touched,
+                }
+                self._sparse_overlay_session_id = None
+                self._sparse_overlay_generation = 0
+                self._sparse_overlay_snapshot_digest = None
+                return False
+
+            self._local_background_context_digest = expected_digest
+            self._sparse_overlay_session_id = None
+            self._sparse_overlay_generation = 0
+            self._sparse_overlay_snapshot_digest = None
+            self._local_background_status = {
+                "state": "foreground_repair_required",
+                "operation": "presentation_context_update",
+                "context_digest": expected_digest,
+                "scene_revision": context.scene_revision,
+            }
+            return True
+
+    def sparse_overlay_authority(self):
+        """Return a detached snapshot of controller-owned foreground authority."""
+        with self._controller_lock():
+            session = getattr(self, "_sparse_overlay_session_id", None)
+            return {
+                "controller_session_id": session.hex() if session is not None else None,
+                "generation": int(getattr(self, "_sparse_overlay_generation", 0)),
+                "snapshot_digest": (
+                    self._sparse_overlay_snapshot_digest.hex()
+                    if getattr(self, "_sparse_overlay_snapshot_digest", None) is not None
+                    else None
+                ),
+                "local_background_active": bool(self._local_background_active),
+                "status": dict(self._local_background_status),
+            }
+
     @staticmethod
     def _agreement_value(statuses, key):
         values = {status.get(key) for status in statuses}

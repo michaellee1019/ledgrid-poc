@@ -25,8 +25,10 @@ from animation.core.presentation_contracts import (
     VibeState, component_preset_fingerprint, resolve_vibe,
 )
 from ipc.scene_contract import (
+    DEFAULT_SCENE_PROVIDER_POLICY,
     DESIRED_DISPLAY_SCHEMA,
     DESIRED_DISPLAY_VERSION,
+    SceneProviderPolicy,
     SceneValidationError,
     background_only_scene,
     normalize_scene_payload,
@@ -36,6 +38,49 @@ from ipc.scene_contract import (
 PRESET_ID = "before-deploy"
 STATE_VERSION = 5
 UNKNOWN_INSTALLATION_PROFILE_DIGEST = "0" * 64
+RECEIVER_HYBRID_CANARY_ENV = "LEDGRID_RECEIVER_HYBRID_CANARY"
+
+
+def receiver_hybrid_canary_enabled(value: Any = None) -> bool:
+    """Resolve the deliberately named receiver-hybrid canary switch."""
+
+    if value is None:
+        value = os.environ.get(RECEIVER_HYBRID_CANARY_ENV, "0")
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, str):
+        raise TypeError("receiver hybrid canary must be a boolean or string")
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(
+        f"{RECEIVER_HYBRID_CANARY_ENV} must be a boolean switch"
+    )
+
+
+def receiver_hybrid_provider_policy(enabled: bool) -> SceneProviderPolicy:
+    if type(enabled) is not bool:
+        raise TypeError("receiver hybrid canary state must be boolean")
+    return SceneProviderPolicy(
+        receiver_local_background=enabled,
+        receiver_sparse_overlay=enabled,
+    )
+
+
+def _status_provider_policy(status: dict[str, Any]) -> SceneProviderPolicy:
+    flags = status.get("feature_flags")
+    if not isinstance(flags, dict):
+        return DEFAULT_SCENE_PROVIDER_POLICY
+    return SceneProviderPolicy(
+        receiver_local_background=(
+            flags.get("receiver_local_background") is True
+        ),
+        receiver_sparse_overlay=(
+            flags.get("receiver_sparse_overlay") is True
+        ),
+    )
 
 
 def _positive_finite_number(value: Any) -> float | None:
@@ -149,14 +194,17 @@ def _preset_fingerprint(animation: str, preset_id: str, params: dict[str, Any]) 
 
 
 def _scene_from_status(
-    status: dict[str, Any], animation: str, params: dict[str, Any]
+    status: dict[str, Any], animation: str, params: dict[str, Any],
+    *, provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
 ) -> dict[str, Any]:
     raw_scene = status.get("scene_state")
     if not isinstance(raw_scene, dict):
         raw_scene = status.get("scene")
     if isinstance(raw_scene, dict) and raw_scene.get("schema"):
         try:
-            return normalize_scene_payload(raw_scene)
+            return normalize_scene_payload(
+                raw_scene, provider_policy=provider_policy
+            )
         except SceneValidationError as exc:
             raise RuntimeError(f"Controller status has an invalid scene: {exc}") from exc
     selected = _current_preset(status.get("current_preset"), animation)
@@ -281,13 +329,16 @@ def save_status(
     status: dict[str, Any], presets_dir: Path, state_path: Path
 ) -> dict[str, Any]:
     """Persist a controller status snapshot as the restart default."""
+    provider_policy = _status_provider_policy(status)
     animation = _safe_animation_name(status.get("current_animation"))
     if not status.get("is_running") or not animation:
         # Global presentation controls remain independently writable while the
         # wall is stopped. Retain the last valid playable snapshot and update
         # only those controls so the next restart does not discard the choice.
         try:
-            previous = load_saved_state(state_path)
+            previous = load_saved_state(
+                state_path, provider_policy=provider_policy
+            )
             animation = previous["animation"]
             preset_path_value = previous.get("preset_path")
             if isinstance(preset_path_value, str):
@@ -313,24 +364,60 @@ def save_status(
         _atomic_write(state_path, state)
         return preset
 
-    params = _preset_params(status)
+    raw_scene = status.get("scene_state")
+    if not isinstance(raw_scene, dict):
+        raw_scene = status.get("scene")
+    scene = None
+    if isinstance(raw_scene, dict) and raw_scene.get("schema"):
+        scene = _scene_from_status(
+            status, animation, {}, provider_policy=provider_policy
+        )
+    native_background = bool(
+        scene is not None
+        and scene["background"].get("provider") == "receiver_native"
+    )
+    if native_background:
+        background = scene["background"]
+        params = dict(background.get("resolved_parameters") or {})
+        params.update(background.get("parameter_overrides") or {})
+    else:
+        params = _preset_params(status)
+        if scene is None:
+            scene = _scene_from_status(
+                status, animation, params, provider_policy=provider_policy
+            )
+
     preset_path = presets_dir / animation / f"{PRESET_ID}.json"
     now = time.time()
-    try:
-        existing = _read_object(preset_path)
-    except RuntimeError:
-        existing = {}
     preset = {
         "version": 1,
         "preset_id": PRESET_ID,
         "name": PRESET_ID,
         "animation": animation,
         "params": params,
-        "created_at": existing.get("created_at", now),
+        "created_at": now,
         "updated_at": now,
     }
+    if native_background:
+        # Receiver-native components have no Python plugin preset file. Their
+        # exact desired scene and recorded Python fallback are the durable
+        # restart contract; writing a fake preset would make deployment tools
+        # imply that the Python loader can instantiate the native component.
+        state = _desired_display_state(status, scene)
+        state.update({
+            "version": STATE_VERSION,
+            "animation": animation,
+            "saved_at": now,
+        })
+        _atomic_write(state_path, state)
+        return preset
+
+    try:
+        existing = _read_object(preset_path)
+    except RuntimeError:
+        existing = {}
+    preset["created_at"] = existing.get("created_at", now)
     _atomic_write(preset_path, preset)
-    scene = _scene_from_status(status, animation, params)
     state = _desired_display_state(status, scene)
     state.update({
         # ``version`` and the legacy aliases keep older deploy coordinators able
@@ -351,11 +438,17 @@ def save(status_path: Path, presets_dir: Path, state_path: Path) -> dict[str, An
     return save_status(_read_object(status_path), presets_dir, state_path)
 
 
-def load_saved_state(state_path: Path) -> dict[str, Any]:
+def load_saved_state(
+    state_path: Path,
+    *,
+    provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
+) -> dict[str, Any]:
     """Load and validate the animation and parameters used for restart."""
     state = _read_object(state_path)
     if "scene" in state or state.get("schema") == DESIRED_DISPLAY_SCHEMA:
-        return _load_desired_display_state(state)
+        return _load_desired_display_state(
+            state, provider_policy=provider_policy
+        )
 
     animation = _safe_animation_name(state.get("animation"))
     if not animation:
@@ -430,7 +523,11 @@ def _known_python_fallback_scene(raw_scene: Any) -> dict[str, Any]:
         ) from exc
 
 
-def _load_desired_display_state(state: dict[str, Any]) -> dict[str, Any]:
+def _load_desired_display_state(
+    state: dict[str, Any],
+    *,
+    provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
+) -> dict[str, Any]:
     """Validate the aggregate before exposing any values to controller startup."""
     raw_scene = state.get("scene")
     fallback_scene = _known_python_fallback_scene(raw_scene)
@@ -453,7 +550,9 @@ def _load_desired_display_state(state: dict[str, Any]) -> dict[str, Any]:
         )
     else:
         try:
-            scene = normalize_scene_payload(raw_scene)
+            scene = normalize_scene_payload(
+                raw_scene, provider_policy=provider_policy
+            )
         except (SceneValidationError, TypeError, ValueError) as exc:
             scene = fallback_scene
             fallback_reason = f"unsupported saved scene: {exc}"
@@ -544,9 +643,20 @@ def _wait_for_fresh_controller(channel: FileControlChannel, started_at: float, t
     raise RuntimeError("Controller did not publish fresh status after restart")
 
 
-def restore(status_path: Path, control_path: Path, state_path: Path, timeout: float) -> dict[str, Any]:
+def restore(
+    status_path: Path,
+    control_path: Path,
+    state_path: Path,
+    timeout: float,
+    *,
+    receiver_hybrid_canary: bool | None = None,
+) -> dict[str, Any]:
     restore_started_at = time.time()
-    state = load_saved_state(state_path)
+    canary_enabled = receiver_hybrid_canary_enabled(receiver_hybrid_canary)
+    state = load_saved_state(
+        state_path,
+        provider_policy=receiver_hybrid_provider_policy(canary_enabled),
+    )
     animation = state["animation"]
 
     channel = FileControlChannel(str(control_path), str(status_path))
@@ -736,13 +846,28 @@ def main() -> None:
     parser.add_argument("--state", type=Path, default=Path("run_state/before_deploy.json"))
     parser.add_argument("--deployment", type=Path, default=Path("run_state/deployment.json"))
     parser.add_argument("--wait", type=float, default=10.0)
+    parser.add_argument(
+        "--receiver-hybrid-canary",
+        action="store_true",
+        default=None,
+        help=(
+            "opt in to receiver-native background scenes; otherwise the "
+            f"recorded Python fallback is restored (env: {RECEIVER_HYBRID_CANARY_ENV})"
+        ),
+    )
     args = parser.parse_args()
 
     if args.action == "save":
         preset = save(args.status, args.presets, args.state)
         print(f"Saved {preset['animation']}/{PRESET_ID}")
     elif args.action == "restore":
-        preset = restore(args.status, args.control, args.state, args.wait)
+        preset = restore(
+            args.status,
+            args.control,
+            args.state,
+            args.wait,
+            receiver_hybrid_canary=args.receiver_hybrid_canary,
+        )
         print(f"Restored {preset['animation']}/{PRESET_ID}")
     else:
         deploy_timestamp = record_deploy(args.deployment)

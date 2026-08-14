@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from typing import Any, Iterable, Optional
 
@@ -26,6 +26,7 @@ SCENE_PRESET_VERSION = 1
 DESIRED_DISPLAY_SCHEMA = "ledgrid.desired-display-state"
 DESIRED_DISPLAY_VERSION = 1
 FIXED_OVERLAY_SLOT = "clock_overlay"
+COMPILED_RAINBOW_PLUGIN_ID = "compiled_rainbow"
 SUPPORTED_PROVIDERS = frozenset(("python",))
 KNOWN_PROVIDERS = frozenset(("python", "receiver_native"))
 SUPPORTED_ROLES = frozenset(("background", "overlay", "full_scene"))
@@ -36,6 +37,39 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 class SceneValidationError(ValueError):
     """A stable client-visible validation error."""
+
+
+@dataclass(frozen=True)
+class SceneProviderPolicy:
+    """Explicit rollout policy for providers executable by scene clients.
+
+    Receiver-local playback and sparse foreground publication form one product
+    slice.  Enabling only one half must not make a receiver-native component
+    selectable or valid.  Version 1 deliberately allowlists the statically
+    linked compiled rainbow rather than opening the scene boundary to arbitrary
+    native packages.
+    """
+
+    receiver_local_background: bool = False
+    receiver_sparse_overlay: bool = False
+
+    def __post_init__(self) -> None:
+        for name in ("receiver_local_background", "receiver_sparse_overlay"):
+            if type(getattr(self, name)) is not bool:
+                raise TypeError(f"scene provider policy {name!r} must be boolean")
+
+    @property
+    def compiled_rainbow_enabled(self) -> bool:
+        return self.receiver_local_background and self.receiver_sparse_overlay
+
+    def allows_receiver_background(self, plugin_id: str) -> bool:
+        return (
+            self.compiled_rainbow_enabled
+            and plugin_id == COMPILED_RAINBOW_PLUGIN_ID
+        )
+
+
+DEFAULT_SCENE_PROVIDER_POLICY = SceneProviderPolicy()
 
 
 def jsonable(value: Any) -> Any:
@@ -118,8 +152,14 @@ def catalog_index(catalog: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str],
     return result
 
 
-def decorate_catalog(catalog: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def decorate_catalog(
+    catalog: Iterable[Mapping[str, Any]],
+    *,
+    provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
+) -> list[dict[str, Any]]:
     """Expose explicit fixed-editor compatibility for every catalog item."""
+    if not isinstance(provider_policy, SceneProviderPolicy):
+        raise TypeError("provider_policy must be a SceneProviderPolicy")
     decorated = []
     for raw in catalog:
         item = jsonable(raw)
@@ -137,7 +177,25 @@ def decorate_catalog(catalog: Iterable[Mapping[str, Any]]) -> list[dict[str, Any
             isinstance(compatibility, dict)
             and compatibility.get("composable") is False
         )
-        if provider not in SUPPORTED_PROVIDERS:
+        if provider == "receiver_native":
+            if not provider_policy.compiled_rainbow_enabled:
+                # Preserve the Phase 2C feature-off product response exactly.
+                diagnostic = "This provider is catalog-visible but not executable in host scenes."
+            elif component_id != COMPILED_RAINBOW_PLUGIN_ID:
+                diagnostic = (
+                    "Only the compiled_rainbow receiver-native background is "
+                    "enabled by the version 1 scene policy."
+                )
+            elif role != "background":
+                diagnostic = "The compiled_rainbow component must declare the background role."
+            elif explicitly_noncomposable:
+                diagnostic = str(
+                    compatibility.get("diagnostic")
+                    or "This component is not compatible with composed scenes."
+                )
+            else:
+                slots = ["background"]
+        elif provider not in SUPPORTED_PROVIDERS:
             diagnostic = "This provider is catalog-visible but not executable in host scenes."
         elif explicitly_noncomposable:
             diagnostic = str(
@@ -168,6 +226,7 @@ def filter_catalog(
     *,
     provider: Optional[str] = None,
     role: Optional[str] = None,
+    provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
 ) -> list[dict[str, Any]]:
     if provider is not None:
         if provider not in KNOWN_PROVIDERS:
@@ -179,7 +238,7 @@ def filter_catalog(
             f"role filter must be one of {', '.join(sorted(SUPPORTED_ROLES))}"
         )
     result = []
-    for item in decorate_catalog(catalog):
+    for item in decorate_catalog(catalog, provider_policy=provider_policy):
         _component_id, item_provider, item_role = _catalog_identity(item)
         if provider is not None and item_provider != provider:
             continue
@@ -198,6 +257,8 @@ def _component_ref(
     *,
     expected_roles: set[str],
     catalog: Optional[Iterable[Mapping[str, Any]]],
+    provider_policy: SceneProviderPolicy,
+    allow_receiver_background: bool = False,
 ) -> dict[str, Any]:
     payload = _object(value, label)
     _only(
@@ -211,13 +272,39 @@ def _component_ref(
     )
     plugin_id = _identifier(payload.get("plugin_id"), f"{label}.plugin_id")
     provider = payload.get("provider", "python")
-    if provider not in SUPPORTED_PROVIDERS:
+    if provider == "receiver_native":
+        if (
+            not allow_receiver_background
+            or not provider_policy.allows_receiver_background(plugin_id)
+        ):
+            if not provider_policy.compiled_rainbow_enabled:
+                # Preserve the feature-off Phase 2C validation response.
+                raise SceneValidationError(
+                    f"{label}.provider {provider!r} is unsupported; "
+                    "Phase 2C supports python"
+                )
+            if label == "scene.known_python_fallback":
+                raise SceneValidationError(
+                    "scene.known_python_fallback must use the python provider"
+                )
+            raise SceneValidationError(
+                "receiver_native scene backgrounds are limited to "
+                f"{COMPILED_RAINBOW_PLUGIN_ID!r} by the version 1 policy"
+            )
+        for field in ("bundle_digest", "expected_payload_digest"):
+            digest = payload.get(field)
+            if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+                raise SceneValidationError(
+                    f"receiver-native {label}.{field} must be a lowercase SHA-256 digest"
+                )
+    elif provider not in SUPPORTED_PROVIDERS:
         raise SceneValidationError(
             f"{label}.provider {provider!r} is unsupported; Phase 2C supports python"
         )
-    for forbidden in ("bundle_digest", "expected_payload_digest"):
-        if payload.get(forbidden) is not None:
-            raise SceneValidationError(f"python {label} must not declare {forbidden}")
+    else:
+        for forbidden in ("bundle_digest", "expected_payload_digest"):
+            if payload.get(forbidden) is not None:
+                raise SceneValidationError(f"python {label} must not declare {forbidden}")
     preset_id = payload.get("preset_id")
     fingerprint = payload.get("preset_fingerprint")
     if preset_id is None:
@@ -251,6 +338,23 @@ def _component_ref(
                 f"{label} component {plugin_id!r} is not composable: "
                 f"{compatibility.get('diagnostic', 'compatibility contract rejected it')}"
             )
+        if provider == "receiver_native":
+            build = descriptor.get("build")
+            if isinstance(build, Mapping):
+                expected_bindings = {
+                    "bundle_digest": build.get("contract_digest"),
+                    "expected_payload_digest": build.get(
+                        "expected_payload_digest"
+                    ),
+                }
+                for field, expected_digest in expected_bindings.items():
+                    if (
+                        isinstance(expected_digest, str)
+                        and payload[field] != expected_digest
+                    ):
+                        raise SceneValidationError(
+                            f"{label}.{field} does not match the catalog binding"
+                        )
 
     result: dict[str, Any] = {
         "plugin_id": plugin_id,
@@ -258,6 +362,11 @@ def _component_ref(
         "parameter_overrides": overrides,
         "resolved_parameters": resolved,
     }
+    if provider == "receiver_native":
+        result.update(
+            bundle_digest=payload["bundle_digest"],
+            expected_payload_digest=payload["expected_payload_digest"],
+        )
     if preset_id is not None:
         result.update(preset_id=preset_id, preset_fingerprint=fingerprint)
     return result
@@ -267,8 +376,11 @@ def normalize_scene_payload(
     value: Any,
     *,
     catalog: Optional[Iterable[Mapping[str, Any]]] = None,
+    provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
 ) -> dict[str, Any]:
     """Validate and canonicalize the fixed background + clock-overlay scene."""
+    if not isinstance(provider_policy, SceneProviderPolicy):
+        raise TypeError("provider_policy must be a SceneProviderPolicy")
     payload = _object(value, "scene")
     if "scene" in payload and not {"background", "overlays"}.intersection(payload):
         _only(payload, {"scene"}, "scene envelope")
@@ -291,11 +403,14 @@ def normalize_scene_payload(
     background = _component_ref(
         payload.get("background"), "scene.background",
         expected_roles={"background"}, catalog=catalog,
+        provider_policy=provider_policy,
+        allow_receiver_background=True,
     )
     fallback = _component_ref(
         payload.get("known_python_fallback", payload.get("background")),
         "scene.known_python_fallback",
         expected_roles={"background"}, catalog=catalog,
+        provider_policy=provider_policy,
     )
     raw_overlays = payload.get("overlays", [])
     if not isinstance(raw_overlays, list) or len(raw_overlays) > 1:
@@ -316,6 +431,7 @@ def normalize_scene_payload(
         component = _component_ref(
             overlay.get("component"), "scene overlay component",
             expected_roles={"overlay"}, catalog=catalog,
+            provider_policy=provider_policy,
         )
         if component["plugin_id"] != FIXED_OVERLAY_SLOT:
             raise SceneValidationError(
@@ -412,11 +528,15 @@ def background_only_scene(
 
 def scene_preview_identity(
     scene: Mapping[str, Any], vibe: Mapping[str, Any], plant_modifiers: Mapping[str, Any],
-    *, elapsed: float = 0.0,
+    *,
+    elapsed: float = 0.0,
+    provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
 ) -> str:
     """Content identity for every visual preview input; never includes live objects."""
     canonical = {
-        "scene": normalize_scene_payload(scene),
+        "scene": normalize_scene_payload(
+            scene, provider_policy=provider_policy
+        ),
         "vibe": jsonable(vibe),
         "plant_modifiers": jsonable(plant_modifiers),
         # Elapsed is the requested source/cadence point.  Quantized component

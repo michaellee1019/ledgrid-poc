@@ -29,10 +29,10 @@ ALL_LOCAL_CAPABILITIES = (
 )
 
 
-def context(*, vibe_revision=7, plant_revision=9, scene_epoch=11):
+def context(*, vibe_revision=7, plant_revision=9, scene_epoch=11, scene_revision=5):
     return ReceiverPresentationContext(
         controller_session_id=bytes(range(16)),
-        scene_revision=5,
+        scene_revision=scene_revision,
         scene_epoch=scene_epoch,
         present_at_scene_time_us=1000,
         vibe=resolve_vibe("vivid", revision=vibe_revision),
@@ -206,6 +206,49 @@ def controller(devices):
 
 
 class ReceiverLocalBackgroundOrchestrationTests(unittest.TestCase):
+    def test_live_context_update_preserves_base_and_requires_foreground_repair(self):
+        devices = [Device(logical_device=index) for index in range(4)]
+        item = controller(devices)
+        initial = context(vibe_revision=7)
+        self.assertTrue(item.start_local_background(initial))
+        item._sparse_overlay_session_id = bytes(range(16))
+        item._sparse_overlay_generation = 9
+        item._sparse_overlay_snapshot_digest = b"x" * 32
+
+        changed = context(vibe_revision=8, scene_revision=6)
+        self.assertTrue(item.update_presentation_context(changed))
+
+        self.assertTrue(item._local_background_active)
+        self.assertEqual([device.base_mode for device in devices], [1] * 4)
+        self.assertEqual(
+            [[call[0] for call in device.calls].count("start") for device in devices],
+            [1] * 4,
+        )
+        self.assertFalse(any(
+            call[0] == "stop" for device in devices for call in device.calls
+        ))
+        self.assertEqual(item._local_background_status["state"], "foreground_repair_required")
+        self.assertIsNone(item._sparse_overlay_session_id)
+        self.assertEqual(item._sparse_overlay_generation, 0)
+        self.assertEqual(
+            item.sparse_overlay_authority()["controller_session_id"], None
+        )
+
+    def test_failed_live_context_update_marks_degraded_without_base_restart(self):
+        devices = [Device(logical_device=index) for index in range(4)]
+        item = controller(devices)
+        self.assertTrue(item.start_local_background(context(vibe_revision=7)))
+        devices[2].fail.add("context_set")
+
+        self.assertFalse(item.update_presentation_context(
+            context(vibe_revision=8, scene_revision=6)
+        ))
+
+        self.assertEqual(item._local_background_status["state"], "degraded")
+        self.assertTrue(item._local_background_status["receivers_touched"])
+        self.assertEqual([device.base_mode for device in devices], [1] * 4)
+        self.assertIsNone(item._sparse_overlay_session_id)
+
     def test_explicit_status_refresh_drains_every_board_and_records_failures(self):
         devices = [Device(logical_device=index) for index in range(4)]
         item = controller(devices)

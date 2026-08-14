@@ -421,7 +421,11 @@
             syncGlobalSpeedFromStatus(INITIAL_STATUS);
             syncGlobalVibeFromStatus(INITIAL_STATUS);
             syncPlantModifiersFromStatus(INITIAL_STATUS);
+            syncReceiverHybridStatus(INITIAL_STATUS);
         }
+        const sceneBackground = document.getElementById('sceneBackgroundSelect');
+        sceneBackground?.addEventListener('change', syncSceneProviderControls);
+        syncSceneProviderControls();
         startStatsPolling();
     });
 
@@ -870,6 +874,7 @@
             syncGlobalSpeedFromStatus(data);
             syncGlobalVibeFromStatus(data);
             syncPlantModifiersFromStatus(data);
+            syncReceiverHybridStatus(data);
         } catch (err) {
             console.error('Failed to fetch stats', err);
         }
@@ -1566,19 +1571,75 @@
         setTimeout(() => toast.remove(), 3000);
     }
 
-    function sceneComponentRef(componentId) {
-        return {
+    function sceneComponentDescriptor(componentId) {
+        return SCENE_COMPONENT_CATALOG.find(item => item.plugin_id === componentId) || null;
+    }
+
+    function sceneComponentRef(componentId, authoredParameters = null) {
+        const descriptor = sceneComponentDescriptor(componentId);
+        if (!descriptor) throw new Error(`Unknown scene component: ${componentId}`);
+        const provider = descriptor.provider || 'python';
+        const overrides = authoredParameters ? {...authoredParameters} : {};
+        const ref = {
             plugin_id: componentId,
-            provider: 'python',
-            parameter_overrides: {},
-            resolved_parameters: {}
+            provider,
+            parameter_overrides: overrides,
+            resolved_parameters: provider === 'receiver_native'
+                ? {...(descriptor.defaults || {}), ...overrides}
+                : overrides
+        };
+        if (provider === 'receiver_native') {
+            const build = descriptor.build || {};
+            ref.bundle_digest = build.contract_digest || build.bundle_digest;
+            ref.expected_payload_digest = build.expected_payload_digest;
+            if (!ref.bundle_digest || !ref.expected_payload_digest) {
+                throw new Error(`${componentId} is missing its receiver contract binding.`);
+            }
+        }
+        return ref;
+    }
+
+    function syncSceneProviderControls() {
+        const componentId = document.getElementById('sceneBackgroundSelect')?.value;
+        const receiverNative = sceneComponentDescriptor(componentId)?.provider === 'receiver_native';
+        const fallbackField = document.getElementById('scenePythonFallbackField');
+        const receiverParameters = document.getElementById('sceneReceiverParameters');
+        if (fallbackField) fallbackField.hidden = !receiverNative;
+        if (receiverParameters) receiverParameters.hidden = !receiverNative;
+    }
+
+    function receiverBackgroundParameters(backgroundId) {
+        if (sceneComponentDescriptor(backgroundId)?.provider !== 'receiver_native') return null;
+        return {
+            preferred_cadence_hz: Number(
+                document.getElementById('sceneReceiverCadence')?.value || 30
+            ),
+            common_seed: Number(document.getElementById('sceneReceiverSeed')?.value || 0)
+        };
+    }
+
+    function clockOverlayParameters() {
+        const showSeconds = document.getElementById('sceneClockShowSeconds');
+        const format24h = document.getElementById('sceneClock24Hour');
+        if (!showSeconds && !format24h) return null;
+        return {
+            show_seconds: showSeconds ? showSeconds.checked : true,
+            format_24h: format24h ? format24h.checked : false
         };
     }
 
     function editedScenePayload() {
         const backgroundId = document.getElementById('sceneBackgroundSelect')?.value;
-        if (!backgroundId) throw new Error('Choose a compatible Python background.');
-        const background = sceneComponentRef(backgroundId);
+        if (!backgroundId) throw new Error('Choose a compatible background.');
+        const background = sceneComponentRef(
+            backgroundId, receiverBackgroundParameters(backgroundId)
+        );
+        let fallback = {...background};
+        if (background.provider === 'receiver_native') {
+            const fallbackId = document.getElementById('scenePythonFallbackSelect')?.value;
+            if (!fallbackId) throw new Error('Choose a Python fallback for receiver playback.');
+            fallback = sceneComponentRef(fallbackId);
+        }
         const overlays = [];
         if (document.getElementById('sceneOverlayEnabled')?.checked) {
             const stalePolicy = document.getElementById('sceneStalePolicy')?.value || 'hold';
@@ -1586,7 +1647,7 @@
             if (stalePolicy === 'clear_after_lease') stale.lease_ms = 1000;
             overlays.push({
                 slot_id: 'clock_overlay',
-                component: sceneComponentRef('clock_overlay'),
+                component: sceneComponentRef('clock_overlay', clockOverlayParameters()),
                 enabled: true,
                 opacity: Number(document.getElementById('sceneOverlayOpacity')?.value || 255),
                 placement: {
@@ -1603,7 +1664,7 @@
             revision: Date.now(),
             background,
             overlays,
-            known_python_fallback: {...background}
+            known_python_fallback: fallback
         };
     }
 
@@ -1641,6 +1702,16 @@
                 animationRenderer.lastFrameData = payload;
                 animationRenderer.renderFrame(payload);
             }
+            const notice = document.getElementById('scenePreviewNotice');
+            if (notice) {
+                const receiverSimulation = payload.background_provider === 'receiver_native';
+                notice.hidden = !receiverSimulation;
+                const label = document.getElementById('scenePreviewLabel');
+                if (label && receiverSimulation) {
+                    label.textContent = payload.preview_label
+                        || 'Host simulation preview — not receiver framebuffer readback';
+                }
+            }
             showToast('Preview rendered without changing the live scene.', 'success');
         } catch (error) {
             showToast(error.message, 'error');
@@ -1659,13 +1730,87 @@
     function loadSceneIntoEditor(scene) {
         const background = document.getElementById('sceneBackgroundSelect');
         if (background) background.value = scene.background.plugin_id;
+        const fallback = document.getElementById('scenePythonFallbackSelect');
+        if (fallback && scene.background.provider === 'receiver_native') {
+            fallback.value = scene.known_python_fallback.plugin_id;
+        }
+        const receiverParameters = scene.background.parameter_overrides || {};
+        const cadence = document.getElementById('sceneReceiverCadence');
+        const seed = document.getElementById('sceneReceiverSeed');
+        if (cadence && receiverParameters.preferred_cadence_hz != null) {
+            cadence.value = receiverParameters.preferred_cadence_hz;
+        }
+        if (seed && receiverParameters.common_seed != null) {
+            seed.value = receiverParameters.common_seed;
+        }
+        syncSceneProviderControls();
         const overlay = Array.isArray(scene.overlays) ? scene.overlays[0] : null;
         document.getElementById('sceneOverlayEnabled').checked = Boolean(overlay?.enabled);
         if (!overlay) return;
+        const clockParameters = overlay.component.parameter_overrides || {};
+        const showSeconds = document.getElementById('sceneClockShowSeconds');
+        const format24h = document.getElementById('sceneClock24Hour');
+        if (showSeconds && clockParameters.show_seconds != null) {
+            showSeconds.checked = Boolean(clockParameters.show_seconds);
+        }
+        if (format24h && clockParameters.format_24h != null) {
+            format24h.checked = Boolean(clockParameters.format_24h);
+        }
         document.getElementById('sceneOverlayOpacity').value = overlay.opacity;
         document.getElementById('sceneOverlayStripOffset').value = overlay.placement.strip_translation;
         document.getElementById('sceneOverlayLedOffset').value = overlay.placement.led_translation;
         document.getElementById('sceneStalePolicy').value = overlay.stale_policy.policy;
+    }
+
+    function syncReceiverHybridStatus(status) {
+        const host = document.getElementById('receiverHybridStatus');
+        if (!host) return;
+        const scene = status?.scene || {};
+        const receiver = scene.receiver || null;
+        const publisher = receiver?.publisher || {};
+        const state = document.getElementById('receiverAgreementState');
+
+        let stateLabel = 'Host Python scene';
+        let stateKind = 'host';
+        if (scene.provider_mode === 'receiver_hybrid') {
+            if (receiver?.fallback_active) {
+                stateLabel = 'Degraded · fallback active';
+                stateKind = 'degraded';
+            } else if (receiver?.healthy === true) {
+                stateLabel = 'Agreed';
+                stateKind = 'healthy';
+            } else if (receiver?.healthy === false) {
+                stateLabel = 'Degraded';
+                stateKind = 'degraded';
+            } else {
+                stateLabel = 'Awaiting receiver proof';
+                stateKind = 'waiting';
+            }
+        }
+        if (state) {
+            state.textContent = stateLabel;
+            state.dataset.state = stateKind;
+        }
+        safeSetText(
+            'receiverForegroundLease',
+            Number.isFinite(Number(publisher.lease_ms)) ? `${publisher.lease_ms} ms` : '--'
+        );
+        safeSetText(
+            'receiverForegroundGeneration',
+            publisher.generation != null ? publisher.generation : '--'
+        );
+        safeSetText('receiverFallbackState', receiver?.fallback_active ? 'Active' : 'No');
+
+        const agreement = [];
+        if (receiver?.source_scene_revision != null) {
+            agreement.push(`scene ${receiver.source_scene_revision}`);
+        }
+        if (receiver?.context_revision != null) {
+            agreement.push(`context ${receiver.context_revision}`);
+        }
+        if (publisher.last_operation) agreement.push(publisher.last_operation);
+        if (publisher.last_error) agreement.push(`error: ${publisher.last_error}`);
+        safeSetText('receiverHybridDetail', agreement.join(' · ') || '--');
     }
 
     async function saveScenePreset() {

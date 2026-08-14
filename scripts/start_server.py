@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from animation.core.manager import AnimationManager
+from animation.core.feature_flags import AnimationPipelineFeatureFlags
 from ipc.control_channel import FileControlChannel
 from ipc.runtime_control import (
     restore_display_state as _restore_display_state,
@@ -27,7 +28,13 @@ from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP, defa
 from drivers.frame_codec import decode_frame_data
 from web.app import create_app
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
-from tools.deployment.preserve_deploy_settings import load_saved_state, save_status
+from tools.deployment.preserve_deploy_settings import (
+    RECEIVER_HYBRID_CANARY_ENV,
+    load_saved_state,
+    receiver_hybrid_canary_enabled,
+    receiver_hybrid_provider_policy,
+    save_status,
+)
 
 
 RELEASE_METADATA = ".release.json"
@@ -132,17 +139,43 @@ def controller_status_payload(
     """Build one controller snapshot with its immutable release identity."""
     payload = manager.get_current_frame()
     payload.update(manager.get_current_status())
+    flags = getattr(manager, "feature_flags", None)
+    payload['feature_flags'] = (
+        flags.to_dict()
+        if isinstance(flags, AnimationPipelineFeatureFlags)
+        else AnimationPipelineFeatureFlags().to_dict()
+    )
     payload['release_id'] = release_id
     payload['last_command_id'] = last_command_id
     payload['updated_at'] = updated_at
     return payload
 
 
+def receiver_hybrid_feature_flags(enabled: bool) -> AnimationPipelineFeatureFlags:
+    """Map the single canary switch to the two required rollout gates."""
+
+    if type(enabled) is not bool:
+        raise TypeError("receiver hybrid canary state must be boolean")
+    return AnimationPipelineFeatureFlags(
+        receiver_local_background=enabled,
+        receiver_sparse_overlay=enabled,
+    )
+
+
 def run_controller_mode(args):
     """Controller process: drives LEDs and writes status/frames to disk."""
+    receiver_hybrid_canary = receiver_hybrid_canary_enabled(
+        getattr(args, "receiver_hybrid_canary", False)
+    )
+    feature_flags = receiver_hybrid_feature_flags(receiver_hybrid_canary)
     saved_state = None
     try:
-        saved_state = load_saved_state(Path(args.saved_state_file))
+        saved_state = load_saved_state(
+            Path(args.saved_state_file),
+            provider_policy=receiver_hybrid_provider_policy(
+                receiver_hybrid_canary
+            ),
+        )
         print(f"💾 Restart default: {saved_state['animation']}/before-deploy")
     except RuntimeError as exc:
         print(f"ℹ️ No usable saved animation state: {exc}")
@@ -194,6 +227,7 @@ def run_controller_mode(args):
         default_animation_preset=(
             saved_state.get('current_preset') if saved_state else None
         ),
+        feature_flags=feature_flags,
         auto_start=not bool(saved_state and saved_state.get('scene')),
     )
     manager.target_fps = int(saved_state.get('target_fps', args.target_fps)) if saved_state else args.target_fps
@@ -239,8 +273,12 @@ def run_controller_mode(args):
                 data = cmd.get('data') or {}
                 if handle_command(manager, action, data):
                     try:
+                        persistence_status = manager.get_current_status()
+                        persistence_status['feature_flags'] = (
+                            manager.feature_flags.to_dict()
+                        )
                         save_status(
-                            manager.get_current_status(),
+                            persistence_status,
                             Path(args.presets_dir),
                             Path(args.saved_state_file),
                         )
@@ -448,6 +486,11 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
 
 def run_web_mode(args):
     """Web/preview process."""
+    feature_flags = receiver_hybrid_feature_flags(
+        receiver_hybrid_canary_enabled(
+            getattr(args, "receiver_hybrid_canary", False)
+        )
+    )
     channel = FileControlChannel(control_path=args.control_file, status_path=args.status_file)
     web_interface = create_app(
         control_channel=channel,
@@ -457,6 +500,7 @@ def run_web_mode(args):
         leds_per_strip=args.leds_per_strip,
         animations_dir=args.animations_dir,
         animation_speed_scale=args.animation_speed_scale,
+        feature_flags=feature_flags,
         release_id=args.release_id,
     )
 
@@ -492,6 +536,15 @@ def main():
                         help='Path to the persisted restart animation state')
     parser.add_argument('--release-id', default=None,
                         help='Verified immutable release identity supplied by production startup')
+    parser.add_argument(
+        '--receiver-hybrid-canary',
+        action='store_true',
+        default=None,
+        help=(
+            'opt in to the receiver-native compiled-rainbow canary '
+            f'(env: {RECEIVER_HYBRID_CANARY_ENV}; default: off)'
+        ),
+    )
     parser.add_argument('--strips', type=int, default=default_strip_count(),
                         help=f'Number of LED strips (default: {default_strip_count()})')
     parser.add_argument('--leds-per-strip', type=int, default=DEFAULT_LEDS_PER_STRIP,
@@ -526,6 +579,13 @@ def main():
                         help='Seconds between status writes (controller mode)')
 
     args = parser.parse_args()
+
+    try:
+        args.receiver_hybrid_canary = receiver_hybrid_canary_enabled(
+            args.receiver_hybrid_canary
+        )
+    except (TypeError, ValueError) as exc:
+        parser.error(str(exc))
 
     project_root = Path(__file__).resolve().parents[1]
     try:

@@ -2,7 +2,16 @@
 
 import unittest
 
-from scripts.start_server import _restore_display_state, device_count_for_strips, handle_command
+from animation.core.receiver_static_component import (
+    COMPILED_RAINBOW_BUNDLE_DIGEST,
+    COMPILED_RAINBOW_EXPECTED_PAYLOAD_DIGEST,
+)
+from scripts.start_server import (
+    _restore_display_state,
+    device_count_for_strips,
+    handle_command,
+    receiver_hybrid_feature_flags,
+)
 
 
 class _Manager:
@@ -50,6 +59,16 @@ class _Manager:
             raise ValueError("invalid")
         self.calls.append(("brightness", value))
         return value
+
+    def validate_output_brightness(self, value):
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
+            raise ValueError("invalid")
+        return value
+
+    def _validate_tempo_scale(self, value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise ValueError("invalid")
+        return float(value)
 
     def apply_device_state(self, state):
         self.calls.append(("device", state))
@@ -108,6 +127,16 @@ class StartServerTests(unittest.TestCase):
         self.assertEqual(device_count_for_strips(8), 1)
         self.assertEqual(device_count_for_strips(9), 2)
         self.assertEqual(device_count_for_strips(32), 4)
+
+    def test_receiver_hybrid_feature_flags_are_all_off_unless_explicitly_enabled(self):
+        ordinary = receiver_hybrid_feature_flags(False)
+        self.assertTrue(ordinary.all_disabled)
+        canary = receiver_hybrid_feature_flags(True)
+        self.assertTrue(canary.receiver_local_background)
+        self.assertTrue(canary.receiver_sparse_overlay)
+        self.assertFalse(canary.receiver_native_modules)
+        with self.assertRaisesRegex(TypeError, "must be boolean"):
+            receiver_hybrid_feature_flags(1)
 
     def test_state_changing_commands_request_persistence(self):
         manager = _Manager()
@@ -225,6 +254,99 @@ class StartServerTests(unittest.TestCase):
             "known_python_fallback": {**component, "provider": "python"},
         }
         self.assertFalse(handle_command(manager, "start_scene", {"scene": scene}))
+        self.assertEqual(manager.calls, [])
+
+    def test_raw_receiver_commands_are_not_part_of_the_ipc_surface(self):
+        manager = _Manager()
+        self.assertFalse(handle_command(manager, "receiver_start_component", {
+            "component_id": 1,
+        }))
+        self.assertEqual(manager.calls, [])
+
+    def test_feature_off_restore_selects_recorded_fallback_before_mutation(self):
+        manager = _Manager()
+        fallback = {
+            "plugin_id": "solid",
+            "provider": "python",
+            "parameter_overrides": {"red": 4},
+            "resolved_parameters": {"red": 4},
+        }
+        scene = {
+            "schema": "ledgrid.scene-state",
+            "schema_version": 1,
+            "revision": 19,
+            "background": {
+                "plugin_id": "compiled_rainbow",
+                "provider": "receiver_native",
+                "parameter_overrides": {"common_seed": 8},
+                "resolved_parameters": {
+                    "preferred_cadence_hz": 30,
+                    "common_seed": 8,
+                },
+                "bundle_digest": COMPILED_RAINBOW_BUNDLE_DIGEST,
+                "expected_payload_digest": (
+                    COMPILED_RAINBOW_EXPECTED_PAYLOAD_DIGEST
+                ),
+            },
+            "overlays": [],
+            "known_python_fallback": fallback,
+        }
+        modifiers = {
+            "version": 1,
+            "active": ["shadow"],
+            "strengths": {"shadow": 0.5},
+        }
+        vibe = {"schema_version": 1, "vibe_id": "cozy"}
+
+        self.assertTrue(_restore_display_state(manager, {
+            "scene": scene,
+            "plant_modifiers": modifiers,
+            "vibe": vibe,
+            "output": {
+                "power": True,
+                "master_brightness": 0.4,
+                "operator_tempo_scale": 1.25,
+                "target_fps": 120,
+            },
+        }))
+
+        self.assertEqual(manager.calls[0][0], "scene")
+        self.assertEqual(
+            manager.calls[0][1]["background"]["plugin_id"], "solid"
+        )
+        self.assertEqual(manager.calls[1:], [
+            ("modifiers", modifiers),
+            ("vibe", vibe),
+            ("speed", 1.25),
+            ("fps", 120),
+            ("brightness", 102),
+        ])
+
+    def test_desired_display_is_fully_validated_before_scene_mutation(self):
+        manager = _Manager()
+        component = {
+            "plugin_id": "solid",
+            "provider": "python",
+            "parameter_overrides": {},
+            "resolved_parameters": {"red": 4},
+        }
+        with self.assertRaisesRegex(ValueError, "target_fps must be an integer"):
+            _restore_display_state(manager, {
+                "scene": {
+                    "schema": "ledgrid.scene-state",
+                    "schema_version": 1,
+                    "revision": 1,
+                    "background": component,
+                    "overlays": [],
+                    "known_python_fallback": component,
+                },
+                "plant_modifiers": {
+                    "version": 1,
+                    "active": [],
+                    "strengths": {},
+                },
+                "output": {"power": True, "target_fps": 120.5},
+            })
         self.assertEqual(manager.calls, [])
 
     def test_desired_display_unknown_vibe_uses_observable_manager_fallback(self):

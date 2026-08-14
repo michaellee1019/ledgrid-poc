@@ -7,6 +7,7 @@ import unittest
 import numpy as np
 
 from animation.core.compositing import (
+    HostForegroundCompositor,
     HostSceneCompositor,
     PlacedOverlay,
     fold_overlays,
@@ -379,6 +380,112 @@ class HostSceneCompositorTest(unittest.TestCase):
             self.compositor.compose(self.base(), (item for item in ()))  # type: ignore[arg-type]
         with self.assertRaises(TypeError):
             self.compositor.compose(self.base(), (object(),))  # type: ignore[arg-type]
+
+
+class HostForegroundCompositorTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.compositor = HostForegroundCompositor(2, 4)
+
+    @staticmethod
+    def frame(
+        values: dict[int, tuple[int, int, int, int]],
+        *,
+        revision: int = 1,
+        changed: bool = True,
+        dirty_ranges=None,
+    ) -> OverlayFrame:
+        pixels = np.zeros((8, 4), dtype=np.uint8)
+        for index, value in values.items():
+            pixels[index] = value
+        return OverlayFrame(
+            pixels,
+            revision=revision,
+            changed=changed,
+            dirty_ranges=dirty_ranges,
+        )
+
+    def test_aggregate_is_premultiplied_and_scales_opacity_once(self):
+        source = self.frame({0: (100, 50, 25, 128)})
+        result = self.compositor.compose((PlacedOverlay(source, opacity=128),))
+
+        np.testing.assert_array_equal(result.pixels[0], (50, 25, 13, 64))
+        self.assertTrue(result.changed)
+        self.assertIsNone(result.dirty_ranges)
+        np.testing.assert_array_equal(source.pixels[0], (100, 50, 25, 128))
+
+    def test_move_disable_and_remove_publish_exact_old_and_new_coverage(self):
+        source = self.frame(
+            {1: (40, 0, 0, 80)}, changed=False, dirty_ranges=()
+        )
+        self.compositor.compose((PlacedOverlay(source),))
+
+        moved = self.compositor.compose((PlacedOverlay(
+            self.frame(
+                {1: (40, 0, 0, 80)},
+                revision=1,
+                changed=False,
+                dirty_ranges=(),
+            ),
+            led_offset=1,
+        ),))
+        self.assertEqual(moved.dirty_ranges, ((1, 3),))
+        np.testing.assert_array_equal(moved.pixels[1], (0, 0, 0, 0))
+        np.testing.assert_array_equal(moved.pixels[2], (40, 0, 0, 80))
+
+        disabled = self.compositor.compose((PlacedOverlay(
+            self.frame(
+                {1: (40, 0, 0, 80)},
+                revision=1,
+                changed=False,
+                dirty_ranges=(),
+            ),
+            led_offset=1,
+            enabled=False,
+        ),))
+        self.assertEqual(disabled.dirty_ranges, ((2, 3),))
+        self.assertFalse(np.any(disabled.pixels))
+
+        removed = self.compositor.compose(())
+        self.assertTrue(removed.changed)
+        self.assertEqual(removed.dirty_ranges, ())
+
+    def test_translated_dirty_ranges_are_strip_major_and_clipped(self):
+        first = self.frame({3: (10, 0, 0, 10)}, changed=False)
+        self.compositor.compose((PlacedOverlay(first),))
+        changed = self.frame(
+            {3: (20, 0, 0, 20)},
+            revision=2,
+            changed=True,
+            dirty_ranges=((3, 4),),
+        )
+
+        result = self.compositor.compose((PlacedOverlay(changed, led_offset=-1),))
+
+        self.assertEqual(result.dirty_ranges, ((2, 4),))
+        np.testing.assert_array_equal(result.pixels[2], (20, 0, 0, 20))
+
+    def test_unchanged_frame_reuses_output_without_mutation(self):
+        source = self.frame({0: (1, 2, 3, 4)}, changed=False)
+        first = self.compositor.compose((PlacedOverlay(source),))
+        before = first.pixels.copy()
+        cached = self.compositor.compose((PlacedOverlay(
+            OverlayFrame(
+                source.pixels,
+                revision=source.revision,
+                changed=False,
+                dirty_ranges=(),
+            ),
+        ),))
+
+        self.assertFalse(cached.changed)
+        self.assertEqual(cached.dirty_ranges, ())
+        self.assertIs(cached.pixels, first.pixels)
+        np.testing.assert_array_equal(first.pixels, before)
+
+    def test_version_one_rejects_multiple_planes_at_the_boundary(self):
+        source = self.frame({}, changed=False)
+        with self.assertRaisesRegex(ValueError, "supports one overlay"):
+            self.compositor.compose((PlacedOverlay(source), PlacedOverlay(source)))
 
 
 if __name__ == "__main__":

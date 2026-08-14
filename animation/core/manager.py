@@ -19,9 +19,28 @@ from typing import Optional, Dict, Any, List
 import numpy as np
 
 from animation.core import AnimationBase, RenderedFrame, StatefulAnimationBase, AnimationPluginLoader
-from animation.core.compositing import HostSceneCompositor, PlacedOverlay
+from animation.core.compositing import (
+    HostForegroundCompositor,
+    HostSceneCompositor,
+    PlacedOverlay,
+)
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
+from animation.core.feature_flags import AnimationPipelineFeatureFlags
 from animation.core.plant_awareness import PlantModifierState
+from animation.core.receiver_presentation import (
+    ReceiverPresentationContext,
+    quantize_q8_8,
+)
+from animation.core.receiver_sparse_publisher import ReceiverSparsePublisher
+from animation.core.receiver_static_component import (
+    COMPILED_RAINBOW_COMPONENT_ID,
+    COMPILED_RAINBOW_PLUGIN_ID,
+    Q8_8_ONE,
+    receiver_static_component_catalog,
+    receiver_static_component_descriptor,
+    render_compiled_rainbow_preview,
+    validate_compiled_rainbow_parameters,
+)
 from animation.core.presentation_contracts import (
     AGGREGATE_OVERLAY_SLOT_ID,
     AnimationRuntimeContext,
@@ -43,6 +62,7 @@ from animation.core.presentation_contracts import (
 )
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import encode_frame_data, FRAME_ENCODING_NAME
+from ipc.scene_contract import SceneProviderPolicy
 
 # Try to import the real LED controller, fall back to mock for testing
 try:
@@ -133,6 +153,7 @@ class AnimationManager:
                  default_animation: Optional[str] = None,
                  default_animation_config: Optional[Dict[str, Any]] = None,
                  default_animation_preset: Optional[Dict[str, Any]] = None,
+                 feature_flags: Optional[Any] = None,
                  auto_start: bool = True):
         """
         Initialize animation manager
@@ -153,6 +174,11 @@ class AnimationManager:
         self._default_animation = default_animation or self.DEFAULT_ANIMATION
         self._default_animation_config = default_animation_config or {}
         self._default_animation_preset = default_animation_preset
+        self.feature_flags = (
+            feature_flags
+            if isinstance(feature_flags, AnimationPipelineFeatureFlags)
+            else AnimationPipelineFeatureFlags.from_mapping(feature_flags)
+        )
         
         # Animation state
         self.current_animation: Optional[AnimationBase] = None
@@ -194,6 +220,16 @@ class AnimationManager:
         self._scene_compatibility_mode = False
         self._scene_allows_compatibility_components = False
         self._scene_final_presentation_state = self._empty_presentation_state()
+        self._receiver_hybrid_mode = False
+        self._receiver_sparse_publisher: Optional[ReceiverSparsePublisher] = None
+        self._receiver_foreground_compositor: Optional[HostForegroundCompositor] = None
+        self._receiver_context: Optional[ReceiverPresentationContext] = None
+        self._receiver_context_revision = 0
+        self._receiver_plant_revision = 0
+        self._receiver_foreground_presentation_state = self._empty_presentation_state()
+        self._receiver_last_status: Optional[Dict[str, Any]] = None
+        self._receiver_hybrid_error: Optional[str] = None
+        self._receiver_fallback_active = False
         self.plant_modifier_state = (
             PlantModifierState.from_payload(plant_modifiers)
             if plant_modifiers is not None
@@ -388,6 +424,7 @@ class AnimationManager:
             self._vibe_diagnostic = diagnostic
         if presentation_changed:
             self._refresh_active_presentation_context()
+            self._refresh_receiver_hybrid_context("vibe")
         return self.get_vibe_status()
 
     @staticmethod
@@ -502,7 +539,7 @@ class AnimationManager:
                 components = tuple(
                     component for component in (
                         self._scene_background, self._scene_overlay
-                    ) if component is not None
+                    ) if component is not None and component.get('animation') is not None
                 )
                 for component in components:
                     animation = component['animation']
@@ -741,6 +778,8 @@ class AnimationManager:
     def set_plant_aware(self, enabled: bool) -> bool:
         """Compatibility boundary translating the old global boolean."""
         state = PlantModifierState.from_legacy(enabled)
+        prior_state = getattr(self, "plant_modifier_state", PlantModifierState.empty())
+        changed = state.to_dict() != prior_state.to_dict()
         self.plant_modifier_state = state
         self.plant_aware = bool(state.active)
         self._legacy_plant_aware_bridge = True
@@ -756,11 +795,19 @@ class AnimationManager:
                     'plant_modifiers': state.to_dict(),
                 })
         self._update_preview_plant_state()
+        if changed:
+            self._receiver_plant_revision = (
+                getattr(self, "_receiver_plant_revision", 0) + 1
+            )
+            self._refresh_receiver_hybrid_context("plant_modifiers")
         return self.plant_aware
 
     def set_plant_modifiers(self, state: Any) -> Dict[str, Any]:
         """Validate and apply modifier authority live and to every future start."""
-        self.plant_modifier_state = PlantModifierState.from_payload(state)
+        requested = PlantModifierState.from_payload(state)
+        prior_state = getattr(self, "plant_modifier_state", PlantModifierState.empty())
+        changed = requested.to_dict() != prior_state.to_dict()
+        self.plant_modifier_state = requested
         self._legacy_plant_aware_bridge = False
         self.plant_aware = bool(self.plant_modifier_state.active)
         with self._scene_state_guard():
@@ -775,6 +822,11 @@ class AnimationManager:
                     'plant_modifiers': self.plant_modifier_state.to_dict(),
                 })
         self._update_preview_plant_state()
+        if changed:
+            self._receiver_plant_revision = (
+                getattr(self, "_receiver_plant_revision", 0) + 1
+            )
+            self._refresh_receiver_hybrid_context("plant_modifiers")
         return self.plant_modifier_state.to_dict()
 
     def _update_preview_plant_state(self) -> None:
@@ -806,7 +858,20 @@ class AnimationManager:
         self, provider: Optional[str] = None, role: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Return the descriptor-only component catalog used by scene clients."""
-        return self.plugin_loader.component_catalog(provider=provider, role=role)
+        catalog = self.plugin_loader.component_catalog()
+        catalog.extend(receiver_static_component_catalog(self.feature_flags))
+        return [
+            descriptor for descriptor in catalog
+            if (provider is None or descriptor.get("provider") == provider)
+            and (role is None or descriptor.get("role") == role)
+        ]
+
+    def scene_provider_policy(self) -> SceneProviderPolicy:
+        """Return the explicit product policy shared by API and persistence."""
+        return SceneProviderPolicy(
+            receiver_local_background=self.feature_flags.receiver_local_background,
+            receiver_sparse_overlay=self.feature_flags.receiver_sparse_overlay,
+        )
 
     @staticmethod
     def _scene_parameter_payload(payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -833,8 +898,23 @@ class AnimationManager:
         *,
         allow_compatibility_component: bool = False,
     ) -> Dict[str, Any]:
+        if ref.provider is ComponentProvider.RECEIVER_NATIVE:
+            descriptor = receiver_static_component_descriptor(self.feature_flags)
+            if descriptor is None or ref.plugin_id != COMPILED_RAINBOW_PLUGIN_ID:
+                raise ValueError(
+                    "receiver-native scene background is unavailable under the "
+                    "active feature policy"
+                )
+            if expected_role != "background":
+                raise ValueError("receiver-native components may only be scene backgrounds")
+            if descriptor.get("role") != expected_role:
+                raise ValueError(
+                    f"scene {expected_role} {ref.plugin_id!r} is declared as "
+                    f"{descriptor.get('role')!r}"
+                )
+            return descriptor
         if ref.provider is not ComponentProvider.PYTHON:
-            raise ValueError("live scenes support only the python provider")
+            raise ValueError(f"unsupported live scene provider: {ref.provider.value}")
         descriptor = self.plugin_loader.get_component_descriptor(ref.plugin_id)
         if (
             descriptor is None
@@ -893,13 +973,25 @@ class AnimationManager:
         overrides = self._scene_parameter_payload(dict(ref.parameter_overrides))
         resolved = snapshot if snapshot else defaults
         resolved.update(overrides)
-        try:
-            resolved = self.plugin_loader.validate_component_parameters(
-                ref.plugin_id, resolved
-            )
-        except ValueError:
-            if not allow_compatibility_component:
-                raise
+        if ref.provider is ComponentProvider.RECEIVER_NATIVE:
+            resolved = validate_compiled_rainbow_parameters(resolved)
+            build = descriptor.get("build") or {}
+            if (
+                ref.bundle_digest != build.get("bundle_digest")
+                or ref.expected_payload_digest
+                != build.get("expected_payload_digest")
+            ):
+                raise ValueError(
+                    "receiver-native component identity does not match the compiled contract"
+                )
+        else:
+            try:
+                resolved = self.plugin_loader.validate_component_parameters(
+                    ref.plugin_id, resolved
+                )
+            except ValueError:
+                if not allow_compatibility_component:
+                    raise
         canonical = ComponentRef(
             plugin_id=ref.plugin_id,
             provider=ref.provider,
@@ -907,6 +999,8 @@ class AnimationManager:
             preset_fingerprint=ref.preset_fingerprint,
             parameter_overrides=overrides,
             resolved_parameters=resolved,
+            bundle_digest=ref.bundle_digest,
+            expected_payload_digest=ref.expected_payload_digest,
         )
         return canonical, resolved
 
@@ -946,6 +1040,15 @@ class AnimationManager:
                 placement=overlay.placement,
                 stale_policy=overlay.stale_policy,
             ))
+        if background.provider is ComponentProvider.RECEIVER_NATIVE:
+            for overlay in overlays:
+                if (
+                    overlay.stale_policy.policy
+                    is not ForegroundStalePolicy.CLEAR_AFTER_LEASE
+                ):
+                    raise ValueError(
+                        "receiver hybrid overlays require clear_after_lease stale policy"
+                    )
         return SceneState(
             revision=scene.revision,
             background=background,
@@ -1036,8 +1139,9 @@ class AnimationManager:
 
     @staticmethod
     def _cleanup_scene_component(component: Optional[Dict[str, Any]]) -> None:
-        if not component:
+        if not component or component.get('cleaned'):
             return
+        component['cleaned'] = True
         animation = component.get('animation')
         if animation is None:
             return
@@ -1141,6 +1245,456 @@ class AnimationManager:
             return False
         return self.start_scene(scene, _allow_compatibility_components=True)
 
+    def _receiver_hybrid_capability_error(self) -> Optional[str]:
+        if not (
+            self.feature_flags.receiver_local_background
+            and self.feature_flags.receiver_sparse_overlay
+        ):
+            return "receiver hybrid rollout flags are disabled"
+        required = (
+            "start_local_background",
+            "update_local_background_params",
+            "update_presentation_context",
+            "publish_sparse_overlay",
+            "renew_sparse_overlay",
+            "clear_sparse_overlay",
+            "set_all_pixels",
+        )
+        missing = [
+            name for name in required
+            if not callable(getattr(self.controller, name, None))
+        ]
+        if missing:
+            return "controller lacks receiver hybrid APIs: " + ", ".join(missing)
+        return None
+
+    def _next_receiver_context_revision(self, source_revision: int) -> int:
+        next_revision = max(self._receiver_context_revision + 1, int(source_revision))
+        if next_revision > (1 << 64) - 1:
+            raise OverflowError("receiver presentation-context revision is exhausted")
+        return next_revision
+
+    def _receiver_scene_time_us(self, now: Optional[float] = None) -> int:
+        current = time.perf_counter() if now is None else float(now)
+        elapsed = max(0.0, current - float(self.start_time))
+        return min((1 << 64) - 1, int(elapsed * 1_000_000.0))
+
+    def _receiver_presentation_context(
+        self,
+        publisher: ReceiverSparsePublisher,
+        *,
+        revision: int,
+        present_at_scene_time_us: int,
+    ) -> ReceiverPresentationContext:
+        with self._presentation_state_guard():
+            vibe = self._resolved_vibe
+        return ReceiverPresentationContext(
+            controller_session_id=publisher.controller_session_id,
+            scene_revision=revision,
+            scene_epoch=self._scene_epoch,
+            present_at_scene_time_us=present_at_scene_time_us,
+            vibe=vibe,
+            plant_modifiers=self.plant_modifier_state,
+            plant_revision=self._receiver_plant_revision,
+        )
+
+    @staticmethod
+    def _apply_receiver_luminance_rgba(
+        frame: OverlayFrame,
+        *,
+        luminance_q8_8: int,
+        state: Dict[str, Any],
+        force_refresh: bool = False,
+    ) -> OverlayFrame:
+        identity = int(luminance_q8_8)
+        refresh = force_refresh or state.get("identity") != identity
+        state["identity"] = identity
+        if identity == Q8_8_ONE:
+            state["cached"] = None
+            return OverlayFrame(
+                frame.pixels,
+                revision=frame.revision,
+                changed=frame.changed or refresh,
+                dirty_ranges=None if refresh and not frame.changed else frame.dirty_ranges,
+            )
+        if not frame.changed and not refresh and state.get("cached") is not None:
+            return OverlayFrame(
+                state["cached"],
+                revision=frame.revision,
+                changed=False,
+                dirty_ranges=(),
+            )
+        geometry = frame.pixels.shape
+        if state.get("geometry") != geometry:
+            state["buffers"] = [
+                np.empty(geometry, dtype=np.uint8),
+                np.empty(geometry, dtype=np.uint8),
+            ]
+            state["index"] = 0
+            state["geometry"] = geometry
+        output = state["buffers"][state["index"]]
+        state["index"] = (state["index"] + 1) % len(state["buffers"])
+        working = frame.pixels[:, :3].astype(np.uint16)
+        working *= identity
+        working += 128
+        np.floor_divide(working, Q8_8_ONE, out=working)
+        np.minimum(working, frame.pixels[:, 3:4], out=working)
+        np.copyto(output[:, :3], working, casting="unsafe")
+        np.copyto(output[:, 3], frame.pixels[:, 3])
+        state["cached"] = output
+        return OverlayFrame(
+            output,
+            revision=frame.revision,
+            changed=frame.changed or refresh,
+            dirty_ranges=None if refresh else frame.dirty_ranges,
+        )
+
+    def _render_receiver_foreground(
+        self,
+        *,
+        now: float,
+        force_refresh: bool = False,
+    ) -> OverlayFrame:
+        with self._scene_state_guard():
+            compositor = self._receiver_foreground_compositor
+            if not self._receiver_hybrid_mode or compositor is None:
+                raise RuntimeError("no receiver hybrid scene is active")
+            overlay = self._scene_overlay
+            placed = ()
+            with self._presentation_state_guard():
+                resolved = self._resolved_vibe
+                operator_tempo = self.animation_speed_scale
+            if overlay is not None and overlay['enabled']:
+                source = self._render_scene_component(
+                    overlay,
+                    now=now,
+                    resolved_vibe=resolved,
+                    operator_tempo=operator_tempo,
+                    overlay=True,
+                )
+                placed = (PlacedOverlay(
+                    source,
+                    opacity=overlay['opacity'],
+                    strip_offset=overlay['strip_offset'],
+                    led_offset=overlay['led_offset'],
+                    enabled=True,
+                ),)
+            aggregate = compositor.compose(placed)
+            luminance = quantize_q8_8(
+                resolved.profile.luminance_scale,
+                name="luminance_scale",
+                maximum=Q8_8_ONE,
+            )
+            return self._apply_receiver_luminance_rgba(
+                aggregate,
+                luminance_q8_8=luminance,
+                state=self._receiver_foreground_presentation_state,
+                force_refresh=force_refresh,
+            )
+
+    @staticmethod
+    def _source_over_receiver_preview(
+        base: np.ndarray, foreground: np.ndarray
+    ) -> np.ndarray:
+        work = base.astype(np.uint16)
+        inverse_alpha = 255 - foreground[:, 3].astype(np.uint16)
+        work *= inverse_alpha[:, None]
+        work += 127
+        np.floor_divide(work, 255, out=work)
+        work += foreground[:, :3].astype(np.uint16)
+        np.minimum(work, 255, out=work)
+        return work.astype(np.uint8)
+
+    def _receiver_preview_frame(
+        self,
+        scene: SceneState,
+        foreground: OverlayFrame,
+        *,
+        scene_time_us: int,
+        resolved_vibe: Optional[ResolvedVibe] = None,
+    ) -> np.ndarray:
+        resolved = self._resolved_vibe if resolved_vibe is None else resolved_vibe
+        luminance = quantize_q8_8(
+            resolved.profile.luminance_scale,
+            name="luminance_scale",
+            maximum=Q8_8_ONE,
+        )
+        base = render_compiled_rainbow_preview(
+            scene_time_us,
+            scene.background.resolved_parameters,
+            strip_count=self.controller.strip_count,
+            leds_per_strip=self.controller.leds_per_strip,
+            luminance_q8_8=luminance,
+        )
+        return self._source_over_receiver_preview(base, foreground.pixels)
+
+    def _publish_receiver_foreground(
+        self,
+        frame: OverlayFrame,
+        *,
+        scene_time_us: int,
+        now: float,
+    ) -> bool:
+        publisher = self._receiver_sparse_publisher
+        if publisher is None or self._receiver_context is None:
+            return False
+        with self._presentation_io_guard():
+            return publisher.publish_frame(
+                frame,
+                scene_revision=self._receiver_context_revision,
+                scene_epoch=self._scene_epoch,
+                base_revision=self._receiver_context_revision,
+                present_at_scene_time_us=scene_time_us,
+                now=now,
+            )
+
+    def _refresh_receiver_hybrid_context(self, reason: str) -> bool:
+        """Restage receiver context and repair foreground without clock resets."""
+        failure: Optional[Exception] = None
+        with self._scene_state_guard():
+            if (
+                not self._receiver_hybrid_mode
+                or self._active_scene_state is None
+                or self._receiver_sparse_publisher is None
+            ):
+                return True
+            scene = self._active_scene_state
+            publisher = self._receiver_sparse_publisher
+            try:
+                publisher.begin_new_session()
+                revision = self._next_receiver_context_revision(scene.revision)
+                now = time.perf_counter()
+                scene_time_us = self._receiver_scene_time_us(now)
+                context = self._receiver_presentation_context(
+                    publisher,
+                    revision=revision,
+                    present_at_scene_time_us=scene_time_us,
+                )
+                with self._presentation_io_guard():
+                    accepted = self.controller.update_presentation_context(context)
+                if accepted is False:
+                    raise RuntimeError(
+                        f"receiver context update for {reason} was not acknowledged"
+                    )
+                self._receiver_context_revision = revision
+                self._receiver_context = context
+                if self._scene_overlay is not None:
+                    self._scene_overlay['force_changed'] = True
+                foreground = self._render_receiver_foreground(
+                    now=now, force_refresh=True
+                )
+                if not self._publish_receiver_foreground(
+                    foreground,
+                    scene_time_us=scene_time_us,
+                    now=now,
+                ):
+                    raise RuntimeError(
+                        f"receiver foreground repair for {reason} was not acknowledged"
+                    )
+                preview = self._receiver_preview_frame(
+                    scene, foreground, scene_time_us=scene_time_us
+                )
+                with self.frame_data_lock:
+                    self.current_frame_data = preview
+                self._receiver_hybrid_error = None
+                return True
+            except Exception as exc:
+                failure = exc
+                print(f"✗ Receiver hybrid {reason} update fell back: {exc}")
+                traceback.print_exc()
+        assert failure is not None
+        return self._activate_known_python_fallback(scene, failure)
+
+    def _known_python_fallback_scene(self, scene: SceneState) -> SceneState:
+        return SceneState(
+            revision=min((1 << 64) - 1, scene.revision + 1),
+            background=scene.known_python_fallback,
+            overlays=(),
+            known_python_fallback=scene.known_python_fallback,
+        )
+
+    def _fallback_snapshot(self, scene: SceneState) -> np.ndarray:
+        preview = self.get_scene_preview(
+            self._known_python_fallback_scene(scene), elapsed=0.0
+        )
+        return np.asarray(preview["frame_data"], dtype=np.uint8)
+
+    def _activate_known_python_fallback(
+        self, scene: SceneState, error: Any
+    ) -> bool:
+        diagnostic = str(error)
+        try:
+            snapshot = self._fallback_snapshot(scene)
+        except Exception:
+            traceback.print_exc()
+            snapshot = np.zeros((self.controller.total_leds, 3), dtype=np.uint8)
+
+        fallback_status = {
+            "healthy": False,
+            "fallback_active": True,
+            "error": diagnostic,
+            "source_scene_revision": scene.revision,
+            "context_revision": self._receiver_context_revision,
+        }
+        self.stop_animation(clear_leds=False)
+        self._receiver_last_status = fallback_status
+        try:
+            with self._presentation_io_guard():
+                accepted = self.controller.set_all_pixels(snapshot)
+            if accepted is False:
+                raise RuntimeError("controller rejected complete fallback takeover")
+        except Exception as exc:
+            fallback_status["takeover_error"] = str(exc)
+            return False
+        with self.frame_data_lock:
+            self.current_frame_data = snapshot
+        started = self.start_scene(self._known_python_fallback_scene(scene))
+        if not started:
+            fallback_status["fallback_start_error"] = (
+                "known Python fallback did not start"
+            )
+        self._receiver_last_status = fallback_status
+        return started
+
+    def _start_receiver_hybrid_scene(self, scene: SceneState) -> bool:
+        capability_error = self._receiver_hybrid_capability_error()
+        if capability_error is not None:
+            print(f"✗ Receiver hybrid scene rejected: {capability_error}")
+            return False
+
+        overlay_ref = scene.overlays[0] if scene.overlays else None
+        overlay = None
+        overlay_component = None
+        presentation_taken_over = False
+        try:
+            if overlay_ref is not None:
+                overlay_class = self.plugin_loader.get_plugin(
+                    overlay_ref.component.plugin_id
+                )
+                if overlay_class is None:
+                    raise ValueError("receiver hybrid overlay implementation is missing")
+                overlay = overlay_class(
+                    self.controller,
+                    self._component_config(dict(
+                        overlay_ref.component.resolved_parameters
+                    )),
+                )
+                if isinstance(overlay, StatefulAnimationBase):
+                    raise TypeError("Stateful animations cannot be sparse overlays")
+                overlay.start()
+                overlay_component = self._new_scene_component(
+                    overlay_ref.component.plugin_id,
+                    overlay,
+                    dict(overlay_ref.component.resolved_parameters),
+                    started_at=time.perf_counter(),
+                    ref=overlay_ref.component,
+                )
+                overlay_component.update({
+                    'enabled': overlay_ref.enabled,
+                    'opacity': overlay_ref.opacity,
+                    'strip_offset': overlay_ref.placement.strip_translation,
+                    'led_offset': overlay_ref.placement.led_translation,
+                    'stale_policy': overlay_ref.stale_policy,
+                })
+
+            self.stop_animation(clear_leds=True)
+            presentation_taken_over = True
+            self._reset_run_counters()
+            lease_ms = (
+                overlay_ref.stale_policy.lease_ms
+                if overlay_ref is not None else 3_000
+            )
+            publisher = ReceiverSparsePublisher(
+                self.controller,
+                lease_ms=3_000 if lease_ms is None else lease_ms,
+            )
+            context_revision = self._next_receiver_context_revision(scene.revision)
+            with self._scene_state_guard():
+                self._scene_mode = True
+                self._scene_compatibility_mode = False
+                self._scene_allows_compatibility_components = False
+                self._scene_background = {
+                    'name': scene.background.plugin_id,
+                    'animation': None,
+                    'config': dict(scene.background.resolved_parameters),
+                    'ref': scene.background,
+                    'frame_index': 0,
+                    'calls': 0,
+                    'changed_calls': 0,
+                    'render_count': 0,
+                }
+                self._scene_overlay = overlay_component
+                self._active_scene_state = scene
+                self._scene_compositor = None
+                self._receiver_hybrid_mode = True
+                self._receiver_sparse_publisher = publisher
+                self._receiver_foreground_compositor = HostForegroundCompositor(
+                    self.controller.strip_count, self.controller.leds_per_strip
+                )
+                self._receiver_foreground_presentation_state = (
+                    self._empty_presentation_state()
+                )
+                self._receiver_context_revision = context_revision
+                self._receiver_hybrid_error = "starting"
+                self._receiver_fallback_active = False
+                self.current_animation = None
+                self.current_animation_name = scene.background.plugin_id
+                self.current_animation_hash = scene.background.bundle_digest
+                self.current_preset = self._legacy_preset_from_ref(scene.background)
+
+            context = self._receiver_presentation_context(
+                publisher, revision=context_revision, present_at_scene_time_us=0
+            )
+            parameters = validate_compiled_rainbow_parameters(
+                scene.background.resolved_parameters
+            )
+            with self._presentation_io_guard():
+                started = self.controller.start_local_background(
+                    context,
+                    component_id=COMPILED_RAINBOW_COMPONENT_ID,
+                    preferred_cadence_hz=parameters["preferred_cadence_hz"],
+                    common_seed=parameters["common_seed"],
+                )
+            if started is False:
+                raise RuntimeError("receiver local background start was not acknowledged")
+            self._receiver_context = context
+            foreground = self._render_receiver_foreground(
+                now=self.start_time, force_refresh=True
+            )
+            if not self._publish_receiver_foreground(
+                foreground, scene_time_us=0, now=self.start_time
+            ):
+                raise RuntimeError("initial sparse foreground snapshot was not acknowledged")
+            with self._presentation_state_guard():
+                resolved = self._resolved_vibe
+            preview = self._receiver_preview_frame(
+                scene, foreground, scene_time_us=0, resolved_vibe=resolved
+            )
+            with self.frame_data_lock:
+                self.current_frame_data = preview
+            self._receiver_hybrid_error = None
+            self._receiver_last_status = None
+            self._launch_animation_loop()
+            print(f"✓ Started receiver hybrid scene: {scene.background.plugin_id}")
+            return True
+        except Exception as exc:
+            if not presentation_taken_over:
+                try:
+                    self._cleanup_scene_component(overlay_component)
+                except Exception:
+                    traceback.print_exc()
+                if overlay is not None and overlay_component is None:
+                    try:
+                        overlay.stop()
+                        overlay.cleanup()
+                    except Exception:
+                        traceback.print_exc()
+                print(f"✗ Failed to prepare receiver hybrid scene: {exc}")
+                return False
+            print(f"✗ Receiver hybrid scene fell back: {exc}")
+            traceback.print_exc()
+            return self._activate_known_python_fallback(scene, exc)
+
     def start_scene(
         self,
         scene_payload: Any,
@@ -1148,7 +1702,7 @@ class AnimationManager:
         _compatibility_animation: bool = False,
         _allow_compatibility_components: bool = False,
     ) -> bool:
-        """Validate and start a complete fixed-slot Python scene atomically."""
+        """Validate and start a complete fixed-slot scene atomically."""
         try:
             scene = self._resolve_scene_state(
                 scene_payload,
@@ -1157,6 +1711,9 @@ class AnimationManager:
         except (TypeError, ValueError) as exc:
             print(f"✗ Invalid scene: {exc}")
             return False
+
+        if scene.background.provider is ComponentProvider.RECEIVER_NATIVE:
+            return self._start_receiver_hybrid_scene(scene)
 
         background_class = self.plugin_loader.get_plugin(scene.background.plugin_id)
         overlay_ref = scene.overlays[0] if scene.overlays else None
@@ -1297,6 +1854,13 @@ class AnimationManager:
         self._scene_compatibility_mode = False
         self._scene_allows_compatibility_components = False
         self._scene_final_presentation_state = self._empty_presentation_state()
+        self._receiver_hybrid_mode = False
+        self._receiver_sparse_publisher = None
+        self._receiver_foreground_compositor = None
+        self._receiver_context = None
+        self._receiver_foreground_presentation_state = self._empty_presentation_state()
+        self._receiver_hybrid_error = None
+        self._receiver_fallback_active = False
         self.current_animation = None
         self.current_animation_name = None
         self.current_animation_hash = None
@@ -1418,16 +1982,21 @@ class AnimationManager:
     
     def stop_animation(self, clear_leds: bool = True):
         """Stop current animation or painter mode output."""
-        had_output = self.is_running or self.painter_active
+        had_output = self.is_running or self.painter_active or self._scene_mode
+        receiver_takeover = False
 
-        if self.is_running:
+        if self.is_running or self._scene_mode:
             with self._run_state_guard():
                 self._run_generation = getattr(self, '_run_generation', 0) + 1
                 self.is_running = False
                 self.stop_event.set()
 
             # Stop frame-based animation thread if it exists
-            if self.animation_thread and self.animation_thread.is_alive():
+            if (
+                self.animation_thread
+                and self.animation_thread.is_alive()
+                and self.animation_thread is not threading.current_thread()
+            ):
                 self.animation_thread.join(timeout=1.0)
             self.animation_thread = None
 
@@ -1435,10 +2004,57 @@ class AnimationManager:
                 with self._scene_lock:
                     overlay = self._scene_overlay
                     background = self._scene_background
+                    publisher = self._receiver_sparse_publisher
+                    was_receiver_hybrid = self._receiver_hybrid_mode
+                    receiver_scene = self._active_scene_state
                     try:
                         self._cleanup_scene_component(overlay)
                     finally:
                         self._cleanup_scene_component(background)
+                    if publisher is not None:
+                        publisher_status = publisher.get_status()
+                        publisher.close(clear=False)
+                        self._receiver_last_status = {
+                            "healthy": False,
+                            "fallback_active": False,
+                            "error": None,
+                            "operation": "host_takeover",
+                            "source_scene_revision": (
+                                receiver_scene.revision
+                                if receiver_scene is not None else None
+                            ),
+                            "context_revision": self._receiver_context_revision,
+                            "publisher": publisher_status,
+                        }
+                    if was_receiver_hybrid:
+                        with self.frame_data_lock:
+                            current = np.asarray(self.current_frame_data, dtype=np.uint8)
+                        if (
+                            not clear_leds
+                            and current.shape == (self.controller.total_leds, 3)
+                        ):
+                            takeover_frame = current
+                        else:
+                            takeover_frame = np.zeros(
+                                (self.controller.total_leds, 3), dtype=np.uint8
+                            )
+                        try:
+                            with self._presentation_io_guard():
+                                accepted = self.controller.set_all_pixels(takeover_frame)
+                            receiver_takeover = accepted is not False
+                            if not receiver_takeover:
+                                raise RuntimeError(
+                                    "controller rejected complete host takeover"
+                                )
+                        except Exception as exc:
+                            receiver_takeover = True
+                            status = dict(self._receiver_last_status or {})
+                            status.update({
+                                "healthy": False,
+                                "fallback_active": False,
+                                "takeover_error": str(exc),
+                            })
+                            self._receiver_last_status = status
                     self._clear_scene_state()
             else:
                 # Stateful compatibility animations handle their own threads.
@@ -1466,7 +2082,7 @@ class AnimationManager:
 
         self.current_animation_hash = None
 
-        if clear_leds and had_output:
+        if clear_leds and had_output and not receiver_takeover:
             with self._presentation_io_guard():
                 self.controller.clear()
     
@@ -1558,6 +2174,203 @@ class AnimationManager:
         self.stop_animation(clear_leds=clear_leds)
         return True
 
+    def _update_receiver_hybrid_component(
+        self,
+        target: str,
+        params: Optional[Dict[str, Any]],
+        *,
+        component: Optional[Any],
+        enabled: Optional[bool],
+        opacity: Optional[int],
+        placement: Optional[Any],
+        stale_policy: Optional[Any],
+        remove: bool,
+    ) -> bool:
+        failure: Optional[Exception] = None
+        with self._scene_state_guard():
+            scene = self._active_scene_state
+            if not self._receiver_hybrid_mode or scene is None:
+                return False
+            requested = self._scene_parameter_payload(params)
+            try:
+                if target == "background":
+                    resolved = dict(scene.background.resolved_parameters)
+                    resolved.update(requested)
+                    resolved = validate_compiled_rainbow_parameters(resolved)
+                    overrides = dict(scene.background.parameter_overrides)
+                    overrides.update(requested)
+                    background = ComponentRef(
+                        plugin_id=scene.background.plugin_id,
+                        provider=scene.background.provider,
+                        preset_id=scene.background.preset_id,
+                        preset_fingerprint=scene.background.preset_fingerprint,
+                        parameter_overrides=overrides,
+                        resolved_parameters=resolved,
+                        bundle_digest=scene.background.bundle_digest,
+                        expected_payload_digest=scene.background.expected_payload_digest,
+                    )
+                    candidate = self._resolve_scene_state(SceneState(
+                        scene.revision + 1,
+                        background,
+                        scene.overlays,
+                        scene.known_python_fallback,
+                    ))
+                    with self._presentation_io_guard():
+                        accepted = self.controller.update_local_background_params(
+                            preferred_cadence_hz=resolved["preferred_cadence_hz"],
+                            common_seed=resolved["common_seed"],
+                        )
+                    if accepted is False:
+                        raise RuntimeError(
+                            "receiver local background parameter update was not acknowledged"
+                        )
+                    assert self._scene_background is not None
+                    self._scene_background['config'] = resolved
+                    self._scene_background['ref'] = background
+                    self._active_scene_state = candidate
+                    return self._refresh_receiver_hybrid_context(
+                        "background_parameters"
+                    )
+
+                old_overlay = scene.overlays[0] if scene.overlays else None
+                old_runtime = self._scene_overlay
+                if remove:
+                    if old_overlay is None:
+                        return False
+                    candidate = self._resolve_scene_state(SceneState(
+                        scene.revision + 1,
+                        scene.background,
+                        (),
+                        scene.known_python_fallback,
+                    ))
+                    self._scene_overlay = None
+                    self._active_scene_state = candidate
+                    refreshed = self._refresh_receiver_hybrid_context(
+                        "overlay_remove"
+                    )
+                    self._cleanup_scene_component(old_runtime)
+                    return refreshed
+
+                if component is None:
+                    if old_overlay is None:
+                        return False
+                    component_ref = old_overlay.component
+                else:
+                    component_ref = (
+                        component if isinstance(component, ComponentRef)
+                        else ComponentRef.from_payload(component)
+                    )
+                resolved = dict(component_ref.resolved_parameters)
+                resolved.update(requested)
+                resolved = self.plugin_loader.validate_component_parameters(
+                    component_ref.plugin_id, resolved
+                )
+                overrides = dict(component_ref.parameter_overrides)
+                overrides.update(requested)
+                component_ref = ComponentRef(
+                    plugin_id=component_ref.plugin_id,
+                    provider=component_ref.provider,
+                    preset_id=component_ref.preset_id,
+                    preset_fingerprint=component_ref.preset_fingerprint,
+                    parameter_overrides=overrides,
+                    resolved_parameters=resolved,
+                )
+                current_placement = (
+                    old_overlay.placement if old_overlay else OverlayPlacement()
+                )
+                resolved_placement = (
+                    placement if isinstance(placement, OverlayPlacement)
+                    else OverlayPlacement.from_payload(placement)
+                    if placement is not None else current_placement
+                )
+                current_stale = (
+                    old_overlay.stale_policy
+                    if old_overlay else StalePolicy(
+                        ForegroundStalePolicy.CLEAR_AFTER_LEASE, 3_000
+                    )
+                )
+                resolved_stale = (
+                    stale_policy if isinstance(stale_policy, StalePolicy)
+                    else StalePolicy.from_payload(stale_policy)
+                    if stale_policy is not None else current_stale
+                )
+                overlay_ref = OverlayRef(
+                    slot_id=AGGREGATE_OVERLAY_SLOT_ID,
+                    component=component_ref,
+                    enabled=(
+                        old_overlay.enabled if enabled is None and old_overlay else True
+                    ) if enabled is None else enabled,
+                    opacity=(
+                        old_overlay.opacity if opacity is None and old_overlay else 255
+                    ) if opacity is None else opacity,
+                    placement=resolved_placement,
+                    stale_policy=resolved_stale,
+                )
+                candidate = self._resolve_scene_state(SceneState(
+                    scene.revision + 1,
+                    scene.background,
+                    (overlay_ref,),
+                    scene.known_python_fallback,
+                ))
+                overlay_ref = candidate.overlays[0]
+                replacing = (
+                    old_runtime is None
+                    or old_runtime['name'] != overlay_ref.component.plugin_id
+                )
+                runtime = old_runtime
+                if replacing:
+                    animation_class = self.plugin_loader.get_plugin(
+                        overlay_ref.component.plugin_id
+                    )
+                    if animation_class is None:
+                        raise ValueError("overlay implementation not found")
+                    animation = animation_class(
+                        self.controller,
+                        self._component_config(dict(
+                            overlay_ref.component.resolved_parameters
+                        )),
+                    )
+                    if isinstance(animation, StatefulAnimationBase):
+                        raise TypeError("Stateful animations cannot be sparse overlays")
+                    animation.start()
+                    runtime = self._new_scene_component(
+                        overlay_ref.component.plugin_id,
+                        animation,
+                        dict(overlay_ref.component.resolved_parameters),
+                        started_at=time.perf_counter(),
+                        ref=overlay_ref.component,
+                    )
+                else:
+                    assert runtime is not None
+                    runtime['animation'].update_parameters(
+                        self._component_config(requested)
+                    )
+                assert runtime is not None
+                runtime.update({
+                    'config': dict(overlay_ref.component.resolved_parameters),
+                    'ref': overlay_ref.component,
+                    'enabled': overlay_ref.enabled,
+                    'opacity': overlay_ref.opacity,
+                    'strip_offset': overlay_ref.placement.strip_translation,
+                    'led_offset': overlay_ref.placement.led_translation,
+                    'stale_policy': overlay_ref.stale_policy,
+                    'force_changed': True,
+                })
+                self._scene_overlay = runtime
+                self._active_scene_state = candidate
+                refreshed = self._refresh_receiver_hybrid_context("overlay_update")
+                if replacing:
+                    self._cleanup_scene_component(old_runtime)
+                return refreshed
+            except Exception as exc:
+                failure = exc
+                print(f"✗ Failed to update receiver hybrid {target}: {exc}")
+                traceback.print_exc()
+        assert failure is not None
+        if isinstance(failure, (TypeError, ValueError)):
+            return False
+        return self._activate_known_python_fallback(scene, failure)
+
     def update_scene_component(
         self,
         target: str,
@@ -1592,6 +2405,18 @@ class AnimationManager:
             raise ValueError("only the overlay component may be removed")
         if component is not None and target == "background":
             raise ValueError("replace a background by applying a complete scene")
+
+        if self._receiver_hybrid_mode:
+            return self._update_receiver_hybrid_component(
+                target,
+                params,
+                component=component,
+                enabled=enabled,
+                opacity=opacity,
+                placement=placement,
+                stale_policy=stale_policy,
+                remove=remove,
+            )
 
         with self._scene_state_guard():
             if not self._scene_mode or self._active_scene_state is None:
@@ -2030,6 +2855,7 @@ class AnimationManager:
             'uptime': (time.perf_counter() - self.start_time) if self.is_running else 0,
             'target_fps': self.target_fps,
             'animation_speed_scale': self.animation_speed_scale,
+            'feature_flags': self.feature_flags.to_dict(),
             'vibe': self.get_vibe_status(),
             'plant_aware': self.plant_aware,
             'plant_modifiers': self.plant_modifier_state.to_dict(),
@@ -2063,12 +2889,22 @@ class AnimationManager:
                 status['animation_stats'] = {'error': str(exc)}
         else:
             status['interaction_types'] = []
+            if self._receiver_hybrid_mode and self._scene_background:
+                descriptor = receiver_static_component_descriptor(self.feature_flags)
+                if descriptor is not None:
+                    status['animation_info'] = {
+                        **descriptor,
+                        'current_params': dict(self._scene_background['config']),
+                    }
 
         scene_status = self._scene_status_snapshot()
         if scene_status is not None and not self._scene_compatibility_mode:
             status['scene'] = scene_status
         if self._scene_mode:
             status['scene_state'] = self.get_scene_state()
+        receiver_status = self._receiver_hybrid_status_snapshot()
+        if receiver_status is not None:
+            status['receiver_hybrid'] = receiver_status
 
         performance = self._get_perf_summary()
         if performance:
@@ -2085,6 +2921,46 @@ class AnimationManager:
         
         return status
 
+    def _receiver_hybrid_status_snapshot(self) -> Optional[Dict[str, Any]]:
+        if not self._receiver_hybrid_mode:
+            return (
+                dict(self._receiver_last_status)
+                if self._receiver_last_status is not None else None
+            )
+        publisher = self._receiver_sparse_publisher
+        publisher_status = publisher.get_status() if publisher is not None else {}
+        driver_status: Dict[str, Any] = {}
+        getter = getattr(self.controller, "get_stats", None)
+        if callable(getter):
+            try:
+                stats = getter()
+                aggregate = stats.get("aggregate", {}) if isinstance(stats, dict) else {}
+                candidate = aggregate.get("local_background", {})
+                if isinstance(candidate, dict):
+                    driver_status = dict(candidate)
+            except Exception as exc:
+                driver_status = {"state": "degraded", "error": str(exc)}
+        healthy = bool(
+            publisher_status.get("healthy")
+            and driver_status.get("state") == "active"
+            and self._receiver_hybrid_error is None
+            and not self._receiver_fallback_active
+        )
+        scene = self._active_scene_state
+        return {
+            "healthy": healthy,
+            "fallback_active": self._receiver_fallback_active,
+            "error": self._receiver_hybrid_error,
+            "source_scene_revision": scene.revision if scene is not None else None,
+            "context_revision": self._receiver_context_revision,
+            "context_digest": (
+                self._receiver_context.context_digest.hex()
+                if self._receiver_context is not None else None
+            ),
+            "publisher": publisher_status,
+            "driver": driver_status,
+        }
+
     def _scene_status_snapshot(self) -> Optional[Dict[str, Any]]:
         if not self._scene_mode or not self._scene_background:
             return None
@@ -2092,6 +2968,9 @@ class AnimationManager:
             background = self._scene_background
             overlay = self._scene_overlay
             snapshot: Dict[str, Any] = {
+                'provider_mode': (
+                    'receiver_hybrid' if self._receiver_hybrid_mode else 'python_host'
+                ),
                 'background': {
                     'name': background['name'],
                     'frame_count': background['frame_index'],
@@ -2099,7 +2978,7 @@ class AnimationManager:
                     'changed_calls': background['changed_calls'],
                     'interaction_types': sorted(
                         background['animation'].INTERACTION_TYPES
-                    ),
+                    ) if background.get('animation') is not None else [],
                     'component': (
                         background['ref'].to_dict() if background.get('ref') else None
                     ),
@@ -2130,6 +3009,8 @@ class AnimationManager:
                     ),
                 },
             }
+            if self._receiver_hybrid_mode:
+                snapshot['receiver'] = self._receiver_hybrid_status_snapshot()
             if overlay is not None:
                 try:
                     overlay_stats = overlay['animation'].get_runtime_stats()
@@ -2410,6 +3291,127 @@ class AnimationManager:
         """Advance a preview, resetting only when authored parameters change."""
         return self._render_preview(animation_name, params, vibe=vibe)
 
+    def _get_receiver_scene_preview(
+        self,
+        scene: SceneState,
+        *,
+        vibe: Optional[Any],
+        plant_modifiers: Optional[Any],
+        elapsed: float,
+    ) -> Dict[str, Any]:
+        preview_plant_state = (
+            self.plant_modifier_state
+            if plant_modifiers is None
+            else PlantModifierState.from_payload(plant_modifiers)
+        )
+        with self._presentation_state_guard():
+            resolved = (
+                self._resolved_vibe if vibe is None else self._canonical_vibe(vibe)
+            )
+            operator_tempo = self.animation_speed_scale
+        overlay_ref = scene.overlays[0] if scene.overlays else None
+        overlay_component = None
+        try:
+            placed = ()
+            if overlay_ref is not None:
+                overlay_class = self.plugin_loader.get_plugin(
+                    overlay_ref.component.plugin_id
+                )
+                if overlay_class is None:
+                    raise ValueError("receiver preview overlay implementation is missing")
+                config = dict(overlay_ref.component.resolved_parameters)
+                config.update({
+                    "plant_aware": False,
+                    "plant_modifiers": preview_plant_state.to_dict(),
+                })
+                overlay = overlay_class(self.preview_controller, config)
+                if isinstance(overlay, StatefulAnimationBase):
+                    raise TypeError("Stateful animations cannot be scene previews")
+                overlay.start()
+                overlay_component = self._new_scene_component(
+                    overlay_ref.component.plugin_id,
+                    overlay,
+                    dict(overlay_ref.component.resolved_parameters),
+                    started_at=0.0,
+                    ref=overlay_ref.component,
+                )
+                if overlay_ref.enabled:
+                    source = self._render_scene_component(
+                        overlay_component,
+                        now=float(elapsed),
+                        resolved_vibe=resolved,
+                        operator_tempo=operator_tempo,
+                        overlay=True,
+                        plant_modifiers=preview_plant_state.to_dict(),
+                    )
+                    placed = (PlacedOverlay(
+                        source,
+                        opacity=overlay_ref.opacity,
+                        strip_offset=overlay_ref.placement.strip_translation,
+                        led_offset=overlay_ref.placement.led_translation,
+                        enabled=True,
+                    ),)
+            compositor = HostForegroundCompositor(
+                self.preview_controller.strip_count,
+                self.preview_controller.leds_per_strip,
+            )
+            foreground = compositor.compose(placed)
+            luminance = quantize_q8_8(
+                resolved.profile.luminance_scale,
+                name="luminance_scale",
+                maximum=Q8_8_ONE,
+            )
+            foreground = self._apply_receiver_luminance_rgba(
+                foreground,
+                luminance_q8_8=luminance,
+                state=self._empty_presentation_state(),
+                force_refresh=True,
+            )
+            scene_time_us = int(float(elapsed) * 1_000_000.0)
+            frame = self._receiver_preview_frame(
+                scene,
+                foreground,
+                scene_time_us=scene_time_us,
+                resolved_vibe=resolved,
+            )
+            return {
+                'frame_data': frame.tolist(),
+                'led_info': {
+                    'total_leds': self.preview_controller.total_leds,
+                    'strip_count': self.preview_controller.strip_count,
+                    'leds_per_strip': self.preview_controller.leds_per_strip,
+                },
+                'is_running': False,
+                'mode': 'scene',
+                'current_animation': scene.background.plugin_id,
+                'background_provider': ComponentProvider.RECEIVER_NATIVE.value,
+                'scene': {
+                    'background': scene.background.plugin_id,
+                    'background_provider': ComponentProvider.RECEIVER_NATIVE.value,
+                    'overlay': (
+                        overlay_ref.component.plugin_id if overlay_ref else None
+                    ),
+                    'provider_mode': 'receiver_hybrid',
+                },
+                'frame_count': 1,
+                'changed': True,
+                'dirty_ranges': None,
+                'preview': True,
+                'preview_label': (
+                    'Host-rendered preview — receiver framebuffer is not available'
+                ),
+                'preview_source': 'host_contract_renderer',
+                'framebuffer_readback': False,
+                'live_state_mutated': False,
+                'timestamp': time.time(),
+                'vibe': {
+                    'state': resolved.state.to_dict(),
+                    'profile': resolved.profile.to_dict(),
+                },
+            }
+        finally:
+            self._cleanup_scene_component(overlay_component)
+
     def get_scene_preview(
         self,
         scene_payload: Any,
@@ -2448,6 +3450,13 @@ class AnimationManager:
                 overlay_opacity = overlay_ref.opacity
                 strip_offset = overlay_ref.placement.strip_translation
                 led_offset = overlay_ref.placement.led_translation
+            if scene.background.provider is ComponentProvider.RECEIVER_NATIVE:
+                return self._get_receiver_scene_preview(
+                    scene,
+                    vibe=vibe,
+                    plant_modifiers=plant_modifiers,
+                    elapsed=float(elapsed),
+                )
         else:
             background_name = scene_payload
             overlay_ref = None
@@ -2904,6 +3913,46 @@ class AnimationManager:
                 dirty_ranges = None
         return frame, changed, dirty_ranges
 
+    def _receiver_hybrid_tick(self, now: float) -> tuple[np.ndarray, bool]:
+        with self._scene_state_guard():
+            scene = self._active_scene_state
+            publisher = self._receiver_sparse_publisher
+            if (
+                not self._receiver_hybrid_mode
+                or scene is None
+                or publisher is None
+            ):
+                raise RuntimeError("receiver hybrid scene disappeared")
+            before = publisher.get_status()["counts"]
+            foreground = self._render_receiver_foreground(now=now)
+            scene_time_us = self._receiver_scene_time_us(now)
+            if not self._publish_receiver_foreground(
+                foreground,
+                scene_time_us=scene_time_us,
+                now=now,
+            ):
+                error = publisher.get_status().get("last_error")
+                raise RuntimeError(error or "receiver foreground publication failed")
+            after = publisher.get_status()["counts"]
+            transmitted = any(
+                after[name] != before[name]
+                for name in ("full_snapshots", "delta_generations", "renewals")
+            )
+            if foreground.changed:
+                preview = self._receiver_preview_frame(
+                    scene,
+                    foreground,
+                    scene_time_us=scene_time_us,
+                )
+            else:
+                # The live status frame is explicitly a host simulation, not
+                # receiver readback. Keep the last useful preview between sparse
+                # foreground changes so local-base offload does not quietly turn
+                # into a 200 Hz host background renderer.
+                with self.frame_data_lock:
+                    preview = np.asarray(self.current_frame_data, dtype=np.uint8)
+            return preview, transmitted
+
     def _animation_loop(self, run_generation: Optional[int] = None):
         """Main animation loop running in separate thread"""
         if run_generation is None:
@@ -2922,11 +3971,16 @@ class AnimationManager:
                 show_duration = 0.0
 
                 try:
-                    if not self.current_animation:
+                    receiver_hybrid = bool(getattr(self, "_receiver_hybrid_mode", False))
+                    if not self.current_animation and not receiver_hybrid:
                         break
 
                     gen_start = time.perf_counter()
-                    if getattr(self, '_scene_mode', False):
+                    if receiver_hybrid:
+                        frame, transmitted = self._receiver_hybrid_tick(loop_start)
+                        changed = transmitted
+                        dirty_ranges = None
+                    elif getattr(self, '_scene_mode', False):
                         frame, changed, dirty_ranges = (
                             self._render_composed_scene_frame(now=loop_start)
                         )
@@ -2946,6 +4000,21 @@ class AnimationManager:
                         with self.frame_data_lock:
                             self.current_frame_data = frame
 
+                    if receiver_hybrid:
+                        if transmitted:
+                            self.frames_presented += 1
+                        else:
+                            self.unchanged_frames_skipped += 1
+                        self.frame_count += 1
+                        self._update_fps_tracking(loop_start)
+                        generate_duration = time.perf_counter() - gen_start
+                        pending_present = None
+                        # Receiver publication is synchronous under the manager's
+                        # presentation-I/O guard; no host RGB future is submitted.
+                        should_present = False
+                    else:
+                        should_present = changed or self.frames_presented == 0
+
                     if pending_present is not None:
                         completed = pending_present
                         pending_present = None
@@ -2953,8 +4022,7 @@ class AnimationManager:
                         if not self._run_owns_generation(run_generation):
                             break
 
-                    should_present = changed or self.frames_presented == 0
-                    if should_present:
+                    if not receiver_hybrid and should_present:
                         use_partial = bool(
                             dirty_ranges
                             and self.frames_presented > 0
@@ -2968,11 +4036,12 @@ class AnimationManager:
                             inline_show,
                         )
                         self.frames_presented += 1
-                    else:
+                    elif not receiver_hybrid:
                         self.unchanged_frames_skipped += 1
 
-                    self.frame_count += 1
-                    self._update_fps_tracking(loop_start)
+                    if not receiver_hybrid:
+                        self.frame_count += 1
+                        self._update_fps_tracking(loop_start)
 
                 except RuntimeError as e:
                     if str(e).startswith("cannot schedule new futures after"):
@@ -2982,10 +4051,28 @@ class AnimationManager:
                         if self._run_is_active(run_generation):
                             self.is_running = False
                         break
+                    if (
+                        getattr(self, "_receiver_hybrid_mode", False)
+                        and getattr(self, "_active_scene_state", None) is not None
+                    ):
+                        scene = self._active_scene_state
+                        print(f"✗ Receiver hybrid loop failed over: {e}")
+                        traceback.print_exc()
+                        self._activate_known_python_fallback(scene, e)
+                        break
                     print(f"✗ Animation loop error: {e}")
                     traceback.print_exc()
                     time.sleep(0.05)
                 except Exception as e:
+                    if (
+                        getattr(self, "_receiver_hybrid_mode", False)
+                        and getattr(self, "_active_scene_state", None) is not None
+                    ):
+                        scene = self._active_scene_state
+                        print(f"✗ Receiver hybrid loop failed over: {e}")
+                        traceback.print_exc()
+                        self._activate_known_python_fallback(scene, e)
+                        break
                     print(f"✗ Animation loop error: {e}")
                     traceback.print_exc()
                     time.sleep(0.05)

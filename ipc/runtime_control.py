@@ -10,7 +10,24 @@ from __future__ import annotations
 from typing import Any
 
 from animation.core.plant_awareness import PlantModifierState
-from ipc.scene_contract import normalize_scene_payload
+from ipc.scene_contract import (
+    DEFAULT_SCENE_PROVIDER_POLICY,
+    SceneProviderPolicy,
+    SceneValidationError,
+    normalize_scene_payload,
+)
+
+
+def manager_scene_provider_policy(manager: Any) -> SceneProviderPolicy:
+    """Read the manager's immutable provider policy, defaulting safely off."""
+
+    getter = getattr(manager, "scene_provider_policy", None)
+    if not callable(getter):
+        return DEFAULT_SCENE_PROVIDER_POLICY
+    policy = getter()
+    if not isinstance(policy, SceneProviderPolicy):
+        raise TypeError("manager scene_provider_policy() returned an invalid policy")
+    return policy
 
 
 def manager_component_catalog(manager: Any) -> list[dict]:
@@ -44,7 +61,9 @@ def component_params(component: dict) -> dict:
 
 def start_scene(manager: Any, scene_payload: dict) -> bool:
     scene = normalize_scene_payload(
-        scene_payload, catalog=manager_component_catalog(manager) or None
+        scene_payload,
+        catalog=manager_component_catalog(manager) or None,
+        provider_policy=manager_scene_provider_policy(manager),
     )
     starter = getattr(manager, "start_scene", None)
     if callable(starter):
@@ -91,13 +110,56 @@ def update_scene_component(manager: Any, target: str, update: dict) -> bool:
     )) and changed
 
 
+def _python_fallback_scene(scene: Any) -> dict:
+    """Build the conservative background-only scene recorded for recovery."""
+
+    if not isinstance(scene, dict):
+        raise ValueError("desired display state has no scene fallback")
+    fallback = scene.get("known_python_fallback")
+    if not isinstance(fallback, dict) or fallback.get("provider", "python") != "python":
+        raise ValueError("desired display state has no recorded Python fallback")
+    return {
+        "schema": "ledgrid.scene-state",
+        "schema_version": 1,
+        "revision": scene.get("revision", 0),
+        "background": dict(fallback),
+        "overlays": [],
+        "known_python_fallback": dict(fallback),
+    }
+
+
 def restore_display_state(manager: Any, state: dict) -> bool:
     """Validate the complete desired state before applying any mutation."""
     if not isinstance(state, dict):
         raise ValueError("desired display state must be an object")
-    scene = normalize_scene_payload(
-        state.get("scene"), catalog=manager_component_catalog(manager) or None
-    )
+    raw_scene = state.get("scene")
+    catalog = manager_component_catalog(manager) or None
+    provider_policy = manager_scene_provider_policy(manager)
+    try:
+        scene = normalize_scene_payload(
+            raw_scene,
+            catalog=catalog,
+            provider_policy=provider_policy,
+        )
+    except SceneValidationError:
+        # A receiver scene saved by a canary-capable release remains useful
+        # data when ordinary production (all gates off) starts later. Resolve
+        # the recorded Python component before any scene or hardware mutation.
+        native_background = (
+            raw_scene.get("background")
+            if isinstance(raw_scene, dict) else None
+        )
+        if (
+            not isinstance(native_background, dict)
+            or native_background.get("provider") != "receiver_native"
+            or provider_policy.compiled_rainbow_enabled
+        ):
+            raise
+        scene = normalize_scene_payload(
+            _python_fallback_scene(raw_scene),
+            catalog=catalog,
+            provider_policy=provider_policy,
+        )
     output = state.get("output", {})
     if not isinstance(output, dict):
         raise ValueError("desired display output must be an object")
@@ -128,9 +190,8 @@ def restore_display_state(manager: Any, state: dict) -> bool:
         tempo = manager._validate_tempo_scale(tempo)
     target_fps = output.get("target_fps")
     if target_fps is not None:
-        if isinstance(target_fps, bool):
+        if isinstance(target_fps, bool) or not isinstance(target_fps, int):
             raise ValueError("desired display target_fps must be an integer")
-        target_fps = int(target_fps)
         if not 1 <= target_fps <= 200:
             raise ValueError("desired display target_fps must be between 1 and 200")
     modifiers = PlantModifierState.from_payload(state.get("plant_modifiers", {})).to_dict()

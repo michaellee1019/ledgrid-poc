@@ -20,14 +20,17 @@ from typing import Any, Dict, List, Optional
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from animation.core.manager import AnimationManager, PreviewLEDController
+from animation.core.feature_flags import AnimationPipelineFeatureFlags
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.preview_assets import load_catalog, merge_catalogs
 from ipc.control_channel import FileControlChannel
 from ipc.scene_contract import (
+    DEFAULT_SCENE_PROVIDER_POLICY,
     FIXED_OVERLAY_SLOT,
     SCENE_PRESET_SCHEMA,
     SCENE_PRESET_VERSION,
+    SceneProviderPolicy,
     SceneValidationError,
     background_only_scene,
     decorate_catalog,
@@ -135,6 +138,9 @@ class AnimationWebInterface:
                 status=status,
                 vibe_profiles=self._vibe_profile_catalog(),
                 component_catalog=self._component_catalog(),
+                receiver_hybrid_enabled=(
+                    self._scene_provider_policy().compiled_rainbow_enabled
+                ),
                 scene_presets=self._list_scene_presets(),
                 speed_baseline=DEFAULT_ANIMATION_SPEED_SCALE,
                 local_mode=self.local_mode,
@@ -154,6 +160,7 @@ class AnimationWebInterface:
                     self._component_catalog(),
                     provider=request.args.get('provider'),
                     role=request.args.get('role'),
+                    provider_policy=self._scene_provider_policy(),
                 )
             except SceneValidationError as exc:
                 return jsonify({'error': str(exc)}), 400
@@ -238,8 +245,19 @@ class AnimationWebInterface:
             except (KeyError, TypeError, ValueError, SceneValidationError) as exc:
                 return jsonify({'error': str(exc)}), 400
             preview['preview_identity'] = scene_preview_identity(
-                scene, vibe, modifiers, elapsed=float(body.get('elapsed', 0.0))
+                scene, vibe, modifiers, elapsed=float(body.get('elapsed', 0.0)),
+                provider_policy=self._scene_provider_policy(),
             )
+            if scene['background']['provider'] == 'receiver_native':
+                preview.update({
+                    'preview': True,
+                    'preview_label': (
+                        'Host simulation preview — not receiver framebuffer readback'
+                    ),
+                    'background_provider': 'receiver_native',
+                    'live_state_mutated': False,
+                    'framebuffer_readback': False,
+                })
             preview['scene'] = scene
             preview['plant_modifiers'] = modifiers
             return jsonify(preview)
@@ -1068,30 +1086,60 @@ class AnimationWebInterface:
 
     def _component_catalog(self) -> List[Dict[str, Any]]:
         """Read the unified descriptor catalog without importing implementations."""
+        policy = self._scene_provider_policy()
         getter = getattr(self.preview_manager, 'list_components', None)
         if callable(getter):
             raw = getter()
             if isinstance(raw, dict):
                 raw = raw.get('components', [])
-            return decorate_catalog(raw or [])
+            return decorate_catalog(raw or [], provider_policy=policy)
         loader = getattr(self.preview_manager, 'plugin_loader', None)
         if loader is not None:
             catalog_getter = getattr(loader, 'component_catalog', None)
             if callable(catalog_getter):
-                return decorate_catalog(catalog_getter())
+                return decorate_catalog(
+                    catalog_getter(), provider_policy=policy
+                )
         # Small test doubles and legacy local integrations may expose only the
         # animation list.  Keep this adapter explicit and Python/background-only.
-        return decorate_catalog({
+        return decorate_catalog(({
             **item,
             'plugin_id': item.get('plugin_id', item.get('plugin_name')),
             'provider': item.get('provider', 'python'),
             'role': item.get('role', 'background'),
-        } for item in self.preview_manager.list_animations())
+        } for item in self.preview_manager.list_animations()), provider_policy=policy)
+
+    def _scene_provider_policy(self) -> SceneProviderPolicy:
+        """Resolve the manager's explicit rollout policy, failing safely off."""
+        getter = getattr(self.preview_manager, 'scene_provider_policy', None)
+        if callable(getter):
+            try:
+                policy = getter()
+            except (TypeError, ValueError):
+                policy = None
+            if isinstance(policy, SceneProviderPolicy):
+                if not policy.compiled_rainbow_enabled:
+                    return policy
+                flags = getattr(self.preview_manager, 'feature_flags', None)
+                if (
+                    isinstance(flags, AnimationPipelineFeatureFlags)
+                    and flags.receiver_local_background
+                    and flags.receiver_sparse_overlay
+                ):
+                    return policy
+                # Receiver execution requires typed rollout flags and the
+                # manager's narrower product policy to agree.
+                return DEFAULT_SCENE_PROVIDER_POLICY
+        return DEFAULT_SCENE_PROVIDER_POLICY
 
     def _validated_scene_request(self, payload: Any) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise SceneValidationError('request body must contain a scene object')
-        scene = normalize_scene_payload(payload, catalog=self._component_catalog())
+        scene = normalize_scene_payload(
+            payload,
+            catalog=self._component_catalog(),
+            provider_policy=self._scene_provider_policy(),
+        )
         components = [scene['background'], scene['known_python_fallback']]
         components.extend(overlay['component'] for overlay in scene['overlays'])
         for component in components:
@@ -1165,7 +1213,11 @@ class AnimationWebInterface:
             raw_scene = status.get('scene')
         if isinstance(raw_scene, dict) and raw_scene.get('schema'):
             try:
-                return normalize_scene_payload(raw_scene, catalog=self._component_catalog())
+                return normalize_scene_payload(
+                    raw_scene,
+                    catalog=self._component_catalog(),
+                    provider_policy=self._scene_provider_policy(),
+                )
             except SceneValidationError:
                 pass
         animation = status.get('current_animation')
@@ -2170,7 +2222,8 @@ def create_app(control_channel: FileControlChannel = None,
                animations_dir: str = None,
                animation_speed_scale: float = DEFAULT_ANIMATION_SPEED_SCALE,
                plant_aware: bool = DEFAULT_PLANT_AWARE,
-               release_id: Optional[str] = None):
+               release_id: Optional[str] = None,
+               feature_flags: Optional[AnimationPipelineFeatureFlags] = None):
     """Factory function to create the web application"""
     if control_channel is None:
         control_channel = FileControlChannel()
@@ -2179,12 +2232,17 @@ def create_app(control_channel: FileControlChannel = None,
     preview_controller = PreviewLEDController(strips, leds_per_strip)
 
     # Create animation manager (preview only, no hardware access)
+    manager_kwargs: Dict[str, Any] = {
+        'plugins_dir': animations_dir,
+        'animation_speed_scale': animation_speed_scale,
+        'plant_aware': plant_aware,
+        'auto_start': False,
+    }
+    if feature_flags is not None:
+        manager_kwargs['feature_flags'] = feature_flags
     animation_manager = AnimationManager(
         preview_controller,
-        plugins_dir=animations_dir,
-        animation_speed_scale=animation_speed_scale,
-        plant_aware=plant_aware,
-        auto_start=False,
+        **manager_kwargs,
     )
 
     # Create web interface
