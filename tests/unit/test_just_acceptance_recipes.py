@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -101,6 +102,35 @@ class JustAcceptanceRecipeTests(unittest.TestCase):
             "--confirmation-response", "response.json",
             "--duration", "20",
         ])
+
+    def test_physical_canary_scripts_start_directly_outside_repository(self):
+        scripts = (
+            "phase3a_single_receiver_canary.py",
+            "phase3b_single_receiver_canary.py",
+            "phase3b_degraded_showcase.py",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            (temp_path / "spidev.py").write_text(
+                "class SpiDev:\n    pass\n", encoding="utf-8"
+            )
+            env = dict(os.environ, PYTHONPATH=temp_dir)
+            for script in scripts:
+                with self.subTest(script=script):
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            str(ROOT / "tools" / "benchmarks" / script),
+                            "--help",
+                        ],
+                        cwd=temp_path,
+                        env=env,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("usage:", result.stdout)
 
     def test_defaults_and_positional_arguments_remain_supported(self):
         default_receiver = self.run_with_fake_uv("receiver-acceptance")

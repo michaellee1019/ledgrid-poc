@@ -27,11 +27,16 @@ import math
 import os
 from pathlib import Path
 import secrets
+import sys
 import tempfile
 import time
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 import numpy as np
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from animation.core.compositing import HostForegroundCompositor, PlacedOverlay
 from animation.core.plant_awareness import PlantModifierState
