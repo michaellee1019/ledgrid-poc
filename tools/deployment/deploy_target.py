@@ -615,6 +615,21 @@ def flash_firmware(
     if support_id is None:
         return {"outcome": "skipped", "reason": "no support inputs"}
     workspace, _ = _copy_support_workspace(root, support_id)
+    firmware_binary = (
+        workspace
+        / "firmware"
+        / "esp32"
+        / ".pio"
+        / "build"
+        / "esp32-s3-devkitc-1"
+        / "firmware.bin"
+    )
+    if not firmware_binary.is_file():
+        raise RuntimeError(
+            "validated production firmware.bin is unavailable; run build-firmware "
+            "before flash-firmware"
+        )
+    firmware_sha256 = _sha256_file(firmware_binary)
     ports = sorted(set(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*")))
     if len(ports) != receiver_count:
         raise RuntimeError(
@@ -632,18 +647,23 @@ def flash_firmware(
         {
             "DEPLOY_DIR": os.fspath(workspace),
             "DEBUG": "1" if debug else "0",
+            # The coordinator has already run the pinned production build. The
+            # leaf helper must upload exactly that artifact, not start a second
+            # compile whose output could diverge from the build receipt.
+            "FIRMWARE_PREBUILT": "1",
+            "EXPECTED_FIRMWARE_SHA256": firmware_sha256,
             "IDF_CCACHE_ENABLE": "1",
             "CCACHE_DIR": os.fspath(
                 root / "build" / "firmware" / CCACHE_DIRECTORY
             ),
+            "PLATFORMIO_BUILD_CACHE_DIR": os.fspath(
+                root / "build" / "firmware" / PLATFORMIO_BUILD_CACHE
+            ),
         }
     )
-    # The flash helper uploads to all receivers concurrently. PlatformIO's
-    # build-cache directory contains a shared SCons signature database, so
-    # giving every uploader the same directory races its atomic replacement.
-    # The firmware is already built at this point; uploads need only the
-    # workspace-local .pio output and the concurrency-safe compiler cache.
-    env.pop("PLATFORMIO_BUILD_CACHE_DIR", None)
+    # The helper serializes the four nobuild uploads. They therefore reuse the
+    # exact build-phase SCons state without racing either its signature database
+    # or the shared workspace-local .pio/build output tree.
     # Deployment helpers are app-lane source, not support-lane source. Use the
     # explicitly selected candidate helper while directing all build/hash state
     # at the isolated firmware workspace. Falling back to ``current`` retains
@@ -657,13 +677,25 @@ def flash_firmware(
         raise RuntimeError("selected app release has no flash helper")
     completed = _command(("bash", helper), env=env, check=False)
     output = completed.stdout + completed.stderr
-    if completed.returncode or "Flash FAILED" in output or "hash NOT updated" in output:
+    binary_error = None
+    if not firmware_binary.is_file():
+        binary_error = "validated production firmware.bin disappeared during flash"
+    elif _sha256_file(firmware_binary) != firmware_sha256:
+        binary_error = "validated production firmware.bin changed during flash"
+    if (
+        completed.returncode
+        or "Flash FAILED" in output
+        or "hash NOT updated" in output
+        or binary_error is not None
+    ):
         _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
-        raise RuntimeError(f"receiver firmware flash failed: {output[-4000:]}")
+        detail = f"; {binary_error}" if binary_error else ""
+        raise RuntimeError(f"receiver firmware flash failed{detail}: {output[-4000:]}")
     skipped = "Firmware unchanged; skipping" in output
     return {
         "outcome": "skipped" if skipped else "executed",
         "ports": ports,
+        "firmware_sha256": firmware_sha256,
         "output_tail": output[-2000:],
     }
 

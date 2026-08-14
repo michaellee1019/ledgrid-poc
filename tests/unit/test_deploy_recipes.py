@@ -149,14 +149,21 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn(failure, script)
         self.assertIn(f"{failure}\n  exit 1", script)
 
-    def test_parallel_firmware_upload_reuses_binary_with_isolated_scons_state(self):
+    def test_firmware_upload_serializes_nobuild_reuse_of_validated_binary(self):
         script = (ROOT / "tools/deployment/flash_esp32.sh").read_text(
             encoding="utf-8"
         )
         self.assertIn("-t nobuild -t upload", script)
-        self.assertIn('upload_cache_root="$DEPLOY_DIR/.platformio-upload-cache"', script)
-        self.assertIn('port_cache="$upload_cache_root/${port##*/}"', script)
-        self.assertIn('PLATFORMIO_BUILD_CACHE_DIR="$port_cache"', script)
+        self.assertIn("Flashing firmware to $port_count ESP32 device(s) sequentially", script)
+        self.assertIn("verify_firmware_binary", script)
+        self.assertIn('if [ "${FIRMWARE_PREBUILT:-0}" = "1" ]', script)
+        upload_section = script.split(
+            'log_info "Flashing firmware to $port_count ESP32 device(s) sequentially..."',
+            1,
+        )[1]
+        self.assertNotIn("pids=(", upload_section)
+        self.assertNotIn(") &", upload_section)
+        self.assertNotIn(".platformio-upload-cache", script)
 
     def test_remote_recovery_helpers_use_the_supervised_service(self):
         stop = (ROOT / "tools/deployment/stop_remote.sh").read_text(encoding="utf-8")

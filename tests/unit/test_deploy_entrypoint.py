@@ -679,11 +679,22 @@ class TargetFirmwareBuildTests(unittest.TestCase):
 
 
 class TargetFirmwareFailureTests(unittest.TestCase):
-    def test_parallel_flash_does_not_share_platformio_scons_state(self) -> None:
+    @staticmethod
+    def _production_binary(workspace: Path, content: bytes = b"production") -> Path:
+        binary = (
+            workspace
+            / "firmware/esp32/.pio/build/esp32-s3-devkitc-1/firmware.bin"
+        )
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(content)
+        return binary
+
+    def test_serial_flash_reuses_build_phase_scons_state_and_exact_binary(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
             workspace = root / "workspace"
             workspace.mkdir()
+            binary = self._production_binary(workspace)
             helper = root / "current/tools/deployment/flash_esp32.sh"
             helper.parent.mkdir(parents=True)
             helper.write_text("#!/bin/bash\n", encoding="utf-8")
@@ -710,8 +721,17 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 )
 
             self.assertEqual(result["outcome"], "executed")
+            self.assertEqual(result["firmware_sha256"], deploy_target._sha256_file(binary))
             flash_env = command.call_args.kwargs["env"]
-            self.assertNotIn("PLATFORMIO_BUILD_CACHE_DIR", flash_env)
+            self.assertEqual(flash_env["FIRMWARE_PREBUILT"], "1")
+            self.assertEqual(
+                flash_env["EXPECTED_FIRMWARE_SHA256"],
+                deploy_target._sha256_file(binary),
+            )
+            self.assertEqual(
+                flash_env["PLATFORMIO_BUILD_CACHE_DIR"],
+                os.fspath(root / "build/firmware/.platformio-build-cache"),
+            )
             self.assertEqual(flash_env["IDF_CCACHE_ENABLE"], "1")
             self.assertEqual(
                 flash_env["CCACHE_DIR"],
@@ -723,6 +743,7 @@ class TargetFirmwareFailureTests(unittest.TestCase):
             root = Path(temporary_dir)
             workspace = root / "workspace"
             workspace.mkdir()
+            self._production_binary(workspace)
             helper = root / "current/tools/deployment/flash_esp32.sh"
             helper.parent.mkdir(parents=True)
             helper.write_text("#!/bin/bash\n", encoding="utf-8")
@@ -742,6 +763,61 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                     patch.object(deploy_target.glob, "glob", side_effect=(ports, [])),
                     patch.object(deploy_target, "_command", return_value=completed),
                     self.assertRaisesRegex(RuntimeError, "flash failed"),
+                ):
+                    deploy_target.flash_firmware(
+                        root, "a" * 64, receiver_count=4, debug=False,
+                    )
+
+    def test_flash_rejects_missing_build_artifact_before_helper_or_serial_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace",
+                    return_value=(workspace, True),
+                ),
+                patch.object(deploy_target, "_command") as command,
+                self.assertRaisesRegex(RuntimeError, "run build-firmware"),
+            ):
+                deploy_target.flash_firmware(
+                    root, "a" * 64, receiver_count=4, debug=False,
+                )
+            command.assert_not_called()
+
+    def test_flash_success_cannot_hide_deleted_or_changed_validated_binary(self) -> None:
+        for mutation, expected in (
+            ("delete", "disappeared during flash"),
+            ("change", "changed during flash"),
+        ):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary_dir:
+                root = Path(temporary_dir)
+                workspace = root / "workspace"
+                workspace.mkdir()
+                binary = self._production_binary(workspace)
+                helper = root / "current/tools/deployment/flash_esp32.sh"
+                helper.parent.mkdir(parents=True)
+                helper.write_text("#!/bin/bash\n", encoding="utf-8")
+                ports = [f"/dev/ttyACM{index}" for index in range(4)]
+
+                def command(args, **_kwargs):
+                    if tuple(args[:3]) == ("sudo", "systemctl", "stop"):
+                        return subprocess.CompletedProcess(args, 0, "", "")
+                    if mutation == "delete":
+                        binary.unlink()
+                    else:
+                        binary.write_bytes(b"different firmware")
+                    return subprocess.CompletedProcess(args, 0, "All flashed\n", "")
+
+                with (
+                    patch.object(
+                        deploy_target, "_copy_support_workspace",
+                        return_value=(workspace, True),
+                    ),
+                    patch.object(deploy_target.glob, "glob", side_effect=(ports, [])),
+                    patch.object(deploy_target, "_command", side_effect=command),
+                    self.assertRaisesRegex(RuntimeError, expected),
                 ):
                     deploy_target.flash_firmware(
                         root, "a" * 64, receiver_count=4, debug=False,

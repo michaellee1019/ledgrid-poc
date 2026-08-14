@@ -140,40 +140,51 @@ while IFS= read -r p; do
   log_info "  -> $p"
 done <<< "$ports"
 
-log_info "Building firmware..."
-(cd "$FIRMWARE_DIR" && $PIO_CMD run -e esp32-s3-devkitc-1)
+firmware_binary="$FIRMWARE_DIR/.pio/build/esp32-s3-devkitc-1/firmware.bin"
+expected_firmware_sha256="${EXPECTED_FIRMWARE_SHA256:-}"
 
-log_info "Flashing firmware to $port_count ESP32 device(s) in parallel..."
-pids=()
-flash_logs=()
-upload_cache_root="$DEPLOY_DIR/.platformio-upload-cache"
-mkdir -p "$upload_cache_root"
+verify_firmware_binary() {
+  if [ ! -f "$firmware_binary" ]; then
+    log_warning "Validated production firmware is missing: $firmware_binary"
+    return 1
+  fi
+  if [ -n "$expected_firmware_sha256" ]; then
+    actual_firmware_sha256="$("${HASH_TOOL[@]}" "$firmware_binary" | awk '{print $1}')"
+    if [ "$actual_firmware_sha256" != "$expected_firmware_sha256" ]; then
+      log_warning "Validated production firmware digest changed before upload"
+      return 1
+    fi
+  fi
+}
+
+if [ "${FIRMWARE_PREBUILT:-0}" = "1" ]; then
+  log_info "Using coordinator-validated production firmware build"
+  verify_firmware_binary
+else
+  log_info "Building firmware..."
+  (cd "$FIRMWARE_DIR" && $PIO_CMD run -e esp32-s3-devkitc-1)
+  verify_firmware_binary
+fi
+
+log_info "Flashing firmware to $port_count ESP32 device(s) sequentially..."
+all_ok=true
 while IFS= read -r port; do
   log_file=$(mktemp)
-  flash_logs+=("$port|$log_file")
-  log_info "Uploading to $port (background)"
+  log_info "Uploading to $port"
   # The firmware has already been built above. ``nobuild`` prevents each
-  # uploader from walking the compile graph again, while a per-port cache keeps
-  # concurrent SCons signature writes isolated from one another.
-  port_cache="$upload_cache_root/${port##*/}"
-  mkdir -p "$port_cache"
-  (
+  # uploader from walking the compile graph again. Uploads are deliberately
+  # serialized because PlatformIO still mutates the common .pio/build tree and
+  # SCons signature database even when compiler-cache directories differ.
+  if ! verify_firmware_binary; then
+    all_ok=false
+    rm -f "$log_file"
+    break
+  fi
+  if (
     cd "$FIRMWARE_DIR"
-    PLATFORMIO_BUILD_CACHE_DIR="$port_cache" \
-      $PIO_CMD run -e esp32-s3-devkitc-1 -t nobuild -t upload \
+    $PIO_CMD run -e esp32-s3-devkitc-1 -t nobuild -t upload \
       --upload-port "$port" > "$log_file" 2>&1
-  ) &
-  pids+=($!)
-done <<< "$ports"
-
-# Wait for all uploads and report results
-all_ok=true
-for i in "${!pids[@]}"; do
-  pid=${pids[$i]}
-  entry=${flash_logs[$i]}
-  port="${entry%%|*}"
-  log_file="${entry##*|}"
-  if wait "$pid"; then
+  ); then
     log_success "Flashed $port"
   else
     log_warning "Flash FAILED for $port"
@@ -181,7 +192,11 @@ for i in "${!pids[@]}"; do
     all_ok=false
   fi
   rm -f "$log_file"
-done
+  if ! verify_firmware_binary; then
+    all_ok=false
+    break
+  fi
+done <<< "$ports"
 
 if $all_ok; then
   echo "$current_hash" > "$HASH_FILE"
