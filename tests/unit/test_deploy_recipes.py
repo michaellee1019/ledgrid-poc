@@ -164,6 +164,10 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn('FIRMWARE_ENVIRONMENT:-esp32-s3-devkitc-1', script)
         self.assertIn('printf \'%s\\n\' "$firmware_environment"', script)
         self.assertIn('printf \'%s\\n\' "$actual_firmware_sha256"', script)
+        self.assertIn('hash_storage="$(readlink -f -- "$HASH_FILE")"', script)
+        self.assertIn('mktemp "${hash_storage}.tmp.XXXXXX"', script)
+        self.assertIn('mv "$marker_temporary" "$hash_storage"', script)
+        self.assertNotIn('mv "$marker_temporary" "$HASH_FILE"', script)
         self.assertLess(
             script.index("verify_firmware_binary\nelse"),
             script.index('if [ "$current_hash" = "$previous_hash" ]'),

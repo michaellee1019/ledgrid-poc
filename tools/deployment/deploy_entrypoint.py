@@ -758,6 +758,10 @@ class CoordinatorDeployment:
             )
         ):
             raise RuntimeError("firmware build and flash receipts disagree")
+        context = self.context
+        context.state["firmware_mutated"] = (
+            str(result.get("outcome", "executed")) == "executed"
+        )
         installed_digest = result.get("firmware_installation_digest")
         if (
             not isinstance(installed_digest, str)
@@ -898,7 +902,9 @@ class CoordinatorDeployment:
             raise
 
     def _restart(self, context: DeployContext) -> OperationResult:
-        if not context.state.get("activated"):
+        if not context.state.get("activated") and not context.state.get(
+            "firmware_mutated"
+        ):
             # The target-provided selection time shares the API clock. This
             # prevents workstation/Pi skew from invalidating an otherwise safe
             # unchanged-release health check.
@@ -918,7 +924,13 @@ class CoordinatorDeployment:
         return self._post_activation(execute)
 
     def _restore(self, context: DeployContext) -> OperationResult:
-        if not context.state.get("activated") or not context.state.get("state_captured"):
+        if (
+            not (
+                context.state.get("activated")
+                or context.state.get("firmware_mutated")
+            )
+            or not context.state.get("state_captured")
+        ):
             return OperationResult(outcome="skipped", details={"reason": "no captured state to restore"})
 
         def execute() -> OperationResult:

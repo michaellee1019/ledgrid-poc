@@ -161,8 +161,11 @@ class _Runner:
 
 
 class _FakeTarget:
-    def __init__(self, *, unchanged: bool = False) -> None:
+    def __init__(
+        self, *, unchanged: bool = False, firmware_changed: bool = False
+    ) -> None:
         self.unchanged = unchanged
+        self.firmware_changed = firmware_changed
         self.candidate = "c" * 64
         self.previous = self.candidate if unchanged else "b" * 64
         self.support = "d" * 64
@@ -196,8 +199,11 @@ class _FakeTarget:
             }
         if command == "flash-firmware":
             return {
-                "outcome": "skipped",
-                "reason": "firmware unchanged",
+                "outcome": "executed" if self.firmware_changed else "skipped",
+                "reason": (
+                    "firmware changed" if self.firmware_changed
+                    else "firmware unchanged"
+                ),
                 "firmware_environment": PRODUCTION_FIRMWARE_ENVIRONMENT,
                 "firmware_sha256": FIRMWARE_SHA256,
                 "firmware_installation_digest": FIRMWARE_INSTALLATION_DIGEST,
@@ -1078,7 +1084,9 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                 path.chmod(0o755)
         self.temporary_dir.cleanup()
 
-    def _deployment(self, *, unchanged: bool = False):
+    def _deployment(
+        self, *, unchanged: bool = False, firmware_changed: bool = False
+    ):
         runner = _Runner()
         context = DeployContext(
             target="fake@wall",
@@ -1100,7 +1108,9 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
             health_timeout=1.0,
         )
         deployment = deploy_entrypoint.CoordinatorDeployment(config, context)
-        target = _FakeTarget(unchanged=unchanged)
+        target = _FakeTarget(
+            unchanged=unchanged, firmware_changed=firmware_changed
+        )
         deployment.target = target
         return deployment, context, runner, target
 
@@ -1172,6 +1182,25 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
         self.assertNotIn("restore-state", commands)
         self.assertEqual(commands.count("activate"), 1)
         self.assertIn("health", commands, "fresh external health must never be cached")
+
+    def test_firmware_mutation_restarts_and_restores_even_when_app_is_unchanged(self) -> None:
+        deployment, context, _runner, target = self._deployment(
+            unchanged=True, firmware_changed=True
+        )
+        try:
+            receipt = DeployCoordinator().run(context, deployment.steps())
+        finally:
+            deployment.close()
+
+        by_id = {step.step_id: step for step in receipt.steps}
+        self.assertEqual(receipt.outcome, "success")
+        self.assertEqual(by_id["receiver.firmware_flash"].outcome, "executed")
+        self.assertEqual(by_id["app.activate"].outcome, "skipped")
+        self.assertEqual(by_id["host.restart"].outcome, "executed")
+        self.assertEqual(by_id["state.restore"].outcome, "executed")
+        commands = [command for command, _args in target.calls]
+        self.assertIn("restart", commands)
+        self.assertIn("restore-state", commands)
 
     def test_firmware_flash_uses_candidate_app_release_helper(self) -> None:
         deployment, context, _runner, target = self._deployment()

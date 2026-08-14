@@ -106,8 +106,16 @@ current_hash="$(
 )"
 
 previous_hash=""
-if [ -f "$HASH_FILE" ]; then
-  previous_hash="$(cat "$HASH_FILE" | tr -d '\n')"
+hash_storage="$HASH_FILE"
+if [ -L "$HASH_FILE" ]; then
+  hash_storage="$(readlink -f -- "$HASH_FILE")"
+  if [ -z "$hash_storage" ]; then
+    log_warning "Firmware marker symlink cannot be resolved"
+    exit 1
+  fi
+fi
+if [ -f "$hash_storage" ]; then
+  previous_hash="$(cat "$hash_storage" | tr -d '\n')"
 fi
 
 if [ "$current_hash" = "$previous_hash" ]; then
@@ -225,9 +233,12 @@ while IFS= read -r port; do
 done <<< "$ports"
 
 if $all_ok; then
-  marker_temporary="$(mktemp "${HASH_FILE}.tmp.XXXXXX")"
+  # Update the target-owned shared file, not the workspace symlink itself.
+  # Replacing the symlink would strand the new digest in an ephemeral build
+  # workspace and force every subsequent deploy to reflash all receivers.
+  marker_temporary="$(mktemp "${hash_storage}.tmp.XXXXXX")"
   printf '%s\n' "$current_hash" > "$marker_temporary"
-  mv "$marker_temporary" "$HASH_FILE"
+  mv "$marker_temporary" "$hash_storage"
   printf 'FIRMWARE_INSTALLATION_DIGEST=%s\n' "$current_hash"
   log_success "All $port_count ESP32 device(s) flashed successfully"
 else
