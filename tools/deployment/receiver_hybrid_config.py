@@ -46,12 +46,17 @@ ALLOWED_FIRMWARE_ENVIRONMENTS = frozenset({
 _CONFIG_KEYS = frozenset({
     "schema", "schema_version", "enabled", "transport_policy",
     "physical_lane_order", "reverse_strips_by_logical_receiver",
+    "reverse_native_strips_by_logical_receiver",
 })
 _CONFIG_REQUIRED_KEYS = _CONFIG_KEYS - {
     "physical_lane_order", "reverse_strips_by_logical_receiver",
+    "reverse_native_strips_by_logical_receiver",
 }
 DEFAULT_PHYSICAL_LANE_ORDER = (0, 1, 2, 3)
 DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER = (False, False, False, False)
+DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER = (
+    False, False, False, False
+)
 
 
 class ReceiverHybridConfigError(ValueError):
@@ -78,17 +83,17 @@ def _normalize_physical_lane_order(value: Any) -> tuple[int, int, int, int]:
 
 
 def _normalize_reverse_strips_by_logical_receiver(
-    value: Any,
+    value: Any, *, field: str = "reverse_strips_by_logical_receiver",
 ) -> tuple[bool, bool, bool, bool]:
     """Return one exact local-strip direction flag per logical receiver."""
 
     if not isinstance(value, (list, tuple)) or len(value) != 4:
         raise ReceiverHybridConfigError(
-            "reverse_strips_by_logical_receiver must contain exactly four booleans"
+            f"{field} must contain exactly four booleans"
         )
     if any(type(item) is not bool for item in value):
         raise ReceiverHybridConfigError(
-            "reverse_strips_by_logical_receiver values must be booleans"
+            f"{field} values must be booleans"
         )
     return tuple(value)
 
@@ -103,6 +108,9 @@ class ReceiverHybridConfig(Mapping[str, object]):
     physical_lane_order: tuple[int, int, int, int] = DEFAULT_PHYSICAL_LANE_ORDER
     reverse_strips_by_logical_receiver: tuple[bool, bool, bool, bool] = (
         DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+    )
+    reverse_native_strips_by_logical_receiver: tuple[bool, bool, bool, bool] = (
+        DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER
     )
 
     def __post_init__(self) -> None:
@@ -129,6 +137,14 @@ class ReceiverHybridConfig(Mapping[str, object]):
         )
         object.__setattr__(
             self,
+            "reverse_native_strips_by_logical_receiver",
+            _normalize_reverse_strips_by_logical_receiver(
+                self.reverse_native_strips_by_logical_receiver,
+                field="reverse_native_strips_by_logical_receiver",
+            ),
+        )
+        object.__setattr__(
+            self,
             "reverse_strips_by_logical_receiver",
             _normalize_reverse_strips_by_logical_receiver(
                 self.reverse_strips_by_logical_receiver
@@ -146,16 +162,19 @@ class ReceiverHybridConfig(Mapping[str, object]):
             return self.physical_lane_order
         if key == "reverse_strips_by_logical_receiver":
             return self.reverse_strips_by_logical_receiver
+        if key == "reverse_native_strips_by_logical_receiver":
+            return self.reverse_native_strips_by_logical_receiver
         raise KeyError(key)
 
     def __iter__(self) -> Iterator[str]:
         return iter((
             "enabled", "transport_policy", "firmware_environment",
             "physical_lane_order", "reverse_strips_by_logical_receiver",
+            "reverse_native_strips_by_logical_receiver",
         ))
 
     def __len__(self) -> int:
-        return 5
+        return 6
 
     def to_dict(self) -> dict[str, object]:
         return dict(self)
@@ -233,12 +252,20 @@ def _parse_config(payload: Any, path: Path) -> ReceiverHybridConfig:
             DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER,
         )
     )
+    reverse_native_strips = _normalize_reverse_strips_by_logical_receiver(
+        payload.get(
+            "reverse_native_strips_by_logical_receiver",
+            DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
+        ),
+        field="reverse_native_strips_by_logical_receiver",
+    )
     return ReceiverHybridConfig(
         enabled=enabled,
         transport_policy=transport_policy,
         firmware_environment=firmware_environment,
         physical_lane_order=physical_lane_order,
         reverse_strips_by_logical_receiver=reverse_strips,
+        reverse_native_strips_by_logical_receiver=reverse_native_strips,
     )
 
 
@@ -277,6 +304,7 @@ def write_receiver_hybrid_config(
     transport_policy: str | None = None,
     physical_lane_order: Any = None,
     reverse_strips_by_logical_receiver: Any = None,
+    reverse_native_strips_by_logical_receiver: Any = None,
 ) -> ReceiverHybridConfig:
     """Atomically persist one allowlisted rollout selection and fsync it."""
 
@@ -309,6 +337,18 @@ def write_receiver_hybrid_config(
             reverse_strips_by_logical_receiver
         )
     )
+    if reverse_native_strips_by_logical_receiver is None:
+        reverse_native_strips_by_logical_receiver = (
+            resolve_receiver_hybrid_config(
+                root
+            ).reverse_native_strips_by_logical_receiver
+        )
+    reverse_native_strips_by_logical_receiver = (
+        _normalize_reverse_strips_by_logical_receiver(
+            reverse_native_strips_by_logical_receiver,
+            field="reverse_native_strips_by_logical_receiver",
+        )
+    )
     path = receiver_hybrid_config_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -319,6 +359,9 @@ def write_receiver_hybrid_config(
         "physical_lane_order": list(physical_lane_order),
         "reverse_strips_by_logical_receiver": list(
             reverse_strips_by_logical_receiver
+        ),
+        "reverse_native_strips_by_logical_receiver": list(
+            reverse_native_strips_by_logical_receiver
         ),
     }
     descriptor, temporary_name = tempfile.mkstemp(
@@ -352,7 +395,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--reversed-logical-receivers",
-        help="comma-separated logical receiver ids whose local strip order is reversed",
+        help="comma-separated logical receivers whose host-frame strip order is reversed",
+    )
+    parser.add_argument(
+        "--reversed-native-logical-receivers",
+        help="comma-separated logical receivers whose native animation coordinates are reversed",
     )
     parser.add_argument(
         "action", choices=("show", "enable-degraded", "disable")
@@ -365,6 +412,7 @@ def main() -> int:
     root = args.root.expanduser().resolve()
     lane_order = None
     reverse_strips = None
+    reverse_native_strips = None
     if args.physical_lane_order is not None:
         try:
             lane_order = tuple(
@@ -391,18 +439,42 @@ def main() -> int:
                 "reversed logical receivers must contain only 0,1,2,3"
             )
         reverse_strips = tuple(index in reversed_ids for index in range(4))
+    if args.reversed_native_logical_receivers is not None:
+        try:
+            reversed_native_ids = {
+                int(item.strip())
+                for item in args.reversed_native_logical_receivers.split(",")
+                if item.strip()
+            }
+        except ValueError as exc:
+            raise ReceiverHybridConfigError(
+                "reversed native logical receivers must be comma-separated integers"
+            ) from exc
+        if not reversed_native_ids.issubset({0, 1, 2, 3}):
+            raise ReceiverHybridConfigError(
+                "reversed native logical receivers must contain only 0,1,2,3"
+            )
+        reverse_native_strips = tuple(
+            index in reversed_native_ids for index in range(4)
+        )
     if args.action == "enable-degraded":
         config = write_receiver_hybrid_config(
             root, enabled=True, physical_lane_order=lane_order,
             reverse_strips_by_logical_receiver=reverse_strips,
+            reverse_native_strips_by_logical_receiver=reverse_native_strips,
         )
     elif args.action == "disable":
         config = write_receiver_hybrid_config(
             root, enabled=False, physical_lane_order=lane_order,
             reverse_strips_by_logical_receiver=reverse_strips,
+            reverse_native_strips_by_logical_receiver=reverse_native_strips,
         )
     else:
-        if lane_order is not None or reverse_strips is not None:
+        if (
+            lane_order is not None
+            or reverse_strips is not None
+            or reverse_native_strips is not None
+        ):
             raise ReceiverHybridConfigError(
                 "mapping options require enable-degraded or disable"
             )
@@ -423,6 +495,7 @@ __all__ = [
     "DEGRADED_SPI1_TRANSPORT_POLICY",
     "DEGRADED_TRANSPORT_POLICY",
     "DEFAULT_PHYSICAL_LANE_ORDER",
+    "DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER",
     "DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER",
     "OFF_RECEIVER_HYBRID_CONFIG",
     "PRODUCTION_FIRMWARE_ENVIRONMENT",

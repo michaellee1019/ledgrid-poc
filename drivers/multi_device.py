@@ -53,6 +53,7 @@ class MultiDeviceLEDController:
     def with_receiver_hybrid_transport_policy(
         self, transport_policy, *, physical_lane_order=(0, 1, 2, 3),
         reverse_strips_by_logical_receiver=(False, False, False, False),
+        reverse_native_strips_by_logical_receiver=(False, False, False, False),
     ):
         """Return the controller facade selected by one explicit policy.
 
@@ -79,6 +80,9 @@ class MultiDeviceLEDController:
             physical_lane_order=physical_lane_order,
             reverse_strips_by_logical_receiver=(
                 reverse_strips_by_logical_receiver
+            ),
+            reverse_native_strips_by_logical_receiver=(
+                reverse_native_strips_by_logical_receiver
             ),
         )
 

@@ -146,12 +146,14 @@ class StartServerTests(unittest.TestCase):
 
             def with_receiver_hybrid_transport_policy(
                 self, policy, *, physical_lane_order,
-                reverse_strips_by_logical_receiver
+                reverse_strips_by_logical_receiver,
+                reverse_native_strips_by_logical_receiver,
             ):
                 selection = (
                     policy,
                     tuple(physical_lane_order),
                     tuple(reverse_strips_by_logical_receiver),
+                    tuple(reverse_native_strips_by_logical_receiver),
                 )
                 self.policies.append(selection)
                 return ("wrapped", *selection)
@@ -174,12 +176,14 @@ class StartServerTests(unittest.TestCase):
             (
                 "wrapped", "degraded_spi1_01_readable", (0, 1, 2, 3),
                 (False, False, False, False),
+                (False, False, False, False),
             ),
         )
         self.assertEqual(
             controller.policies,
             [(
                 "degraded_spi1_01_readable", (0, 1, 2, 3),
+                (False, False, False, False),
                 (False, False, False, False),
             )],
         )
@@ -189,12 +193,16 @@ class StartServerTests(unittest.TestCase):
             "transport_policy": "degraded_spi1_01_readable",
             "physical_lane_order": [0, 1, 3, 2],
             "reverse_strips_by_logical_receiver": [False, False, True, True],
+            "reverse_native_strips_by_logical_receiver": [
+                False, False, False, False,
+            ],
         })
         self.assertEqual(
             mapped,
             (
                 "wrapped", "degraded_spi1_01_readable", (0, 1, 3, 2),
                 (False, False, True, True),
+                (False, False, False, False),
             ),
         )
 

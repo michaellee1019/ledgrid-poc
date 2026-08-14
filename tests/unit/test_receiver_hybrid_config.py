@@ -86,6 +86,10 @@ class ReceiverHybridConfigTests(unittest.TestCase):
                 legacy.reverse_strips_by_logical_receiver,
                 (False, False, False, False),
             )
+            self.assertEqual(
+                legacy.reverse_native_strips_by_logical_receiver,
+                (False, False, False, False),
+            )
 
             configured = write_receiver_hybrid_config(
                 root,
@@ -99,6 +103,10 @@ class ReceiverHybridConfigTests(unittest.TestCase):
                 (False, False, True, True),
             )
             self.assertEqual(
+                configured.reverse_native_strips_by_logical_receiver,
+                (False, False, False, False),
+            )
+            self.assertEqual(
                 json.loads(legacy_path.read_text())["physical_lane_order"],
                 [0, 1, 3, 2],
             )
@@ -109,6 +117,10 @@ class ReceiverHybridConfigTests(unittest.TestCase):
             self.assertEqual(
                 preserved.reverse_strips_by_logical_receiver,
                 (False, False, True, True),
+            )
+            self.assertEqual(
+                preserved.reverse_native_strips_by_logical_receiver,
+                (False, False, False, False),
             )
 
     def test_failed_atomic_replace_keeps_prior_complete_config(self):
@@ -198,6 +210,36 @@ class ReceiverHybridConfigTests(unittest.TestCase):
                 ):
                     resolve_receiver_hybrid_config(root)
 
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            self.write(root, self.payload(
+                reverse_native_strips_by_logical_receiver=[False, False, 1, False]
+            ))
+            with self.assertRaisesRegex(
+                ReceiverHybridConfigError,
+                "reverse_native_strips_by_logical_receiver",
+            ):
+                resolve_receiver_hybrid_config(root)
+
+    def test_native_direction_is_independent_and_round_trips(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            configured = write_receiver_hybrid_config(
+                root,
+                enabled=True,
+                reverse_strips_by_logical_receiver=(False, False, True, True),
+                reverse_native_strips_by_logical_receiver=(True, False, False, True),
+            )
+            self.assertEqual(
+                configured.reverse_strips_by_logical_receiver,
+                (False, False, True, True),
+            )
+            self.assertEqual(
+                configured.reverse_native_strips_by_logical_receiver,
+                (True, False, False, True),
+            )
+            self.assertEqual(resolve_receiver_hybrid_config(root), configured)
+
     def test_malformed_oversized_and_symlink_configs_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
@@ -275,6 +317,10 @@ class ReceiverHybridConfigTests(unittest.TestCase):
             self.assertEqual(
                 payload["reverse_strips_by_logical_receiver"],
                 [False, False, True, True],
+            )
+            self.assertEqual(
+                payload["reverse_native_strips_by_logical_receiver"],
+                [False, False, False, False],
             )
 
     def test_cli_persists_explicit_left_to_right_lane_order(self):

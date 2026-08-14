@@ -231,6 +231,11 @@ def select_receiver_hybrid_controller(controller, receiver_hybrid_config):
         "reverse_strips_by_logical_receiver",
         (False, False, False, False),
     )
+    reverse_native_strips = _receiver_hybrid_config_value(
+        receiver_hybrid_config,
+        "reverse_native_strips_by_logical_receiver",
+        (False, False, False, False),
+    )
     if not enabled:
         return controller
     selector = getattr(
@@ -241,6 +246,7 @@ def select_receiver_hybrid_controller(controller, receiver_hybrid_config):
             policy,
             physical_lane_order=physical_lane_order,
             reverse_strips_by_logical_receiver=reverse_strips,
+            reverse_native_strips_by_logical_receiver=reverse_native_strips,
         )
     if policy not in (None, "", "off", "strict_all_readable_v1"):
         raise RuntimeError(

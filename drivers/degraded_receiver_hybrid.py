@@ -181,6 +181,9 @@ class DegradedReceiverHybridController:
         reverse_strips_by_logical_receiver: Sequence[bool] = (
             DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
         ),
+        reverse_native_strips_by_logical_receiver: Sequence[bool] = (
+            DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+        ),
     ) -> None:
         self.controller = controller
         self.devices = list(getattr(controller, "devices", ()))
@@ -201,6 +204,11 @@ class DegradedReceiverHybridController:
         )
         self.reverse_strips_by_logical_receiver = (
             self._normalize_reverse_strips(reverse_strips_by_logical_receiver)
+        )
+        self.reverse_native_strips_by_logical_receiver = (
+            self._normalize_reverse_strips(
+                reverse_native_strips_by_logical_receiver
+            )
         )
         self._validate_installed_controller()
         self._sleeper = sleeper
@@ -330,6 +338,9 @@ class DegradedReceiverHybridController:
             "reverse_strips_by_logical_receiver": list(
                 self.reverse_strips_by_logical_receiver
             ),
+            "reverse_native_strips_by_logical_receiver": list(
+                self.reverse_native_strips_by_logical_receiver
+            ),
         })
 
     @staticmethod
@@ -412,7 +423,7 @@ class DegradedReceiverHybridController:
             LEDS_PER_STRIP & 0xFF,
             (
                 CONFIG_REVERSE_LOCAL_STRIP_ORDER
-                if self.reverse_strips_by_logical_receiver[logical_id]
+                if self.reverse_native_strips_by_logical_receiver[logical_id]
                 else 0
             ),
             logical_id,
@@ -448,6 +459,9 @@ class DegradedReceiverHybridController:
                     "logical_identity_verified": True,
                     "logical_device": logical_id,
                     "reverse_local_strip_order": (
+                        self.reverse_native_strips_by_logical_receiver[logical_id]
+                    ),
+                    "reverse_host_frame_strip_order": (
                         self.reverse_strips_by_logical_receiver[logical_id]
                     ),
                     "wire_bytes": len(packet) + CRC_BYTES,
@@ -459,6 +473,9 @@ class DegradedReceiverHybridController:
                     "logical_identity_verified": False,
                     "logical_device_requested": logical_id,
                     "reverse_local_strip_order_requested": (
+                        self.reverse_native_strips_by_logical_receiver[logical_id]
+                    ),
+                    "reverse_host_frame_strip_order": (
                         self.reverse_strips_by_logical_receiver[logical_id]
                     ),
                     "wire_bytes": len(packet) + CRC_BYTES,

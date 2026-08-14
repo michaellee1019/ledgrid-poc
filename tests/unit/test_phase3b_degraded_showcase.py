@@ -1018,12 +1018,15 @@ class ShowcaseRunnerTests(unittest.TestCase):
         configured = transport.configure_logical_identities()
         self.assertEqual(
             [device.reverse_local_strip_order for device in self.controller.devices],
-            list(reverse),
+            [False, False, False, False],
         )
-        self.assertTrue(
+        self.assertFalse(
             configured["devices"]["2"][
                 "reverse_local_strip_order_requested"
             ]
+        )
+        self.assertTrue(
+            configured["devices"]["2"]["reverse_host_frame_strip_order"]
         )
 
         overlay = np.zeros((WALL_PIXELS, 4), dtype=np.uint8)
@@ -1097,6 +1100,10 @@ class ShowcaseRunnerTests(unittest.TestCase):
         status = transport.get_stats()["aggregate"]["local_background"]
         self.assertEqual(
             status["reverse_strips_by_logical_receiver"], list(reverse)
+        )
+        self.assertEqual(
+            status["reverse_native_strips_by_logical_receiver"],
+            [False, False, False, False],
         )
 
     def test_physical_lane_permutation_is_exact(self):
