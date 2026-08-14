@@ -47,7 +47,7 @@ READABLE_DEVICES = (0, 1)
 UNVERIFIED_DEVICES = (2, 3)
 EXPECTED_DEVICE_MAP = ((0, 0), (0, 1), (1, 1), (1, 0))
 EXPECTED_STATUS_VERSION = 4
-WRITE_ONLY_BATCH_SETTLE_SECONDS = 0.010
+WRITE_ONLY_FOREGROUND_SETTLE_SECONDS = 0.050
 EXPECTED_CAPABILITIES = (
     CAPABILITY_STATIC_LOCAL_BACKGROUND
     | CAPABILITY_PRESENTATION_CONTEXT_V1
@@ -308,13 +308,14 @@ class DegradedReceiverHybridController:
                 )
             transfer(bytes(payload))
         # The two-deep SPI slave queue cannot advertise readiness on the
-        # installed no-MISO lane. Large RGBA batches require CRC, digest, and
-        # staging work before the receiver can safely accept the following
-        # commit, so give those packets a conservative settle window. Small
-        # control packets retain the established 1 ms pacing.
+        # installed no-MISO lane. Foreground session/begin/batch/commit work
+        # performs CRC, digest, staging, and authority updates before the
+        # receiver can safely accept the next transaction, so give that whole
+        # command family a conservative settle window. Other small controls
+        # retain the established 1 ms pacing.
         self._sleeper(
-            WRITE_ONLY_BATCH_SETTLE_SECONDS
-            if stage == "foreground patch batch"
+            WRITE_ONLY_FOREGROUND_SETTLE_SECONDS
+            if stage.startswith("foreground ")
             else COMMAND_ACK_POLL_INTERVAL_SECONDS
         )
 
@@ -1305,6 +1306,6 @@ __all__ = [
     "EXPECTED_STATUS_VERSION",
     "READABLE_DEVICES",
     "UNVERIFIED_DEVICES",
-    "WRITE_ONLY_BATCH_SETTLE_SECONDS",
+    "WRITE_ONLY_FOREGROUND_SETTLE_SECONDS",
     "evaluate_degraded_receiver_topology",
 ]

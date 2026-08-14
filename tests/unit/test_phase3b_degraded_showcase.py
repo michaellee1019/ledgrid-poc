@@ -26,7 +26,7 @@ from drivers.spi_controller import (
     MAX_RGBA_PIXELS_PER_BATCH_SPAN,
     OVERLAY_UPDATE_FULL_SNAPSHOT,
 )
-from drivers.degraded_receiver_hybrid import WRITE_ONLY_BATCH_SETTLE_SECONDS
+from drivers.degraded_receiver_hybrid import WRITE_ONLY_FOREGROUND_SETTLE_SECONDS
 from tools.benchmarks.phase3b_degraded_showcase import (
     ClockForegroundSource,
     CONFIRMATION_SCHEMA,
@@ -738,7 +738,7 @@ class ShowcaseRunnerTests(unittest.TestCase):
                restorer=None, controller_factory=None):
         options = dict(source_options or {})
         return Phase3BDegradedShowcase(
-            ShowcaseConfig(duration_seconds=0.21, foreground_poll_hz=10.0),
+            ShowcaseConfig(duration_seconds=0.75, foreground_poll_hz=10.0),
             self.snapshot,
             controller_factory=controller_factory or (lambda: self.controller),
             restore_desired_display=restorer or self._restore,
@@ -826,8 +826,8 @@ class ShowcaseRunnerTests(unittest.TestCase):
                     self.events[position + 1],
                     (
                         "sleep",
-                        WRITE_ONLY_BATCH_SETTLE_SECONDS
-                        if event[0] == "foreground patch batch"
+                        WRITE_ONLY_FOREGROUND_SETTLE_SECONDS
+                        if event[0].startswith("foreground ")
                         else COMMAND_ACK_POLL_INTERVAL_SECONDS,
                     ),
                     (position, event, self.events[position + 1]),
@@ -1079,7 +1079,10 @@ class ShowcaseRunnerTests(unittest.TestCase):
             event[1]
             for event in self.events
             if event[0] == "sleep"
-            and event[1] != COMMAND_ACK_POLL_INTERVAL_SECONDS
+            and event[1] not in (
+                COMMAND_ACK_POLL_INTERVAL_SECONDS,
+                WRITE_ONLY_FOREGROUND_SETTLE_SECONDS,
+            )
         ]
         self.assertTrue(runner_waits)
         self.assertLessEqual(max(runner_waits), 0.02)
