@@ -134,16 +134,31 @@ class PixelChaseAnimation(AnimationBase):
             "plant_globe_mask_path",
         } & new_params.keys():
             self._rebuild_path()
-            for frame in self._frame_buffers:
-                frame.fill(0)
-            self._buffer_pixels = [
-                np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32)
-            ]
-            self._last_output_pixels = np.empty(0, dtype=np.int32)
-            self._last_head_pixels = np.empty(0, dtype=np.int32)
-            self._last_output_pixel = None
+            self._clear_path_presentation()
         # Every exposed parameter affects presentation. Invalidate the source-
         # rate key so a live update is visible without waiting for another step.
+        self._last_step = None
+        self._last_frame = None
+
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Rebuild the diagnostic traversal without altering elapsed-time phase."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._rebuild_path()
+            self._clear_path_presentation()
+
+    def _clear_path_presentation(self) -> None:
+        for frame in self._frame_buffers:
+            frame.fill(0)
+        self._buffer_pixels = [
+            np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32)
+        ]
+        self._last_output_pixels = np.empty(0, dtype=np.int32)
+        self._last_head_pixels = np.empty(0, dtype=np.int32)
+        self._last_output_pixel = None
         self._last_step = None
         self._last_frame = None
 

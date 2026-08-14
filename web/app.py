@@ -21,6 +21,11 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.feature_flags import AnimationPipelineFeatureFlags
+from animation.core.installation_profile_library import InstallationProfileLibrary
+from animation.core.installation_profile_topology import (
+    IDENTITY_INSTALLATION_PROFILE_TOPOLOGY,
+    InstallationProfileTopology,
+)
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.preview_assets import load_catalog, merge_catalogs
@@ -2087,6 +2092,29 @@ class AnimationWebInterface:
                     self.preview_manager.set_plant_aware(status['plant_aware'])
             except ValueError:
                 pass
+        if not self.local_mode and 'installation_profile_digest' in status:
+            selector = getattr(
+                self.preview_manager, 'select_installation_profile', None
+            )
+            if callable(selector):
+                requested_digest = status['installation_profile_digest']
+                try:
+                    selection = selector(requested_digest)
+                except (TypeError, ValueError, RuntimeError) as exc:
+                    # Selection is validate-before-mutation.  Preserve the last
+                    # valid preview authority while still surfacing a useful
+                    # diagnostic on this normalized status response.
+                    status['installation_profile_preview'] = {
+                        'state': 'rejected',
+                        'requested_digest': requested_digest,
+                        'error': str(exc),
+                    }
+                else:
+                    status['installation_profile_preview'] = {
+                        'state': 'selected',
+                        'requested_digest': requested_digest,
+                        'selection': selection,
+                    }
         return led_info
 
     def _status_payload(self, decode_frame: bool = False) -> Dict[str, Any]:
@@ -2223,19 +2251,32 @@ def create_app(control_channel: FileControlChannel = None,
                animation_speed_scale: float = DEFAULT_ANIMATION_SPEED_SCALE,
                plant_aware: bool = DEFAULT_PLANT_AWARE,
                release_id: Optional[str] = None,
-               feature_flags: Optional[AnimationPipelineFeatureFlags] = None):
+               feature_flags: Optional[AnimationPipelineFeatureFlags] = None,
+               installation_profile_topology: InstallationProfileTopology = (
+                   IDENTITY_INSTALLATION_PROFILE_TOPOLOGY
+               ),
+               project_root: Optional[Path] = None):
     """Factory function to create the web application"""
     if control_channel is None:
         control_channel = FileControlChannel()
 
     # Preview-only controller keeps renderer and plugin listing in this process
     preview_controller = PreviewLEDController(strips, leds_per_strip)
+    preview_project_root = (
+        Path(project_root)
+        if project_root is not None
+        else Path(__file__).resolve().parents[1]
+    )
 
     # Create animation manager (preview only, no hardware access)
     manager_kwargs: Dict[str, Any] = {
         'plugins_dir': animations_dir,
         'animation_speed_scale': animation_speed_scale,
         'plant_aware': plant_aware,
+        'installation_profile_library': InstallationProfileLibrary(
+            preview_project_root / 'installation_profile_library'
+        ),
+        'installation_profile_topology': installation_profile_topology,
         'auto_start': False,
     }
     if feature_flags is not None:

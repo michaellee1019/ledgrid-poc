@@ -214,6 +214,16 @@ class LivingEcosystemAnimation(AnimationBase):
             self._reset_world(self._cycle)
         self._last_render_elapsed = None
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Refresh habitat masks without reseeding or resetting the ecosystem."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._refresh_plant_habitat()
+        self._last_render_elapsed = None
+
     def _population_limits(self) -> Tuple[int, int]:
         density = float(np.clip(self.params.get("creature_density", 1.0), .25, 2.0))
         grazers = max(8, min(60, round(min(30, self.width * .95) * density)))

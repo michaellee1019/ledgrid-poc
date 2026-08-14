@@ -53,6 +53,15 @@ class StripOrderAnimation(AnimationBase):
             print(f"   Strips: {controller.strip_count}")
             print(f"   LEDs per strip: {controller.leds_per_strip}")
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Force the active diagnostic strip to redraw against new geometry."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._plant_render_key = None
+
     def _white(self):
         brightness = float(self.params.get('brightness', 0.5))
         level = max(0, min(255, int(255 * brightness)))

@@ -63,6 +63,18 @@ class GradientAnimation(AnimationBase):
         self._plant_position_cache.clear()
         self._plant_composition_cache.clear()
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Drop only geometry-derived/static presentation caches."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._plant_position_cache.clear()
+            self._plant_composition_cache.clear()
+            self._last_static_key = None
+            self._last_frame = None
+
     def generate_frame(self, time_elapsed: float, frame_count: int):
         direction = str(self.params.get("direction", "vertical")).lower()
         if direction not in {"horizontal", "vertical", "diagonal"}:

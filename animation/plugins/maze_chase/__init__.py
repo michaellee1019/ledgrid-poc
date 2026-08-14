@@ -286,6 +286,33 @@ class MazeChaseAnimation(AnimationBase):
                 placed.add(self._nearest_visible_cell(origin, unavailable | placed))
         return placed
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Refresh future maze/reset plans without moving active actors."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._configure_plant_maze()
+            self.initial_pellets = {
+                cell
+                for cell in self.walkable
+                if cell not in self.GHOST_SPAWNS
+                and cell != self.PLAYER_SPAWN
+                and cell not in self._plant_occluded_cells
+            }
+            authored = {
+                (row, col)
+                for row, line in enumerate(MAZE)
+                for col, value in enumerate(line)
+                if value == "o"
+            }
+            self.initial_energizers = self._place_energizers(authored)
+            self.initial_pellets -= self.initial_energizers
+            self.fruit_spawn = self._nearest_visible_cell((14, 7))
+        self.last_render_elapsed = None
+        self.last_rendered_frame = None
+
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
         schema.update({

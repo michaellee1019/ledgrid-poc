@@ -467,6 +467,16 @@ class AsciiDropAnimation(AnimationBase):
             self._refresh_plant_geometry()
             self._last_render_key = None
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Refresh managed geometry without advancing falling characters."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._refresh_plant_geometry()
+        self._last_render_key = None
+
     def generate_frame(self, time_elapsed: float, frame_count: int):
         now = max(0.0, float(time_elapsed))
         dt = 0.0 if self._last_time is None else max(0.0, min(0.25, now - self._last_time))

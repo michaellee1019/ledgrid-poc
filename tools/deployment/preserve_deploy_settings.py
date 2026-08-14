@@ -694,6 +694,8 @@ def restore(
             if (
                 status.get("last_command_id") == command["command_id"]
                 and power_matches
+                and status.get("installation_profile_digest")
+                == state["installation_profile_digest"]
                 and (
                     not state.get("power", True)
                     or (
@@ -714,6 +716,9 @@ def restore(
                     "vibe": expected_vibe,
                     "vibe_fallback": expect_diagnostic,
                     "scene_fallback": state.get("scene_fallback_reason"),
+                    "installation_profile_digest": state[
+                        "installation_profile_digest"
+                    ],
                 }
             time.sleep(0.1)
         raise RuntimeError(

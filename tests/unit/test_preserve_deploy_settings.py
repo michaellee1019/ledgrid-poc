@@ -605,6 +605,7 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                         "last_command_id": command["command_id"],
                         "current_animation": "compiled_rainbow",
                         "is_running": True,
+                        "installation_profile_digest": "0" * 64,
                         "scene_state": scene,
                         "scene": {"provider_mode": "receiver_hybrid"},
                         "receiver_hybrid": {
@@ -637,6 +638,58 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             self.assertEqual(len(observed), 1)
             self.assertEqual(observed[0]["action"], "restore_display_state")
             self.assertEqual(observed[0]["data"]["state"]["scene"], scene)
+            self.assertEqual(
+                observed[0]["data"]["state"]["installation_profile_digest"],
+                "0" * 64,
+            )
+            self.assertEqual(
+                restored["installation_profile_digest"], "0" * 64
+            )
+
+    def test_desired_restore_rejects_matching_status_with_wrong_profile_digest(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            status_path = root / "status.json"
+            control_path = root / "control.json"
+            state_path = root / "state.json"
+            selected_digest = "a" * 64
+            wrong_digest = "b" * 64
+            save_status({
+                "is_running": True,
+                "current_animation": "rainbow",
+                "animation_info": {"current_params": {"speed": 0.8}},
+                "installation_profile_digest": selected_digest,
+            }, root / "presets", state_path)
+            desired = load_saved_state(state_path)
+            status_path.write_text(json.dumps({"updated_at": 1}))
+
+            def simulate_controller():
+                time.sleep(0.03)
+                status_path.write_text(json.dumps({"updated_at": time.time()}))
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
+                    if not control_path.exists():
+                        time.sleep(0.01)
+                        continue
+                    command = json.loads(control_path.read_text())
+                    status_path.write_text(json.dumps({
+                        "updated_at": time.time(),
+                        "last_command_id": command["command_id"],
+                        "current_animation": "rainbow",
+                        "is_running": True,
+                        "scene_state": desired["scene"],
+                        "vibe": {"state": desired["vibe"]},
+                        "installation_profile_digest": wrong_digest,
+                    }))
+                    return
+
+            controller = threading.Thread(target=simulate_controller)
+            controller.start()
+            with self.assertRaisesRegex(
+                RuntimeError, "did not restore desired display"
+            ):
+                restore(status_path, control_path, state_path, 0.2, root=root)
+            controller.join()
 
     def test_native_restore_proof_requires_exact_scene_and_degraded_readable_evidence(self):
         with tempfile.TemporaryDirectory() as temporary_dir:

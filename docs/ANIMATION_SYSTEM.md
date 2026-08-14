@@ -255,6 +255,27 @@ The base schema also supplies `plant_clearance`, `plant_mask_path`, and
 `get_plant_masks()`, including per-layer edges, distance/normal fields, and the
 seven ordered globe-region masks.
 
+The manager may instead select a content-addressed installation profile from
+the target-owned `installation_profile_library/`. A nonzero saved digest is
+strictly resolved before controller construction or live selection; the
+64-character all-zero digest keeps the legacy JSON mask path and does not touch
+the library filesystem. The selected global 32x138 geometry is immutable and is
+shared by reference through live, composed, receiver-foreground, and preview
+presentation contexts. Status exposes the selected digest, revision, compact
+view metadata, and the independently named topology fields. The ordinary
+`get_plant_masks(radius)` override remains supported: it caches one immutable
+clearance layer derived from the profile distance field and shares all other
+managed arrays.
+
+A live profile change is presentation-only. `AnimationBase` invalidates its
+mask and framework-optics caches, and a plugin that projects or plans from
+`get_plant_masks()` must refresh that derived cache from
+`on_presentation_context_changed(old, new)` when installation-profile identity
+changes. That hook may invalidate future routing/layout work, but must preserve
+the plugin instance, authored parameters, current semantic state, elapsed-time
+state, and RNG stream. Profile selection never sends receiver commands in this
+host-runtime phase.
+
 Keep foliage, globes, their union, and clearance-expanded obstacles semantically
 separate. Interactive simulations can use them for collision and routing;
 visual effects can use them as masks or accent layers. An empty active state

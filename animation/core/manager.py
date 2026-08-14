@@ -26,6 +26,16 @@ from animation.core.compositing import (
 )
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.feature_flags import AnimationPipelineFeatureFlags
+from animation.core.installation_profile_library import InstallationProfileLibrary
+from animation.core.installation_profile_runtime import (
+    EMPTY_INSTALLATION_PROFILE_DIGEST,
+    InstallationProfileSelection,
+    InstallationProfileRuntimeError,
+)
+from animation.core.installation_profile_topology import (
+    IDENTITY_INSTALLATION_PROFILE_TOPOLOGY,
+    InstallationProfileTopology,
+)
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.receiver_presentation import (
     ReceiverPresentationContext,
@@ -154,6 +164,11 @@ class AnimationManager:
                  default_animation_config: Optional[Dict[str, Any]] = None,
                  default_animation_preset: Optional[Dict[str, Any]] = None,
                  feature_flags: Optional[Any] = None,
+                 installation_profile_library: Optional[InstallationProfileLibrary] = None,
+                 installation_profile_digest: Optional[str] = None,
+                 installation_profile_topology: InstallationProfileTopology = (
+                     IDENTITY_INSTALLATION_PROFILE_TOPOLOGY
+                 ),
                  auto_start: bool = True):
         """
         Initialize animation manager
@@ -165,6 +180,9 @@ class AnimationManager:
             plant_aware: Global plant-aware state applied to every animation
             default_animation: Animation to auto-start on init (None = use DEFAULT_ANIMATION)
             default_animation_config: Parameters to apply to the default animation
+            installation_profile_library: Optional managed profile library
+            installation_profile_digest: Initial managed profile content digest
+            installation_profile_topology: Receiver topology used while resolving
             auto_start: Whether to start the default animation during construction
         """
         self.controller = controller
@@ -230,6 +248,21 @@ class AnimationManager:
         self._receiver_last_status: Optional[Dict[str, Any]] = None
         self._receiver_hybrid_error: Optional[str] = None
         self._receiver_fallback_active = False
+        self._installation_profile_selection_lock = threading.RLock()
+        self._installation_profile_library = installation_profile_library
+        self._installation_profile_topology = installation_profile_topology
+        # Construction resolves and validates an initial digest before plugin
+        # construction or auto-start, so the first managed frame observes the
+        # requested immutable geometry view.
+        installation_profile_selection = InstallationProfileSelection(
+            library=installation_profile_library,
+            topology=installation_profile_topology,
+            selected_digest=installation_profile_digest,
+        )
+        self._validate_installation_profile_geometry(
+            installation_profile_selection.view
+        )
+        self._installation_profile_selection = installation_profile_selection
         self.plant_modifier_state = (
             PlantModifierState.from_payload(plant_modifiers)
             if plant_modifiers is not None
@@ -427,6 +460,128 @@ class AnimationManager:
             self._refresh_receiver_hybrid_context("vibe")
         return self.get_vibe_status()
 
+    def preflight_installation_profile(
+        self, digest_or_none: Optional[str]
+    ) -> Dict[str, Any]:
+        """Resolve a prospective managed profile without changing manager state."""
+        candidate = InstallationProfileSelection(
+            library=self._installation_profile_library,
+            topology=self._installation_profile_topology,
+            selected_digest=digest_or_none,
+        )
+        self._validate_installation_profile_geometry(candidate.view)
+        return candidate.status()
+
+    def select_installation_profile(
+        self, digest_or_none: Optional[str]
+    ) -> Dict[str, Any]:
+        """Select immutable host geometry without disturbing semantic state.
+
+        ``InstallationProfileSelection.select`` resolves the complete managed
+        artifact before mutating its selection, so any exception leaves the
+        prior digest, revision, and runtime view intact.  Receiver activation is
+        deliberately absent from this host-context lane.
+        """
+        with self._installation_profile_guard():
+            return self._select_installation_profile_locked(digest_or_none)
+
+    def _select_installation_profile_locked(
+        self, digest_or_none: Optional[str]
+    ) -> Dict[str, Any]:
+        """Complete one serialized selection and presentation refresh."""
+        current_digest = self._installation_profile_selection.selected_digest
+        requested_empty = digest_or_none in (
+            None, EMPTY_INSTALLATION_PROFILE_DIGEST
+        )
+        if digest_or_none == current_digest or (
+            requested_empty
+            and current_digest == EMPTY_INSTALLATION_PROFILE_DIGEST
+        ):
+            return self._installation_profile_selection.status()
+
+        # Resolve a disposable candidate first so manager geometry and artifact
+        # integrity are proven before changing the active selection.
+        self.preflight_installation_profile(digest_or_none)
+        changed = self._installation_profile_selection.select(digest_or_none)
+        if not changed:
+            return self._installation_profile_selection.status()
+
+        with self._presentation_state_guard():
+            self._presentation_revision += 1
+            self._presentation_refresh_pending = True
+            self._live_presentation_state = self._empty_presentation_state()
+
+        # Profile changes are presentation-only.  Force the next composed
+        # output to carry a complete dirty result while retaining component
+        # identity, simulation clocks, frame counters, and authored parameters.
+        with self._scene_state_guard():
+            for component in (self._scene_background, self._scene_overlay):
+                if component is not None and component.get("animation") is not None:
+                    component["force_changed"] = True
+                    component["grade_state"] = self._empty_presentation_state()
+            self._scene_final_presentation_state = self._empty_presentation_state()
+            self._receiver_foreground_presentation_state = (
+                self._empty_presentation_state()
+            )
+
+        self._refresh_active_presentation_context()
+        self._refresh_preview_presentation_context()
+        return self._installation_profile_selection.status()
+
+    def _installation_profile_guard(self) -> threading.RLock:
+        """Serialize selection through every dependent presentation refresh."""
+        lock = getattr(self, "_installation_profile_selection_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._installation_profile_selection_lock = lock
+        return lock
+
+    def _refresh_preview_presentation_context(self) -> None:
+        """Refresh an existing preview without replacing or advancing it."""
+        lock = getattr(self, "_preview_lock", None)
+        if lock is None:
+            return
+        with lock:
+            session = self._preview_session
+            if not session:
+                return
+            animation = session["animation"]
+            with self._presentation_state_guard():
+                resolved = self._resolved_vibe
+                operator_tempo = self.animation_speed_scale
+            context = self._runtime_context(
+                animation,
+                unscaled_elapsed=session["last_unscaled_elapsed"],
+                scaled_elapsed=session["scaled_elapsed"],
+                frame_index=session["frame_count"],
+                resolved_vibe=resolved,
+                operator_tempo_scale=operator_tempo,
+            )
+            animation.set_presentation_context(context)
+            session["presentation_state"] = self._empty_presentation_state()
+            session["force_refresh"] = True
+
+    def _installation_profile_view(self):
+        selection = getattr(self, "_installation_profile_selection", None)
+        view = None if selection is None else selection.view
+        if view is None:
+            return {}
+        return view
+
+    def _validate_installation_profile_geometry(self, view) -> None:
+        if view is None:
+            return
+        controller_geometry = (
+            int(self.controller.strip_count), int(self.controller.leds_per_strip)
+        )
+        profile_geometry = (int(view.global_width), int(view.height))
+        if controller_geometry != profile_geometry:
+            raise InstallationProfileRuntimeError(
+                "installation profile geometry "
+                f"{profile_geometry[0]}x{profile_geometry[1]} does not match "
+                f"controller geometry {controller_geometry[0]}x{controller_geometry[1]}"
+            )
+
     @staticmethod
     def _animation_authored_speed(animation: AnimationBase) -> float:
         try:
@@ -487,7 +642,7 @@ class AnimationManager:
             effective_time_scale=(
                 authored_speed * vibe_tempo * operator_tempo
             ),
-            installation_profile_view={},
+            installation_profile_view=self._installation_profile_view(),
             plant_modifiers=(
                 self.plant_modifier_state.to_dict()
                 if plant_modifiers is None else plant_modifiers
@@ -2830,6 +2985,17 @@ class AnimationManager:
     
     def get_current_status(self) -> Dict[str, Any]:
         """Get current animation status and performance info"""
+        # A selector holds this guard through presentation invalidation and
+        # context refresh.  Status therefore never publishes a digest whose
+        # corresponding manager refresh is still in flight.
+        with self._installation_profile_guard():
+            installation_profile_digest = (
+                self._installation_profile_selection.selected_digest
+                or EMPTY_INSTALLATION_PROFILE_DIGEST
+            )
+            installation_profile_status = (
+                self._installation_profile_selection.status()
+            )
         mode = (
             'animation' if self.is_running and self._scene_compatibility_mode
             else 'scene' if self.is_running and self._scene_mode
@@ -2855,6 +3021,8 @@ class AnimationManager:
             'uptime': (time.perf_counter() - self.start_time) if self.is_running else 0,
             'target_fps': self.target_fps,
             'animation_speed_scale': self.animation_speed_scale,
+            'installation_profile_digest': installation_profile_digest,
+            'installation_profile': installation_profile_status,
             'feature_flags': self.feature_flags.to_dict(),
             'vibe': self.get_vibe_status(),
             'plant_aware': self.plant_aware,
@@ -3277,6 +3445,7 @@ class AnimationManager:
                 profile=resolved.profile,
                 changed=changed,
                 state=session['presentation_state'],
+                force_refresh=bool(session.pop('force_refresh', False)),
             )
             if isinstance(frame_data, np.ndarray):
                 frame_data = frame_data.tolist()

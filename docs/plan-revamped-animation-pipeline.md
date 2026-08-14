@@ -1352,8 +1352,10 @@ Phase 3B canaries, the explicitly degraded four-wall showcase, installed
 orientation correction, ordinary deployment restoration, and camera evidence
 have passed without claiming release acceptance for write-only receivers 2/3.
 Phase 3C's deterministic portable profile compiler/codec, checked-in golden,
-and identity/installed topology round trip are complete. Profile library/runtime
-work and strict physical acceptance remain open**.
+identity/installed topology round trip, and bounded managed profile library are
+complete. Read-only host runtime/preview selection is implementation-complete
+and awaiting its clean deploy receipt; receiver runtime work and strict physical
+acceptance remain open**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -3015,7 +3017,8 @@ work may proceed before the SPI1 repair. Strict profile activation, digest
 agreement, receiver timing, and physical seam acceptance remain release-blocked.
 
 Implementation status (2026-08-14): **portable deterministic-profile and
-bounded host-library/fake-transaction slices complete; host-context wiring,
+bounded host-library/fake-transaction slices complete; read-only host-context
+wiring is implementation-complete and awaiting its clean deploy receipt;
 receiver runtime, optics, and physical acceptance remain open**.
 The v1 binary schema, digest domains, category/region encodings, fixed global
 derivatives, receiver-view orientation, strict decoder bounds, and 65,535-byte
@@ -3090,12 +3093,79 @@ receiver, or wall timing evidence):
   passed. The plan includes both new core modules in immutable app inputs while
   ordinary clean `just deploy` remains the authoritative command.
 
-The stop boundary remains strict: no profile SPI command, firmware cache,
-runtime activation/status, host-context selection, dashboard control, optic, or
-installed-wall mutation was added. The next bounded portable Phase 3C lane is
-managed-profile selection into read-only host runtime/preview context with
-digest-aware cache invalidation; real receiver staging and physical acceptance
-remain separate later gates.
+The host-library slice kept its strict stop boundary: it added no profile SPI
+command, firmware cache, runtime activation/status, dashboard control, optic,
+or installed-wall mutation. The following bounded host-context lane is now
+implemented below; real receiver staging and physical acceptance remain
+separate later gates.
+
+Current bounded host-context slice (started 2026-08-14): **implementation and
+portable acceptance complete; clean ordinary deploy pending**. The
+selected content digest resolves only through the existing Pi-authoritative
+managed library. The resolved global geometry becomes an immutable Python
+runtime/preview view; the already-generated receiver slices remain reserved for
+later ABI/runtime work and are not staged or activated here.
+
+- [x] Preserve the all-zero digest as the explicit no-profile compatibility
+  value and keep the library filesystem untouched when it is selected.
+- [x] Resolve a nonzero digest and topology completely before changing manager,
+  scene, preview, persistence, or output state; a failed switch must retain the
+  exact prior selection and live component identities.
+- [x] Supply the same immutable managed global view to single-animation,
+  composed background/overlay, receiver-hybrid foreground, ordinary preview,
+  and scene-preview runtime contexts without copying the 32×138 arrays per
+  frame.
+- [x] Invalidate only presentation/geometry caches on a live selection change.
+  Do not reconstruct components, reset or advance simulation clocks, consume
+  RNG, mutate authored parameters, or emit receiver profile/context traffic.
+- [x] Restore the persisted digest through controller startup and aggregate
+  desired-display validation, and synchronize the preview process from live
+  controller status without adding a mutating dashboard control.
+- [x] Prove artifact-exact managed categories, clearance, edges, distance, and
+  regions; legacy parity for those shared fields; one-time Q0.7 normal
+  dequantization; immutable array reachability; explicit-clearance reuse;
+  same-digest idempotence; failed-switch atomicity; live/preview continuity;
+  topology-domain separation; persistence status; and no receiver mutation.
+- [ ] Pass `just test`, explicit rendering acceptance, fixture regeneration,
+  whitespace checks, ordinary deploy dry-run/plan, and a clean ordinary
+  `just deploy` before closing the slice.
+
+Portable host-context evidence captured on 2026-08-14 (development Mac; no new
+receiver profile/runtime or physical-wall evidence):
+
+- `InstallationProfileRuntimeView` exposes one immutable global 32×138
+  `PlantMaskGeometry` plus compact digest/version/topology identity. All logical,
+  flat, derivative, and seven ordered region arrays reject writes. Runtime
+  contexts retain that view by reference; explicit clearance variants derive
+  once from the frozen distance field, share every other array, and are cached.
+- `InstallationProfileSelection` and the manager serialize resolve-before-swap,
+  presentation invalidation, live/preview context refresh, and coherent status.
+  Missing, malformed, corrupt, wrong-geometry, and same-digest cases retain the
+  exact prior selection. Competing selectors expose only whole immutable views.
+- Live, fixed-scene, receiver-hybrid foreground, ordinary-preview, and
+  scene-preview tests retain component identity, authored parameters, world
+  state, clocks, and RNG. A 17-plugin derived-cache audit refreshes only the
+  affected geometry/layout/render caches and future plans. It also caught and
+  preserved direct-vs-managed first-frame byte parity for classification-only
+  plugins.
+- Startup resolves a nonzero persisted digest before controller construction;
+  aggregate restore preflights it with the full desired display, selects it
+  before scene start, and rolls back on scene rejection. Deploy restore now
+  requires the controller-reported digest to equal the saved digest. Live web
+  status synchronizes the separate preview manager from the same shared root;
+  no web, IPC, transport, or receiver profile mutator exists.
+- Integrated focused acceptance passed 73 tests and 64 subtests. The new core
+  runtime module reports 96 percent branch coverage. `just test` passed 1,188
+  Python/plugin tests and 1,722 subtests, 23 rendering tests and 3 subtests, the
+  4 ms rendering benchmark, 60 native firmware tests, both production/canary
+  ESP32-S3 builds, and 171 deployment tests with 90 subtests. The full-gate
+  highest 32×138 p95 was 3.3359 ms for `snake-max-density`; these are Mac proxy
+  numbers, not Raspberry Pi timings.
+- The explicit `just test-rendering` rerun passed the same 23 tests and 4 ms gate
+  with a highest p95 of 3.3223 ms. Golden `--check`, compile checks,
+  `git diff --check`, `just --dry-run deploy`, and read-only `just deploy-plan`
+  passed. A clean ordinary deploy receipt remains the sole open item for this
+  bounded slice.
 
 - [x] Freeze the portable v1 header, section table, section vocabulary,
   canonical ordering, CRC/content/calibration digests, global-derivative rules,
@@ -3122,7 +3192,7 @@ remain separate later gates.
 - Add receiver staging/activation, digest/status, and rollback for profiles
   independently of native backgrounds, using the completed Pi library and fake
   transaction contract.
-- Wire the completed read-only managed profile views through host runtime and
+- [x] Wire the completed read-only managed profile views through host runtime and
   preview context, then reserve the native ABI view.
 - Implement the existing universal `hue_shift` modifier after composition as the
   first receiver-safe optic. Separately exercise read-only foliage/globe geometry

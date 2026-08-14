@@ -426,6 +426,17 @@ class ConwayLifeAnimation(AnimationBase):
         if spawn_glider:
             self._spawn_glider(count=int(self.params.get("glider_count", 3) or 3))
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Refresh managed habitat and the derived next-state plan only."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._refresh_plant_habitat()
+            self._compute_next_state()
+        self._last_frame = None
+
     def get_runtime_stats(self) -> Dict[str, Any]:
         stats = {
             "generation": self.generation,

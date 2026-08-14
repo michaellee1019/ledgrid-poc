@@ -179,6 +179,13 @@ class SnakeAnimation(AnimationBase):
 
     def on_presentation_context_changed(self, old_context, new_context) -> None:
         """Force a repaint while retaining game, RNG, and event state exactly."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._refresh_plant_geometry()
+            self._build_walls_and_portals()
         self.last_render_elapsed = None
 
     def get_runtime_stats(self) -> Dict[str, Any]:

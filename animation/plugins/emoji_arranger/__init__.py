@@ -208,6 +208,15 @@ class EmojiArrangerAnimation(AnimationBase):
 
         return pixel_colors
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Drop only the mask-derived text layout on profile changes."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._plant_layout_key = None
+
     def _plant_aware_layout(
         self,
         lines: Sequence[Sequence[str]],

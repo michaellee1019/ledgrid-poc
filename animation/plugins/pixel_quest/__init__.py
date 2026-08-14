@@ -140,6 +140,15 @@ class PixelQuestAnimation(AnimationBase):
             self._reset_run()
         self.last_render_elapsed = None
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Redraw mask-aware landmarks without advancing the quest clock."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self.last_render_elapsed = None
+
     def _reset_session_counters(self):
         self.session_defeated = 0
         self.session_bosses = 0

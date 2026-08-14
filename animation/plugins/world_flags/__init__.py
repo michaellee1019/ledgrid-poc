@@ -115,6 +115,16 @@ class WorldFlagsAnimation(AnimationBase):
         if str(self.params.get("map_path")) != previous_path:
             self._load_map()
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Invalidate mask-aware banner placement, retaining parade time."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._plant_canvas_key = None
+            self._plant_canvas = None
+
     def generate_frame(self, time_elapsed: float, frame_count: int):
         single = str(self.params.get("display_mode", "parade")).lower() == "single"
         if self.plant_aware_enabled():

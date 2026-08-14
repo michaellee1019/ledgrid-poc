@@ -235,6 +235,18 @@ class TetrisAnimation(AnimationBase):
         self.last_render_elapsed = None
         self.next_render_elapsed = None
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Invalidate geometry-backed plans without touching the active board."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._tetris_plant_masks = None
+            self.plans_dirty = True
+        self.last_render_elapsed = None
+        self.next_render_elapsed = None
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> Any:
         render_fps = self._effective_render_fps()
         if (

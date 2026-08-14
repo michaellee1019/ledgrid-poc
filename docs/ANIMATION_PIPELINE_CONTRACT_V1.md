@@ -321,6 +321,55 @@ explicit no-active state. Fake status may report `healthy`, `no_active`,
 transaction or be reported healthy. This vocabulary reserves no command IDs,
 wire bytes, receiver storage layout, or runtime status fields.
 
+### Phase 3C host runtime and preview selection contract
+
+The host owns one installation-profile selection independently of scene, vibe,
+plant modifiers, and output state. The explicit compatibility selection is the
+64-character all-zero digest. It resolves to no managed view, retains the
+legacy JSON-backed `PlantMaskGeometry` path, and must not create or mutate the
+managed-library filesystem. Every nonzero selection is a lowercase SHA-256
+content digest and resolves only through the Pi-authoritative managed library.
+
+Resolution, artifact validation, topology slicing, 32x138 controller-geometry
+validation, and immutable runtime-view construction all complete before the
+active selection changes. A rejection leaves the prior digest, selection
+revision, runtime view, scene components, preview session, authored parameters,
+and output state unchanged. Re-selecting the active digest is idempotent and
+does not advance the selection or presentation revision.
+
+The global Python runtime view contains compact profile/calibration/version/
+geometry identity, the separately named topology, and one immutable
+`PlantMaskGeometry`. All logical, flat, edge, distance, normal, and seven
+ordered region arrays are non-writeable. Runtime contexts pass that view by
+reference to single animations, fixed-scene components, receiver-hybrid Python
+foregrounds, ordinary previews, and scene previews; they do not copy or
+serialize the 32x138 arrays per frame. The managed category, clearance, edge,
+distance, and region fields reproduce the portable artifact exactly. Signed
+Q0.7 normals are dequantized once to Python float fields at this boundary. An
+explicit `get_plant_masks(radius)` call derives only a non-writeable clearance
+layer from the frozen global distance field, caches it, and shares every other
+managed array; the default call returns the artifact's recorded radius exactly.
+
+Presentation identity includes the profile and calibration digests, format and
+geometry, physical lane order, and native receiver direction. Transport routes
+and host-frame direction remain status-visible but are deliberately excluded:
+they do not change global host geometry or receiver-profile bytes. A semantic
+profile/topology change invalidates base and plugin-owned presentation/geometry
+caches and future plans without replacing components, changing authored
+parameters, advancing simulation clocks, or consuming RNG. It forces the next
+host result dirty, but emits no receiver profile/context command and performs no
+receiver staging or activation.
+
+Persisted desired display state restores the profile as part of aggregate
+validation. Startup preflights any nonzero saved digest before controller or
+animation construction. Aggregate restore selects the validated profile before
+scene start so the first frame sees the correct geometry, and restores the prior
+selection if scene start rejects. The web preview process uses its own manager
+against the same target-owned library root, follows the live status digest, and
+retains its last valid view while reporting a rejected synchronization. There is
+no installation-profile mutator in the dashboard or runtime IPC command set in
+this slice.
+
 Dirty ranges are sorted, non-overlapping, half-open ranges. Movement/removal
 uses the union of old and new coverage. A complete clear covers every formerly
 covered pixel even when the new overlay contains no nonzero alpha.

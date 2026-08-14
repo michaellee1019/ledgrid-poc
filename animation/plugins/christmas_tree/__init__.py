@@ -124,6 +124,25 @@ class ChristmasTreeAnimation(AnimationBase):
         } & new_params.keys():
             self._layout_cache_key = ()
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Rebuild static placement while preserving snowfall and RNG state."""
+        if old_context is None:
+            # Keep first-render behavior byte-identical to direct/headless use.
+            # The ordinary lazy build will consume the authored layout stream.
+            self._layout_cache_key = ()
+            return
+        if (
+            old_context.installation_profile_identity
+            == new_context.installation_profile_identity
+        ):
+            return
+        snowflakes = [dict(item) for item in self.snowflakes]
+        simulation_rng = self.random
+        self._layout_cache_key = ()
+        self._build_static_elements()
+        self.snowflakes = snowflakes
+        self.random = simulation_rng
+
     def generate_frame(self, time_elapsed: float, frame_count: int):
         self._build_static_elements()
         self._render_background(time_elapsed)

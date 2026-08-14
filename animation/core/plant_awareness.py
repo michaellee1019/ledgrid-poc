@@ -134,11 +134,15 @@ class PlantMaskGeometry:
 
     @property
     def safe(self) -> np.ndarray:
-        return ~self.clearance
+        safe = ~self.clearance
+        safe.setflags(write=False)
+        return safe
 
     @property
     def safe_flat(self) -> np.ndarray:
-        return ~self.clearance_flat
+        safe = ~self.clearance_flat
+        safe.setflags(write=False)
+        return safe
 
 
 def plant_parameter_schema() -> Mapping[str, Mapping[str, Any]]:

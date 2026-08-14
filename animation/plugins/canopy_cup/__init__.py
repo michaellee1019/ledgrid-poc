@@ -323,6 +323,19 @@ class CanopyCupAnimation(AnimationBase):
         self._last_render_tick = None
         self.last_rendered_frame = None
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Refresh track geometry without restarting the tournament."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._refresh_plant_geometry(force=True)
+            self._revalidate_current_course()
+        self.last_render_elapsed = None
+        self._last_render_tick = None
+        self.last_rendered_frame = None
+
     def _begin_tournament(self, *, reset_clock: bool) -> None:
         self.game_rng = random.Random(self.seed + self.tournament_index * 1_000_003)
         self.points = [0, 0, 0, 0]

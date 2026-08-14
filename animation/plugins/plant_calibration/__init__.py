@@ -134,6 +134,15 @@ class PlantCalibrationAnimation(AnimationBase):
         # All patterns are static and parameterized; rebuild if values change.
         self._rebuild_pattern_frames()
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Rebuild only the mask-derived presentation frames for a new profile."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._rebuild_pattern_frames()
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> List[Color]:
         if not self._pattern_frames:
             self._rebuild_pattern_frames()

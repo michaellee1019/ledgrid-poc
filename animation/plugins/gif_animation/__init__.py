@@ -99,6 +99,17 @@ class GifAnimation(AnimationBase):
         if directory_changed or name_changed or index_changed or fit_mode_changed:
             self._load_selected_gif()
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Invalidate mask-composited frames without changing playback time."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._adjusted_frame_cache.clear()
+            self._plant_offset_key = None
+        self._last_output_key = None
+
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
         schema.update({

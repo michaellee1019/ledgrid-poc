@@ -18,6 +18,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from animation.core.manager import AnimationManager
 from animation.core.feature_flags import AnimationPipelineFeatureFlags
+from animation.core.installation_profile_library import InstallationProfileLibrary
+from animation.core.installation_profile_runtime import (
+    EMPTY_INSTALLATION_PROFILE_DIGEST,
+)
+from animation.core.installation_profile_topology import (
+    IDENTITY_INSTALLATION_PROFILE_TOPOLOGY,
+    INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
+    InstallationProfileTopology,
+)
 from ipc.control_channel import FileControlChannel
 from ipc.runtime_control import (
     restore_display_state as _restore_display_state,
@@ -214,6 +223,83 @@ def _receiver_hybrid_runtime_settings(args):
     )
 
 
+def installation_profile_topology_for_runtime(
+    receiver_hybrid_config,
+) -> InstallationProfileTopology:
+    """Build profile topology without collapsing its four wiring domains."""
+
+    identity = IDENTITY_INSTALLATION_PROFILE_TOPOLOGY
+    installed = INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
+    physical_lane_order = tuple(_receiver_hybrid_config_value(
+        receiver_hybrid_config,
+        "physical_lane_order",
+        identity.physical_lane_order,
+    ))
+    reverse_host_strips = tuple(_receiver_hybrid_config_value(
+        receiver_hybrid_config,
+        "reverse_strips_by_logical_receiver",
+        identity.reverse_host_strips_by_logical_receiver,
+    ))
+    reverse_native_strips = tuple(_receiver_hybrid_config_value(
+        receiver_hybrid_config,
+        "reverse_native_strips_by_logical_receiver",
+        identity.reverse_native_strips_by_logical_receiver,
+    ))
+    uses_installed_wiring = bool(_receiver_hybrid_config_value(
+        receiver_hybrid_config, "enabled", False
+    )) or (
+        physical_lane_order != identity.physical_lane_order
+        or reverse_host_strips != identity.reverse_host_strips_by_logical_receiver
+        or reverse_native_strips
+        != identity.reverse_native_strips_by_logical_receiver
+    )
+    default_transport_routes = (
+        installed.logical_to_transport_routes
+        if uses_installed_wiring
+        else identity.logical_to_transport_routes
+    )
+    transport_routes = tuple(_receiver_hybrid_config_value(
+        receiver_hybrid_config,
+        "logical_to_transport_routes",
+        default_transport_routes,
+    ))
+    return InstallationProfileTopology(
+        # Transport routing remains an independently named hardware authority;
+        # it is never copied from physical lane order or either direction map.
+        logical_to_transport_routes=transport_routes,
+        physical_lane_order=physical_lane_order,
+        reverse_host_strips_by_logical_receiver=reverse_host_strips,
+        reverse_native_strips_by_logical_receiver=reverse_native_strips,
+    )
+
+
+def installation_profile_startup_context(
+    project_root: Path, receiver_hybrid_config, saved_state
+):
+    """Resolve persisted profile authority before controller construction."""
+
+    topology = installation_profile_topology_for_runtime(receiver_hybrid_config)
+    library = InstallationProfileLibrary(
+        project_root / "installation_profile_library"
+    )
+    digest = (
+        saved_state.get(
+            "installation_profile_digest", EMPTY_INSTALLATION_PROFILE_DIGEST
+        )
+        if isinstance(saved_state, dict)
+        else EMPTY_INSTALLATION_PROFILE_DIGEST
+    )
+    if digest != EMPTY_INSTALLATION_PROFILE_DIGEST:
+        try:
+            library.resolve(digest, topology)
+        except (TypeError, ValueError, RuntimeError) as exc:
+            raise RuntimeError(
+                f"saved installation profile {digest!r} is unavailable or "
+                f"invalid: {exc}"
+            ) from exc
+    return library, digest, topology
+
+
 def select_receiver_hybrid_controller(controller, receiver_hybrid_config):
     """Apply an explicitly enabled transport policy to a controller."""
 
@@ -275,6 +361,13 @@ def run_controller_mode(args):
     except RuntimeError as exc:
         print(f"ℹ️ No usable saved animation state: {exc}")
 
+    project_root = Path(__file__).resolve().parents[1]
+    installation_profile_library, installation_profile_digest, (
+        installation_profile_topology
+    ) = installation_profile_startup_context(
+        project_root, receiver_hybrid_config, saved_state
+    )
+
     # Determine if we're using multi-device or single-device controller
     # Multi-device controller expects total strips, single-device expects strips per device
     if hasattr(LEDController, '__name__') and 'Multi' in LEDController.__name__:
@@ -326,6 +419,9 @@ def run_controller_mode(args):
             saved_state.get('current_preset') if saved_state else None
         ),
         feature_flags=feature_flags,
+        installation_profile_library=installation_profile_library,
+        installation_profile_digest=installation_profile_digest,
+        installation_profile_topology=installation_profile_topology,
         auto_start=not bool(saved_state and saved_state.get('scene')),
     )
     manager.target_fps = int(saved_state.get('target_fps', args.target_fps)) if saved_state else args.target_fps
@@ -435,7 +531,7 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
     elif action == 'restore_display_state':
         try:
             return _restore_display_state(manager, data.get("state"))
-        except (TypeError, ValueError) as exc:
+        except (RuntimeError, TypeError, ValueError) as exc:
             print(f"⚠️ Invalid desired display state: {exc}")
             return False
     elif action == 'stop':
@@ -600,6 +696,9 @@ def run_web_mode(args):
         animations_dir=args.animations_dir,
         animation_speed_scale=args.animation_speed_scale,
         feature_flags=feature_flags,
+        installation_profile_topology=installation_profile_topology_for_runtime(
+            receiver_hybrid_config
+        ),
         release_id=args.release_id,
     )
 

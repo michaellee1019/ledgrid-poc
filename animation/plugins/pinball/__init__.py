@@ -125,6 +125,20 @@ class PinballAnimation(AnimationBase):
                 self._prepare_plant_table()
         self.last_render_elapsed = None
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Refresh the table projection without moving the active ball."""
+        if (
+            old_context is None
+            or old_context.installation_profile_identity
+            != new_context.installation_profile_identity
+        ):
+            self._plant_geometry_identity = None
+            self._plant_regions.clear()
+            self._plant_region_bounds.clear()
+            if self._plant_effects_enabled():
+                self._prepare_plant_table()
+        self.last_render_elapsed = None
+
     def get_parameter_schema(self) -> Dict[str, Dict[str, Any]]:
         schema = super().get_parameter_schema()
         schema.update({

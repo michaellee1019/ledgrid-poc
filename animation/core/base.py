@@ -7,13 +7,14 @@ import time
 import colorsys
 import threading
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import List, Tuple, Dict, Any, Optional, Union, Mapping
 
 import numpy as np
 
 from animation.core.presentation_contracts import AnimationRuntimeContext, TimingAdapter
+from animation.core.installation_profile_runtime import InstallationProfileRuntimeView
 
 from animation.core.plant_awareness import (
     FRAMEWORK_VISUAL_MODIFIERS, PlantMaskCache, PlantMaskGeometry,
@@ -66,6 +67,9 @@ class AnimationBase(ABC):
         self._frame_buffer_geometry: Optional[Tuple[int, int]] = None
         self._hsv_scratch: Dict[str, np.ndarray] = {}
         self._plant_mask_cache = PlantMaskCache(self)
+        self._managed_plant_mask_variants: Dict[
+            Tuple[Tuple[Any, ...], int], PlantMaskGeometry
+        ] = {}
         self._framework_modifier_buffers: List[np.ndarray] = []
         self._framework_modifier_buffer_index = 0
         self._framework_modifier_geometry: Optional[int] = None
@@ -147,6 +151,14 @@ class AnimationBase(ABC):
             old = self._presentation_context
             self._presentation_context = context
             if old is None or old.presentation_identity != context.presentation_identity:
+                self._framework_modifier_cached_frame = None
+                if (
+                    old is None
+                    or old.installation_profile_identity
+                    != context.installation_profile_identity
+                ):
+                    self._plant_mask_cache.invalidate()
+                    self._managed_plant_mask_variants.clear()
                 self.on_presentation_context_changed(old, context)
 
     def on_presentation_context_changed(
@@ -263,6 +275,7 @@ class AnimationBase(ABC):
             'plant_clearance', 'plant_mask_path', 'plant_globe_mask_path'
         } & new_params.keys():
             self._plant_mask_cache.invalidate()
+            self._managed_plant_mask_variants.clear()
 
     def plant_aware_enabled(self) -> bool:
         """Return whether the animation's opt-in semantic mask behavior is active."""
@@ -397,7 +410,35 @@ class AnimationBase(ABC):
         return output
 
     def get_plant_masks(self, clearance: Optional[int] = None) -> PlantMaskGeometry:
-        """Load and cache calibrated foliage/globe geometry on first use."""
+        """Use selected global geometry, or the legacy JSON cache by default."""
+        context = self._presentation_context
+        if context is not None and isinstance(
+            context.installation_profile_view, InstallationProfileRuntimeView
+        ):
+            view = context.installation_profile_view
+            masks = view.plant_masks
+            if clearance is None:
+                return masks
+            radius = max(0, int(clearance))
+            if radius == view.clearance_radius:
+                return masks
+            key = (view.presentation_identity, radius)
+            cached = self._managed_plant_mask_variants.get(key)
+            if cached is not None:
+                return cached
+            # The portable artifact's global Chebyshev distance field supports
+            # the legacy explicit-clearance API without rereading JSON or
+            # recomputing derivatives. Cache the single derived boolean layer;
+            # every other immutable profile array remains shared by reference.
+            resolved_clearance = np.asarray(masks.distance <= radius, dtype=np.bool_)
+            resolved_clearance.setflags(write=False)
+            cached = replace(
+                masks,
+                clearance=resolved_clearance,
+                clearance_flat=resolved_clearance.reshape(-1),
+            )
+            self._managed_plant_mask_variants[key] = cached
+            return cached
         return self._plant_mask_cache.get(clearance)
     
     def get_info(self) -> Dict[str, Any]:

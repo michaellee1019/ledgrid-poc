@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from animation.core.installation_profile_runtime import (
+    EMPTY_INSTALLATION_PROFILE_DIGEST,
+)
 from animation.core.plant_awareness import PlantModifierState
 from ipc.scene_contract import (
     DEFAULT_SCENE_PROVIDER_POLICY,
@@ -199,10 +202,46 @@ def restore_display_state(manager: Any, state: dict) -> bool:
     if vibe is not None and not isinstance(vibe, dict):
         raise ValueError("desired display vibe must be a versioned object")
 
-    # Validation is complete.  Scene/power is the first mutation, followed by
-    # independent presentation controls.
-    if power and not start_scene(manager, scene):
-        return False
+    installation_profile_digest = state.get(
+        "installation_profile_digest", EMPTY_INSTALLATION_PROFILE_DIGEST
+    )
+    profile_preflight = getattr(
+        manager, "preflight_installation_profile", None
+    )
+    profile_selector = getattr(manager, "select_installation_profile", None)
+    if callable(profile_preflight):
+        # Resolve the immutable managed artifact together with every other
+        # aggregate validation.  This method is explicitly read-only: no
+        # profile, scene, controller, or receiver state has changed yet.
+        profile_preflight(installation_profile_digest)
+    elif installation_profile_digest != EMPTY_INSTALLATION_PROFILE_DIGEST:
+        raise ValueError(
+            "manager cannot preflight a nonempty installation profile"
+        )
+
+    prior_profile_digest = EMPTY_INSTALLATION_PROFILE_DIGEST
+    current_status = getattr(manager, "get_current_status", None)
+    if callable(current_status):
+        status = current_status()
+        if isinstance(status, dict):
+            prior_profile_digest = status.get(
+                "installation_profile_digest", prior_profile_digest
+            )
+
+    # Validation is complete.  Profile authority changes before scene start so
+    # the first frame receives the resolved view; scene rejection restores the
+    # prior profile rather than leaving a partial aggregate restore.
+    if callable(profile_selector):
+        profile_selector(installation_profile_digest)
+    try:
+        if power and not start_scene(manager, scene):
+            if callable(profile_selector):
+                profile_selector(prior_profile_digest)
+            return False
+    except Exception:
+        if callable(profile_selector):
+            profile_selector(prior_profile_digest)
+        raise
     if not power:
         manager.stop_animation()
     manager.set_plant_modifiers(modifiers)

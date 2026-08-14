@@ -19,6 +19,7 @@ from typing import Any, Mapping, Optional, Tuple
 import numpy as np
 
 from animation.core.compositing import normalize_optional_dirty_ranges
+from animation.core.installation_profile_runtime import InstallationProfileRuntimeView
 
 
 COMPONENT_DESCRIPTOR_SCHEMA = "ledgrid.component-descriptor"
@@ -675,7 +676,7 @@ class AnimationRuntimeContext:
     vibe_profile_version: int
     palette_roles: Mapping[str, Any]
     capability_values: Mapping[str, Any]
-    installation_profile_view: Mapping[str, Any]
+    installation_profile_view: Mapping[str, Any] | InstallationProfileRuntimeView
     plant_modifiers: Mapping[str, Any]
     resolved_profile_digest: Optional[str] = None
     tempo_scale: float = 1.0
@@ -713,13 +714,16 @@ class AnimationRuntimeContext:
         ):
             _finite_number(name, getattr(self, name), minimum=0.01, maximum=10000.0)
         _finite_number("luminance_scale", self.luminance_scale, minimum=0.0, maximum=1.0)
-        for name in (
-            "palette_roles",
-            "capability_values",
-            "installation_profile_view",
-            "plant_modifiers",
-        ):
+        for name in ("palette_roles", "capability_values", "plant_modifiers"):
             object.__setattr__(self, name, _immutable_mapping(name, getattr(self, name)))
+        if not isinstance(self.installation_profile_view, InstallationProfileRuntimeView):
+            object.__setattr__(
+                self,
+                "installation_profile_view",
+                _immutable_mapping(
+                    "installation_profile_view", self.installation_profile_view
+                ),
+            )
         _validate_palette_roles(self.palette_roles)
 
     @property
@@ -745,9 +749,17 @@ class AnimationRuntimeContext:
             self.authored_speed,
             tuple(self.palette_roles.items()),
             tuple(self.capability_values.items()),
-            tuple(self.installation_profile_view.items()),
+            self.installation_profile_identity,
             tuple(self.plant_modifiers.items()),
         )
+
+    @property
+    def installation_profile_identity(self) -> tuple[Any, ...]:
+        """Return stable compact identity for legacy JSON or managed geometry."""
+
+        if isinstance(self.installation_profile_view, InstallationProfileRuntimeView):
+            return self.installation_profile_view.presentation_identity
+        return tuple(self.installation_profile_view.items())
 
 
 @dataclass(frozen=True)
