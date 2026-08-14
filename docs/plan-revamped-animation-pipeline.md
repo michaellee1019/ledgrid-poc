@@ -2755,16 +2755,35 @@ Portable-slice evidence and open gates (2026-08-13):
   unchanged named canary firmware, app activation/restart/restore were
   unchanged and skipped, stable health passed, and a post-deploy photograph
   plus status confirmed the same running rainbow-plus-clock scene.
-- [ ] Camera-guided numeral repair is in progress after a higher-resolution
+- [x] Camera-guided numeral repair is complete. A higher-resolution
   eight-color, one-color-per-strip diagnostic exposed information the earlier
   four-color lane test could not: logical receivers 2 and 3 keep their SPI
-  routes and lane positions but their eight local strips appear in reverse
-  physical order. The durable topology contract is being extended with one
-  strict boolean direction per logical receiver. Acceptance requires exact
-  host full-frame and sparse full/delta remapping, receiver-native rainbow
-  coordinates in the same direction, a camera-readable `HH:MM` face across the
-  affected boundary, focused plus full portable/firmware/deployment tests, and
-  one final ordinary `just deploy` while the corrected scene remains active.
+  routes and lane positions but their eight local strips are physically
+  reversed. The durable topology contract now stores one strict direction bit
+  per logical receiver; malformed types and lengths fail closed. The same map
+  drives sparse full/delta patches, complete and subsequent host frames, and
+  receiver-native rainbow global coordinates. A real `02:41:59` to `02:42:00`
+  regression reconstructs the aggregate RGBA plane byte-exactly across both
+  affected logical receivers. The complete gate passed 1,066 Python tests plus
+  1,544 subtests, 23 policy tests, all 60 native firmware tests, both ESP32
+  builds, and 168 deployment tests plus 88 subtests.
+- [x] Clean receipt `4c9831c3ed9c4f10b701d94078186823` deployed commit
+  `e19c455`, app release
+  `8ea4a042db2dd07a9806f2cbc18220faed74c5dae5519df5d1b1e1f014a00885`,
+  and canary firmware
+  `9118ea2bb803b66e09b66908d258145d93b78f5cf9067d6b94531ca856767c32`
+  to all four receivers, restoring the exact rainbow-plus-clock scene. The
+  camera-derived config is now physical order `(0,1,3,2)` with reversed logical
+  receivers `(2,3)`, digest
+  `f9a49ff7b3d4525fbb6e4171d8995c534a4ecac2d5b955311b059f3b98a43c4f`.
+  Fresh status proves the exact mapping, active hybrid ownership, zero publisher
+  failures, and zero queue/display errors. The wall-only webcam crop visibly
+  reads contiguous `03:57` over a continuous rainbow; its durable target path is
+  `run_state/physical-acceptance/20260814-rainbow-clock-strip-direction-fixed.png`
+  with SHA-256
+  `347433ff76a4c7cf4e064018dddbf86de26d3c950d199b94860c59499e027a9c`.
+  One ordinary post-cutover reconciliation deploy remains the final gate before
+  handoff; it must skip the unchanged receiver firmware and retain this scene.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground
