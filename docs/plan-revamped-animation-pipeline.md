@@ -2782,10 +2782,9 @@ Portable-slice evidence and open gates (2026-08-13):
   `f9a49ff7b3d4525fbb6e4171d8995c534a4ecac2d5b955311b059f3b98a43c4f`.
   Fresh status proved the exact host mapping, active hybrid ownership, zero
   publisher failures, and zero queue/display errors. The wall-only webcam crop
-  proved contiguous `03:57` digits, but operator observation correctly rejected
-  the receiver-native base: applying the host reversal to native coordinates
-  mirrored the two right lanes into a chevron. That crop is retained as rejected
-  diagnostic evidence at
+  proved contiguous `03:57` digits. The assistant incorrectly classified the
+  receiver-native base in that crop as a chevron and removed its independent
+  direction bits in the next cutover. The crop remains diagnostic evidence at
   `run_state/physical-acceptance/20260814-rainbow-clock-strip-direction-fixed.png`
   with SHA-256
   `347433ff76a4c7cf4e064018dddbf86de26d3c950d199b94860c59499e027a9c`.
@@ -2806,12 +2805,18 @@ Portable-slice evidence and open gates (2026-08-13):
   0/1 and restored the saved native scene. Five samples over 50 seconds then
   retained exact IDs 0/1, active compiled rainbow, clock renewals increasing
   from 35 to 75, zero publisher failures, and zero queue/display errors. The
-  final post-stability wall-only webcam crop visibly reads contiguous numerals
-  and shows one continuous diagonal rainbow with no center chevron across all
-  four lanes. Durable evidence is
+  final post-stability wall-only webcam crop visibly reads contiguous numerals,
+  but operator review correctly rejected its rainbow: the all-false native map
+  folds the two right lanes into a center chevron. It is rejected diagnostic
+  evidence, not physical acceptance:
   `run_state/physical-acceptance/20260814-rainbow-clock-final-stable.png` with
   SHA-256
   `55a664758b1fb3f57c55cae0e0bc7fc15c69d3cac6973d57fbcfca48ff8667c4`.
+- [ ] Restore native reversal on logical receivers 2/3 while retaining the
+  already-correct host/clock reversal on 2/3; accept only after a fresh
+  post-deploy camera frame shows one diagonal rainbow with no center fold and
+  contiguous clock numerals. Keep SPI1 receivers 2/3 explicitly
+  display-unverified in telemetry regardless of camera evidence.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground
