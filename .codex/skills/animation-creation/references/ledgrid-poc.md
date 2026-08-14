@@ -88,6 +88,61 @@ selectable or uploadable crosses the firmware, SPI driver, multi-device
 controller, manager lifecycle, IPC status, persistence, and dashboard; do not
 implement it as an isolated firmware renderer.
 
+### Installed hybrid coordinate contract
+
+The target-owned authority is
+`run_state/receiver_hybrid.json`, parsed by
+`tools/deployment/receiver_hybrid_config.py`. Inspect it and live status before
+changing any mapping; do not infer the installed order from list position or
+software defaults. As physically camera-verified on 2026-08-14, the installation
+uses:
+
+| Domain | Installed value |
+| --- | --- |
+| logical receiver to SPI route | `0→0.0`, `1→0.1`, `2→1.1`, `3→1.0` |
+| logical receivers from physical left to right | `(0,1,3,2)` |
+| host full-frame/sparse strip reversal | `(false,false,true,true)` |
+| receiver-native coordinate reversal | `(false,false,true,true)` |
+| receiver-native global offsets by logical ID | `(0,8,24,16)` |
+
+The two direction maps happen to match now but remain separate contracts. Host
+reversal is applied while slicing complete RGB and premultiplied-RGBA content.
+Native reversal is encoded in the six-byte CONFIG flags and changes the
+firmware renderer's global-strip calculation. Do not remove or merge either
+field.
+
+On the installed target, show the durable selection with:
+
+```bash
+python3 /home/ledgridwall/ledgrid-pod/current/tools/deployment/receiver_hybrid_config.py \
+  --root /home/ledgridwall/ledgrid-pod show
+```
+
+The accepted selection digest was
+`9086cd70c29ce4065cdddaad52b3d9c0b87dcbe8bc29e43c515809a0a31cd5bf`.
+Treat that digest as handoff evidence, not an eternal constant: a later physical
+cable change must produce a new camera diagnostic and atomic config update.
+
+For orientation work, use this sequence:
+
+1. Preserve transport IDs/routes and run a four-receiver lane-color test.
+2. Use 32 distinct strip colors; four receiver colors cannot reveal local
+   reversal inside an eight-strip lane.
+3. Verify host/sparse order with content that crosses both affected boundaries.
+4. Verify native order independently with a signed diagonal/phase field. Clock
+   legibility does not accept the native background.
+5. Capture a fresh wall-only camera frame after the final restart, then run an
+   ordinary `just deploy` and capture again. Persist the accepted crop, SHA-256,
+   release, receipt, config digest, and status sample in the phase plan.
+
+The accepted post-deploy evidence is
+`run_state/physical-acceptance/20260814-rainbow-clock-continuous-native.png`
+(SHA-256
+`7c04792eafd64f33c90e2fe6c2f2aba0829ac1a48640b46f0fc69dfcd373bfa9`).
+It proves visible rainbow/clock continuity, not acknowledgement or release
+acceptance on write-only logical receivers 2/3. The current degraded policy must
+continue to report `telemetry_complete=false` and `release_acceptance=false`.
+
 The `native-animations` branch is a retained organ donor for this work. Consult
 the donor map in `docs/plan-revamped-animation-pipeline.md` and port narrow lanes
 with their tests. Do not merge/cherry-pick it wholesale or inherit its signed

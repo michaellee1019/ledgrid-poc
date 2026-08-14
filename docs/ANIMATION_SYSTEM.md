@@ -312,18 +312,36 @@ acceptance flow.
 
 ## Receiver boundary and planned evolution
 
-This document describes the current Python host-rendered plugin, catalog, and
-fixed-scene product contract. Phase 3A of the
-[unified roadmap](plan-revamped-animation-pipeline.md) now provides explicit
+This document describes the Python host-rendered plugin, catalog, scene, and
+receiver-hybrid product contracts. Phase 3A of the
+[unified roadmap](plan-revamped-animation-pipeline.md) provides explicit
 receiver ownership, status v3, a staged host-authoritative presentation context,
-and a statically linked rainbow behind a dedicated firmware canary flag. The
-first Phase 3B0 portable slice adds a negotiated status-v4 extension, bounded
+and a statically linked rainbow. Phase 3B adds negotiated status v4, bounded
 premultiplied-RGBA foreground state, sparse four-board host orchestration,
-leases, scheduled commit, and fixed-point receiver composition behind that same
-canary flag. The ordinary production image keeps both local playback and sparse
-foreground compiled off, and a complete host RGB frame remains the accepted
-wall path and immediate takeover mechanism. Manager/dashboard integration and
-physical canary evidence remain later Phase 3B0 work.
+leases, scheduled commit, fixed-point receiver composition, manager lifecycle,
+desired-scene persistence, and complete host RGB takeover.
+
+The default/absent rollout config still selects the feature-off production
+firmware and Python full-frame path. The installed wall currently opts into the
+named feature-on canary image through the explicit
+`degraded_spi1_01_readable` target-owned policy. Readable logical receivers 0/1
+require exact v4 acknowledgements; write-only 2/3 receive paced serialized
+commands and remain acknowledgement-, integrity-, and timing-unverified despite
+camera-visible output. Runtime status must therefore remain
+`operational=true`, `degraded=true`,
+`telemetry_complete=false`, `healthy=false`, and
+`release_acceptance=false`. This explicit product mode does not close the strict
+all-four hardware gates.
+
+The installed hybrid topology has four independent coordinate facts: fixed SPI
+route/logical identity, physical lane permutation, host-frame/sparse strip
+direction, and receiver-native procedural direction. The target-owned config is
+authoritative. As camera-verified on 2026-08-14 it records physical order
+`(0,1,3,2)` plus host and native reversal maps
+`(false,false,true,true)`. Host transforms must not be reused as proof of native
+orientation: verify boundary-crossing foreground and a signed native phase field
+separately. See [Hardware](HARDWARE.md#installed-lane-and-strip-orientation) for
+the exact installed mapping and diagnostic sequence.
 
 The follow-on Phase 3B0 slice adds capability-gated sparse batch command `0x35`.
 Its 28-byte fixed header carries the session, generation, and logical span

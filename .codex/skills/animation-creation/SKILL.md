@@ -263,6 +263,39 @@ mode transitions before defining its file format or protocol.
   or common v-sync are deferred, start receivers in a deterministic order and
   measure skew and drift for diagnosis without claiming strict synchronization.
 
+For a multi-receiver physical canvas, keep coordinate domains independent and
+name each one in code, configuration, tests, and evidence:
+
+1. Transport route and logical receiver identity.
+2. Physical left-to-right receiver-lane permutation.
+3. Host-authored full-frame and sparse-foreground strip direction.
+4. Receiver-native procedural/global-coordinate strip direction.
+
+A cable swap can change the second domain without changing the first, and host
+content can require a different local transform from a firmware renderer. Never
+copy one mapping into another merely because one diagnostic looks correct.
+Exercise each mapping with an orthogonal visual: receiver/lane colors for lane
+permutation, one distinct color per physical strip for within-receiver host
+direction, boundary-crossing text or glyphs for sparse host slicing, and a
+native phase field with an obvious signed slope for firmware coordinates.
+Accept the composition only when every visual passes in the same final runtime
+configuration.
+
+Treat camera evidence as a versioned test result. Capture it after the final
+restart or deployment, retain a wall-only crop and digest, and label rejected
+frames as rejected rather than silently reusing them. If the camera moved,
+reacquire its wall geometry before using rectified or per-pixel measurements;
+do not extrapolate a stale homography. A direct photograph can still establish
+a coarse property such as a center seam when all relevant boundaries are
+clearly visible, but say exactly what it proves. Operator observation overrides
+an assistant's visual inference and reopens the gate.
+
+For receivers without a return path, host transfer counters prove only outbound
+traffic. Camera evidence may establish that a requested image was physically
+visible, but it does not prove receiver identity, acknowledgement, integrity,
+timing, or release acceptance. Preserve that distinction in status and handoff
+language.
+
 For compressed frame tracks, prefer a bounded forward decoder with periodic or
 initial keyframes and explicit frame durations. Measure package size per receiver,
 decoded working memory, flash-write frequency, and decode spikes; compression

@@ -145,10 +145,12 @@ preset overlay is never the source of curated content.
 
 `just deploy` always validates a clean source manifest and runs
 `deploy-precheck`. It then runs the coordinator's stable full sequence: source,
-tests, target connection, immutable app stage, receiver build, host provision,
-receiver flash reconciliation, candidate validation, settings capture,
-activation, restart, settings restoration, fresh health, and rollback-safe
-release pruning. The Pi runtime is
+tests, target connection, immutable app stage, receiver build, settings capture,
+host provision, receiver flash reconciliation, candidate validation, activation,
+restart, settings restoration, fresh health, and rollback-safe release pruning.
+State capture deliberately precedes any receiver flash because flashing can
+reset a receiver-native scene and must not cause its Python fallback to overwrite
+the saved desired display. The Pi runtime is
 selected through an atomic `venv` symlink
 to a fresh, digest-addressed `.venvs/` environment keyed by the hash-pinned
 runtime lock and the Pi Python/platform identity. A candidate environment must
@@ -175,6 +177,52 @@ Do not use the Python-only flow after changing any of:
 - dependency or environment setup
 - SPI boot configuration
 - systemd/startup behavior
+
+## Durable receiver-hybrid rollout
+
+`run_state/receiver_hybrid.json` is the single target-owned authority used by
+startup, firmware selection, state restore, and deployment receipts. Absence or
+an explicit disabled selection chooses the feature-off production firmware.
+Only the allowlisted degraded policy chooses
+`esp32-s3-devkitc-1-local-canary`; callers cannot persist an arbitrary firmware
+environment beside it.
+
+Inspect the live selection before a receiver-native deployment:
+
+```bash
+ssh ledgridwall@ledgridwall.local -- \
+  python3 /home/ledgridwall/ledgrid-pod/current/tools/deployment/receiver_hybrid_config.py \
+  --root /home/ledgridwall/ledgrid-pod show
+```
+
+The currently camera-verified installed mapping is written atomically with:
+
+```bash
+ssh ledgridwall@ledgridwall.local -- \
+  python3 /home/ledgridwall/ledgrid-pod/current/tools/deployment/receiver_hybrid_config.py \
+  --root /home/ledgridwall/ledgrid-pod \
+  --physical-lane-order 0,1,3,2 \
+  --reversed-logical-receivers 2,3 \
+  --reversed-native-logical-receivers 2,3 \
+  enable-degraded
+```
+
+Do not copy a host direction result into the native option without a separate
+camera diagnostic. `--reversed-logical-receivers` controls complete RGB and
+sparse RGBA slicing; `--reversed-native-logical-receivers` controls the
+firmware renderer's local-to-global coordinate transform. A four-color
+receiver-lane test determines only `--physical-lane-order`; use 32 distinct
+strip colors to determine host local direction and a signed receiver-native
+phase field to determine native direction.
+
+Changing the selection digest is a fail-closed scene-authority boundary. Restart
+the service, inspect whether the known Python fallback was selected, explicitly
+re-authorize the desired native scene if needed, and retain the new scene/config
+evidence before deployment. Then run ordinary `just deploy`, not merely
+`deploy-python`, so the selected firmware environment and exact binary digest
+are reconciled. Acceptance requires the same config digest, desired scene, and
+camera-visible result after deploy. A write-only receiver's outbound counters
+do not substitute for visual evidence or MISO acknowledgement.
 
 ## Coordinator and immutable-release rollout
 

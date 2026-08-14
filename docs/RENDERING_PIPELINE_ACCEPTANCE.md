@@ -196,6 +196,47 @@ cannot authorize all-board receiver-native, sparse-overlay, upload, or other
 MISO-acknowledged work. Repair the return path and rerun the strict commands to
 close those gates.
 
+### Degraded hybrid visual evidence
+
+The installed wall may deliberately run the named feature-on firmware with the
+explicit `degraded_spi1_01_readable` policy for a receiver-native background plus
+Pi-authored sparse foreground. This is an operational product mode, not a strict
+release gate. It must always report `telemetry_complete: false`,
+`release_acceptance: false`, readable devices `[0,1]`, and unverified devices
+`[2,3]`.
+
+Visual acceptance for that mode has independent sub-gates:
+
+- Transport/logical route: status and the live `device_map` preserve logical
+  identities and SPI routes.
+- Physical receiver order: one receiver color per 8-strip lane establishes the
+  left-to-right permutation.
+- Host strip direction: 32 distinct strip colors plus boundary-crossing sparse
+  content establish local order and old-pixel clearing. Four receiver colors do
+  not exercise this property.
+- Receiver-native direction: an obvious signed diagonal/phase field crosses all
+  8-strip boundaries without a fold, mirror, or phase reset. Clock legibility is
+  not evidence for this gate.
+- Combined scene: the final background and foreground both pass in one process
+  after restart, then again after ordinary `just deploy` restores the exact
+  desired scene and target-owned config.
+
+Use a fresh camera frame taken after the final mutation. Retain the uncropped
+source when appropriate, a wall-only crop, SHA-256, config digest, app release,
+deploy receipt, and nearby status samples. If the camera moved, reacquire its
+homography before using rectified/per-pixel evidence; do not extrapolate the old
+calibration. Label every failed or superseded image as rejected. Operator
+observation reopens a visual gate even when the assistant or an automated image
+metric previously passed it.
+
+The 2026-08-14 accepted combined-scene crop is
+`run_state/physical-acceptance/20260814-rainbow-clock-continuous-native.png`
+with SHA-256
+`7c04792eafd64f33c90e2fe6c2f2aba0829ac1a48640b46f0fc69dfcd373bfa9`.
+It proves visible continuity for the then-current installed mapping; it does not
+prove receiver acknowledgement, integrity counters, timing, or release
+acceptance on logical receivers 2/3.
+
 - run the dense canary load for 60 seconds, then the complete animation sweep;
 - the live animation sweep starts every registered plugin and observes no host
   SPI or receiver integrity-counter increase while it runs;

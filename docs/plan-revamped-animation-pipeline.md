@@ -2832,75 +2832,100 @@ Portable-slice evidence and open gates (2026-08-13):
   readable IDs 0/1, renewals increasing 121/131/141, and zero publisher,
   queue, or display errors. SPI1 receivers 2/3 remain explicitly
   display-unverified and this does not claim release acceptance.
-- [ ] Receiver timing percentiles, strict readable-receiver canary, optional
-  explicitly degraded four-wall visual showcase, disconnect/expiry observation,
-  and restored streamed acceptance remain physical work. No physical foreground
-  acceptance is claimed here.
+- [ ] Repair SPI1 MISO/MOSI and repeat strict all-four streamed and Phase 3B
+  acceptance, including receiver timing, disconnect/expiry, restored streaming,
+  and soak evidence. The completed strict readable-0/1 canaries and explicitly
+  degraded four-wall camera showcase remain useful evidence but do not close
+  this all-four release gate.
 
-#### Next-context execution and handoff
+#### Cold-session handoff: begin the Phase 3C portable profile slice
 
-Implement the vertical slice in this order so the next handoff contains a visible
-benefit rather than only dormant protocol code:
+Phase 3B's portable/product work and the explicitly degraded installed showcase
+are complete enough to move to Phase 3C without changing the running wall. Do
+not repeat the orientation experiments or mutate the target as the first action
+of a cold session.
 
-1. Extend the generated foreground vectors and add focused host/firmware state
-   machine tests. Expected focused ownership is
-   `tests/unit/test_receiver_sparse_overlay_protocol.py`,
-   `tests/unit/test_receiver_sparse_overlay_orchestration.py`, and portable
-   receiver-runtime cases; reuse existing generated fixtures instead of creating
-   a second blend oracle.
-2. Land the firmware compositor and fake four-board publisher behind
-   `receiver_sparse_overlay=false`, including complete-host-frame takeover, before
-   integrating manager lifecycle. Build both production feature-off and deliberate
-   canary variants and prove the ordinary deploy target cannot select the canary.
-3. Connect the existing `clock_overlay`, receiver-static descriptor/preview,
-   scene lifecycle, vibe updates, desired-display restoration, and dashboard in
-   one product slice. Add `tests/unit/test_hybrid_scene_product_surface.py` for
-   API/IPC/UI-facing state, preview isolation, feature-off rejection, fallback,
-   and cleanup.
-4. Run focused suites first, then `just test`, `just test-rendering`,
-   `pio test -d firmware/esp32 -e native`, both pinned firmware builds,
-   `just test-deployment`, and both ordinary deploy dry runs. The 32 x 138
-   default/stress benchmark and deterministic payload trace are required before
-   any wall mutation.
-5. Demonstrate the local dashboard preview and state round trip. Only then run a
-   strict readable-receiver canary; the degraded four-wall showcase is optional,
-   manually observed, explicitly incomplete, and never a substitute for the
-   post-repair strict gate.
+Current installed state to preserve:
 
-Current handoff: items 1 through 4, the protocol batching/ack-amortization
-follow-up, and the portable strict/degraded item-5 runners are complete as a
-portable/fake-wall/product slice. The receiver-native scene is available only
-under the deliberately named host canary switch and named feature-on firmware
-build; ordinary production remains Python-only. Item 5 physical execution has
-started on logical receiver 1 and stopped safely after local-background proof
-when sparse controller-session acceptance was not established. The next hardware
-work is therefore deployment and a physical repeat of the dual-core scheduling
-fix on that strict readable receiver, not the degraded showcase. Only after the
-strict canary passes may the optional explicitly degraded showcase run, followed
-by complete-host-frame cleanup, production-image restoration, and restored
-streamed acceptance. Do not interpret portable or local-background completion
-as foreground physical acceptance, and do not enable the receiver path by
-default while the documented SPI1 return-path fault remains.
+- `compiled_rainbow` receiver-native background plus Pi `clock_overlay` remains
+  the saved desired scene;
+- target config digest is
+  `9086cd70c29ce4065cdddaad52b3d9c0b87dcbe8bc29e43c515809a0a31cd5bf`;
+- logical-to-SPI routes remain `0→0.0`, `1→0.1`, `2→1.1`, `3→1.0`;
+- physical left-to-right logical order is `(0,1,3,2)`;
+- both host-frame/sparse and receiver-native direction maps are
+  `(false,false,true,true)`; these are independent fields even though their
+  current values match;
+- clean full deploy receipt `cc5fa66f03834df0ad3ca1f58e39aae2`
+  selected app release
+  `7c7a422e7f46c6f5ea981538f0e231b83141879280da87da50b453df57d4a23c`,
+  restored the exact scene, and retained the unchanged canary firmware digest
+  `9118ea2bb803b66e09b66908d258145d93b78f5cf9067d6b94531ca856767c32`;
+- accepted camera evidence is
+  `run_state/physical-acceptance/20260814-rainbow-clock-continuous-native.png`
+  with SHA-256
+  `7c04792eafd64f33c90e2fe6c2f2aba0829ac1a48640b46f0fc69dfcd373bfa9`;
+- logical receivers 2/3 are still write-only. The running mode is operational
+  but degraded, telemetry-incomplete, unhealthy by release semantics, and not
+  release-acceptable.
 
-Settled-source portable evidence on 2026-08-13: `just test` passed 1,008 Python
-tests and 1,476 subtests, 23 rendering tests and 3 subtests, all 59 native
-firmware cases (17 contract, 8 native-protocol, and 34 receiver-runtime), both
-pinned firmware builds, and 162 deployment tests plus 77 subtests. After the
-timing-percentile sampler was tightened to use the firmware's completion-gated
-local-frame counter rather than its host-mailbox display counter, the final full
-Python rerun passed 1,010 tests and 1,477 subtests. The final repeated
-`snake-max-density` installed-geometry p95 was 3.4609 ms, below 4 ms. The
-feature-off production image uses 50,720
-bytes RAM and 272,273 bytes flash; the deliberate canary uses 65,504 bytes RAM
-and 278,553 bytes flash, a feature-on delta of 14,784 bytes RAM and 6,280 bytes
-flash. Generated-fixture drift checks, Python compilation, `git diff --check`,
-the deterministic payload gate, both ordinary deploy dry runs, and the dirty
-source-accounting deploy plan pass. These are workstation/portable numbers, not
-Raspberry Pi or ESP32 runtime percentiles.
+The next bounded objective is the **portable half of Phase 3C's deterministic
+installation-profile compiler and golden contract**. It must not stage or
+activate a profile on receivers. Start by reading:
 
-Keep the plan's implementation status, focused evidence, measured payload bytes,
-timing percentiles, cleanup result, and any newly discovered stop gate current as
-each numbered item lands.
+- `config/README.md` and the four canonical 32×138 calibration inputs it names;
+- `animation/core/plant_awareness.py`, especially `PlantMaskGeometry`, edge,
+  distance/normal, clearance, and `GLOBE_REGION_ORDER` semantics;
+- `docs/ANIMATION_PIPELINE_CONTRACT_V1.md` for existing fixed-width wire and
+  golden-fixture conventions;
+- `tools/fixtures/generate_receiver_presentation_golden.py` for deterministic
+  fixture generation style;
+- `tools/deployment/receiver_hybrid_config.py` and
+  `drivers/degraded_receiver_hybrid.py` only to preserve the coordinate-domain
+  boundary, not to add profile activation yet.
+
+Execute the slice in this order:
+
+1. Freeze a versioned, bounded profile schema with explicit magic/version,
+   geometry, section counts/offsets, digest semantics, category encoding, globe
+   region identity, and maximum-size validation. Document every integer width
+   and canonical sort/order rule before implementing the encoder.
+2. Compile the canonical global strip-major 32×138 foliage, globe, clearance,
+   edge, region, and any accepted distance/normal data without embedding SPI
+   routes or installed lane direction in the artifact.
+3. Add one topology adapter that slices the canonical profile for a logical
+   receiver. Apply physical lane permutation and local direction exactly once;
+   keep transport identity, physical lane order, host direction, and native
+   direction independently named.
+4. Add a checked-in generated golden plus regeneration-equality test. Reassemble
+   all four slices for both identity topology and installed
+   `(0,1,3,2)`/right-reversed topology and require byte/semantic equality with
+   the canonical global views.
+5. Fail closed on malformed JSON, wrong geometry, duplicate/out-of-range pixels,
+   unknown/missing regions, count/offset overflow, truncation, overlap-policy
+   violations, and any non-deterministic input ordering. Prove foliage/globe
+   precedence and the stable seven-region order.
+6. Run focused compiler/slicer tests, the plant-awareness tests, fixture drift,
+   `just test`, `just test-rendering`, `git diff --check`, and the ordinary
+   deploy dry-run/plan. Update this handoff with exact counts, artifact bytes,
+   section sizes, and test evidence.
+
+Acceptance for this first Phase 3C slice is portable only: identical semantic
+inputs produce identical bytes; the golden round-trips every required category
+and region; both topology fixtures reassemble exactly; malformed/bounds cases
+fail before output or mutation; and existing Python rendering remains unchanged.
+The stop boundary is strict: do not add receiver profile commands, storage,
+activation/status, firmware optics, live `hue_shift`, service flags, or wall
+mutation in this slice. Those begin only after the portable artifact and slicing
+contract are reviewed.
+
+Parallel physical work remains open but is not the next portable phase: repair
+SPI1 MISO/MOSI, rerun strict all-four streamed and Phase 3B gates, and collect
+receiver timing/expiry/restore evidence. No Phase 3C implementation may describe
+the current camera-visible degraded showcase as closing those gates.
+
+The bullets below retain the accepted Phase 3B contract for historical context;
+they are not the cold session's open implementation list.
 
 - Implement staged RGBA8 foreground buffers, coverage tracking, fixed-point
   source-over composition, lease expiry, full snapshot, sparse patch, commit,

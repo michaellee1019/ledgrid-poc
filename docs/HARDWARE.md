@@ -86,6 +86,51 @@ and a lane-order test for the running installation. The full deployment
 configures `dtparam=spi=on` and `dtoverlay=spi1-2cs` idempotently. A boot-config
 change requires a Pi reboot before all four device nodes appear.
 
+### Installed lane and strip orientation
+
+Transport identity, wall position, and pixel direction are separate hardware
+facts. The camera-verified installed contract on 2026-08-14 is:
+
+| Logical receiver | SPI route | Physical lane from left | Host strip order | Native coordinate order | Native global offset |
+| ---: | --- | ---: | --- | --- | ---: |
+| 0 | `spidev0.0` | 0 | forward | forward | 0 |
+| 1 | `spidev0.1` | 1 | forward | forward | 8 |
+| 2 | `spidev1.1` | 3 | reversed | reversed | 24 |
+| 3 | `spidev1.0` | 2 | reversed | reversed | 16 |
+
+In config form, physical left-to-right logical order is `(0,1,3,2)`, while
+both the host-frame and receiver-native reversal maps are
+`(false,false,true,true)`. The durable runtime authority is
+`run_state/receiver_hybrid.json`; software defaults and this copied table are
+not substitutes for reading that file after a cable change.
+
+The two reversal columns deliberately remain independent. Host reversal maps
+complete RGB frames and sparse RGBA foreground into the receiver's local output
+buffer. Native reversal is a six-byte CONFIG flag used by firmware when turning
+its local strip index into a global procedural coordinate. A correct clock or
+host diagnostic therefore does not prove that a receiver-native background has
+the right orientation.
+
+After changing cables, establish the domains in this order:
+
+1. Verify the unchanged or new logical-to-`spidev` routes and readable roles.
+2. Show one color per receiver to establish physical lane permutation.
+3. Show one distinct color per physical strip to establish host local direction;
+   four lane colors are insufficient for this step.
+4. Use boundary-crossing host content to verify sparse slicing and old-pixel
+   clears.
+5. Independently run a receiver-native signed diagonal/phase pattern and inspect
+   every 8-strip boundary for a reversal or phase fold.
+6. Photograph the final state after service restart and again after ordinary
+   deployment. Retain rejected frames as rejected evidence rather than
+   overwriting or reinterpreting them.
+
+Logical receivers 2 and 3 currently have no usable MISO return. A photograph can
+prove that their lanes displayed a visible pattern, but outbound counters and
+camera evidence cannot prove receiver acknowledgement, identity, integrity, or
+timing. Full receiver-native release acceptance remains blocked on the SPI1
+return-path repair.
+
 ## Alternate HAT compatibility mode
 
 The repository also retains an alternate `LEDGRID_HAT=1` software mode. It
