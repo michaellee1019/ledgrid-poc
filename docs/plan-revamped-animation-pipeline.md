@@ -3014,14 +3014,88 @@ Portable compiler, golden-vector, profile-library, host-preview, and fake-wall
 work may proceed before the SPI1 repair. Strict profile activation, digest
 agreement, receiver timing, and physical seam acceptance remain release-blocked.
 
-Implementation status (2026-08-14): **portable deterministic-profile slice
-complete; profile library, fake-wall staging, receiver runtime, optics, and
-physical acceptance remain open**.
+Implementation status (2026-08-14): **portable deterministic-profile and
+bounded host-library/fake-transaction slices complete; host-context wiring,
+receiver runtime, optics, and physical acceptance remain open**.
 The v1 binary schema, digest domains, category/region encodings, fixed global
 derivatives, receiver-view orientation, strict decoder bounds, and 65,535-byte
 maximum are frozen in `ANIMATION_PIPELINE_CONTRACT_V1.md`. Compiler/codec,
 topology round-trip, and generated-golden lanes passed independently and as one
 integrated repository gate against that shared contract.
+
+Current bounded host-library slice (2026-08-14): **complete**. This slice
+publishes already-compiled profiles into a Pi-authoritative library and proves
+the future four-receiver transaction against an in-memory fake only. It does
+not add an SPI command, firmware storage, live activation, dashboard mutation,
+or installed-wall operation.
+
+- [x] Publish validated canonical profiles atomically under their frozen
+  content digest, make identical publication idempotent, reject corruption and
+  noncanonical/global-wrong inputs, and retain a small immutable publish receipt.
+- [x] Resolve only safe managed IDs to immutable bytes plus read-only global and
+  topology-sliced semantic views; cache identity must include profile digest and
+  topology while transport/host-strip policy remains non-semantic.
+- [x] Model four fake receiver caches with capacity preflight, stage, unanimous
+  verify/commit, prior-generation rollback, idempotent retry, and failure
+  injection at each receiver boundary. No failed transaction may claim or leave
+  a healthy mixed generation.
+- [x] Keep the installation-profile library outside immutable app releases and
+  protected from full-sync deletion; prove an app stage/activate/rollback leaves
+  published profile bytes unchanged.
+- [x] Pass focused library/transaction/deployment tests, existing profile and
+  plant-awareness tests, `just test`, `just test-rendering`, fixture drift,
+  `git diff --check`, and ordinary deploy dry-run/plan before closing the slice.
+
+Portable host-library evidence captured on 2026-08-14 (development Mac; no Pi,
+receiver, or wall timing evidence):
+
+- `animation/core/installation_profile_library.py` validates the complete
+  canonical global artifact before filesystem mutation, publishes immutable
+  `profiles/<content-digest>/{profile.bin,receipt.json}` entries by atomic
+  directory rename and fsync, makes identical concurrent publication
+  idempotent, and fails closed on unsafe IDs, symlink escapes, unexpected
+  members, noncanonical/global-wrong bytes, corrupt artifacts, or corrupt
+  receipts. Warm caches still revalidate the exact bytes and receipt.
+- The accepted 40,072-byte golden publishes under content ID
+  `cc7a21b2e5a630af74424d2b1a1fd960a6bf8f68463077025b7286938755acea`.
+  Installed-topology receiver payloads are 10,264 bytes each: logical 0/1 use
+  origins 0/8 in ascending order and logical 2/3 use origins 24/16 in reversed
+  native order. Transport-route and host-direction-only changes reuse the same
+  semantic slices; lane or native-direction changes do not.
+- `animation/core/installation_profile_transaction.py` remains a strict
+  in-memory fake. It binds that global ID to four receiver-payload SHA-256
+  values, preflights every capacity/reserve before mutation, pins active,
+  rollback, and staged payloads, evicts only inactive LRU entries, and
+  compensates partial stage/verify/commit work to the exact prior unanimous or
+  no-active binding state. All 16 receiver-by-phase rejection boundaries,
+  staged corruption, retry, mixed state, degraded state, and pin failures are
+  covered; the delegated focused branch-coverage run reported 85 percent.
+- Cross-lane acceptance publishes and resolves the global profile through the
+  installed topology, commits all four receiver payloads, injects a receiver-2
+  partial-commit failure, proves unanimous compensation, retries, and retains
+  the prior generation as rollback. The final focused host-slice run passed 30
+  tests and 42 subtests.
+- `installation_profile_library/` is now a target-owned shared path outside app
+  releases and protected from full-sync deletion. Real local rsync, app
+  stage/activate/rollback, and a pre-Phase-3C rollback release preserve both
+  profile and receipt bytes; a legacy release that embeds the path is rejected.
+- `just test` passed 1,137 Python/plugin tests and 1,681 subtests, 23 rendering
+  tests and 3 subtests, the 4 ms rendering benchmark, all 60 native firmware
+  tests, both production/canary ESP32-S3 builds, and 170 deployment tests with
+  90 subtests. The explicit `just test-rendering` rerun passed with a highest
+  p95 of 3.4141 ms for `snake-max-density` at a 0.62 changed ratio. These are Mac
+  proxy measurements, not Raspberry Pi timings.
+- Golden `--check`, compile checks, shell syntax through the deployment suite,
+  `git diff --check`, `just --dry-run deploy`, and read-only `just deploy-plan`
+  passed. The plan includes both new core modules in immutable app inputs while
+  ordinary clean `just deploy` remains the authoritative command.
+
+The stop boundary remains strict: no profile SPI command, firmware cache,
+runtime activation/status, host-context selection, dashboard control, optic, or
+installed-wall mutation was added. The next bounded portable Phase 3C lane is
+managed-profile selection into read-only host runtime/preview context with
+digest-aware cache invalidation; real receiver staging and physical acceptance
+remain separate later gates.
 
 - [x] Freeze the portable v1 header, section table, section vocabulary,
   canonical ordering, CRC/content/calibration digests, global-derivative rules,
@@ -3045,10 +3119,11 @@ integrated repository gate against that shared contract.
   binary installation profile.
 - Golden-test global masks, clearance, edges, globe regions, distance/normals,
   slicing, coordinate orientation, and halos against Python geometry.
-- Add Pi library, receiver staging/activation, digest/status, and rollback for
-  profiles independently of native backgrounds.
-- Expose read-only profile views through host context and reserve the native ABI
-  view.
+- Add receiver staging/activation, digest/status, and rollback for profiles
+  independently of native backgrounds, using the completed Pi library and fake
+  transaction contract.
+- Wire the completed read-only managed profile views through host runtime and
+  preview context, then reserve the native ABI view.
 - Implement the existing universal `hue_shift` modifier after composition as the
   first receiver-safe optic. Separately exercise read-only foliage/globe geometry
   in the static/native canary without reclassifying semantic modifiers.

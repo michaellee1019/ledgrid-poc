@@ -323,6 +323,9 @@ class DeployManifestTests(unittest.TestCase):
 
         self.assertIn("rsync -az --delete --stats", sync_script)
         for protected_path in (
+            "--filter 'protect /calibration_photos/***'",
+            "--filter 'protect /receiver_library/***'",
+            "--filter 'protect /installation_profile_library/***'",
             "--exclude 'venv/'",
             "--exclude 'run_state/'",
             "--filter 'protect /presets/'",
@@ -341,7 +344,7 @@ class DeployManifestTests(unittest.TestCase):
         self.assertIn("--delete", fast_contract)
         self.assertIn("web/static/generated/animation-previews/", fast_contract)
 
-    def test_full_sync_filter_preserves_runtime_presets_during_delete(self):
+    def test_full_sync_filter_preserves_target_owned_bytes_during_delete(self):
         source = self.root / "staged"
         target = self.root / "deployed"
         self._write("staged/web/app.py", b"new deployment")
@@ -350,6 +353,14 @@ class DeployManifestTests(unittest.TestCase):
         saved_preset = self._write(
             "deployed/presets/animations/rainbow/my-preset.json",
             b'{"name":"My Preset"}',
+        )
+        compiled_profile = self._write(
+            f"deployed/installation_profile_library/profiles/{'a' * 64}/profile.bin",
+            b"compiled-profile-bytes\x00\xff",
+        )
+        publish_receipt = self._write(
+            f"deployed/installation_profile_library/profiles/{'a' * 64}/receipt.json",
+            b'{"digest":"published"}\n',
         )
 
         subprocess.run(
@@ -363,6 +374,8 @@ class DeployManifestTests(unittest.TestCase):
                 "protect /presets/animations/***",
                 "--exclude",
                 "/presets/animations/",
+                "--filter",
+                "protect /installation_profile_library/***",
                 f"{source}/",
                 f"{target}/",
             ],
@@ -372,6 +385,8 @@ class DeployManifestTests(unittest.TestCase):
         self.assertEqual((target / "web/app.py").read_bytes(), b"new deployment")
         self.assertFalse(stale_code.exists())
         self.assertEqual(saved_preset.read_bytes(), b'{"name":"My Preset"}')
+        self.assertEqual(compiled_profile.read_bytes(), b"compiled-profile-bytes\x00\xff")
+        self.assertEqual(publish_receipt.read_bytes(), b'{"digest":"published"}\n')
 
 
 if __name__ == "__main__":

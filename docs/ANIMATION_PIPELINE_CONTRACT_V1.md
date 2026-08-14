@@ -3,8 +3,8 @@
 ## Scope and authority
 
 This document freezes the names, bytes, state boundaries, and rollout gates
-needed by Phase 1 and activated incrementally through the portable half of
-Phase 3C of
+needed by Phase 1 and activated incrementally through the bounded host-library
+slice of Phase 3C of
 [plan-revamped-animation-pipeline.md](plan-revamped-animation-pipeline.md).
 The scene/provider rollout flags remain off, while Phase 3A activates explicit
 receiver ownership and status v3. Ordinary production firmware keeps the
@@ -42,8 +42,10 @@ change; these identifiers and versions may not change in place.
 
 Contracts marked runtime-reserved are deliberately not accepted by current
 receiver runtime code. The installation-profile v1 bytes are frozen for the
-portable compiler, decoder, topology slicer, and golden tests only; there are no
-profile transfer, activation, status, or receiver-optics commands in this phase.
+portable compiler, decoder, topology slicer, Pi-authoritative managed library,
+read-only host views, and in-memory four-receiver transaction fake; there are no
+real profile transfer, activation, status, or receiver-optics commands in this
+phase.
 Status v4 is negotiated only after a legacy-safe v3 query exposes sparse
 foreground support. Its first 320 bytes preserve status v3 exactly apart from
 the `LGS4` magic/version. Status v3 preserves every v2 counter offset in its
@@ -285,8 +287,39 @@ The global golden has origin 0, all 32 strips, and canonical ascending strip
 order. A receiver view has eight strips and its physical lane origin; bit 0 is
 set only when its payload rows are stored in descending physical strip order.
 Reassembly uses the origin and flag to recover canonical global order. The
-portable Phase 3C stop boundary forbids staging, activation, receiver status,
-firmware optics, and wall mutation.
+portable Phase 3C stop boundary forbids real receiver staging, activation,
+receiver status, firmware optics, and wall mutation. In-memory fake staging is
+acceptance infrastructure only and has no transport or firmware behavior.
+
+### Phase 3C host-library and fake-transaction contract
+
+The Pi-authoritative target-owned root is `installation_profile_library/`, kept
+outside immutable app releases and protected from full-sync deletion. Canonical
+global artifacts publish atomically at
+`profiles/<content-digest>/profile.bin`; the sibling `receipt.json` contains
+exactly schema version, profile-format version, ID, embedded content digest,
+calibration digest, ordinary file SHA-256, byte size, and UTC publication time.
+The timestamp records the event but never participates in identity. An existing
+missing, conflicting, or corrupt entry fails closed rather than being repaired
+implicitly. Identical publication returns the original receipt.
+
+Managed IDs are exactly 64 lowercase hexadecimal characters. Resolution
+revalidates immutable artifact bytes and receipt metadata before exposing the
+canonical global profile and four immutable receiver views. Receiver-view cache
+identity contains the global content digest, physical lane order, and native
+strip direction. Transport routes and host-frame strip direction remain named
+but do not change profile semantics or receiver bytes.
+
+The portable fake binds one global profile ID to four receiver-specific payload
+SHA-256 values. Its only lifecycle is deterministic `preflight`, `stage`,
+`verify`, `commit`, and failure compensation. Capacity plus reserve is checked
+on all four targets before mutation; active, rollback, and staged payloads are
+pinned; only inactive payloads may be evicted in least-recently-used order. A
+partial operation restores the prior unanimous active/rollback bindings or the
+explicit no-active state. Fake status may report `healthy`, `no_active`,
+`mixed_generation`, or `degraded`; mixed or corrupt state cannot start another
+transaction or be reported healthy. This vocabulary reserves no command IDs,
+wire bytes, receiver storage layout, or runtime status fields.
 
 Dirty ranges are sorted, non-overlapping, half-open ranges. Movement/removal
 uses the union of old and new coverage. A complete clear covers every formerly

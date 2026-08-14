@@ -46,6 +46,7 @@ sync_full_deployment() {
         --filter 'protect /receipts/***' \
         --filter 'protect /calibration_photos/***' \
         --filter 'protect /receiver_library/***' \
+        --filter 'protect /installation_profile_library/***' \
         --exclude 'venv/' \
         --exclude '.venv*/' \
         --exclude '.venvs/' \

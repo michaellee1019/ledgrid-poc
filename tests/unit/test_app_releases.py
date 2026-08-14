@@ -12,6 +12,8 @@ from tools.deployment.app_releases import (
     AppActivation,
     AppReleaseManager,
     CandidateHealthFailed,
+    DEFAULT_SHARED_PATHS,
+    INSTALLATION_PROFILE_LIBRARY_PATH,
     RELEASE_METADATA,
     ReleaseValidationError,
     build_app_rollback_steps,
@@ -58,27 +60,38 @@ class AppReleaseTests(unittest.TestCase):
             ),
         }
 
-    def test_two_releases_have_no_stale_code_and_preserve_all_shared_state(self):
+    def test_stage_activate_and_rollback_preserve_all_target_owned_state(self):
         first_files = self.app_files("one")
         first_files["animation/removed.py"] = self.write_source("animation/removed.py", "old")
         first = self.manager.stage(first_files)
         self.manager.activate(first.id)
 
+        profile_digest = "a" * 64
         fixtures = {
-            "presets/animations/rainbow/user.json": "preset",
-            "run_state/control.json": "state",
-            "logs/web.log": "log",
-            "venv/pyvenv.cfg": "venv",
-            "calibration_photos/wall.jpg": "calibration",
-            "firmware/esp32.bin": "firmware",
-            "receiver_library/bundle.bin": "receiver",
+            "presets/animations/rainbow/user.json": b"preset",
+            "run_state/control.json": b"state",
+            "logs/web.log": b"log",
+            "venv/pyvenv.cfg": b"venv",
+            "calibration_photos/wall.jpg": b"calibration",
+            "firmware/esp32.bin": b"firmware",
+            "receiver_library/bundle.bin": b"receiver",
+            (
+                f"{INSTALLATION_PROFILE_LIBRARY_PATH}/profiles/"
+                f"{profile_digest}/profile.bin"
+            ): b"compiled-profile-bytes\x00\xff",
+            (
+                f"{INSTALLATION_PROFILE_LIBRARY_PATH}/profiles/"
+                f"{profile_digest}/receipt.json"
+            ): b'{"digest":"published"}\n',
         }
         for relative, content in fixtures.items():
             path = self.target / relative
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            path.write_bytes(content)
 
         second = self.manager.stage(self.app_files("two"))
+        for relative, content in fixtures.items():
+            self.assertEqual((self.target / relative).read_bytes(), content)
         previous = self.manager.activate(second.id)
 
         self.assertEqual(previous, first.id)
@@ -89,12 +102,20 @@ class AppReleaseTests(unittest.TestCase):
             {"version": "two"},
         )
         for relative, content in fixtures.items():
-            self.assertEqual((self.target / relative).read_text(), content)
+            self.assertEqual((self.target / relative).read_bytes(), content)
         for relative in (
             "presets", "run_state", "logs", "venv", "calibration_photos",
-            "firmware", "receiver_library",
+            "firmware", "receiver_library", INSTALLATION_PROFILE_LIBRARY_PATH,
         ):
             self.assertTrue((second.path / relative).is_symlink())
+
+        rollback = self.manager.rollback_target()
+        self.assertEqual(rollback, first.id)
+        self.assertEqual(self.manager.activate(rollback), second.id)
+        self.assertEqual(self.manager.current_release_id(), first.id)
+        for relative, content in fixtures.items():
+            self.assertEqual((self.target / relative).read_bytes(), content)
+        self.assertTrue((first.path / INSTALLATION_PROFILE_LIBRARY_PATH).is_symlink())
 
     def test_staging_is_deterministic_immutable_and_reuses_valid_digest(self):
         files = self.app_files("same")
@@ -114,6 +135,8 @@ class AppReleaseTests(unittest.TestCase):
         cases = (
             ({"presets/animations/user.json": regular}, "target-owned"),
             ({"run_state/status.json": regular}, "target-owned"),
+            ({INSTALLATION_PROFILE_LIBRARY_PATH: regular}, "target-owned"),
+            ({INSTALLATION_PROFILE_LIBRARY_PATH / "profile.bin": regular}, "target-owned"),
             ({"../escape.py": regular}, "unsafe"),
             ({"link.py": symlink}, "regular file"),
             ({"missing.py": self.source / "missing.py"}, "No such file"),
@@ -121,6 +144,50 @@ class AppReleaseTests(unittest.TestCase):
         for files, message in cases:
             with self.subTest(files=files), self.assertRaisesRegex((ValueError, FileNotFoundError), message):
                 self.manager.stage(files)
+
+    def test_upgrade_can_rollback_to_release_that_predates_profile_library_link(self):
+        legacy_shared_paths = dict(DEFAULT_SHARED_PATHS)
+        legacy_shared_paths.pop(INSTALLATION_PROFILE_LIBRARY_PATH)
+        legacy_manager = AppReleaseManager(
+            self.target,
+            shared_paths=legacy_shared_paths,
+        )
+        legacy = legacy_manager.stage(self.app_files("legacy"))
+        legacy_manager.activate(legacy.id)
+
+        profile_path = (
+            self.target
+            / INSTALLATION_PROFILE_LIBRARY_PATH
+            / "profiles"
+            / ("a" * 64)
+            / "profile.bin"
+        )
+        profile_path.parent.mkdir(parents=True)
+        profile_path.write_bytes(b"published-before-upgrade\x00\xff")
+
+        candidate = self.manager.stage(self.app_files("candidate"))
+        self.assertEqual(self.manager.activate(candidate.id), legacy.id)
+        self.assertEqual(self.manager.rollback_target(), legacy.id)
+        self.assertEqual(self.manager.activate(legacy.id), candidate.id)
+        self.assertEqual(profile_path.read_bytes(), b"published-before-upgrade\x00\xff")
+
+    def test_validate_rejects_legacy_release_with_source_owned_profile_content(self):
+        legacy_shared_paths = dict(DEFAULT_SHARED_PATHS)
+        legacy_shared_paths.pop(INSTALLATION_PROFILE_LIBRARY_PATH)
+        legacy_manager = AppReleaseManager(
+            self.target,
+            shared_paths=legacy_shared_paths,
+        )
+        embedded_profile = self.write_source("embedded-profile.bin", "not target-owned")
+        legacy = legacy_manager.stage(
+            {
+                "app.py": self.write_source("app.py", "app"),
+                INSTALLATION_PROFILE_LIBRARY_PATH / "profile.bin": embedded_profile,
+            },
+        )
+
+        with self.assertRaisesRegex(ReleaseValidationError, "target-owned"):
+            self.manager.validate(legacy.id)
 
     def test_validate_rejects_corruption_metadata_shape_duplicates_omissions_and_bad_ids(self):
         info = self.manager.stage(self.app_files("one"))

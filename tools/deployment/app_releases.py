@@ -36,6 +36,10 @@ except ModuleNotFoundError:  # Direct ``python tools/deployment/app_releases.py`
 
 
 RELEASE_METADATA = ".release.json"
+INSTALLATION_PROFILE_LIBRARY_PATH = PurePosixPath("installation_profile_library")
+# Releases created before Phase 3C omit this link. They remain valid rollback
+# targets, but validation below still rejects embedded files beneath this path.
+LEGACY_OPTIONAL_SHARED_PATHS = frozenset({INSTALLATION_PROFILE_LIBRARY_PATH})
 DEFAULT_SHARED_PATHS: Mapping[PurePosixPath, PurePosixPath] = {
     PurePosixPath("venv"): PurePosixPath("venv"),
     PurePosixPath("presets"): PurePosixPath("presets"),
@@ -44,6 +48,9 @@ DEFAULT_SHARED_PATHS: Mapping[PurePosixPath, PurePosixPath] = {
     PurePosixPath("calibration_photos"): PurePosixPath("calibration_photos"),
     PurePosixPath("firmware"): PurePosixPath("firmware"),
     PurePosixPath("receiver_library"): PurePosixPath("receiver_library"),
+    # Compiled geometry profiles are Pi-authoritative runtime artifacts, not
+    # receiver packages or source-owned application files.
+    INSTALLATION_PROFILE_LIBRARY_PATH: INSTALLATION_PROFILE_LIBRARY_PATH,
 }
 DEFAULT_SHARED_FILES: Mapping[PurePosixPath, PurePosixPath] = {
     PurePosixPath("web.log"): PurePosixPath("logs/web.log"),
@@ -410,6 +417,12 @@ class AppReleaseManager:
             relative = _safe_relative_path(raw_item["path"])
             if relative in expected_paths:
                 raise ReleaseValidationError(f"duplicate release file metadata: {relative}")
+            if relative in self._protected_files or any(
+                _is_beneath(relative, root) for root in self._protected_roots
+            ):
+                raise ReleaseValidationError(
+                    f"target-owned path cannot enter an app release: {relative}",
+                )
             expected_paths.add(relative)
             path = release / relative.as_posix()
             if path.is_symlink() or not path.is_file():
@@ -447,7 +460,19 @@ class AppReleaseManager:
         unexpected = sorted((path.as_posix() for path in actual_paths - allowed))
         if unexpected:
             raise ReleaseValidationError(f"unexpected paths in immutable release: {unexpected}")
-        if set(expected_links) != set(self.shared_paths) | set(self.shared_files):
+        configured_links = {**self.shared_paths, **self.shared_files}
+        actual_link_paths = set(expected_links)
+        configured_link_paths = set(configured_links)
+        missing_links = configured_link_paths - actual_link_paths
+        if (
+            actual_link_paths - configured_link_paths
+            or missing_links - LEGACY_OPTIONAL_SHARED_PATHS
+            or any(
+                configured_links[path] != target
+                for path, target in expected_links.items()
+                if path in configured_links
+            )
+        ):
             raise ReleaseValidationError("release shared-state contract does not match manager")
         recomputed = self._digest_descriptions(files, expected_links)
         if recomputed != release_id:
