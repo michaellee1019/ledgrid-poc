@@ -9,6 +9,7 @@
 #include "fixtures/animation_pipeline_v1.hpp"
 #include "fixtures/receiver_presentation_v1.hpp"
 #include "ledgrid/protocol.hpp"
+#include "ledgrid/receiver_task_policy.hpp"
 #include "ledgrid/receiver_runtime.hpp"
 #include "ledgrid/sha256.hpp"
 
@@ -876,6 +877,14 @@ void test_crc_gate_rejects_corruption_before_runtime_mutation() {
   TEST_ASSERT_EQUAL_UINT32(initial_generation, runtime.render_generation());
 }
 
+void test_receiver_control_and_display_tasks_use_separate_cores() {
+  TEST_ASSERT_EQUAL_INT(0, ledgrid::kReceiverSpiTaskCore);
+  TEST_ASSERT_EQUAL_INT(1, ledgrid::kReceiverDisplayTaskCore);
+  TEST_ASSERT_EQUAL_UINT(3, ledgrid::kReceiverDisplayTaskPriority);
+  TEST_ASSERT_NOT_EQUAL(ledgrid::kReceiverSpiTaskCore,
+                        ledgrid::kReceiverDisplayTaskCore);
+}
+
 void test_render_set_all_submit_interleaving_has_one_linearization_point() {
   ledgrid::ReceiverRuntime runtime(true);
   ledgrid::ReceiverOutputState output(8, 138, 50);
@@ -1620,6 +1629,7 @@ int main(int, char**) {
   RUN_TEST(test_parameter_and_context_updates_invalidate_inflight_local_frames);
   RUN_TEST(test_live_dispatch_policy_is_exhaustive_and_feature_gated);
   RUN_TEST(test_crc_gate_rejects_corruption_before_runtime_mutation);
+  RUN_TEST(test_receiver_control_and_display_tasks_use_separate_cores);
   RUN_TEST(test_render_set_all_submit_interleaving_has_one_linearization_point);
   RUN_TEST(test_config_and_brightness_interleavings_invalidate_render_tickets);
   RUN_TEST(test_operation_sequence_saturates_and_fails_closed_at_boundary);

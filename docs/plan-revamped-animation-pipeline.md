@@ -1342,12 +1342,17 @@ acceptance, and clean wall-deploy gate are complete. Phase 3A portable
 implementation and integrated repository gates are complete; a clean degraded
 deployment/baseline has passed, while strict all-four status and the restored
 one-receiver physical canary remain open. Phase 2D's explicit color-policy
-inventory is complete, while semantic palette migration and visual product work
-remain open. Phase 3B0's contract, portable runtime, fake wall, batch/ack payload,
-product lifecycle, strict readable-receiver runner, and explicitly degraded
-showcase runner are complete and both deterministic payload gates are green.
-The receiver feature stays gated; neither physical Phase 3B runner has executed,
-so there is still no visible wall showcase or receiver timing/expiry evidence**.
+inventory is complete across the unified 53-component selectable catalog, while
+semantic palette migration and visual product work remain open. Phase 3B0's
+contract, portable runtime, fake wall, batch/ack payload, product lifecycle,
+strict readable-receiver runner, and explicitly degraded showcase runner are
+complete and both deterministic payload gates are green. The strict physical
+Phase 3B canary has now executed on one readable receiver and exposed a
+receiver-task scheduling defect after proving compiled local playback. A
+dual-core scheduling fix is portable-green but still awaits deployment and a
+physical repeat. The receiver feature therefore stays gated; the degraded
+four-wall showcase has not run, and there is still no accepted wall-showcase or
+foreground timing/expiry evidence**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -2306,8 +2311,10 @@ Prove the core hybrid value before solving native artifact loading.
 
 Implementation status (2026-08-13): **portable vertical slice, batch/ack payload
 optimization, feature-gated product lifecycle, strict one-receiver runner, and
-explicitly degraded showcase runner complete; physical canary/showcase remain
-open**. Generated cross-language wire/state vectors,
+explicitly degraded showcase runner complete; the strict physical canary has
+isolated a receiver scheduling defect whose fix awaits physical confirmation,
+and the degraded showcase remains open**. Generated
+cross-language wire/state vectors,
 host serializers and negotiated status-v4 parsing, fake four-board transactional
 publication, feature-on receiver state/composition, exact cleanup, atomic
 multi-span batch patches, and deterministic payload accounting now land
@@ -2467,6 +2474,48 @@ Portable-slice evidence and open gates (2026-08-13):
   feature-off baseline: logical 0/1 reported exact v3 identity/capabilities and
   logical 2/3 matched the documented no-return state. It changed no wall state
   and is not Phase 3B feature-on evidence.
+- [x] The physical canary procedure identified `/dev/ttyACM0` as logical
+  receiver 1 (`9c:13:9e:bb:3d:14`) without guessing the other USB bindings.
+  Exact status-v4/six-capability preflight rejected the wrong logical address
+  without mutation, then passed on logical 1. The named feature-on image started
+  the compiled rainbow and advanced its local cadence with valid context and
+  zero receiver fault deltas. The first sparse controller-session command did
+  not produce accepted evidence, so the procedure stopped before any foreground
+  snapshot or degraded full-wall mutation. Every attempt's exit guard reflashed
+  the pinned production image, restarted `ledgrid.service`, and restored
+  `living_stained_glass`; the post-run production probe reported status versions
+  `[3, 3, 0, 0]`, capabilities `[12, 12, 0, 0]`, and zero host/receiver errors.
+- [x] Physical execution exposed three acceptance-tool defects before the
+  receiver-side stop: direct CLI imports depended on the current directory;
+  v4 acknowledgements and complete-host takeover could legitimately trail the
+  first queued status; and real command completion could exceed the original
+  two-query acknowledgement window. Direct launch now works from an unrelated
+  directory, takeover and acknowledgement waits are bounded and exact, and
+  command failures report the last version, command, operation sequence, and
+  CRC/queue/display counters. Focused strict-canary, sparse-protocol, Phase 3A,
+  and recipe tests cover these hardware-derived cases. Each settled fix was
+  followed by a clean ordinary `just deploy`; final receipt
+  `fc4acb673fe04f8b98269858ddea60fc` deployed clean commit `582c47b`, completed
+  all 14 phases in 2m26s, activated immutable app release
+  `bd974409717663640ac25f63f336c6dc4b0fd541d3d620fdd7e30e2843d68793`,
+  skipped unchanged production firmware, and restored the exact prior scene.
+- [x] A persisted diagnostic repeat proved that the sparse `0x20` session
+  command was not rejected: status eventually reported command `0x20`, the next
+  operation sequence, and success with zero CRC, SPI-queue, and display errors,
+  but only after the host's bounded acknowledgement window. Extending and pacing
+  that window to 128 status queries still failed, ruling out a host timeout
+  adjustment. ESP-IDF pins `app_main`, which owns the SPI dequeue loop, to CPU0;
+  the higher-priority continuous display task was also pinned to CPU0 and could
+  starve command processing during local playback. The display task is now
+  pinned to CPU1 through an explicit tested task policy while SPI remains on
+  CPU0. All 60 native cases, 87 focused Python tests plus 155 subtests, and both
+  pinned production/canary builds pass; image sizes remain within the accepted
+  50,720/65,504-byte RAM and 272,273/278,553-byte flash envelopes.
+- [ ] Deploy the task-separation fix, then repeat the strict logical-1 canary
+  with persisted output and obtain accepted controller-session,
+  snapshot/delta, timing, lease-expiry, and complete-host-takeover evidence. Do
+  not set the host canary switch, flash the remaining receivers, or start the
+  degraded showcase until this stop gate passes.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground
@@ -2507,12 +2556,15 @@ follow-up, and the portable strict/degraded item-5 runners are complete as a
 portable/fake-wall/product slice. The receiver-native scene is available only
 under the deliberately named host canary switch and named feature-on firmware
 build; ordinary production remains Python-only. Item 5 physical execution has
-not started. The next hardware work is therefore the scheduled strict
-readable-receiver canary and optional explicitly degraded showcase, followed by
-complete-host-frame cleanup, production-image restoration, and restored streamed
-acceptance. Do not interpret portable completion as physical acceptance or
-enable the receiver path by default while the documented SPI1 return-path fault
-remains.
+started on logical receiver 1 and stopped safely after local-background proof
+when sparse controller-session acceptance was not established. The next hardware
+work is therefore deployment and a physical repeat of the dual-core scheduling
+fix on that strict readable receiver, not the degraded showcase. Only after the
+strict canary passes may the optional explicitly degraded showcase run, followed
+by complete-host-frame cleanup, production-image restoration, and restored
+streamed acceptance. Do not interpret portable or local-background completion
+as foreground physical acceptance, and do not enable the receiver path by
+default while the documented SPI1 return-path fault remains.
 
 Settled-source portable evidence on 2026-08-13: `just test` passed 1,008 Python
 tests and 1,476 subtests, 23 rendering tests and 3 subtests, all 59 native

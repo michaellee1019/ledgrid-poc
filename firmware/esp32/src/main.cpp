@@ -13,6 +13,7 @@
 #include "ledgrid/frame_mailbox.hpp"
 #include "ledgrid/parallel_led_driver.hpp"
 #include "ledgrid/protocol.hpp"
+#include "ledgrid/receiver_task_policy.hpp"
 #include "ledgrid/receiver_runtime.hpp"
 #include "ledgrid/startup_animation.hpp"
 #include "ledgrid/ws2812_encoder.hpp"
@@ -46,6 +47,8 @@ constexpr std::size_t kSpiFrameBytes = 1 + kMaxRgbBytes + kCrcBytes;
 constexpr std::size_t kSpiBufferSize =
     ledgrid::kAnimationPipelineMaxTransactionBytes;
 constexpr std::size_t kSpiQueueDepth = 2;
+static_assert(configNUMBER_OF_CORES > ledgrid::kReceiverDisplayTaskCore,
+              "receiver firmware requires the ESP32-S3 dual-core scheduler");
 static_assert(kSpiBufferSize == 4096, "transport contract changed");
 static_assert(kSpiFrameBytes <= kSpiBufferSize,
               "maximum RGB frame plus CRC exceeds transport buffer");
@@ -713,9 +716,9 @@ extern "C" void app_main() {
           "led-display",
           8192,
           nullptr,
-          3,
+          ledgrid::kReceiverDisplayTaskPriority,
           &display_task_handle,
-          0) != pdPASS) {
+          ledgrid::kReceiverDisplayTaskCore) != pdPASS) {
     ESP_LOGE(kLogTag, "Display task creation failed");
     while (true) vTaskDelay(pdMS_TO_TICKS(1000));
   }
