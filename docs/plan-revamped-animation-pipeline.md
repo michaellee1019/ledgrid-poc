@@ -1353,9 +1353,8 @@ orientation correction, ordinary deployment restoration, and camera evidence
 have passed without claiming release acceptance for write-only receivers 2/3.
 Phase 3C's deterministic portable profile compiler/codec, checked-in golden,
 identity/installed topology round trip, and bounded managed profile library are
-complete. Read-only host runtime/preview selection is implementation-complete
-and awaiting its clean deploy receipt; receiver runtime work and strict physical
-acceptance remain open**.
+complete. Read-only host runtime/preview selection and its clean deployment are
+complete; receiver runtime work and strict physical acceptance remain open**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -3016,10 +3015,10 @@ Portable compiler, golden-vector, profile-library, host-preview, and fake-wall
 work may proceed before the SPI1 repair. Strict profile activation, digest
 agreement, receiver timing, and physical seam acceptance remain release-blocked.
 
-Implementation status (2026-08-14): **portable deterministic-profile and
-bounded host-library/fake-transaction slices complete; read-only host-context
-wiring is implementation-complete and awaiting its clean deploy receipt;
-receiver runtime, optics, and physical acceptance remain open**.
+Implementation status (2026-08-14): **portable deterministic-profile,
+bounded host-library/fake-transaction, and read-only host-context slices are
+complete and cleanly deployed; receiver runtime, optics, and physical
+acceptance remain open**.
 The v1 binary schema, digest domains, category/region encodings, fixed global
 derivatives, receiver-view orientation, strict decoder bounds, and 65,535-byte
 maximum are frozen in `ANIMATION_PIPELINE_CONTRACT_V1.md`. Compiler/codec,
@@ -3099,9 +3098,8 @@ or installed-wall mutation. The following bounded host-context lane is now
 implemented below; real receiver staging and physical acceptance remain
 separate later gates.
 
-Current bounded host-context slice (started 2026-08-14): **implementation and
-portable acceptance complete; clean ordinary deploy pending**. The
-selected content digest resolves only through the existing Pi-authoritative
+Current bounded host-context slice (2026-08-14): **complete**. The selected
+content digest resolves only through the existing Pi-authoritative
 managed library. The resolved global geometry becomes an immutable Python
 runtime/preview view; the already-generated receiver slices remain reserved for
 later ABI/runtime work and are not staged or activated here.
@@ -3126,7 +3124,7 @@ later ABI/runtime work and are not staged or activated here.
   dequantization; immutable array reachability; explicit-clearance reuse;
   same-digest idempotence; failed-switch atomicity; live/preview continuity;
   topology-domain separation; persistence status; and no receiver mutation.
-- [ ] Pass `just test`, explicit rendering acceptance, fixture regeneration,
+- [x] Pass `just test`, explicit rendering acceptance, fixture regeneration,
   whitespace checks, ordinary deploy dry-run/plan, and a clean ordinary
   `just deploy` before closing the slice.
 
@@ -3164,8 +3162,21 @@ receiver profile/runtime or physical-wall evidence):
 - The explicit `just test-rendering` rerun passed the same 23 tests and 4 ms gate
   with a highest p95 of 3.3223 ms. Golden `--check`, compile checks,
   `git diff --check`, `just --dry-run deploy`, and read-only `just deploy-plan`
-  passed. A clean ordinary deploy receipt remains the sole open item for this
-  bounded slice.
+  passed.
+- Clean ordinary deployment `0eb9638cd1934ecc9e2934ea19d6fcc3` succeeded from
+  commit `b917353d0cb65b673db0e51a4c4ab5070a07116d` with no source diff. App
+  release `c8fc0375565774d5ee7e1c863970e12808af32154b7c8bc673d1a15f1d66fe2b`
+  became both desired and observed, readiness stabilized for all four
+  receivers, and state restore reported `living_stained_glass/before-deploy`.
+  Firmware build and flash were correctly skipped as unchanged. This receipt
+  proves the host slice deploy/restore path only; it is not receiver profile or
+  physical-wall acceptance.
+
+The next bounded Phase 3C lane is receiver profile staging and activation:
+define the reserved native ABI view, firmware cache/capacity behavior,
+unanimous digest/status agreement, and rollback independently of native
+background activation. Keep dashboard mutation and physical seam/timing claims
+out of that lane until the strict installed-wall gate can run.
 
 - [x] Freeze the portable v1 header, section table, section vocabulary,
   canonical ordering, CRC/content/calibration digests, global-derivative rules,
