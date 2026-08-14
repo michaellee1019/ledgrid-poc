@@ -658,13 +658,30 @@ class SingleReceiverPhase3BCanary:
     @staticmethod
     def _fresh_status(controller) -> Mapping[str, Any]:
         status = None
-        # A newly opened sparse-capable controller must first discover v4 in
-        # the v3 prefix.  Four reads drain both prequeued v3 snapshots and
-        # return a v4 snapshot produced after this observation began.
-        for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 2):
-            status = controller.query_receiver_status()
+        # A reopened controller first drains the two-deep queue containing an
+        # old/truncated response and the init PING's legacy-safe v3 response.
+        # One more v3 read negotiates the v4 query size, then at most one queue
+        # depth drains the already queued v3 replies before coherent v4 arrives.
+        # Even an exact v4 can predate this observation, so retain the original
+        # freshness drain before accepting it; only the final read is negotiation
+        # slack for the hardware-derived reopen sequence.
+        minimum_queries = SPI_RESPONSE_QUEUE_DEPTH + 2
+        maximum_queries = 2 * SPI_RESPONSE_QUEUE_DEPTH + 1
+        for query_index in range(maximum_queries):
+            observed = controller.query_receiver_status()
+            if not isinstance(observed, Mapping):
+                continue
+            status = observed
+            if (
+                query_index + 1 >= minimum_queries
+                and _int(status, "receiver_status_version") == 4
+            ):
+                return status
         if not isinstance(status, Mapping):
             raise CanaryFailure("receiver returned no status")
+        # Preserve the strongest observed diagnostic. Strict identity evaluation
+        # will report the exact non-v4 version instead of losing it to a generic
+        # timeout, while the fixed query bound prevents an infinite negotiation.
         return status
 
     @staticmethod

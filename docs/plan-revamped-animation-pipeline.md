@@ -2563,11 +2563,32 @@ Portable-slice evidence and open gates (2026-08-13):
   composite, commit, expiry, and implausible-rate failures. The exit guard again
   reflashed exact production firmware, restarted the feature-off service,
   restored byte-identical desired state, and passed production status.
-- [ ] Deploy the snapshot-accounting fix, then repeat the strict logical-1
-  canary with persisted output and obtain accepted snapshot/delta, timing,
-  lease-expiry, and complete-host-takeover evidence. Do not set the host canary
-  switch, flash the remaining receivers, or start the degraded showcase until
-  this stop gate passes.
+- [x] The snapshot-accounting fix passed clean ordinary deployment receipt
+  `acd01555d2e047fcbe014d6dab48e9ea`: all 14 phases completed from clean commit
+  `51ece3d` in 2m13s, app release
+  `9ee6fa19b268e577a1138d48e7381b5e4780097826ec139e0b5302dd97601873`
+  activated, unchanged production firmware was reused, exact prior state was
+  restored, and readiness passed.
+- [x] The next guarded logical-1 canary passed zero-fault full snapshot and the
+  realistic snapshot accounting with one natural 30 Hz base frame in 45.171 ms;
+  it then passed the cadence-aligned delta with exact zero base advance and one
+  foreground composite. The 0.501-second timing window sampled 15 completed
+  frames: base render p95 1.136 ms, foreground composite p95 0.208 ms, encode
+  p95 0.498 ms, and display p95 4.458 ms, with zero cadence misses. After the
+  deliberate five-second disconnect, the receiver had continued for 152 base
+  frames, but the freshly reopened host stopped one query too early on a queued
+  v3 prefix. A reopen begins with PING, v3 query-size negotiation, and the
+  two-deep legacy response queue, so coherent v4 arrives on the fifth read.
+  Fresh-status draining now retains the four-read post-observation freshness
+  floor, allows at most five reads for reopen negotiation, accepts only exact v4,
+  and returns the strongest bounded non-v4 diagnostic on failure. Tests cover
+  the real reopen sequence, a stale pre-observation v4, and bounded no-v4
+  failure. Production reflash, feature-off restart, exact state restoration,
+  health, and degraded production status passed again.
+- [ ] Deploy the bounded fresh-v4 drain, then repeat the strict logical-1 canary
+  and obtain accepted lease-expiry plus complete-host-takeover evidence. Do not
+  set the host canary switch, flash the remaining receivers, or start the
+  degraded showcase until this stop gate passes.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground

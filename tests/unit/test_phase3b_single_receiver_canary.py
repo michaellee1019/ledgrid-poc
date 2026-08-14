@@ -23,6 +23,7 @@ from drivers.spi_controller import (
     CMD_SET_ALL,
     OVERLAY_UPDATE_DELTA,
     OVERLAY_UPDATE_FULL_SNAPSHOT,
+    SPI_RESPONSE_QUEUE_DEPTH,
 )
 from tools.benchmarks.phase3b_single_receiver_canary import (
     BASE_HOST_FULL_SCENE,
@@ -125,6 +126,8 @@ class FakeReceiver:
         self.bad_ack_at = None
         self.factory_failures = set()
         self.after_operation = None
+        self.reopen_status_negotiation = False
+        self.reopen_status_reads = 0
         self.retain_foreground_on_expiry = False
         self.freeze_frames = False
         self._frame_fraction = 0.0
@@ -143,7 +146,18 @@ class FakeReceiver:
         self.status["receiver_operation_sequence"] += 1
         self.status["receiver_last_processed_command"] = CMD_PING
         self.status["receiver_last_result"] = 1
-        return FakeController(self)
+        controller = FakeController(self)
+        if self.opens == 2 and self.reopen_status_negotiation:
+            current = dict(self.status)
+            legacy_v3 = dict(current, receiver_status_version=3)
+            controller.queued_statuses = [
+                {"receiver_status_version": 0},
+                legacy_v3,
+                dict(legacy_v3),
+                dict(legacy_v3),
+                current,
+            ]
+        return controller
 
     def _render(self, frames):
         if frames <= 0:
@@ -201,6 +215,7 @@ class FakeReceiver:
 class FakeController:
     def __init__(self, receiver):
         self.receiver = receiver
+        self.queued_statuses = []
 
     def _ack(self, operation, command, *, overlay=False):
         receiver = self.receiver
@@ -219,6 +234,9 @@ class FakeController:
         return dict(status)
 
     def query_receiver_status(self):
+        if self.queued_statuses:
+            self.receiver.reopen_status_reads += 1
+            return dict(self.queued_statuses.pop(0))
         status = dict(self.receiver.status)
         if self.receiver._lease_deadline is not None:
             remaining = max(
@@ -673,7 +691,7 @@ class Phase3BCanaryTests(unittest.TestCase):
         controller = QueuedStatusController()
         status = runner._black_takeover(controller)
 
-        self.assertGreaterEqual(controller.reads, 8)
+        self.assertEqual(controller.reads, 2 * SPI_RESPONSE_QUEUE_DEPTH + 1)
         self.assertEqual(status["receiver_status_version"], 4)
         self.assertEqual(status["receiver_last_processed_command"], CMD_SET_ALL)
 
@@ -711,6 +729,69 @@ class Phase3BCanaryTests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertIn("lease expiry/base continuation", result["failure"])
         self.assertEqual(receiver.black_takeovers, 1)
+
+    def test_expiry_reopen_drains_ping_v3_negotiation_until_coherent_v4(self):
+        runner, receiver = self.rig()
+        receiver.reopen_status_negotiation = True
+
+        result = runner.run()
+
+        self.assertTrue(result["passed"], result)
+        self.assertEqual(receiver.reopen_status_reads, 5)
+        self.assertTrue(result["expiry"]["passed"])
+
+    def test_fresh_status_returns_last_mapping_after_bounded_non_v4_reads(self):
+        runner, _receiver = self.rig()
+
+        class NeverV4Controller:
+            def __init__(self):
+                self.reads = 0
+
+            def query_receiver_status(self):
+                self.reads += 1
+                if self.reads == 1:
+                    return None
+                return {"receiver_status_version": 3}
+
+        controller = NeverV4Controller()
+        status = runner._fresh_status(controller)
+
+        self.assertEqual(controller.reads, 2 * SPI_RESPONSE_QUEUE_DEPTH + 1)
+        self.assertEqual(status, {"receiver_status_version": 3})
+        self.assertTrue(
+            any(
+                "expected exactly 4" in failure
+                for failure in evaluate_identity_status(status, runner.config.logical_id)
+            )
+        )
+
+    def test_fresh_status_drains_preobservation_v4_before_returning_fresh_v4(self):
+        runner, _receiver = self.rig()
+        queued = status_v4(logical_id=runner.config.logical_id)
+        fresh = dict(queued)
+        fresh.update({
+            "receiver_operation_sequence": queued["receiver_operation_sequence"] + 1,
+            "receiver_last_processed_command": CMD_SET_ALL,
+            "receiver_crc_errors": 1,
+        })
+
+        class PrequeuedV4Controller:
+            def __init__(self):
+                self.reads = 0
+                self.responses = [queued, fresh, fresh, fresh]
+
+            def query_receiver_status(self):
+                response = self.responses[self.reads]
+                self.reads += 1
+                return dict(response)
+
+        controller = PrequeuedV4Controller()
+        status = runner._fresh_status(controller)
+
+        self.assertEqual(controller.reads, SPI_RESPONSE_QUEUE_DEPTH + 2)
+        self.assertEqual(status["receiver_last_processed_command"], CMD_SET_ALL)
+        self.assertEqual(status["receiver_operation_sequence"], 1)
+        self.assertEqual(status["receiver_crc_errors"], 1)
 
     def test_timing_summary_is_deterministic_for_every_receiver_metric(self):
         samples = []
