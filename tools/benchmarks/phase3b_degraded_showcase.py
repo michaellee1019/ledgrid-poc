@@ -57,6 +57,9 @@ from drivers.spi_controller import (
     CAPABILITY_SPARSE_OVERLAY_V1,
     CAPABILITY_STATIC_LOCAL_BACKGROUND,
     CAPABILITY_STATUS_V3,
+    CMD_CONFIG,
+    COMMAND_ACK_POLL_INTERVAL_SECONDS,
+    CRC_BYTES,
     LEDController,
     MAX_RGBA_PIXELS_PER_BATCH_SPAN,
     OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
@@ -138,6 +141,13 @@ class ShowcaseConfig:
             or not 2 <= self.lease_ms <= 0xFFFFFFFF
         ):
             raise ValueError("lease_ms must be between 2 and uint32 maximum")
+        foreground_interval = 1.0 / float(self.foreground_poll_hz)
+        renewal_interval = min(1.0, self.lease_ms / 2000.0)
+        if foreground_interval >= renewal_interval:
+            raise ValueError(
+                "foreground poll interval must be shorter than the scheduled "
+                "lease-renewal interval"
+            )
 
 
 @dataclass(frozen=True)
@@ -306,7 +316,7 @@ def validate_visual_confirmation(payload: Any, challenge: str) -> dict[str, Any]
 
 
 class FileVisualConfirmation:
-    """Publish a fresh challenge and wait for a separately written response."""
+    """Nonblocking file exchange for confirmation while the scene stays live."""
 
     def __init__(
         self,
@@ -316,7 +326,6 @@ class FileVisualConfirmation:
         timeout: float,
         poll_interval: float = 0.1,
         clock: Callable[[], float] = time.monotonic,
-        sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self.challenge_path = Path(challenge_path)
         self.response_path = Path(response_path)
@@ -324,10 +333,20 @@ class FileVisualConfirmation:
             raise ValueError("visual confirmation response must not exist before the run")
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("confirmation timeout must be finite and greater than zero")
+        if (
+            isinstance(poll_interval, bool)
+            or not isinstance(poll_interval, (int, float))
+            or not math.isfinite(float(poll_interval))
+            or float(poll_interval) <= 0.0
+        ):
+            raise ValueError(
+                "confirmation poll interval must be finite and greater than zero"
+            )
         self.timeout = float(timeout)
         self.poll_interval = float(poll_interval)
         self.clock = clock
-        self.sleeper = sleeper
+        self._challenge: Optional[str] = None
+        self._deadline: Optional[float] = None
 
     @staticmethod
     def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
@@ -349,7 +368,11 @@ class FileVisualConfirmation:
                 pass
             raise
 
-    def __call__(self, challenge: str) -> Mapping[str, Any]:
+    def begin(self, challenge: str) -> None:
+        if self._challenge is not None:
+            raise RuntimeError("visual confirmation exchange already started")
+        if not isinstance(challenge, str) or not challenge:
+            raise ValueError("visual confirmation challenge must be non-empty")
         self._atomic_json(self.challenge_path, {
             "schema": CONFIRMATION_SCHEMA,
             "schema_version": CONFIRMATION_VERSION,
@@ -362,13 +385,33 @@ class FileVisualConfirmation:
                 "this challenge, verdict=pass, and a non-empty operator."
             ),
         })
-        deadline = self.clock() + self.timeout
-        while True:
-            if self.response_path.exists():
-                return json.loads(self.response_path.read_text(encoding="utf-8"))
-            if self.clock() >= deadline:
-                raise ShowcaseFailure("visual confirmation response timed out")
-            self.sleeper(self.poll_interval)
+        self._challenge = challenge
+        self._deadline = self.clock() + self.timeout
+
+    def remaining_seconds(self) -> float:
+        if self._challenge is None or self._deadline is None:
+            raise RuntimeError("visual confirmation exchange has not started")
+        return max(0.0, self._deadline - self.clock())
+
+    def poll(self) -> Optional[Mapping[str, Any]]:
+        if self._challenge is None or self._deadline is None:
+            raise RuntimeError("visual confirmation exchange has not started")
+        # The observation must arrive strictly before the bounded deadline.  A
+        # response file that appears at or after it cannot race this check and
+        # turn a timed-out run into a pass.
+        if self.clock() >= self._deadline:
+            raise ShowcaseFailure("visual confirmation response timed out")
+        if self.response_path.exists():
+            try:
+                payload = json.loads(self.response_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, ValueError) as exc:
+                raise ShowcaseFailure(
+                    f"visual confirmation response is malformed: {exc}"
+                ) from exc
+            if not isinstance(payload, Mapping):
+                raise ShowcaseFailure("visual confirmation response is not an object")
+            return payload
+        return None
 
 
 class ClockForegroundSource:
@@ -407,7 +450,12 @@ class ClockForegroundSource:
 class DegradedHybridTransport:
     """Strict/readable + write-only Phase 3B command transport."""
 
-    def __init__(self, controller: Any) -> None:
+    def __init__(
+        self,
+        controller: Any,
+        *,
+        sleeper: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.controller = controller
         self.devices = list(getattr(controller, "devices", ()))
         self.num_devices = getattr(controller, "num_devices", len(self.devices))
@@ -430,9 +478,22 @@ class DegradedHybridTransport:
             raise ShowcaseFailure(
                 f"controller device map is {tuple(device_map)!r}; expected {EXPECTED_DEVICE_MAP!r}"
             )
+        observed_devices = tuple(
+            (getattr(device, "bus", None), getattr(device, "device", None))
+            for device in self.devices
+        )
+        if observed_devices != EXPECTED_DEVICE_MAP:
+            raise ShowcaseFailure(
+                f"controller device objects route to {observed_devices!r}; "
+                f"expected {EXPECTED_DEVICE_MAP!r}"
+            )
+        self._sleeper = sleeper
         self._session: Optional[bytes] = None
         self._generation = 0
         self._scene_revision: Optional[int] = None
+        self._expected_alpha_coverage = (0, 0, 0, 0)
+        self._coverage_checks = 0
+        self._identity_configuration: Optional[dict[str, Any]] = None
         self._status: dict[str, Any] = {
             "state": "initialized",
             "operation": "none",
@@ -463,18 +524,93 @@ class DegradedHybridTransport:
         if overlay and status.get("receiver_overlay_operation_result") not in OVERLAY_RESULT_OK:
             raise ShowcaseFailure(f"receiver {logical_id} rejected {stage}")
 
-    @staticmethod
-    def _write_only_packet(device: Any, stage: str, payload: bytes) -> None:
+    def _write_only_packet(self, device: Any, stage: str, payload: bytes) -> None:
         """Transmit one validated allowlisted packet without claiming an ACK."""
 
         test_hook = getattr(device, "write_only_packet", None)
         if callable(test_hook):
             test_hook(stage, bytes(payload))
-            return
-        xfer = getattr(device, "_xfer", None)
-        if not callable(xfer):
-            raise ShowcaseFailure(f"write-only receiver lacks raw transport for {stage}")
-        xfer(bytes(payload))
+        else:
+            xfer = getattr(device, "_xfer", None)
+            if not callable(xfer):
+                raise ShowcaseFailure(f"write-only receiver lacks raw transport for {stage}")
+            xfer(bytes(payload))
+        # A completed master transfer does not mean the receiver task has
+        # processed and re-queued its two-deep slave DMA slot.  Apply the same
+        # bounded refill interval used by acknowledged commands after every raw
+        # write, including identity, snapshot batches, renewals, and cleanup.
+        self._sleeper(COMMAND_ACK_POLL_INTERVAL_SECONDS)
+
+    @staticmethod
+    def _identity_packet(logical_id: int) -> bytes:
+        if logical_id not in range(4):
+            raise ValueError("logical identity must be 0..3")
+        return bytes((
+            CMD_CONFIG,
+            LOCAL_STRIPS,
+            (LEDS_PER_STRIP >> 8) & 0xFF,
+            LEDS_PER_STRIP & 0xFF,
+            0,
+            logical_id,
+        ))
+
+    def configure_logical_identities(self) -> dict[str, Any]:
+        """Explicitly bind every freshly flashed receiver before runtime commands."""
+
+        devices: dict[str, Any] = {}
+        for logical_id, device in enumerate(self.devices):
+            packet = self._identity_packet(logical_id)
+            if logical_id in READABLE_DEVICES:
+                command = getattr(device, "_command_status", None)
+                if not callable(command):
+                    raise ShowcaseFailure(
+                        f"receiver {logical_id} lacks exact CONFIG acknowledgement path"
+                    )
+                status = command(packet, required_status_version=EXPECTED_STATUS_VERSION)
+                self._require_ack(status, "logical identity CONFIG", logical_id)
+                expected = {
+                    "receiver_status_version": EXPECTED_STATUS_VERSION,
+                    "receiver_logical_device": logical_id,
+                    "receiver_last_processed_command": CMD_CONFIG,
+                }
+                for key, value in expected.items():
+                    if status.get(key) != value:
+                        raise ShowcaseFailure(
+                            f"receiver {logical_id} CONFIG reported {key}="
+                            f"{status.get(key)!r}; expected {value!r}"
+                        )
+                devices[str(logical_id)] = {
+                    "payload_bytes": len(packet),
+                    "wire_bytes": len(packet) + CRC_BYTES,
+                    "receiver_acknowledged": True,
+                    "logical_identity_verified": True,
+                    "logical_device": logical_id,
+                }
+            else:
+                self._write_only_packet(device, "logical identity CONFIG", packet)
+                devices[str(logical_id)] = {
+                    "payload_bytes": len(packet),
+                    "wire_bytes": len(packet) + CRC_BYTES,
+                    "receiver_acknowledged": False,
+                    "logical_identity_verified": False,
+                    "logical_device_requested": logical_id,
+                    "warning": (
+                        "outbound-only CONFIG; receiver identity remains unverified "
+                        "until the SPI1 return path is repaired"
+                    ),
+                }
+        result = {
+            "passed": True,
+            "telemetry_complete": False,
+            "devices": devices,
+            "unverified_devices": list(UNVERIFIED_DEVICES),
+        }
+        self._identity_configuration = result
+        self._status.update({
+            "operation": "logical_identity_config",
+            "identity_configuration": result,
+        })
+        return result
 
     def _invoke(
         self,
@@ -613,11 +749,10 @@ class DegradedHybridTransport:
         for start, end in dirty_ranges or ():
             first = max(local_start, start)
             last = min(local_start + LOCAL_PIXELS, end)
-            while first < last:
+            for first in range(first, last, MAX_RGBA_PIXELS_PER_BATCH_SPAN):
                 count = min(MAX_RGBA_PIXELS_PER_BATCH_SPAN, last - first)
                 local_first = first - local_start
                 patches.append((local_first, local[local_first:local_first + count]))
-                first += count
         return patches
 
     def publish_sparse_overlay(
@@ -636,6 +771,20 @@ class DegradedHybridTransport:
         full_snapshot: bool = False,
     ) -> bool:
         overlay = self._normalize_overlay(pixels)
+        expected_coverage = tuple(
+            int(np.count_nonzero(
+                overlay[index * LOCAL_PIXELS:(index + 1) * LOCAL_PIXELS, 3]
+            ))
+            for index in range(4)
+        )
+        missing = [
+            index for index, count in enumerate(expected_coverage) if count <= 0
+        ]
+        if missing:
+            raise ShowcaseFailure(
+                "foreground has zero expected alpha coverage on logical receiver(s) "
+                + ", ".join(str(index) for index in missing)
+            )
         session = LEDController._controller_session(controller_session_id)
         if generation <= prior_generation or generation >= 0xFFFFFFFFFFFFFFFF:
             raise ValueError("foreground generation is not a safe successor")
@@ -747,6 +896,7 @@ class DegradedHybridTransport:
                 "receiver_foreground_scene_epoch": scene_epoch,
                 "receiver_foreground_base_revision": base_revision,
                 "receiver_foreground_present_at_scene_time_us": present_at_scene_time_us,
+                "receiver_overlay_committed_coverage_pixels": expected_coverage[index],
             }
             for key, value in expected.items():
                 if status.get(key) != value:
@@ -756,10 +906,16 @@ class DegradedHybridTransport:
         self._session = session
         self._generation = generation
         self._scene_revision = scene_revision
+        self._expected_alpha_coverage = expected_coverage
+        self._coverage_checks += 1
         self._status.update({
             "state": "active",
             "operation": "foreground_publish",
             "foreground_generation": generation,
+            "expected_alpha_coverage_by_receiver": {
+                str(index): count for index, count in enumerate(expected_coverage)
+            },
+            "coverage_checks": self._coverage_checks,
         })
         return True
 
@@ -786,8 +942,12 @@ class DegradedHybridTransport:
                 status.get("receiver_foreground_state") != 2
                 or status.get("receiver_overlay_committed_generation") != generation
                 or status.get("receiver_overlay_session_id") != session.hex()
+                or status.get("receiver_overlay_committed_coverage_pixels")
+                != self._expected_alpha_coverage[index]
             ):
-                raise ShowcaseFailure(f"receiver {index} lost foreground authority on renew")
+                raise ShowcaseFailure(
+                    f"receiver {index} lost foreground authority or exact coverage on renew"
+                )
         self._status.update({"operation": "foreground_renew"})
         return True
 
@@ -809,8 +969,92 @@ class DegradedHybridTransport:
             self._invoke(index, "foreground clear", "clear_overlay", packet,
                          overlay=True, kwargs=kwargs)
         self._generation = generation
+        self._expected_alpha_coverage = (0, 0, 0, 0)
         self._status.update({"operation": "foreground_clear"})
         return True
+
+    def foreground_visibility(self) -> dict[str, Any]:
+        expected = {
+            str(index): count
+            for index, count in enumerate(self._expected_alpha_coverage)
+        }
+        readable = {}
+        failures = []
+        for index in READABLE_DEVICES:
+            status = self._fresh_status(self.devices[index])
+            status_version = _integer(status, "receiver_status_version")
+            logical_device = status.get("receiver_logical_device")
+            foreground_state = status.get("receiver_foreground_state")
+            observed_session = status.get("receiver_overlay_session_id")
+            observed_generation = _integer(
+                status, "receiver_overlay_committed_generation"
+            )
+            lease_remaining_ms = _integer(
+                status, "receiver_overlay_lease_remaining_ms"
+            )
+            observed_coverage = _integer(
+                status, "receiver_overlay_committed_coverage_pixels"
+            )
+            proof = {
+                "status_v4_exact": status_version == EXPECTED_STATUS_VERSION,
+                "logical_identity_exact": logical_device == index,
+                "foreground_active": foreground_state == 2,
+                "session_exact": (
+                    self._session is not None
+                    and observed_session == self._session.hex()
+                ),
+                "generation_exact": observed_generation == self._generation,
+                "lease_remaining_positive": lease_remaining_ms > 0,
+                "coverage_expected_positive": (
+                    self._expected_alpha_coverage[index] > 0
+                ),
+                "coverage_exact": (
+                    observed_coverage == self._expected_alpha_coverage[index]
+                ),
+            }
+            readable[str(index)] = {
+                "status_version": status_version,
+                "logical_device": logical_device,
+                "expected_alpha_pixels": self._expected_alpha_coverage[index],
+                "observed_committed_coverage_pixels": observed_coverage,
+                "expected_session_id": (
+                    None if self._session is None else self._session.hex()
+                ),
+                "observed_session_id": observed_session,
+                "expected_generation": self._generation,
+                "observed_generation": observed_generation,
+                "lease_remaining_ms": lease_remaining_ms,
+                **proof,
+            }
+            failed_checks = [name for name, passed in proof.items() if not passed]
+            if failed_checks:
+                failures.append(
+                    f"receiver {index} pass-boundary visibility failed "
+                    + ", ".join(failed_checks)
+                )
+        write_only = {
+            str(index): {
+                "expected_alpha_pixels": self._expected_alpha_coverage[index],
+                "receiver_telemetry_verified": False,
+                "physical_display_verified": False,
+                "warning": "expected host coverage only; receiver/display is unverified",
+            }
+            for index in UNVERIFIED_DEVICES
+        }
+        if any(count <= 0 for count in self._expected_alpha_coverage):
+            failures.append("expected foreground alpha coverage is not positive on every lane")
+        return {
+            "passed": not failures,
+            "failures": failures,
+            "all_lanes_expected_nonzero": all(
+                count > 0 for count in self._expected_alpha_coverage
+            ),
+            "expected_alpha_coverage_by_receiver": expected,
+            "readable_receivers": readable,
+            "write_only_receivers": write_only,
+            "coverage_checks": self._coverage_checks,
+            "sampled_at_pass_boundary": True,
+        }
 
     def host_stats(self, logical_ids: Sequence[int]) -> dict[int, dict[str, int]]:
         result = {}
@@ -848,6 +1092,7 @@ class DegradedHybridTransport:
                 failures.append(f"receiver {index} takeover proof: {exc}")
         if failures:
             raise ShowcaseFailure("complete host takeover failed: " + "; ".join(failures))
+        self._expected_alpha_coverage = (0, 0, 0, 0)
         self._status.update({"state": "host_full_scene", "operation": "set_all_takeover"})
 
     def get_stats(self) -> dict[str, Any]:
@@ -891,9 +1136,11 @@ class Phase3BDegradedShowcase:
         *,
         controller_factory: Callable[[], Any],
         restore_desired_display: Callable[[Mapping[str, Any]], None],
-        confirmation_provider: Callable[[str], Mapping[str, Any]],
+        confirmation_provider: Any,
         frame_source_factory: Callable[[Any], Any] = ClockForegroundSource,
-        transport_factory: Callable[[Any], DegradedHybridTransport] = DegradedHybridTransport,
+        transport_factory: Optional[
+            Callable[[Any], DegradedHybridTransport]
+        ] = None,
         clock: Callable[[], float] = time.monotonic,
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
         sleeper: Callable[[float], None] = time.sleep,
@@ -923,6 +1170,61 @@ class Phase3BDegradedShowcase:
             vibe=resolve_vibe(self.config.vibe_id, revision=1),
             plant_modifiers=PlantModifierState.from_payload({}),
             plant_revision=1,
+        )
+
+    def _begin_confirmation_exchange(
+        self, challenge: str
+    ) -> tuple[
+        Callable[[], Optional[Mapping[str, Any]]],
+        str,
+        Optional[float],
+        Optional[Callable[[], float]],
+    ]:
+        begin = getattr(self.confirmation_provider, "begin", None)
+        poll = getattr(self.confirmation_provider, "poll", None)
+        if callable(begin) and callable(poll):
+            begin(challenge)
+            poll_interval = getattr(
+                self.confirmation_provider, "poll_interval", None
+            )
+            if poll_interval is not None:
+                if (
+                    isinstance(poll_interval, bool)
+                    or not isinstance(poll_interval, (int, float))
+                    or not math.isfinite(float(poll_interval))
+                    or float(poll_interval) <= 0.0
+                ):
+                    raise TypeError(
+                        "live confirmation poll_interval must be a positive "
+                        "finite number"
+                    )
+                poll_interval = float(poll_interval)
+            remaining = getattr(
+                self.confirmation_provider, "remaining_seconds", None
+            )
+            if remaining is not None and not callable(remaining):
+                raise TypeError(
+                    "live confirmation remaining_seconds must be callable"
+                )
+            return (
+                poll,
+                "live_nonblocking_exchange",
+                poll_interval,
+                remaining,
+            )
+        if callable(self.confirmation_provider):
+            # Portable fakes historically returned an immediate confirmation.
+            # Keep that narrow compatibility without using it for the CLI/live
+            # path, where blocking here would stop lease renewal.
+            payload = self.confirmation_provider(challenge)
+            return (
+                lambda: payload,
+                "immediate_callable_compatibility",
+                None,
+                None,
+            )
+        raise TypeError(
+            "confirmation provider must expose begin()/poll() or be an immediate callable"
         )
 
     def run(self) -> dict[str, Any]:
@@ -956,7 +1258,11 @@ class Phase3BDegradedShowcase:
         mutation_started = False
         try:
             controller = self.controller_factory()
-            transport = self.transport_factory(controller)
+            transport = (
+                self.transport_factory(controller)
+                if self.transport_factory is not None
+                else DegradedHybridTransport(controller, sleeper=self.sleeper)
+            )
             preflight = transport.preflight()
             report["preflight"] = preflight
             before = transport.host_stats(UNVERIFIED_DEVICES)
@@ -974,6 +1280,9 @@ class Phase3BDegradedShowcase:
             # flag is set, every exit path must reclaim host ownership and
             # restore the exact persisted desired state.
             mutation_started = True
+            report["identity_configuration"] = (
+                transport.configure_logical_identities()
+            )
             transport.start_local_background(
                 context,
                 component_id=COMPILED_RAINBOW_COMPONENT_ID,
@@ -984,14 +1293,20 @@ class Phase3BDegradedShowcase:
             source.start()
 
             started = self.clock()
-            deadline = started + self.config.duration_seconds
+            minimum_deadline = started + self.config.duration_seconds
             interval = 1.0 / self.config.foreground_poll_hz
             frame_count = 0
             published_calls = 0
+            challenge = self.challenge_factory(16)
+            if not isinstance(challenge, str) or not challenge:
+                raise ShowcaseFailure("confirmation challenge factory returned no challenge")
+            confirmation_poll = None
+            confirmation_result = None
+            confirmation_poll_interval = None
+            confirmation_remaining = None
+            initial_host_evidence_checked = False
             while True:
                 now = self.clock()
-                if now >= deadline and frame_count > 0:
-                    break
                 frame = source.render(max(0.0, now - started), frame_count)
                 scene_time_us = min(
                     0xFFFFFFFFFFFFFFFF, int(max(0.0, now - started) * 1_000_000)
@@ -1008,16 +1323,106 @@ class Phase3BDegradedShowcase:
                         publisher.get_status().get("last_error")
                         or "sparse foreground publication failed"
                     )
+                if not initial_host_evidence_checked:
+                    initial_host_evidence = evaluate_write_only_host_evidence(
+                        before, transport.host_stats(UNVERIFIED_DEVICES)
+                    )
+                    report["initial_write_only_host_evidence"] = (
+                        initial_host_evidence
+                    )
+                    if not initial_host_evidence["passed"]:
+                        raise ShowcaseFailure(
+                            "; ".join(initial_host_evidence["failures"])
+                        )
+                    initial_host_evidence_checked = True
                 published_calls += 1
                 frame_count += 1
-                remaining = deadline - self.clock()
-                if remaining <= 0:
+                if confirmation_poll is None:
+                    (
+                        confirmation_poll,
+                        exchange_mode,
+                        confirmation_poll_interval,
+                        confirmation_remaining,
+                    ) = self._begin_confirmation_exchange(challenge)
+                    report["confirmation_exchange"] = {
+                        "mode": exchange_mode,
+                        "challenge_published_while_scene_active": True,
+                        "minimum_visible_duration_seconds": (
+                            self.config.duration_seconds
+                        ),
+                        "poll_interval_seconds": confirmation_poll_interval,
+                        "timeout_remaining_cap_available": bool(
+                            confirmation_remaining is not None
+                        ),
+                    }
+                if confirmation_result is None:
+                    candidate = confirmation_poll()
+                    if candidate is not None:
+                        confirmation_result = validate_visual_confirmation(
+                            candidate, challenge
+                        )
+                        report["visual_confirmation"] = confirmation_result
+                        report["confirmation_exchange"][
+                            "confirmed_elapsed_seconds"
+                        ] = round(self.clock() - started, 3)
+
+                current = self.clock()
+                if confirmation_result is not None and current >= minimum_deadline:
+                    visibility = transport.foreground_visibility()
+                    report["foreground_visibility_at_confirmation"] = visibility
+                    report["confirmation_exchange"][
+                        "pass_boundary_elapsed_seconds"
+                    ] = round(self.clock() - started, 3)
+                    if not visibility["passed"]:
+                        raise ShowcaseFailure(
+                            "foreground visibility at pass boundary: "
+                            + "; ".join(visibility["failures"])
+                        )
                     break
+                sleep_caps = [interval]
+                publisher_status = publisher.get_status()
+                last_lease_at = publisher_status.get("last_lease_at")
+                renewal_interval = publisher_status.get(
+                    "renewal_interval_seconds"
+                )
+                if (
+                    isinstance(last_lease_at, (int, float))
+                    and not isinstance(last_lease_at, bool)
+                    and isinstance(renewal_interval, (int, float))
+                    and not isinstance(renewal_interval, bool)
+                ):
+                    sleep_caps.append(max(
+                        0.0,
+                        float(last_lease_at) + float(renewal_interval) - current,
+                    ))
+                if confirmation_result is None:
+                    if confirmation_poll_interval is not None:
+                        sleep_caps.append(confirmation_poll_interval)
+                    if confirmation_remaining is not None:
+                        remaining = confirmation_remaining()
+                        if (
+                            isinstance(remaining, bool)
+                            or not isinstance(remaining, (int, float))
+                            or not math.isfinite(float(remaining))
+                            or float(remaining) < 0.0
+                        ):
+                            raise ShowcaseFailure(
+                                "confirmation remaining time is invalid"
+                            )
+                        sleep_caps.append(float(remaining))
+                if confirmation_result is not None:
+                    sleep_caps.append(
+                        max(0.0, minimum_deadline - current)
+                    )
+                sleep_seconds = min(sleep_caps)
+                if sleep_seconds <= 0:
+                    continue
                 before_sleep = self.clock()
-                self.sleeper(min(interval, remaining))
+                self.sleeper(sleep_seconds)
                 if self.clock() <= before_sleep:
                     raise ShowcaseFailure("showcase clock did not advance after sleep")
 
+            report["duration_seconds_actual"] = round(self.clock() - started, 3)
             after = transport.host_stats(UNVERIFIED_DEVICES)
             host_evidence = evaluate_write_only_host_evidence(before, after)
             report["write_only_host_evidence"] = host_evidence
@@ -1025,13 +1430,6 @@ class Phase3BDegradedShowcase:
                 raise ShowcaseFailure("; ".join(host_evidence["failures"]))
             report["publisher"] = publisher.get_status()
             report["foreground_poll_calls"] = published_calls
-            challenge = self.challenge_factory(16)
-            if not isinstance(challenge, str) or not challenge:
-                raise ShowcaseFailure("confirmation challenge factory returned no challenge")
-            confirmation = validate_visual_confirmation(
-                self.confirmation_provider(challenge), challenge
-            )
-            report["visual_confirmation"] = confirmation
             report["passed"] = True
         except Exception as exc:
             failure = str(exc)

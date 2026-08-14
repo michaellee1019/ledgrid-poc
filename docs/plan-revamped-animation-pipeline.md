@@ -2629,13 +2629,61 @@ Portable-slice evidence and open gates (2026-08-13):
   byte-identical desired state, and passed restart, health, and degraded-status
   checks. Evidence is under
   `run_state/phase3b-showcase/20260814T153434Z-fdd532d4221b4e71bd28a54e7f6732c1`.
-- [ ] Deploy the bounded expiry accounting and repeat the strict 0/1 gates, then
-  run only the explicitly degraded all-four visual showcase with fresh
-  nonce-bound operator confirmation. Persistent host canary flags remain off;
-  receivers 2/3 cannot contribute acknowledgement or receiver-telemetry
-  evidence until SPI1 MISO is repaired. After the showcase, reflash production
-  on all four receivers and pass exact state restoration, health, degraded
-  status, streamed-wall acceptance, and the live animation sweep.
+- [x] Bounded expiry accounting passed clean ordinary deployment receipt
+  `045d06ab006d41f09a1cba7e729f3cfa` from commit `cc00e86`: all 14 phases
+  completed in 2m14s, app release
+  `49ed3befe76188964177724ea9cce9cc674ffbc2b006c0aefd0de95d62eef21a`
+  activated, production firmware remained hash-identical, exact desired state
+  restored, and stable four-receiver health passed.
+- [x] The receipt-bound guarded retry again passed the complete strict canaries
+  on logical receivers 0 and 1, then entered the degraded visual body. The
+  operator correctly rejected the visual gate: only two lanes showed the
+  compiled rainbow, the other two retained stained glass, and no clock was
+  visible. The nonce response records `verdict=fail`; no release or physical
+  pass is claimed. Its unconditional cleanup sequentially reflashed the exact
+  production image on all four ports, restored byte-identical desired state,
+  and passed service restart, health, and degraded production status. Evidence
+  is under
+  `run_state/phase3b-showcase/20260814T154726Z-045d06ab006d41f09a1cba7e729f3cfa`.
+- [x] The failed visual gate exposed two deterministic runner defects. Fresh
+  canary firmware initializes logical identity to `0xff` and rejects every
+  runtime context/background/overlay command until CONFIG assigns an ID in
+  `0..3`; normal identity provisioning deliberately omits that sixth CONFIG
+  byte when status v3 is unreadable, so receivers 2/3 only latched outbound
+  packets and retained their prior frame. Also, the showcase stopped foreground
+  publication before publishing its confirmation challenge, allowing the
+  three-second clock lease to expire while the operator was first being asked
+  to observe it. The real clock source has nonzero alpha coverage on every lane;
+  empty content was not the cause.
+- [x] The degraded runner now explicitly provisions all four canary logical
+  identities after the observation-only topology gate. Readable 0/1 require the
+  exact next v4 CONFIG acknowledgement and identity; write-only 2/3 receive the
+  exact six-byte CONFIG but remain loudly unacknowledged/unverified. Every raw
+  control packet is paced by the established one-millisecond queue-refill
+  interval, and device objects must match the installed bus/CS map.
+- [x] Confirmation is now a live nonblocking exchange created only after the
+  first successful snapshot and initial 2/3 host-counter evidence. The runner
+  continues rendering, publishing, and renewing until both the minimum visible
+  interval and the nonce response complete; polling is bounded strictly inside
+  the renewal schedule and confirmation deadline, and late responses fail.
+  The actual pass boundary freshly requires exact v4 identity, session,
+  generation, positive lease, active foreground, and exact positive alpha
+  coverage on readable 0/1 while reporting expected-but-unverified coverage for
+  2/3. The delta splitter's duplicate range increment was also removed.
+- [x] Firmware-faithful fakes boot write-only receivers at `0xff` and reject
+  runtime commands before CONFIG. Tests cover exact identity ordering and raw
+  pacing; actual clock coverage on every lane; confirmation delayed beyond the
+  original lease; first-snapshot evidence before challenge; late response and
+  unsafe-low-rate rejection; malformed/timeout cleanup; pass-boundary loss of
+  state, coverage, v4, identity, session, generation, or lease; and gap-free
+  delta batching. The combined degraded, publisher, orchestration, protocol,
+  and strict-canary suite passes 95 tests and 148 subtests. The guarded hardware
+  script now preserves raw output, atomically extracts the final JSON report,
+  and asserts the new identity, live-confirmation, and visibility evidence.
+- [ ] Repeat the guarded all-four showcase and require direct operator pass.
+  Afterward, sequentially restore production on all four receivers and pass
+  exact state restoration, health, degraded status, streamed-wall acceptance,
+  and the live animation sweep. Persistent host canary flags remain off.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground
