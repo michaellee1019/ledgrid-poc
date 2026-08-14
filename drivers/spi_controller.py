@@ -42,6 +42,8 @@ RECEIVER_STATUS_BYTES_V4 = 416
 # The ESP32 slave keeps two response buffers queued. A command's result is
 # therefore observable after two complete status-query transfers.
 SPI_RESPONSE_QUEUE_DEPTH = 2
+COMMAND_ACK_MAX_STATUS_QUERIES = 16
+COMMAND_ACK_POLL_INTERVAL_SECONDS = 0.001
 MAX_PIXELS_SET_ALL = (MAX_SPI_TRANSFER - 1 - CRC_BYTES) // 3
 MAX_PIXELS_PER_RANGE = min(255, (MAX_SPI_TRANSFER - 4 - CRC_BYTES) // 3)
 
@@ -702,24 +704,45 @@ class LEDController:
             # The slave has to queue a response before it knows the length of
             # the master's next transfer. A sparse command therefore leaves
             # one legacy-safe v3 snapshot in the two-deep queue; clock one
-            # additional query to receive the requested v4 extension.
-            post_queries = SPI_RESPONSE_QUEUE_DEPTH + (required_version == 4)
+            # additional query to receive the requested v4 extension. Larger
+            # commands can take longer than those minimum queue drains on real
+            # hardware, so continue polling within one small fixed bound while
+            # still accepting only the exact next operation sequence.
+            minimum_post_queries = SPI_RESPONSE_QUEUE_DEPTH + (
+                required_version == 4
+            )
             status = None
-            for _ in range(post_queries):
+            expected_sequence = prior_sequence + 1
+            for query_index in range(COMMAND_ACK_MAX_STATUS_QUERIES):
                 status = self.query_receiver_status()
-            if (
-                int(status.get("receiver_status_version", 0) or 0)
-                < required_version
-                or
-                int(status.get("receiver_last_processed_command", -1)) != command
-                or int(status.get("receiver_operation_sequence", -1))
-                != prior_sequence + 1
-            ):
-                raise RuntimeError(
-                    f"receiver did not acknowledge command 0x{command:02x} "
-                    "with the next operation sequence"
+                if query_index + 1 < minimum_post_queries:
+                    continue
+                observed_version = int(
+                    status.get("receiver_status_version", 0) or 0
                 )
-            return status
+                observed_command = int(
+                    status.get("receiver_last_processed_command", -1)
+                )
+                observed_sequence = int(
+                    status.get("receiver_operation_sequence", -1)
+                )
+                if (
+                    observed_version >= required_version
+                    and observed_command == command
+                    and observed_sequence == expected_sequence
+                ):
+                    return status
+                if observed_sequence > expected_sequence or (
+                    observed_sequence == expected_sequence
+                    and observed_command != command
+                ):
+                    break
+                if query_index + 1 < COMMAND_ACK_MAX_STATUS_QUERIES:
+                    time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
+            raise RuntimeError(
+                f"receiver did not acknowledge command 0x{command:02x} "
+                "with the next operation sequence"
+            )
 
     @classmethod
     def serialize_local_background_start(

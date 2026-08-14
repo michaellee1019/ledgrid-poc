@@ -29,16 +29,25 @@ DIGEST = bytes(range(32))
 class FakeSparseSpi:
     """Two-deep response queue with v3-to-v4 status negotiation."""
 
-    def __init__(self, *, sparse_capable=True, acknowledge=True, overlay_result=1):
+    def __init__(
+        self,
+        *,
+        sparse_capable=True,
+        acknowledge=True,
+        acknowledge_after_status_queries=0,
+        overlay_result=1,
+    ):
         self.max_speed_hz = 20_000_000
         self.mode = 0
         self.bits_per_word = 8
         self.sparse_capable = sparse_capable
         self.acknowledge = acknowledge
+        self.acknowledge_after_status_queries = acknowledge_after_status_queries
         self.overlay_result = overlay_result
         self.packets = []
         self.last_command = 0
         self.operation_sequence = 0
+        self.pending_ack = None
         self.queued = [(0, 0), (0, 0)]
         self.queued_status_bytes = [
             protocol.RECEIVER_STATUS_BYTES_V3,
@@ -87,9 +96,26 @@ class FakeSparseSpi:
             response += bytes(len(wire) - len(response))
         else:
             response = response[:len(wire)]
-        if wire[0] != protocol.CMD_STATUS_QUERY and self.acknowledge:
-            self.last_command = wire[0]
-            self.operation_sequence += 1
+        if wire[0] == protocol.CMD_STATUS_QUERY and self.pending_ack is not None:
+            command, sequence, remaining = self.pending_ack
+            remaining -= 1
+            if remaining <= 0:
+                self.last_command = command
+                self.operation_sequence = sequence
+                self.pending_ack = None
+            else:
+                self.pending_ack = (command, sequence, remaining)
+        elif wire[0] != protocol.CMD_STATUS_QUERY and self.acknowledge:
+            next_sequence = self.operation_sequence + 1
+            if self.acknowledge_after_status_queries:
+                self.pending_ack = (
+                    wire[0],
+                    next_sequence,
+                    self.acknowledge_after_status_queries,
+                )
+            else:
+                self.last_command = wire[0]
+                self.operation_sequence = next_sequence
         self.queued.append((self.last_command, self.operation_sequence))
         requested_v4 = (
             wire[0] == protocol.CMD_STATUS_QUERY
@@ -103,10 +129,17 @@ class FakeSparseSpi:
         return response
 
 
-def controller(*, sparse_capable=True, acknowledge=True, overlay_result=1):
+def controller(
+    *,
+    sparse_capable=True,
+    acknowledge=True,
+    acknowledge_after_status_queries=0,
+    overlay_result=1,
+):
     spi = FakeSparseSpi(
         sparse_capable=sparse_capable,
         acknowledge=acknowledge,
+        acknowledge_after_status_queries=acknowledge_after_status_queries,
         overlay_result=overlay_result,
     )
     with mock.patch.object(protocol.spidev, "SpiDev", return_value=spi):
@@ -114,6 +147,7 @@ def controller(*, sparse_capable=True, acknowledge=True, overlay_result=1):
     spi.packets.clear()
     spi.last_command = 0
     spi.operation_sequence = 0
+    spi.pending_ack = None
     spi.queued = [(0, 0), (0, 0)]
     spi.queued_status_bytes = [
         protocol.RECEIVER_STATUS_BYTES_V3,
@@ -551,6 +585,24 @@ class SparseOverlayDriverTests(unittest.TestCase):
         self.assertEqual(len(queries), 5)
         self.assertEqual([len(packet) for packet in queries], [322] + [418] * 4)
         self.assertEqual(item.get_stats()["receiver_status_version"], 4)
+
+    def test_ack_wait_is_bounded_but_allows_delayed_receiver_processing(self):
+        item = controller(acknowledge_after_status_queries=4)
+        status = item.renew_overlay(
+            controller_session_id=SESSION, generation=1, lease_ms=1
+        )
+        queries = [
+            packet for packet in item.spi.packets
+            if packet[0] == protocol.CMD_STATUS_QUERY
+        ]
+        self.assertEqual(status["receiver_last_processed_command"], 0x34)
+        self.assertEqual(status["receiver_operation_sequence"], 1)
+        self.assertGreater(len(queries), 5)
+        self.assertLessEqual(
+            len(queries),
+            protocol.SPI_RESPONSE_QUEUE_DEPTH
+            + protocol.COMMAND_ACK_MAX_STATUS_QUERIES,
+        )
 
     def test_exact_retry_produces_identical_wire_packets(self):
         item = controller()
