@@ -2742,11 +2742,19 @@ Portable-slice evidence and open gates (2026-08-13):
   config/startup/transport tests pass 59 cases, including non-identity native
   offsets, overlay coverage, two consecutive host frames, and durable CLI
   round trip; 84 adjacent manager/persistence/deployment tests also pass.
-- [ ] Atomically install physical order `(0,1,3,2)`, restart into the saved
-  rainbow-plus-clock scene, and photograph one continuous clock across all four
-  physical lanes. Then repeat clean `just deploy` while it is active and require
-  exact config-digest preservation, no firmware flash, exact scene restore, and
-  stable service health before closing this cable-order regression.
+- [x] Physical order `(0,1,3,2)` was atomically installed with config digest
+  `08c0a8c2484d4b48f01cece74892246f335c1e7df74e8a7cc5238d3f6e930586`.
+  Because the digest changed, fail-closed startup deliberately selected the
+  known Python fallback; the saved native scene was then explicitly
+  re-authorized. Live status proved the exact permutation, active hybrid
+  ownership, zero publisher failures, and per-logical-device expected clock
+  coverage `{0:85,1:136,2:34,3:136}`. Webcam evidence showed one continuous
+  clock across all four physical lanes over the compiled rainbow. A final clean
+  ordinary deploy from commit `8c066c6` succeeded as receipt
+  `36a4a796c3bb415582a26a0093f45f10` in 1m56s: build and flash skipped the
+  unchanged named canary firmware, app activation/restart/restore were
+  unchanged and skipped, stable health passed, and a post-deploy photograph
+  plus status confirmed the same running rainbow-plus-clock scene.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground
