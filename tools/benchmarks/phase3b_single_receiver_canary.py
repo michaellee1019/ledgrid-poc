@@ -627,7 +627,24 @@ class SingleReceiverPhase3BCanary:
         latest = self._fresh_status(controller)
         while not predicate(latest):
             if self.clock() >= deadline:
-                raise CanaryFailure(f"timed out waiting for {description}")
+                diagnostic_keys = (
+                    "receiver_status_version",
+                    "receiver_last_processed_command",
+                    "receiver_operation_sequence",
+                    "receiver_last_result",
+                    "receiver_overlay_operation_result",
+                    "receiver_base_mode",
+                    "receiver_foreground_state",
+                    "receiver_crc_errors",
+                    "receiver_spi_queue_errors",
+                    "receiver_display_errors",
+                )
+                diagnostic = ", ".join(
+                    f"{key}={latest.get(key)!r}" for key in diagnostic_keys
+                )
+                raise CanaryFailure(
+                    f"timed out waiting for {description}; last status: {diagnostic}"
+                )
             self.sleeper(self.config.poll_interval_seconds)
             latest = self._fresh_status(controller)
         return latest

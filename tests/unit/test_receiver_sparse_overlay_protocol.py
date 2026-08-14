@@ -653,7 +653,10 @@ class SparseOverlayDriverTests(unittest.TestCase):
 
     def test_lost_or_wrong_ack_is_not_accepted(self):
         item = controller(acknowledge=False)
-        with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"did not acknowledge.*command 0x00, sequence 0 .*CRC errors 0",
+        ):
             item.renew_overlay(
                 controller_session_id=SESSION, generation=1, lease_ms=1
             )

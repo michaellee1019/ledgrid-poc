@@ -741,7 +741,17 @@ class LEDController:
                     time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
             raise RuntimeError(
                 f"receiver did not acknowledge command 0x{command:02x} "
-                "with the next operation sequence"
+                "with the next operation sequence; last status "
+                f"v{int((status or {}).get('receiver_status_version', 0) or 0)}, "
+                "command "
+                f"0x{int((status or {}).get('receiver_last_processed_command', 0) or 0):02x}, "
+                f"sequence {int((status or {}).get('receiver_operation_sequence', -1))} "
+                f"(expected {expected_sequence}), CRC errors "
+                f"{int((status or {}).get('receiver_crc_errors', 0) or 0)}, "
+                "SPI queue errors "
+                f"{int((status or {}).get('receiver_spi_queue_errors', 0) or 0)}, "
+                "display errors "
+                f"{int((status or {}).get('receiver_display_errors', 0) or 0)}"
             )
 
     @classmethod
