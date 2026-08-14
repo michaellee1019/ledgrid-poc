@@ -580,14 +580,27 @@ class SingleReceiverPhase3BCanary:
             raise CanaryFailure(f"{stage}: {'; '.join(failures)}")
 
     def _require_ack(
-        self, stage: str, status: Any, command: int, *, overlay: bool = False
-    ) -> None:
+        self,
+        stage: str,
+        status: Any,
+        command: int,
+        *,
+        controller: Any,
+        overlay: bool = False,
+    ) -> Mapping[str, Any]:
+        # Non-overlay command helpers require only the v3 prefix and may return
+        # the legacy-safe snapshot already queued before a short command.  The
+        # strict canary still evaluates every acknowledgement against a fresh
+        # v4 snapshot after the receiver has had enough transfers to publish it.
+        if _int(status, "receiver_status_version") != 4:
+            status = self._fresh_status(controller)
         self._require(stage, evaluate_command_ack(
             status,
             logical_id=self.config.logical_id,
             command=command,
             overlay=overlay,
         ))
+        return status
 
     def _context(self) -> ReceiverPresentationContext:
         epoch = self.monotonic_ns()
@@ -621,7 +634,19 @@ class SingleReceiverPhase3BCanary:
 
     def _black_takeover(self, controller) -> Mapping[str, Any]:
         controller.set_all_pixels(self.black_frame)
-        status = self._fresh_status(controller)
+        # SET_ALL publishes through the receiver display task.  On hardware its
+        # operation result can trail the first queued status snapshots even
+        # though the full packet has already transferred successfully.
+        status = self._wait_for_status(
+            controller,
+            lambda value: (
+                _int(value, "receiver_base_mode") == BASE_HOST_FULL_SCENE
+                and _int(value, "receiver_foreground_state")
+                == FOREGROUND_CLEARED
+                and _int(value, "receiver_last_processed_command") == CMD_SET_ALL
+            ),
+            "completed black complete-host-frame takeover",
+        )
         self._require(
             "black complete-host-frame takeover",
             evaluate_host_takeover(status, self.config.logical_id),
@@ -750,6 +775,7 @@ class SingleReceiverPhase3BCanary:
                 lease_ms=self.config.lease_ms,
             ),
             CMD_OVERLAY_BEGIN,
+            controller=controller,
             overlay=True,
         )
         statuses = controller.send_overlay_patches(
@@ -767,6 +793,7 @@ class SingleReceiverPhase3BCanary:
                 f"foreground generation {generation} patch batch {index} acknowledgement",
                 status,
                 CMD_OVERLAY_PATCH_BATCH,
+                controller=controller,
                 overlay=True,
             )
         self._require_ack(
@@ -779,6 +806,7 @@ class SingleReceiverPhase3BCanary:
                 present_at_scene_time_us=0,
             ),
             CMD_OVERLAY_COMMIT,
+            controller=controller,
             overlay=True,
         )
 
@@ -822,11 +850,13 @@ class SingleReceiverPhase3BCanary:
                 "presentation BEGIN acknowledgement",
                 controller.begin_presentation_context(context),
                 CMD_PRESENTATION_CONTEXT_BEGIN,
+                controller=controller,
             )
             self._require_ack(
                 "presentation SET acknowledgement",
                 controller.set_presentation_context(context),
                 CMD_PRESENTATION_CONTEXT_SET,
+                controller=controller,
             )
             self._require_ack(
                 "presentation COMMIT acknowledgement",
@@ -834,6 +864,7 @@ class SingleReceiverPhase3BCanary:
                     context, host_monotonic_anchor_ns=self.monotonic_ns()
                 ),
                 CMD_PRESENTATION_CONTEXT_COMMIT,
+                controller=controller,
             )
             self._require_ack(
                 "compiled rainbow START acknowledgement",
@@ -845,6 +876,7 @@ class SingleReceiverPhase3BCanary:
                     scene_epoch=context.scene_epoch,
                 ),
                 CMD_LOCAL_BACKGROUND_START,
+                controller=controller,
             )
             local_expected = expected_local_status(context, self.config)
             local_started = self._wait_for_status(
@@ -880,6 +912,7 @@ class SingleReceiverPhase3BCanary:
                     authoritative_snapshot_digest=snapshot_digest,
                 ),
                 CMD_CONTROLLER_SESSION_BEGIN,
+                controller=controller,
                 overlay=True,
             )
             self._publish_generation(

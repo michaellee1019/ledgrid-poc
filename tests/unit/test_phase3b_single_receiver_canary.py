@@ -494,6 +494,59 @@ class Phase3BCanaryTests(unittest.TestCase):
         self.assertIn("receiver_overlay_operation_result", result["failure"])
         self.assertEqual(receiver.black_takeovers, 1)
 
+    def test_non_overlay_ack_refreshes_queued_v3_to_strict_v4(self):
+        runner, receiver = self.rig()
+        controller = receiver.factory()
+        controller._ack("context_begin", CMD_PRESENTATION_CONTEXT_BEGIN)
+        queued_v3 = dict(receiver.status, receiver_status_version=3)
+
+        refreshed = runner._require_ack(
+            "presentation BEGIN acknowledgement",
+            queued_v3,
+            CMD_PRESENTATION_CONTEXT_BEGIN,
+            controller=controller,
+        )
+
+        self.assertEqual(refreshed["receiver_status_version"], 4)
+        self.assertEqual(
+            refreshed["receiver_last_processed_command"],
+            CMD_PRESENTATION_CONTEXT_BEGIN,
+        )
+
+    def test_black_takeover_waits_for_async_receiver_completion(self):
+        runner, receiver = self.rig()
+
+        class DelayedTakeoverController:
+            def __init__(self):
+                self.reads = 0
+                self.status = status_v4(logical_id=runner.config.logical_id)
+                self.status.update({
+                    "receiver_base_mode": BASE_LOCAL_BACKGROUND,
+                    "receiver_foreground_state": FOREGROUND_ACTIVE,
+                    "receiver_last_processed_command": CMD_OVERLAY_COMMIT,
+                })
+
+            def set_all_pixels(self, colors):
+                self.reads = 0
+
+            def query_receiver_status(self):
+                self.reads += 1
+                if self.reads >= 6:
+                    self.status.update({
+                        "receiver_base_mode": BASE_HOST_FULL_SCENE,
+                        "receiver_foreground_state": FOREGROUND_CLEARED,
+                        "receiver_transition_reason": TRANSITION_HOST_TAKEOVER,
+                        "receiver_last_processed_command": CMD_SET_ALL,
+                        "receiver_last_result": 1,
+                    })
+                return dict(self.status)
+
+        controller = DelayedTakeoverController()
+        status = runner._black_takeover(controller)
+
+        self.assertGreaterEqual(controller.reads, 6)
+        self.assertEqual(status["receiver_base_mode"], BASE_HOST_FULL_SCENE)
+
     def test_new_fault_and_cadence_advance_during_delta_are_detected(self):
         for mutation, message in (
             (lambda status: status.__setitem__("receiver_crc_errors", 1), "CRC errors"),
