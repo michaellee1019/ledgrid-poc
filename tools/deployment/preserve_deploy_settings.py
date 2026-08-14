@@ -33,6 +33,11 @@ from ipc.scene_contract import (
     background_only_scene,
     normalize_scene_payload,
 )
+from tools.deployment.receiver_hybrid_config import (
+    DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY,
+    ReceiverHybridConfig,
+    resolve_receiver_hybrid_config,
+)
 
 
 PRESET_ID = "before-deploy"
@@ -649,13 +654,15 @@ def restore(
     state_path: Path,
     timeout: float,
     *,
-    receiver_hybrid_canary: bool | None = None,
+    root: Path | None = None,
 ) -> dict[str, Any]:
     restore_started_at = time.time()
-    canary_enabled = receiver_hybrid_canary_enabled(receiver_hybrid_canary)
+    hybrid_config = resolve_receiver_hybrid_config(
+        Path.cwd() if root is None else root
+    )
     state = load_saved_state(
         state_path,
-        provider_policy=receiver_hybrid_provider_policy(canary_enabled),
+        provider_policy=receiver_hybrid_provider_policy(hybrid_config.enabled),
     )
     animation = state["animation"]
 
@@ -687,7 +694,15 @@ def restore(
             if (
                 status.get("last_command_id") == command["command_id"]
                 and power_matches
-                and (not state.get("power", True) or scene_background == animation)
+                and (
+                    not state.get("power", True)
+                    or (
+                        scene_background == animation
+                        and _restored_scene_proof(
+                            status, state["scene"], hybrid_config
+                        )
+                    )
+                )
                 and _status_has_expected_vibe(
                     status, expected_vibe, expect_diagnostic=expect_diagnostic
                 )
@@ -752,6 +767,37 @@ def restore(
             return restored
         time.sleep(0.1)
     raise RuntimeError(f"Controller did not restore {animation!r} before timeout")
+
+
+def _restored_scene_proof(
+    status: dict[str, Any],
+    expected_scene: dict[str, Any],
+    hybrid_config: ReceiverHybridConfig,
+) -> bool:
+    """Require exact desired state and, for native scenes, operational proof."""
+
+    background = expected_scene.get("background")
+    if not isinstance(background, dict) or background.get("provider") != "receiver_native":
+        return True
+    if status.get("scene_state") != expected_scene:
+        return False
+    if not hybrid_config.enabled:
+        return False
+    scene_status = status.get("scene")
+    receiver = status.get("receiver_hybrid")
+    if not isinstance(scene_status, dict) or not isinstance(receiver, dict):
+        return False
+    return bool(
+        scene_status.get("provider_mode") == "receiver_hybrid"
+        and receiver.get("operational") is True
+        and receiver.get("fallback_active") is False
+        and receiver.get("error") is None
+        and receiver.get("transport_policy")
+            == DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY
+        and receiver.get("telemetry_complete") is False
+        and receiver.get("readable_devices") == [0, 1]
+        and receiver.get("unverified_devices") == [2, 3]
+    )
 
 
 def _expected_restored_vibe(
@@ -846,15 +892,6 @@ def main() -> None:
     parser.add_argument("--state", type=Path, default=Path("run_state/before_deploy.json"))
     parser.add_argument("--deployment", type=Path, default=Path("run_state/deployment.json"))
     parser.add_argument("--wait", type=float, default=10.0)
-    parser.add_argument(
-        "--receiver-hybrid-canary",
-        action="store_true",
-        default=None,
-        help=(
-            "opt in to receiver-native background scenes; otherwise the "
-            f"recorded Python fallback is restored (env: {RECEIVER_HYBRID_CANARY_ENV})"
-        ),
-    )
     args = parser.parse_args()
 
     if args.action == "save":
@@ -866,7 +903,6 @@ def main() -> None:
             args.control,
             args.state,
             args.wait,
-            receiver_hybrid_canary=args.receiver_hybrid_canary,
         )
         print(f"Restored {preset['animation']}/{PRESET_ID}")
     else:

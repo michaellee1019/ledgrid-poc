@@ -19,6 +19,7 @@ if "spidev" not in sys.modules:
     sys.modules["spidev"] = spidev_stub
 
 from animation.core.presentation_contracts import OverlayFrame
+from animation.core.receiver_sparse_publisher import ReceiverSparsePublisher
 from drivers.spi_controller import (
     CMD_CONFIG,
     COMMAND_ACK_POLL_INTERVAL_SECONDS,
@@ -847,6 +848,52 @@ class ShowcaseRunnerTests(unittest.TestCase):
         self.assertEqual(device.runtime_rejections, 1)
         self.assertEqual(device.base_mode, 1)
         self.assertFalse(configured["devices"]["2"]["logical_identity_verified"])
+
+    def test_production_transport_rejects_partial_spi1_return_recovery(self):
+        self.controller.devices[2].write_only = False
+        transport = DegradedHybridTransport(
+            self.controller, sleeper=self._sleep
+        )
+        with self.assertRaisesRegex(Exception, "exact status-v0"):
+            transport.preflight()
+
+    def test_production_transport_publisher_clear_is_exact_on_readable_pair(self):
+        transport = DegradedHybridTransport(
+            self.controller, sleeper=self._sleep
+        )
+        publisher = ReceiverSparsePublisher(
+            transport,
+            lease_ms=3000,
+            monotonic=self.clock,
+            session_factory=lambda: bytes(range(16)),
+        )
+        context = self.runner()._context(publisher)
+        transport.start_local_background(
+            context,
+            component_id=1,
+            preferred_cadence_hz=30,
+            common_seed=0x3B00CAFE,
+        )
+        pixels = np.zeros((WALL_PIXELS, 4), dtype=np.uint8)
+        for logical_id in range(4):
+            pixels[logical_id * LOCAL_PIXELS] = (8, 4, 2, 8)
+        self.assertTrue(publisher.publish(
+            pixels,
+            changed=True,
+            scene_revision=context.scene_revision,
+            scene_epoch=context.scene_epoch,
+            base_revision=context.scene_revision,
+            present_at_scene_time_us=0,
+            now=self.clock(),
+        ))
+        self.assertTrue(publisher.clear())
+        for device in self.controller.devices[:2]:
+            self.assertEqual(device.foreground_state, 0)
+            self.assertEqual(device.committed_coverage, 0)
+        status = transport.get_stats()["aggregate"]["local_background"]
+        self.assertEqual(status["operation"], "foreground_clear")
+        self.assertTrue(status["operational"])
+        self.assertFalse(status["telemetry_complete"])
 
     def test_delayed_live_confirmation_keeps_foreground_renewed_past_lease(self):
         clock = self.clock

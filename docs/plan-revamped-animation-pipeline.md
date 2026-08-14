@@ -2680,10 +2680,48 @@ Portable-slice evidence and open gates (2026-08-13):
   and strict-canary suite passes 95 tests and 148 subtests. The guarded hardware
   script now preserves raw output, atomically extracts the final JSON report,
   and asserts the new identity, live-confirmation, and visibility evidence.
-- [ ] Repeat the guarded all-four showcase and require direct operator pass.
-  Afterward, sequentially restore production on all four receivers and pass
-  exact state restoration, health, degraded status, streamed-wall acceptance,
-  and the live animation sweep. Persistent host canary flags remain off.
+- [x] The live-runner fix passed clean ordinary deployment receipt
+  `ae764d0ab0eb4d00a21d90c23402d1a4` from commit `aed52fa`: all 14 phases
+  completed in 2m16s, app release
+  `3d662e76619123b06898404d46bb0bd3a11a0cd94ac236299f909278af9acb26`
+  activated, exact state and stable health passed, and unchanged production
+  firmware remained hash-identical.
+- [x] The next guarded retry passed both strict readable-receiver gates and
+  entered the corrected live exchange, but its 300-second operator window had
+  already timed out and restored production before the later observation. The
+  wall correctly showed stained glass at observation time; an earlier challenge
+  file was not proof that the process was still live. Cleanup again passed all
+  four production flashes, exact state hash, restart, health, and degraded
+  status. Evidence is under
+  `run_state/phase3b-showcase/20260814T163249Z-ae764d0ab0eb4d00a21d90c23402d1a4`.
+- [x] A subsequent operator-held run is active under
+  `run_state/phase3b-showcase/20260814T170342Z-ae764d0ab0eb4d00a21d90c23402d1a4`.
+  The fixed webcam independently shows the compiled rainbow spanning the entire
+  physical wall, proving the identity fix reached all four lanes. It also shows
+  that the sparse amber clock is not legible over the bright base, so no complete
+  rainbow-plus-clock visual pass is claimed yet.
+- [x] Add an opt-in premultiplied black clock backdrop with exact content-dirty
+  ranges, retaining byte-identical transparent default behavior. The portable
+  implementation and 15 focused tests are complete: the prior default-frame
+  SHA is unchanged, fixed-point premultiplied composition is exact, constant-
+  alpha second ticks still emit RGB dirty ranges, and maximum-backdrop p99 is
+  0.459 ms at 32x138. Physical all-four rainbow-plus-clock photography remains
+  a cutover gate below.
+- [x] Promote the degraded prototype into an explicit persistent transport
+  policy backed by a strict shared `run_state` config: exact v4/ACK on 0/1,
+  exact write-only shape and paced raw packets on 2/3, always
+  `telemetry_complete=false` and never release-acceptable. Select the named
+  feature-on firmware environment from that same config in service startup,
+  build, flash, restore, and receipts; absent config remains fully feature-off.
+- [x] Make ordinary deployment safe while native playback is active: capture
+  desired state before receiver flashing, bind firmware skip markers to the
+  selected environment and binary digest, restore the exact native scene only
+  with readable-receiver proof, and retain universal complete-frame Python
+  fallback. The portable implementation now passes the complete suite: 1,056
+  unit tests plus 1,528 subtests, 23 policy tests, both firmware builds, and 167
+  deployment tests plus 88 subtests. The final physical gates remain: deploy
+  the persistent scene, photograph it, and repeat `just deploy` while it is
+  active to prove exact native restore and service continuity.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground

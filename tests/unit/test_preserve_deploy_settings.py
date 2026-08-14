@@ -14,12 +14,18 @@ from ipc.scene_contract import SceneProviderPolicy
 
 from tools.deployment.preserve_deploy_settings import (
     _expected_restored_vibe,
+    _restored_scene_proof,
     load_saved_state,
     receiver_hybrid_canary_enabled,
     record_deploy,
     restore,
     save,
     save_status,
+)
+from tools.deployment.receiver_hybrid_config import (
+    DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY,
+    resolve_receiver_hybrid_config,
+    write_receiver_hybrid_config,
 )
 
 
@@ -565,6 +571,7 @@ class PreserveDeploySettingsTests(unittest.TestCase):
     def test_canary_restore_sends_versioned_native_scene_not_receiver_commands(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
+            write_receiver_hybrid_config(root, enabled=True)
             status_path = root / "status.json"
             control_path = root / "control.json"
             state_path = root / "state.json"
@@ -599,6 +606,18 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                         "current_animation": "compiled_rainbow",
                         "is_running": True,
                         "scene_state": scene,
+                        "scene": {"provider_mode": "receiver_hybrid"},
+                        "receiver_hybrid": {
+                            "operational": True,
+                            "fallback_active": False,
+                            "error": None,
+                            "transport_policy": (
+                                DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY
+                            ),
+                            "telemetry_complete": False,
+                            "readable_devices": [0, 1],
+                            "unverified_devices": [2, 3],
+                        },
                         "vibe": {"state": vibe},
                     }))
                     return
@@ -610,7 +629,7 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                 control_path,
                 state_path,
                 1,
-                receiver_hybrid_canary=True,
+                root=root,
             )
             controller.join()
 
@@ -618,6 +637,51 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             self.assertEqual(len(observed), 1)
             self.assertEqual(observed[0]["action"], "restore_display_state")
             self.assertEqual(observed[0]["data"]["state"]["scene"], scene)
+
+    def test_native_restore_proof_requires_exact_scene_and_degraded_readable_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            write_receiver_hybrid_config(root, enabled=True)
+            config = resolve_receiver_hybrid_config(root)
+            scene = self._native_scene(common_seed=321)
+            status = {
+                "scene_state": scene,
+                "scene": {"provider_mode": "receiver_hybrid"},
+                "receiver_hybrid": {
+                    "operational": True,
+                    "fallback_active": False,
+                    "error": None,
+                    "transport_policy": DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY,
+                    "telemetry_complete": False,
+                    "readable_devices": [0, 1],
+                    "unverified_devices": [2, 3],
+                },
+            }
+            self.assertTrue(_restored_scene_proof(status, scene, config))
+
+            cases = (
+                ("scene_state", {**scene, "revision": 92}),
+                ("provider_mode", "python_host"),
+                ("operational", False),
+                ("fallback_active", True),
+                ("error", "receiver failed"),
+                ("transport_policy", "strict"),
+                ("telemetry_complete", True),
+                ("readable_devices", [0]),
+                ("unverified_devices", [2]),
+            )
+            for field, value in cases:
+                with self.subTest(field=field):
+                    candidate = json.loads(json.dumps(status))
+                    if field == "scene_state":
+                        candidate[field] = value
+                    elif field == "provider_mode":
+                        candidate["scene"][field] = value
+                    else:
+                        candidate["receiver_hybrid"][field] = value
+                    self.assertFalse(
+                        _restored_scene_proof(candidate, scene, config)
+                    )
 
     def test_restore_acknowledges_vibe_before_start_and_rechecks_final_state(self):
         with tempfile.TemporaryDirectory() as temporary_dir:

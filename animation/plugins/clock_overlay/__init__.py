@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from animation import AnimationBase
-from animation.core.compositing import coverage_dirty_union
 from animation.core.plant_awareness import PLANT_MODIFIER_IDS
 from animation.core.presentation_contracts import OverlayFrame, TimingAdapter
 from animation.libraries.clock_face import ClockFaceRenderer
@@ -27,13 +26,29 @@ def _cache_value(value: Any) -> Any:
     return value
 
 
+def _content_dirty_ranges(
+    previous: np.ndarray, current: np.ndarray
+) -> tuple[tuple[int, int], ...]:
+    """Return exact flat ranges whose premultiplied RGBA bytes changed."""
+    changed = np.flatnonzero(np.any(previous != current, axis=1))
+    if changed.size == 0:
+        return ()
+    starts = changed[np.r_[True, np.diff(changed) != 1]]
+    ends = changed[np.r_[np.diff(changed) != 1, True]] + 1
+    return tuple(
+        (int(start), int(end)) for start, end in zip(starts, ends)
+    )
+
+
 class ClockOverlayAnimation(ClockFaceRenderer, AnimationBase):
-    """Clock marks and glow over transparent pixels, with no owned background."""
+    """Clock marks with an optional local contrast backdrop."""
 
     ANIMATION_NAME = "Clock Overlay"
-    ANIMATION_DESCRIPTION = "Plant-aware clock marks for composed backgrounds"
+    ANIMATION_DESCRIPTION = (
+        "Plant-aware clock marks with an optional high-contrast backdrop"
+    )
     ANIMATION_AUTHOR = "LED Grid Team"
-    ANIMATION_VERSION = "1.0"
+    ANIMATION_VERSION = "1.1"
 
     PLANT_MODIFIER_SUPPORT = frozenset(PLANT_MODIFIER_IDS)
     TIMING_ADAPTER = TimingAdapter.WALL_CLOCK
@@ -55,6 +70,10 @@ class ClockOverlayAnimation(ClockFaceRenderer, AnimationBase):
             # and alpha, preserving premultiplication and allowing opaque black.
             "brightness": 1.0,
             "opacity": 1.0,
+            # Disabled by default for exact visual compatibility. When enabled,
+            # the backdrop is a premultiplied black rectangle beneath the face.
+            "backdrop_opacity": 0.0,
+            "backdrop_padding": 1,
         })
         self.params = {**self.default_params, **self.config}
         self.width, self.height = self.get_strip_info()
@@ -62,6 +81,9 @@ class ClockOverlayAnimation(ClockFaceRenderer, AnimationBase):
         self._straight_rgb = np.zeros_like(self._marks)
         self._halo_rgb = np.zeros_like(self._marks)
         self._alpha = np.zeros((self.width, self.height), dtype=np.float32)
+        self._backdrop_alpha_work = np.zeros(
+            (self.width, self.height), dtype=np.uint16
+        )
         pixel_count = self.get_pixel_count()
         self._overlay_buffers = [
             np.zeros((pixel_count, 4), dtype=np.uint8),
@@ -116,6 +138,16 @@ class ClockOverlayAnimation(ClockFaceRenderer, AnimationBase):
                 "type": "float", "min": 0.0, "max": 1.0, "default": 1.0,
                 "description": "Whole-overlay opacity applied to RGB and alpha",
             },
+            "backdrop_opacity": {
+                "type": "float", "min": 0.0, "max": 1.0, "default": 0.0,
+                "description": (
+                    "Black contrast backdrop opacity; zero preserves transparency"
+                ),
+            },
+            "backdrop_padding": {
+                "type": "int", "min": 0, "max": 4, "default": 1,
+                "description": "Backdrop padding around current clock bounds",
+            },
         }
         schema.update({
             key: value for key, value in super().get_parameter_schema().items()
@@ -168,7 +200,7 @@ class ClockOverlayAnimation(ClockFaceRenderer, AnimationBase):
                 changed=False,
             )
 
-        dirty_ranges = coverage_dirty_union(previous, output)
+        dirty_ranges = _content_dirty_ranges(previous, output)
         self._revision += 1
         self._last_overlay_pixels = output
         return OverlayFrame(
@@ -234,6 +266,47 @@ class ClockOverlayAnimation(ClockFaceRenderer, AnimationBase):
         # Float rounding and future palette additions must never violate the
         # premultiplied contract checked by OverlayFrame.
         np.minimum(visual[:, :, :3], visual[:, :, 3:4], out=visual[:, :, :3])
+        self._composite_black_backdrop(core, visual)
+
+    def _composite_black_backdrop(
+        self, core: np.ndarray, visual: np.ndarray
+    ) -> None:
+        """Place a clipped premultiplied-black rectangle beneath clock marks."""
+        backdrop_opacity = float(
+            np.clip(self.params.get("backdrop_opacity", 0.0), 0.0, 1.0)
+        )
+        overlay_opacity = float(
+            np.clip(self.params.get("opacity", 1.0), 0.0, 1.0)
+        )
+        backdrop_alpha = int(
+            np.floor(backdrop_opacity * overlay_opacity * 255.0 + 0.5)
+        )
+        if backdrop_alpha == 0:
+            return
+
+        coordinates = np.argwhere(core)
+        if coordinates.size == 0:
+            return
+        padding = int(np.clip(self.params.get("backdrop_padding", 1), 0, 4))
+        minimum = coordinates.min(axis=0)
+        maximum = coordinates.max(axis=0)
+        x0 = max(0, int(minimum[0]) - padding)
+        y0 = max(0, int(minimum[1]) - padding)
+        x1 = min(self.width, int(maximum[0]) + padding + 1)
+        y1 = min(self.height, int(maximum[1]) + padding + 1)
+
+        # The marks are the top layer. Their premultiplied RGB is unchanged by
+        # a black lower layer; only alpha gains Ab * (1 - Af), rounded with the
+        # compositor's exact RGBA8 half-up rule.
+        region = visual[x0:x1, y0:y1]
+        work = self._backdrop_alpha_work[x0:x1, y0:y1]
+        np.copyto(work, region[:, :, 3], casting="unsafe")
+        np.subtract(255, work, out=work)
+        np.multiply(work, backdrop_alpha, out=work)
+        np.add(work, 127, out=work)
+        np.floor_divide(work, 255, out=work)
+        np.add(work, region[:, :, 3], out=work)
+        np.copyto(region[:, :, 3], work, casting="unsafe")
 
     def _clock_now(self) -> datetime:
         context = getattr(self, "presentation_context", None)

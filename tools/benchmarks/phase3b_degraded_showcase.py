@@ -50,6 +50,9 @@ from animation.core.receiver_presentation import (
 from animation.core.receiver_sparse_publisher import ReceiverSparsePublisher
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from drivers.multi_device import MultiDeviceLEDController
+from drivers.degraded_receiver_hybrid import (
+    DegradedReceiverHybridController as ProductionDegradedHybridTransport,
+)
 from drivers.spi_controller import (
     CAPABILITY_EXPLICIT_BASE_OWNERSHIP,
     CAPABILITY_PRESENTATION_CONTEXT_V1,
@@ -1097,6 +1100,13 @@ class DegradedHybridTransport:
 
     def get_stats(self) -> dict[str, Any]:
         return {"aggregate": {"local_background": dict(self._status)}}
+
+
+# The bounded showcase and persistent service share exactly one degraded wire
+# implementation.  The legacy class above is retained temporarily as readable
+# historical context for the evidence format; all runtime construction below
+# resolves this production facade.
+DegradedHybridTransport = ProductionDegradedHybridTransport
 
 
 def evaluate_write_only_host_evidence(

@@ -2,7 +2,7 @@
   "plugin_id": "clock_overlay",
   "class": "ClockOverlayAnimation",
   "icon": "🕰️",
-  "gallery": "test",
+  "gallery": "show",
   "manifest_version": 1,
   "provider": "python",
   "role": "overlay",

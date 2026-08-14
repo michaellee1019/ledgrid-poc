@@ -11,7 +11,7 @@ import unittest
 
 import numpy as np
 
-from animation.core.compositing import coverage_dirty_union
+from animation.core.compositing import source_over_rgb
 from animation.core.plugin_loader import AnimationPluginLoader
 from animation.core.presentation_contracts import NEXT_DEADLINE_SEMANTICS
 from animation.core.presentation_contracts import AnimationRuntimeContext, OverlayFrame
@@ -125,6 +125,7 @@ class ClockOverlayTests(unittest.TestCase):
         manifest = loader.plugin_manifests["clock_overlay"]
         self.assertEqual(manifest["provider"], "python")
         self.assertEqual(manifest["role"], "overlay")
+        self.assertEqual(manifest["gallery"], "show")
         self.assertEqual(
             manifest["entrypoint"],
             "animation.plugins.clock_overlay:ClockOverlayAnimation",
@@ -146,13 +147,30 @@ class ClockOverlayTests(unittest.TestCase):
         for control in (
             "face", "palette", "format_24h", "show_seconds",
             "clock_offset_minutes", "position_y", "scale", "glow",
-            "brightness", "opacity",
+            "brightness", "opacity", "backdrop_opacity", "backdrop_padding",
         ):
             self.assertIn(control, schema)
         for background_only in ("background", "motion", "density", "speed"):
             self.assertNotIn(background_only, schema)
         self.assertEqual(schema["brightness"]["min"], 0.0)
         self.assertEqual(schema["opacity"]["min"], 0.0)
+        self.assertEqual(
+            schema["backdrop_opacity"],
+            {
+                "type": "float", "min": 0.0, "max": 1.0, "default": 0.0,
+                "description": (
+                    "Black contrast backdrop opacity; zero preserves transparency"
+                ),
+            },
+        )
+        self.assertEqual(schema["backdrop_padding"]["type"], "int")
+        self.assertEqual(schema["backdrop_padding"]["min"], 0)
+        self.assertEqual(schema["backdrop_padding"]["max"], 4)
+        self.assertEqual(schema["backdrop_padding"]["default"], 1)
+
+        descriptor = loader.get_component_descriptor("clock_overlay")
+        self.assertEqual(descriptor["defaults"]["backdrop_opacity"], 0.0)
+        self.assertEqual(descriptor["defaults"]["backdrop_padding"], 1)
 
     def test_every_face_returns_canonical_contiguous_premultiplied_rgba(self):
         fingerprints = set()
@@ -221,9 +239,95 @@ class ClockOverlayTests(unittest.TestCase):
         self.assertFalse(minute_cached.changed)
         self.assertTrue(minute_advanced.changed)
 
-    def test_second_rollover_dirty_union_covers_old_and_new_clock_pixels(self):
+    def test_default_backdrop_is_exact_prior_byte_baseline(self):
+        implicit = _FixedOverlay(_Controller()).generate_frame(0.0, 0)
+        explicit_off = _FixedOverlay(_Controller(), {
+            "backdrop_opacity": 0.0, "backdrop_padding": 4,
+        }).generate_frame(0.0, 0)
+
+        np.testing.assert_array_equal(explicit_off.pixels, implicit.pixels)
+        self.assertEqual(
+            hashlib.sha256(implicit.pixels.tobytes()).hexdigest(),
+            "bfe0a936a50b3cf994a5432184a905866107cfce0c419cc3340ab340dfb70541",
+        )
+
+    def test_backdrop_is_exact_clipped_premultiplied_black_under_clock_bounds(self):
+        core_reference = _FixedOverlay(_Controller(), {
+            "face": "digital", "glow": 0.0,
+        }).generate_frame(0.0, 0)
+        baseline = _FixedOverlay(_Controller(), {
+            "face": "digital", "glow": 1.0,
+        }).generate_frame(0.0, 0)
+        rendered = _FixedOverlay(_Controller(), {
+            "face": "digital", "glow": 1.0,
+            "backdrop_opacity": 0.5, "backdrop_padding": 2,
+        }).generate_frame(0.0, 0)
+
+        core_visual = core_reference.pixels.reshape((32, 138, 4))[:, ::-1]
+        baseline_visual = baseline.pixels.reshape((32, 138, 4))[:, ::-1]
+        rendered_visual = rendered.pixels.reshape((32, 138, 4))[:, ::-1]
+        core = core_visual[:, :, 3] > 0
+        coordinates = np.argwhere(core)
+        minimum = coordinates.min(axis=0)
+        maximum = coordinates.max(axis=0)
+        rectangle = np.zeros((32, 138), dtype=bool)
+        rectangle[
+            max(0, int(minimum[0]) - 2):min(32, int(maximum[0]) + 3),
+            max(0, int(minimum[1]) - 2):min(138, int(maximum[1]) + 3),
+        ] = True
+
+        expected_alpha = baseline_visual[:, :, 3].astype(np.uint16)
+        foreground_alpha = expected_alpha[rectangle].copy()
+        expected_alpha[rectangle] = (
+            foreground_alpha
+            + (128 * (255 - foreground_alpha) + 127) // 255
+        )
+        np.testing.assert_array_equal(
+            rendered_visual[:, :, 3], expected_alpha.astype(np.uint8)
+        )
+        np.testing.assert_array_equal(
+            rendered_visual[:, :, :3], baseline_visual[:, :, :3]
+        )
+        backdrop_only = rectangle & (baseline_visual[:, :, 3] == 0)
+        self.assertTrue(np.all(rendered_visual[backdrop_only, :3] == 0))
+        self.assertTrue(np.all(rendered_visual[backdrop_only, 3] == 128))
+        np.testing.assert_array_equal(
+            rendered_visual[~rectangle], baseline_visual[~rectangle]
+        )
+        self.assertTrue(np.all(
+            rendered.pixels[:, :3] <= rendered.pixels[:, 3:4]
+        ))
+
+    def test_backdrop_darkens_a_bright_base_without_dimming_opaque_amber_marks(self):
+        rendered = _FixedOverlay(_Controller(), {
+            "face": "digital", "palette": "amber", "glow": 0.0,
+            "backdrop_opacity": 0.75, "backdrop_padding": 2,
+        }).generate_frame(0.0, 0)
+        backdrop_index = int(np.flatnonzero(
+            (rendered.pixels[:, 3] == 191)
+            & np.all(rendered.pixels[:, :3] == 0, axis=1)
+        )[0])
+        mark_index = int(np.flatnonzero(rendered.pixels[:, 3] == 255)[0])
+        bright_rainbow_pixel = (255, 220, 180)
+
+        dimmed = source_over_rgb(
+            bright_rainbow_pixel, rendered.pixels[backdrop_index].tolist()
+        )
+        mark = source_over_rgb(
+            bright_rainbow_pixel, rendered.pixels[mark_index].tolist()
+        )
+
+        self.assertTrue(all(
+            result < source
+            for result, source in zip(dimmed, bright_rainbow_pixel)
+        ))
+        self.assertEqual(mark, tuple(rendered.pixels[mark_index, :3]))
+        self.assertGreater(max(mark), max(dimmed))
+
+    def test_second_rollover_dirties_rgb_when_backdrop_alpha_is_constant(self):
         animation = _FixedOverlay(_Controller(), {
             "face": "digital", "show_seconds": True, "glow": 0.0,
+            "backdrop_opacity": 1.0, "backdrop_padding": 2,
         })
         first = animation.generate_frame(0.0, 0)
         previous = first.pixels.copy()
@@ -233,9 +337,15 @@ class ClockOverlayTests(unittest.TestCase):
 
         self.assertTrue(rolled.changed)
         self.assertEqual(rolled.revision, first.revision + 1)
-        self.assertEqual(
-            rolled.dirty_ranges,
-            coverage_dirty_union(previous, rolled.pixels),
+        np.testing.assert_array_equal(previous[:, 3], rolled.pixels[:, 3])
+        changed = np.any(previous != rolled.pixels, axis=1)
+        dirty = np.zeros(_Controller.total_leds, dtype=bool)
+        for start, end in rolled.dirty_ranges:
+            dirty[start:end] = True
+        np.testing.assert_array_equal(dirty, changed)
+        self.assertGreater(np.count_nonzero(changed), 0)
+        self.assertLess(
+            np.count_nonzero(changed), np.count_nonzero(rolled.pixels[:, 3])
         )
 
     def test_revision_and_dirty_ranges_cover_movement_and_complete_clear(self):
@@ -248,9 +358,11 @@ class ClockOverlayTests(unittest.TestCase):
         moved = animation.generate_frame(0.0, 1)
         self.assertTrue(moved.changed)
         self.assertEqual(moved.revision, first.revision + 1)
-        self.assertEqual(
-            moved.dirty_ranges,
-            coverage_dirty_union(first_pixels, moved.pixels),
+        moved_dirty = np.zeros(_Controller.total_leds, dtype=bool)
+        for start, end in moved.dirty_ranges:
+            moved_dirty[start:end] = True
+        np.testing.assert_array_equal(
+            moved_dirty, np.any(first_pixels != moved.pixels, axis=1)
         )
 
         moved_pixels = moved.pixels.copy()
@@ -259,9 +371,11 @@ class ClockOverlayTests(unittest.TestCase):
         self.assertTrue(cleared.changed)
         self.assertEqual(cleared.revision, moved.revision + 1)
         self.assertFalse(np.any(cleared.pixels))
-        self.assertEqual(
-            cleared.dirty_ranges,
-            coverage_dirty_union(moved_pixels, cleared.pixels),
+        cleared_dirty = np.zeros(_Controller.total_leds, dtype=bool)
+        for start, end in cleared.dirty_ranges:
+            cleared_dirty[start:end] = True
+        np.testing.assert_array_equal(
+            cleared_dirty, np.any(moved_pixels != cleared.pixels, axis=1)
         )
 
         animation.update_parameters({"brightness": 0.4})
@@ -286,6 +400,12 @@ class ClockOverlayTests(unittest.TestCase):
         self.assertEqual(transparent.revision, 0)
         self.assertFalse(np.any(transparent.pixels))
 
+        backdrop_transparent = _FixedOverlay(_Controller(), {
+            "opacity": 0.0, "backdrop_opacity": 1.0,
+        }).generate_frame(0.0, 0)
+        self.assertFalse(backdrop_transparent.changed)
+        self.assertFalse(np.any(backdrop_transparent.pixels))
+
     def test_live_parameters_change_authored_presentation_without_restart(self):
         animation = _FixedOverlay(_Controller(), {
             "face": "digital", "format_24h": False, "palette": "amber",
@@ -296,6 +416,7 @@ class ClockOverlayTests(unittest.TestCase):
             "face": "analog", "palette": "ice", "format_24h": True,
             "scale": 3, "glow": 0.9, "brightness": 0.4, "opacity": 0.6,
             "position_y": 0.7, "clock_offset_minutes": 60,
+            "backdrop_opacity": 0.65, "backdrop_padding": 3,
         })
         changed = animation.generate_frame(0.0, 1)
         self.assertTrue(changed.changed)
@@ -303,6 +424,33 @@ class ClockOverlayTests(unittest.TestCase):
         self.assertFalse(np.array_equal(changed.pixels, original_pixels))
         self.assertEqual(animation.authored_params["face"], "analog")
         self.assertEqual(animation.authored_params["opacity"], 0.6)
+        self.assertEqual(animation.authored_params["backdrop_opacity"], 0.65)
+
+    def test_backdrop_padding_clips_at_every_wall_edge_without_wrap(self):
+        for position_y in (0.08, 0.92):
+            with self.subTest(position_y=position_y):
+                baseline = _FixedOverlay(_Controller(), {
+                    "face": "linear", "glow": 0.0,
+                    "position_y": position_y,
+                }).generate_frame(0.0, 0)
+                rendered = _FixedOverlay(_Controller(), {
+                    "face": "linear", "glow": 0.0,
+                    "position_y": position_y,
+                    "backdrop_opacity": 1.0, "backdrop_padding": 4,
+                }).generate_frame(0.0, 0)
+                baseline_visual = baseline.pixels.reshape((32, 138, 4))[:, ::-1]
+                rendered_visual = rendered.pixels.reshape((32, 138, 4))[:, ::-1]
+                coordinates = np.argwhere(baseline_visual[:, :, 3] > 0)
+                minimum = coordinates.min(axis=0)
+                maximum = coordinates.max(axis=0)
+                expected = np.zeros((32, 138), dtype=bool)
+                expected[
+                    max(0, int(minimum[0]) - 4):min(32, int(maximum[0]) + 5),
+                    max(0, int(minimum[1]) - 4):min(138, int(maximum[1]) + 5),
+                ] = True
+                np.testing.assert_array_equal(
+                    rendered_visual[:, :, 3] > 0, expected
+                )
 
     def test_plant_aware_placement_moves_face_without_applying_optics(self):
         with tempfile.TemporaryDirectory() as directory:

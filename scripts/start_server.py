@@ -29,12 +29,25 @@ from drivers.frame_codec import decode_frame_data
 from web.app import create_app
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from tools.deployment.preserve_deploy_settings import (
-    RECEIVER_HYBRID_CANARY_ENV,
     load_saved_state,
     receiver_hybrid_canary_enabled,
     receiver_hybrid_provider_policy,
     save_status,
 )
+try:
+    from tools.deployment.receiver_hybrid_config import (
+        OFF_RECEIVER_HYBRID_CONFIG,
+        resolve_receiver_hybrid_config,
+    )
+except ImportError:  # Compatibility with an older deployed helper lane.
+    OFF_RECEIVER_HYBRID_CONFIG = {
+        "enabled": False,
+        "transport_policy": "off",
+        "firmware_environment": "esp32-s3-devkitc-1",
+    }
+
+    def resolve_receiver_hybrid_config(_root):
+        return OFF_RECEIVER_HYBRID_CONFIG
 
 
 RELEASE_METADATA = ".release.json"
@@ -162,11 +175,75 @@ def receiver_hybrid_feature_flags(enabled: bool) -> AnimationPipelineFeatureFlag
     )
 
 
+def _receiver_hybrid_config_value(config, name, default=None):
+    if isinstance(config, dict):
+        return config.get(name, default)
+    return getattr(config, name, default)
+
+
+def resolve_receiver_hybrid_runtime_config(
+    project_root: Path, *, explicit_enabled=None
+):
+    """Resolve durable rollout state with the legacy CLI/env as strict overrides."""
+
+    durable = resolve_receiver_hybrid_config(project_root)
+    explicit = explicit_enabled
+    if explicit is None:
+        return durable
+    enabled = receiver_hybrid_canary_enabled(explicit)
+    if not enabled:
+        return OFF_RECEIVER_HYBRID_CONFIG
+    if _receiver_hybrid_config_value(durable, "enabled", False) is True:
+        return durable
+    # Preserve the pre-durable-config one-receiver/all-readable canary.  It is
+    # explicit but never selects the installed write-only exception.
+    return {
+        "enabled": True,
+        "transport_policy": "strict_all_readable_v1",
+        "firmware_environment": None,
+    }
+
+
+def _receiver_hybrid_runtime_settings(args):
+    config = getattr(args, "receiver_hybrid_config", None)
+    if config is not None:
+        return config
+    return resolve_receiver_hybrid_runtime_config(
+        Path(__file__).resolve().parents[1],
+        explicit_enabled=getattr(args, "receiver_hybrid_canary", None),
+    )
+
+
+def select_receiver_hybrid_controller(controller, receiver_hybrid_config):
+    """Apply an explicitly enabled transport policy to a controller."""
+
+    enabled = bool(_receiver_hybrid_config_value(
+        receiver_hybrid_config, "enabled", False
+    ))
+    policy = _receiver_hybrid_config_value(
+        receiver_hybrid_config, "transport_policy", "off"
+    )
+    if not enabled:
+        return controller
+    selector = getattr(
+        controller, "with_receiver_hybrid_transport_policy", None
+    )
+    if callable(selector):
+        return selector(policy)
+    if policy not in (None, "", "off", "strict_all_readable_v1"):
+        raise RuntimeError(
+            "selected receiver hybrid transport requires a multi-device "
+            "controller policy facade"
+        )
+    return controller
+
+
 def run_controller_mode(args):
     """Controller process: drives LEDs and writes status/frames to disk."""
-    receiver_hybrid_canary = receiver_hybrid_canary_enabled(
-        getattr(args, "receiver_hybrid_canary", False)
-    )
+    receiver_hybrid_config = _receiver_hybrid_runtime_settings(args)
+    receiver_hybrid_canary = bool(_receiver_hybrid_config_value(
+        receiver_hybrid_config, "enabled", False
+    ))
     feature_flags = receiver_hybrid_feature_flags(receiver_hybrid_canary)
     saved_state = None
     try:
@@ -195,6 +272,9 @@ def run_controller_mode(args):
             leds_per_strip=args.leds_per_strip,
             debug=args.controller_debug,
             parallel=True,
+        )
+        controller = select_receiver_hybrid_controller(
+            controller, receiver_hybrid_config
         )
     else:
         # Single-device or mock controller
@@ -486,11 +566,12 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
 
 def run_web_mode(args):
     """Web/preview process."""
-    feature_flags = receiver_hybrid_feature_flags(
-        receiver_hybrid_canary_enabled(
-            getattr(args, "receiver_hybrid_canary", False)
+    receiver_hybrid_config = _receiver_hybrid_runtime_settings(args)
+    feature_flags = receiver_hybrid_feature_flags(bool(
+        _receiver_hybrid_config_value(
+            receiver_hybrid_config, "enabled", False
         )
-    )
+    ))
     channel = FileControlChannel(control_path=args.control_file, status_path=args.status_file)
     web_interface = create_app(
         control_channel=channel,
@@ -542,7 +623,7 @@ def main():
         default=None,
         help=(
             'opt in to the receiver-native compiled-rainbow canary '
-            f'(env: {RECEIVER_HYBRID_CANARY_ENV}; default: off)'
+            '(durable run_state policy remains the service default)'
         ),
     )
     parser.add_argument('--strips', type=int, default=default_strip_count(),
@@ -580,14 +661,17 @@ def main():
 
     args = parser.parse_args()
 
+    project_root = Path(__file__).resolve().parents[1]
     try:
-        args.receiver_hybrid_canary = receiver_hybrid_canary_enabled(
-            args.receiver_hybrid_canary
+        args.receiver_hybrid_config = resolve_receiver_hybrid_runtime_config(
+            project_root, explicit_enabled=args.receiver_hybrid_canary
         )
+        args.receiver_hybrid_canary = bool(_receiver_hybrid_config_value(
+            args.receiver_hybrid_config, "enabled", False
+        ))
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
 
-    project_root = Path(__file__).resolve().parents[1]
     try:
         active_release_id = resolve_active_release_id(project_root)
     except RuntimeError as exc:

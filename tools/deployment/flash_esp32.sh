@@ -46,13 +46,62 @@ else
   HASH_TOOL=(shasum -a 256)
 fi
 
-log_info "Computing firmware source hash..."
+firmware_environment="${FIRMWARE_ENVIRONMENT:-esp32-s3-devkitc-1}"
+case "$firmware_environment" in
+  esp32-s3-devkitc-1|esp32-s3-devkitc-1-local-canary) ;;
+  *)
+    log_warning "Unsupported firmware environment: $firmware_environment"
+    exit 1
+    ;;
+esac
+firmware_binary="$FIRMWARE_DIR/.pio/build/$firmware_environment/firmware.bin"
+expected_firmware_sha256="${EXPECTED_FIRMWARE_SHA256:-}"
+if [ -n "$expected_firmware_sha256" ] \
+    && ! [[ "$expected_firmware_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+  log_warning "Expected firmware digest is malformed"
+  exit 1
+fi
+
+verify_firmware_binary() {
+  if [ ! -f "$firmware_binary" ]; then
+    log_warning "Validated firmware is missing: $firmware_binary"
+    return 1
+  fi
+  if [ -n "$expected_firmware_sha256" ]; then
+    actual_firmware_sha256="$("${HASH_TOOL[@]}" "$firmware_binary" | awk '{print $1}')"
+    if [ "$actual_firmware_sha256" != "$expected_firmware_sha256" ]; then
+      log_warning "Validated firmware digest changed before upload"
+      return 1
+    fi
+  fi
+}
+
+# Verify or build the exact selected artifact before consulting the installed
+# marker.  This prevents an old source-only marker from skipping a different
+# coordinator-validated binary or PlatformIO environment.
+if [ "${FIRMWARE_PREBUILT:-0}" = "1" ]; then
+  if [ -z "$expected_firmware_sha256" ]; then
+    log_warning "Prebuilt firmware requires EXPECTED_FIRMWARE_SHA256"
+    exit 1
+  fi
+  log_info "Using coordinator-validated $firmware_environment firmware build"
+  verify_firmware_binary
+else
+  log_info "Building $firmware_environment firmware..."
+  (cd "$FIRMWARE_DIR" && $PIO_CMD run -e "$firmware_environment")
+  verify_firmware_binary
+fi
+actual_firmware_sha256="$("${HASH_TOOL[@]}" "$firmware_binary" | awk '{print $1}')"
+
+log_info "Computing firmware installation digest..."
 current_hash="$(
   {
     cd "$FIRMWARE_DIR"
     find platformio.ini extra_script.py include src -type f -print0 \
       | sort -z | xargs -0 "${HASH_TOOL[@]}"
     printf '%s\n' "$pio_version"
+    printf '%s\n' "$firmware_environment"
+    printf '%s\n' "$actual_firmware_sha256"
   } | "${HASH_TOOL[@]}" | awk '{print $1}'
 )"
 
@@ -63,6 +112,7 @@ fi
 
 if [ "$current_hash" = "$previous_hash" ]; then
   log_info "Firmware unchanged; skipping ESP32 flash"
+  printf 'FIRMWARE_INSTALLATION_DIGEST=%s\n' "$current_hash"
   exit 0
 fi
 
@@ -140,32 +190,6 @@ while IFS= read -r p; do
   log_info "  -> $p"
 done <<< "$ports"
 
-firmware_binary="$FIRMWARE_DIR/.pio/build/esp32-s3-devkitc-1/firmware.bin"
-expected_firmware_sha256="${EXPECTED_FIRMWARE_SHA256:-}"
-
-verify_firmware_binary() {
-  if [ ! -f "$firmware_binary" ]; then
-    log_warning "Validated production firmware is missing: $firmware_binary"
-    return 1
-  fi
-  if [ -n "$expected_firmware_sha256" ]; then
-    actual_firmware_sha256="$("${HASH_TOOL[@]}" "$firmware_binary" | awk '{print $1}')"
-    if [ "$actual_firmware_sha256" != "$expected_firmware_sha256" ]; then
-      log_warning "Validated production firmware digest changed before upload"
-      return 1
-    fi
-  fi
-}
-
-if [ "${FIRMWARE_PREBUILT:-0}" = "1" ]; then
-  log_info "Using coordinator-validated production firmware build"
-  verify_firmware_binary
-else
-  log_info "Building firmware..."
-  (cd "$FIRMWARE_DIR" && $PIO_CMD run -e esp32-s3-devkitc-1)
-  verify_firmware_binary
-fi
-
 log_info "Flashing firmware to $port_count ESP32 device(s) sequentially..."
 all_ok=true
 while IFS= read -r port; do
@@ -184,7 +208,7 @@ while IFS= read -r port; do
   fi
   if (
     cd "$FIRMWARE_DIR"
-    $PIO_CMD run -e esp32-s3-devkitc-1 -t upload \
+    $PIO_CMD run -e "$firmware_environment" -t upload \
       --upload-port "$port" > "$log_file" 2>&1
   ); then
     log_success "Flashed $port"
@@ -201,7 +225,10 @@ while IFS= read -r port; do
 done <<< "$ports"
 
 if $all_ok; then
-  echo "$current_hash" > "$HASH_FILE"
+  marker_temporary="$(mktemp "${HASH_FILE}.tmp.XXXXXX")"
+  printf '%s\n' "$current_hash" > "$marker_temporary"
+  mv "$marker_temporary" "$HASH_FILE"
+  printf 'FIRMWARE_INSTALLATION_DIGEST=%s\n' "$current_hash"
   log_success "All $port_count ESP32 device(s) flashed successfully"
 else
   log_warning "Some devices failed to flash; hash NOT updated (will retry next deploy)"

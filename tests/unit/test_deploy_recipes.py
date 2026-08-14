@@ -154,13 +154,21 @@ class DeployRecipeTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn(
-            "$PIO_CMD run -e esp32-s3-devkitc-1 -t upload \\",
+            '$PIO_CMD run -e "$firmware_environment" -t upload \\',
             script,
         )
         self.assertNotIn("-t nobuild", script)
         self.assertIn("Flashing firmware to $port_count ESP32 device(s) sequentially", script)
         self.assertIn("verify_firmware_binary", script)
         self.assertIn('if [ "${FIRMWARE_PREBUILT:-0}" = "1" ]', script)
+        self.assertIn('FIRMWARE_ENVIRONMENT:-esp32-s3-devkitc-1', script)
+        self.assertIn('printf \'%s\\n\' "$firmware_environment"', script)
+        self.assertIn('printf \'%s\\n\' "$actual_firmware_sha256"', script)
+        self.assertLess(
+            script.index("verify_firmware_binary\nelse"),
+            script.index('if [ "$current_hash" = "$previous_hash" ]'),
+            "the exact selected binary must be verified before early skip",
+        )
         upload_section = script.split(
             'log_info "Flashing firmware to $port_count ESP32 device(s) sequentially..."',
             1,

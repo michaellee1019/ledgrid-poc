@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shlex
 import shutil
 import stat
@@ -650,7 +651,41 @@ class CoordinatorDeployment:
         support_id = self.context.state.get("support_id")
         args = (support_id,) if isinstance(support_id, str) else ()
         result = self.target.run("build-firmware", *args)
-        return OperationResult(outcome=str(result.get("outcome", "executed")), details=result)
+        environment = result.get("firmware_environment")
+        config_digest = result.get("receiver_hybrid_config_digest")
+        firmware_sha256 = result.get("firmware_sha256")
+        if not isinstance(environment, str) or not environment:
+            raise RuntimeError("firmware build returned no selected environment")
+        if (
+            not isinstance(config_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", config_digest) is None
+        ):
+            raise RuntimeError("firmware build returned no rollout config digest")
+        if firmware_sha256 is not None and (
+            not isinstance(firmware_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", firmware_sha256) is None
+        ):
+            raise RuntimeError("firmware build returned an invalid binary digest")
+        self.context.state["firmware_selection"] = {
+            "firmware_environment": environment,
+            "receiver_hybrid_config_digest": config_digest,
+            "firmware_sha256": firmware_sha256,
+        }
+        artifacts = ()
+        if isinstance(firmware_sha256, str):
+            artifacts = (
+                Artifact(
+                    "receiver_firmware_build",
+                    environment,
+                    firmware_sha256,
+                    "1",
+                ),
+            )
+        return OperationResult(
+            outcome=str(result.get("outcome", "executed")),
+            details=result,
+            artifacts=artifacts,
+        )
 
     def _provision(self, context: DeployContext) -> OperationResult:
         release_id = str(context.state["release_id"])
@@ -688,6 +723,14 @@ class CoordinatorDeployment:
 
     def _firmware_flash(self, _context: DeployContext) -> OperationResult:
         support_id = self.context.state.get("support_id")
+        selection = self.context.state.get("firmware_selection")
+        if not isinstance(selection, dict):
+            raise RuntimeError("firmware flash has no build-phase rollout selection")
+        environment = selection.get("firmware_environment")
+        config_digest = selection.get("receiver_hybrid_config_digest")
+        firmware_sha256 = selection.get("firmware_sha256")
+        if not isinstance(environment, str) or not isinstance(config_digest, str):
+            raise RuntimeError("firmware build-phase rollout selection is malformed")
         args: list[str] = []
         if isinstance(support_id, str):
             args.append(support_id)
@@ -697,12 +740,43 @@ class CoordinatorDeployment:
                 str(self.context.state["release_id"]),
                 "--receivers",
                 str(self.config.receiver_count),
+                "--expected-environment",
+                environment,
+                "--expected-config-digest",
+                config_digest,
             )
         )
         if os.environ.get("DEBUG", "0") == "1":
             args.append("--debug")
         result = self.target.run("flash-firmware", *args)
-        return OperationResult(outcome=str(result.get("outcome", "executed")), details=result)
+        if (
+            result.get("firmware_environment") != environment
+            or result.get("receiver_hybrid_config_digest") != config_digest
+            or (
+                firmware_sha256 is not None
+                and result.get("firmware_sha256") != firmware_sha256
+            )
+        ):
+            raise RuntimeError("firmware build and flash receipts disagree")
+        installed_digest = result.get("firmware_installation_digest")
+        if (
+            not isinstance(installed_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", installed_digest) is None
+        ):
+            raise RuntimeError("firmware flash returned no installed-image receipt")
+        return OperationResult(
+            outcome=str(result.get("outcome", "executed")),
+            details=result,
+            artifacts=(
+                Artifact(
+                    "receiver_firmware_installation",
+                    environment,
+                    str(result["firmware_sha256"]),
+                    "1",
+                    target_id=installed_digest,
+                ),
+            ),
+        )
 
     def _validate_app(self, context: DeployContext) -> OperationResult:
         result = self.target.run("validate-app", str(context.state["release_id"]))
@@ -846,11 +920,19 @@ class CoordinatorDeployment:
     def _restore(self, context: DeployContext) -> OperationResult:
         if not context.state.get("activated") or not context.state.get("state_captured"):
             return OperationResult(outcome="skipped", details={"reason": "no captured state to restore"})
-        return self._post_activation(
-            lambda: OperationResult(
-                details=self.target.run("restore-state", "--timeout", "20")
-            )
-        )
+
+        def execute() -> OperationResult:
+            result = self.target.run("restore-state", "--timeout", "20")
+            selection = context.state.get("firmware_selection")
+            if isinstance(selection, dict):
+                expected = selection.get("receiver_hybrid_config_digest")
+                if result.get("receiver_hybrid_config_digest") != expected:
+                    raise RuntimeError(
+                        "state restore used a different receiver-hybrid config"
+                    )
+            return OperationResult(details=result)
+
+        return self._post_activation(execute)
 
     def _health(self, context: DeployContext) -> OperationResult:
         def execute() -> OperationResult:

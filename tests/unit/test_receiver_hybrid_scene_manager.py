@@ -481,6 +481,33 @@ class ReceiverHybridSceneManagerTests(unittest.TestCase):
         self.assertEqual(degraded["publisher"]["last_operation"], "renew_failed")
         self.assertIn("renew compensation disagreement", degraded["publisher"]["last_error"])
 
+    def test_degraded_transport_is_operational_but_never_healthy_or_release_accepted(self):
+        controller, manager = self.make_manager()
+        self.assertTrue(manager.start_scene(_scene()))
+        controller._status.update({
+            "operational": True,
+            "degraded": True,
+            "telemetry_complete": False,
+            "release_acceptance": False,
+            "transport_policy": "degraded_spi1_01_readable",
+            "readable_devices": [0, 1],
+            "unverified_devices": [2, 3],
+        })
+
+        status = manager.get_current_status()["receiver_hybrid"]
+        self.assertTrue(status["operational"])
+        self.assertTrue(status["degraded"])
+        self.assertFalse(status["telemetry_complete"])
+        self.assertFalse(status["healthy"])
+        self.assertFalse(status["release_acceptance"])
+        self.assertEqual(
+            status["transport_policy"], "degraded_spi1_01_readable"
+        )
+        self.assertEqual(status["readable_devices"], [0, 1])
+        self.assertEqual(status["unverified_devices"], [2, 3])
+        self.assertFalse(status["fallback_active"])
+        self.assertIsNone(status["error"])
+
     def test_loop_runtime_failure_takes_over_once_and_exits_into_python_fallback(self):
         controller, manager = self.make_manager()
         self.assertTrue(manager.start_scene(_scene()))

@@ -2940,15 +2940,42 @@ class AnimationManager:
                     driver_status = dict(candidate)
             except Exception as exc:
                 driver_status = {"state": "degraded", "error": str(exc)}
-        healthy = bool(
+        transport_operational = bool(
             publisher_status.get("healthy")
             and driver_status.get("state") == "active"
             and self._receiver_hybrid_error is None
             and not self._receiver_fallback_active
         )
+        operational = bool(
+            transport_operational
+            and driver_status.get("operational", True)
+        )
+        telemetry_complete = bool(
+            driver_status.get("telemetry_complete", True)
+        )
+        degraded = bool(
+            driver_status.get("degraded", False) or not telemetry_complete
+        )
+        healthy = bool(operational and telemetry_complete and not degraded)
+        release_acceptance = bool(
+            healthy and driver_status.get("release_acceptance", True)
+        )
         scene = self._active_scene_state
         return {
             "healthy": healthy,
+            "operational": operational,
+            "degraded": degraded,
+            "telemetry_complete": telemetry_complete,
+            "release_acceptance": release_acceptance,
+            "transport_policy": driver_status.get(
+                "transport_policy", "strict_all_readable_v1"
+            ),
+            "readable_devices": list(
+                driver_status.get("readable_devices", ())
+            ),
+            "unverified_devices": list(
+                driver_status.get("unverified_devices", ())
+            ),
             "fallback_active": self._receiver_fallback_active,
             "error": self._receiver_hybrid_error,
             "source_scene_revision": scene.revision if scene is not None else None,

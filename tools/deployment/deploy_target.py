@@ -32,8 +32,14 @@ from urllib.request import urlopen
 
 try:
     from tools.deployment.app_releases import AppReleaseManager, ReleaseValidationError
+    from tools.deployment.receiver_hybrid_config import (
+        resolve_receiver_hybrid_config,
+    )
 except ModuleNotFoundError:  # Direct execution from an uploaded snapshot.
     from app_releases import AppReleaseManager, ReleaseValidationError  # type: ignore[no-redef]
+    from receiver_hybrid_config import (  # type: ignore[no-redef]
+        resolve_receiver_hybrid_config,
+    )
 
 
 SNAPSHOT_SCHEMA_VERSION = 1
@@ -556,17 +562,30 @@ def _make_build_workspace_writable(workspace: Path) -> None:
 
 
 def build_firmware(root: Path, support_id: Optional[str]) -> Mapping[str, Any]:
+    hybrid_config = resolve_receiver_hybrid_config(root)
+    firmware_environment = hybrid_config.firmware_environment
     if support_id is None:
-        return {"outcome": "skipped", "reason": "no support inputs"}
+        return {
+            "outcome": "skipped",
+            "reason": "no support inputs",
+            "receiver_hybrid_config": hybrid_config.to_dict(),
+            "receiver_hybrid_config_digest": hybrid_config.selection_digest,
+            "firmware_environment": firmware_environment,
+        }
     workspace, reused = _copy_support_workspace(root, support_id)
     firmware = workspace / "firmware" / "esp32"
-    binary = firmware / ".pio" / "build" / "esp32-s3-devkitc-1" / "firmware.bin"
+    binary = (
+        firmware / ".pio" / "build" / firmware_environment / "firmware.bin"
+    )
     if reused and binary.is_file():
         return {
             "outcome": "skipped",
             "reason": "firmware build already exists",
             "workspace": os.fspath(workspace),
             "firmware_sha256": _sha256_file(binary),
+            "receiver_hybrid_config": hybrid_config.to_dict(),
+            "receiver_hybrid_config_digest": hybrid_config.selection_digest,
+            "firmware_environment": firmware_environment,
         }
     pio = shutil.which("pio") or os.fspath(Path.home() / ".platformio-venv" / "bin" / "pio")
     if not Path(pio).is_file() and shutil.which(pio) is None:
@@ -588,7 +607,7 @@ def build_firmware(root: Path, support_id: Optional[str]) -> Mapping[str, Any]:
             f"{version.stdout.strip() or version.stderr.strip() or 'unknown'}"
         )
     completed = _command(
-        (pio, "run", "-e", "esp32-s3-devkitc-1"),
+        (pio, "run", "-e", firmware_environment),
         cwd=firmware,
         env=build_env,
     )
@@ -600,6 +619,9 @@ def build_firmware(root: Path, support_id: Optional[str]) -> Mapping[str, Any]:
         "build_cache": os.fspath(build_cache),
         "ccache": os.fspath(ccache_dir),
         "firmware_sha256": _sha256_file(binary),
+        "receiver_hybrid_config": hybrid_config.to_dict(),
+        "receiver_hybrid_config_digest": hybrid_config.selection_digest,
+        "firmware_environment": firmware_environment,
         "output_tail": (completed.stdout + completed.stderr)[-2000:],
     }
 
@@ -611,9 +633,33 @@ def flash_firmware(
     app_release_id: Optional[str] = None,
     receiver_count: int,
     debug: bool,
+    expected_firmware_environment: Optional[str] = None,
+    expected_config_digest: Optional[str] = None,
 ) -> Mapping[str, Any]:
+    hybrid_config = resolve_receiver_hybrid_config(root)
+    firmware_environment = hybrid_config.firmware_environment
+    if (
+        expected_firmware_environment is not None
+        and expected_firmware_environment != firmware_environment
+    ):
+        raise RuntimeError(
+            "receiver-hybrid firmware selection changed between build and flash"
+        )
+    if (
+        expected_config_digest is not None
+        and expected_config_digest != hybrid_config.selection_digest
+    ):
+        raise RuntimeError(
+            "receiver-hybrid config changed between build and flash"
+        )
     if support_id is None:
-        return {"outcome": "skipped", "reason": "no support inputs"}
+        return {
+            "outcome": "skipped",
+            "reason": "no support inputs",
+            "receiver_hybrid_config": hybrid_config.to_dict(),
+            "receiver_hybrid_config_digest": hybrid_config.selection_digest,
+            "firmware_environment": firmware_environment,
+        }
     workspace, _ = _copy_support_workspace(root, support_id)
     firmware_binary = (
         workspace
@@ -621,13 +667,13 @@ def flash_firmware(
         / "esp32"
         / ".pio"
         / "build"
-        / "esp32-s3-devkitc-1"
+        / firmware_environment
         / "firmware.bin"
     )
     if not firmware_binary.is_file():
         raise RuntimeError(
-            "validated production firmware.bin is unavailable; run build-firmware "
-            "before flash-firmware"
+            f"validated {firmware_environment} firmware.bin is unavailable; "
+            "run build-firmware before flash-firmware"
         )
     firmware_sha256 = _sha256_file(firmware_binary)
     ports = sorted(set(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*")))
@@ -651,6 +697,7 @@ def flash_firmware(
             # leaf helper must upload exactly that artifact, not start a second
             # compile whose output could diverge from the build receipt.
             "FIRMWARE_PREBUILT": "1",
+            "FIRMWARE_ENVIRONMENT": firmware_environment,
             "EXPECTED_FIRMWARE_SHA256": firmware_sha256,
             "IDF_CCACHE_ENABLE": "1",
             "CCACHE_DIR": os.fspath(
@@ -693,10 +740,18 @@ def flash_firmware(
         detail = f"; {binary_error}" if binary_error else ""
         raise RuntimeError(f"receiver firmware flash failed{detail}: {output[-4000:]}")
     skipped = "Firmware unchanged; skipping" in output
+    installed_marker = shared_marker.read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", installed_marker):
+        _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
+        raise RuntimeError("receiver firmware helper returned no valid installed marker")
     return {
         "outcome": "skipped" if skipped else "executed",
         "ports": ports,
         "firmware_sha256": firmware_sha256,
+        "firmware_environment": firmware_environment,
+        "firmware_installation_digest": installed_marker,
+        "receiver_hybrid_config": hybrid_config.to_dict(),
+        "receiver_hybrid_config_digest": hybrid_config.selection_digest,
         "output_tail": output[-2000:],
     }
 
@@ -775,11 +830,17 @@ def capture_state(root: Path) -> Mapping[str, Any]:
 
 
 def restore_state(root: Path, *, timeout: float) -> Mapping[str, Any]:
+    hybrid_config = resolve_receiver_hybrid_config(root)
     helper_root = _active_helper_root(root)
     runtime = root / "venv" / "bin" / "python"
     state = root / "run_state" / "before_deploy.json"
     if helper_root is None or not runtime.is_file() or not state.is_file():
-        return {"restored": False, "reason": "no captured state"}
+        return {
+            "restored": False,
+            "reason": "no captured state",
+            "receiver_hybrid_config": hybrid_config.to_dict(),
+            "receiver_hybrid_config_digest": hybrid_config.selection_digest,
+        }
     completed = _command(
         (
             runtime,
@@ -790,7 +851,12 @@ def restore_state(root: Path, *, timeout: float) -> Mapping[str, Any]:
         ),
         cwd=helper_root,
     )
-    return {"restored": True, "output_tail": completed.stdout[-1000:]}
+    return {
+        "restored": True,
+        "receiver_hybrid_config": hybrid_config.to_dict(),
+        "receiver_hybrid_config_digest": hybrid_config.selection_digest,
+        "output_tail": completed.stdout[-1000:],
+    }
 
 
 def restart_service(unit: str = DEFAULT_SYSTEMD_UNIT) -> Mapping[str, Any]:
@@ -1007,6 +1073,8 @@ def _parser() -> argparse.ArgumentParser:
     flash.add_argument("--app-release")
     flash.add_argument("--receivers", type=int, default=4)
     flash.add_argument("--debug", action="store_true")
+    flash.add_argument("--expected-environment")
+    flash.add_argument("--expected-config-digest")
     subparsers.add_parser("capture-state")
     activate_parser = subparsers.add_parser("activate")
     activate_parser.add_argument("release_id")
@@ -1057,6 +1125,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             app_release_id=args.app_release,
             receiver_count=args.receivers,
             debug=args.debug,
+            expected_firmware_environment=args.expected_environment,
+            expected_config_digest=args.expected_config_digest,
         )
     elif args.command == "capture-state":
         result = capture_state(root)

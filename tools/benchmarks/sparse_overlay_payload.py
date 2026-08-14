@@ -350,6 +350,11 @@ def build_report(
 
     repair_seconds = set(range(0, seconds, repair_interval_seconds))
     renewal_seconds = set(range(0, seconds, renewal_interval_seconds))
+    retry_receivers = [
+        receiver
+        for receiver, patches in enumerate(frames[retry_second]["local_patches"])
+        if patches
+    ]
     full_patches = tuple(_full_snapshot_ranges() for _ in range(RECEIVER_COUNT))
     for frame in frames:
         second = frame["second"]
@@ -449,9 +454,10 @@ def build_report(
             "repair_interval_seconds": repair_interval_seconds,
             "repair_seconds": sorted(repair_seconds),
             "retry_policy": (
-                "one exact retry of each receiver's latest accepted batch at "
-                f"second {retry_second}"
+                "one exact retry of each changed receiver's latest accepted "
+                f"batch at second {retry_second}"
             ),
+            "retry_receivers": retry_receivers,
         },
         "ordinary_changed_tick": {
             "second": ordinary["second"],
@@ -558,7 +564,7 @@ def validate_report(report: dict) -> None:
         "delta_begin": RECEIVER_COUNT * (duration - repair_count),
         "delta_commit": RECEIVER_COUNT * (duration - repair_count),
         "lease_renew": RECEIVER_COUNT * renewal_count,
-        "exact_batch_retry": RECEIVER_COUNT,
+        "exact_batch_retry": len(report["policy"]["retry_receivers"]),
         "publish_preflight_query": RECEIVER_COUNT * duration,
         "publish_verification_query": RECEIVER_COUNT * duration,
         "renewal_preflight_query": RECEIVER_COUNT * renewal_count,

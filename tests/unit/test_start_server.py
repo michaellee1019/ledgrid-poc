@@ -11,6 +11,7 @@ from scripts.start_server import (
     device_count_for_strips,
     handle_command,
     receiver_hybrid_feature_flags,
+    select_receiver_hybrid_controller,
 )
 
 
@@ -137,6 +138,41 @@ class StartServerTests(unittest.TestCase):
         self.assertFalse(canary.receiver_native_modules)
         with self.assertRaisesRegex(TypeError, "must be boolean"):
             receiver_hybrid_feature_flags(1)
+
+    def test_service_controller_applies_only_explicit_degraded_transport_policy(self):
+        class Controller:
+            def __init__(self):
+                self.policies = []
+
+            def with_receiver_hybrid_transport_policy(self, policy):
+                self.policies.append(policy)
+                return ("wrapped", policy)
+
+        controller = Controller()
+        self.assertIs(
+            select_receiver_hybrid_controller(controller, {
+                "enabled": False,
+                "transport_policy": "off",
+            }),
+            controller,
+        )
+        self.assertEqual(controller.policies, [])
+        selected = select_receiver_hybrid_controller(controller, {
+            "enabled": True,
+            "transport_policy": "degraded_spi1_01_readable",
+        })
+        self.assertEqual(
+            selected, ("wrapped", "degraded_spi1_01_readable")
+        )
+        self.assertEqual(
+            controller.policies, ["degraded_spi1_01_readable"]
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "requires a multi-device"):
+            select_receiver_hybrid_controller(object(), {
+                "enabled": True,
+                "transport_policy": "degraded_spi1_01_readable",
+            })
 
     def test_state_changing_commands_request_persistence(self):
         manager = _Manager()

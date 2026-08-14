@@ -30,6 +30,16 @@ from tools.deployment.deploy_coordinator import (
     ROLLBACK_STEP_ORDER,
     SSHAtomicJSONReceiptStore,
 )
+from tools.deployment.receiver_hybrid_config import (
+    DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+    PRODUCTION_FIRMWARE_ENVIRONMENT,
+    write_receiver_hybrid_config,
+)
+
+
+FIRMWARE_SHA256 = "e" * 64
+ROLLOUT_CONFIG_DIGEST = "f" * 64
+FIRMWARE_INSTALLATION_DIGEST = "a" * 64
 
 
 class _SnapshotFixture:
@@ -171,7 +181,13 @@ class _FakeTarget:
         if command == "cleanup-snapshot":
             return {"removed": True}
         if command == "build-firmware":
-            return {"outcome": "skipped", "reason": "firmware build already exists"}
+            return {
+                "outcome": "skipped",
+                "reason": "firmware build already exists",
+                "firmware_environment": PRODUCTION_FIRMWARE_ENVIRONMENT,
+                "firmware_sha256": FIRMWARE_SHA256,
+                "receiver_hybrid_config_digest": ROLLOUT_CONFIG_DIGEST,
+            }
         if command == "provision":
             return {
                 "runtime": {"installed": False},
@@ -179,7 +195,14 @@ class _FakeTarget:
                 "spi": {"status": "ready", "config_changed": False},
             }
         if command == "flash-firmware":
-            return {"outcome": "skipped", "reason": "firmware unchanged"}
+            return {
+                "outcome": "skipped",
+                "reason": "firmware unchanged",
+                "firmware_environment": PRODUCTION_FIRMWARE_ENVIRONMENT,
+                "firmware_sha256": FIRMWARE_SHA256,
+                "firmware_installation_digest": FIRMWARE_INSTALLATION_DIGEST,
+                "receiver_hybrid_config_digest": ROLLOUT_CONFIG_DIGEST,
+            }
         if command == "validate-app":
             return {"release_id": self.candidate, "digest": self.candidate}
         if command == "capture-state":
@@ -195,7 +218,10 @@ class _FakeTarget:
         if command == "restart":
             return {"restart_started_at": 100.0}
         if command == "restore-state":
-            return {"restored": True}
+            return {
+                "restored": True,
+                "receiver_hybrid_config_digest": ROLLOUT_CONFIG_DIGEST,
+            }
         if command == "health":
             return {
                 "desired_release": args[0],
@@ -677,6 +703,76 @@ class TargetFirmwareBuildTests(unittest.TestCase):
                 os.fspath(root / "build/firmware/.ccache"),
             )
 
+    def test_enabled_degraded_policy_builds_only_allowlisted_canary_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            write_receiver_hybrid_config(root, enabled=True)
+            workspace = root / "workspace"
+            firmware = workspace / "firmware/esp32"
+            firmware.mkdir(parents=True)
+            calls = []
+
+            def command(args, **kwargs):
+                calls.append(tuple(args))
+                if args[-1] == "--version":
+                    return subprocess.CompletedProcess(
+                        args, 0, "PlatformIO Core, version 6.1.19\n", "",
+                    )
+                binary = (
+                    firmware / ".pio/build"
+                    / DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT
+                    / "firmware.bin"
+                )
+                binary.parent.mkdir(parents=True)
+                binary.write_bytes(b"degraded hybrid firmware")
+                return subprocess.CompletedProcess(args, 0, "build passed\n", "")
+
+            with (
+                patch.object(
+                    deploy_target,
+                    "_copy_support_workspace",
+                    return_value=(workspace, False),
+                ),
+                patch.object(deploy_target.shutil, "which", return_value="/fake/pio"),
+                patch.object(deploy_target, "_command", side_effect=command),
+            ):
+                result = deploy_target.build_firmware(root, "a" * 64)
+
+            self.assertEqual(
+                calls[1],
+                (
+                    "/fake/pio", "run", "-e",
+                    DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+                ),
+            )
+            self.assertEqual(
+                result["firmware_environment"],
+                DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+            )
+            self.assertTrue(result["receiver_hybrid_config"]["enabled"])
+
+    def test_flash_rejects_rollout_config_drift_before_port_or_helper_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            with (
+                patch.object(deploy_target, "_copy_support_workspace") as workspace,
+                patch.object(deploy_target.glob, "glob") as discover,
+                patch.object(deploy_target, "_command") as command,
+                self.assertRaisesRegex(RuntimeError, "selection changed"),
+            ):
+                deploy_target.flash_firmware(
+                    root,
+                    "a" * 64,
+                    receiver_count=4,
+                    debug=False,
+                    expected_firmware_environment=(
+                        DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT
+                    ),
+                )
+            workspace.assert_not_called()
+            discover.assert_not_called()
+            command.assert_not_called()
+
 
 class TargetFirmwareFailureTests(unittest.TestCase):
     @staticmethod
@@ -699,6 +795,15 @@ class TargetFirmwareFailureTests(unittest.TestCase):
             helper.parent.mkdir(parents=True)
             helper.write_text("#!/bin/bash\n", encoding="utf-8")
             ports = [f"/dev/ttyACM{index}" for index in range(4)]
+
+            def command(args, **_kwargs):
+                (root / ".esp32_firmware_hash").write_text(
+                    FIRMWARE_INSTALLATION_DIGEST + "\n", encoding="utf-8"
+                )
+                return subprocess.CompletedProcess(
+                    args, 0, "Flashed all receivers", "",
+                )
+
             with (
                 patch.dict(
                     os.environ,
@@ -711,9 +816,7 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 patch.object(
                     deploy_target,
                     "_command",
-                    return_value=subprocess.CompletedProcess(
-                        ("bash",), 0, "Flashed all receivers", "",
-                    ),
+                    side_effect=command,
                 ) as command,
             ):
                 result = deploy_target.flash_firmware(
@@ -722,8 +825,16 @@ class TargetFirmwareFailureTests(unittest.TestCase):
 
             self.assertEqual(result["outcome"], "executed")
             self.assertEqual(result["firmware_sha256"], deploy_target._sha256_file(binary))
+            self.assertEqual(
+                result["firmware_installation_digest"],
+                FIRMWARE_INSTALLATION_DIGEST,
+            )
             flash_env = command.call_args.kwargs["env"]
             self.assertEqual(flash_env["FIRMWARE_PREBUILT"], "1")
+            self.assertEqual(
+                flash_env["FIRMWARE_ENVIRONMENT"],
+                PRODUCTION_FIRMWARE_ENVIRONMENT,
+            )
             self.assertEqual(
                 flash_env["EXPECTED_FIRMWARE_SHA256"],
                 deploy_target._sha256_file(binary),
@@ -1012,7 +1123,12 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(
             [artifact.kind for artifact in receipt.artifacts],
-            ["app_release", "support_release"],
+            [
+                "app_release",
+                "support_release",
+                "receiver_firmware_build",
+                "receiver_firmware_installation",
+            ],
         )
         local_commands = [call[0] for call in runner.calls]
         self.assertTrue(any(command and command[0] == "rsync" for command in local_commands))
@@ -1023,10 +1139,10 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                 "stage-app",
                 "cleanup-snapshot",
                 "build-firmware",
+                "capture-state",
                 "provision",
                 "flash-firmware",
                 "validate-app",
-                "capture-state",
                 "current-release",
                 "activate",
                 "restart",
@@ -1063,6 +1179,11 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
             {
                 "support_id": target.support,
                 "release_id": target.candidate,
+                "firmware_selection": {
+                    "firmware_environment": PRODUCTION_FIRMWARE_ENVIRONMENT,
+                    "receiver_hybrid_config_digest": ROLLOUT_CONFIG_DIGEST,
+                    "firmware_sha256": FIRMWARE_SHA256,
+                },
             },
         )
         try:
@@ -1081,6 +1202,10 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                     target.candidate,
                     "--receivers",
                     "4",
+                    "--expected-environment",
+                    PRODUCTION_FIRMWARE_ENVIRONMENT,
+                    "--expected-config-digest",
+                    ROLLOUT_CONFIG_DIGEST,
                 ),
             ),
         )

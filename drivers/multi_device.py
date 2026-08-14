@@ -50,6 +50,29 @@ SPARSE_OVERLAY_REQUIRED_CAPABILITIES = (
 class MultiDeviceLEDController:
     """Multi-device LED controller that manages multiple ESP32 devices"""
 
+    def with_receiver_hybrid_transport_policy(self, transport_policy):
+        """Return the controller facade selected by one explicit policy.
+
+        Ordinary host streaming and the strict all-readable receiver path keep
+        this controller unchanged.  The installed degraded SPI1 exception is
+        isolated in its own facade so strict transaction methods never acquire
+        implicit write-only branches.
+        """
+
+        if transport_policy in (None, "", "off", "strict_all_readable_v1"):
+            return self
+        from drivers.degraded_receiver_hybrid import (
+            DEGRADED_SPI1_TRANSPORT_POLICY,
+            DegradedReceiverHybridController,
+        )
+
+        if transport_policy != DEGRADED_SPI1_TRANSPORT_POLICY:
+            raise ValueError(
+                f"unsupported receiver hybrid transport policy: "
+                f"{transport_policy!r}"
+            )
+        return DegradedReceiverHybridController(self)
+
     def _controller_lock(self):
         """Lazily initialize orchestration state for legacy/test construction."""
         if not hasattr(self, "_transport_lock"):
