@@ -37,6 +37,7 @@ from tools.benchmarks.phase3b_single_receiver_canary import (
     CanaryConfig,
     SingleReceiverPhase3BCanary,
     evaluate_identity_status,
+    evaluate_snapshot_counter_window,
     make_foreground_frames,
     summarize_timing_samples,
 )
@@ -433,6 +434,12 @@ class Phase3BCanaryTests(unittest.TestCase):
         self.assertEqual(result["expiry"]["expiration_delta"], 1)
         self.assertGreater(result["expiry"]["rendered_delta"], 0)
         self.assertEqual(result["snapshot"]["coverage_pixels"], 12)
+        self.assertEqual(
+            result["snapshot"]["counter_window"]["deltas"][
+                "receiver_local_frames_rendered"
+            ],
+            0,
+        )
         self.assertEqual(result["delta"]["coverage_pixels"], 7)
         timing = result["receiver_timing_window"]
         self.assertEqual(
@@ -459,6 +466,83 @@ class Phase3BCanaryTests(unittest.TestCase):
         self.assertEqual(receiver.black_takeovers, 2)
         self.assertTrue(result["finally_black_takeover"])
         self.assertEqual(receiver.status["receiver_base_mode"], BASE_HOST_FULL_SCENE)
+
+    def test_snapshot_accepts_one_natural_base_frame_but_delta_stays_aligned(self):
+        runner, receiver = self.rig()
+
+        def advance_one_base_frame(operation, _status):
+            if operation == "snapshot_commit":
+                receiver._render(1)
+
+        receiver.after_operation = advance_one_base_frame
+        result = runner.run()
+
+        self.assertTrue(result["passed"], result)
+        snapshot_deltas = result["snapshot"]["counter_window"]["deltas"]
+        self.assertEqual(snapshot_deltas["receiver_local_frames_rendered"], 1)
+        self.assertEqual(snapshot_deltas["receiver_local_cadence_deadlines"], 1)
+        self.assertEqual(snapshot_deltas["receiver_overlay_composite_frames"], 2)
+        self.assertEqual(
+            result["cadence_independence"]["deltas"][
+                "receiver_local_frames_rendered"
+            ],
+            0,
+        )
+
+    def test_snapshot_counter_window_rejects_inconsistent_or_implausible_work(self):
+        before = status_v4(logical_id=1)
+        expected_operations = 16
+
+        def evaluated(**deltas):
+            after = dict(before)
+            defaults = {
+                "receiver_local_frames_rendered": 1,
+                "receiver_local_cadence_deadlines": 1,
+                "receiver_overlay_composite_frames": 2,
+                "receiver_overlay_commits": 1,
+                "receiver_overlay_expirations": 0,
+                "receiver_operation_sequence": expected_operations,
+            }
+            defaults.update(deltas)
+            for key, delta in defaults.items():
+                after[key] = before[key] + delta
+            return evaluate_snapshot_counter_window(
+                before,
+                after,
+                elapsed_seconds=0.01,
+                cadence_hz=20,
+                expected_operation_delta=expected_operations,
+            )
+
+        zero_frame = evaluated(
+            receiver_local_frames_rendered=0,
+            receiver_local_cadence_deadlines=0,
+            receiver_overlay_composite_frames=1,
+        )
+        self.assertTrue(zero_frame["passed"], zero_frame)
+        one_frame = evaluated()
+        self.assertTrue(one_frame["passed"], one_frame)
+        for changes, message in (
+            ({"receiver_local_cadence_deadlines": 0}, "cadence deadlines"),
+            ({"receiver_overlay_composite_frames": 1}, "plus exactly 1"),
+            ({"receiver_overlay_commits": 0}, "expected exactly 1"),
+            ({"receiver_overlay_expirations": 1}, "expected exactly 0"),
+            (
+                {
+                    "receiver_local_frames_rendered": 2,
+                    "receiver_local_cadence_deadlines": 2,
+                    "receiver_overlay_composite_frames": 3,
+                },
+                "expected 0..1",
+            ),
+        ):
+            with self.subTest(changes=changes):
+                result = evaluated(**changes)
+                self.assertFalse(result["passed"], result)
+                self.assertTrue(
+                    any(message in failure for failure in result["failures"]),
+                    result,
+                )
 
     def test_every_intermediate_command_failure_still_forces_complete_black(self):
         operations = (

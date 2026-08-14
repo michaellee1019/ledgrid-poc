@@ -331,6 +331,99 @@ def evaluate_timing_status(status: Any) -> list[str]:
     return failures
 
 
+def evaluate_snapshot_counter_window(
+    before: Any,
+    after: Any,
+    *,
+    elapsed_seconds: float,
+    cadence_hz: int,
+    expected_operation_delta: int,
+) -> dict[str, Any]:
+    """Validate counters across the multi-command authoritative snapshot."""
+    if not isinstance(before, Mapping) or not isinstance(after, Mapping):
+        return {
+            "passed": False,
+            "failures": ["snapshot counter status pair is unavailable"],
+        }
+    if not math.isfinite(elapsed_seconds) or elapsed_seconds < 0:
+        return {
+            "passed": False,
+            "failures": ["snapshot counter elapsed time is invalid"],
+        }
+    if (
+        isinstance(cadence_hz, bool)
+        or not isinstance(cadence_hz, int)
+        or cadence_hz <= 0
+    ):
+        return {
+            "passed": False,
+            "failures": ["snapshot counter cadence is invalid"],
+        }
+
+    keys = (
+        "receiver_local_frames_rendered",
+        "receiver_local_cadence_deadlines",
+        "receiver_overlay_composite_frames",
+        "receiver_overlay_commits",
+        "receiver_overlay_expirations",
+        "receiver_operation_sequence",
+    )
+    deltas = {
+        key: _int(after, key) - _int(before, key)
+        for key in keys
+    }
+    failures = []
+    operations = deltas["receiver_operation_sequence"]
+    if operations != expected_operation_delta:
+        failures.append(
+            f"operation sequence advanced by {operations}; "
+            f"expected exactly {expected_operation_delta}"
+        )
+
+    rendered = deltas["receiver_local_frames_rendered"]
+    deadlines = deltas["receiver_local_cadence_deadlines"]
+    if rendered != deadlines:
+        failures.append(
+            f"local frames rendered advanced by {rendered} while cadence deadlines "
+            f"advanced by {deadlines}"
+        )
+    # Status is generated ahead of the SPI response that delivers it. Host
+    # elapsed time includes every acknowledgement/status drain, while one
+    # cadence deadline may already be in flight when the baseline is queued.
+    # Allow that single phase-boundary frame beyond whole elapsed periods.
+    maximum_natural_frames = math.floor(elapsed_seconds * cadence_hz) + 1
+    if not 0 <= rendered <= maximum_natural_frames:
+        failures.append(
+            f"natural base frames advanced by {rendered}; expected 0.."
+            f"{maximum_natural_frames} across {elapsed_seconds:.6f}s at {cadence_hz} Hz"
+        )
+
+    commits = deltas["receiver_overlay_commits"]
+    if commits != 1:
+        failures.append(
+            f"receiver_overlay_commits advanced by {commits}; expected exactly 1"
+        )
+    expirations = deltas["receiver_overlay_expirations"]
+    if expirations != 0:
+        failures.append(
+            f"receiver_overlay_expirations advanced by {expirations}; expected exactly 0"
+        )
+    composites = deltas["receiver_overlay_composite_frames"]
+    expected_composites = rendered + 1
+    if composites != expected_composites:
+        failures.append(
+            f"receiver_overlay_composite_frames advanced by {composites}; expected "
+            f"{rendered} natural base frames plus exactly 1 foreground commit"
+        )
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "elapsed_seconds": round(elapsed_seconds, 6),
+        "maximum_natural_frames": maximum_natural_frames,
+        "deltas": deltas,
+    }
+
+
 def evaluate_cadence_independence(
     before: Any,
     after: Any,
@@ -922,6 +1015,7 @@ class SingleReceiverPhase3BCanary:
             snapshot_patches = _snapshot_patches(snapshot)
             snapshot_digest = hashlib.sha256(snapshot.tobytes()).digest()
             before_snapshot = dict(self._fresh_status(controller))
+            snapshot_started = self.clock()
             self._require_ack(
                 "foreground controller-session acknowledgement",
                 controller.begin_controller_session(
@@ -951,6 +1045,7 @@ class SingleReceiverPhase3BCanary:
                 ),
                 "committed full foreground snapshot composition",
             )
+            snapshot_elapsed = self.clock() - snapshot_started
             snapshot_expected = expected_foreground_status(
                 context,
                 self.config,
@@ -972,28 +1067,17 @@ class SingleReceiverPhase3BCanary:
                 evaluate_timing_status(snapshot_status),
             )
             expected_snapshot_operations = 1 + 1 + len(snapshot_patches) + 1
-            observed_snapshot_operations = _int(
-                snapshot_status, "receiver_operation_sequence"
-            ) - _int(before_snapshot, "receiver_operation_sequence")
-            snapshot_counter_failures = []
-            if observed_snapshot_operations != expected_snapshot_operations:
-                snapshot_counter_failures.append(
-                    f"operation sequence advanced by {observed_snapshot_operations}; "
-                    f"expected exactly {expected_snapshot_operations}"
-                )
-            for key, expected_delta in (
-                ("receiver_local_frames_rendered", 0),
-                ("receiver_local_cadence_deadlines", 0),
-                ("receiver_overlay_composite_frames", 1),
-                ("receiver_overlay_commits", 1),
-                ("receiver_overlay_expirations", 0),
-            ):
-                delta_value = _int(snapshot_status, key) - _int(before_snapshot, key)
-                if delta_value != expected_delta:
-                    snapshot_counter_failures.append(
-                        f"{key} advanced by {delta_value}; expected exactly {expected_delta}"
-                    )
-            self._require("full foreground snapshot counters", snapshot_counter_failures)
+            snapshot_counter_result = evaluate_snapshot_counter_window(
+                before_snapshot,
+                snapshot_status,
+                elapsed_seconds=snapshot_elapsed,
+                cadence_hz=self.config.cadence_hz,
+                expected_operation_delta=expected_snapshot_operations,
+            )
+            self._require(
+                "full foreground snapshot counters",
+                snapshot_counter_result["failures"],
+            )
 
             # Align immediately after a natural base cadence frame.  The small
             # delta transaction must then produce one foreground recomposition
@@ -1044,6 +1128,7 @@ class SingleReceiverPhase3BCanary:
                 "coverage_pixels": int(np.count_nonzero(snapshot[:, 3])),
                 "patches": len(snapshot_patches),
                 "digest": snapshot_digest.hex(),
+                "counter_window": snapshot_counter_result,
             }
             report["delta"] = {
                 "generation": 2,

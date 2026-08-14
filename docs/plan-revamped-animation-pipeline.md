@@ -2540,11 +2540,34 @@ Portable-slice evidence and open gates (2026-08-13):
   zero-fault requirements. The guarded outer cleanup reflashed the receipt-bound
   production image, restarted the feature-off service, restored exact state,
   and passed degraded production status.
-- [ ] Deploy the acknowledgement-pacing/status-coherence fix, then repeat the
-  strict logical-1 canary with persisted output and obtain accepted
-  snapshot/delta, timing, lease-expiry, and complete-host-takeover evidence. Do
-  not set the host canary switch, flash the remaining receivers, or start the
-  degraded showcase until this stop gate passes.
+- [x] The acknowledgement-pacing/status-coherence fix passed a second clean
+  ordinary deployment. Receipt `7d3615f490134579b0700519d3e9ccb6`
+  completed all 14 phases from clean commit `54257c2` in 2m09s, activated app
+  release `6bc8c48215852c40201a5504de78265252e5810e724437a43c672df2bdb3d66f`,
+  reused the exact unchanged production firmware, restored the prior scene,
+  and passed stable readiness. An earlier attempt on the same clean commit was
+  observation-only and failed before remote mutation because the default SSH
+  agent could not sign; the successful repeat explicitly selected the ignored
+  repository-local key with `IdentitiesOnly=yes`.
+- [x] The next receipt-bound logical-1 canary proved zero new CRC, SPI-queue, or
+  display faults and coherent exact-v4 complete-host takeover in `finally`.
+  Snapshot composition then stopped only because the runner expected no base
+  cadence during the entire paced session/snapshot transaction. One legitimate
+  30 Hz base frame elapsed, so the correct composite delta was two: one natural
+  base composition plus one foreground commit. Snapshot acceptance now requires
+  rendered/deadline equality, a natural-frame bound of
+  `floor(elapsed * cadence) + 1` for one in-flight status boundary, exactly one
+  commit, zero expirations, and composites equal to natural base frames plus
+  one. The later cadence-aligned sparse delta retains the stricter zero-base-
+  advance requirement. Focused tests cover zero/one natural frames plus cadence,
+  composite, commit, expiry, and implausible-rate failures. The exit guard again
+  reflashed exact production firmware, restarted the feature-off service,
+  restored byte-identical desired state, and passed production status.
+- [ ] Deploy the snapshot-accounting fix, then repeat the strict logical-1
+  canary with persisted output and obtain accepted snapshot/delta, timing,
+  lease-expiry, and complete-host-takeover evidence. Do not set the host canary
+  switch, flash the remaining receivers, or start the degraded showcase until
+  this stop gate passes.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground
