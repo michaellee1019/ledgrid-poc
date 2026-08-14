@@ -627,6 +627,13 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
       const std::uint8_t new_strips = data[1];
       const std::uint16_t new_leds =
           (static_cast<std::uint16_t>(data[2]) << 8) | data[3];
+      // Six-byte CONFIG is the explicit installed-topology form. Bit 7 of
+      // its flags byte declares that this receiver's local strip order is
+      // physically reversed. Legacy four/five-byte CONFIG preserves the
+      // previously provisioned direction.
+      const bool has_installed_direction = length == 6;
+      const bool reverse_local_strip_order =
+          has_installed_direction && (data[4] & 0x80U) != 0;
       if (new_strips != kMaxStrips || new_leds == 0 || new_leds > kMaxLedsPerStrip) {
         return false;
       }
@@ -638,7 +645,12 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
            new_leds != prior_output.leds_per_strip)) {
         std::memset(working_frame, 0, sizeof(working_frame));
       }
-      receiver_runtime.request_local_refresh();
+      if (has_installed_direction) {
+        receiver_runtime.set_reverse_local_strip_order(
+            reverse_local_strip_order);
+      } else {
+        receiver_runtime.request_local_refresh();
+      }
       unlock_runtime();
       if (!configured) return false;
       logical_receiver_id.store(new_logical_id, std::memory_order_release);

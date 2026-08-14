@@ -33,6 +33,10 @@ struct LocalBackgroundParameters {
   std::uint32_t global_strip_offset = 0;
   std::uint32_t common_seed = 0;
   std::uint64_t scene_epoch = 0;
+  // Installed receivers may be physically connected with local strip 7 at
+  // the left edge. This is configured out-of-band from the stable animation
+  // parameter wire contract and affects only receiver-native rendering.
+  bool reverse_local_strip_order = false;
 };
 
 struct LocalRenderStats {
@@ -181,6 +185,10 @@ class ReceiverRuntime {
       std::uint64_t frame_scene_time_us,
       std::uint32_t render_us);
   void request_local_refresh();
+  void set_reverse_local_strip_order(bool reversed) {
+    local_.reverse_local_strip_order = reversed;
+    request_local_refresh();
+  }
   bool service_foreground(std::uint64_t local_monotonic_us);
   bool foreground_refresh_pending() const { return foreground_refresh_pending_; }
   std::uint32_t foreground_revision() const { return foreground_revision_; }

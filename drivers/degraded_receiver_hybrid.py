@@ -47,6 +47,8 @@ READABLE_DEVICES = (0, 1)
 UNVERIFIED_DEVICES = (2, 3)
 EXPECTED_DEVICE_MAP = ((0, 0), (0, 1), (1, 1), (1, 0))
 DEFAULT_PHYSICAL_LANE_ORDER = (0, 1, 2, 3)
+DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER = (False, False, False, False)
+CONFIG_REVERSE_LOCAL_STRIP_ORDER = 0x80
 EXPECTED_STATUS_VERSION = 4
 WRITE_ONLY_FOREGROUND_SETTLE_SECONDS = 0.050
 EXPECTED_CAPABILITIES = (
@@ -176,6 +178,9 @@ class DegradedReceiverHybridController:
         sleeper: Callable[[float], None] = time.sleep,
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
         physical_lane_order: Sequence[int] = DEFAULT_PHYSICAL_LANE_ORDER,
+        reverse_strips_by_logical_receiver: Sequence[bool] = (
+            DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+        ),
     ) -> None:
         self.controller = controller
         self.devices = list(getattr(controller, "devices", ()))
@@ -193,6 +198,9 @@ class DegradedReceiverHybridController:
         self._physical_lane_by_logical = tuple(
             self.physical_lane_order.index(logical_id)
             for logical_id in range(4)
+        )
+        self.reverse_strips_by_logical_receiver = (
+            self._normalize_reverse_strips(reverse_strips_by_logical_receiver)
         )
         self._validate_installed_controller()
         self._sleeper = sleeper
@@ -230,12 +238,41 @@ class DegradedReceiverHybridController:
     def _physical_lane(self, logical_id: int) -> int:
         return self._physical_lane_by_logical[logical_id]
 
+    @staticmethod
+    def _normalize_reverse_strips(
+        value: Sequence[bool],
+    ) -> tuple[bool, bool, bool, bool]:
+        if isinstance(value, (str, bytes)) or len(value) != 4:
+            raise DegradedReceiverHybridError(
+                "reverse strip mapping must contain four booleans"
+            )
+        if any(type(item) is not bool for item in value):
+            raise DegradedReceiverHybridError(
+                "reverse strip mapping values must be booleans"
+            )
+        return tuple(value)
+
     def _global_strip_offset(self, logical_id: int) -> int:
         return self._physical_lane(logical_id) * LOCAL_STRIPS
 
     def _wall_slice(self, logical_id: int) -> slice:
         start = self._physical_lane(logical_id) * LOCAL_PIXELS
         return slice(start, start + LOCAL_PIXELS)
+
+    def _mapped_local_pixels(
+        self, pixels: np.ndarray, logical_id: int
+    ) -> np.ndarray:
+        """Map physical wall order into one receiver's local strip order."""
+
+        local = pixels[self._wall_slice(logical_id)]
+        if not self.reverse_strips_by_logical_receiver[logical_id]:
+            return np.ascontiguousarray(local)
+        channels = local.shape[1]
+        return np.ascontiguousarray(
+            local.reshape(LOCAL_STRIPS, LEDS_PER_STRIP, channels)[::-1].reshape(
+                LOCAL_PIXELS, channels
+            )
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.controller, name)
@@ -290,6 +327,9 @@ class DegradedReceiverHybridController:
                 str(logical_id): self._physical_lane(logical_id)
                 for logical_id in range(4)
             },
+            "reverse_strips_by_logical_receiver": list(
+                self.reverse_strips_by_logical_receiver
+            ),
         })
 
     @staticmethod
@@ -362,8 +402,7 @@ class DegradedReceiverHybridController:
             else COMMAND_ACK_POLL_INTERVAL_SECONDS
         )
 
-    @staticmethod
-    def _identity_packet(logical_id: int) -> bytes:
+    def _identity_packet(self, logical_id: int) -> bytes:
         if logical_id not in range(4):
             raise ValueError("logical identity must be 0..3")
         return bytes((
@@ -371,7 +410,11 @@ class DegradedReceiverHybridController:
             LOCAL_STRIPS,
             (LEDS_PER_STRIP >> 8) & 0xFF,
             LEDS_PER_STRIP & 0xFF,
-            0,
+            (
+                CONFIG_REVERSE_LOCAL_STRIP_ORDER
+                if self.reverse_strips_by_logical_receiver[logical_id]
+                else 0
+            ),
             logical_id,
         ))
 
@@ -404,6 +447,9 @@ class DegradedReceiverHybridController:
                     "receiver_acknowledged": True,
                     "logical_identity_verified": True,
                     "logical_device": logical_id,
+                    "reverse_local_strip_order": (
+                        self.reverse_strips_by_logical_receiver[logical_id]
+                    ),
                     "wire_bytes": len(packet) + CRC_BYTES,
                 }
             else:
@@ -412,6 +458,9 @@ class DegradedReceiverHybridController:
                     "receiver_acknowledged": False,
                     "logical_identity_verified": False,
                     "logical_device_requested": logical_id,
+                    "reverse_local_strip_order_requested": (
+                        self.reverse_strips_by_logical_receiver[logical_id]
+                    ),
                     "wire_bytes": len(packet) + CRC_BYTES,
                     "warning": "outbound-only CONFIG; identity remains unverified",
                 }
@@ -730,9 +779,20 @@ class DegradedReceiverHybridController:
         full_snapshot: bool,
         dirty_ranges: Optional[tuple[tuple[int, int], ...]],
         physical_lane_by_logical: Sequence[int] = DEFAULT_PHYSICAL_LANE_ORDER,
+        reverse_strips_by_logical_receiver: Sequence[bool] = (
+            DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+        ),
     ) -> list[tuple[int, np.ndarray]]:
         local_start = physical_lane_by_logical[logical_id] * LOCAL_PIXELS
         local = pixels[local_start:local_start + LOCAL_PIXELS]
+        reversed_order = reverse_strips_by_logical_receiver[logical_id]
+        if reversed_order:
+            channels = local.shape[1]
+            local = np.ascontiguousarray(
+                local.reshape(LOCAL_STRIPS, LEDS_PER_STRIP, channels)[::-1].reshape(
+                    LOCAL_PIXELS, channels
+                )
+            )
         if full_snapshot:
             return [
                 (start, local[start:start + MAX_RGBA_PIXELS_PER_BATCH_SPAN])
@@ -740,17 +800,35 @@ class DegradedReceiverHybridController:
                     0, LOCAL_PIXELS, MAX_RGBA_PIXELS_PER_BATCH_SPAN
                 )
             ]
-        patches: list[tuple[int, np.ndarray]] = []
+        local_ranges: list[tuple[int, int]] = []
         for start, end in dirty_ranges or ():
             first = max(local_start, start)
             last = min(local_start + LOCAL_PIXELS, end)
-            for global_first in range(
-                first, last, MAX_RGBA_PIXELS_PER_BATCH_SPAN
-            ):
-                count = min(
-                    MAX_RGBA_PIXELS_PER_BATCH_SPAN, last - global_first
+            while first < last:
+                physical_local = first - local_start
+                physical_strip = physical_local // LEDS_PER_STRIP
+                led_offset = physical_local % LEDS_PER_STRIP
+                count = min(last - first, LEDS_PER_STRIP - led_offset)
+                local_strip = (
+                    LOCAL_STRIPS - 1 - physical_strip
+                    if reversed_order else physical_strip
                 )
-                local_first = global_first - local_start
+                mapped_first = local_strip * LEDS_PER_STRIP + led_offset
+                local_ranges.append((mapped_first, mapped_first + count))
+                first += count
+        local_ranges.sort()
+        merged: list[tuple[int, int]] = []
+        for start, end in local_ranges:
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+        patches: list[tuple[int, np.ndarray]] = []
+        for start, end in merged:
+            for local_first in range(start, end, MAX_RGBA_PIXELS_PER_BATCH_SPAN):
+                count = min(
+                    MAX_RGBA_PIXELS_PER_BATCH_SPAN, end - local_first
+                )
                 patches.append(
                     (local_first, local[local_first:local_first + count])
                 )
@@ -870,6 +948,9 @@ class DegradedReceiverHybridController:
                 full_snapshot=full_snapshot,
                 dirty_ranges=ranges,
                 physical_lane_by_logical=self._physical_lane_by_logical,
+                reverse_strips_by_logical_receiver=(
+                    self.reverse_strips_by_logical_receiver
+                ),
             )
             for index in range(4)
         ]
@@ -1243,9 +1324,7 @@ class DegradedReceiverHybridController:
         failures: list[str] = []
         with self._lock():
             for index, device in enumerate(self.devices):
-                local = np.ascontiguousarray(
-                    frame[self._wall_slice(index)]
-                )
+                local = self._mapped_local_pixels(frame, index)
                 try:
                     accepted = device.set_all_pixels(local)
                     if accepted is False:
@@ -1313,7 +1392,9 @@ class DegradedReceiverHybridController:
             destination = slice(
                 logical_id * LOCAL_PIXELS, (logical_id + 1) * LOCAL_PIXELS
             )
-            transport_order[destination] = frame[self._wall_slice(logical_id)]
+            transport_order[destination] = self._mapped_local_pixels(
+                frame, logical_id
+            )
         return self.controller.set_frame(transport_order, dirty_ranges=None)
 
     def clear(self) -> bool:

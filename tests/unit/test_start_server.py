@@ -145,10 +145,16 @@ class StartServerTests(unittest.TestCase):
                 self.policies = []
 
             def with_receiver_hybrid_transport_policy(
-                self, policy, *, physical_lane_order
+                self, policy, *, physical_lane_order,
+                reverse_strips_by_logical_receiver
             ):
-                self.policies.append((policy, tuple(physical_lane_order)))
-                return ("wrapped", policy, tuple(physical_lane_order))
+                selection = (
+                    policy,
+                    tuple(physical_lane_order),
+                    tuple(reverse_strips_by_logical_receiver),
+                )
+                self.policies.append(selection)
+                return ("wrapped", *selection)
 
         controller = Controller()
         self.assertIs(
@@ -165,21 +171,31 @@ class StartServerTests(unittest.TestCase):
         })
         self.assertEqual(
             selected,
-            ("wrapped", "degraded_spi1_01_readable", (0, 1, 2, 3)),
+            (
+                "wrapped", "degraded_spi1_01_readable", (0, 1, 2, 3),
+                (False, False, False, False),
+            ),
         )
         self.assertEqual(
             controller.policies,
-            [("degraded_spi1_01_readable", (0, 1, 2, 3))],
+            [(
+                "degraded_spi1_01_readable", (0, 1, 2, 3),
+                (False, False, False, False),
+            )],
         )
 
         mapped = select_receiver_hybrid_controller(controller, {
             "enabled": True,
             "transport_policy": "degraded_spi1_01_readable",
             "physical_lane_order": [0, 1, 3, 2],
+            "reverse_strips_by_logical_receiver": [False, False, True, True],
         })
         self.assertEqual(
             mapped,
-            ("wrapped", "degraded_spi1_01_readable", (0, 1, 3, 2)),
+            (
+                "wrapped", "degraded_spi1_01_readable", (0, 1, 3, 2),
+                (False, False, True, True),
+            ),
         )
 
         with self.assertRaisesRegex(RuntimeError, "requires a multi-device"):

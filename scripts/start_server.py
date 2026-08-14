@@ -226,13 +226,22 @@ def select_receiver_hybrid_controller(controller, receiver_hybrid_config):
     physical_lane_order = _receiver_hybrid_config_value(
         receiver_hybrid_config, "physical_lane_order", (0, 1, 2, 3)
     )
+    reverse_strips = _receiver_hybrid_config_value(
+        receiver_hybrid_config,
+        "reverse_strips_by_logical_receiver",
+        (False, False, False, False),
+    )
     if not enabled:
         return controller
     selector = getattr(
         controller, "with_receiver_hybrid_transport_policy", None
     )
     if callable(selector):
-        return selector(policy, physical_lane_order=physical_lane_order)
+        return selector(
+            policy,
+            physical_lane_order=physical_lane_order,
+            reverse_strips_by_logical_receiver=reverse_strips,
+        )
     if policy not in (None, "", "off", "strict_all_readable_v1"):
         raise RuntimeError(
             "selected receiver hybrid transport requires a multi-device "

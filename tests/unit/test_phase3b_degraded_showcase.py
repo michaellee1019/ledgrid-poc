@@ -27,7 +27,11 @@ from drivers.spi_controller import (
     MAX_RGBA_PIXELS_PER_BATCH_SPAN,
     OVERLAY_UPDATE_FULL_SNAPSHOT,
 )
-from drivers.degraded_receiver_hybrid import WRITE_ONLY_FOREGROUND_SETTLE_SECONDS
+from drivers.degraded_receiver_hybrid import (
+    LEDS_PER_STRIP,
+    LOCAL_STRIPS,
+    WRITE_ONLY_FOREGROUND_SETTLE_SECONDS,
+)
 from tools.benchmarks.phase3b_degraded_showcase import (
     ClockForegroundSource,
     CONFIRMATION_SCHEMA,
@@ -250,6 +254,62 @@ class ConfirmationAndEvidenceTests(unittest.TestCase):
         self.assertEqual(coverage, [19, 65, 62, 12])
         self.assertTrue(all(count > 0 for count in coverage))
 
+    def test_real_clock_minute_delta_reassembles_across_reversed_lane_boundary(self):
+        clock = FakeClock()
+        controller = FakeController([], clock)
+        source = ClockForegroundSource(controller)
+        observed = [datetime(2026, 8, 12, 14, 41, 59)]
+        source.animation._clock_now = lambda: observed[0]
+        first = source.render(0.0, 0)
+        observed[0] = datetime(2026, 8, 12, 14, 42, 0)
+        second = source.render(1.0, 1)
+        self.assertTrue(second.changed)
+        self.assertIsNotNone(second.dirty_ranges)
+
+        lane_order = (0, 1, 3, 2)
+        physical_by_logical = tuple(
+            lane_order.index(logical_id) for logical_id in range(4)
+        )
+        reverse = (False, False, True, True)
+        planes = []
+        changed_logical = []
+        for logical_id in range(4):
+            initial = DegradedHybridTransport._local_patches(
+                first.pixels,
+                logical_id,
+                full_snapshot=True,
+                dirty_ranges=None,
+                physical_lane_by_logical=physical_by_logical,
+                reverse_strips_by_logical_receiver=reverse,
+            )
+            plane = np.concatenate([data for _start, data in initial]).copy()
+            delta = DegradedHybridTransport._local_patches(
+                second.pixels,
+                logical_id,
+                full_snapshot=False,
+                dirty_ranges=tuple(second.dirty_ranges),
+                physical_lane_by_logical=physical_by_logical,
+                reverse_strips_by_logical_receiver=reverse,
+            )
+            if delta:
+                changed_logical.append(logical_id)
+            for start, data in delta:
+                plane[start:start + len(data)] = data
+            planes.append(plane)
+
+        reconstructed = np.zeros_like(second.pixels)
+        for logical_id, plane in enumerate(planes):
+            physical_lane = physical_by_logical[logical_id]
+            if reverse[logical_id]:
+                plane = plane.reshape(
+                    LOCAL_STRIPS, LEDS_PER_STRIP, 4
+                )[::-1].reshape(LOCAL_PIXELS, 4)
+            start = physical_lane * LOCAL_PIXELS
+            reconstructed[start:start + LOCAL_PIXELS] = plane
+        np.testing.assert_array_equal(reconstructed, second.pixels)
+        self.assertIn(2, changed_logical)
+        self.assertIn(3, changed_logical)
+
     def test_delta_patch_split_advances_once_without_duplicates_or_gaps(self):
         pixels = np.arange(LOCAL_PIXELS * 4, dtype=np.uint16).reshape(
             LOCAL_PIXELS, 4
@@ -372,6 +432,7 @@ class FakeDevice:
         self.device_index = logical_id
         self.logical_id = logical_id
         self.configured_logical_id = 0xFF if write_only else logical_id
+        self.reverse_local_strip_order = False
         self.bus, self.device = EXPECTED_DEVICE_MAP[logical_id]
         self.events = events
         self.clock = clock
@@ -483,11 +544,12 @@ class FakeDevice:
             required_status_version != EXPECTED_STATUS_VERSION
             or len(packet) != 6
             or packet[0] != CMD_CONFIG
-            or packet[1:5] != bytes((8, 0, 138, 0))
+            or packet[1:4] != bytes((8, 0, 138))
             or packet[5] != self.device_index
         ):
             raise RuntimeError("malformed explicit identity CONFIG")
         self.configured_logical_id = packet[5]
+        self.reverse_local_strip_order = bool(packet[4] & 0x80)
         self.logical_id = packet[5]
         self.last_processed_command = CMD_CONFIG
         return self._status()
@@ -582,11 +644,12 @@ class FakeDevice:
             if (
                 len(packet) != 6
                 or packet[0] != CMD_CONFIG
-                or packet[1:5] != bytes((8, 0, 138, 0))
+                or packet[1:4] != bytes((8, 0, 138))
                 or packet[5] != self.device_index
             ):
                 raise RuntimeError("malformed raw identity CONFIG")
             self.configured_logical_id = packet[5]
+            self.reverse_local_strip_order = bool(packet[4] & 0x80)
             return
         if self.configured_logical_id not in range(4):
             self.runtime_rejections += 1
@@ -943,6 +1006,99 @@ class ShowcaseRunnerTests(unittest.TestCase):
         status = transport.get_stats()["aggregate"]["local_background"]
         self.assertEqual(status["physical_lane_order"], [0, 1, 3, 2])
 
+    def test_reversed_local_strip_order_maps_native_overlay_delta_and_host(self):
+        lane_order = (0, 1, 3, 2)
+        reverse = (False, False, True, True)
+        transport = DegradedHybridTransport(
+            self.controller,
+            sleeper=self._sleep,
+            physical_lane_order=lane_order,
+            reverse_strips_by_logical_receiver=reverse,
+        )
+        configured = transport.configure_logical_identities()
+        self.assertEqual(
+            [device.reverse_local_strip_order for device in self.controller.devices],
+            list(reverse),
+        )
+        self.assertTrue(
+            configured["devices"]["2"][
+                "reverse_local_strip_order_requested"
+            ]
+        )
+
+        overlay = np.zeros((WALL_PIXELS, 4), dtype=np.uint8)
+        for physical_strip in range(32):
+            start = physical_strip * LEDS_PER_STRIP
+            overlay[start:start + LEDS_PER_STRIP] = (
+                physical_strip + 1, 2, 1, 8
+            )
+        patches_by_logical = [
+            transport._local_patches(
+                overlay,
+                logical_id,
+                full_snapshot=True,
+                dirty_ranges=None,
+                physical_lane_by_logical=transport._physical_lane_by_logical,
+                reverse_strips_by_logical_receiver=reverse,
+            )
+            for logical_id in range(4)
+        ]
+        for logical_id, patches in enumerate(patches_by_logical):
+            local = np.concatenate([data for _start, data in patches])
+            physical_lane = transport._physical_lane(logical_id)
+            expected_strips = list(range(
+                physical_lane * LOCAL_STRIPS + 1,
+                (physical_lane + 1) * LOCAL_STRIPS + 1,
+            ))
+            if reverse[logical_id]:
+                expected_strips.reverse()
+            self.assertEqual(
+                [
+                    int(local[strip * LEDS_PER_STRIP, 0])
+                    for strip in range(LOCAL_STRIPS)
+                ],
+                expected_strips,
+            )
+
+        # A physical change on the left edge of the rightmost panel maps to
+        # local strip 7 of logical receiver 2, rather than corrupting strip 0.
+        physical_lane = transport._physical_lane(2)
+        physical_first = physical_lane * LOCAL_PIXELS
+        delta = transport._local_patches(
+            overlay,
+            2,
+            full_snapshot=False,
+            dirty_ranges=((physical_first, physical_first + 3),),
+            physical_lane_by_logical=transport._physical_lane_by_logical,
+            reverse_strips_by_logical_receiver=reverse,
+        )
+        self.assertEqual(len(delta), 1)
+        self.assertEqual(delta[0][0], 7 * LEDS_PER_STRIP)
+        np.testing.assert_array_equal(
+            delta[0][1], overlay[physical_first:physical_first + 3]
+        )
+
+        host = overlay[:, :3]
+        self.assertTrue(transport.set_all_pixels(host))
+        self.assertTrue(transport.set_frame(host))
+        for logical_id, device in enumerate(self.controller.devices):
+            local = device.last_host_frame
+            physical_lane = transport._physical_lane(logical_id)
+            expected = list(range(
+                physical_lane * LOCAL_STRIPS + 1,
+                (physical_lane + 1) * LOCAL_STRIPS + 1,
+            ))
+            if reverse[logical_id]:
+                expected.reverse()
+            self.assertEqual(
+                [int(local[strip * LEDS_PER_STRIP, 0]) for strip in range(8)],
+                expected,
+            )
+        status = transport.get_stats()["aggregate"]["local_background"]
+        self.assertEqual(
+            status["reverse_strips_by_logical_receiver"], list(reverse)
+        )
+
     def test_physical_lane_permutation_is_exact(self):
         for lane_order in (
             (0, 1, 2),
@@ -957,6 +1113,20 @@ class ShowcaseRunnerTests(unittest.TestCase):
                     self.controller,
                     sleeper=self._sleep,
                     physical_lane_order=lane_order,
+                )
+
+        for reverse in (
+            (False, False, True),
+            (False, False, True, 1),
+            "0011",
+        ):
+            with self.subTest(reverse=reverse), self.assertRaisesRegex(
+                Exception, "reverse strip mapping"
+            ):
+                DegradedHybridTransport(
+                    self.controller,
+                    sleeper=self._sleep,
+                    reverse_strips_by_logical_receiver=reverse,
                 )
 
     def test_production_transport_publisher_clear_is_exact_on_readable_pair(self):

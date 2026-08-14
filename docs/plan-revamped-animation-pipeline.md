@@ -2755,6 +2755,16 @@ Portable-slice evidence and open gates (2026-08-13):
   unchanged named canary firmware, app activation/restart/restore were
   unchanged and skipped, stable health passed, and a post-deploy photograph
   plus status confirmed the same running rainbow-plus-clock scene.
+- [ ] Camera-guided numeral repair is in progress after a higher-resolution
+  eight-color, one-color-per-strip diagnostic exposed information the earlier
+  four-color lane test could not: logical receivers 2 and 3 keep their SPI
+  routes and lane positions but their eight local strips appear in reverse
+  physical order. The durable topology contract is being extended with one
+  strict boolean direction per logical receiver. Acceptance requires exact
+  host full-frame and sparse full/delta remapping, receiver-native rainbow
+  coordinates in the same direction, a camera-readable `HH:MM` face across the
+  affected boundary, focused plus full portable/firmware/deployment tests, and
+  one final ordinary `just deploy` while the corrected scene remains active.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground

@@ -82,11 +82,22 @@ class ReceiverHybridConfigTests(unittest.TestCase):
             legacy_path = self.write(root, self.payload())
             legacy = resolve_receiver_hybrid_config(root)
             self.assertEqual(legacy.physical_lane_order, (0, 1, 2, 3))
+            self.assertEqual(
+                legacy.reverse_strips_by_logical_receiver,
+                (False, False, False, False),
+            )
 
             configured = write_receiver_hybrid_config(
-                root, enabled=True, physical_lane_order=(0, 1, 3, 2)
+                root,
+                enabled=True,
+                physical_lane_order=(0, 1, 3, 2),
+                reverse_strips_by_logical_receiver=(False, False, True, True),
             )
             self.assertEqual(configured.physical_lane_order, (0, 1, 3, 2))
+            self.assertEqual(
+                configured.reverse_strips_by_logical_receiver,
+                (False, False, True, True),
+            )
             self.assertEqual(
                 json.loads(legacy_path.read_text())["physical_lane_order"],
                 [0, 1, 3, 2],
@@ -95,6 +106,10 @@ class ReceiverHybridConfigTests(unittest.TestCase):
 
             preserved = write_receiver_hybrid_config(root, enabled=True)
             self.assertEqual(preserved.physical_lane_order, (0, 1, 3, 2))
+            self.assertEqual(
+                preserved.reverse_strips_by_logical_receiver,
+                (False, False, True, True),
+            )
 
     def test_failed_atomic_replace_keeps_prior_complete_config(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -161,6 +176,28 @@ class ReceiverHybridConfigTests(unittest.TestCase):
                 ):
                     resolve_receiver_hybrid_config(root)
 
+    def test_invalid_reverse_strip_mappings_fail_closed(self):
+        for mapping in (
+            [False, False, True],
+            [False, False, True, 1],
+            [False, False, True, None],
+            "0,0,1,1",
+        ):
+            with (
+                self.subTest(mapping=mapping),
+                tempfile.TemporaryDirectory() as temporary_dir,
+            ):
+                root = Path(temporary_dir)
+                self.write(
+                    root,
+                    self.payload(reverse_strips_by_logical_receiver=mapping),
+                )
+                with self.assertRaisesRegex(
+                    ReceiverHybridConfigError,
+                    "reverse_strips_by_logical_receiver",
+                ):
+                    resolve_receiver_hybrid_config(root)
+
     def test_malformed_oversized_and_symlink_configs_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
@@ -218,6 +255,27 @@ class ReceiverHybridConfigTests(unittest.TestCase):
                 self.assertIs(payload["enabled"], enabled)
                 self.assertEqual(payload["firmware_environment"], environment)
                 self.assertRegex(payload["config_digest"], r"^[0-9a-f]{64}$")
+
+    def test_cli_persists_camera_verified_lane_and_strip_mapping(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            output = io.StringIO()
+            with (
+                patch("sys.argv", [
+                    "receiver_hybrid_config.py", "--root", str(root),
+                    "--physical-lane-order", "0,1,3,2",
+                    "--reversed-logical-receivers", "2,3",
+                    "enable-degraded",
+                ]),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(), 0)
+            payload = json.loads(output.getvalue())
+            self.assertEqual(payload["physical_lane_order"], [0, 1, 3, 2])
+            self.assertEqual(
+                payload["reverse_strips_by_logical_receiver"],
+                [False, False, True, True],
+            )
 
     def test_cli_persists_explicit_left_to_right_lane_order(self):
         with tempfile.TemporaryDirectory() as temporary_dir:

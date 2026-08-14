@@ -301,6 +301,7 @@ void test_command_ids_ownership_and_disabled_behavior_are_explicit() {
 
 void test_start_parameter_stop_takeover_restart_and_failure_transitions() {
   ledgrid::ReceiverRuntime runtime(true);
+  runtime.set_reverse_local_strip_order(true);
   activate_neutral_context(&runtime);
   auto start = start_command(40, 16, 0x10203040, 0x0102030405060708ULL);
   TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
@@ -309,12 +310,14 @@ void test_start_parameter_stop_takeover_restart_and_failure_transitions() {
   TEST_ASSERT_EQUAL_UINT16(40, runtime.local_parameters().preferred_cadence_hz);
   TEST_ASSERT_EQUAL_UINT32(16, runtime.local_parameters().global_strip_offset);
   TEST_ASSERT_EQUAL_UINT64(0x0102030405060708ULL, runtime.local_parameters().scene_epoch);
+  TEST_ASSERT_TRUE(runtime.local_parameters().reverse_local_strip_order);
 
   std::vector<std::uint8_t> parameters{0x12};
   append_u16(&parameters, 20); append_u32(&parameters, 24); append_u32(&parameters, 7);
   TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
       runtime.process_command(parameters.data(), parameters.size())));
   TEST_ASSERT_EQUAL_UINT64(0x0102030405060708ULL, runtime.local_parameters().scene_epoch);
+  TEST_ASSERT_TRUE(runtime.local_parameters().reverse_local_strip_order);
   runtime.complete_host_frame();
   TEST_ASSERT_EQUAL_UINT8(2, static_cast<std::uint8_t>(runtime.base_mode()));
   TEST_ASSERT_EQUAL_UINT8(3, static_cast<std::uint8_t>(runtime.transition_reason()));
@@ -383,6 +386,18 @@ void test_rainbow_uses_global_coordinates_seed_and_luminance_once() {
   TEST_ASSERT_TRUE(ledgrid::render_compiled_rainbow(
       12345, board_params, 256, 8, 4, board.data(), board.size()));
   TEST_ASSERT_EQUAL_MEMORY(full.data() + 8U * 4U * 3U, board.data(), board.size());
+  auto reversed_params = board_params;
+  reversed_params.reverse_local_strip_order = true;
+  std::array<std::uint8_t, 8U * 4U * 3U> reversed{};
+  TEST_ASSERT_TRUE(ledgrid::render_compiled_rainbow(
+      12345, reversed_params, 256, 8, 4, reversed.data(), reversed.size()));
+  constexpr std::size_t kTestStripBytes = 4U * 3U;
+  for (std::size_t strip = 0; strip < 8; ++strip) {
+    TEST_ASSERT_EQUAL_MEMORY(
+        board.data() + (7U - strip) * kTestStripBytes,
+        reversed.data() + strip * kTestStripBytes,
+        kTestStripBytes);
+  }
   auto changed_seed = board_params;
   changed_seed.common_seed++;
   std::array<std::uint8_t, 8U * 4U * 3U> changed{};

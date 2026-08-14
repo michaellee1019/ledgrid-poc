@@ -135,6 +135,7 @@ ReceiverOperationResult ReceiverRuntime::start_local(
     return finish(ReceiverOperationResult::InvalidSize);
   }
   LocalBackgroundParameters candidate{};
+  candidate.reverse_local_strip_order = local_.reverse_local_strip_order;
   candidate.component_id = read_u16(command + 1);
   candidate.preferred_cadence_hz = read_u16(command + 3);
   candidate.global_strip_offset = read_u32(command + 5);
@@ -1253,7 +1254,10 @@ bool render_compiled_rainbow(
       kStartupRainbowCycleUs);
   const std::uint16_t seed_phase = parameters.common_seed % kHueCycleSteps;
   for (std::uint8_t strip = 0; strip < strip_count; ++strip) {
-    const std::uint32_t global_strip = parameters.global_strip_offset + strip;
+    const std::uint32_t global_strip = parameters.global_strip_offset + (
+        parameters.reverse_local_strip_order
+            ? static_cast<std::uint32_t>(strip_count - 1U - strip)
+            : strip);
     for (std::uint16_t led = 0; led < leds_per_strip; ++led) {
       const std::uint16_t spatial = static_cast<std::uint16_t>(
           ((global_strip + led) % kStartupRainbowPeriodPixels) * kSpatialStep);

@@ -51,7 +51,8 @@ class MultiDeviceLEDController:
     """Multi-device LED controller that manages multiple ESP32 devices"""
 
     def with_receiver_hybrid_transport_policy(
-        self, transport_policy, *, physical_lane_order=(0, 1, 2, 3)
+        self, transport_policy, *, physical_lane_order=(0, 1, 2, 3),
+        reverse_strips_by_logical_receiver=(False, False, False, False),
     ):
         """Return the controller facade selected by one explicit policy.
 
@@ -74,7 +75,11 @@ class MultiDeviceLEDController:
                 f"{transport_policy!r}"
             )
         return DegradedReceiverHybridController(
-            self, physical_lane_order=physical_lane_order
+            self,
+            physical_lane_order=physical_lane_order,
+            reverse_strips_by_logical_receiver=(
+                reverse_strips_by_logical_receiver
+            ),
         )
 
     def _controller_lock(self):
