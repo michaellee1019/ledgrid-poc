@@ -661,9 +661,10 @@ def flash_firmware(
             ),
         }
     )
-    # The helper serializes the four nobuild uploads. They therefore reuse the
-    # exact build-phase SCons state without racing either its signature database
-    # or the shared workspace-local .pio/build output tree.
+    # The helper serializes four ordinary upload targets. Each invocation may
+    # perform PlatformIO's incremental graph check, but reuses the exact
+    # build-phase SCons state without racing either its signature database or
+    # the shared workspace-local .pio/build output tree.
     # Deployment helpers are app-lane source, not support-lane source. Use the
     # explicitly selected candidate helper while directing all build/hash state
     # at the isolated firmware workspace. Falling back to ``current`` retains

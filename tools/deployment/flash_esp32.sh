@@ -171,10 +171,12 @@ all_ok=true
 while IFS= read -r port; do
   log_file=$(mktemp)
   log_info "Uploading to $port"
-  # The firmware has already been built above. ``nobuild`` prevents each
-  # uploader from walking the compile graph again. Uploads are deliberately
-  # serialized because PlatformIO still mutates the common .pio/build tree and
-  # SCons signature database even when compiler-cache directories differ.
+  # Uploads are deliberately serialized because PlatformIO mutates the common
+  # .pio/build tree and SCons signature database while processing the upload
+  # target. Do not combine its separate skip-build and upload targets: the
+  # pinned ESP32 platform can pass malformed address/file pairs to esptool for
+  # that target combination. The ordinary upload target performs an incremental
+  # graph check and then reuses the coordinator-validated build.
   if ! verify_firmware_binary; then
     all_ok=false
     rm -f "$log_file"
@@ -182,7 +184,7 @@ while IFS= read -r port; do
   fi
   if (
     cd "$FIRMWARE_DIR"
-    $PIO_CMD run -e esp32-s3-devkitc-1 -t nobuild -t upload \
+    $PIO_CMD run -e esp32-s3-devkitc-1 -t upload \
       --upload-port "$port" > "$log_file" 2>&1
   ); then
     log_success "Flashed $port"

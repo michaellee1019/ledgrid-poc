@@ -149,11 +149,15 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn(failure, script)
         self.assertIn(f"{failure}\n  exit 1", script)
 
-    def test_firmware_upload_serializes_nobuild_reuse_of_validated_binary(self):
+    def test_firmware_upload_serializes_supported_upload_target_for_validated_binary(self):
         script = (ROOT / "tools/deployment/flash_esp32.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn("-t nobuild -t upload", script)
+        self.assertIn(
+            "$PIO_CMD run -e esp32-s3-devkitc-1 -t upload \\",
+            script,
+        )
+        self.assertNotIn("-t nobuild", script)
         self.assertIn("Flashing firmware to $port_count ESP32 device(s) sequentially", script)
         self.assertIn("verify_firmware_binary", script)
         self.assertIn('if [ "${FIRMWARE_PREBUILT:-0}" = "1" ]', script)
