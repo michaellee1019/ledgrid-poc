@@ -129,6 +129,7 @@ class FakeReceiver:
         self.reopen_status_negotiation = False
         self.reopen_status_reads = 0
         self.retain_foreground_on_expiry = False
+        self.expiry_in_flight_base_composites = 0
         self.freeze_frames = False
         self._frame_fraction = 0.0
         self._lease_deadline = None
@@ -208,7 +209,9 @@ class FakeReceiver:
             ):
                 status[key] = 0
             status["receiver_overlay_expirations"] += 1
-            status["receiver_overlay_composite_frames"] += 1
+            status["receiver_overlay_composite_frames"] += (
+                1 + self.expiry_in_flight_base_composites
+            )
             self._lease_deadline = None
 
 
@@ -451,6 +454,12 @@ class Phase3BCanaryTests(unittest.TestCase):
         self.assertTrue(result["expiry"]["passed"])
         self.assertEqual(result["expiry"]["expiration_delta"], 1)
         self.assertGreater(result["expiry"]["rendered_delta"], 0)
+        self.assertEqual(
+            result["expiry"]["composite_delta"],
+            result["expiry"]["rendered_delta"] + 1,
+        )
+        self.assertEqual(result["expiry"]["expiry_refresh_composite_allowance"], 1)
+        self.assertEqual(result["expiry"]["in_flight_base_composite_allowance"], 1)
         self.assertEqual(result["snapshot"]["coverage_pixels"], 12)
         self.assertEqual(
             result["snapshot"]["counter_window"]["deltas"][
@@ -728,6 +737,37 @@ class Phase3BCanaryTests(unittest.TestCase):
         result = runner.run()
         self.assertFalse(result["passed"])
         self.assertIn("lease expiry/base continuation", result["failure"])
+        self.assertEqual(receiver.black_takeovers, 1)
+
+    def test_expiry_allows_one_in_flight_base_composite(self):
+        runner, receiver = self.rig()
+        receiver.expiry_in_flight_base_composites = 1
+
+        result = runner.run()
+
+        self.assertTrue(result["passed"], result)
+        expiry = result["expiry"]
+        self.assertEqual(
+            expiry["composite_delta"],
+            expiry["rendered_delta"] + 2,
+        )
+        self.assertEqual(
+            expiry["composite_delta_bounds"],
+            {
+                "minimum": expiry["rendered_delta"],
+                "maximum": expiry["rendered_delta"] + 2,
+            },
+        )
+
+    def test_expiry_rejects_more_than_one_in_flight_base_composite(self):
+        runner, receiver = self.rig()
+        receiver.expiry_in_flight_base_composites = 2
+
+        result = runner.run()
+
+        self.assertFalse(result["passed"], result)
+        self.assertIn("lease expiry/base continuation", result["failure"])
+        self.assertIn("plus at most one expiry refresh", result["failure"])
         self.assertEqual(receiver.black_takeovers, 1)
 
     def test_expiry_reopen_drains_ping_v3_negotiation_until_coherent_v4(self):

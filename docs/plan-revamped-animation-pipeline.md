@@ -2585,10 +2585,57 @@ Portable-slice evidence and open gates (2026-08-13):
   the real reopen sequence, a stale pre-observation v4, and bounded no-v4
   failure. Production reflash, feature-off restart, exact state restoration,
   health, and degraded production status passed again.
-- [ ] Deploy the bounded fresh-v4 drain, then repeat the strict logical-1 canary
-  and obtain accepted lease-expiry plus complete-host-takeover evidence. Do not
-  set the host canary switch, flash the remaining receivers, or start the
-  degraded showcase until this stop gate passes.
+- [x] The bounded fresh-v4 drain passed clean ordinary deployment receipt
+  `fdd532d4221b4e71bd28a54e7f6732c1`: all 14 phases completed from clean commit
+  `9cf591e` in 2m10s, app release
+  `e3d15b9936afd74e98f9c933207bcaeb07837d2e4afd26c3e6892aee068b5517`
+  activated, unchanged production firmware was reused, exact state restored,
+  and readiness passed. One canary invocation then stopped before mutation when
+  five stale 160--191 MB recovery trees filled the target's 923 MB `/tmp` tmpfs.
+  Only those exact `phase3b-production.*` trees were removed, returning `/tmp`
+  to one-percent use, and the guard now deletes its own recovery tree after all
+  production/state/health/status evidence is persisted.
+- [x] Receipt-bound logical receiver 1 now passes the complete strict Phase 3B
+  canary with zero CRC, queue, display, or cadence-miss deltas: full snapshot;
+  aligned sparse movement/clear delta with exact zero base advance; 15 completed
+  timing samples in 0.501 seconds; five-second disconnect; lease expiry with 152
+  continuing base frames and one expiry refresh; normal complete-host takeover;
+  and a second complete-host takeover in `finally`. Measured p95 values were
+  1.101 ms base render, 0.209 ms foreground composite, 0.503 ms encode, and
+  4.463 ms display. Guarded cleanup reflashed the exact production image,
+  restarted the feature-off service, restored byte-identical desired state,
+  passed health and degraded status, and reclaimed the temporary recovery tree.
+- [x] The first guarded all-four attempt captured byte-exact desired state and a
+  4,416-pixel RGB restoration frame, hash-verified and sequentially flashed the
+  canary image to all four receivers, and obtained a complete strict pass from
+  logical receiver 0. Its 15 timing samples had p95 values of 1.134 ms base
+  render, 0.227 ms foreground composite, 0.501 ms encode, and 4.465 ms display;
+  snapshot, aligned delta, five-second expiry, normal takeover, and `finally`
+  takeover all passed without fault or cadence-miss deltas.
+- [x] The same attempt proved the remaining logical-1 stop was an acceptance
+  boundary, not a session-setup or transport failure. Receiver 1 passed its
+  snapshot, aligned delta, and timing windows, then reported 151 completed base
+  frames and 153 composites during expiry. Firmware records a composite before
+  physical submit/wait but records the corresponding rendered base frame only
+  after completion; lease expiry can independently add one clearing refresh.
+  The strict evaluator therefore now permits completed base frames plus at most
+  one expiry refresh and one in-flight base composite. It still rejects `+3`,
+  while retaining exact expiry, commit, operation, session, status, cadence,
+  timing, and zero-fault requirements. Focused Phase 3A/sparse/Phase 3B coverage
+  passes 67 tests and 112 subtests, including `+1`, `+2`, and failing `+3` cases.
+- [x] Because the logical-1 stop occurred before the visual body, no showcase
+  challenge or operator response was created. The guarded `EXIT` path
+  sequentially restored production firmware on all four receivers, restored
+  byte-identical desired state, and passed restart, health, and degraded-status
+  checks. Evidence is under
+  `run_state/phase3b-showcase/20260814T153434Z-fdd532d4221b4e71bd28a54e7f6732c1`.
+- [ ] Deploy the bounded expiry accounting and repeat the strict 0/1 gates, then
+  run only the explicitly degraded all-four visual showcase with fresh
+  nonce-bound operator confirmation. Persistent host canary flags remain off;
+  receivers 2/3 cannot contribute acknowledgement or receiver-telemetry
+  evidence until SPI1 MISO is repaired. After the showcase, reflash production
+  on all four receivers and pass exact state restoration, health, degraded
+  status, streamed-wall acceptance, and the live animation sweep.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground

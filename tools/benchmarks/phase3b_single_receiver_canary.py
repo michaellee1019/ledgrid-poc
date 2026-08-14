@@ -537,9 +537,22 @@ def evaluate_expiry_window(
     composites = _int(after, "receiver_overlay_composite_frames") - _int(
         before, "receiver_overlay_composite_frames"
     )
-    if not rendered <= composites <= rendered + 1:
+    # The display task records a composite before submitting/waiting on the
+    # physical frame, but records a rendered base frame only after that wait.
+    # Expiry independently schedules one foreground-clearing refresh, so a
+    # coherent status can include neither, either, or both pending composites.
+    expiry_refresh_composite_allowance = 1
+    in_flight_base_composite_allowance = 1
+    maximum_composites = (
+        rendered
+        + expiry_refresh_composite_allowance
+        + in_flight_base_composite_allowance
+    )
+    if not rendered <= composites <= maximum_composites:
         failures.append(
-            f"composite-frame delta {composites} is not base delta {rendered} or expiry refresh"
+            f"composite-frame delta {composites} is outside {rendered}.."
+            f"{maximum_composites}; expected completed base frames plus at most "
+            "one expiry refresh and one in-flight base composite"
         )
     failures.extend(evaluate_timing_status(after))
     return {
@@ -549,6 +562,12 @@ def evaluate_expiry_window(
         "rendered_delta": rendered,
         "deadline_delta": deadlines,
         "composite_delta": composites,
+        "composite_delta_bounds": {
+            "minimum": rendered,
+            "maximum": maximum_composites,
+        },
+        "expiry_refresh_composite_allowance": expiry_refresh_composite_allowance,
+        "in_flight_base_composite_allowance": in_flight_base_composite_allowance,
         "expiration_delta": expirations,
     }
 
