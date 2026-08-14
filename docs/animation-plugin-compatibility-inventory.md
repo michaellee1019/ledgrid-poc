@@ -52,7 +52,7 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 | `christmas_tree` | `ChristmasTreeAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `circadian_window` | `CircadianWindowAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `clock` | `ClockAnimation` | `show` | `compatibility_full_scene` | Owns both the clock face and its opaque authored background. |
-| `clock_overlay` | `ClockOverlayAnimation` | `show` | `python_overlay` | Explicit Python overlay manifest; returns premultiplied RGBA8 through the manager-owned composition path. |
+| `clock_overlay` | `ClockOverlayAnimation` | `test` | `python_overlay` | Explicit Python overlay manifest; returns premultiplied RGBA8 through the manager-owned composition path. |
 | `cloud_canyon` | `CloudCanyonAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `conway_life` | `ConwayLifeAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `cyclic_reef` | `CyclicReefAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |

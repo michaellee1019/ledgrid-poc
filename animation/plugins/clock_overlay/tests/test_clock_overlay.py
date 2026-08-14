@@ -125,7 +125,7 @@ class ClockOverlayTests(unittest.TestCase):
         manifest = loader.plugin_manifests["clock_overlay"]
         self.assertEqual(manifest["provider"], "python")
         self.assertEqual(manifest["role"], "overlay")
-        self.assertEqual(manifest["gallery"], "show")
+        self.assertEqual(manifest["gallery"], "test")
         self.assertEqual(
             manifest["entrypoint"],
             "animation.plugins.clock_overlay:ClockOverlayAnimation",
