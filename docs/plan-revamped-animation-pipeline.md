@@ -2812,11 +2812,26 @@ Portable-slice evidence and open gates (2026-08-13):
   `run_state/physical-acceptance/20260814-rainbow-clock-final-stable.png` with
   SHA-256
   `55a664758b1fb3f57c55cae0e0bc7fc15c69d3cac6973d57fbcfca48ff8667c4`.
-- [ ] Restore native reversal on logical receivers 2/3 while retaining the
-  already-correct host/clock reversal on 2/3; accept only after a fresh
-  post-deploy camera frame shows one diagonal rainbow with no center fold and
-  contiguous clock numerals. Keep SPI1 receivers 2/3 explicitly
-  display-unverified in telemetry regardless of camera evidence.
+- [x] Restored native reversal on logical receivers 2/3 while retaining the
+  already-correct host/clock reversal on 2/3. Durable config digest
+  `9086cd70c29ce4065cdddaad52b3d9c0b87dcbe8bc29e43c515809a0a31cd5bf`
+  now records physical order `(0,1,3,2)` and both direction maps as
+  `(false,false,true,true)`. Ordinary deploy receipt
+  `cc5fa66f03834df0ad3ca1f58e39aae2` passed from clean commit `0d3e90a` in
+  2m18s, including the full precheck, state capture before the skipped
+  unchanged canary firmware build/flash, app activation, exact scene restore,
+  and readiness for release
+  `7c7a422e7f46c6f5ea981538f0e231b83141879280da87da50b453df57d4a23c`.
+  The fresh post-deploy wall-only camera frame shows one diagonal rainbow
+  through the center and both right lanes with contiguous `04:27` numerals;
+  durable evidence is
+  `run_state/physical-acceptance/20260814-rainbow-clock-continuous-native.png`
+  with SHA-256
+  `7c04792eafd64f33c90e2fe6c2f2aba0829ac1a48640b46f0fc69dfcd373bfa9`.
+  Three samples over 20 seconds kept the native scene operational, exact
+  readable IDs 0/1, renewals increasing 121/131/141, and zero publisher,
+  queue, or display errors. SPI1 receivers 2/3 remain explicitly
+  display-unverified and this does not claim release acceptance.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground
