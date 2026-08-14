@@ -2511,8 +2511,37 @@ Portable-slice evidence and open gates (2026-08-13):
   CPU0. All 60 native cases, 87 focused Python tests plus 155 subtests, and both
   pinned production/canary builds pass; image sizes remain within the accepted
   50,720/65,504-byte RAM and 272,273/278,553-byte flash envelopes.
-- [ ] Deploy the task-separation fix, then repeat the strict logical-1 canary
-  with persisted output and obtain accepted controller-session,
+- [x] The task-separation fix was delivered by a clean ordinary deployment.
+  Receipt `46f84d04d42b4fe6be4f51a6f365426f` completed all phases from clean commit
+  `ef908b7`, activated immutable app release
+  `ee98ef83ab34344ad4b1947d7cfd30b24c3746688a2b39c770d9592a3bd95912`,
+  flashed the exact production firmware to all four receivers, obtained two
+  stable health samples, and restored `living_stained_glass`. Two preceding
+  attempts failed closed and restored the prior service: concurrent PlatformIO
+  uploads could delete their shared build output, and the combined `nobuild`
+  plus `upload` targets generated invalid esptool address/file arguments.
+  Deployment now hashes the prebuilt production image, flashes receivers
+  sequentially with the supported `-t upload` target, and verifies the image
+  before and after every port. Deployment regression coverage retains those
+  hardware-derived failure cases and ordinary `just deploy` remains green.
+- [x] The first post-deployment strict logical-1 repeat proved the CPU separation
+  resolved the original sparse session setup failure: exact v4/six-capability
+  preflight, context activation, compiled rainbow cadence, controller session,
+  both full-snapshot batches, generation-1 commit, and foreground composition
+  all succeeded. The stop gate then correctly rejected two new CRC faults. Exact
+  next-operation-sequence acknowledgements prove both batch packets were valid;
+  each fault instead followed an unpaced acknowledgement query while the
+  two-deep slave queue was being refilled after batch CRC/digest/copy work.
+  Control-path pre-drain and post-command queries are now paced by the existing
+  bounded 1 ms interval without slowing complete-frame streaming. A real queued
+  v3 response also clears cached v4-only telemetry, and complete-host takeover
+  waits for a coherent v4 snapshot rather than accepting a v3/stale-v4 chimera.
+  Timing-aware queue and takeover tests preserve exact acknowledgement and
+  zero-fault requirements. The guarded outer cleanup reflashed the receipt-bound
+  production image, restarted the feature-off service, restored exact state,
+  and passed degraded production status.
+- [ ] Deploy the acknowledgement-pacing/status-coherence fix, then repeat the
+  strict logical-1 canary with persisted output and obtain accepted
   snapshot/delta, timing, lease-expiry, and complete-host-takeover evidence. Do
   not set the host canary switch, flash the remaining receivers, or start the
   degraded showcase until this stop gate passes.

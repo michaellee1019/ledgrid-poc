@@ -657,7 +657,8 @@ class SingleReceiverPhase3BCanary:
         status = self._wait_for_status(
             controller,
             lambda value: (
-                _int(value, "receiver_base_mode") == BASE_HOST_FULL_SCENE
+                _int(value, "receiver_status_version") == 4
+                and _int(value, "receiver_base_mode") == BASE_HOST_FULL_SCENE
                 and _int(value, "receiver_foreground_state")
                 == FOREGROUND_CLEARED
                 and _int(value, "receiver_last_processed_command") == CMD_SET_ALL

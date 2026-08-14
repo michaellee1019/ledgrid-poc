@@ -605,10 +605,18 @@ class LEDController:
             # A receiver may restart into a feature-off image while this host
             # process survives. Return to the universally supported v3 query.
             self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V3
+
+        # A sparse-capable receiver deliberately queues a legacy-safe v3
+        # response for every non-status command. Do not combine that fresh v3
+        # prefix with an older cached v4 overlay extension: callers must either
+        # observe a coherent v3 snapshot with no extension or wait for the next
+        # negotiated v4 response.
+        response_magic = tuple(int(response[index]) for index in range(4))
+        if response_magic == RECEIVER_STATUS_MAGIC_V3:
             self._clear_receiver_overlay_status()
 
     def _clear_receiver_overlay_status(self):
-        """Drop v4-only telemetry after a live downgrade to status v3."""
+        """Drop v4-only telemetry after an actual status-v3 response."""
         self._receiver_overlay_operation_result = 0
         self._receiver_overlay_update_kind = 0
         self._receiver_overlay_expected_patches = 0
@@ -684,7 +692,9 @@ class LEDController:
             else:
                 command = self._bounded_uint("command", command, 0xFF)
             prior = None
-            for _ in range(SPI_RESPONSE_QUEUE_DEPTH):
+            for query_index in range(SPI_RESPONSE_QUEUE_DEPTH):
+                if query_index:
+                    time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
                 prior = self.query_receiver_status()
             if int(prior.get("receiver_status_version", 0) or 0) < 3:
                 raise RuntimeError("receiver status v3 is required for command acknowledgement")
@@ -714,6 +724,13 @@ class LEDController:
             status = None
             expected_sequence = prior_sequence + 1
             for query_index in range(COMMAND_ACK_MAX_STATUS_QUERIES):
+                # The receiver validates and dispatches the command before it
+                # can refill the consumed slave-DMA slot. In particular, a
+                # maximum sparse batch performs CRC, digest, span validation,
+                # and RGBA staging work here. Pace the first acknowledgement
+                # query as well as every subsequent one so the two-deep queue
+                # is never consumed by an unbounded initial burst.
+                time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
                 status = self.query_receiver_status()
                 if query_index + 1 < minimum_post_queries:
                     continue
@@ -737,8 +754,6 @@ class LEDController:
                     and observed_command != command
                 ):
                     break
-                if query_index + 1 < COMMAND_ACK_MAX_STATUS_QUERIES:
-                    time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
             raise RuntimeError(
                 f"receiver did not acknowledge command 0x{command:02x} "
                 "with the next operation sequence; last status "

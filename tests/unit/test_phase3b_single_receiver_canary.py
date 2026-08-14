@@ -547,6 +547,52 @@ class Phase3BCanaryTests(unittest.TestCase):
         self.assertGreaterEqual(controller.reads, 6)
         self.assertEqual(status["receiver_base_mode"], BASE_HOST_FULL_SCENE)
 
+    def test_black_takeover_drains_takeover_shaped_v3_before_accepting_v4(self):
+        runner, _receiver = self.rig()
+
+        stale_v3 = status_v4(logical_id=runner.config.logical_id)
+        stale_v3.update({
+            "receiver_status_version": 3,
+            "receiver_base_mode": BASE_HOST_FULL_SCENE,
+            "receiver_foreground_state": FOREGROUND_CLEARED,
+            "receiver_transition_reason": TRANSITION_HOST_TAKEOVER,
+            "receiver_last_processed_command": CMD_SET_ALL,
+        })
+        completed_v4 = dict(stale_v3, receiver_status_version=4)
+
+        class QueuedStatusController:
+            def __init__(self):
+                self.reads = 0
+                self.responses = [dict(stale_v3) for _ in range(4)]
+
+            def set_all_pixels(self, colors):
+                frame = np.asarray(colors)
+                self.assert_complete_black(frame)
+
+            @staticmethod
+            def assert_complete_black(frame):
+                if (
+                    frame.shape != (LOCAL_PIXELS, 3)
+                    or frame.dtype != np.uint8
+                    or np.any(frame)
+                ):
+                    raise AssertionError(
+                        "takeover must be one complete uint8 black receiver frame"
+                    )
+
+            def query_receiver_status(self):
+                self.reads += 1
+                if self.responses:
+                    return self.responses.pop(0)
+                return dict(completed_v4)
+
+        controller = QueuedStatusController()
+        status = runner._black_takeover(controller)
+
+        self.assertGreaterEqual(controller.reads, 8)
+        self.assertEqual(status["receiver_status_version"], 4)
+        self.assertEqual(status["receiver_last_processed_command"], CMD_SET_ALL)
+
     def test_new_fault_and_cadence_advance_during_delta_are_detected(self):
         for mutation, message in (
             (lambda status: status.__setitem__("receiver_crc_errors", 1), "CRC errors"),

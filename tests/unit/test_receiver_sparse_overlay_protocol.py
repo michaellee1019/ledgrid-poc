@@ -129,6 +129,35 @@ class FakeSparseSpi:
         return response
 
 
+class FakeAckClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+class TimingAwareSparseSpi(FakeSparseSpi):
+    """Record acknowledgement queries that arrive before the queue can refill."""
+
+    def __init__(self, clock):
+        super().__init__()
+        self.clock = clock
+        self.next_query_at = None
+        self.query_times = []
+        self.premature_queries = []
+
+    def xfer2(self, packet):
+        command = int(packet[0])
+        now = self.clock.now
+        if command == protocol.CMD_STATUS_QUERY:
+            self.query_times.append(now)
+            if self.next_query_at is not None and now < self.next_query_at:
+                self.premature_queries.append((now, self.next_query_at))
+        self.next_query_at = now + protocol.COMMAND_ACK_POLL_INTERVAL_SECONDS
+        return super().xfer2(packet)
+
+
 def controller(
     *,
     sparse_capable=True,
@@ -604,6 +633,41 @@ class SparseOverlayDriverTests(unittest.TestCase):
             + protocol.COMMAND_ACK_MAX_STATUS_QUERIES,
         )
 
+    def test_ack_queries_are_paced_without_weakening_exact_ack(self):
+        clock = FakeAckClock()
+        spi = TimingAwareSparseSpi(clock)
+        with (
+            mock.patch.object(protocol.spidev, "SpiDev", return_value=spi),
+            mock.patch.object(protocol.time, "sleep", side_effect=clock.sleep),
+        ):
+            item = protocol.LEDController(strips=8, leds_per_strip=138)
+            spi.packets.clear()
+            spi.last_command = 0
+            spi.operation_sequence = 0
+            spi.pending_ack = None
+            spi.queued = [(0, 0), (0, 0)]
+            spi.queued_status_bytes = [
+                protocol.RECEIVER_STATUS_BYTES_V3,
+                protocol.RECEIVER_STATUS_BYTES_V3,
+            ]
+            spi.next_query_at = None
+            spi.query_times.clear()
+            spi.premature_queries.clear()
+
+            status = item.renew_overlay(
+                controller_session_id=SESSION, generation=1, lease_ms=1
+            )
+
+        self.assertEqual(spi.premature_queries, [])
+        self.assertGreaterEqual(len(spi.query_times), 5)
+        self.assertTrue(all(
+            later + 1e-12
+            >= earlier + protocol.COMMAND_ACK_POLL_INTERVAL_SECONDS
+            for earlier, later in zip(spi.query_times, spi.query_times[1:])
+        ))
+        self.assertEqual(status["receiver_last_processed_command"], 0x34)
+        self.assertEqual(status["receiver_operation_sequence"], 1)
+
     def test_exact_retry_produces_identical_wire_packets(self):
         item = controller()
         arguments = dict(
@@ -776,6 +840,35 @@ class SparseOverlayStatusTests(unittest.TestCase):
 
         stats = item.get_stats()
         self.assertEqual(stats["receiver_status_version"], 3)
+        self.assertEqual(stats["receiver_overlay_operation_result"], 0)
+        self.assertEqual(stats["receiver_overlay_committed_generation"], 0)
+        self.assertIsNone(stats["receiver_overlay_session_id"])
+
+    def test_sparse_capable_v3_queue_entry_clears_stale_v4_extension(self):
+        item = controller()
+        response = bytearray(protocol.RECEIVER_STATUS_BYTES_V4)
+        response[:5] = b"LGS4\x04"
+        sparse_capabilities = (
+            protocol.CAPABILITY_STATUS_V3
+            | protocol.CAPABILITY_SPARSE_OVERLAY_V1
+        )
+        response[64:68] = sparse_capabilities.to_bytes(4, "big")
+        response[320] = 2
+        response[328:336] = (7).to_bytes(8, "big")
+        response[384:400] = SESSION
+        item._update_receiver_status(response)
+
+        queued_v3 = bytearray(protocol.RECEIVER_STATUS_BYTES_V3)
+        queued_v3[:5] = b"LGS3\x03"
+        queued_v3[64:68] = sparse_capabilities.to_bytes(4, "big")
+        item._update_receiver_status(queued_v3)
+
+        stats = item.get_stats()
+        self.assertEqual(stats["receiver_status_version"], 3)
+        self.assertEqual(
+            item._receiver_status_query_bytes,
+            protocol.RECEIVER_STATUS_BYTES_V4,
+        )
         self.assertEqual(stats["receiver_overlay_operation_result"], 0)
         self.assertEqual(stats["receiver_overlay_committed_generation"], 0)
         self.assertIsNone(stats["receiver_overlay_session_id"])
