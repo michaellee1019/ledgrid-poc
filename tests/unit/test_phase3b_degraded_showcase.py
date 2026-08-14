@@ -26,6 +26,7 @@ from drivers.spi_controller import (
     MAX_RGBA_PIXELS_PER_BATCH_SPAN,
     OVERLAY_UPDATE_FULL_SNAPSHOT,
 )
+from drivers.degraded_receiver_hybrid import WRITE_ONLY_BATCH_SETTLE_SECONDS
 from tools.benchmarks.phase3b_degraded_showcase import (
     ClockForegroundSource,
     CONFIRMATION_SCHEMA,
@@ -823,7 +824,12 @@ class ShowcaseRunnerTests(unittest.TestCase):
             ):
                 self.assertEqual(
                     self.events[position + 1],
-                    ("sleep", COMMAND_ACK_POLL_INTERVAL_SECONDS),
+                    (
+                        "sleep",
+                        WRITE_ONLY_BATCH_SETTLE_SECONDS
+                        if event[0] == "foreground patch batch"
+                        else COMMAND_ACK_POLL_INTERVAL_SECONDS,
+                    ),
                     (position, event, self.events[position + 1]),
                 )
         self.assert_exact_cleanup(result)
