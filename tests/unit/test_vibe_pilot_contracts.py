@@ -177,6 +177,7 @@ class ExampleAnimation(AnimationBase):
         for mutation, message in (
             (("capabilities", ["telepathy"]), "unsupported values"),
             (("mapping", {"palette": {"neutral": "ocean"}}), "neutral must preserve"),
+            (("preserve_palette", None), "preserve color policy cannot claim"),
         ):
             with self.subTest(mutation=mutation[0]), tempfile.TemporaryDirectory() as temporary:
                 plugin_dir = Path(temporary) / "example"
@@ -185,9 +186,12 @@ class ExampleAnimation(AnimationBase):
                 payload = deepcopy(base)
                 if mutation[0] == "capabilities":
                     payload["vibe"]["capabilities"] = mutation[1]
-                else:
+                elif mutation[0] == "mapping":
                     payload["vibe"]["capabilities"].append("palette_roles")
                     payload["vibe"]["legacy_parameter_mappings"] = mutation[1]
+                else:
+                    payload["vibe"]["color_policy"] = "preserve"
+                    payload["vibe"]["capabilities"] = ["palette_roles"]
                 (plugin_dir / "manifest.json").write_text(
                     json.dumps(payload), encoding="utf-8"
                 )

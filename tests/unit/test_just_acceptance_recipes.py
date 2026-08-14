@@ -78,6 +78,30 @@ class JustAcceptanceRecipeTests(unittest.TestCase):
             "--allow-degraded-spi1-return-path", "--seconds", "2",
         ])
 
+    def test_phase3b_canary_recipe_requires_explicit_readable_binding(self):
+        argv = self.run_with_fake_uv(
+            "receiver-phase3b-physical-canary", "0", "1", "1", "7"
+        )
+        self.assertEqual(argv[-10:], [
+            "python", "tools/benchmarks/phase3b_single_receiver_canary.py",
+            "--bus", "0", "--device", "1", "--logical-id", "1",
+            "--disconnect-seconds", "7",
+        ])
+
+    def test_phase3b_degraded_showcase_requires_explicit_restoration_and_confirmation(self):
+        argv = self.run_with_fake_uv(
+            "receiver-phase3b-degraded-showcase",
+            "state.json", "frame.npy", "challenge.json", "response.json", "20",
+        )
+        self.assertEqual(argv[-12:], [
+            "python", "tools/benchmarks/phase3b_degraded_showcase.py",
+            "--desired-display-state", "state.json",
+            "--restore-frame-npy", "frame.npy",
+            "--confirmation-challenge", "challenge.json",
+            "--confirmation-response", "response.json",
+            "--duration", "20",
+        ])
+
     def test_defaults_and_positional_arguments_remain_supported(self):
         default_receiver = self.run_with_fake_uv("receiver-acceptance")
         self.assertEqual(default_receiver[-10:-2], [

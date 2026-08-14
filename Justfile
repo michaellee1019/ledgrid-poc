@@ -210,6 +210,22 @@ receiver-phase3a-physical-canary bus device logical_id disconnect_seconds="60":
 		--bus {{bus}} --device {{device}} --logical-id {{logical_id}} \
 		--disconnect-seconds {{disconnect_seconds}}
 
+# Run with ledgrid.service already stopped and one readable receiver deliberately
+# flashed with the named local-canary image. This never manages services or flashes.
+receiver-phase3b-physical-canary bus device logical_id disconnect_seconds="5":
+	{{python_env}} python tools/benchmarks/phase3b_single_receiver_canary.py \
+		--bus {{bus}} --device {{device}} --logical-id {{logical_id}} \
+		--disconnect-seconds {{disconnect_seconds}}
+
+# Explicitly incomplete four-wall product showcase for the documented SPI1 return
+# fault. The operator must supply an exact prior complete frame/state and a fresh
+# nonce response; this never installs, uploads, flashes, or claims release acceptance.
+receiver-phase3b-degraded-showcase desired_state restore_frame challenge response duration="15":
+	{{python_env}} python tools/benchmarks/phase3b_degraded_showcase.py \
+		--desired-display-state {{desired_state}} --restore-frame-npy {{restore_frame}} \
+		--confirmation-challenge {{challenge}} --confirmation-response {{response}} \
+		--duration {{duration}}
+
 # Exercise every live plugin while checking host and receiver integrity counters.
 live-animation-sweep seconds="2":
 	seconds="{{seconds}}"; seconds="${seconds#seconds=}"; \

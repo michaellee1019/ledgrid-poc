@@ -204,6 +204,11 @@ class AnimationPluginLoader:
                 "semantic color policy requires palette_roles capability and at least "
                 f"one semantic role: {manifest_path}"
             )
+        if color_policy == "preserve" and "palette_roles" in capabilities:
+            raise ValueError(
+                "preserve color policy cannot claim palette_roles capability: "
+                f"{manifest_path}"
+            )
 
         mappings = vibe.get("legacy_parameter_mappings", {})
         if not isinstance(mappings, dict):

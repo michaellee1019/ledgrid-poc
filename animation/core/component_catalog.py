@@ -26,6 +26,8 @@ from .presentation_contracts import (
     ComponentProvider,
     ComponentRole,
     TimingAdapter,
+    VIBE_CAPABILITIES,
+    VIBE_COLOR_POLICIES,
 )
 
 
@@ -203,6 +205,7 @@ def scanned_descriptor(
         defaults={},
         cadence=cadence_payload,
         timing_adapter=vibe.get("timing_adapter", TimingAdapter.LEGACY_SPEED_PARAM.value),
+        vibe_color_policy=vibe.get("color_policy", "preserve"),
         vibe_capabilities=tuple(vibe.get("capabilities", ())),
         preview=payload.get("preview", {}),
     )
@@ -311,6 +314,7 @@ def painter_descriptor() -> Dict[str, Any]:
             "next_deadline_semantics": NEXT_DEADLINE_SEMANTICS,
         },
         timing_adapter=TimingAdapter.WALL_CLOCK.value,
+        vibe_color_policy="preserve",
         vibe_capabilities=(),
         preview={},
     )
@@ -350,6 +354,61 @@ def filter_catalog(
     ]
 
 
+def color_policy_inventory(
+    descriptors: Iterable[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """Generate a deterministic policy audit from a unified component catalog."""
+    components = []
+    identities = set()
+    counts = {policy: 0 for policy in sorted(VIBE_COLOR_POLICIES)}
+    for descriptor in sorted(
+        descriptors,
+        key=lambda value: (
+            str(value.get("provider", "")),
+            str(value.get("plugin_id", "")),
+        ),
+    ):
+        identity = (descriptor.get("provider"), descriptor.get("plugin_id"))
+        if identity in identities:
+            raise ValueError(f"duplicate component descriptor identity {identity!r}")
+        identities.add(identity)
+        policy = descriptor.get("vibe_color_policy")
+        if policy not in VIBE_COLOR_POLICIES:
+            raise ValueError(
+                f"component {identity!r} lacks an explicit canonical color policy"
+            )
+        capabilities = tuple(sorted(descriptor.get("vibe_capabilities", ())))
+        unsupported = set(capabilities).difference(VIBE_CAPABILITIES)
+        if unsupported:
+            raise ValueError(
+                f"component {identity!r} has unsupported vibe capabilities "
+                f"{sorted(unsupported)}"
+            )
+        if policy == "semantic" and "palette_roles" not in capabilities:
+            raise ValueError(
+                f"semantic component {identity!r} must claim palette_roles"
+            )
+        if policy == "preserve" and "palette_roles" in capabilities:
+            raise ValueError(
+                f"preserve component {identity!r} cannot claim palette_roles"
+            )
+        counts[policy] += 1
+        components.append({
+            "plugin_id": identity[1],
+            "provider": identity[0],
+            "role": descriptor.get("role"),
+            "color_policy": policy,
+            "vibe_capabilities": list(capabilities),
+            "vibe_enabled": bool(capabilities),
+        })
+    return {
+        "schema": "ledgrid.component-color-policy-inventory",
+        "component_count": len(components),
+        "counts": counts,
+        "components": components,
+    }
+
+
 def validate_parameter_overrides(
     descriptor: Mapping[str, Any], values: Mapping[str, Any]
 ) -> Dict[str, Any]:
@@ -384,6 +443,7 @@ def _descriptor_dict(
     defaults: Mapping[str, Any],
     cadence: Mapping[str, Any],
     timing_adapter: str,
+    vibe_color_policy: str,
     vibe_capabilities: tuple[str, ...],
     preview: Mapping[str, Any],
 ) -> Dict[str, Any]:
@@ -408,6 +468,7 @@ def _descriptor_dict(
         defaults=defaults,
         cadence=cadence_contract,
         timing_adapter=timing_adapter,
+        vibe_color_policy=vibe_color_policy,
         vibe_capabilities=vibe_capabilities,
         installation_profile_requirements=(),
         preview=preview,
@@ -436,6 +497,7 @@ def _descriptor_dict(
             "next_deadline_semantics": cadence_contract.next_deadline_semantics,
         },
         "timing_adapter": validated.timing_adapter.value,
+        "vibe_color_policy": validated.vibe_color_policy,
         "vibe_capabilities": list(validated.vibe_capabilities),
         "installation_profile_requirements": [],
         "preview": _json_copy(preview, "preview"),

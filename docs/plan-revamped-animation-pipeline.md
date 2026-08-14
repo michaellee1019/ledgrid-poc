@@ -330,6 +330,7 @@ ComponentDescriptor
   entrypoint
   parameter_schema and defaults
   preferred_fps or cadence contract
+  vibe color policy
   vibe capabilities
   installation-profile requirements
   preview/build metadata
@@ -1340,11 +1341,13 @@ wall-deploy gate are complete. Phase 2C scene/catalog productization, portable
 acceptance, and clean wall-deploy gate are complete. Phase 3A portable
 implementation and integrated repository gates are complete; a clean degraded
 deployment/baseline has passed, while strict all-four status and the restored
-one-receiver physical canary remain open. Phase 2D product work and the remaining
-Phase 3B0 product/showcase work are the next visible-benefit tranche and do not
-require SPI1 MISO. The Phase 3B0 contract, portable-runtime, fake-wall, and
-batch/ack payload slices are complete and both deterministic payload gates are
-green, but the feature stays gated and is not yet a visible wall showcase**.
+one-receiver physical canary remain open. Phase 2D's explicit color-policy
+inventory is complete, while semantic palette migration and visual product work
+remain open. Phase 3B0's contract, portable runtime, fake wall, batch/ack payload,
+product lifecycle, strict readable-receiver runner, and explicitly degraded
+showcase runner are complete and both deterministic payload gates are green.
+The receiver feature stays gated; neither physical Phase 3B runner has executed,
+so there is still no visible wall showcase or receiver timing/expiry evidence**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -1936,11 +1939,25 @@ an obvious everyday product benefit while the receiver return path is awaiting
 repair. This host/product lane depends only on Phase 2C and may run in parallel
 with portable Phases 3B and 3D.
 
-Implementation status (2026-08-13): **not started; authorized under the temporary
-SPI1 return-path constraint**. Phase 2A proved the contract with four pilots and
-Phase 2C shipped the global vibe control and scene editor. This phase expands the
-benefit deliberately rather than treating the pilot mappings as the finished
-palette product.
+Implementation status (2026-08-13): **explicit color-policy inventory complete;
+semantic migration and visual product rollout remain open and are authorized
+under the temporary SPI1 return-path constraint**. Phase 2A proved the contract
+with four pilots and Phase 2C shipped the global vibe control and scene editor.
+Every selectable component now exposes an explicit policy without silently
+enabling any presentation behavior. This phase still needs to expand the visible
+benefit deliberately rather than treating the pilot mappings or classifications
+as the finished palette product.
+
+- [x] All 51 shipped Python packages declare `semantic`, `grade`, or `preserve`;
+  Painter and the compiled receiver-static component make the unified generated
+  inventory 53 components: 39 grade, 12 preserve, and 2 semantic.
+- [x] The 46 newly classified packages retain zero vibe capabilities, mappings,
+  or semantic roles. A 32 x 138 render-parity gate proves neutral versus vivid is
+  byte-exact and leaves authored parameters unchanged until migration explicitly
+  opts a component in.
+- [ ] Convert palette-capable procedural families, review neutral/non-neutral
+  visuals and curated presets, produce contact-sheet evidence, and finish the
+  provider/role product presentation described below.
 
 - Classify every shipped component as `semantic`, `grade`, or `preserve` color
   policy and make the policy visible in its descriptor. Preserve-color assets,
@@ -2287,9 +2304,10 @@ Portable tests and a deliberately scheduled one-receiver canary are sufficient.
 
 Prove the core hybrid value before solving native artifact loading.
 
-Implementation status (2026-08-13): **portable vertical slice and batch/ack
-payload optimization and the feature-gated product lifecycle slice complete;
-visible canary/showcase remain open**. Generated cross-language wire/state vectors,
+Implementation status (2026-08-13): **portable vertical slice, batch/ack payload
+optimization, feature-gated product lifecycle, strict one-receiver runner, and
+explicitly degraded showcase runner complete; physical canary/showcase remain
+open**. Generated cross-language wire/state vectors,
 host serializers and negotiated status-v4 parsing, fake four-board transactional
 publication, feature-on receiver state/composition, exact cleanup, atomic
 multi-span batch patches, and deterministic payload accounting now land
@@ -2433,6 +2451,22 @@ Portable-slice evidence and open gates (2026-08-13):
   production firmware were skipped, `living_stained_glass/before-deploy` was
   restored, and two stable health samples agreed on the desired/observed release
   across all four receivers. The source policy was clean with no dirty diff.
+- [x] The strict one-readable-receiver runner now requires exact status v4 and
+  the six explicit Phase 3B canary capabilities before mutation. Portable fakes
+  cover full snapshot, sparse movement/clear delta, base/foreground cadence
+  independence, positive timing telemetry, zero fault deltas, disconnect/lease
+  expiry with the base continuing, every command failure boundary, and complete
+  black host takeover in normal and `finally` paths.
+- [x] The separately named degraded four-wall runner accepts only exact strict
+  status-v4 receivers 0/1 plus the exact status-v0 no-return shape on 2/3. It
+  allowlists only compiled-background/foreground packets, records outbound-only
+  evidence for 2/3, requires nonce-bound human confirmation, reports
+  `telemetry_complete: false`, and restores an exact supplied complete RGB frame
+  plus desired state after mutation. A failed topology preflight is observation-only.
+- [x] A fresh read-only installed-wall probe on 2026-08-13 passed the unchanged
+  feature-off baseline: logical 0/1 reported exact v3 identity/capabilities and
+  logical 2/3 matched the documented no-return state. It changed no wall state
+  and is not Phase 3B feature-on evidence.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground
@@ -2468,28 +2502,33 @@ benefit rather than only dormant protocol code:
    manually observed, explicitly incomplete, and never a substitute for the
    post-repair strict gate.
 
-Current handoff: items 1 through 4 and the protocol batching/ack-amortization
-follow-up are complete as a portable/fake-wall/product slice. The receiver-native
-scene is available only under the deliberately named host canary switch and the
-named feature-on firmware build; ordinary production remains Python-only. Item 5
-has not started. The next implementation work is therefore the scheduled strict
+Current handoff: items 1 through 4, the protocol batching/ack-amortization
+follow-up, and the portable strict/degraded item-5 runners are complete as a
+portable/fake-wall/product slice. The receiver-native scene is available only
+under the deliberately named host canary switch and named feature-on firmware
+build; ordinary production remains Python-only. Item 5 physical execution has
+not started. The next hardware work is therefore the scheduled strict
 readable-receiver canary and optional explicitly degraded showcase, followed by
-complete-host-frame cleanup and restored streamed acceptance. Do not interpret
-portable completion as physical acceptance or enable the receiver path by
-default while the documented SPI1 return-path fault remains.
+complete-host-frame cleanup, production-image restoration, and restored streamed
+acceptance. Do not interpret portable completion as physical acceptance or
+enable the receiver path by default while the documented SPI1 return-path fault
+remains.
 
-Settled-source portable evidence on 2026-08-13: `just test` passed 970 Python
-tests and 1,264 subtests, 23 rendering tests and 3 subtests, all 59 native
+Settled-source portable evidence on 2026-08-13: `just test` passed 1,008 Python
+tests and 1,476 subtests, 23 rendering tests and 3 subtests, all 59 native
 firmware cases (17 contract, 8 native-protocol, and 34 receiver-runtime), both
-pinned firmware builds, and 162 deployment tests plus 77 subtests. The final
-repeated `snake-max-density` installed-geometry p95 was 3.2268 ms, below 4 ms.
-The feature-off production image uses 50,720
+pinned firmware builds, and 162 deployment tests plus 77 subtests. After the
+timing-percentile sampler was tightened to use the firmware's completion-gated
+local-frame counter rather than its host-mailbox display counter, the final full
+Python rerun passed 1,010 tests and 1,477 subtests. The final repeated
+`snake-max-density` installed-geometry p95 was 3.4609 ms, below 4 ms. The
+feature-off production image uses 50,720
 bytes RAM and 272,273 bytes flash; the deliberate canary uses 65,504 bytes RAM
 and 278,553 bytes flash, a feature-on delta of 14,784 bytes RAM and 6,280 bytes
-flash. Both generated-fixture drift checks, the deterministic payload tool,
-Ruff, Python compilation, `git diff --check`, and both ordinary deploy dry runs
-pass. These are workstation/portable numbers, not Raspberry Pi or ESP32 runtime
-percentiles.
+flash. Generated-fixture drift checks, Python compilation, `git diff --check`,
+the deterministic payload gate, both ordinary deploy dry runs, and the dirty
+source-accounting deploy plan pass. These are workstation/portable numbers, not
+Raspberry Pi or ESP32 runtime percentiles.
 
 Keep the plan's implementation status, focused evidence, measured payload bytes,
 timing percentiles, cleanup result, and any newly discovered stop gate current as

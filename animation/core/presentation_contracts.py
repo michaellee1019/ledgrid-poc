@@ -148,6 +148,7 @@ class ComponentDescriptor:
     parameter_schema: Mapping[str, Any]
     defaults: Mapping[str, Any]
     cadence: CadenceContract
+    vibe_color_policy: str
     timing_adapter: TimingAdapter = TimingAdapter.LEGACY_SPEED_PARAM
     vibe_capabilities: Tuple[str, ...] = ()
     installation_profile_requirements: Tuple[str, ...] = ()
@@ -167,6 +168,10 @@ class ComponentDescriptor:
         object.__setattr__(
             self, "timing_adapter", _enum_value("timing_adapter", self.timing_adapter, TimingAdapter)
         )
+        if self.vibe_color_policy not in VIBE_COLOR_POLICIES:
+            raise ValueError(
+                "vibe_color_policy must be semantic, grade, or preserve"
+            )
         if not isinstance(self.cadence, CadenceContract):
             raise TypeError("cadence must be a CadenceContract")
         for name in ("parameter_schema", "defaults", "preview", "build"):
@@ -174,6 +179,26 @@ class ComponentDescriptor:
         for name in ("vibe_capabilities", "installation_profile_requirements"):
             values = _identifier_tuple(name, getattr(self, name))
             object.__setattr__(self, name, values)
+        unsupported = set(self.vibe_capabilities).difference(VIBE_CAPABILITIES)
+        if unsupported:
+            raise ValueError(
+                "vibe_capabilities contains unsupported values: "
+                + ", ".join(sorted(unsupported))
+            )
+        if (
+            self.vibe_color_policy == "semantic"
+            and "palette_roles" not in self.vibe_capabilities
+        ):
+            raise ValueError(
+                "semantic vibe_color_policy requires palette_roles capability"
+            )
+        if (
+            self.vibe_color_policy == "preserve"
+            and "palette_roles" in self.vibe_capabilities
+        ):
+            raise ValueError(
+                "preserve vibe_color_policy cannot claim palette_roles capability"
+            )
 
 
 @dataclass(frozen=True)

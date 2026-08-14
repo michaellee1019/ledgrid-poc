@@ -1,1 +1,1 @@
-{"plugin_id":"rain_on_glass","class":"RainOnGlassAnimation","icon":"🌧️","gallery":"show"}
+{"plugin_id":"rain_on_glass","class":"RainOnGlassAnimation","icon":"🌧️","gallery":"show","vibe":{"color_policy":"grade","timing_adapter":"legacy_speed_param","capabilities":[]}}

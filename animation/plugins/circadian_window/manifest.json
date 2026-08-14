@@ -1,1 +1,1 @@
-{"plugin_id":"circadian_window","class":"CircadianWindowAnimation","icon":"🌅","gallery":"show"}
+{"plugin_id":"circadian_window","class":"CircadianWindowAnimation","icon":"🌅","gallery":"show","vibe":{"color_policy":"grade","timing_adapter":"legacy_speed_param","capabilities":[]}}

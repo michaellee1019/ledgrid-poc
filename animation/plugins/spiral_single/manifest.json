@@ -1,1 +1,1 @@
-{"plugin_id":"spiral_single","class":"SpiralSingleAnimation","icon":"🌀","gallery":"test"}
+{"plugin_id":"spiral_single","class":"SpiralSingleAnimation","icon":"🌀","gallery":"test","vibe":{"color_policy":"grade","timing_adapter":"legacy_speed_param","capabilities":[]}}

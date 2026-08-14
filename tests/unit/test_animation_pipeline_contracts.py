@@ -322,6 +322,7 @@ class PresentationValueContractTest(unittest.TestCase):
             parameter_schema={"palette": {"type": "string", "enum": ["cool", "warm"]}},
             defaults={"palette": "cool"},
             cadence=CadenceContract("fixed_fps", preferred_fps=30),
+            vibe_color_policy="semantic",
             timing_adapter="scaled_context",
             vibe_capabilities=("palette_roles",),
         )
@@ -335,6 +336,14 @@ class PresentationValueContractTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             ComponentDescriptor(
                 **{**descriptor.__dict__, "manifest_version": 2}
+            )
+        with self.assertRaisesRegex(ValueError, "preserve.*palette_roles"):
+            ComponentDescriptor(
+                **{**descriptor.__dict__, "vibe_color_policy": "preserve"}
+            )
+        with self.assertRaisesRegex(ValueError, "unsupported values"):
+            ComponentDescriptor(
+                **{**descriptor.__dict__, "vibe_capabilities": ("telepathy",)}
             )
         with self.assertRaises(ValueError):
             CadenceContract(CadenceMode.EVENT_DRIVEN, preferred_fps=1)

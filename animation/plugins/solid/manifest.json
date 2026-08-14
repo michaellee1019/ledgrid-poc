@@ -1,1 +1,1 @@
-{"plugin_id":"solid","class":"SolidColorAnimation","icon":"🎨","gallery":"show"}
+{"plugin_id":"solid","class":"SolidColorAnimation","icon":"🎨","gallery":"show","vibe":{"color_policy":"preserve","timing_adapter":"legacy_speed_param","capabilities":[]}}

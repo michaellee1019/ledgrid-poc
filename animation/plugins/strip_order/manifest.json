@@ -1,1 +1,1 @@
-{"plugin_id":"strip_order","class":"StripOrderAnimation","icon":"🔢","gallery":"test"}
+{"plugin_id":"strip_order","class":"StripOrderAnimation","icon":"🔢","gallery":"test","vibe":{"color_policy":"preserve","timing_adapter":"legacy_speed_param","capabilities":[]}}

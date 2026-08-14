@@ -192,7 +192,10 @@ selection survives controller restart and deploy-state restoration, is exposed
 in status, and is passed explicitly to both plain and parameterized previews.
 Changing it does not mutate authored parameters or dirty preset identity.
 
-Plugins opt in through a strict optional `vibe` manifest object. For example:
+Every shipped plugin declares a `semantic`, `grade`, or `preserve` color policy
+in its strict `vibe` manifest object. Capabilities remain the opt-in boundary for
+actual palette, tempo, or luminance behavior, so a classification-only manifest
+with `"capabilities": []` is an exact presentation no-op. For example:
 
 ```json
 {
