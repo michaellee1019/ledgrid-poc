@@ -2722,6 +2722,31 @@ Portable-slice evidence and open gates (2026-08-13):
   deployment tests plus 88 subtests. The final physical gates remain: deploy
   the persistent scene, photograph it, and repeat `just deploy` while it is
   active to prove exact native restore and service continuity.
+- [x] Persistent degraded playback and ordinary reconciliation are now physical:
+  clean receipt `09edc7d257d141549ee7e7eeb15f96f4` deployed commit `bcdf7ff`,
+  selected app release
+  `c397a7413987645cd6b76d124b6f986a6ea773561146e3bd9677ab66fc3b8874`,
+  skipped the unchanged named canary firmware, restored the exact
+  `compiled_rainbow` plus clock desired scene, and passed stable health. The
+  scene continued through the next ordinary deploy without a receiver flash.
+- [x] A four-color full-wall diagnostic after a physical cable change proved
+  that transport/logical identity remained `(0,1,2,3)` while the actual
+  physical left-to-right lane order became `(0,1,3,2)`: logical lanes 2 and 3
+  were swapped. The durable rollout config now carries an exact validated
+  permutation. The degraded facade keeps SPI routes, logical identities, and
+  readable roles unchanged while using that permutation for receiver-native
+  global strip offsets, sparse full/delta foreground slicing and coverage,
+  complete host takeover, and every subsequent Python fallback frame. Legacy
+  configs load as identity order only until atomically rewritten; malformed,
+  duplicate, boolean, missing, and out-of-range mappings fail closed. Focused
+  config/startup/transport tests pass 59 cases, including non-identity native
+  offsets, overlay coverage, two consecutive host frames, and durable CLI
+  round trip; 84 adjacent manager/persistence/deployment tests also pass.
+- [ ] Atomically install physical order `(0,1,3,2)`, restart into the saved
+  rainbow-plus-clock scene, and photograph one continuous clock across all four
+  physical lanes. Then repeat clean `just deploy` while it is active and require
+  exact config-digest preservation, no firmware flash, exact scene restore, and
+  stable service health before closing this cable-order regression.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground

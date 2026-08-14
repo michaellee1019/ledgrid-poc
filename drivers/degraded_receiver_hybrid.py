@@ -46,6 +46,7 @@ DEGRADED_SPI1_TRANSPORT_POLICY = "degraded_spi1_01_readable"
 READABLE_DEVICES = (0, 1)
 UNVERIFIED_DEVICES = (2, 3)
 EXPECTED_DEVICE_MAP = ((0, 0), (0, 1), (1, 1), (1, 0))
+DEFAULT_PHYSICAL_LANE_ORDER = (0, 1, 2, 3)
 EXPECTED_STATUS_VERSION = 4
 WRITE_ONLY_FOREGROUND_SETTLE_SECONDS = 0.050
 EXPECTED_CAPABILITIES = (
@@ -174,6 +175,7 @@ class DegradedReceiverHybridController:
         *,
         sleeper: Callable[[float], None] = time.sleep,
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
+        physical_lane_order: Sequence[int] = DEFAULT_PHYSICAL_LANE_ORDER,
     ) -> None:
         self.controller = controller
         self.devices = list(getattr(controller, "devices", ()))
@@ -185,6 +187,13 @@ class DegradedReceiverHybridController:
         self.leds_per_device = LOCAL_PIXELS
         self.inline_show = getattr(controller, "inline_show", True)
         self.debug = getattr(controller, "debug", False)
+        self.physical_lane_order = self._normalize_physical_lane_order(
+            physical_lane_order
+        )
+        self._physical_lane_by_logical = tuple(
+            self.physical_lane_order.index(logical_id)
+            for logical_id in range(4)
+        )
         self._validate_installed_controller()
         self._sleeper = sleeper
         self._monotonic_ns = monotonic_ns
@@ -198,6 +207,35 @@ class DegradedReceiverHybridController:
         self._identity_configuration: Optional[dict[str, Any]] = None
         self._status: dict[str, Any] = {}
         self._record_status(state="initialized", operation="none", operational=False)
+
+    @staticmethod
+    def _normalize_physical_lane_order(
+        value: Sequence[int],
+    ) -> tuple[int, int, int, int]:
+        if isinstance(value, (str, bytes)) or len(value) != 4:
+            raise DegradedReceiverHybridError(
+                "physical lane order must contain four logical receiver ids"
+            )
+        if any(type(item) is not int for item in value):
+            raise DegradedReceiverHybridError(
+                "physical lane order values must be integers"
+            )
+        normalized = tuple(value)
+        if set(normalized) != {0, 1, 2, 3}:
+            raise DegradedReceiverHybridError(
+                "physical lane order must be a permutation of 0,1,2,3"
+            )
+        return normalized
+
+    def _physical_lane(self, logical_id: int) -> int:
+        return self._physical_lane_by_logical[logical_id]
+
+    def _global_strip_offset(self, logical_id: int) -> int:
+        return self._physical_lane(logical_id) * LOCAL_STRIPS
+
+    def _wall_slice(self, logical_id: int) -> slice:
+        start = self._physical_lane(logical_id) * LOCAL_PIXELS
+        return slice(start, start + LOCAL_PIXELS)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.controller, name)
@@ -247,6 +285,11 @@ class DegradedReceiverHybridController:
             "healthy": False,
             "fallback_active": False,
             "release_acceptance": False,
+            "physical_lane_order": list(self.physical_lane_order),
+            "physical_lane_by_logical_receiver": {
+                str(logical_id): self._physical_lane(logical_id)
+                for logical_id in range(4)
+            },
         })
 
     @staticmethod
@@ -497,7 +540,7 @@ class DegradedReceiverHybridController:
             LEDController.serialize_local_background_start(
                 component_id=component_id,
                 preferred_cadence_hz=preferred_cadence_hz,
-                global_strip_offset=index * LOCAL_STRIPS,
+                global_strip_offset=self._global_strip_offset(index),
                 common_seed=common_seed,
                 scene_epoch=context.scene_epoch,
             )
@@ -525,7 +568,7 @@ class DegradedReceiverHybridController:
                     kwargs={
                         "component_id": component_id,
                         "preferred_cadence_hz": preferred_cadence_hz,
-                        "global_strip_offset": index * LOCAL_STRIPS,
+                        "global_strip_offset": self._global_strip_offset(index),
                         "common_seed": common_seed,
                         "scene_epoch": context.scene_epoch,
                     },
@@ -538,7 +581,7 @@ class DegradedReceiverHybridController:
                     "receiver_declared_cadence_hz": preferred_cadence_hz,
                     "receiver_common_seed": common_seed,
                     "receiver_scene_epoch": context.scene_epoch,
-                    "receiver_global_strip_offset": index * LOCAL_STRIPS,
+                    "receiver_global_strip_offset": self._global_strip_offset(index),
                 }
                 for key, value in expected.items():
                     if status.get(key) != value:
@@ -594,7 +637,7 @@ class DegradedReceiverHybridController:
         packets = [
             LEDController.serialize_local_background_params(
                 preferred_cadence_hz=preferred_cadence_hz,
-                global_strip_offset=index * LOCAL_STRIPS,
+                global_strip_offset=self._global_strip_offset(index),
                 common_seed=common_seed,
             )
             for index in range(4)
@@ -610,7 +653,7 @@ class DegradedReceiverHybridController:
                     packet,
                     kwargs={
                         "preferred_cadence_hz": preferred_cadence_hz,
-                        "global_strip_offset": index * LOCAL_STRIPS,
+                        "global_strip_offset": self._global_strip_offset(index),
                         "common_seed": common_seed,
                     },
                 )
@@ -619,7 +662,7 @@ class DegradedReceiverHybridController:
                 expected = {
                     "receiver_base_mode": BASE_LOCAL_BACKGROUND,
                     "receiver_declared_cadence_hz": preferred_cadence_hz,
-                    "receiver_global_strip_offset": index * LOCAL_STRIPS,
+                    "receiver_global_strip_offset": self._global_strip_offset(index),
                     "receiver_common_seed": common_seed,
                 }
                 for key, value in expected.items():
@@ -686,8 +729,9 @@ class DegradedReceiverHybridController:
         *,
         full_snapshot: bool,
         dirty_ranges: Optional[tuple[tuple[int, int], ...]],
+        physical_lane_by_logical: Sequence[int] = DEFAULT_PHYSICAL_LANE_ORDER,
     ) -> list[tuple[int, np.ndarray]]:
-        local_start = logical_id * LOCAL_PIXELS
+        local_start = physical_lane_by_logical[logical_id] * LOCAL_PIXELS
         local = pixels[local_start:local_start + LOCAL_PIXELS]
         if full_snapshot:
             return [
@@ -789,7 +833,7 @@ class DegradedReceiverHybridController:
         overlay = self._normalize_overlay(pixels)
         expected_coverage = tuple(
             int(np.count_nonzero(
-                overlay[index * LOCAL_PIXELS:(index + 1) * LOCAL_PIXELS, 3]
+                overlay[self._wall_slice(index), 3]
             ))
             for index in range(4)
         )
@@ -825,6 +869,7 @@ class DegradedReceiverHybridController:
                 index,
                 full_snapshot=full_snapshot,
                 dirty_ranges=ranges,
+                physical_lane_by_logical=self._physical_lane_by_logical,
             )
             for index in range(4)
         ]
@@ -1199,7 +1244,7 @@ class DegradedReceiverHybridController:
         with self._lock():
             for index, device in enumerate(self.devices):
                 local = np.ascontiguousarray(
-                    frame[index * LOCAL_PIXELS:(index + 1) * LOCAL_PIXELS]
+                    frame[self._wall_slice(index)]
                 )
                 try:
                     accepted = device.set_all_pixels(local)
@@ -1257,7 +1302,19 @@ class DegradedReceiverHybridController:
     def set_frame(self, colors: Any, dirty_ranges: Any = None) -> Any:
         if self._context is not None or self._session is not None:
             return self.set_all_pixels(colors)
-        return self.controller.set_frame(colors, dirty_ranges=dirty_ranges)
+        # After the proven complete takeover, retain the underlying controller's
+        # normal streaming path but present it in logical-device order. Dirty
+        # ranges belong to physical wall coordinates and cannot be forwarded
+        # across a non-identity permutation without remapping, so this explicit
+        # degraded path sends a complete frame.
+        frame = self._normalize_host_frame(colors)
+        transport_order = np.empty_like(frame)
+        for logical_id in range(4):
+            destination = slice(
+                logical_id * LOCAL_PIXELS, (logical_id + 1) * LOCAL_PIXELS
+            )
+            transport_order[destination] = frame[self._wall_slice(logical_id)]
+        return self.controller.set_frame(transport_order, dirty_ranges=None)
 
     def clear(self) -> bool:
         return self.set_all_pixels(

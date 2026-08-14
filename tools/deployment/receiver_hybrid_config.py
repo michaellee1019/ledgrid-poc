@@ -45,11 +45,33 @@ ALLOWED_FIRMWARE_ENVIRONMENTS = frozenset({
 
 _CONFIG_KEYS = frozenset({
     "schema", "schema_version", "enabled", "transport_policy",
+    "physical_lane_order",
 })
+_CONFIG_REQUIRED_KEYS = _CONFIG_KEYS - {"physical_lane_order"}
+DEFAULT_PHYSICAL_LANE_ORDER = (0, 1, 2, 3)
 
 
 class ReceiverHybridConfigError(ValueError):
     """The durable rollout file is present but unsafe or unsupported."""
+
+
+def _normalize_physical_lane_order(value: Any) -> tuple[int, int, int, int]:
+    """Return logical receiver ids ordered by physical lane, left to right."""
+
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        raise ReceiverHybridConfigError(
+            "physical_lane_order must contain exactly four logical receiver ids"
+        )
+    if any(type(item) is not int for item in value):
+        raise ReceiverHybridConfigError(
+            "physical_lane_order values must be integers"
+        )
+    normalized = tuple(value)
+    if set(normalized) != {0, 1, 2, 3}:
+        raise ReceiverHybridConfigError(
+            "physical_lane_order must be a permutation of 0,1,2,3"
+        )
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -59,6 +81,7 @@ class ReceiverHybridConfig(Mapping[str, object]):
     enabled: bool
     transport_policy: str
     firmware_environment: str
+    physical_lane_order: tuple[int, int, int, int] = DEFAULT_PHYSICAL_LANE_ORDER
 
     def __post_init__(self) -> None:
         expected = (
@@ -77,6 +100,11 @@ class ReceiverHybridConfig(Mapping[str, object]):
             raise ReceiverHybridConfigError(
                 "receiver-hybrid policy and firmware environment disagree"
             )
+        object.__setattr__(
+            self,
+            "physical_lane_order",
+            _normalize_physical_lane_order(self.physical_lane_order),
+        )
 
     def __getitem__(self, key: str) -> object:
         if key == "enabled":
@@ -85,13 +113,18 @@ class ReceiverHybridConfig(Mapping[str, object]):
             return self.transport_policy
         if key == "firmware_environment":
             return self.firmware_environment
+        if key == "physical_lane_order":
+            return self.physical_lane_order
         raise KeyError(key)
 
     def __iter__(self) -> Iterator[str]:
-        return iter(("enabled", "transport_policy", "firmware_environment"))
+        return iter((
+            "enabled", "transport_policy", "firmware_environment",
+            "physical_lane_order",
+        ))
 
     def __len__(self) -> int:
-        return 3
+        return 4
 
     def to_dict(self) -> dict[str, object]:
         return dict(self)
@@ -129,7 +162,7 @@ def _parse_config(payload: Any, path: Path) -> ReceiverHybridConfig:
             f"receiver-hybrid config must be a JSON object: {path}"
         )
     unknown = sorted(set(payload) - _CONFIG_KEYS)
-    missing = sorted(_CONFIG_KEYS - set(payload))
+    missing = sorted(_CONFIG_REQUIRED_KEYS - set(payload))
     if unknown or missing:
         raise ReceiverHybridConfigError(
             "receiver-hybrid config keys are not exact; "
@@ -160,10 +193,14 @@ def _parse_config(payload: Any, path: Path) -> ReceiverHybridConfig:
         DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT
         if enabled else PRODUCTION_FIRMWARE_ENVIRONMENT
     )
+    physical_lane_order = _normalize_physical_lane_order(
+        payload.get("physical_lane_order", DEFAULT_PHYSICAL_LANE_ORDER)
+    )
     return ReceiverHybridConfig(
         enabled=enabled,
         transport_policy=transport_policy,
         firmware_environment=firmware_environment,
+        physical_lane_order=physical_lane_order,
     )
 
 
@@ -200,6 +237,7 @@ def write_receiver_hybrid_config(
     *,
     enabled: bool,
     transport_policy: str | None = None,
+    physical_lane_order: Any = None,
 ) -> ReceiverHybridConfig:
     """Atomically persist one allowlisted rollout selection and fsync it."""
 
@@ -215,6 +253,14 @@ def write_receiver_hybrid_config(
         raise ReceiverHybridConfigError(
             "receiver-hybrid enabled state and transport policy disagree"
         )
+    if physical_lane_order is None:
+        try:
+            physical_lane_order = resolve_receiver_hybrid_config(
+                root
+            ).physical_lane_order
+        except ReceiverHybridConfigError:
+            raise
+    physical_lane_order = _normalize_physical_lane_order(physical_lane_order)
     path = receiver_hybrid_config_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -222,6 +268,7 @@ def write_receiver_hybrid_config(
         "schema_version": RECEIVER_HYBRID_CONFIG_VERSION,
         "enabled": enabled,
         "transport_policy": transport_policy,
+        "physical_lane_order": list(physical_lane_order),
     }
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
@@ -249,6 +296,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument(
+        "--physical-lane-order",
+        help="logical receiver ids from physical left to right, e.g. 0,1,3,2",
+    )
+    parser.add_argument(
         "action", choices=("show", "enable-degraded", "disable")
     )
     return parser
@@ -257,11 +308,30 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _parser().parse_args()
     root = args.root.expanduser().resolve()
+    lane_order = None
+    if args.physical_lane_order is not None:
+        try:
+            lane_order = tuple(
+                int(item.strip())
+                for item in args.physical_lane_order.split(",")
+            )
+        except ValueError as exc:
+            raise ReceiverHybridConfigError(
+                "physical lane order must be comma-separated integers"
+            ) from exc
     if args.action == "enable-degraded":
-        config = write_receiver_hybrid_config(root, enabled=True)
+        config = write_receiver_hybrid_config(
+            root, enabled=True, physical_lane_order=lane_order
+        )
     elif args.action == "disable":
-        config = write_receiver_hybrid_config(root, enabled=False)
+        config = write_receiver_hybrid_config(
+            root, enabled=False, physical_lane_order=lane_order
+        )
     else:
+        if lane_order is not None:
+            raise ReceiverHybridConfigError(
+                "--physical-lane-order requires enable-degraded or disable"
+            )
         config = resolve_receiver_hybrid_config(root)
     print(json.dumps({
         **config.to_dict(),
@@ -278,6 +348,7 @@ __all__ = [
     "DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY",
     "DEGRADED_SPI1_TRANSPORT_POLICY",
     "DEGRADED_TRANSPORT_POLICY",
+    "DEFAULT_PHYSICAL_LANE_ORDER",
     "OFF_RECEIVER_HYBRID_CONFIG",
     "PRODUCTION_FIRMWARE_ENVIRONMENT",
     "RECEIVER_HYBRID_CONFIG_RELATIVE_PATH",

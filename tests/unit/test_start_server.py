@@ -144,9 +144,11 @@ class StartServerTests(unittest.TestCase):
             def __init__(self):
                 self.policies = []
 
-            def with_receiver_hybrid_transport_policy(self, policy):
-                self.policies.append(policy)
-                return ("wrapped", policy)
+            def with_receiver_hybrid_transport_policy(
+                self, policy, *, physical_lane_order
+            ):
+                self.policies.append((policy, tuple(physical_lane_order)))
+                return ("wrapped", policy, tuple(physical_lane_order))
 
         controller = Controller()
         self.assertIs(
@@ -162,10 +164,22 @@ class StartServerTests(unittest.TestCase):
             "transport_policy": "degraded_spi1_01_readable",
         })
         self.assertEqual(
-            selected, ("wrapped", "degraded_spi1_01_readable")
+            selected,
+            ("wrapped", "degraded_spi1_01_readable", (0, 1, 2, 3)),
         )
         self.assertEqual(
-            controller.policies, ["degraded_spi1_01_readable"]
+            controller.policies,
+            [("degraded_spi1_01_readable", (0, 1, 2, 3))],
+        )
+
+        mapped = select_receiver_hybrid_controller(controller, {
+            "enabled": True,
+            "transport_policy": "degraded_spi1_01_readable",
+            "physical_lane_order": [0, 1, 3, 2],
+        })
+        self.assertEqual(
+            mapped,
+            ("wrapped", "degraded_spi1_01_readable", (0, 1, 3, 2)),
         )
 
         with self.assertRaisesRegex(RuntimeError, "requires a multi-device"):

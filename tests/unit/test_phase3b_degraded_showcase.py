@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import struct
 import sys
 import tempfile
 from pathlib import Path
@@ -382,6 +383,7 @@ class FakeDevice:
         self.bytes_sent = 0
         self.errors = 0
         self.base_mode = 2
+        self.background_offset = logical_id * 8
         self.context = None
         self.session = None
         self.foreground_state = 0
@@ -440,7 +442,7 @@ class FakeDevice:
             "receiver_base_mode": self.base_mode,
             "receiver_component_id": 1,
             "receiver_declared_cadence_hz": 30,
-            "receiver_global_strip_offset": self.logical_id * 8,
+            "receiver_global_strip_offset": self.background_offset,
             "receiver_common_seed": 0x3B00CAFE,
             "receiver_scene_epoch": self.context.scene_epoch if self.context else 0,
             "receiver_active_scene_revision": self.context.scene_revision if self.context else 0,
@@ -509,6 +511,12 @@ class FakeDevice:
     def start_local_background(self, **kwargs):
         self._touch("local background start")
         self.base_mode = 1
+        self.background_offset = kwargs["global_strip_offset"]
+        return self._status()
+
+    def update_local_background_params(self, **kwargs):
+        self._touch("local background parameters")
+        self.background_offset = kwargs["global_strip_offset"]
         return self._status()
 
     def begin_controller_session(self, **kwargs):
@@ -586,6 +594,10 @@ class FakeDevice:
             return
         if stage == "local background start":
             self.base_mode = 1
+            if len(packet) == struct.calcsize(">BHHIIQ"):
+                self.background_offset = struct.unpack(">BHHIIQ", packet)[3]
+        elif stage == "local background parameters":
+            self.background_offset = struct.unpack(">BHII", packet)[2]
         elif stage == "foreground session":
             self.session = packet[2:18]
         elif stage == "foreground begin":
@@ -634,6 +646,7 @@ class FakeDevice:
 
     def set_all_pixels(self, frame):
         self._touch("set_all", np.asarray(frame).nbytes)
+        self.last_host_frame = np.asarray(frame, dtype=np.uint8).copy()
         self.base_mode = 2
         self.foreground_state = 0
         self.committed_coverage = 0
@@ -661,6 +674,14 @@ class FakeController:
         self.events.append(("controller close",))
         if self.fail_close:
             raise OSError("close failed")
+
+    def set_frame(self, frame, dirty_ranges=None):
+        self.events.append(("controller set_frame", dirty_ranges))
+        data = np.asarray(frame, dtype=np.uint8)
+        for logical_id, device in enumerate(self.devices):
+            start = logical_id * LOCAL_PIXELS
+            device.set_all_pixels(data[start:start + LOCAL_PIXELS])
+        return True
 
 
 class FakeSource:
@@ -862,6 +883,81 @@ class ShowcaseRunnerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(Exception, "exact status-v0"):
             transport.preflight()
+
+    def test_physical_lane_permutation_routes_base_overlay_and_host_frames(self):
+        lane_order = (0, 1, 3, 2)
+        transport = DegradedHybridTransport(
+            self.controller,
+            sleeper=self._sleep,
+            physical_lane_order=lane_order,
+        )
+        publisher = ReceiverSparsePublisher(
+            transport,
+            lease_ms=3000,
+            monotonic=self.clock,
+            session_factory=lambda: bytes(range(16)),
+        )
+        context = self.runner()._context(publisher)
+        self.assertTrue(transport.start_local_background(
+            context,
+            component_id=1,
+            preferred_cadence_hz=30,
+            common_seed=0x3B00CAFE,
+        ))
+        self.assertEqual(
+            [device.background_offset for device in self.controller.devices],
+            [0, 8, 24, 16],
+        )
+
+        overlay = np.zeros((WALL_PIXELS, 4), dtype=np.uint8)
+        for physical_lane, alpha_count in enumerate((1, 2, 3, 4)):
+            start = physical_lane * LOCAL_PIXELS
+            overlay[start:start + alpha_count] = (
+                4 + physical_lane, 4, 2, 8
+            )
+        self.assertTrue(publisher.publish(
+            overlay,
+            changed=True,
+            scene_revision=context.scene_revision,
+            scene_epoch=context.scene_epoch,
+            base_revision=context.scene_revision,
+            present_at_scene_time_us=0,
+            now=self.clock(),
+        ))
+        self.assertEqual(
+            [device.committed_coverage for device in self.controller.devices],
+            [1, 2, 4, 3],
+        )
+
+        host = np.zeros((WALL_PIXELS, 3), dtype=np.uint8)
+        for physical_lane in range(4):
+            host[
+                physical_lane * LOCAL_PIXELS:(physical_lane + 1) * LOCAL_PIXELS
+            ] = physical_lane + 1
+        self.assertTrue(transport.set_frame(host))
+        self.assertTrue(transport.set_frame(host))
+        self.assertEqual(
+            [int(device.last_host_frame[0, 0]) for device in self.controller.devices],
+            [1, 2, 4, 3],
+        )
+        status = transport.get_stats()["aggregate"]["local_background"]
+        self.assertEqual(status["physical_lane_order"], [0, 1, 3, 2])
+
+    def test_physical_lane_permutation_is_exact(self):
+        for lane_order in (
+            (0, 1, 2),
+            (0, 1, 2, 2),
+            (0, 1, 2, 4),
+            (0, 1, 2, True),
+        ):
+            with self.subTest(lane_order=lane_order), self.assertRaisesRegex(
+                Exception, "physical lane order"
+            ):
+                DegradedHybridTransport(
+                    self.controller,
+                    sleeper=self._sleep,
+                    physical_lane_order=lane_order,
+                )
 
     def test_production_transport_publisher_clear_is_exact_on_readable_pair(self):
         transport = DegradedHybridTransport(

@@ -50,7 +50,9 @@ SPARSE_OVERLAY_REQUIRED_CAPABILITIES = (
 class MultiDeviceLEDController:
     """Multi-device LED controller that manages multiple ESP32 devices"""
 
-    def with_receiver_hybrid_transport_policy(self, transport_policy):
+    def with_receiver_hybrid_transport_policy(
+        self, transport_policy, *, physical_lane_order=(0, 1, 2, 3)
+    ):
         """Return the controller facade selected by one explicit policy.
 
         Ordinary host streaming and the strict all-readable receiver path keep
@@ -71,7 +73,9 @@ class MultiDeviceLEDController:
                 f"unsupported receiver hybrid transport policy: "
                 f"{transport_policy!r}"
             )
-        return DegradedReceiverHybridController(self)
+        return DegradedReceiverHybridController(
+            self, physical_lane_order=physical_lane_order
+        )
 
     def _controller_lock(self):
         """Lazily initialize orchestration state for legacy/test construction."""

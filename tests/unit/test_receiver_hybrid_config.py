@@ -76,6 +76,26 @@ class ReceiverHybridConfigTests(unittest.TestCase):
                 disabled.firmware_environment, PRODUCTION_FIRMWARE_ENVIRONMENT
             )
 
+    def test_lane_order_round_trips_and_legacy_config_defaults_to_identity(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            legacy_path = self.write(root, self.payload())
+            legacy = resolve_receiver_hybrid_config(root)
+            self.assertEqual(legacy.physical_lane_order, (0, 1, 2, 3))
+
+            configured = write_receiver_hybrid_config(
+                root, enabled=True, physical_lane_order=(0, 1, 3, 2)
+            )
+            self.assertEqual(configured.physical_lane_order, (0, 1, 3, 2))
+            self.assertEqual(
+                json.loads(legacy_path.read_text())["physical_lane_order"],
+                [0, 1, 3, 2],
+            )
+            self.assertNotEqual(configured.selection_digest, legacy.selection_digest)
+
+            preserved = write_receiver_hybrid_config(root, enabled=True)
+            self.assertEqual(preserved.physical_lane_order, (0, 1, 3, 2))
+
     def test_failed_atomic_replace_keeps_prior_complete_config(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
@@ -123,6 +143,22 @@ class ReceiverHybridConfigTests(unittest.TestCase):
                 root = Path(temporary_dir)
                 self.write(root, payload)
                 with self.assertRaisesRegex(ReceiverHybridConfigError, error):
+                    resolve_receiver_hybrid_config(root)
+
+    def test_invalid_lane_orders_fail_closed(self):
+        for lane_order in (
+            [0, 1, 2],
+            [0, 1, 2, 2],
+            [0, 1, 2, 4],
+            [0, 1, 2, True],
+            "0,1,2,3",
+        ):
+            with self.subTest(lane_order=lane_order), tempfile.TemporaryDirectory() as temporary_dir:
+                root = Path(temporary_dir)
+                self.write(root, self.payload(physical_lane_order=lane_order))
+                with self.assertRaisesRegex(
+                    ReceiverHybridConfigError, "physical_lane_order"
+                ):
                     resolve_receiver_hybrid_config(root)
 
     def test_malformed_oversized_and_symlink_configs_are_rejected(self):
@@ -182,6 +218,30 @@ class ReceiverHybridConfigTests(unittest.TestCase):
                 self.assertIs(payload["enabled"], enabled)
                 self.assertEqual(payload["firmware_environment"], environment)
                 self.assertRegex(payload["config_digest"], r"^[0-9a-f]{64}$")
+
+    def test_cli_persists_explicit_left_to_right_lane_order(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            output = io.StringIO()
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "receiver_hybrid_config.py",
+                        "--root", str(root),
+                        "--physical-lane-order", "0,1,3,2",
+                        "enable-degraded",
+                    ],
+                ),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(), 0)
+            payload = json.loads(output.getvalue())
+            self.assertEqual(payload["physical_lane_order"], [0, 1, 3, 2])
+            self.assertEqual(
+                resolve_receiver_hybrid_config(root).physical_lane_order,
+                (0, 1, 3, 2),
+            )
 
 
 if __name__ == "__main__":

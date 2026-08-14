@@ -223,13 +223,16 @@ def select_receiver_hybrid_controller(controller, receiver_hybrid_config):
     policy = _receiver_hybrid_config_value(
         receiver_hybrid_config, "transport_policy", "off"
     )
+    physical_lane_order = _receiver_hybrid_config_value(
+        receiver_hybrid_config, "physical_lane_order", (0, 1, 2, 3)
+    )
     if not enabled:
         return controller
     selector = getattr(
         controller, "with_receiver_hybrid_transport_policy", None
     )
     if callable(selector):
-        return selector(policy)
+        return selector(policy, physical_lane_order=physical_lane_order)
     if policy not in (None, "", "off", "strict_all_readable_v1"):
         raise RuntimeError(
             "selected receiver hybrid transport requires a multi-device "
