@@ -2768,7 +2768,7 @@ Portable-slice evidence and open gates (2026-08-13):
   subsequent host frames use only the host map; CONFIG and receiver-native
   rainbow coordinates use only the native map. A real `02:41:59` to `02:42:00`
   regression reconstructs the aggregate RGBA plane byte-exactly across both
-  affected logical receivers. The complete gate passed 1,066 Python tests plus
+  affected logical receivers. The complete gate passed 1,067 Python tests plus
   1,544 subtests, 23 policy tests, all 60 native firmware tests, both ESP32
   builds, and 168 deployment tests plus 88 subtests.
 - [x] Clean receipt `4c9831c3ed9c4f10b701d94078186823` deployed commit
@@ -2792,11 +2792,20 @@ Portable-slice evidence and open gates (2026-08-13):
   Receipt `a30db509a9b04f32bc263df578b2a5b7` then proved ordinary deploy
   reconciliation still skipped the unchanged receiver firmware and retained the
   scene, but it intentionally does not override the rejected visual gate.
-- [ ] Deploy the independent-native-direction correction, keep the host map
+- [x] The independent-native-direction correction deployed cleanly as receipt
+  `a699f79517584ef5b6d89e0105f23317` from commit `bcfd785`, with app release
+  `6d78c19e9d3990dacf37403420302673c03b2e581d20a04e2c668233c014375f`.
+  It kept the host map
   `(false,false,true,true)` and native map `(false,false,false,false)`, then
-  require one fresh webcam frame with both readable numerals and one continuous
-  non-chevron rainbow across all four lanes. Repeat ordinary deploy and require
-  unchanged firmware skip plus the same post-deploy visual result before handoff.
+  skipped both unchanged receiver firmware build and flash, restored the exact
+  scene, and passed readiness. Live status reports that exact mapping, active
+  hybrid ownership, zero publisher failures, and zero queue/display errors.
+  The fresh wall-only webcam crop visibly reads contiguous `04:10` digits and
+  shows one continuous diagonal rainbow with no center chevron across all four
+  lanes. Durable evidence is
+  `run_state/physical-acceptance/20260814-rainbow-clock-independent-directions.png`
+  with SHA-256
+  `401b9a1a7e3967a9cbfcd7a8cf51283843118c51f796bf4438e3de678114937e`.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground
