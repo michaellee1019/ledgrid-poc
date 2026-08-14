@@ -458,6 +458,7 @@ class DeployContext:
     command_runner: Optional[CommandRunner] = None
     ssh_runner: Optional[CommandRunner] = None
     receipt_sinks: Tuple["ReceiptSink", ...] = ()
+    progress: Optional[Callable[[str], None]] = None
     attempt_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     state: Dict[str, Any] = field(default_factory=dict)
 
@@ -470,6 +471,10 @@ class DeployContext:
         if self.ssh_runner is None:
             raise RuntimeError("no SSH command runner configured")
         return self.ssh_runner.run(args, **kwargs)
+
+    def report(self, message: str) -> None:
+        if self.progress is not None:
+            self.progress(message)
 
 
 @dataclass
@@ -614,6 +619,7 @@ class DeployCoordinator:
         ]
 
     def run(self, context: DeployContext, steps: Sequence[Step]) -> DeployReceipt:
+        deployment_started = self.monotonic()
         receipt = DeployReceipt(
             deployment_id=context.attempt_id,
             started_at=_utc_now(),
@@ -623,42 +629,58 @@ class DeployCoordinator:
             source_identity=context.source_identity,
         )
         try:
-            for step in steps:
+            for index, step in enumerate(steps, start=1):
                 started_at = _utc_now()
                 started = self.monotonic()
+                expectation = STEP_TIMING_EXPECTATIONS.get(step.id)
+                suffix = f"; {expectation}" if expectation else ""
+                context.report(
+                    f"[deploy {index:02d}/{len(steps):02d}] START {step.id}{suffix}"
+                )
                 try:
                     operation_result = step.operation(context) or OperationResult()
                 except (KeyboardInterrupt, DeploymentInterrupted) as exc:
+                    duration = self.monotonic() - started
                     result = StepResult(
                         step_id=step.id,
                         mutating=step.mutating,
                         started_at=started_at,
                         finished_at=_utc_now(),
-                        duration_seconds=self.monotonic() - started,
+                        duration_seconds=duration,
                         outcome="interrupted",
                         error=str(exc) or "deployment interrupted",
                     )
                     receipt.steps.append(result)
+                    context.report(
+                        f"[deploy {index:02d}/{len(steps):02d}] INTERRUPTED "
+                        f"{step.id} ({_format_duration(duration)})"
+                    )
                     raise
                 except Exception as exc:
+                    duration = self.monotonic() - started
                     result = StepResult(
                         step_id=step.id,
                         mutating=step.mutating,
                         started_at=started_at,
                         finished_at=_utc_now(),
-                        duration_seconds=self.monotonic() - started,
+                        duration_seconds=duration,
                         outcome="failed",
                         error=str(exc),
                         details=_exception_details(exc),
                     )
                     receipt.steps.append(result)
+                    context.report(
+                        f"[deploy {index:02d}/{len(steps):02d}] FAILED {step.id} "
+                        f"({_format_duration(duration)}): {context.redactor.text(exc)}"
+                    )
                     raise
+                duration = self.monotonic() - started
                 result = StepResult(
                     step_id=step.id,
                     mutating=step.mutating,
                     started_at=started_at,
                     finished_at=_utc_now(),
-                    duration_seconds=self.monotonic() - started,
+                    duration_seconds=duration,
                     outcome=operation_result.outcome,
                     log_reference=operation_result.log_reference,
                     artifacts=operation_result.artifacts,
@@ -668,6 +690,10 @@ class DeployCoordinator:
                 receipt.artifacts.extend(operation_result.artifacts)
                 if step.id == "health.readiness":
                     receipt.health = dict(operation_result.details)
+                context.report(
+                    f"[deploy {index:02d}/{len(steps):02d}] DONE {step.id} "
+                    f"({operation_result.outcome}, {_format_duration(duration)})"
+                )
             receipt.outcome = "success"
         except (KeyboardInterrupt, DeploymentInterrupted) as exc:
             receipt.outcome = "interrupted"
@@ -684,7 +710,22 @@ class DeployCoordinator:
                 except Exception as exc:
                     persist_errors.append(context.redactor.text(exc))
             receipt.persistence_errors = tuple(persist_errors)
+            elapsed = _format_duration(self.monotonic() - deployment_started)
+            if persist_errors:
+                context.report(
+                    f"[deploy] FAILURE in {elapsed}; receipt persistence failed"
+                )
+            else:
+                context.report(f"[deploy] {receipt.outcome.upper()} in {elapsed}")
         return receipt
+
+
+def _format_duration(seconds: float) -> str:
+    rounded = max(0, int(round(seconds)))
+    minutes, remaining = divmod(rounded, 60)
+    if minutes:
+        return f"{minutes}m {remaining:02d}s"
+    return f"{seconds:.1f}s"
 
 
 def _exception_details(exc: Exception) -> Mapping[str, Any]:
@@ -716,6 +757,7 @@ FULL_STEP_ORDER: Tuple[Tuple[str, bool, str], ...] = (
     ("host.restart", True, "restart the app service"),
     ("state.restore", True, "restore preserved operator settings"),
     ("health.readiness", False, "require fresh desired-release readiness"),
+    ("release.prune", True, "retain a bounded rollback-safe app release set"),
 )
 
 PYTHON_STEP_ORDER: Tuple[Tuple[str, bool, str], ...] = (
@@ -729,6 +771,7 @@ PYTHON_STEP_ORDER: Tuple[Tuple[str, bool, str], ...] = (
     ("host.restart", True, "restart the app service"),
     ("state.restore", True, "restore preserved operator settings"),
     ("health.readiness", False, "require fresh desired-release readiness"),
+    ("release.prune", True, "retain a bounded rollback-safe app release set"),
 )
 
 ROLLBACK_STEP_ORDER: Tuple[Tuple[str, bool, str], ...] = (
@@ -739,7 +782,26 @@ ROLLBACK_STEP_ORDER: Tuple[Tuple[str, bool, str], ...] = (
     ("host.restart", True, "restart the app service"),
     ("state.restore", True, "restore preserved operator settings"),
     ("health.readiness", False, "require fresh rollback-release readiness"),
+    ("release.prune", True, "retain a bounded rollback-safe app release set"),
 )
+
+
+STEP_TIMING_EXPECTATIONS: Mapping[str, str] = {
+    "source.validate": "normally <1s",
+    "tests.run": "normally 1-2m",
+    "target.connect": "normally <5s",
+    "app.stage": "normally 20-40s",
+    "receiver.firmware_build": "cached ~1s; cold cache can take ~13m",
+    "host.provision": "normally <5s unless a reboot is required",
+    "receiver.firmware_flash": "skipped ~2s; four receivers ~1.5m",
+    "app.validate": "normally 3-8s",
+    "state.capture": "normally 1-3s",
+    "app.activate": "normally <10s",
+    "host.restart": "normally 1-3s",
+    "state.restore": "normally 5-10s",
+    "health.readiness": "normally 3-30s",
+    "release.prune": "normally <2s after one-time backlog cleanup",
+}
 
 
 def build_steps(mode: str, operations: Mapping[str, Operation]) -> List[Step]:

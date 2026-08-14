@@ -12,6 +12,7 @@ import sys
 
 
 DEFAULT_TAIL_LINES = 40
+LIVE_PROGRESS_PREFIX = "[deploy"
 
 
 def _safe_phase_name(phase: str) -> str:
@@ -55,14 +56,24 @@ def run_captured(
                 process.stdout.close()
             return_code = process.wait()
         else:
-            process = subprocess.run(
+            process = subprocess.Popen(
                 command,
                 stdout=log,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.PIPE,
                 text=True,
                 env=env,
             )
-            return_code = process.returncode
+            assert process.stderr is not None
+            try:
+                for line in process.stderr:
+                    log.write(line)
+                    log.flush()
+                    if line.startswith(LIVE_PROGRESS_PREFIX):
+                        sys.stderr.write(line)
+                        sys.stderr.flush()
+            finally:
+                process.stderr.close()
+            return_code = process.wait()
 
     if return_code:
         lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()

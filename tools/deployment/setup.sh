@@ -24,6 +24,21 @@ fi
 
 ensure_remote_passwordless_sudo
 
+log_info "Ensuring the persistent firmware compiler cache is available..."
+ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
+set -euo pipefail
+
+if command -v ccache >/dev/null 2>&1; then
+  echo "[SUCCESS] ccache already installed"
+  exit 0
+fi
+
+echo "[INFO] Installing ccache via apt"
+sudo apt-get update
+sudo apt-get install -y ccache
+echo "[SUCCESS] ccache installed"
+EOF
+
 log_info "Ensuring PlatformIO is available on the deploy target..."
 ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
 set -euo pipefail

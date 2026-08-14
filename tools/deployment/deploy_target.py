@@ -42,6 +42,8 @@ RELEASE_PATTERN = re.compile(r"[0-9a-f]{64}")
 DEFAULT_RECEIPT_DIR = PurePosixPath("run_state/deploy_receipts")
 DEFAULT_SYSTEMD_UNIT = "ledgrid.service"
 DEFAULT_API_URL = "http://127.0.0.1:5000/api/status"
+PLATFORMIO_BUILD_CACHE = ".platformio-build-cache"
+CCACHE_DIRECTORY = ".ccache"
 
 
 def _path(value: os.PathLike[str] | str) -> Path:
@@ -569,18 +571,34 @@ def build_firmware(root: Path, support_id: Optional[str]) -> Mapping[str, Any]:
     pio = shutil.which("pio") or os.fspath(Path.home() / ".platformio-venv" / "bin" / "pio")
     if not Path(pio).is_file() and shutil.which(pio) is None:
         raise RuntimeError("PlatformIO is unavailable on the target; run setup first")
+    if shutil.which("ccache") is None:
+        raise RuntimeError("ccache is unavailable on the target; run setup first")
+    build_cache = root / "build" / "firmware" / PLATFORMIO_BUILD_CACHE
+    build_cache.mkdir(parents=True, exist_ok=True)
+    ccache_dir = root / "build" / "firmware" / CCACHE_DIRECTORY
+    ccache_dir.mkdir(parents=True, exist_ok=True)
+    build_env = dict(os.environ)
+    build_env["PLATFORMIO_BUILD_CACHE_DIR"] = os.fspath(build_cache)
+    build_env["IDF_CCACHE_ENABLE"] = "1"
+    build_env["CCACHE_DIR"] = os.fspath(ccache_dir)
     version = _command((pio, "--version"))
     if re.search(r"\bversion 6\.1\.19$", version.stdout.strip()) is None:
         raise RuntimeError(
             "PlatformIO 6.1.19 is required on the target; found: "
             f"{version.stdout.strip() or version.stderr.strip() or 'unknown'}"
         )
-    completed = _command((pio, "run", "-e", "esp32-s3-devkitc-1"), cwd=firmware)
+    completed = _command(
+        (pio, "run", "-e", "esp32-s3-devkitc-1"),
+        cwd=firmware,
+        env=build_env,
+    )
     if not binary.is_file():
         raise RuntimeError("firmware build produced no firmware.bin")
     return {
         "outcome": "executed",
         "workspace": os.fspath(workspace),
+        "build_cache": os.fspath(build_cache),
+        "ccache": os.fspath(ccache_dir),
         "firmware_sha256": _sha256_file(binary),
         "output_tail": (completed.stdout + completed.stderr)[-2000:],
     }
@@ -614,8 +632,18 @@ def flash_firmware(
         {
             "DEPLOY_DIR": os.fspath(workspace),
             "DEBUG": "1" if debug else "0",
+            "IDF_CCACHE_ENABLE": "1",
+            "CCACHE_DIR": os.fspath(
+                root / "build" / "firmware" / CCACHE_DIRECTORY
+            ),
         }
     )
+    # The flash helper uploads to all receivers concurrently. PlatformIO's
+    # build-cache directory contains a shared SCons signature database, so
+    # giving every uploader the same directory races its atomic replacement.
+    # The firmware is already built at this point; uploads need only the
+    # workspace-local .pio output and the concurrency-safe compiler cache.
+    env.pop("PLATFORMIO_BUILD_CACHE_DIR", None)
     # Deployment helpers are app-lane source, not support-lane source. Use the
     # explicitly selected candidate helper while directing all build/hash state
     # at the isolated firmware workspace. Falling back to ``current`` retains
@@ -642,6 +670,27 @@ def flash_firmware(
 
 def current_release(root: Path) -> Optional[str]:
     return _app_manager(root).current_release_id()
+
+
+def prune_releases(root: Path, *, retain: int) -> Mapping[str, Any]:
+    manager = _app_manager(root)
+    removed = manager.prune(retain=retain)
+    retained = sorted(
+        path.name
+        for path in manager.releases_dir.iterdir()
+        if (
+            not path.is_symlink()
+            and path.is_dir()
+            and RELEASE_PATTERN.fullmatch(path.name)
+        )
+    ) if manager.releases_dir.exists() else []
+    return {
+        "outcome": "executed" if removed else "skipped",
+        "retain": retain,
+        "current_release": manager.current_release_id(),
+        "removed_releases": list(removed),
+        "retained_releases": retained,
+    }
 
 
 def activate(root: Path, release_id: str) -> Mapping[str, Any]:
@@ -943,6 +992,9 @@ def _parser() -> argparse.ArgumentParser:
     health.add_argument("--api-url", default=DEFAULT_API_URL)
     subparsers.add_parser("record-deploy")
     subparsers.add_parser("reboot")
+    subparsers.add_parser("current-release")
+    prune = subparsers.add_parser("prune-releases")
+    prune.add_argument("--retain", type=int, required=True)
     subparsers.add_parser("inspect")
     return parser
 
@@ -998,6 +1050,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = record_deploy(root)
     elif args.command == "reboot":
         result = reboot_host()
+    elif args.command == "current-release":
+        result = {"current_release": current_release(root)}
+    elif args.command == "prune-releases":
+        result = prune_releases(root, retain=args.retain)
     elif args.command == "inspect":
         result = inspect_target(root)
     else:  # pragma: no cover - argparse guarantees this

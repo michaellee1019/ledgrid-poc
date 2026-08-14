@@ -56,6 +56,30 @@ class _FailingSink:
 
 
 class DeployCoordinatorTests(unittest.TestCase):
+    def test_progress_reports_step_expectations_outcomes_and_total(self):
+        messages = []
+        context = DeployContext(
+            target="wall",
+            mode="test",
+            source_identity={},
+            progress=messages.append,
+        )
+        receipt = DeployCoordinator().run(
+            context,
+            [
+                Step(
+                    "tests.run",
+                    False,
+                    lambda _context: OperationResult(outcome="skipped"),
+                ),
+            ],
+        )
+
+        self.assertEqual(receipt.outcome, "success")
+        self.assertIn("[deploy 01/01] START tests.run; normally 1-2m", messages[0])
+        self.assertIn("DONE tests.run (skipped", messages[1])
+        self.assertRegex(messages[-1], r"^\[deploy\] SUCCESS in ")
+
     def test_each_failure_is_fail_fast_and_persists_atomic_receipt(self):
         for failing_index in range(4):
             with self.subTest(failing_index=failing_index), tempfile.TemporaryDirectory() as temp:
@@ -130,12 +154,14 @@ class DeployCoordinatorTests(unittest.TestCase):
 
     def test_partial_receipt_sink_failure_does_not_rewrite_deployment_outcome(self):
         with tempfile.TemporaryDirectory() as temp:
+            messages = []
             context = DeployContext(
                 target="wall",
                 mode="test",
                 source_identity={},
                 attempt_id="partial",
                 receipt_sinks=(AtomicJSONReceiptStore(Path(temp)), _FailingSink()),
+                progress=messages.append,
             )
             receipt = DeployCoordinator().run(
                 context, [Step("test.one", False, lambda _: None)],
@@ -143,6 +169,10 @@ class DeployCoordinatorTests(unittest.TestCase):
             self.assertEqual(receipt.outcome, "success")
             self.assertEqual(len(receipt.persistence_errors), 1)
             self.assertEqual(json.loads((Path(temp) / "partial.json").read_text())["outcome"], "success")
+            self.assertRegex(
+                messages[-1],
+                r"^\[deploy\] FAILURE in .*; receipt persistence failed$",
+            )
 
     def test_redaction_covers_commands_logs_receipts_artifacts_and_secret_paths(self):
         with tempfile.TemporaryDirectory() as temp:

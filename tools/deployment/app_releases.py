@@ -512,6 +512,63 @@ class AppReleaseManager:
                 releases.append(self.validate(path.name))
         return sorted(releases, key=lambda info: (info.created_at, info.id), reverse=True)
 
+    def prune(self, *, retain: int) -> Tuple[str, ...]:
+        """Remove old, well-formed releases while preserving rollback safety.
+
+        Retention is a total-release ceiling, including ``current``.  Selection
+        uses immutable metadata only; pruning must not re-hash every historical
+        release merely to decide which old directories can be removed.  An
+        unrecognized or malformed directory is left untouched for diagnosis.
+        """
+        if isinstance(retain, bool) or retain < 2:
+            raise ValueError("release retention must preserve at least two releases")
+        if not self.releases_dir.exists():
+            return ()
+
+        current = self.current_release_id()
+        candidates: List[Tuple[str, str, Path]] = []
+        for path in self.releases_dir.iterdir():
+            if (
+                path.is_symlink()
+                or not path.is_dir()
+                or re.fullmatch(r"[0-9a-f]{64}", path.name) is None
+            ):
+                continue
+            try:
+                metadata = json.loads((path / RELEASE_METADATA).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(metadata, dict):
+                continue
+            created_at = metadata.get("created_at")
+            if (
+                metadata.get("id") != path.name
+                or metadata.get("digest") != path.name
+                or not isinstance(created_at, str)
+                or not created_at
+            ):
+                continue
+            candidates.append((created_at, path.name, path))
+
+        candidates.sort(reverse=True)
+        keep = {release_id for _created_at, release_id, _path in candidates[:retain]}
+        if current is not None and current not in keep:
+            keep.add(current)
+            for _created_at, release_id, _path in reversed(candidates):
+                if release_id != current and release_id in keep:
+                    keep.remove(release_id)
+                    break
+
+        removed: List[str] = []
+        for _created_at, release_id, path in reversed(candidates):
+            if release_id in keep:
+                continue
+            self._remove_staging_tree(path)
+            removed.append(release_id)
+        if removed:
+            _fsync_directory(self.releases_dir)
+        return tuple(removed)
+
     def rollback_target(self, requested_release: Optional[str] = None) -> str:
         current = self.current_release_id()
         if requested_release is not None:
@@ -535,6 +592,7 @@ class AppActivation:
     health_check: HealthCheck
     restore_settings: RestoreSettings = lambda: None
     validators: Tuple[Validator, ...] = ()
+    release_retention: int = 5
     previous_release: Optional[str] = field(default=None, init=False)
     restart_boundary: Optional[float] = field(default=None, init=False)
 
@@ -576,6 +634,16 @@ class AppActivation:
             raise CandidateHealthFailed(failure) from candidate_error
         return OperationResult(details=dict(health))
 
+    def prune_operation(self, _context: Any) -> OperationResult:
+        removed = self.manager.prune(retain=self.release_retention)
+        return OperationResult(
+            outcome="executed" if removed else "skipped",
+            details={
+                "retain": self.release_retention,
+                "removed_releases": list(removed),
+            },
+        )
+
     def _restore_after_failure(self, candidate_error: Exception) -> ActivationFailure:
         if self.previous_release is None:
             return ActivationFailure(
@@ -613,6 +681,7 @@ class AppActivation:
             "host.restart": self.restart_operation,
             "state.restore": self.restore_settings_operation,
             "health.readiness": self.readiness_operation,
+            "release.prune": self.prune_operation,
         }
 
 

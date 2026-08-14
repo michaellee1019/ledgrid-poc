@@ -43,13 +43,33 @@ Use `just` recipes rather than invoking deployment helpers directly:
 `deploy-no-firmware` is retained as a compatibility alias for
 `deploy-python`; use the canonical name in new automation and documentation.
 
-Successful deployments are intentionally quiet. Captured command logs remain
-under ignored `.deploy-logs/`; append-only attempt receipts are required both
-locally in `.deploy-logs/receipts/` and on the target in
-`run_state/deploy_receipts/`. A missing receipt copy makes the command fail even
-when the wall operation itself succeeded. A failure prints its phase, exit
-status, relevant log tail, and complete log path. Set `DEBUG=1` for leaf-helper
-diagnostics or use the verbose recipe to stream phase output.
+Deployments print one start/completion line per coordinator step, including a
+normal timing expectation and the measured duration. Detailed command output
+remains captured under ignored `.deploy-logs/`; append-only attempt receipts
+are required both locally in `.deploy-logs/receipts/` and on the target in
+`run_state/deploy_receipts/`. A missing receipt copy makes the command fail
+even when the wall operation itself succeeded. A failure prints its phase,
+exit status, relevant log tail, and complete log path. Set `DEBUG=1` for
+leaf-helper diagnostics or use the verbose recipe to stream the final receipt
+as well.
+
+### Timing expectations
+
+These are operating ranges, not timeouts. The command identifies the active
+phase so an operator can distinguish expected compilation from a stalled SSH
+or health operation.
+
+| Full-deploy situation | Expected elapsed time | Investigate after |
+| --- | ---: | ---: |
+| App changed; receiver firmware already installed | 2–3 minutes | 4 minutes |
+| Receiver binary already built but four boards need flashing | 4–5 minutes | 6 minutes |
+| Firmware changed with a populated compiler cache | 5–8 minutes | 10 minutes |
+| First firmware build after cache reset | 16–18 minutes | 19 minutes |
+
+`just deploy-python` is the normal 2–3 minute path for app-only changes. The
+full flow deliberately spends about 1–2 minutes in the local regression gate.
+`TEST=false` is an explicit exception for an operator who has intentionally
+accepted skipping that gate, not the normal way to meet the timing range.
 
 ## First deployment
 
@@ -83,11 +103,14 @@ once; subsequent commands that set `SSH_KEY` do not consult the agent for other
 identities.
 
 Setup installs pinned PlatformIO 6.1.19 in a dedicated environment on the Pi
-and verifies serial permissions. Firmware uses the immutable pioarduino
-`55.03.39` platform input. The full deployment applies the supported SPI boot
-configuration and reports whether a reboot is required. After that reboot,
-confirm the expected `/dev/spidev0.0`, `0.1`, `1.0`, and `1.1` nodes and rerun
-the full deployment.
+and installs `ccache` before verifying serial permissions. Firmware uses the
+immutable pioarduino `55.03.39` platform input. Content-addressed firmware
+workspaces share a persistent PlatformIO cache and ESP-IDF compiler cache below
+`build/firmware/`, so framework and unchanged source objects survive a new
+firmware digest without weakening the immutable source/workspace boundary. The
+full deployment applies the supported SPI boot configuration and reports
+whether a reboot is required. After that reboot, confirm the expected
+`/dev/spidev0.0`, `0.1`, `1.0`, and `1.1` nodes and rerun the full deployment.
 
 ## What is deployed
 
@@ -124,7 +147,8 @@ preset overlay is never the source of curated content.
 `deploy-precheck`. It then runs the coordinator's stable full sequence: source,
 tests, target connection, immutable app stage, receiver build, host provision,
 receiver flash reconciliation, candidate validation, settings capture,
-activation, restart, settings restoration, and fresh health. The Pi runtime is
+activation, restart, settings restoration, fresh health, and rollback-safe
+release pruning. The Pi runtime is
 selected through an atomic `venv` symlink
 to a fresh, digest-addressed `.venvs/` environment keyed by the hash-pinned
 runtime lock and the Pi Python/platform identity. A candidate environment must
@@ -164,9 +188,13 @@ from the frozen source under `releases/<sha256>`, validates every digest, mode,
 and shared-state link, then atomically selects `current`. Presets, `run_state`,
 logs, environments, calibration, firmware, and the receiver library stay
 outside releases. The coordinated rollback path contains only source/release
-validation, capture, activate, restart, restore, and fresh health; its step
-policy cannot acquire provision, build, reboot, or flash operations. No release
-garbage collection ships in Phase 0.
+validation, capture, activate, restart, restore, fresh health, and app-release
+retention; its step policy cannot acquire provision, build, reboot, or flash
+operations. No release is pruned until after fresh health acceptance. Five
+valid app releases are kept by default, including the active release, and
+malformed or unrecognized release directories are preserved for diagnosis.
+Override the total ceiling with `DEPLOY_RETAIN_RELEASES`; values below two are
+rejected so one rollback remains.
 
 Every release contains `.release.json`. Startup accepts that identity only when
 the lowercase SHA-256 digest matches both its content-addressed directory and

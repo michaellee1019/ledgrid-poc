@@ -184,7 +184,7 @@ class _FakeTarget:
             return {"release_id": self.candidate, "digest": self.candidate}
         if command == "capture-state":
             return {"captured": True}
-        if command == "inspect":
+        if command == "current-release":
             return {"current_release": self.previous}
         if command == "activate":
             return {
@@ -204,6 +204,8 @@ class _FakeTarget:
             }
         if command == "record-deploy":
             return {"recorded": True}
+        if command == "prune-releases":
+            return {"outcome": "skipped", "retain": int(args[1]), "removed_releases": []}
         raise AssertionError(f"unexpected target command: {command} {args}")
 
 
@@ -626,10 +628,10 @@ class TargetFirmwareBuildTests(unittest.TestCase):
             workspace = root / "workspace"
             firmware = workspace / "firmware/esp32"
             firmware.mkdir(parents=True)
-            commands: list[tuple[str, ...]] = []
+            calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
 
-            def command(args, **_kwargs):
-                commands.append(tuple(args))
+            def command(args, **kwargs):
+                calls.append((tuple(args), kwargs))
                 if args[-1] == "--version":
                     return subprocess.CompletedProcess(
                         args, 0, "PlatformIO Core, version 6.1.19\n", "",
@@ -655,7 +657,7 @@ class TargetFirmwareBuildTests(unittest.TestCase):
 
             self.assertEqual(result["outcome"], "executed")
             self.assertEqual(
-                commands,
+                [args for args, _kwargs in calls],
                 [
                     ("/fake/pio", "--version"),
                     ("/fake/pio", "run", "-e", "esp32-s3-devkitc-1"),
@@ -664,9 +666,58 @@ class TargetFirmwareBuildTests(unittest.TestCase):
             self.assertFalse(
                 (firmware / ".pio/build/esp32-s3-devkitc-1-local-canary").exists(),
             )
+            build_kwargs = calls[1][1]
+            self.assertEqual(
+                build_kwargs["env"]["PLATFORMIO_BUILD_CACHE_DIR"],
+                os.fspath(root / "build/firmware/.platformio-build-cache"),
+            )
+            self.assertEqual(build_kwargs["env"]["IDF_CCACHE_ENABLE"], "1")
+            self.assertEqual(
+                build_kwargs["env"]["CCACHE_DIR"],
+                os.fspath(root / "build/firmware/.ccache"),
+            )
 
 
 class TargetFirmwareFailureTests(unittest.TestCase):
+    def test_parallel_flash_does_not_share_platformio_scons_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            helper = root / "current/tools/deployment/flash_esp32.sh"
+            helper.parent.mkdir(parents=True)
+            helper.write_text("#!/bin/bash\n", encoding="utf-8")
+            ports = [f"/dev/ttyACM{index}" for index in range(4)]
+            with (
+                patch.dict(
+                    os.environ,
+                    {"PLATFORMIO_BUILD_CACHE_DIR": "/inherited/shared-cache"},
+                ),
+                patch.object(
+                    deploy_target, "_copy_support_workspace", return_value=(workspace, True),
+                ),
+                patch.object(deploy_target.glob, "glob", side_effect=(ports, [])),
+                patch.object(
+                    deploy_target,
+                    "_command",
+                    return_value=subprocess.CompletedProcess(
+                        ("bash",), 0, "Flashed all receivers", "",
+                    ),
+                ) as command,
+            ):
+                result = deploy_target.flash_firmware(
+                    root, "a" * 64, receiver_count=4, debug=False,
+                )
+
+            self.assertEqual(result["outcome"], "executed")
+            flash_env = command.call_args.kwargs["env"]
+            self.assertNotIn("PLATFORMIO_BUILD_CACHE_DIR", flash_env)
+            self.assertEqual(flash_env["IDF_CCACHE_ENABLE"], "1")
+            self.assertEqual(
+                flash_env["CCACHE_DIR"],
+                os.fspath(root / "build/firmware/.ccache"),
+            )
+
     def test_flash_failure_exit_or_failure_marker_never_becomes_success(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
@@ -900,12 +951,13 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                 "flash-firmware",
                 "validate-app",
                 "capture-state",
-                "inspect",
+                "current-release",
                 "activate",
                 "restart",
                 "restore-state",
                 "health",
                 "record-deploy",
+                "prune-releases",
             ],
         )
 
@@ -991,6 +1043,8 @@ class _RollbackTarget:
             return {"release_id": args[0], "digest": args[0]}
         if command == "capture-state":
             return {"captured": True}
+        if command == "current-release":
+            return {"current_release": self.current}
         if command == "activate":
             before = self.current
             self.current = args[0]
@@ -1013,6 +1067,8 @@ class _RollbackTarget:
             }
         if command == "record-deploy":
             return {"recorded": True}
+        if command == "prune-releases":
+            return {"outcome": "skipped", "retain": int(args[1]), "removed_releases": []}
         if command == "cleanup-snapshot":
             return {"removed": True}
         raise AssertionError(f"unexpected rollback target command: {command} {args}")
@@ -1073,12 +1129,13 @@ class RollbackEntrypointIntegrationTests(unittest.TestCase):
                 "inspect",
                 "validate-app",
                 "capture-state",
-                "inspect",
+                "current-release",
                 "activate",
                 "restart",
                 "restore-state",
                 "health",
                 "record-deploy",
+                "prune-releases",
             ],
         )
         forbidden = {

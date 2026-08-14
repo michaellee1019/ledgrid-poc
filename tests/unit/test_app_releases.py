@@ -186,6 +186,28 @@ class AppReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already active"):
             self.manager.rollback_target(second.id)
 
+    def test_prune_retains_current_and_a_bounded_recent_rollback_set(self):
+        releases = []
+        for version in range(6):
+            releases.append(self.manager.stage(self.app_files(f"version-{version}")))
+        self.manager.activate(releases[1].id)
+
+        removed = self.manager.prune(retain=3)
+        remaining = {
+            path.name for path in self.manager.releases_dir.iterdir() if path.is_dir()
+        }
+
+        self.assertEqual(len(remaining), 3)
+        self.assertIn(releases[1].id, remaining, "current is never pruned")
+        self.assertEqual(
+            remaining - {releases[1].id},
+            {releases[-1].id, releases[-2].id},
+        )
+        self.assertEqual(set(removed), {release.id for release in releases} - remaining)
+        self.assertEqual(self.manager.current_release_id(), releases[1].id)
+        with self.assertRaisesRegex(ValueError, "at least two"):
+            self.manager.prune(retain=1)
+
     def test_unhealthy_activation_restores_previous_healthy_release(self):
         first = self.manager.stage(self.app_files("healthy"))
         self.manager.activate(first.id)
@@ -244,9 +266,15 @@ class AppReleaseTests(unittest.TestCase):
         operations = activation.operations()
         self.assertEqual(
             set(operations),
-            {"app.validate", "app.activate", "host.restart", "state.restore", "health.readiness"},
+            {
+                "app.validate", "app.activate", "host.restart", "state.restore",
+                "health.readiness", "release.prune",
+            },
         )
-        for name in ("app.validate", "app.activate", "host.restart", "state.restore", "health.readiness"):
+        for name in (
+            "app.validate", "app.activate", "host.restart", "state.restore",
+            "health.readiness", "release.prune",
+        ):
             operations[name](None)
         self.assertEqual(self.manager.current_release_id(), first.id)
         self.assertFalse(any("build" in item or "flash" in item or "provision" in item for item in calls))

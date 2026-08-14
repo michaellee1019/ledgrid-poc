@@ -81,6 +81,7 @@ SUPPORT_FILES = frozenset({"requirements-platformio.lock"})
 DEFAULT_TARGET = "ledgridwall@ledgridwall.local"
 DEFAULT_DEPLOY_DIR = "ledgrid-pod"
 DEFAULT_LOCAL_RECEIPTS = Path(".deploy-logs") / "receipts"
+DEFAULT_RELEASE_RETENTION = 5
 DEFAULT_SSH_OPTIONS = (
     "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
     "-o", "StrictHostKeyChecking=accept-new",
@@ -419,6 +420,7 @@ class DeploymentConfig:
     strips: int = 32
     leds_per_strip: int = 138
     receiver_count: int = 4
+    release_retention: int = DEFAULT_RELEASE_RETENTION
     health_timeout: float = 30.0
     ssh_options: tuple[str, ...] = DEFAULT_SSH_OPTIONS
     local_receipts: Path = DEFAULT_LOCAL_RECEIPTS
@@ -438,6 +440,8 @@ class DeploymentConfig:
         ):
             if isinstance(value, bool) or value <= 0:
                 raise ValueError(f"{label} must be a positive integer")
+        if isinstance(self.release_retention, bool) or self.release_retention < 2:
+            raise ValueError("release_retention must preserve at least two releases")
 
 
 @dataclass(frozen=True)
@@ -714,7 +718,7 @@ class CoordinatorDeployment:
 
     def _activate(self, context: DeployContext) -> OperationResult:
         candidate = str(context.state["release_id"])
-        before = self.target.run("inspect").get("current_release")
+        before = self.target.run("current-release").get("current_release")
         context.state["previous_release"] = before
         try:
             result = self.target.run("activate", candidate)
@@ -723,7 +727,7 @@ class CoordinatorDeployment:
             # acknowledgement was lost. Resolve that ambiguous boundary and
             # compensate just as rigorously as later restart/restore failures.
             try:
-                selected = self.target.run("inspect").get("current_release")
+                selected = self.target.run("current-release").get("current_release")
             except Exception:
                 selected = None
             if selected == candidate and before != candidate:
@@ -872,6 +876,23 @@ class CoordinatorDeployment:
 
         return self._post_activation(execute)
 
+    def _prune(self, _context: DeployContext) -> OperationResult:
+        try:
+            result = self.target.run(
+                "prune-releases", "--retain", str(self.config.release_retention)
+            )
+        except Exception as exc:
+            # Retention maintenance happens only after fresh health acceptance.
+            # It must not roll back or fail an otherwise healthy deployment.
+            return OperationResult(
+                outcome="warning",
+                details={"retain": self.config.release_retention, "error": str(exc)},
+            )
+        return OperationResult(
+            outcome=str(result.get("outcome", "executed")),
+            details=result,
+        )
+
     def operations(self) -> Mapping[str, Operation]:
         operations: dict[str, Operation] = {
             "source.validate": self._source_validate,
@@ -884,6 +905,7 @@ class CoordinatorDeployment:
             "host.restart": self._restart,
             "state.restore": self._restore,
             "health.readiness": self._health,
+            "release.prune": self._prune,
         }
         if self.config.mode == "full":
             operations.update(
@@ -992,6 +1014,7 @@ class CoordinatorRollback(CoordinatorDeployment):
             "host.restart": self._restart,
             "state.restore": self._restore,
             "health.readiness": self._health,
+            "release.prune": self._prune,
         }
 
     def steps(self):
@@ -1020,6 +1043,7 @@ def _context(config: DeploymentConfig) -> DeployContext:
         redactor=redactor,
         command_runner=local_runner,
         ssh_runner=ssh_runner,
+        progress=lambda message: print(message, file=sys.stderr, flush=True),
         receipt_sinks=(
             AtomicJSONReceiptStore(local_receipts),
             SSHAtomicJSONReceiptStore(
@@ -1211,6 +1235,11 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--strips", type=int, default=int(os.environ.get("STRIPS", "32")))
     parser.add_argument("--leds-per-strip", type=int, default=int(os.environ.get("LEDS_PER_STRIP", "138")))
     parser.add_argument("--receivers", type=int, default=int(os.environ.get("EXPECTED_ESP32_DEVICES", "4")))
+    parser.add_argument(
+        "--retain-releases",
+        type=int,
+        default=int(os.environ.get("DEPLOY_RETAIN_RELEASES", str(DEFAULT_RELEASE_RETENTION))),
+    )
 
 
 def _add_rollback_options(parser: argparse.ArgumentParser) -> None:
@@ -1223,6 +1252,11 @@ def _add_rollback_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--strips", type=int, default=int(os.environ.get("STRIPS", "32")))
     parser.add_argument("--leds-per-strip", type=int, default=int(os.environ.get("LEDS_PER_STRIP", "138")))
     parser.add_argument("--receivers", type=int, default=int(os.environ.get("EXPECTED_ESP32_DEVICES", "4")))
+    parser.add_argument(
+        "--retain-releases",
+        type=int,
+        default=int(os.environ.get("DEPLOY_RETAIN_RELEASES", str(DEFAULT_RELEASE_RETENTION))),
+    )
     parser.set_defaults(
         mode="python",
         policy="clean",
@@ -1245,6 +1279,7 @@ def _add_readonly_target_options(parser: argparse.ArgumentParser) -> None:
         strips=32,
         leds_per_strip=138,
         receivers=4,
+        retain_releases=DEFAULT_RELEASE_RETENTION,
     )
 
 
@@ -1263,6 +1298,7 @@ def _config(args: argparse.Namespace) -> DeploymentConfig:
         strips=args.strips,
         leds_per_strip=args.leds_per_strip,
         receiver_count=args.receivers,
+        release_retention=args.retain_releases,
         ssh_options=_ssh_options(root, args.ssh_key),
     )
 

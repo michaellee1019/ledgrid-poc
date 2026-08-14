@@ -35,6 +35,30 @@ class CapturedRunnerTests(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(log.read_text(encoding="utf-8"), "success detail\n")
 
+    def test_default_mode_streams_only_structured_deploy_progress(self):
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            status, log = run_captured(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import sys; "
+                        "print('[deploy 01/02] START tests.run', file=sys.stderr); "
+                        "print('hidden diagnostic', file=sys.stderr); "
+                        "print('receipt')"
+                    ),
+                ],
+                phase="deploy.full",
+                log_dir=self.log_dir,
+            )
+
+        self.assertEqual(status, 0)
+        self.assertEqual(stderr.getvalue(), "[deploy 01/02] START tests.run\n")
+        captured = log.read_text(encoding="utf-8")
+        self.assertIn("hidden diagnostic", captured)
+        self.assertIn("receipt", captured)
+
     def test_failure_reports_phase_tail_and_log_path(self):
         stderr = io.StringIO()
         with redirect_stderr(stderr):

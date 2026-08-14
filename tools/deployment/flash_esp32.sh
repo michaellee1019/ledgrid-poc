@@ -146,11 +146,23 @@ log_info "Building firmware..."
 log_info "Flashing firmware to $port_count ESP32 device(s) in parallel..."
 pids=()
 flash_logs=()
+upload_cache_root="$DEPLOY_DIR/.platformio-upload-cache"
+mkdir -p "$upload_cache_root"
 while IFS= read -r port; do
   log_file=$(mktemp)
   flash_logs+=("$port|$log_file")
   log_info "Uploading to $port (background)"
-  (cd "$FIRMWARE_DIR" && $PIO_CMD run -e esp32-s3-devkitc-1 -t upload --upload-port "$port" > "$log_file" 2>&1) &
+  # The firmware has already been built above. ``nobuild`` prevents each
+  # uploader from walking the compile graph again, while a per-port cache keeps
+  # concurrent SCons signature writes isolated from one another.
+  port_cache="$upload_cache_root/${port##*/}"
+  mkdir -p "$port_cache"
+  (
+    cd "$FIRMWARE_DIR"
+    PLATFORMIO_BUILD_CACHE_DIR="$port_cache" \
+      $PIO_CMD run -e esp32-s3-devkitc-1 -t nobuild -t upload \
+      --upload-port "$port" > "$log_file" 2>&1
+  ) &
   pids+=($!)
 done <<< "$ports"
 

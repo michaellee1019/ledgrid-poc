@@ -149,6 +149,15 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn(failure, script)
         self.assertIn(f"{failure}\n  exit 1", script)
 
+    def test_parallel_firmware_upload_reuses_binary_with_isolated_scons_state(self):
+        script = (ROOT / "tools/deployment/flash_esp32.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("-t nobuild -t upload", script)
+        self.assertIn('upload_cache_root="$DEPLOY_DIR/.platformio-upload-cache"', script)
+        self.assertIn('port_cache="$upload_cache_root/${port##*/}"', script)
+        self.assertIn('PLATFORMIO_BUILD_CACHE_DIR="$port_cache"', script)
+
     def test_remote_recovery_helpers_use_the_supervised_service(self):
         stop = (ROOT / "tools/deployment/stop_remote.sh").read_text(encoding="utf-8")
         diagnose = (ROOT / "tools/diagnostics/remote_diagnostics.sh").read_text(
