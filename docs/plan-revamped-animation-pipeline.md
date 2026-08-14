@@ -2800,12 +2800,18 @@ Portable-slice evidence and open gates (2026-08-13):
   skipped both unchanged receiver firmware build and flash, restored the exact
   scene, and passed readiness. Live status reports that exact mapping, active
   hybrid ownership, zero publisher failures, and zero queue/display errors.
-  The fresh wall-only webcam crop visibly reads contiguous `04:10` digits and
-  shows one continuous diagonal rainbow with no center chevron across all four
-  lanes. Durable evidence is
-  `run_state/physical-acceptance/20260814-rainbow-clock-independent-directions.png`
-  with SHA-256
-  `401b9a1a7e3967a9cbfcd7a8cf51283843118c51f796bf4438e3de678114937e`.
+  The first later status sample caught one impossible transient readable return
+  (`receiver 0 logical_device=7`) and the manager correctly failed closed to the
+  Python fallback. A controlled service restart reprovisioned exact identities
+  0/1 and restored the saved native scene. Five samples over 50 seconds then
+  retained exact IDs 0/1, active compiled rainbow, clock renewals increasing
+  from 35 to 75, zero publisher failures, and zero queue/display errors. The
+  final post-stability wall-only webcam crop visibly reads contiguous numerals
+  and shows one continuous diagonal rainbow with no center chevron across all
+  four lanes. Durable evidence is
+  `run_state/physical-acceptance/20260814-rainbow-clock-final-stable.png` with
+  SHA-256
+  `55a664758b1fb3f57c55cae0e0bc7fc15c69d3cac6973d57fbcfca48ff8667c4`.
 - [ ] Receiver timing percentiles, strict readable-receiver canary, optional
   explicitly degraded four-wall visual showcase, disconnect/expiry observation,
   and restored streamed acceptance remain physical work. No physical foreground
