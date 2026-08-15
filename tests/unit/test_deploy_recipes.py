@@ -159,17 +159,20 @@ class DeployRecipeTests(unittest.TestCase):
         )
         self.assertNotIn("-t nobuild", script)
         self.assertIn("Flashing firmware to $port_count ESP32 device(s) sequentially", script)
-        self.assertIn("verify_firmware_binary", script)
+        self.assertIn("verify_firmware_installation", script)
         self.assertIn('if [ "${FIRMWARE_PREBUILT:-0}" = "1" ]', script)
         self.assertIn('FIRMWARE_ENVIRONMENT:-esp32-s3-devkitc-1', script)
-        self.assertIn('printf \'%s\\n\' "$firmware_environment"', script)
-        self.assertIn('printf \'%s\\n\' "$actual_firmware_sha256"', script)
-        self.assertIn('hash_storage="$(readlink -f -- "$HASH_FILE")"', script)
-        self.assertIn('mktemp "${hash_storage}.tmp.XXXXXX"', script)
-        self.assertIn('mv "$marker_temporary" "$hash_storage"', script)
+        self.assertIn('--environment "$firmware_environment"', script)
+        self.assertIn('current_hash="$actual_installation_digest"', script)
+        self.assertIn("EXPECTED_FIRMWARE_INSTALLATION_DIGEST", script)
+        self.assertIn("firmware_artifacts.py", script)
+        self.assertIn('hash_storage="$(resolve_hash_storage)"', script)
+        self.assertIn("EXPECTED_FIRMWARE_HASH_FILE", script)
+        self.assertIn('mktemp "${validated_hash_storage}.tmp.XXXXXX"', script)
+        self.assertIn('mv "$marker_temporary" "$validated_hash_storage"', script)
         self.assertNotIn('mv "$marker_temporary" "$HASH_FILE"', script)
         self.assertLess(
-            script.index("verify_firmware_binary\nelse"),
+            script.index("verify_firmware_installation\nelse"),
             script.index('if [ "$current_hash" = "$previous_hash" ]'),
             "the exact selected binary must be verified before early skip",
         )
@@ -210,7 +213,11 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn('platform = native@1.2.1', platformio)
         self.assertIn('platformio==${EXPECTED_PLATFORMIO_VERSION}', setup)
         self.assertIn("version 6\\.1\\.19", flash)
-        self.assertIn("extra_script.py", flash)
+        artifact_identity = (
+            ROOT / "tools/deployment/firmware_artifacts.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("platformio.ini", artifact_identity)
+        self.assertIn("sdkconfig.defaults", artifact_identity)
 
     def test_fast_deploy_can_recover_when_old_web_process_is_broken(self):
         script = (ROOT / "tools/deployment/deploy_python.sh").read_text(encoding="utf-8")

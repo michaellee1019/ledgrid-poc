@@ -1,9 +1,11 @@
-"""Deterministic, in-memory installation-profile transaction fake.
+"""Portable installation-profile transaction engine and in-memory fake.
 
-This module is portable acceptance infrastructure for the future receiver
-profile lifecycle.  It deliberately performs no transport, filesystem, SPI, or
+The engine operates on the structural :class:`InstallationProfileWall` and
+:class:`InstallationProfileReceiver` protocols, so a transport adapter can use
+the same preflight/stage/verify/commit/compensate orchestration as the fake.
+This module itself deliberately performs no transport, filesystem, SPI, or
 firmware work.  One candidate binds a canonical/global profile content ID to
-four receiver-specific payload content IDs, while each fake receiver models a
+four receiver-specific payload content IDs, while the included fake models a
 bounded disposable cache and its active, staged, and rollback pins.
 """
 
@@ -13,7 +15,11 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Final
+from typing import Final, Protocol
+
+from animation.core.installation_profile import encode_installation_profile
+from animation.core.installation_profile_library import ResolvedInstallationProfile
+from animation.core.installation_profile_topology import slice_installation_profile
 
 
 RECEIVER_COUNT: Final = 4
@@ -21,7 +27,12 @@ RECEIVER_IDS: Final = tuple(range(RECEIVER_COUNT))
 
 
 class InstallationProfileTransactionError(RuntimeError):
-    """An operational fake-receiver profile transaction failed."""
+    """An operational receiver-profile transaction failed."""
+
+
+# Adapter transport/filesystem failures are operational and compensateable.
+# Programmer errors and BaseException control flow deliberately propagate.
+_OPERATIONAL_EXCEPTIONS: Final = (InstallationProfileTransactionError, OSError)
 
 
 def _sha256(payload: bytes) -> str:
@@ -120,6 +131,52 @@ class InstallationProfileCandidate:
         )
 
 
+def candidate_from_resolved(
+    resolved: ResolvedInstallationProfile,
+) -> InstallationProfileCandidate:
+    """Build the exact four canonical receiver payloads from a managed resolve.
+
+    The helper is intentionally strict: the global encoded view must match its
+    managed content ID, receiver keys must be exactly ``0..3``, and every
+    receiver view must equal a fresh slice of the global profile under the
+    resolved topology.  This prevents an adapter from installing bytes whose
+    logical receiver binding drifted from the topology used during resolution.
+    """
+
+    if not isinstance(resolved, ResolvedInstallationProfile):
+        raise TypeError("resolved must be a ResolvedInstallationProfile")
+    canonical_global = encode_installation_profile(resolved.global_profile)
+    if type(resolved.encoded) is not bytes or resolved.encoded != canonical_global:
+        raise ValueError("resolved global profile bytes are not canonical")
+    if canonical_global[68:100].hex() != resolved.id:
+        raise ValueError("resolved profile ID does not match its canonical content ID")
+    if not isinstance(resolved.receiver_profiles, Mapping):
+        raise TypeError("resolved receiver_profiles must be a mapping")
+    keys = tuple(resolved.receiver_profiles.keys())
+    if (
+        len(keys) != RECEIVER_COUNT
+        or any(type(key) is not int for key in keys)
+        or set(keys) != set(RECEIVER_IDS)
+    ):
+        raise ValueError(
+            "resolved receiver_profiles must contain receiver IDs 0,1,2,3 exactly once"
+        )
+
+    expected_profiles = slice_installation_profile(
+        resolved.global_profile, resolved.topology
+    )
+    payloads: dict[int, bytes] = {}
+    for receiver_id in RECEIVER_IDS:
+        payload = encode_installation_profile(resolved.receiver_profiles[receiver_id])
+        expected = encode_installation_profile(expected_profiles[receiver_id])
+        if payload != expected:
+            raise ValueError(
+                f"resolved receiver profile {receiver_id} does not match its topology slice"
+            )
+        payloads[receiver_id] = payload
+    return InstallationProfileCandidate(resolved.id, payloads)
+
+
 class InstallationProfileTransactionPhase(str, Enum):
     PREFLIGHT = "preflight"
     STAGE = "stage"
@@ -184,7 +241,9 @@ class InstallationProfileWallHealth(str, Enum):
 
 
 @dataclass(frozen=True)
-class FakeInstallationProfileReceiverStatus:
+class InstallationProfileReceiverStatus:
+    """Immutable receiver state consumed by wall and transaction adapters."""
+
     receiver_id: int
     capacity_bytes: int
     reserve_bytes: int
@@ -205,15 +264,17 @@ class FakeInstallationProfileReceiverStatus:
 
 
 @dataclass(frozen=True)
-class FakeInstallationProfileWallStatus:
+class InstallationProfileWallStatus:
+    """Immutable four-receiver health summary returned by a wall adapter."""
+
     health: InstallationProfileWallHealth
     active_profile_id: str | None
     mixed_generation: bool
     receiver_statuses: tuple[
-        FakeInstallationProfileReceiverStatus,
-        FakeInstallationProfileReceiverStatus,
-        FakeInstallationProfileReceiverStatus,
-        FakeInstallationProfileReceiverStatus,
+        InstallationProfileReceiverStatus,
+        InstallationProfileReceiverStatus,
+        InstallationProfileReceiverStatus,
+        InstallationProfileReceiverStatus,
     ]
 
     @property
@@ -235,7 +296,7 @@ class InstallationProfileTransactionResult:
     compensated: bool
     error: str | None
     operations: tuple[InstallationProfileTransactionOperation, ...]
-    wall_status: FakeInstallationProfileWallStatus
+    wall_status: InstallationProfileWallStatus
 
 
 @dataclass(frozen=True)
@@ -248,10 +309,74 @@ class _ProfileCachePreflight:
 
 
 @dataclass(frozen=True)
-class _ProfileReceiverSnapshot:
+class InstallationProfileReceiverSnapshot:
+    """Immutable active/staged/rollback state captured before mutation."""
+
     staged_binding: InstallationProfileCacheBinding | None
     active_binding: InstallationProfileCacheBinding | None
     rollback_binding: InstallationProfileCacheBinding | None
+
+
+# Compatibility names remain part of the fake's public API.
+FakeInstallationProfileReceiverStatus = InstallationProfileReceiverStatus
+FakeInstallationProfileWallStatus = InstallationProfileWallStatus
+_ProfileReceiverSnapshot = InstallationProfileReceiverSnapshot
+
+
+class InstallationProfileReceiver(Protocol):
+    """Structural receiver boundary required by the transaction engine.
+
+    Concrete adapters own cache/transport details. Plans returned by
+    ``preflight_profile`` are opaque to the engine and are passed back only to
+    the same receiver's ``stage_profile`` call. Adapters translate protocol and
+    state failures to ``InstallationProfileTransactionError`` and may propagate
+    transport/filesystem ``OSError`` subclasses; both trigger compensation.
+    Programmer errors deliberately propagate.
+    """
+
+    receiver_id: int
+
+    @property
+    def active_binding(self) -> InstallationProfileCacheBinding | None: ...
+
+    @property
+    def staged_binding(self) -> InstallationProfileCacheBinding | None: ...
+
+    def binding_is_valid(
+        self, binding: InstallationProfileCacheBinding | None
+    ) -> bool: ...
+
+    def transaction_snapshot(self) -> InstallationProfileReceiverSnapshot: ...
+
+    def preflight_profile(
+        self, binding: InstallationProfileCacheBinding, payload: bytes
+    ) -> object: ...
+
+    def stage_profile(
+        self, plan: object, payload: bytes, *, corrupt_payload: bool
+    ) -> None: ...
+
+    def verify_profile(
+        self, binding: InstallationProfileCacheBinding, payload: bytes
+    ) -> None: ...
+
+    def commit_profile(
+        self,
+        binding: InstallationProfileCacheBinding,
+        prior_active: InstallationProfileCacheBinding | None,
+    ) -> None: ...
+
+    def compensate_profile(
+        self, snapshot: InstallationProfileReceiverSnapshot
+    ) -> None: ...
+
+
+class InstallationProfileWall(Protocol):
+    """Structural four-receiver wall boundary required by the engine."""
+
+    receivers: Sequence[InstallationProfileReceiver]
+
+    def status(self) -> InstallationProfileWallStatus: ...
 
 
 class FakeInstallationProfileReceiver:
@@ -340,6 +465,13 @@ class FakeInstallationProfileReceiver:
     ) -> bool:
         return binding is None or self._payload_is_valid(binding.payload_digest)
 
+    def binding_is_valid(
+        self, binding: InstallationProfileCacheBinding | None
+    ) -> bool:
+        """Return whether a binding is absent or backed by valid cached bytes."""
+
+        return self._binding_is_valid(binding)
+
     def cache_inactive(self, payload: bytes) -> str:
         """Seed one unpinned content-addressed entry for deterministic tests."""
 
@@ -408,11 +540,11 @@ class FakeInstallationProfileReceiver:
         corrupted[0] ^= 0xFF
         self._cache[digest] = bytes(corrupted)
 
-    def status(self) -> FakeInstallationProfileReceiverStatus:
+    def status(self) -> InstallationProfileReceiverStatus:
         integrity_ok = all(
             _sha256(payload) == digest for digest, payload in self._cache.items()
         )
-        return FakeInstallationProfileReceiverStatus(
+        return InstallationProfileReceiverStatus(
             receiver_id=self.receiver_id,
             capacity_bytes=self.capacity_bytes,
             reserve_bytes=self.reserve_bytes,
@@ -438,6 +570,11 @@ class FakeInstallationProfileReceiver:
             active_binding=self._active_binding,
             rollback_binding=self._rollback_binding,
         )
+
+    def transaction_snapshot(self) -> InstallationProfileReceiverSnapshot:
+        """Capture the binding state needed for exact compensation."""
+
+        return self._snapshot()
 
     def _preflight(
         self,
@@ -497,6 +634,13 @@ class FakeInstallationProfileReceiver:
             write_required=write_required,
         )
 
+    def preflight_profile(
+        self, binding: InstallationProfileCacheBinding, payload: bytes
+    ) -> object:
+        """Plan a candidate without mutating receiver state."""
+
+        return self._preflight(binding, payload)
+
     def _stage(
         self,
         plan: _ProfileCachePreflight,
@@ -551,6 +695,15 @@ class FakeInstallationProfileReceiver:
         if self.used_bytes > self.usable_bytes:
             raise AssertionError("profile cache reserve was violated after staging")
 
+    def stage_profile(
+        self, plan: object, payload: bytes, *, corrupt_payload: bool
+    ) -> None:
+        """Apply one opaque preflight plan and stage its candidate binding."""
+
+        if not isinstance(plan, _ProfileCachePreflight):
+            raise TypeError("plan must be this receiver's profile preflight result")
+        self._stage(plan, payload, corrupt_payload=corrupt_payload)
+
     def _verify(
         self,
         binding: InstallationProfileCacheBinding,
@@ -567,6 +720,13 @@ class FakeInstallationProfileReceiver:
                 f"receiver {self.receiver_id} staged profile hash mismatch"
             )
 
+    def verify_profile(
+        self, binding: InstallationProfileCacheBinding, payload: bytes
+    ) -> None:
+        """Verify that staged bytes and their binding match the candidate."""
+
+        self._verify(binding, payload)
+
     def _commit(
         self,
         binding: InstallationProfileCacheBinding,
@@ -581,6 +741,15 @@ class FakeInstallationProfileReceiver:
         self._staged_binding = None
         self._touch(binding.payload_digest)
         self._commit_count += 1
+
+    def commit_profile(
+        self,
+        binding: InstallationProfileCacheBinding,
+        prior_active: InstallationProfileCacheBinding | None,
+    ) -> None:
+        """Activate a verified binding while retaining the prior generation."""
+
+        self._commit(binding, prior_active)
 
     def _compensate(self, snapshot: _ProfileReceiverSnapshot) -> None:
         self._staged_binding = snapshot.staged_binding
@@ -601,6 +770,15 @@ class FakeInstallationProfileReceiver:
                 del self._cache[digest]
                 self._last_used.pop(digest, None)
         self._compensation_count += 1
+
+    def compensate_profile(
+        self, snapshot: InstallationProfileReceiverSnapshot
+    ) -> None:
+        """Restore the exact binding snapshot after a transaction failure."""
+
+        if not isinstance(snapshot, InstallationProfileReceiverSnapshot):
+            raise TypeError("snapshot must be an InstallationProfileReceiverSnapshot")
+        self._compensate(snapshot)
 
 
 def _four_values(value: int | Sequence[int], *, field: str) -> tuple[int, ...]:
@@ -659,7 +837,7 @@ class FakeInstallationProfileWall:
                 candidate.profile_id, candidate.payload_for(receiver_id)
             )
 
-    def status(self) -> FakeInstallationProfileWallStatus:
+    def status(self) -> InstallationProfileWallStatus:
         statuses = tuple(receiver.status() for receiver in self.receivers)
         active_ids = tuple(
             status.active_binding.profile_id
@@ -682,7 +860,7 @@ class FakeInstallationProfileWall:
             health = InstallationProfileWallHealth.HEALTHY
         else:
             health = InstallationProfileWallHealth.DEGRADED
-        return FakeInstallationProfileWallStatus(
+        return InstallationProfileWallStatus(
             health=health,
             active_profile_id=active_profile_id,
             mixed_generation=mixed,
@@ -691,12 +869,44 @@ class FakeInstallationProfileWall:
 
 
 class InstallationProfileTransaction:
-    """Preflight, stage, verify, and commit one profile across four fakes."""
+    """Preflight, stage, verify, and commit across one structural wall adapter.
 
-    def __init__(self, wall: FakeInstallationProfileWall) -> None:
-        if not isinstance(wall, FakeInstallationProfileWall):
-            raise TypeError("wall must be a FakeInstallationProfileWall")
+    Receiver/profile errors plus ``OSError`` transport failures (including
+    ``TimeoutError``) are operational failures and enter compensation after
+    mutation starts. Programmer errors and process-control ``BaseException``
+    subclasses are intentionally not swallowed.
+    """
+
+    def __init__(self, wall: InstallationProfileWall) -> None:
+        receivers = getattr(wall, "receivers", None)
+        status = getattr(wall, "status", None)
+        if (
+            isinstance(receivers, (str, bytes))
+            or not isinstance(receivers, Sequence)
+            or len(receivers) != RECEIVER_COUNT
+            or not callable(status)
+        ):
+            raise TypeError("wall must implement the four-receiver profile wall interface")
+        required_methods = (
+            "binding_is_valid",
+            "transaction_snapshot",
+            "preflight_profile",
+            "stage_profile",
+            "verify_profile",
+            "commit_profile",
+            "compensate_profile",
+        )
+        for receiver_id, receiver in enumerate(receivers):
+            if getattr(receiver, "receiver_id", None) != receiver_id or any(
+                not callable(getattr(receiver, method, None))
+                for method in required_methods
+            ):
+                raise TypeError(
+                    "wall receivers must implement the profile receiver interface "
+                    "in logical ID order"
+                )
         self.wall = wall
+        self.receivers = tuple(receivers)
 
     @staticmethod
     def _fault_map(
@@ -737,9 +947,71 @@ class InstallationProfileTransaction:
     ) -> bool:
         return all(
             receiver.active_binding == candidate.binding_for(receiver_id)
-            and receiver._binding_is_valid(receiver.active_binding)
-            for receiver_id, receiver in enumerate(self.wall.receivers)
+            and receiver.binding_is_valid(receiver.active_binding)
+            for receiver_id, receiver in enumerate(self.receivers)
         )
+
+    def _candidate_is_exactly_committed(
+        self,
+        candidate: InstallationProfileCandidate,
+        prior_snapshots: Sequence[InstallationProfileReceiverSnapshot],
+    ) -> bool:
+        """Require exact active, staged, and rollback state on every receiver."""
+
+        for receiver_id, receiver in enumerate(self.receivers):
+            snapshot = receiver.transaction_snapshot()
+            expected = candidate.binding_for(receiver_id)
+            expected_rollback = prior_snapshots[receiver_id].active_binding
+            if (
+                snapshot.active_binding != expected
+                or snapshot.staged_binding is not None
+                or snapshot.rollback_binding != expected_rollback
+                or not receiver.binding_is_valid(snapshot.active_binding)
+                or not receiver.binding_is_valid(snapshot.rollback_binding)
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _degraded_wall_status(
+        status: InstallationProfileWallStatus,
+    ) -> InstallationProfileWallStatus:
+        """Return a fail-closed aggregate when receiver recovery is unproven."""
+
+        if status.health in (
+            InstallationProfileWallHealth.MIXED_GENERATION,
+            InstallationProfileWallHealth.DEGRADED,
+        ):
+            return status
+        return InstallationProfileWallStatus(
+            health=InstallationProfileWallHealth.DEGRADED,
+            active_profile_id=None,
+            mixed_generation=status.mixed_generation,
+            receiver_statuses=status.receiver_statuses,
+        )
+
+    @staticmethod
+    def _snapshot_validation_error(
+        receiver: InstallationProfileReceiver,
+        expected: InstallationProfileReceiverSnapshot,
+    ) -> str | None:
+        """Describe binding drift or invalid restored pins for one receiver."""
+
+        actual = receiver.transaction_snapshot()
+        if actual != expected:
+            return "binding snapshot differs from the pre-transaction state"
+        invalid = tuple(
+            name
+            for name, binding in (
+                ("staged", actual.staged_binding),
+                ("active", actual.active_binding),
+                ("rollback", actual.rollback_binding),
+            )
+            if not receiver.binding_is_valid(binding)
+        )
+        if invalid:
+            return f"restored {','.join(invalid)} binding is not valid"
+        return None
 
     def install(
         self,
@@ -763,7 +1035,7 @@ class InstallationProfileTransaction:
             self._candidate_is_active(candidate)
             and initial_status.healthy
             and all(
-                receiver.staged_binding is None for receiver in self.wall.receivers
+                receiver.staged_binding is None for receiver in self.receivers
             )
         ):
             return InstallationProfileTransactionResult(
@@ -792,7 +1064,7 @@ class InstallationProfileTransaction:
                 operations=(),
                 wall_status=initial_status,
             )
-        if any(receiver.staged_binding is not None for receiver in self.wall.receivers):
+        if any(receiver.staged_binding is not None for receiver in self.receivers):
             return InstallationProfileTransactionResult(
                 success=False,
                 changed=False,
@@ -805,13 +1077,15 @@ class InstallationProfileTransaction:
                 wall_status=initial_status,
             )
 
-        snapshots = tuple(receiver._snapshot() for receiver in self.wall.receivers)
-        plans: list[_ProfileCachePreflight] = []
+        snapshots = tuple(
+            receiver.transaction_snapshot() for receiver in self.receivers
+        )
+        plans: list[object] = []
         mutation_started = False
         failed_phase: InstallationProfileTransactionPhase | None = None
         failed_receiver_id: int | None = None
         try:
-            for receiver_id, receiver in enumerate(self.wall.receivers):
+            for receiver_id, receiver in enumerate(self.receivers):
                 failed_phase = InstallationProfileTransactionPhase.PREFLIGHT
                 failed_receiver_id = receiver_id
                 operations.append(
@@ -824,13 +1098,13 @@ class InstallationProfileTransaction:
                     fault, phase=failed_phase, receiver_id=receiver_id
                 )
                 plans.append(
-                    receiver._preflight(
+                    receiver.preflight_profile(
                         candidate.binding_for(receiver_id),
                         candidate.payload_for(receiver_id),
                     )
                 )
 
-            for receiver_id, receiver in enumerate(self.wall.receivers):
+            for receiver_id, receiver in enumerate(self.receivers):
                 failed_phase = InstallationProfileTransactionPhase.STAGE
                 failed_receiver_id = receiver_id
                 operations.append(
@@ -845,7 +1119,7 @@ class InstallationProfileTransaction:
                 # From this boundary onward the receiver may have applied its
                 # preflight eviction plan before reporting a stage error.
                 mutation_started = True
-                receiver._stage(
+                receiver.stage_profile(
                     plans[receiver_id],
                     candidate.payload_for(receiver_id),
                     corrupt_payload=(
@@ -855,7 +1129,7 @@ class InstallationProfileTransaction:
                     ),
                 )
 
-            for receiver_id, receiver in enumerate(self.wall.receivers):
+            for receiver_id, receiver in enumerate(self.receivers):
                 failed_phase = InstallationProfileTransactionPhase.VERIFY
                 failed_receiver_id = receiver_id
                 operations.append(
@@ -867,12 +1141,12 @@ class InstallationProfileTransaction:
                 self._reject_fault(
                     fault, phase=failed_phase, receiver_id=receiver_id
                 )
-                receiver._verify(
+                receiver.verify_profile(
                     candidate.binding_for(receiver_id),
                     candidate.payload_for(receiver_id),
                 )
 
-            for receiver_id, receiver in enumerate(self.wall.receivers):
+            for receiver_id, receiver in enumerate(self.receivers):
                 failed_phase = InstallationProfileTransactionPhase.COMMIT
                 failed_receiver_id = receiver_id
                 operations.append(
@@ -884,18 +1158,19 @@ class InstallationProfileTransaction:
                 self._reject_fault(
                     fault, phase=failed_phase, receiver_id=receiver_id
                 )
-                receiver._commit(
+                receiver.commit_profile(
                     candidate.binding_for(receiver_id),
                     snapshots[receiver_id].active_binding,
                 )
 
             final_status = self.wall.status()
             if (
-                not final_status.healthy
+                not self._candidate_is_exactly_committed(candidate, snapshots)
+                or not final_status.healthy
                 or final_status.active_profile_id != candidate.profile_id
             ):
                 raise InstallationProfileTransactionError(
-                    "profile commit did not produce a healthy unanimous generation"
+                    "profile commit did not produce the exact healthy unanimous candidate"
                 )
             return InstallationProfileTransactionResult(
                 success=True,
@@ -908,11 +1183,12 @@ class InstallationProfileTransaction:
                 operations=tuple(operations),
                 wall_status=final_status,
             )
-        except InstallationProfileTransactionError as exc:
-            compensated = mutation_started
+        except _OPERATIONAL_EXCEPTIONS as exc:
+            compensation_errors: list[str] = []
+            compensated = False
             if mutation_started:
                 for receiver_id, (receiver, snapshot) in enumerate(
-                    zip(self.wall.receivers, snapshots)
+                    zip(self.receivers, snapshots)
                 ):
                     operations.append(
                         InstallationProfileTransactionOperation(
@@ -920,17 +1196,55 @@ class InstallationProfileTransaction:
                             receiver_id,
                         )
                     )
-                    receiver._compensate(snapshot)
+                    try:
+                        receiver.compensate_profile(snapshot)
+                    except _OPERATIONAL_EXCEPTIONS as compensation_exc:
+                        compensation_errors.append(
+                            f"receiver {receiver_id} compensation failed: "
+                            f"{compensation_exc}"
+                        )
+                for receiver_id, (receiver, snapshot) in enumerate(
+                    zip(self.receivers, snapshots)
+                ):
+                    try:
+                        validation_error = self._snapshot_validation_error(
+                            receiver, snapshot
+                        )
+                    except _OPERATIONAL_EXCEPTIONS as validation_exc:
+                        validation_error = (
+                            "post-compensation verification failed: "
+                            f"{validation_exc}"
+                        )
+                    if validation_error is not None:
+                        compensation_errors.append(
+                            f"receiver {receiver_id} {validation_error}"
+                        )
+                compensated = not compensation_errors
+            try:
+                final_status = self.wall.status()
+            except _OPERATIONAL_EXCEPTIONS as status_exc:
+                compensation_errors.append(
+                    f"final wall status failed: {status_exc}"
+                )
+                final_status = self._degraded_wall_status(initial_status)
+                compensated = False
+            if mutation_started and not compensated:
+                final_status = self._degraded_wall_status(final_status)
+            error = str(exc)
+            if compensation_errors:
+                error = f"{error}; compensation incomplete: " + "; ".join(
+                    compensation_errors
+                )
             return InstallationProfileTransactionResult(
                 success=False,
-                changed=False,
+                changed=mutation_started and not compensated,
                 profile_id=candidate.profile_id,
                 failed_phase=failed_phase,
                 failed_receiver_id=failed_receiver_id,
                 compensated=compensated,
-                error=str(exc),
+                error=error,
                 operations=tuple(operations),
-                wall_status=self.wall.status(),
+                wall_status=final_status,
             )
 
 
@@ -943,12 +1257,18 @@ __all__ = [
     "FakeInstallationProfileWallStatus",
     "InstallationProfileCacheBinding",
     "InstallationProfileCandidate",
+    "InstallationProfileReceiver",
+    "InstallationProfileReceiverSnapshot",
+    "InstallationProfileReceiverStatus",
     "InstallationProfileTransaction",
     "InstallationProfileTransactionError",
     "InstallationProfileTransactionOperation",
     "InstallationProfileTransactionPhase",
     "InstallationProfileTransactionResult",
+    "InstallationProfileWall",
     "InstallationProfileWallHealth",
+    "InstallationProfileWallStatus",
     "RECEIVER_COUNT",
     "RECEIVER_IDS",
+    "candidate_from_resolved",
 ]

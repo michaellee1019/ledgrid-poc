@@ -247,6 +247,40 @@ acceptance on logical receivers 2/3.
 - record host generation, SPI send, receiver encode, receiver DMA, accepted,
   displayed, and superseded rates in the deployment report.
 
+## Phase 3C portable receiver-profile prerequisites
+
+The first receiver-profile implementation slice is deliberately non-operational:
+it adds no SPI profile command, persistent receiver cache, status field, optic,
+manager mutation, or wall activation. Its acceptance evidence is portable and
+must not be described as receiver-profile or physical-wall acceptance.
+
+The slice passes only when:
+
+- four Python-generated installed-topology 8 x 138 payloads decode in portable
+  C++ with exact origin/direction, header/table, CRC/content digest, section,
+  range, and cross-section semantic parity; every malformed case clears the
+  output view before exposing a pointer;
+- the shared transaction engine proves exact candidate and rollback bindings,
+  active/staged/rollback payload validity, every receiver-by-phase failure,
+  timeout compensation, best-effort all-board recovery, idempotent retry, and
+  a degraded/changed result whenever recovery cannot be re-proven;
+- firmware installation identity includes every PlatformIO flash-map artifact
+  and offset plus layout inputs, rejects artifact drift before skip/upload, and
+  produces identical bootloader, partition, application, and installation
+  digests for identical pinned inputs in independent clean workspaces;
+- the isolated rollback helper includes every imported deployment module, a
+  pre-existing shared-marker symlink/non-regular file is rejected without
+  touching its target, a legacy marker triggers one explicit migration flash,
+  and the next identical deployment is a true firmware no-op;
+- focused profile/deployment tests, the complete Python/rendering/firmware and
+  deployment gates, both ESP32-S3 builds, fixture regeneration, whitespace,
+  deploy dry-run/plan, and an ordinary clean `just deploy` pass.
+
+Receiver staging, activation, restart recovery, capacity/eviction, status
+agreement, transform timing, seams, and photographed evidence remain open. They
+require the later default-off protocol/storage slice and the strict one-receiver
+then all-four hardware gates after the SPI1 return path is repaired.
+
 ## Rollback
 
 Keep the previously validated firmware binaries until full-wall acceptance passes.

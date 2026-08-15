@@ -3031,6 +3031,60 @@ the future four-receiver transaction against an in-memory fake only. It does
 not add an SPI command, firmware storage, live activation, dashboard mutation,
 or installed-wall operation.
 
+Current receiver-profile runtime prerequisite slice (2026-08-14): **in
+progress**. The initial audit found that the receiver firmware layout has no
+filesystem partition and that deployment identity currently verifies only
+`firmware.bin`, even though PlatformIO also flashes the bootloader and partition
+table. Persistent receiver caching must not begin until every flashed artifact
+and the partition-layout inputs participate in build/install identity. This
+bounded slice therefore hardens that deployment boundary, generalizes the
+already-accepted transaction engine for a future real transport adapter, and
+freezes an inert portable receiver data/view contract before persistent
+storage, manager mutation, or wall operation. Production behavior and complete
+RGB takeover remain unchanged throughout the slice.
+
+- [x] Bind firmware install identity and early-skip decisions to every flashed
+  image plus partition-layout inputs; preserve a true no-op for identical
+  installs and migrate the legacy marker without a false installed claim.
+- [x] Make the existing four-board transaction engine operate against a small
+  structural receiver interface while preserving all fake-wall failure,
+  compensation, cache-pin, and retry behavior.
+- [x] Add a bounds-checked portable C++ decoder/read-only view for all four
+  installed-topology LGIP receiver slices, generated from the authoritative
+  Python compiler, with byte/semantic parity and malformed-input rejection.
+- [ ] Pass focused coverage, the full Python/rendering/firmware/deployment
+  gates, both ESP32-S3 builds, fixture regeneration checks, whitespace checks,
+  deploy dry-run/plan, and an ordinary clean `just deploy` before closing this
+  prerequisite slice.
+
+Portable prerequisite evidence captured before the clean deployment on
+2026-08-14 (development Mac; no receiver-profile activation or physical-wall
+claim):
+
+- the generalized transaction lane passed 123 installation-profile tests plus
+  186 subtests, including dishonest adapters, exact rollback validation,
+  timeout-after-mutation, best-effort four-board compensation, and degraded
+  results whenever recovery could not be proven;
+- the complete portable native receiver suite passed 66/66 tests, including
+  Python-generated four-topology decoder parity and validly rehashed negative
+  cases for every cross-section semantic invariant;
+- the deployment lane passed 179 tests plus 94 subtests, including complete
+  flash-map identity, one-time legacy-marker migration, isolated rollback
+  helper execution for both current and pre-inspector releases, and fail-closed
+  shared-marker symlink/non-regular-file handling;
+- two sequential clean builds in distinct source/build roots produced identical
+  `firmware.bin`, bootloader, partition-table, generated flash-map, and complete
+  installation digests. The complete v2 installation digest was
+  `53a2b37da4286d8171cd1462f68ecfb02b6d5f4ebcac1d5f778f3801c40b7c61`;
+- `just test` passed with both production and local-canary ESP32-S3 builds;
+  explicit `just test-rendering` passed 23 tests plus 3 subtests, with the
+  heaviest observed scenario still below its accepted budget;
+- deterministic profile fixture `--check`, `git diff --check`,
+  `just --dry-run deploy`, `just --dry-run deploy-python`, and
+  `just deploy-plan` passed. The plan accounts for the new Python modules as
+  application inputs and every new firmware header, source, native test, and
+  generated fixture as support inputs.
+
 - [x] Publish validated canonical profiles atomically under their frozen
   content digest, make identical publication idempotent, reject corruption and
   noncanonical/global-wrong inputs, and retain a small immutable publish receipt.
@@ -3064,14 +3118,15 @@ receiver, or wall timing evidence):
   origins 0/8 in ascending order and logical 2/3 use origins 24/16 in reversed
   native order. Transport-route and host-direction-only changes reuse the same
   semantic slices; lane or native-direction changes do not.
-- `animation/core/installation_profile_transaction.py` remains a strict
-  in-memory fake. It binds that global ID to four receiver-payload SHA-256
+- `animation/core/installation_profile_transaction.py` now exposes a small
+  structural wall/receiver interface while retaining the in-memory fake as its
+  acceptance backend. It binds that global ID to four receiver-payload SHA-256
   values, preflights every capacity/reserve before mutation, pins active,
-  rollback, and staged payloads, evicts only inactive LRU entries, and
-  compensates partial stage/verify/commit work to the exact prior unanimous or
-  no-active binding state. All 16 receiver-by-phase rejection boundaries,
-  staged corruption, retry, mixed state, degraded state, and pin failures are
-  covered; the delegated focused branch-coverage run reported 85 percent.
+  rollback, and staged payloads, evicts only inactive LRU entries, and proves
+  exact active/rollback bindings and backing payload validity after commit or
+  compensation. All 16 receiver-by-phase rejection boundaries, staged
+  corruption, retry, mixed/degraded state, transport timeouts, dishonest
+  adapters, best-effort compensation, and pin failures are covered.
 - Cross-lane acceptance publishes and resolves the global profile through the
   installed topology, commits all four receiver payloads, injects a receiver-2
   partial-commit failure, proves unanimous compensation, retries, and retains

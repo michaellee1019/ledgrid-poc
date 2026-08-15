@@ -77,6 +77,19 @@ except ModuleNotFoundError:  # Direct ``python tools/deployment/deploy_entrypoin
 
 
 SNAPSHOT_SCHEMA_VERSION = 1
+ROLLBACK_LEGACY_HELPER_FILENAMES = (
+    "deploy_target.py",
+    "app_releases.py",
+    "deploy_coordinator.py",
+)
+ROLLBACK_OPTIONAL_HELPER_FILENAMES = (
+    "receiver_hybrid_config.py",
+    "firmware_artifacts.py",
+)
+ROLLBACK_HELPER_FILENAMES = (
+    *ROLLBACK_LEGACY_HELPER_FILENAMES,
+    *ROLLBACK_OPTIONAL_HELPER_FILENAMES,
+)
 SUPPORT_ROOTS = frozenset({"firmware", "hardware"})
 SUPPORT_FILES = frozenset({"requirements-platformio.lock"})
 DEFAULT_TARGET = "ledgridwall@ledgridwall.local"
@@ -654,6 +667,7 @@ class CoordinatorDeployment:
         environment = result.get("firmware_environment")
         config_digest = result.get("receiver_hybrid_config_digest")
         firmware_sha256 = result.get("firmware_sha256")
+        installation_digest = result.get("firmware_installation_digest")
         if not isinstance(environment, str) or not environment:
             raise RuntimeError("firmware build returned no selected environment")
         if (
@@ -666,10 +680,24 @@ class CoordinatorDeployment:
             or re.fullmatch(r"[0-9a-f]{64}", firmware_sha256) is None
         ):
             raise RuntimeError("firmware build returned an invalid binary digest")
+        if installation_digest is not None and (
+            not isinstance(installation_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", installation_digest) is None
+        ):
+            raise RuntimeError(
+                "firmware build returned an invalid installation digest"
+            )
+        if isinstance(firmware_sha256, str) and not isinstance(
+            installation_digest, str
+        ):
+            raise RuntimeError(
+                "firmware build returned no complete installation digest"
+            )
         self.context.state["firmware_selection"] = {
             "firmware_environment": environment,
             "receiver_hybrid_config_digest": config_digest,
             "firmware_sha256": firmware_sha256,
+            "firmware_installation_digest": installation_digest,
         }
         artifacts = ()
         if isinstance(firmware_sha256, str):
@@ -677,8 +705,9 @@ class CoordinatorDeployment:
                 Artifact(
                     "receiver_firmware_build",
                     environment,
-                    firmware_sha256,
-                    "1",
+                    str(installation_digest),
+                    "2",
+                    target_id=firmware_sha256,
                 ),
             )
         return OperationResult(
@@ -729,8 +758,13 @@ class CoordinatorDeployment:
         environment = selection.get("firmware_environment")
         config_digest = selection.get("receiver_hybrid_config_digest")
         firmware_sha256 = selection.get("firmware_sha256")
+        installation_digest = selection.get("firmware_installation_digest")
         if not isinstance(environment, str) or not isinstance(config_digest, str):
             raise RuntimeError("firmware build-phase rollout selection is malformed")
+        if firmware_sha256 is not None and not isinstance(installation_digest, str):
+            raise RuntimeError(
+                "firmware build-phase installation selection is malformed"
+            )
         args: list[str] = []
         if isinstance(support_id, str):
             args.append(support_id)
@@ -746,6 +780,8 @@ class CoordinatorDeployment:
                 config_digest,
             )
         )
+        if isinstance(installation_digest, str):
+            args.extend(("--expected-installation-digest", installation_digest))
         if os.environ.get("DEBUG", "0") == "1":
             args.append("--debug")
         result = self.target.run("flash-firmware", *args)
@@ -755,6 +791,11 @@ class CoordinatorDeployment:
             or (
                 firmware_sha256 is not None
                 and result.get("firmware_sha256") != firmware_sha256
+            )
+            or (
+                installation_digest is not None
+                and result.get("firmware_installation_digest")
+                != installation_digest
             )
         ):
             raise RuntimeError("firmware build and flash receipts disagree")
@@ -775,8 +816,8 @@ class CoordinatorDeployment:
                 Artifact(
                     "receiver_firmware_installation",
                     environment,
-                    str(result["firmware_sha256"]),
-                    "1",
+                    installed_digest,
+                    "2",
                     target_id=installed_digest,
                 ),
             ),
@@ -1068,12 +1109,21 @@ class CoordinatorRollback(CoordinatorDeployment):
         context.ssh(
             (
                 "cp",
-                f"{current_tools}/deploy_target.py",
-                f"{current_tools}/app_releases.py",
-                f"{current_tools}/deploy_coordinator.py",
+                *(
+                    f"{current_tools}/{name}"
+                    for name in ROLLBACK_LEGACY_HELPER_FILENAMES
+                ),
                 helper_directory,
             )
         )
+        # Target helpers are versioned with the active app release. Copy newer
+        # direct-import dependencies when that release contains them, while
+        # retaining rollback support for older helpers that predate the files.
+        for name in ROLLBACK_OPTIONAL_HELPER_FILENAMES:
+            source = f"{current_tools}/{name}"
+            present = context.ssh(("test", "-f", source), check=False)
+            if present.returncode == 0:
+                context.ssh(("cp", source, helper_directory))
         self.target._helper_path = f"{helper_directory}/deploy_target.py"
         self._helper_pinned = True
         return OperationResult(

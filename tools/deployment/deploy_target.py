@@ -32,11 +32,13 @@ from urllib.request import urlopen
 
 try:
     from tools.deployment.app_releases import AppReleaseManager, ReleaseValidationError
+    from tools.deployment.firmware_artifacts import inspect_firmware_installation
     from tools.deployment.receiver_hybrid_config import (
         resolve_receiver_hybrid_config,
     )
 except ModuleNotFoundError:  # Direct execution from an uploaded snapshot.
     from app_releases import AppReleaseManager, ReleaseValidationError  # type: ignore[no-redef]
+    from firmware_artifacts import inspect_firmware_installation  # type: ignore[no-redef]
     from receiver_hybrid_config import (  # type: ignore[no-redef]
         resolve_receiver_hybrid_config,
     )
@@ -77,6 +79,59 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _validate_shared_firmware_marker(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError as exc:
+        raise RuntimeError("shared firmware marker disappeared") from exc
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise RuntimeError(
+            "shared firmware marker must be a non-symlink regular file"
+        )
+    if metadata.st_uid != os.geteuid():
+        raise RuntimeError("shared firmware marker is not target-owned")
+
+
+def _prepare_shared_firmware_marker(root: Path, workspace: Path) -> Path:
+    """Create/validate the target marker before linking an isolated workspace."""
+
+    shared = root / ".esp32_firmware_hash"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(shared, flags, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        os.close(descriptor)
+    _validate_shared_firmware_marker(shared)
+
+    workspace_marker = workspace / ".esp32_firmware_hash"
+    workspace_marker.unlink(missing_ok=True)
+    workspace_marker.symlink_to(os.path.relpath(shared, start=workspace))
+    return shared
+
+
+def _read_shared_firmware_marker(path: Path) -> str:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise RuntimeError("cannot safely read shared firmware marker") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            raise RuntimeError("shared firmware marker changed ownership or type")
+        payload = os.read(descriptor, 4096)
+        if os.read(descriptor, 1):
+            raise RuntimeError("shared firmware marker is unexpectedly large")
+    finally:
+        os.close(descriptor)
+    try:
+        return payload.decode("utf-8").strip()
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("shared firmware marker is not UTF-8") from exc
 
 
 def _json_object(path: Path) -> dict[str, Any]:
@@ -574,19 +629,29 @@ def build_firmware(root: Path, support_id: Optional[str]) -> Mapping[str, Any]:
         }
     workspace, reused = _copy_support_workspace(root, support_id)
     firmware = workspace / "firmware" / "esp32"
-    binary = (
-        firmware / ".pio" / "build" / firmware_environment / "firmware.bin"
-    )
-    if reused and binary.is_file():
-        return {
-            "outcome": "skipped",
-            "reason": "firmware build already exists",
-            "workspace": os.fspath(workspace),
-            "firmware_sha256": _sha256_file(binary),
-            "receiver_hybrid_config": hybrid_config.to_dict(),
-            "receiver_hybrid_config_digest": hybrid_config.selection_digest,
-            "firmware_environment": firmware_environment,
-        }
+    if reused:
+        try:
+            installation = inspect_firmware_installation(
+                firmware, firmware_environment
+            )
+        except RuntimeError:
+            # A workspace created by the previous single-binary contract may
+            # be incomplete. Rebuild it instead of accepting a partial cache.
+            installation = None
+        if installation is not None:
+            return {
+                "outcome": "skipped",
+                "reason": "firmware build already exists",
+                "workspace": os.fspath(workspace),
+                "firmware_sha256": installation["firmware_sha256"],
+                "firmware_installation_digest": installation[
+                    "installation_digest"
+                ],
+                "firmware_artifacts": installation,
+                "receiver_hybrid_config": hybrid_config.to_dict(),
+                "receiver_hybrid_config_digest": hybrid_config.selection_digest,
+                "firmware_environment": firmware_environment,
+            }
     pio = shutil.which("pio") or os.fspath(Path.home() / ".platformio-venv" / "bin" / "pio")
     if not Path(pio).is_file() and shutil.which(pio) is None:
         raise RuntimeError("PlatformIO is unavailable on the target; run setup first")
@@ -611,14 +676,15 @@ def build_firmware(root: Path, support_id: Optional[str]) -> Mapping[str, Any]:
         cwd=firmware,
         env=build_env,
     )
-    if not binary.is_file():
-        raise RuntimeError("firmware build produced no firmware.bin")
+    installation = inspect_firmware_installation(firmware, firmware_environment)
     return {
         "outcome": "executed",
         "workspace": os.fspath(workspace),
         "build_cache": os.fspath(build_cache),
         "ccache": os.fspath(ccache_dir),
-        "firmware_sha256": _sha256_file(binary),
+        "firmware_sha256": installation["firmware_sha256"],
+        "firmware_installation_digest": installation["installation_digest"],
+        "firmware_artifacts": installation,
         "receiver_hybrid_config": hybrid_config.to_dict(),
         "receiver_hybrid_config_digest": hybrid_config.selection_digest,
         "firmware_environment": firmware_environment,
@@ -635,6 +701,7 @@ def flash_firmware(
     debug: bool,
     expected_firmware_environment: Optional[str] = None,
     expected_config_digest: Optional[str] = None,
+    expected_installation_digest: Optional[str] = None,
 ) -> Mapping[str, Any]:
     hybrid_config = resolve_receiver_hybrid_config(root)
     firmware_environment = hybrid_config.firmware_environment
@@ -661,33 +728,32 @@ def flash_firmware(
             "firmware_environment": firmware_environment,
         }
     workspace, _ = _copy_support_workspace(root, support_id)
-    firmware_binary = (
-        workspace
-        / "firmware"
-        / "esp32"
-        / ".pio"
-        / "build"
-        / firmware_environment
-        / "firmware.bin"
-    )
-    if not firmware_binary.is_file():
+    firmware = workspace / "firmware" / "esp32"
+    try:
+        installation = inspect_firmware_installation(firmware, firmware_environment)
+    except RuntimeError as exc:
         raise RuntimeError(
-            f"validated {firmware_environment} firmware.bin is unavailable; "
+            f"validated {firmware_environment} firmware installation is unavailable; "
             "run build-firmware before flash-firmware"
+        ) from exc
+    firmware_sha256 = str(installation["firmware_sha256"])
+    installation_digest = str(installation["installation_digest"])
+    if (
+        expected_installation_digest is not None
+        and expected_installation_digest != installation_digest
+    ):
+        raise RuntimeError(
+            "firmware installation artifacts changed between build and flash"
         )
-    firmware_sha256 = _sha256_file(firmware_binary)
     ports = sorted(set(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*")))
     if len(ports) != receiver_count:
         raise RuntimeError(
             f"expected exactly {receiver_count} ESP32 serial devices; found {len(ports)}: {ports}"
         )
-    # Preserve the legacy marker so the first coordinator cutover does not
-    # mistake an unchanged installed image for a required all-board flash.
-    shared_marker = root / ".esp32_firmware_hash"
-    shared_marker.touch(exist_ok=True)
-    workspace_marker = workspace / ".esp32_firmware_hash"
-    workspace_marker.unlink(missing_ok=True)
-    workspace_marker.symlink_to(os.path.relpath(shared_marker, start=workspace))
+    # Preserve the target-owned marker path and atomic update behavior. A
+    # schema-v1 digest remains readable, but cannot equal the complete v2
+    # artifact identity and therefore causes one deliberate migration flash.
+    shared_marker = _prepare_shared_firmware_marker(root, workspace)
     env = dict(os.environ)
     env.update(
         {
@@ -699,6 +765,8 @@ def flash_firmware(
             "FIRMWARE_PREBUILT": "1",
             "FIRMWARE_ENVIRONMENT": firmware_environment,
             "EXPECTED_FIRMWARE_SHA256": firmware_sha256,
+            "EXPECTED_FIRMWARE_INSTALLATION_DIGEST": installation_digest,
+            "EXPECTED_FIRMWARE_HASH_FILE": os.fspath(shared_marker),
             "IDF_CCACHE_ENABLE": "1",
             "CCACHE_DIR": os.fspath(
                 root / "build" / "firmware" / CCACHE_DIRECTORY
@@ -725,29 +793,37 @@ def flash_firmware(
         raise RuntimeError("selected app release has no flash helper")
     completed = _command(("bash", helper), env=env, check=False)
     output = completed.stdout + completed.stderr
-    binary_error = None
-    if not firmware_binary.is_file():
-        binary_error = "validated production firmware.bin disappeared during flash"
-    elif _sha256_file(firmware_binary) != firmware_sha256:
-        binary_error = "validated production firmware.bin changed during flash"
+    artifact_error = None
+    try:
+        after_flash = inspect_firmware_installation(firmware, firmware_environment)
+        if after_flash["installation_digest"] != installation_digest:
+            artifact_error = "validated firmware installation changed during flash"
+    except RuntimeError:
+        artifact_error = "validated firmware installation disappeared during flash"
     if (
         completed.returncode
         or "Flash FAILED" in output
         or "hash NOT updated" in output
-        or binary_error is not None
+        or artifact_error is not None
     ):
         _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
-        detail = f"; {binary_error}" if binary_error else ""
+        detail = f"; {artifact_error}" if artifact_error else ""
         raise RuntimeError(f"receiver firmware flash failed{detail}: {output[-4000:]}")
     skipped = "Firmware unchanged; skipping" in output
-    installed_marker = shared_marker.read_text(encoding="utf-8").strip()
+    installed_marker = _read_shared_firmware_marker(shared_marker)
     if not re.fullmatch(r"[0-9a-f]{64}", installed_marker):
         _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
         raise RuntimeError("receiver firmware helper returned no valid installed marker")
+    if installed_marker != installation_digest:
+        _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
+        raise RuntimeError(
+            "receiver firmware helper installed marker disagrees with selected artifacts"
+        )
     return {
         "outcome": "skipped" if skipped else "executed",
         "ports": ports,
         "firmware_sha256": firmware_sha256,
+        "firmware_artifacts": installation,
         "firmware_environment": firmware_environment,
         "firmware_installation_digest": installed_marker,
         "receiver_hybrid_config": hybrid_config.to_dict(),
@@ -1075,6 +1151,7 @@ def _parser() -> argparse.ArgumentParser:
     flash.add_argument("--debug", action="store_true")
     flash.add_argument("--expected-environment")
     flash.add_argument("--expected-config-digest")
+    flash.add_argument("--expected-installation-digest")
     subparsers.add_parser("capture-state")
     activate_parser = subparsers.add_parser("activate")
     activate_parser.add_argument("release_id")
@@ -1127,6 +1204,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             debug=args.debug,
             expected_firmware_environment=args.expected_environment,
             expected_config_digest=args.expected_config_digest,
+            expected_installation_digest=args.expected_installation_digest,
         )
     elif args.command == "capture-state":
         result = capture_state(root)

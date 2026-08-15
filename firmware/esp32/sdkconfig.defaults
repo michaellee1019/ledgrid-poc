@@ -4,6 +4,9 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_COMPILER_CXX_EXCEPTIONS=n
 CONFIG_COMPILER_CXX_RTTI=n
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# Firmware installation identity is byte-exact. Exclude compile timestamps and
+# other host-time metadata so identical immutable inputs remain a deploy no-op.
+CONFIG_APP_REPRODUCIBLE_BUILD=y
 # Keep app_main's SPI slave dequeue loop on CPU0. The receiver display task is
 # explicitly pinned to CPU1 by receiver_task_policy.hpp.
 CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0=y

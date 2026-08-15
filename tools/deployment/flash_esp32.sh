@@ -56,23 +56,43 @@ case "$firmware_environment" in
 esac
 firmware_binary="$FIRMWARE_DIR/.pio/build/$firmware_environment/firmware.bin"
 expected_firmware_sha256="${EXPECTED_FIRMWARE_SHA256:-}"
+expected_installation_digest="${EXPECTED_FIRMWARE_INSTALLATION_DIGEST:-}"
+expected_hash_file="${EXPECTED_FIRMWARE_HASH_FILE:-}"
 if [ -n "$expected_firmware_sha256" ] \
     && ! [[ "$expected_firmware_sha256" =~ ^[0-9a-f]{64}$ ]]; then
   log_warning "Expected firmware digest is malformed"
   exit 1
 fi
+if [ -n "$expected_installation_digest" ] \
+    && ! [[ "$expected_installation_digest" =~ ^[0-9a-f]{64}$ ]]; then
+  log_warning "Expected firmware installation digest is malformed"
+  exit 1
+fi
 
-verify_firmware_binary() {
-  if [ ! -f "$firmware_binary" ]; then
-    log_warning "Validated firmware is missing: $firmware_binary"
+artifact_inspector="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/firmware_artifacts.py"
+if [ ! -f "$artifact_inspector" ]; then
+  log_warning "Firmware artifact inspector is missing: $artifact_inspector"
+  exit 1
+fi
+
+verify_firmware_installation() {
+  inspector_args=(
+    --firmware-dir "$FIRMWARE_DIR"
+    --environment "$firmware_environment"
+    --field installation_digest
+  )
+  if [ -n "$expected_installation_digest" ]; then
+    inspector_args+=(--expect-digest "$expected_installation_digest")
+  fi
+  if ! actual_installation_digest="$(python3 "$artifact_inspector" "${inspector_args[@]}")"; then
+    log_warning "Validated firmware installation artifacts changed or are incomplete"
     return 1
   fi
-  if [ -n "$expected_firmware_sha256" ]; then
-    actual_firmware_sha256="$("${HASH_TOOL[@]}" "$firmware_binary" | awk '{print $1}')"
-    if [ "$actual_firmware_sha256" != "$expected_firmware_sha256" ]; then
-      log_warning "Validated firmware digest changed before upload"
-      return 1
-    fi
+  actual_firmware_sha256="$("${HASH_TOOL[@]}" "$firmware_binary" | awk '{print $1}')"
+  if [ -n "$expected_firmware_sha256" ] \
+      && [ "$actual_firmware_sha256" != "$expected_firmware_sha256" ]; then
+    log_warning "Validated application firmware digest changed before upload"
+    return 1
   fi
 }
 
@@ -85,39 +105,49 @@ if [ "${FIRMWARE_PREBUILT:-0}" = "1" ]; then
     exit 1
   fi
   log_info "Using coordinator-validated $firmware_environment firmware build"
-  verify_firmware_binary
+  if [ -z "$expected_installation_digest" ]; then
+    log_warning "Prebuilt firmware requires EXPECTED_FIRMWARE_INSTALLATION_DIGEST"
+    exit 1
+  fi
+  verify_firmware_installation
 else
   log_info "Building $firmware_environment firmware..."
   (cd "$FIRMWARE_DIR" && $PIO_CMD run -e "$firmware_environment")
-  verify_firmware_binary
+  verify_firmware_installation
 fi
-actual_firmware_sha256="$("${HASH_TOOL[@]}" "$firmware_binary" | awk '{print $1}')"
 
 log_info "Computing firmware installation digest..."
-current_hash="$(
-  {
-    cd "$FIRMWARE_DIR"
-    find platformio.ini extra_script.py include src -type f -print0 \
-      | sort -z | xargs -0 "${HASH_TOOL[@]}"
-    printf '%s\n' "$pio_version"
-    printf '%s\n' "$firmware_environment"
-    printf '%s\n' "$actual_firmware_sha256"
-  } | "${HASH_TOOL[@]}" | awk '{print $1}'
-)"
+current_hash="$actual_installation_digest"
 
 previous_hash=""
-hash_storage="$HASH_FILE"
-if [ -L "$HASH_FILE" ]; then
-  hash_storage="$(readlink -f -- "$HASH_FILE")"
-  if [ -z "$hash_storage" ]; then
-    log_warning "Firmware marker symlink cannot be resolved"
-    exit 1
+resolve_hash_storage() {
+  local resolved resolved_expected
+  resolved="$(readlink -f -- "$HASH_FILE" 2>/dev/null || true)"
+  if [ -z "$resolved" ] || [ ! -f "$resolved" ]; then
+    log_warning "Firmware marker cannot be resolved to a regular file" >&2
+    return 1
   fi
-fi
-if [ -f "$hash_storage" ]; then
-  previous_hash="$(cat "$hash_storage" | tr -d '\n')"
-fi
+  if [ -n "$expected_hash_file" ]; then
+    if [ -L "$expected_hash_file" ] || [ ! -f "$expected_hash_file" ]; then
+      log_warning "Expected shared firmware marker is not a regular file" >&2
+      return 1
+    fi
+    resolved_expected="$(readlink -f -- "$expected_hash_file" 2>/dev/null || true)"
+    if [ -z "$resolved_expected" ] || [ "$resolved" != "$resolved_expected" ]; then
+      log_warning "Firmware marker does not resolve to the expected shared file" >&2
+      return 1
+    fi
+  fi
+  printf '%s\n' "$resolved"
+}
 
+hash_storage="$(resolve_hash_storage)"
+previous_hash="$(tr -d '\n' < "$hash_storage")"
+
+# Schema-v1 markers were also bare SHA-256 values, so they remain readable.
+# Their source-only identity intentionally differs from the v2 artifact/layout
+# identity and causes one safe migration flash; subsequent unchanged deploys
+# retain the same marker and are true no-ops.
 if [ "$current_hash" = "$previous_hash" ]; then
   log_info "Firmware unchanged; skipping ESP32 flash"
   printf 'FIRMWARE_INSTALLATION_DIGEST=%s\n' "$current_hash"
@@ -209,7 +239,7 @@ while IFS= read -r port; do
   # pinned ESP32 platform can pass malformed address/file pairs to esptool for
   # that target combination. The ordinary upload target performs an incremental
   # graph check and then reuses the coordinator-validated build.
-  if ! verify_firmware_binary; then
+  if ! verify_firmware_installation; then
     all_ok=false
     rm -f "$log_file"
     break
@@ -226,7 +256,7 @@ while IFS= read -r port; do
     all_ok=false
   fi
   rm -f "$log_file"
-  if ! verify_firmware_binary; then
+  if ! verify_firmware_installation; then
     all_ok=false
     break
   fi
@@ -236,9 +266,14 @@ if $all_ok; then
   # Update the target-owned shared file, not the workspace symlink itself.
   # Replacing the symlink would strand the new digest in an ephemeral build
   # workspace and force every subsequent deploy to reflash all receivers.
-  marker_temporary="$(mktemp "${hash_storage}.tmp.XXXXXX")"
+  validated_hash_storage="$(resolve_hash_storage)"
+  if [ "$validated_hash_storage" != "$hash_storage" ]; then
+    log_warning "Firmware marker changed during flash; hash NOT updated"
+    exit 1
+  fi
+  marker_temporary="$(mktemp "${validated_hash_storage}.tmp.XXXXXX")"
   printf '%s\n' "$current_hash" > "$marker_temporary"
-  mv "$marker_temporary" "$hash_storage"
+  mv "$marker_temporary" "$validated_hash_storage"
   printf 'FIRMWARE_INSTALLATION_DIGEST=%s\n' "$current_hash"
   log_success "All $port_count ESP32 device(s) flashed successfully"
 else

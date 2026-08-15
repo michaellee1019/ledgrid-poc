@@ -12,15 +12,18 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
+import sys
 import tempfile
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from tools.deployment import deploy_entrypoint, deploy_target
+from tools.deployment.app_releases import AppReleaseManager
 from tools.deployment.deploy_coordinator import (
     AtomicJSONReceiptStore,
     CommandResult,
@@ -37,9 +40,57 @@ from tools.deployment.receiver_hybrid_config import (
 )
 
 
+ROOT = Path(__file__).resolve().parents[2]
 FIRMWARE_SHA256 = "e" * 64
 ROLLOUT_CONFIG_DIGEST = "f" * 64
 FIRMWARE_INSTALLATION_DIGEST = "a" * 64
+
+
+@contextmanager
+def _writable_temporary_directory():
+    with tempfile.TemporaryDirectory() as temporary_dir:
+        root = Path(temporary_dir)
+        try:
+            yield root
+        finally:
+            for path in root.rglob("*"):
+                if not path.is_symlink() and path.is_dir():
+                    path.chmod(0o755)
+
+
+def _write_firmware_artifacts(
+    firmware: Path,
+    environment: str,
+    *,
+    application: bytes,
+) -> Path:
+    build = firmware / ".pio" / "build" / environment
+    build.mkdir(parents=True, exist_ok=True)
+    (firmware / "platformio.ini").write_text("board_build.flash_mode = dio\n")
+    (firmware / "sdkconfig.defaults").write_text("CONFIG_PARTITION_TABLE_OFFSET=0x8000\n")
+    (firmware / f"sdkconfig.{environment}").write_text("CONFIG_FLASH_SIZE=16MB\n")
+    binary = build / "firmware.bin"
+    binary.write_bytes(application)
+    (build / "bootloader.bin").write_bytes(b"bootloader")
+    (build / "partitions.bin").write_bytes(b"partitions")
+    payload = {
+        "flash_files": {
+            "0x0": "bootloader/bootloader.bin",
+            "0x10000": "ledgrid_receiver.bin",
+            "0x8000": "partition_table/partition-table.bin",
+        },
+        "bootloader": {"file": "bootloader/bootloader.bin"},
+        "app": {"file": "ledgrid_receiver.bin"},
+        "partition-table": {"file": "partition_table/partition-table.bin"},
+    }
+    (build / "flasher_args.json").write_text(json.dumps(payload), encoding="utf-8")
+    (build / "flash_args").write_text(
+        "0x0 bootloader/bootloader.bin\n"
+        "0x10000 ledgrid_receiver.bin\n"
+        "0x8000 partition_table/partition-table.bin\n",
+        encoding="utf-8",
+    )
+    return binary
 
 
 class _SnapshotFixture:
@@ -189,6 +240,7 @@ class _FakeTarget:
                 "reason": "firmware build already exists",
                 "firmware_environment": PRODUCTION_FIRMWARE_ENVIRONMENT,
                 "firmware_sha256": FIRMWARE_SHA256,
+                "firmware_installation_digest": FIRMWARE_INSTALLATION_DIGEST,
                 "receiver_hybrid_config_digest": ROLLOUT_CONFIG_DIGEST,
             }
         if command == "provision":
@@ -669,11 +721,12 @@ class TargetFirmwareBuildTests(unittest.TestCase):
                         args, 0, "PlatformIO Core, version 6.1.19\n", "",
                     )
                 binary = (
-                    firmware
-                    / ".pio/build/esp32-s3-devkitc-1/firmware.bin"
+                    _write_firmware_artifacts(
+                        firmware,
+                        PRODUCTION_FIRMWARE_ENVIRONMENT,
+                        application=b"production feature-off firmware",
+                    )
                 )
-                binary.parent.mkdir(parents=True)
-                binary.write_bytes(b"production feature-off firmware")
                 return subprocess.CompletedProcess(args, 0, "build passed\n", "")
 
             with (
@@ -724,13 +777,11 @@ class TargetFirmwareBuildTests(unittest.TestCase):
                     return subprocess.CompletedProcess(
                         args, 0, "PlatformIO Core, version 6.1.19\n", "",
                     )
-                binary = (
-                    firmware / ".pio/build"
-                    / DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT
-                    / "firmware.bin"
+                _write_firmware_artifacts(
+                    firmware,
+                    DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+                    application=b"degraded hybrid firmware",
                 )
-                binary.parent.mkdir(parents=True)
-                binary.write_bytes(b"degraded hybrid firmware")
                 return subprocess.CompletedProcess(args, 0, "build passed\n", "")
 
             with (
@@ -783,13 +834,11 @@ class TargetFirmwareBuildTests(unittest.TestCase):
 class TargetFirmwareFailureTests(unittest.TestCase):
     @staticmethod
     def _production_binary(workspace: Path, content: bytes = b"production") -> Path:
-        binary = (
-            workspace
-            / "firmware/esp32/.pio/build/esp32-s3-devkitc-1/firmware.bin"
+        return _write_firmware_artifacts(
+            workspace / "firmware" / "esp32",
+            PRODUCTION_FIRMWARE_ENVIRONMENT,
+            application=content,
         )
-        binary.parent.mkdir(parents=True, exist_ok=True)
-        binary.write_bytes(content)
-        return binary
 
     def test_serial_flash_reuses_build_phase_scons_state_and_exact_binary(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -802,9 +851,10 @@ class TargetFirmwareFailureTests(unittest.TestCase):
             helper.write_text("#!/bin/bash\n", encoding="utf-8")
             ports = [f"/dev/ttyACM{index}" for index in range(4)]
 
-            def command(args, **_kwargs):
+            def command(args, **kwargs):
                 (root / ".esp32_firmware_hash").write_text(
-                    FIRMWARE_INSTALLATION_DIGEST + "\n", encoding="utf-8"
+                    kwargs["env"]["EXPECTED_FIRMWARE_INSTALLATION_DIGEST"] + "\n",
+                    encoding="utf-8",
                 )
                 return subprocess.CompletedProcess(
                     args, 0, "Flashed all receivers", "",
@@ -831,11 +881,11 @@ class TargetFirmwareFailureTests(unittest.TestCase):
 
             self.assertEqual(result["outcome"], "executed")
             self.assertEqual(result["firmware_sha256"], deploy_target._sha256_file(binary))
+            flash_env = command.call_args.kwargs["env"]
             self.assertEqual(
                 result["firmware_installation_digest"],
-                FIRMWARE_INSTALLATION_DIGEST,
+                flash_env["EXPECTED_FIRMWARE_INSTALLATION_DIGEST"],
             )
-            flash_env = command.call_args.kwargs["env"]
             self.assertEqual(flash_env["FIRMWARE_PREBUILT"], "1")
             self.assertEqual(
                 flash_env["FIRMWARE_ENVIRONMENT"],
@@ -844,6 +894,14 @@ class TargetFirmwareFailureTests(unittest.TestCase):
             self.assertEqual(
                 flash_env["EXPECTED_FIRMWARE_SHA256"],
                 deploy_target._sha256_file(binary),
+            )
+            self.assertRegex(
+                flash_env["EXPECTED_FIRMWARE_INSTALLATION_DIGEST"],
+                r"^[0-9a-f]{64}$",
+            )
+            self.assertEqual(
+                flash_env["EXPECTED_FIRMWARE_HASH_FILE"],
+                os.fspath(root / ".esp32_firmware_hash"),
             )
             self.assertEqual(
                 flash_env["PLATFORMIO_BUILD_CACHE_DIR"],
@@ -905,8 +963,8 @@ class TargetFirmwareFailureTests(unittest.TestCase):
 
     def test_flash_success_cannot_hide_deleted_or_changed_validated_binary(self) -> None:
         for mutation, expected in (
-            ("delete", "disappeared during flash"),
-            ("change", "changed during flash"),
+            ("delete", "installation disappeared during flash"),
+            ("change", "installation changed during flash"),
         ):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary_dir:
                 root = Path(temporary_dir)
@@ -1212,6 +1270,7 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                     "firmware_environment": PRODUCTION_FIRMWARE_ENVIRONMENT,
                     "receiver_hybrid_config_digest": ROLLOUT_CONFIG_DIGEST,
                     "firmware_sha256": FIRMWARE_SHA256,
+                    "firmware_installation_digest": FIRMWARE_INSTALLATION_DIGEST,
                 },
             },
         )
@@ -1235,6 +1294,8 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                     PRODUCTION_FIRMWARE_ENVIRONMENT,
                     "--expected-config-digest",
                     ROLLOUT_CONFIG_DIGEST,
+                    "--expected-installation-digest",
+                    FIRMWARE_INSTALLATION_DIGEST,
                 ),
             ),
         )
@@ -1405,6 +1466,203 @@ class RollbackEntrypointIntegrationTests(unittest.TestCase):
         self.assertTrue(receipt.health["deployment_status"]["recorded"])
         for sink in sinks:
             self.assertEqual(sink.receipts, [receipt])
+
+    def test_pinned_rollback_helper_bundle_executes_without_repository_imports(self) -> None:
+        with _writable_temporary_directory() as temporary:
+            target_root = temporary / "target"
+            source_a = temporary / "a.txt"
+            source_b = temporary / "b.txt"
+            source_a.write_text("release a\n", encoding="utf-8")
+            source_b.write_text("release b\n", encoding="utf-8")
+            manager = AppReleaseManager(target_root)
+            release_a = manager.stage({"payload.txt": source_a})
+            release_b = manager.stage({"payload.txt": source_b})
+            manager.activate(release_a.id)
+
+            bundle = temporary / "pinned-helper"
+            bundle.mkdir()
+            for name in deploy_entrypoint.ROLLBACK_HELPER_FILENAMES:
+                shutil.copy2(ROOT / "tools" / "deployment" / name, bundle / name)
+
+            helper = bundle / "deploy_target.py"
+
+            def isolated(*args: str) -> dict[str, object]:
+                completed = subprocess.run(
+                    (
+                        sys.executable,
+                        os.fspath(helper),
+                        "--root",
+                        os.fspath(target_root),
+                        *args,
+                    ),
+                    cwd=temporary,
+                    env={
+                        **os.environ,
+                        "PYTHONPATH": os.fspath(temporary / "missing"),
+                        "PYTHONNOUSERSITE": "1",
+                    },
+                    check=False,
+                    text=True,
+                    capture_output=True,
+                )
+                if completed.returncode:
+                    self.fail(
+                        "isolated rollback helper failed:\n"
+                        + completed.stdout
+                        + completed.stderr
+                    )
+                return json.loads(completed.stdout)
+
+            inspected = isolated("inspect")
+            self.assertEqual(inspected["current_release"], release_a.id)
+            self.assertEqual(set(inspected["releases"]), {release_a.id, release_b.id})
+            activated = isolated("activate", release_b.id)
+            self.assertEqual(activated["previous_release"], release_a.id)
+            self.assertEqual(activated["release_id"], release_b.id)
+            self.assertEqual(isolated("current-release")["current_release"], release_b.id)
+
+            # Exercise the coordinator's actual pin command construction too;
+            # the isolated bundle above is exactly the file set copied here.
+            target = _RollbackTarget()
+            runner = _Runner()
+            context = DeployContext(
+                target="fake@wall",
+                mode="rollback",
+                source_identity={"operation": "app_rollback"},
+                ssh_runner=runner,
+                attempt_id="pin-bundle",
+            )
+            config = deploy_entrypoint.DeploymentConfig(
+                root=ROOT,
+                mode="python",
+                policy="clean",
+                target="fake@wall",
+                deploy_dir="fake-root",
+                run_tests=False,
+                generate_previews=False,
+            )
+            rollback = deploy_entrypoint.CoordinatorRollback(
+                config, context, target.requested
+            )
+            with patch.object(
+                deploy_entrypoint.CoordinatorDeployment,
+                "_capture",
+                return_value=deploy_entrypoint.OperationResult(outcome="skipped"),
+            ):
+                rollback._capture(context)
+            copied = [call[0] for call in runner.calls if call[0][0] == "cp"]
+            self.assertEqual(
+                tuple(Path(path).name for path in copied[0][1:-1]),
+                deploy_entrypoint.ROLLBACK_LEGACY_HELPER_FILENAMES,
+            )
+            self.assertEqual(
+                tuple(Path(call[1]).name for call in copied[1:]),
+                deploy_entrypoint.ROLLBACK_OPTIONAL_HELPER_FILENAMES,
+            )
+            rollback._helper_pinned = False
+
+    def test_pinned_rollback_helper_accepts_pre_artifact_inspector_release(self) -> None:
+        class _PreChangeRunner(_Runner):
+            def run(self, args, **kwargs):
+                normalized = tuple(os.fspath(arg) for arg in args)
+                self.calls.append((normalized, kwargs))
+                missing = (
+                    normalized[0] == "test"
+                    and Path(normalized[-1]).name == "firmware_artifacts.py"
+                )
+                return CommandResult(normalized, 1 if missing else 0, "", "", 0.01)
+
+        with _writable_temporary_directory() as temporary:
+            target_root = temporary / "target"
+            payload = temporary / "payload.txt"
+            payload.write_text("legacy release\n", encoding="utf-8")
+            release = AppReleaseManager(target_root).stage({"payload.txt": payload})
+
+            bundle = temporary / "legacy-pinned-helper"
+            bundle.mkdir()
+            current_helper = (
+                ROOT / "tools" / "deployment" / "deploy_target.py"
+            ).read_text(encoding="utf-8")
+            package_import = (
+                "    from tools.deployment.firmware_artifacts import "
+                "inspect_firmware_installation\n"
+            )
+            direct_import = (
+                "    from firmware_artifacts import inspect_firmware_installation "
+                " # type: ignore[no-redef]\n"
+            )
+            self.assertIn(package_import, current_helper)
+            self.assertIn(direct_import, current_helper)
+            # This fixture models the immediately preceding target helper: it
+            # has the hybrid-config dependency but predates firmware_artifacts.
+            (bundle / "deploy_target.py").write_text(
+                current_helper.replace(package_import, "").replace(direct_import, ""),
+                encoding="utf-8",
+            )
+            for name in (
+                "app_releases.py",
+                "deploy_coordinator.py",
+                "receiver_hybrid_config.py",
+            ):
+                shutil.copy2(ROOT / "tools" / "deployment" / name, bundle / name)
+            self.assertFalse((bundle / "firmware_artifacts.py").exists())
+
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    os.fspath(bundle / "deploy_target.py"),
+                    "--root",
+                    os.fspath(target_root),
+                    "inspect",
+                ),
+                cwd=temporary,
+                env={
+                    **os.environ,
+                    "PYTHONPATH": os.fspath(temporary / "missing"),
+                    "PYTHONNOUSERSITE": "1",
+                },
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(json.loads(completed.stdout)["releases"], [release.id])
+
+            target = _RollbackTarget()
+            runner = _PreChangeRunner()
+            context = DeployContext(
+                target="fake@wall",
+                mode="rollback",
+                source_identity={"operation": "app_rollback"},
+                ssh_runner=runner,
+                attempt_id="legacy-pin-bundle",
+            )
+            config = deploy_entrypoint.DeploymentConfig(
+                root=ROOT,
+                mode="python",
+                policy="clean",
+                target="fake@wall",
+                deploy_dir="fake-root",
+                run_tests=False,
+                generate_previews=False,
+            )
+            rollback = deploy_entrypoint.CoordinatorRollback(
+                config, context, target.requested
+            )
+            with patch.object(
+                deploy_entrypoint.CoordinatorDeployment,
+                "_capture",
+                return_value=deploy_entrypoint.OperationResult(outcome="skipped"),
+            ):
+                rollback._capture(context)
+            copied_names = {
+                Path(call[0][1]).name
+                for call in runner.calls
+                if call[0][0] == "cp" and len(call[0]) == 3
+            }
+            self.assertIn("receiver_hybrid_config.py", copied_names)
+            self.assertNotIn("firmware_artifacts.py", copied_names)
+            rollback._helper_pinned = False
 
 
 class _CompensationTarget:
