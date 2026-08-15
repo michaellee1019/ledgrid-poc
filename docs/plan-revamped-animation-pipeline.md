@@ -3084,6 +3084,13 @@ claim):
   `just deploy-plan` passed. The plan accounts for the new Python modules as
   application inputs and every new firmware header, source, native test, and
   generated fixture as support inputs.
+- ordinary clean `just deploy` from `a79c1b4` passed source validation and its
+  complete 2m28s regression precheck, then stopped before target mutation at
+  `target.connect`: this workstation could not resolve `ledgridwall.local`, and
+  the repository-documented `192.168.1.62` fallback timed out from the current
+  `192.168.8.0/24` network. Successful marker migration and the following
+  identical firmware no-op therefore remain open; the final checklist item and
+  slice status stay incomplete.
 
 - [x] Publish validated canonical profiles atomically under their frozen
   content digest, make identical publication idempotent, reject corruption and
