@@ -1357,10 +1357,10 @@ complete. Read-only host runtime/preview selection and its clean deployment are
 complete. Receiver profile staging/activation implementation and its clean
 deployment/no-op acceptance are complete. Portable host/receiver `hue_shift`
 parity, post-composition receiver integration, and the read-only native geometry
-canary are implementation- and regression-complete; their clean deployment is
-pending. Actual installed-wall profile activation, photographic optic/seam
-acceptance, physical power-cut/backend-latency evidence, hardware optic timing,
-and strict readable all-four acceptance remain open**.
+canary are implementation-, regression-, and clean-deployment-complete. Actual
+installed-wall profile activation, photographic optic/seam acceptance,
+physical power-cut/backend-latency evidence, hardware optic timing, and strict
+readable all-four acceptance remain open**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -3026,10 +3026,10 @@ host-library/fake-transaction, read-only host-context, and receiver-profile
 staging/activation implementation slices are complete and cleanly deployed.
 Portable fixed-point host/receiver `hue_shift`, post-composition receiver
 integration, and the read-only geometry canary are implementation- and
-regression-complete with clean deployment pending. Actual installed-wall
-profile activation, photographic optic/seam acceptance, physical
-power-cut/backend latency, hardware optic timing, and strict readable all-four
-acceptance remain open**.
+regression-complete and cleanly deployed. Actual installed-wall profile
+activation, photographic optic/seam acceptance, physical power-cut/backend
+latency, hardware optic timing, and strict readable all-four acceptance remain
+open**.
 The v1 binary schema, digest domains, category/region encodings, fixed global
 derivatives, receiver-view orientation, strict decoder bounds, and 65,535-byte
 maximum are frozen in `ANIMATION_PIPELINE_CONTRACT_V1.md`. Compiler/codec,
@@ -3370,17 +3370,18 @@ This pair closes the implementation slice's clean-deploy/no-op gate and the
 earlier receiver-runtime prerequisite. It does not prove profile payload
 transfer or activation on real receivers, physical power-cut recovery,
 SPIFFS latency/wear bounds, optics, seam behavior, or strict all-four release
-acceptance. The next bounded Phase 3C lane is `hue_shift` parity plus a
-read-only native geometry canary; it must retain those physical stop gates.
+acceptance. The bounded portable `hue_shift` parity/read-only geometry-canary
+lane is recorded below. The next Phase 3C work must retain the physical stop
+gates and may not claim installed optic acceptance before the SPI1 repair and
+an explicitly scheduled profile-activation/photo/timing canary.
 
-Current bounded receiver-optics slice (2026-08-21): **implementation and
-portable acceptance complete; clean deployment pending**. This lane freezes
-one allocation-free fixed-point `hue_shift` transform, applies it only after
-local background/foreground composition and only to exact profile obstacle
-cells, and adds a deterministic read-only category/region canary. It does not
-activate a profile on the installed wall, add a dashboard mutation, move
-semantic modifiers to firmware, or weaken the all-zero/no-profile and
-feature-off compatibility paths.
+Current bounded receiver-optics slice (2026-08-21): **complete and cleanly
+deployed**. This lane freezes one allocation-free fixed-point `hue_shift`
+transform, applies it only after local background/foreground composition and
+only to exact profile obstacle cells, and adds a deterministic read-only
+category/region canary. It does not activate a profile on the installed wall,
+add a dashboard mutation, move semantic modifiers to firmware, or weaken the
+all-zero/no-profile and feature-off compatibility paths.
 
 - [x] Preserve canonical modifier strengths in the committed receiver context
   and prove staged, rejected, idempotent, and live replacement behavior.
@@ -3396,7 +3397,7 @@ feature-off compatibility paths.
 - [x] Stitch all four installed-topology receiver fixtures and prove optic and
   canary parity across every 8-strip boundary, including reversed logical
   receivers 2/3 and a foreground pixel on a boundary obstacle.
-- [ ] Record portable default/maximum transform timings separately, run the
+- [x] Record portable default/maximum transform timings separately, run the
   focused native and Python suites, full project/rendering/firmware/deployment
   gates, fixture drift, both ESP32-S3 builds, deploy dry-runs/plan, whitespace,
   and an ordinary clean `just deploy` before closing this slice.
@@ -3421,6 +3422,28 @@ Portable acceptance evidence before deployment:
 - The render gate retains its event-driven tail evidence: accepted p95 remains
   below budget; isolated p99/max spikes remain recorded rather than being
   relabeled as physical receiver performance.
+
+Clean deployment evidence:
+
+- Commit `d4562661d36d0185c87921020ec258030747c1ce` passed ordinary clean
+  `just deploy` in 17m17s under receipt
+  `1aabeae54911439ca60281342d459dd1` (receipt SHA-256
+  `5a30cc3d8cd07d83cea91f9be47221e527f1b8aa23966a7998f5540b66b0f24e`).
+  Source identity was clean with no untracked exceptions.
+- The coordinator built the configured local-canary image at 87,008 bytes RAM
+  and 357,977 bytes flash, bound all flash/layout artifacts into installation
+  digest `5bc39389cdef79b1d8b8b34cebe13f63eb94dece160959777e9dbbeef1ea1c14`,
+  and flashed `/dev/ttyACM0` through `/dev/ttyACM3` successfully.
+- The app activated release
+  `8d2603865381c5888de4751565e083934f3daf3fa1430be5f07a3abd639597f9`,
+  restored `lava_lamp` / `Busy Bubbles`, and passed two fresh 32x138 readiness
+  samples with exact desired/observed release agreement.
+- Read-only post-deploy status showed the host profile rollout gate disabled,
+  no selected host installation profile, no active receiver profile or context
+  on readable receivers 0/1, host-full-scene ownership, zero driver/display/CRC
+  errors, and profile-cache integrity true. Receivers 2/3 remain unverified
+  through the known SPI1 return-path fault, so this is ordinary deployment and
+  compatibility evidence, not strict all-four optic or release acceptance.
 
 - [x] Freeze the portable v1 header, section table, section vocabulary,
   canonical ordering, CRC/content/calibration digests, global-derivative rules,
