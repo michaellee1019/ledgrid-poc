@@ -31,13 +31,13 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 try:
-    from tools.deployment.app_releases import AppReleaseManager, ReleaseValidationError
+    from tools.deployment.app_releases import AppReleaseManager
     from tools.deployment.firmware_artifacts import inspect_firmware_installation
     from tools.deployment.receiver_hybrid_config import (
         resolve_receiver_hybrid_config,
     )
 except ModuleNotFoundError:  # Direct execution from an uploaded snapshot.
-    from app_releases import AppReleaseManager, ReleaseValidationError  # type: ignore[no-redef]
+    from app_releases import AppReleaseManager  # type: ignore[no-redef]
     from firmware_artifacts import inspect_firmware_installation  # type: ignore[no-redef]
     from receiver_hybrid_config import (  # type: ignore[no-redef]
         resolve_receiver_hybrid_config,
@@ -141,6 +141,24 @@ def _json_object(path: Path) -> dict[str, Any]:
         raise RuntimeError(f"cannot read JSON object {path}: {exc}") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(f"expected a JSON object in {path}")
+    return payload
+
+
+def _final_stdout_json_object(output: str, *, label: str) -> dict[str, Any]:
+    """Parse one final single-line control object after optional tool progress."""
+
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        raise RuntimeError(f"{label} returned no JSON result")
+    final_line = lines[-1]
+    try:
+        payload = json.loads(final_line)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"{label} did not end with JSON: {final_line[-1000:]}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{label} final JSON result is not an object")
     return payload
 
 
@@ -432,13 +450,7 @@ def ensure_runtime(root: Path, release_id: str) -> Mapping[str, Any]:
         ),
         cwd=release,
     )
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"runtime environment did not return JSON: {result.stdout[-1000:]}") from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError("runtime environment result is not an object")
-    return payload
+    return _final_stdout_json_object(result.stdout, label="runtime environment")
 
 
 def _unit_text(root: Path, user: str) -> str:

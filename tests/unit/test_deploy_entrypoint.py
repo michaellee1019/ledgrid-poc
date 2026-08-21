@@ -675,6 +675,52 @@ class TargetHealthIntegrationTests(unittest.TestCase):
 
 
 class TargetProvisioningTests(unittest.TestCase):
+    def test_runtime_ensure_accepts_first_install_progress_before_final_json(self) -> None:
+        root = Path("/target")
+        release_id = "a" * 64
+        expected = {
+            "identity": "b" * 64,
+            "installed": True,
+            "path": "/target/.venvs/runtime-cpython-3.10-bbbbbbbbbbbbbbbbbbbbbbbb",
+            "migrated_legacy": None,
+        }
+        stdout = (
+            "Resolved 37 packages in 211ms\n"
+            "Prepared 37 packages in 1.4s\n"
+            "Installed 37 packages in 96ms\n"
+            + json.dumps(expected, sort_keys=True)
+            + "\n"
+        )
+        completed = subprocess.CompletedProcess(("python3",), 0, stdout, "")
+
+        with patch.object(deploy_target, "_command", return_value=completed) as command:
+            result = deploy_target.ensure_runtime(root, release_id)
+
+        self.assertEqual(result, expected)
+        args = command.call_args.args[0]
+        self.assertEqual(args[0], "python3")
+        self.assertIn("runtime_env.py", os.fspath(args[1]))
+        self.assertEqual(args[2], "ensure")
+
+    def test_runtime_ensure_rejects_missing_malformed_or_trailing_control_json(self) -> None:
+        valid = json.dumps({"installed": True})
+        cases = (
+            ("", "no JSON result"),
+            ("Resolved packages only\n", "did not end with JSON"),
+            ("Installed packages\n{\n", "did not end with JSON"),
+            (valid + "\ntrailing noise\n", "did not end with JSON"),
+            ("Installed packages\n[]\n", "not an object"),
+        )
+        for stdout, message in cases:
+            with self.subTest(stdout=stdout), patch.object(
+                deploy_target,
+                "_command",
+                return_value=subprocess.CompletedProcess(
+                    ("python3",), 0, stdout, ""
+                ),
+            ), self.assertRaisesRegex(RuntimeError, message):
+                deploy_target.ensure_runtime(Path("/target"), "a" * 64)
+
     def test_current_aware_unit_install_waits_until_spi_is_ready_after_reboot(self) -> None:
         root = Path("/target")
         release = root / "releases" / ("a" * 64)
