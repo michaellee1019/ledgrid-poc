@@ -273,8 +273,22 @@ mask and framework-optics caches, and a plugin that projects or plans from
 `on_presentation_context_changed(old, new)` when installation-profile identity
 changes. That hook may invalidate future routing/layout work, but must preserve
 the plugin instance, authored parameters, current semantic state, elapsed-time
-state, and RNG stream. Profile selection never sends receiver commands in this
-host-runtime phase.
+state, and RNG stream. Host profile selection remains independent of receiver
+profile activation.
+
+The default-off Phase 3C receiver path can stage and activate the same decoded
+profile view without changing display ownership. A committed local-background
+context preserves all fourteen resolved Q8.8 modifier strengths. When and only
+when local-background ownership, a valid active profile, and nonzero
+`hue_shift` coincide, firmware applies the generated signed-Q14 hue matrix to
+exact foliage/globe pixels after sparse foreground composition. Profile
+activation or restore invalidates one such in-flight presentation but preserves
+the renderer, context, foreground generation, semantic time, and cadence.
+Zero strength, no profile, the feature-off production build, and complete host
+frames remain byte-exact compatibility paths. A separate allocation-free
+18-class native geometry canary distinguishes empty, clearance, foliage,
+regions 1-7, and obstacle edges without mutating the decoded profile; it is a
+portable/read-only diagnostic and is not exposed as a wall scene.
 
 Keep foliage, globes, their union, and clearance-expanded obstacles semantically
 separate. Interactive simulations can use them for collision and routing;
@@ -382,9 +396,11 @@ adding a second transfer.
 
 Receiver playback is not an `AnimationBase`, does not weaken the Python manifest
 allowlist, and does not introduce another catalog. The Pi continues to resolve
-vibe and plant-modifier presentation state and transmits exact fixed-point values
-and digests; firmware does not perform local profile lookup or receive calibrated
-plant geometry in Phase 3A/3B0.
+vibe and plant-modifier presentation state and transmits exact fixed-point
+values and digests. Phase 3A/3B0 does not perform local profile lookup or
+receive calibrated plant geometry; the separate default-off Phase 3C profile
+transaction stages a Pi-authoritative, content-addressed profile for
+receiver-safe optics.
 
 The `native-animations` branch remains an organ donor for the roadmap's later
 receiver phases. Reuse its ABI/build validation, host preview harness, ESP-IDF

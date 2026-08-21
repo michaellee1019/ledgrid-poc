@@ -258,7 +258,7 @@ ReceiverOperationResult ReceiverRuntime::context_set(
   const std::uint16_t luminance = read_u16(command + 97);
   if (command[26] < 1 || command[26] > 5 || read_u32(command + 27) == 0 ||
       luminance > kQ8_8One || command[103] != 1 ||
-      modifier_count > 14) {
+      modifier_count > kPresentationModifierCount) {
     return finish(ReceiverOperationResult::InvalidContext);
   }
   std::uint8_t prior_id = 0;
@@ -267,7 +267,7 @@ ReceiverOperationResult ReceiverRuntime::context_set(
   for (std::size_t index = 0; index < modifier_count; ++index) {
     const std::size_t offset = 145 + index * 3U;
     const std::uint8_t id = command[offset];
-    if (id == 0 || id > 14 || id <= prior_id ||
+    if (id == 0 || id > kPresentationModifierCount || id <= prior_id ||
         read_u16(command + offset + 1) > kQ8_8One) {
       return finish(ReceiverOperationResult::InvalidContext);
     }
@@ -280,7 +280,8 @@ ReceiverOperationResult ReceiverRuntime::context_set(
   if (!equal_bytes(context_digest, staged_context_.context_digest, 32)) {
     return finish(ReceiverOperationResult::DigestMismatch);
   }
-  std::uint8_t plant_canonical[2 + 14 * 3] = {};
+  std::uint8_t plant_canonical[
+      2U + kPresentationModifierCount * kPresentationContextSetEntryBytes] = {};
   plant_canonical[0] = command[103];
   plant_canonical[1] = modifier_count;
   if (modifier_count != 0) {
@@ -300,6 +301,13 @@ ReceiverOperationResult ReceiverRuntime::context_set(
   staged_context_.luminance_q8_8 = luminance;
   staged_context_.modifier_revision = read_u64(command + 104);
   std::memcpy(staged_context_.modifier_digest, command + 112, 32);
+  std::memset(staged_context_.modifier_strengths_q8_8, 0,
+              sizeof(staged_context_.modifier_strengths_q8_8));
+  for (std::size_t index = 0; index < modifier_count; ++index) {
+    const std::size_t offset = 145U + index * 3U;
+    staged_context_.modifier_strengths_q8_8[command[offset]] =
+        read_u16(command + offset + 1U);
+  }
   context_state_ = PresentationContextState::Ready;
   return finish(ReceiverOperationResult::Ok);
 }
@@ -1092,6 +1100,16 @@ void ReceiverRuntime::request_local_refresh() {
   if (base_mode_ == BaseMode::LocalBackground) force_local_refresh_ = true;
 }
 
+bool ReceiverRuntime::invalidate_local_presentation_for_profile_change() {
+  if (base_mode_ != BaseMode::LocalBackground ||
+      active_context_.modifier_strength_q8_8(kHueShiftModifierId) == 0) {
+    return false;
+  }
+  ++render_generation_;
+  force_local_refresh_ = true;
+  return true;
+}
+
 bool ReceiverRuntime::service_foreground(std::uint64_t local_monotonic_us) {
 #if !LEDGRID_ENABLE_LOCAL_BACKGROUND
   (void)local_monotonic_us;
@@ -1310,6 +1328,12 @@ PhysicalSubmitResult submit_rendered_frame_if_current(
     return PhysicalSubmitResult::DriverRejected;
   }
   return PhysicalSubmitResult::Submitted;
+}
+
+bool installation_profile_command_may_change_active_binding(
+    ReceiverCommand command) {
+  return command == ReceiverCommand::InstallationProfileActivate ||
+         command == ReceiverCommand::InstallationProfileRestore;
 }
 
 }  // namespace ledgrid

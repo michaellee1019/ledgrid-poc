@@ -436,6 +436,66 @@ void test_generated_cross_language_context_packets_stage_and_commit() {
                              runtime.active_context().session, 16);
     TEST_ASSERT_EQUAL_MEMORY(begin.data() + 26,
                              runtime.active_context().context_digest, 32);
+    TEST_ASSERT_EQUAL_UINT16(
+        0, runtime.active_modifier_strength_q8_8(0));
+    TEST_ASSERT_EQUAL_UINT16(
+        0, runtime.active_modifier_strength_q8_8(
+               ledgrid::kPresentationModifierCount + 1U));
+    if (std::strcmp(vector.id, "quiet_plants") == 0) {
+      const std::uint16_t expected[ledgrid::kPresentationModifierCount + 1U] = {
+          0, 128, 0, 0, 64, 0, 192, 0, 0, 256, 0, 0, 0, 0, 32};
+      for (std::uint8_t id = 1; id <= ledgrid::kPresentationModifierCount;
+           ++id) {
+        TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+            expected[id], runtime.active_modifier_strength_q8_8(id),
+            vector.id);
+      }
+      TEST_ASSERT_EQUAL_UINT16(
+          64, runtime.active_modifier_strength_q8_8(
+                  ledgrid::kHueShiftModifierId));
+    }
+  }
+}
+
+void test_rejected_context_set_preserves_active_and_staged_strengths_atomically() {
+  const auto& active = ledgrid::golden_presentation_v1::kPresentationVectors[1];
+  ledgrid::ReceiverRuntime runtime(true);
+  auto active_begin = from_hex(active.begin_hex);
+  auto active_set = from_hex(active.set_hex);
+  auto active_commit = from_hex(active.commit_hex);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(active_begin.data(), active_begin.size())));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(active_set.data(), active_set.size())));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(active_commit.data(), active_commit.size())));
+  TEST_ASSERT_EQUAL_UINT16(
+      64, runtime.active_modifier_strength_q8_8(ledgrid::kHueShiftModifierId));
+
+  const auto& replacement =
+      ledgrid::golden_presentation_v1::kPresentationVectors[2];
+  auto begin = from_hex(replacement.begin_hex);
+  auto set = from_hex(replacement.set_hex);
+  // The final canonical entry follows several valid entries but is just above
+  // the Q8.8 maximum. Bind BEGIN to this malformed payload so rejection proves
+  // validation atomicity rather than merely a context-digest mismatch.
+  set[set.size() - 2U] = 0x01;
+  set[set.size() - 1U] = 0x01;
+  std::uint8_t digest[32] = {};
+  ledgrid::sha256(set.data() + 18U, set.size() - 18U, digest);
+  std::memcpy(begin.data() + 26U, digest, sizeof(digest));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(begin.data(), begin.size())));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ReceiverOperationResult::InvalidContext),
+      static_cast<std::uint8_t>(runtime.process_command(set.data(), set.size())));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::PresentationContextState::Staging),
+      static_cast<std::uint8_t>(runtime.context_state()));
+  TEST_ASSERT_EQUAL_UINT16(
+      64, runtime.active_modifier_strength_q8_8(ledgrid::kHueShiftModifierId));
+  for (std::uint8_t id = 1; id <= ledgrid::kPresentationModifierCount; ++id) {
+    TEST_ASSERT_EQUAL_UINT16(0, runtime.staged_modifier_strength_q8_8(id));
   }
 }
 
@@ -782,6 +842,155 @@ void test_parameter_and_context_updates_invalidate_inflight_local_frames() {
   TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
       runtime.process_command(commit.data(), commit.size(), 9000000)));
   TEST_ASSERT_EQUAL_UINT32(after_context, runtime.render_generation());
+}
+
+void test_live_modifier_replacement_invalidates_only_at_commit() {
+  const auto& original =
+      ledgrid::golden_presentation_v1::kPresentationVectors[1];
+  ledgrid::ReceiverRuntime runtime(true);
+  auto original_begin = from_hex(original.begin_hex);
+  auto original_set = from_hex(original.set_hex);
+  auto original_commit = from_hex(original.commit_hex);
+  runtime.process_command(original_begin.data(), original_begin.size());
+  runtime.process_command(original_set.data(), original_set.size());
+  runtime.process_command(original_commit.data(), original_commit.size(), 1000000);
+  auto start = start_command(
+      30, 8, 42, runtime.active_context().scene_epoch);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(start.data(), start.size(), 1000000)));
+  const std::uint32_t original_generation = runtime.render_generation();
+  TEST_ASSERT_TRUE(runtime.local_frame_rendered_if_current(
+      original_generation, 1000000, runtime.scene_time_us(1000000), 25));
+  TEST_ASSERT_FALSE(runtime.local_frame_due(1000000));
+
+  const auto& replacement =
+      ledgrid::golden_presentation_v1::kPresentationVectors[2];
+  auto begin = from_hex(replacement.begin_hex);
+  auto set = from_hex(replacement.set_hex);
+  auto commit = from_hex(replacement.commit_hex);
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(begin.data(), begin.size(), 1100000)));
+  TEST_ASSERT_EQUAL_UINT32(original_generation, runtime.render_generation());
+  TEST_ASSERT_EQUAL_UINT16(
+      64, runtime.active_modifier_strength_q8_8(ledgrid::kHueShiftModifierId));
+  TEST_ASSERT_EQUAL_UINT16(
+      0, runtime.staged_modifier_strength_q8_8(ledgrid::kHueShiftModifierId));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(set.data(), set.size(), 1100000)));
+  TEST_ASSERT_EQUAL_UINT32(original_generation, runtime.render_generation());
+  TEST_ASSERT_EQUAL_UINT16(
+      64, runtime.active_modifier_strength_q8_8(ledgrid::kHueShiftModifierId));
+  TEST_ASSERT_EQUAL_UINT16(
+      0, runtime.staged_modifier_strength_q8_8(ledgrid::kHueShiftModifierId));
+
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(commit.data(), commit.size(), 1200000)));
+  TEST_ASSERT_EQUAL_UINT32(original_generation + 1U,
+                           runtime.render_generation());
+  TEST_ASSERT_EQUAL_UINT16(
+      0, runtime.active_modifier_strength_q8_8(ledgrid::kHueShiftModifierId));
+  TEST_ASSERT_TRUE(runtime.local_frame_due(1200000));
+  const std::uint32_t committed_generation = runtime.render_generation();
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
+      runtime.process_command(commit.data(), commit.size(), 1300000)));
+  TEST_ASSERT_EQUAL_UINT32(committed_generation, runtime.render_generation());
+}
+
+void test_profile_change_invalidation_preserves_live_runtime_state_and_cadence() {
+  const auto& vector = ledgrid::golden_presentation_v1::kPresentationVectors[1];
+  ledgrid::ReceiverRuntime runtime(true);
+  auto begin = from_hex(vector.begin_hex);
+  auto set = from_hex(vector.set_hex);
+  auto commit = from_hex(vector.commit_hex);
+  runtime.process_command(begin.data(), begin.size());
+  runtime.process_command(set.data(), set.size());
+  runtime.process_command(commit.data(), commit.size(), 1000000);
+  auto start = start_command(
+      40, 8, 42, runtime.active_context().scene_epoch);
+  runtime.process_command(start.data(), start.size(), 1000000);
+  const std::uint32_t generation = runtime.render_generation();
+  TEST_ASSERT_TRUE(runtime.local_frame_rendered_if_current(
+      generation, 1000000, runtime.scene_time_us(1000000), 37));
+  TEST_ASSERT_FALSE(runtime.local_frame_due(1000000));
+  const auto context_before = runtime.active_context();
+  const auto parameters_before = runtime.local_parameters();
+  const auto stats_before = runtime.render_stats();
+  const auto foreground_before = runtime.foreground_state();
+
+  TEST_ASSERT_TRUE(runtime.invalidate_local_presentation_for_profile_change());
+  TEST_ASSERT_EQUAL_UINT32(generation + 1U, runtime.render_generation());
+  TEST_ASSERT_FALSE(runtime.local_render_still_valid(generation));
+  TEST_ASSERT_TRUE(runtime.local_frame_due(1000000));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::BaseMode::LocalBackground),
+      static_cast<std::uint8_t>(runtime.base_mode()));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::PresentationContextState::Active),
+      static_cast<std::uint8_t>(runtime.context_state()));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(foreground_before),
+                          static_cast<std::uint8_t>(runtime.foreground_state()));
+  const auto& context_after = runtime.active_context();
+  TEST_ASSERT_EQUAL_MEMORY(context_before.session, context_after.session, 16);
+  TEST_ASSERT_EQUAL_UINT64(context_before.scene_revision,
+                           context_after.scene_revision);
+  TEST_ASSERT_EQUAL_UINT64(context_before.scene_epoch, context_after.scene_epoch);
+  TEST_ASSERT_EQUAL_UINT64(context_before.present_at_scene_time_us,
+                           context_after.present_at_scene_time_us);
+  TEST_ASSERT_EQUAL_UINT64(context_before.modifier_revision,
+                           context_after.modifier_revision);
+  TEST_ASSERT_EQUAL_MEMORY(context_before.context_digest,
+                           context_after.context_digest, 32);
+  TEST_ASSERT_EQUAL_MEMORY(context_before.modifier_strengths_q8_8,
+                           context_after.modifier_strengths_q8_8,
+                           sizeof(context_before.modifier_strengths_q8_8));
+  const auto& parameters_after = runtime.local_parameters();
+  TEST_ASSERT_EQUAL_UINT16(parameters_before.component_id,
+                           parameters_after.component_id);
+  TEST_ASSERT_EQUAL_UINT16(parameters_before.preferred_cadence_hz,
+                           parameters_after.preferred_cadence_hz);
+  TEST_ASSERT_EQUAL_UINT32(parameters_before.global_strip_offset,
+                           parameters_after.global_strip_offset);
+  TEST_ASSERT_EQUAL_UINT32(parameters_before.common_seed,
+                           parameters_after.common_seed);
+  TEST_ASSERT_EQUAL_UINT64(parameters_before.scene_epoch,
+                           parameters_after.scene_epoch);
+  TEST_ASSERT_EQUAL(parameters_before.reverse_local_strip_order,
+                    parameters_after.reverse_local_strip_order);
+  const auto& stats_after = runtime.render_stats();
+  TEST_ASSERT_EQUAL_UINT32(stats_before.cadence_deadlines,
+                           stats_after.cadence_deadlines);
+  TEST_ASSERT_EQUAL_UINT32(stats_before.rendered_frames,
+                           stats_after.rendered_frames);
+  TEST_ASSERT_EQUAL_UINT32(stats_before.missed_cadence,
+                           stats_after.missed_cadence);
+  TEST_ASSERT_EQUAL_UINT16(stats_before.last_render_us,
+                           stats_after.last_render_us);
+  TEST_ASSERT_EQUAL_UINT16(stats_before.max_render_us,
+                           stats_after.max_render_us);
+  TEST_ASSERT_EQUAL_UINT64(stats_before.last_frame_scene_time_us,
+                           stats_after.last_frame_scene_time_us);
+
+  ledgrid::ReceiverRuntime zero_strength(true);
+  activate_neutral_context(&zero_strength);
+  auto neutral_start = start_command(
+      30, 0, 42, zero_strength.active_context().scene_epoch);
+  zero_strength.process_command(neutral_start.data(), neutral_start.size());
+  const std::uint32_t zero_generation = zero_strength.render_generation();
+  TEST_ASSERT_FALSE(
+      zero_strength.invalidate_local_presentation_for_profile_change());
+  TEST_ASSERT_EQUAL_UINT32(zero_generation, zero_strength.render_generation());
+}
+
+void test_only_profile_activation_and_restore_may_invalidate_presentation() {
+  for (unsigned value = 0; value <= 0xFFU; ++value) {
+    const auto command = static_cast<ledgrid::ReceiverCommand>(value);
+    const bool expected =
+        command == ledgrid::ReceiverCommand::InstallationProfileActivate ||
+        command == ledgrid::ReceiverCommand::InstallationProfileRestore;
+    TEST_ASSERT_EQUAL(
+        expected,
+        ledgrid::installation_profile_command_may_change_active_binding(command));
+  }
 }
 
 void test_live_dispatch_policy_is_exhaustive_and_feature_gated() {
@@ -1629,6 +1838,7 @@ int main(int, char**) {
   RUN_TEST(test_cadence_is_deadline_driven_and_counts_misses);
   RUN_TEST(test_rainbow_uses_global_coordinates_seed_and_luminance_once);
   RUN_TEST(test_generated_cross_language_context_packets_stage_and_commit);
+  RUN_TEST(test_rejected_context_set_preserves_active_and_staged_strengths_atomically);
   RUN_TEST(test_context_digest_and_order_failures_preserve_active_context);
   RUN_TEST(test_zero_tempo_is_valid_presentation_state_not_a_render_failure);
   RUN_TEST(test_context_retries_revision_order_and_conflicts_are_safe);
@@ -1642,6 +1852,9 @@ int main(int, char**) {
   RUN_TEST(test_local_render_generation_prevents_stale_frame_submission);
   RUN_TEST(test_stale_render_and_dma_completions_cannot_mutate_newer_ownership);
   RUN_TEST(test_parameter_and_context_updates_invalidate_inflight_local_frames);
+  RUN_TEST(test_live_modifier_replacement_invalidates_only_at_commit);
+  RUN_TEST(test_profile_change_invalidation_preserves_live_runtime_state_and_cadence);
+  RUN_TEST(test_only_profile_activation_and_restore_may_invalidate_presentation);
   RUN_TEST(test_live_dispatch_policy_is_exhaustive_and_feature_gated);
   RUN_TEST(test_crc_gate_rejects_corruption_before_runtime_mutation);
   RUN_TEST(test_receiver_control_and_display_tasks_use_separate_cores);

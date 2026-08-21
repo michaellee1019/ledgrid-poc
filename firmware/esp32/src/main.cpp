@@ -15,6 +15,7 @@
 #include "ledgrid/parallel_led_driver.hpp"
 #include "ledgrid/protocol.hpp"
 #include "ledgrid/receiver_task_policy.hpp"
+#include "ledgrid/receiver_optics.hpp"
 #include "ledgrid/receiver_runtime.hpp"
 #include "ledgrid/startup_animation.hpp"
 #include "ledgrid/ws2812_encoder.hpp"
@@ -136,6 +137,18 @@ bool installation_profiles_available() {
 #endif
 }
 
+#if LEDGRID_ENABLE_INSTALLATION_PROFILES
+bool profile_view_matches_output(
+    const ledgrid::InstallationProfileViewV1& profile,
+    const ledgrid::ReceiverOutputConfiguration& output) {
+  return profile.encoded != nullptr && profile.category != nullptr &&
+         profile.encoded_size == ledgrid::kInstallationProfileReceiverBytesV1 &&
+         profile.strip_count == output.strip_count &&
+         profile.leds_per_strip == output.leds_per_strip &&
+         profile.pixel_count == output.total_leds();
+}
+#endif
+
 ledgrid::FrameMailboxCounters mailbox_counters() {
   portENTER_CRITICAL(&mailbox_mux);
   const auto counters = frame_mailbox.counters();
@@ -199,6 +212,7 @@ void display_task(void*) {
     ledgrid::ReceiverRenderTicket ticket{};
     ledgrid::LocalBackgroundParameters parameters{};
     std::uint16_t luminance = ledgrid::kQ8_8One;
+    std::uint16_t hue_shift = 0;
     std::uint64_t scene_time = 0;
     bool base_due = false;
     bool foreground_due = false;
@@ -211,6 +225,8 @@ void display_task(void*) {
       foreground_due = receiver_runtime.foreground_refresh_pending();
       parameters = receiver_runtime.local_parameters();
       luminance = receiver_runtime.active_context().luminance_q8_8;
+      hue_shift = receiver_runtime.active_modifier_strength_q8_8(
+          ledgrid::kHueShiftModifierId);
       scene_time = receiver_runtime.scene_time_us(now_us);
       has_rendered_base = receiver_runtime.render_stats().rendered_frames != 0;
     }
@@ -300,6 +316,31 @@ void display_task(void*) {
       }
       unlock_runtime();
       if (!composed) continue;
+#if LEDGRID_ENABLE_INSTALLATION_PROFILES
+      bool optic_succeeded = true;
+      if (hue_shift > 0 && installation_profiles_available()) {
+        lock_profile();
+        const auto& profile = installation_profile_manager.active_view();
+        if (profile_view_matches_output(profile, ticket.output)) {
+          // The manager owns the backing bytes. Hold profile_mutex for the
+          // complete in-place optic so activation/restore cannot replace the
+          // view until this frame is finished with it.
+          optic_succeeded = ledgrid::apply_hue_shift_q8_8(
+              composite_frame, ticket.output.rgb_bytes(), profile, hue_shift);
+        }
+        unlock_profile();
+      }
+      if (!optic_succeeded) {
+        lock_runtime();
+        const bool failure_applied = ledgrid::render_ticket_still_current(
+            receiver_runtime, receiver_output, ticket) &&
+            receiver_runtime.local_render_failed_if_current(
+                ticket.ownership_generation);
+        unlock_runtime();
+        if (failure_applied) ++display_errors;
+        continue;
+      }
+#endif
       const std::uint32_t sequence =
           next_sequence.fetch_add(1, std::memory_order_relaxed);
       PhysicalSubmitContext submit_context{composite_frame, sequence};
@@ -566,9 +607,30 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
         installation_profiles_available());
   if (decision.route == ledgrid::ReceiverDispatchRoute::InstallationProfile) {
 #if LEDGRID_ENABLE_INSTALLATION_PROFILES
+    ledgrid::InstallationProfileBinding prior_active{};
+    ledgrid::InstallationProfileBinding current_active{};
     lock_profile();
+    prior_active = installation_profile_manager.ledger().active;
     const auto result = installation_profile_manager.process(data, length);
+    current_active = installation_profile_manager.ledger().active;
     unlock_profile();
+    const bool active_binding_changed =
+        result == ledgrid::InstallationProfileResult::Ok &&
+        ledgrid::installation_profile_command_may_change_active_binding(command) &&
+        !ledgrid::installation_profile_binding_equal(
+            prior_active, current_active);
+    if (active_binding_changed) {
+      // Never nest profile_mutex and runtime_mutex. The active binding is
+      // already durable; invalidating under runtime_mutex is the operation's
+      // display linearization point before this command returns.
+      lock_runtime();
+      const bool invalidated =
+          receiver_runtime.invalidate_local_presentation_for_profile_change();
+      unlock_runtime();
+      if (invalidated && display_task_handle != nullptr) {
+        xTaskNotifyGive(display_task_handle);
+      }
+    }
     return result == ledgrid::InstallationProfileResult::Ok;
 #else
     return false;

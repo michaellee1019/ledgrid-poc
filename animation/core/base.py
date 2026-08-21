@@ -15,6 +15,8 @@ import numpy as np
 
 from animation.core.presentation_contracts import AnimationRuntimeContext, TimingAdapter
 from animation.core.installation_profile_runtime import InstallationProfileRuntimeView
+from animation.core.receiver_optics import HUE_STRENGTH_MAX, apply_hue_shift_u8
+from animation.core.receiver_presentation import quantize_q8_8
 
 from animation.core.plant_awareness import (
     FRAMEWORK_VISUAL_MODIFIERS, PlantMaskCache, PlantMaskGeometry,
@@ -303,9 +305,13 @@ class AnimationBase(ABC):
         )
 
     def framework_plant_modifiers_active(self) -> bool:
-        return any(
-            self.plant_modifier_strength(modifier) > 0.0
-            for modifier in FRAMEWORK_VISUAL_MODIFIERS
+        return (
+            quantize_q8_8(
+                self.plant_modifier_strength("hue_shift"),
+                name="hue_shift",
+                maximum=HUE_STRENGTH_MAX,
+            ) > 0
+            or self.plant_modifier_strength("liquid_glass") > 0.0
         )
 
     def framework_plant_modifier_refresh_pending(self) -> bool:
@@ -327,8 +333,13 @@ class AnimationBase(ABC):
         including diagnostics and third-party plugins, can use them consistently.
         """
         hue_shift = self.plant_modifier_strength("hue_shift")
+        hue_strength_q8_8 = quantize_q8_8(
+            hue_shift,
+            name="hue_shift",
+            maximum=HUE_STRENGTH_MAX,
+        )
         liquid_glass = self.plant_modifier_strength("liquid_glass")
-        if hue_shift <= 0.0 and liquid_glass <= 0.0:
+        if hue_strength_q8_8 == 0 and liquid_glass <= 0.0:
             return pixels
         if not changed and self._framework_modifier_cached_frame is not None:
             return self._framework_modifier_cached_frame
@@ -354,24 +365,7 @@ class AnimationBase(ABC):
 
         masks = self.get_plant_masks()
         target = masks.obstacle_flat
-        if hue_shift > 0.0 and np.any(target):
-            # A YIQ rotation gives a smooth perceptual hue change while preserving
-            # luminance. Maximum strength rotates by 180 degrees, so every non-zero
-            # setting remains visibly consequential.
-            selected = output[target].astype(np.float32)
-            angle = np.pi * hue_shift
-            cosine, sine = np.cos(angle), np.sin(angle)
-            red, green, blue = selected.T
-            luminance = .299 * red + .587 * green + .114 * blue
-            in_phase = .596 * red - .274 * green - .322 * blue
-            quadrature = .211 * red - .523 * green + .312 * blue
-            rotated_i = in_phase * cosine - quadrature * sine
-            rotated_q = in_phase * sine + quadrature * cosine
-            rgb = np.empty_like(selected)
-            rgb[:, 0] = luminance + .956 * rotated_i + .621 * rotated_q
-            rgb[:, 1] = luminance - .272 * rotated_i - .647 * rotated_q
-            rgb[:, 2] = luminance - 1.106 * rotated_i + 1.703 * rotated_q
-            output[target] = np.clip(rgb, 0.0, 255.0).astype(np.uint8)
+        apply_hue_shift_u8(output, hue_strength_q8_8, target)
 
         if liquid_glass > 0.0:
             width, height = self.get_strip_info()

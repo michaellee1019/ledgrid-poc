@@ -1355,9 +1355,12 @@ Phase 3C's deterministic portable profile compiler/codec, checked-in golden,
 identity/installed topology round trip, and bounded managed profile library are
 complete. Read-only host runtime/preview selection and its clean deployment are
 complete. Receiver profile staging/activation implementation and its clean
-deployment/no-op acceptance are complete; actual profile activation, optics,
-physical power-cut/backend-latency evidence, and strict readable all-four
-acceptance remain open**.
+deployment/no-op acceptance are complete. Portable host/receiver `hue_shift`
+parity, post-composition receiver integration, and the read-only native geometry
+canary are implementation- and regression-complete; their clean deployment is
+pending. Actual installed-wall profile activation, photographic optic/seam
+acceptance, physical power-cut/backend-latency evidence, hardware optic timing,
+and strict readable all-four acceptance remain open**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -3020,9 +3023,13 @@ agreement, receiver timing, and physical seam acceptance remain release-blocked.
 
 Implementation status (2026-08-21): **portable deterministic-profile, bounded
 host-library/fake-transaction, read-only host-context, and receiver-profile
-staging/activation implementation slices are complete and cleanly deployed;
-actual profile activation, optics, physical power-cut/backend latency, and
-strict readable all-four acceptance remain open**.
+staging/activation implementation slices are complete and cleanly deployed.
+Portable fixed-point host/receiver `hue_shift`, post-composition receiver
+integration, and the read-only geometry canary are implementation- and
+regression-complete with clean deployment pending. Actual installed-wall
+profile activation, photographic optic/seam acceptance, physical
+power-cut/backend latency, hardware optic timing, and strict readable all-four
+acceptance remain open**.
 The v1 binary schema, digest domains, category/region encodings, fixed global
 derivatives, receiver-view orientation, strict decoder bounds, and 65,535-byte
 maximum are frozen in `ANIMATION_PIPELINE_CONTRACT_V1.md`. Compiler/codec,
@@ -3365,6 +3372,55 @@ transfer or activation on real receivers, physical power-cut recovery,
 SPIFFS latency/wear bounds, optics, seam behavior, or strict all-four release
 acceptance. The next bounded Phase 3C lane is `hue_shift` parity plus a
 read-only native geometry canary; it must retain those physical stop gates.
+
+Current bounded receiver-optics slice (2026-08-21): **implementation and
+portable acceptance complete; clean deployment pending**. This lane freezes
+one allocation-free fixed-point `hue_shift` transform, applies it only after
+local background/foreground composition and only to exact profile obstacle
+cells, and adds a deterministic read-only category/region canary. It does not
+activate a profile on the installed wall, add a dashboard mutation, move
+semantic modifiers to firmware, or weaken the all-zero/no-profile and
+feature-off compatibility paths.
+
+- [x] Preserve canonical modifier strengths in the committed receiver context
+  and prove staged, rejected, idempotent, and live replacement behavior.
+- [x] Generate shared host/firmware fixed-point vectors covering RGB extrema,
+  representative colors, strengths `0`, `1/256`, `64/256`, `128/256`, and
+  `256/256`, clipping, and exact no-op endpoints.
+- [x] Apply `hue_shift` in place after sparse foreground composition, gated by
+  a valid active profile and exact obstacle membership; background pixels,
+  absent profiles, unsupported modifiers, and zero strength remain byte-exact.
+- [x] Render a deterministic read-only geometry canary whose foliage, each of
+  seven globe regions, clearance-only cells, obstacle edges, and empty cells
+  have mechanically distinct evidence without mutating the profile view.
+- [x] Stitch all four installed-topology receiver fixtures and prove optic and
+  canary parity across every 8-strip boundary, including reversed logical
+  receivers 2/3 and a foreground pixel on a boundary obstacle.
+- [ ] Record portable default/maximum transform timings separately, run the
+  focused native and Python suites, full project/rendering/firmware/deployment
+  gates, fixture drift, both ESP32-S3 builds, deploy dry-runs/plan, whitespace,
+  and an ordinary clean `just deploy` before closing this slice.
+
+Portable acceptance evidence before deployment:
+
+- The generated 257x3x3 signed-Q14 matrix table has SHA-256
+  `df4f6386ad5cf27f697804dac4aff862f73c12e3b27768c36b64f6b7c76f8431`;
+  generator drift and cross-language whole-slice digests pass.
+- Focused host coverage passes 33 tests and 104 subtests. The full gate passes
+  1,246 Python tests plus 1,812 subtests, 23 rendering tests plus 3 subtests,
+  94 native firmware tests, and 181 deployment tests plus 95 subtests.
+- Production and local-canary ESP32-S3 builds pass at 50,792/272,721 and
+  87,008/357,977 bytes of RAM/flash respectively. Production remains
+  feature-off; the canary build owns the diagnostic/profile implementation.
+- On the development Mac, the complete 8x138 native primitive measures
+  0.019/0.042/0.042/0.042 microseconds mean/p95/p99/max at zero strength and
+  4.207/4.625/5.208/6.417 microseconds at maximum strength. The 32x138 host
+  path over 735 target pixels measures 0.0280/0.0315/0.0477/0.0844 milliseconds
+  at strength 64 and 0.0269/0.0278/0.0299/0.0784 milliseconds at strength 256.
+  These are portable regression baselines, not ESP32 timing acceptance.
+- The render gate retains its event-driven tail evidence: accepted p95 remains
+  below budget; isolated p99/max spikes remain recorded rather than being
+  relabeled as physical receiver performance.
 
 - [x] Freeze the portable v1 header, section table, section vocabulary,
   canonical ordering, CRC/content/calibration digests, global-derivative rules,

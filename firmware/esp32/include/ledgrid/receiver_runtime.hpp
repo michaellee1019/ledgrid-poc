@@ -26,6 +26,13 @@ constexpr std::size_t kPresentationContextSetEntryBytes = 3;
 constexpr std::size_t kPresentationContextSetMaxBytes = 187;
 constexpr std::size_t kPresentationContextCommitBytes = 74;
 constexpr std::uint16_t kQ8_8One = 256;
+constexpr std::uint8_t kPresentationModifierCount = 14;
+constexpr std::uint8_t kHueShiftModifierId = 4;
+static_assert(
+    kPresentationContextSetMaxBytes ==
+        kPresentationContextSetBaseBytes +
+            kPresentationModifierCount * kPresentationContextSetEntryBytes,
+    "presentation modifier wire bound drifted");
 
 struct LocalBackgroundParameters {
   std::uint16_t component_id = kCompiledRainbowComponentId;
@@ -86,6 +93,15 @@ struct PresentationContext {
   std::uint8_t context_digest[32] = {};
   std::uint8_t vibe_digest[32] = {};
   std::uint8_t modifier_digest[32] = {};
+  // Wire IDs are frozen, one-based, and sparse in a resolved context. Index
+  // zero is deliberately unused so malformed/unknown IDs safely read as off.
+  std::uint16_t modifier_strengths_q8_8[kPresentationModifierCount + 1U] = {};
+
+  std::uint16_t modifier_strength_q8_8(std::uint8_t modifier_id) const {
+    return modifier_id >= 1U && modifier_id <= kPresentationModifierCount
+        ? modifier_strengths_q8_8[modifier_id]
+        : 0U;
+  }
 };
 
 struct ReceiverOutputConfiguration {
@@ -160,6 +176,14 @@ class ReceiverRuntime {
   }
   SparseOverlayStatus overlay_status(std::uint64_t local_monotonic_us) const;
   const PresentationContext& active_context() const { return active_context_; }
+  std::uint16_t active_modifier_strength_q8_8(
+      std::uint8_t modifier_id) const {
+    return active_context_.modifier_strength_q8_8(modifier_id);
+  }
+  std::uint16_t staged_modifier_strength_q8_8(
+      std::uint8_t modifier_id) const {
+    return staged_context_.modifier_strength_q8_8(modifier_id);
+  }
   std::uint64_t staged_context_scene_revision() const {
     return staged_context_.scene_revision;
   }
@@ -185,6 +209,10 @@ class ReceiverRuntime {
       std::uint64_t frame_scene_time_us,
       std::uint32_t render_us);
   void request_local_refresh();
+  // Called only after an active installation-profile binding changes. This
+  // invalidates in-flight presentation work when the profile-dependent optic
+  // is live, without changing ownership, context, cadence, or foreground.
+  bool invalidate_local_presentation_for_profile_change();
   void set_reverse_local_strip_order(bool reversed) {
     local_.reverse_local_strip_order = reversed;
     request_local_refresh();
@@ -323,5 +351,9 @@ PhysicalSubmitResult submit_rendered_frame_if_current(
     const ReceiverRenderTicket& ticket,
     PhysicalSubmitCallback submit,
     void* submit_context);
+// Profile transfer/staging commands are deliberately display-inert. Production
+// uses this pure classification seam before comparing active bindings.
+bool installation_profile_command_may_change_active_binding(
+    ReceiverCommand command);
 
 }  // namespace ledgrid

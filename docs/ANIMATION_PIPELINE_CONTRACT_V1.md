@@ -39,14 +39,18 @@ change; these identifiers and versions may not change in place.
 | Native background ABI | `ledgrid.native-background-abi` | 2 (reserved) |
 | Unsigned native bundle | `ledgrid.native-background-bundle` | 1 (reserved) |
 | Installation profile | `ledgrid.installation-profile` | 1 |
+| Receiver optic coefficients | `ledgrid.receiver-optics` | 1 |
 
 Contracts marked runtime-reserved are deliberately not accepted by current
 receiver runtime code. The installation-profile v1 bytes are frozen for the
 portable compiler, Python decoder, topology slicer, Pi-authoritative managed
 library, read-only host views, transport-neutral four-receiver transaction
 engine and fake, a bounds-checked C++ receiver decoder/read-only view, and the
-default-off receiver-profile staging contract below. Profile staging and
-activation are display-inert; receiver optics remain outside this contract.
+default-off receiver-profile staging contract below. Profile staging remains
+display-inert. Activation never changes ownership or starts a renderer; after
+the Phase 3C optic contract below, an active profile may change only the
+post-composition `hue_shift` presentation when a committed context requests a
+nonzero strength.
 Status v4 is negotiated only after a legacy-safe v3 query exposes sparse
 foreground support. Its first 320 bytes preserve status v3 exactly apart from
 the `LGS4` magic/version. Status v3 preserves every v2 counter offset in its
@@ -521,9 +525,15 @@ uses the independently auditable compile gate
 local canary and portable native-test environments set it to `1` in this slice.
 While either side is off, the receiver does not advertise bits 6/7, mount or
 mutate `profilecache`, or accept `0x40..0x47`, and the host emits no profile
-command. Enabling both changes only cache and binding state. Profile commands
-never claim base ownership, change foreground/output, start a renderer, apply
-an optic, or alter complete `SET_ALL` as the universal host takeover path.
+command. Enabling both changes only cache and binding state until an active
+profile and committed nonzero `hue_shift` context are both present. Profile
+commands never claim base ownership, change foreground state, start a renderer,
+or alter complete `SET_ALL` as the universal host takeover path. Preflight,
+transfer, finalize, verify, abort, and idempotent activation remain display-
+inert. A successful activation or restore that changes the active binding
+invalidates one in-flight local presentation and requests a fresh frame; it
+does not reset ownership, context, foreground generation, semantic time, or
+cadence history.
 
 Dirty ranges are sorted, non-overlapping, half-open ranges. Movement/removal
 uses the union of old and new coverage. A complete clear covers every formerly
@@ -668,6 +678,78 @@ layer or again at display output. The shared fixture includes zero/unity
 endpoints, both sides of the half-up boundary, current profile quantization,
 multiple vibes, multiple modifier sets, high counter values, exact packet
 bytes, and all three digests.
+
+### Receiver `hue_shift` optic v1
+
+`hue_shift` is the only v1 framework optic implemented by both the host and
+receiver. The committed presentation-context entry with modifier ID `4`
+supplies an unsigned Q8.8 strength from `0` through `256`. Missing entry, zero
+strength, no active valid installation profile, feature-off firmware, and
+complete host-frame ownership are exact byte-for-byte no-ops. Other modifier
+entries remain staged and reported but do not fall through to this optic.
+
+The transform runs after receiver-local RGB rendering, resolved luminance, and
+sparse premultiplied-RGBA foreground composition, but before physical master
+brightness and encoding. It touches exactly the profile pixels whose category
+is foliage (`1`) or globe (`2`); clearance-only and empty pixels are unchanged.
+The receiver reads the active decoded profile without copying or mutating it.
+
+For every quantized strength `s` in `0..256`, the generated contract table owns
+one signed Q14 RGB matrix. The authoring transform is the existing YIQ hue
+rotation with angle `pi * s / 256`:
+
+```text
+Y =  0.299 R + 0.587 G + 0.114 B
+I =  0.596 R - 0.274 G - 0.322 B
+Q =  0.211 R - 0.523 G + 0.312 B
+I' = I cos(angle) - Q sin(angle)
+Q' = I sin(angle) + Q cos(angle)
+R' = Y + 0.956 I' + 0.621 Q'
+G' = Y - 0.272 I' - 0.647 Q'
+B' = Y - 1.106 I' + 1.703 Q'
+```
+
+The composed 3-by-3 coefficients are quantized once with signed half-away-from-
+zero rounding at scale `16384`; strength zero is forced to the exact identity
+matrix. Runtime code performs no trigonometry. For each output channel and RGB8
+input vector, host and firmware compute exactly:
+
+```text
+accumulator = M[row][0] * R + M[row][1] * G + M[row][2] * B
+channel = clamp_u8(floor((accumulator + 8192) / 16384))
+```
+
+The generated JSON/C++ vectors bind the complete coefficient-table digest and
+cover RGB extrema, representative colors, strengths `0`, `1`, `64`, `128`, and
+`256`, negative accumulators, clipping, exact obstacle edges, and installed
+8-strip receiver boundaries. Zero strength exits before profile or pixel work;
+invalid strength, geometry, or buffer bounds fail without partial mutation.
+
+### Read-only installation-geometry canary v1
+
+The native geometry canary is a diagnostic primitive, not a selectable scene
+or an activation command. It replaces one caller-owned 8x138 receiver RGB
+slice only after validating the complete read-only profile view and output
+buffer. Invalid geometry, section values, bounds, or output/profile aliasing
+fail before any output byte changes. Rendering never mutates or copies profile
+section bytes.
+
+Its 18 stable semantic classes are empty, clearance-only, foliage
+interior/edge, and interior/edge for each of globe regions 1 through 7. Empty
+is black; clearance-only has its own dim RGB identity. Each obstacle class has
+a unique red/green identity, while blue is exactly `32` for an interior pixel
+and `255` for an edge pixel. Thus a captured pixel mechanically preserves
+category, globe-region identity, and the exact obstacle-edge bit rather than
+letting edge color erase region identity. Category zero with clearance one is
+clearance-only; category zero with clearance zero is empty. Foliage must have
+region zero, and a globe must have one of the seven frozen region IDs.
+
+Portable acceptance stitches the four installed receiver views in logical
+order and proves all 18 classes, all three semantic fields, all four strip
+origins/directions, every receiver boundary, and read-only profile bytes.
+This diagnostic does not constitute installed-wall profile activation,
+photographic seam acceptance, ESP32 timing evidence, or strict all-four
+receiver health acceptance.
 
 ## Feature-gated foreground wire contract
 
