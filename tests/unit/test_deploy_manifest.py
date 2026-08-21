@@ -362,6 +362,14 @@ class DeployManifestTests(unittest.TestCase):
             f"deployed/installation_profile_library/profiles/{'a' * 64}/receipt.json",
             b'{"digest":"published"}\n',
         )
+        native_bundle = self._write(
+            f"deployed/receiver_library/native_backgrounds/bundles/{'b' * 64}/bundle.zip",
+            b"native-bundle-bytes\x00\xff",
+        )
+        native_payload = self._write(
+            f"deployed/receiver_library/native_backgrounds/payloads/{'c' * 64}.so",
+            b"native-payload-bytes\x00\xff",
+        )
 
         subprocess.run(
             [
@@ -376,6 +384,8 @@ class DeployManifestTests(unittest.TestCase):
                 "/presets/animations/",
                 "--filter",
                 "protect /installation_profile_library/***",
+                "--filter",
+                "protect /receiver_library/***",
                 f"{source}/",
                 f"{target}/",
             ],
@@ -387,6 +397,8 @@ class DeployManifestTests(unittest.TestCase):
         self.assertEqual(saved_preset.read_bytes(), b'{"name":"My Preset"}')
         self.assertEqual(compiled_profile.read_bytes(), b"compiled-profile-bytes\x00\xff")
         self.assertEqual(publish_receipt.read_bytes(), b'{"digest":"published"}\n')
+        self.assertEqual(native_bundle.read_bytes(), b"native-bundle-bytes\x00\xff")
+        self.assertEqual(native_payload.read_bytes(), b"native-payload-bytes\x00\xff")
 
 
 if __name__ == "__main__":

@@ -74,7 +74,14 @@ class AppReleaseTests(unittest.TestCase):
             "venv/pyvenv.cfg": b"venv",
             "calibration_photos/wall.jpg": b"calibration",
             "firmware/esp32.bin": b"firmware",
-            "receiver_library/bundle.bin": b"receiver",
+            (
+                "receiver_library/native_backgrounds/bundles/"
+                f"{'b' * 64}/bundle.zip"
+            ): b"receiver-native-bundle",
+            (
+                "receiver_library/native_backgrounds/payloads/"
+                f"{'c' * 64}.so"
+            ): b"receiver-native-payload",
             (
                 f"{INSTALLATION_PROFILE_LIBRARY_PATH}/profiles/"
                 f"{profile_digest}/profile.bin"

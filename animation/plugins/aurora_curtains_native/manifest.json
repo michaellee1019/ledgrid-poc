@@ -1,0 +1,72 @@
+{
+  "manifest_version": 1,
+  "plugin_id": "aurora_curtains_native",
+  "name": "Aurora Curtains (Native)",
+  "description": "Receiver-rendered aurora ribbons that remain continuous across all four wall controllers.",
+  "icon": "🌌",
+  "gallery": "test",
+  "provider": "receiver_native",
+  "role": "background",
+  "entrypoint": "ledgrid.native-background-abi:2",
+  "cadence": {
+    "mode": "fixed_fps",
+    "preferred_fps": 60
+  },
+  "parameter_schema": {
+    "brightness": {
+      "type": "float",
+      "default": 0.42,
+      "description": "Overall luminance of the aurora.",
+      "min": 0.04,
+      "max": 1.0
+    },
+    "curtain_width": {
+      "type": "int",
+      "default": 7,
+      "description": "Horizontal width of each luminous ribbon.",
+      "min": 2,
+      "max": 14
+    },
+    "layers": {
+      "type": "int",
+      "default": 3,
+      "description": "Number of independently drifting ribbons.",
+      "min": 1,
+      "max": 5
+    },
+    "motion": {
+      "type": "float",
+      "default": 0.34,
+      "description": "Drift rate applied to the scaled scene clock.",
+      "min": 0.02,
+      "max": 1.0
+    },
+    "shimmer": {
+      "type": "bool",
+      "default": true,
+      "description": "Add a fine moving glint to the ribbon edges."
+    }
+  },
+  "vibe": {
+    "color_policy": "semantic",
+    "timing_adapter": "scaled_context",
+    "capabilities": ["palette_roles", "tempo", "luminance"],
+    "semantic_roles": ["background_low", "background_mid", "primary", "secondary", "accent"]
+  },
+  "installation_profile_requirements": [],
+  "preview": {
+    "kind": "native_host_build",
+    "capture_seconds": [0.0, 0.016667, 0.033334, 0.050001, 0.066668, 0.083335, 0.100002, 0.116669, 0.133336, 0.150003, 0.16667, 0.183337],
+    "simulation_fps": 60,
+    "framebuffer_readback": false
+  },
+  "build": {
+    "artifact_kind": "receiver_native_module",
+    "bundle_schema": "ledgrid.native-background-bundle",
+    "bundle_version": 1,
+    "abi_schema": "ledgrid.native-background-abi",
+    "abi_version": 2,
+    "target": "esp32-s3",
+    "source": "native/background.cpp"
+  }
+}

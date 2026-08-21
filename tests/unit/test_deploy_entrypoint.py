@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+from animation.core.plugin_loader import AnimationPluginLoader
 from tools.deployment import deploy_entrypoint, deploy_target
 from tools.deployment.app_releases import AppReleaseManager
 from tools.deployment.deploy_coordinator import (
@@ -728,12 +729,10 @@ class TargetFirmwareBuildTests(unittest.TestCase):
                     return subprocess.CompletedProcess(
                         args, 0, "PlatformIO Core, version 6.1.19\n", "",
                     )
-                binary = (
-                    _write_firmware_artifacts(
-                        firmware,
-                        PRODUCTION_FIRMWARE_ENVIRONMENT,
-                        application=b"production feature-off firmware",
-                    )
+                _write_firmware_artifacts(
+                    firmware,
+                    PRODUCTION_FIRMWARE_ENVIRONMENT,
+                    application=b"production feature-off firmware",
                 )
                 return subprocess.CompletedProcess(args, 0, "build passed\n", "")
 
@@ -1047,6 +1046,90 @@ class FrozenSnapshotEntrypointTests(unittest.TestCase):
         self.assertFalse(snapshot.stat().st_mode & 0o222)
         self.assertFalse((snapshot / "scripts/start_server.py").stat().st_mode & 0o222)
 
+    def test_staged_runtime_discovers_native_component_without_coupling_source_release(self) -> None:
+        plugin_id = "aurora_curtains_native"
+        manifest = self.repo.write(
+            f"animation/plugins/{plugin_id}/manifest.json",
+            (ROOT / f"animation/plugins/{plugin_id}/manifest.json").read_bytes(),
+        )
+        source = self.repo.write(
+            f"animation/plugins/{plugin_id}/native/background.cpp",
+            (ROOT / f"animation/plugins/{plugin_id}/native/background.cpp").read_bytes(),
+        )
+        subprocess.run(
+            ("git", "-C", self.repo.root, "add", os.fspath(manifest), os.fspath(source)),
+            check=True,
+        )
+        subprocess.run(
+            (
+                "git",
+                "-C",
+                self.repo.root,
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                "native fixture",
+            ),
+            check=True,
+        )
+        first_snapshot = self.base / "native-snapshot-one"
+        first = deploy_entrypoint.freeze_snapshot(
+            self.repo.root,
+            "full",
+            "clean",
+            first_snapshot,
+            generate_previews=False,
+        )
+        self.assertIn(
+            f"animation/plugins/{plugin_id}/manifest.json", first.app_files
+        )
+        self.assertEqual(
+            first.native_build_files,
+            (f"animation/plugins/{plugin_id}/native/background.cpp",),
+        )
+        self.assertNotIn(first.native_build_files[0], first.app_files)
+        self.assertNotIn(first.native_build_files[0], first.support_files)
+
+        target = self.base / "native-lane-target"
+        first_app = deploy_target.stage_app(target, first_snapshot)
+        first_support = deploy_target.stage_support(target, first_snapshot)
+        release = target / "releases" / first_app["release_id"]
+        self.assertFalse(
+            (release / first.native_build_files[0]).exists(),
+            "native source must remain outside the application release",
+        )
+        loader = AnimationPluginLoader(os.fspath(release / "animation/plugins"))
+        self.assertIn(plugin_id, loader.scan_components())
+        self.assertEqual(
+            loader.get_component_descriptor(plugin_id)["build"]["source"],
+            "native/background.cpp",
+        )
+        self.assertTrue(deploy_target.activate(target, first_app["release_id"])["changed"])
+
+        source.write_bytes(b"// native two\n")
+        second_snapshot = self.base / "native-snapshot-two"
+        second = deploy_entrypoint.freeze_snapshot(
+            self.repo.root,
+            "full",
+            "dirty",
+            second_snapshot,
+            generate_previews=False,
+        )
+        second_app = deploy_target.stage_app(target, second_snapshot)
+        second_support = deploy_target.stage_support(target, second_snapshot)
+        self.assertNotEqual(first.snapshot_id, second.snapshot_id)
+        self.assertEqual(first_app["release_id"], second_app["release_id"])
+        self.assertEqual(
+            first_support["support_release_id"],
+            second_support["support_release_id"],
+        )
+        self.assertTrue(second_app["reused"])
+        self.assertFalse(
+            deploy_target.activate(target, second_app["release_id"])["changed"],
+            "source-only native changes must not select or restart the app release",
+        )
+
     def test_preview_generation_executes_frozen_snapshot_script_without_tracked_filter(self) -> None:
         snapshot = self.base / "preview-snapshot"
         commands: list[tuple[str, ...]] = []
@@ -1131,12 +1214,18 @@ class FrozenSnapshotEntrypointTests(unittest.TestCase):
         self.assertNotIn("firmware/esp32/partitions.csv", plan["app_inputs"])
         self.assertIn("firmware/esp32/src/main.cpp", plan["support_inputs"])
         self.assertIn("firmware/esp32/partitions.csv", plan["support_inputs"])
+        self.assertEqual(plan["native_build_inputs"], [])
+        self.assertEqual(plan["receiver_background_work"]["outcome"], "skipped")
         self.assertEqual(
             [step["id"] for step in plan["steps"]],
             [item[0] for item in FULL_STEP_ORDER],
         )
         self.assertEqual(
             plan["target_layout"]["current"], "ledgrid-pod/current",
+        )
+        self.assertEqual(
+            plan["target_layout"]["native_background_library"],
+            "ledgrid-pod/receiver_library/native_backgrounds",
         )
         self.assertFalse((self.repo.root / "receipts").exists())
 

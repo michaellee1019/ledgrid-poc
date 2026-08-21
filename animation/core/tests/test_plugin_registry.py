@@ -131,6 +131,71 @@ class ExternalAnimation(AnimationBase):
             self.assertEqual(loaded.__name__, "ExternalAnimation")
             self.assertEqual(loaded.__module__, "external")
 
+    def test_receiver_native_manifest_is_never_a_python_plugin_or_allowlist_member(self):
+        import json
+        import tempfile
+
+        manifest = {
+            "manifest_version": 1,
+            "plugin_id": "native_example",
+            "name": "Native Example",
+            "description": "Descriptor-only receiver source",
+            "icon": "🌌",
+            "gallery": "show",
+            "provider": "receiver_native",
+            "role": "background",
+            "entrypoint": "ledgrid.native-background-abi:2",
+            "cadence": {"mode": "fixed_fps", "preferred_fps": 60},
+            "parameter_schema": {},
+            "vibe": {
+                "color_policy": "preserve",
+                "timing_adapter": "scaled_context",
+                "capabilities": ["tempo", "luminance"],
+            },
+            "installation_profile_requirements": [],
+            "preview": {
+                "kind": "native_host_build",
+                "capture_seconds": [0, 1],
+                "simulation_fps": 60,
+                "framebuffer_readback": False,
+            },
+            "build": {
+                "artifact_kind": "receiver_native_module",
+                "bundle_schema": "ledgrid.native-background-bundle",
+                "bundle_version": 1,
+                "abi_schema": "ledgrid.native-background-abi",
+                "abi_version": 2,
+                "target": "esp32-s3",
+                "source": "native/background.cpp",
+            },
+        }
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            package = Path(temporary_dir) / "native_example"
+            (package / "native").mkdir(parents=True)
+            (package / "native" / "background.cpp").write_text(
+                "// receiver source\n", encoding="utf-8"
+            )
+            (package / "manifest.json").write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
+            loader = AnimationPluginLoader(temporary_dir, allowed_plugins=set())
+
+            self.assertEqual(loader.scan_components(), ["native_example"])
+            self.assertEqual(loader.scan_plugins(), [])
+            self.assertEqual(loader.load_all_plugins(), {})
+            self.assertEqual(loader.list_plugins(), [])
+            self.assertIsNone(loader.load_plugin("native_example"))
+            self.assertIsNone(loader.get_plugin("native_example"))
+            self.assertIsNone(loader.get_plugin_info("native_example"))
+            self.assertIsNone(loader.get_plugin_file("native_example"))
+            self.assertIsNone(loader.get_plugin_dir("native_example"))
+            self.assertEqual(
+                [item["plugin_id"] for item in loader.component_catalog(
+                    provider="receiver_native"
+                )],
+                ["native_example"],
+            )
+
     def test_all_plugins_render_the_installed_32_by_138_geometry(self):
         controller = PreviewLEDController(
             strips=DEFAULT_STRIP_COUNT,

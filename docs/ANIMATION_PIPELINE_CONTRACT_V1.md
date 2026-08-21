@@ -4,7 +4,8 @@
 
 This document freezes the names, bytes, state boundaries, and rollout gates
 needed by Phase 1 and activated incrementally through the bounded host-library,
-host-context, and receiver-decoder prerequisite slices of Phase 3C of
+host-context, receiver-decoder prerequisites, and trusted native authoring/build
+slice of Phase 3D of
 [plan-revamped-animation-pipeline.md](plan-revamped-animation-pipeline.md).
 The scene/provider rollout flags remain off, while Phase 3A activates explicit
 receiver ownership and status v3. Ordinary production firmware keeps the
@@ -36,13 +37,15 @@ change; these identifiers and versions may not change in place.
 | Foreground protocol | `ledgrid.foreground-protocol` | 1 |
 | Receiver presentation context | `ledgrid.receiver-presentation-golden` | 1 |
 | Receiver status | `ledgrid.receiver-status` | 5 (v4-compatible prefix) |
-| Native background ABI | `ledgrid.native-background-abi` | 2 (reserved) |
-| Unsigned native bundle | `ledgrid.native-background-bundle` | 1 (reserved) |
+| Native background ABI | `ledgrid.native-background-abi` | 2 |
+| Unsigned native bundle | `ledgrid.native-background-bundle` | 1 |
 | Installation profile | `ledgrid.installation-profile` | 1 |
 | Receiver optic coefficients | `ledgrid.receiver-optics` | 1 |
 
-Contracts marked runtime-reserved are deliberately not accepted by current
-receiver runtime code. The installation-profile v1 bytes are frozen for the
+The native ABI and bundle are accepted by the trusted repository authoring,
+host-preview, validation, and Pi-library tools, but remain runtime-reserved:
+current receivers do not load or execute them. The installation-profile v1
+bytes are frozen for the
 portable compiler, Python decoder, topology slicer, Pi-authoritative managed
 library, read-only host views, transport-neutral four-receiver transaction
 engine and fake, a bounds-checked C++ receiver decoder/read-only view, and the
@@ -122,6 +125,52 @@ Version 1 does not claim strict receiver v-sync. Physical acceptance requires:
 
 Failure of either bound keeps hybrid playback experimental and leaves complete
 host frames as the accepted path.
+
+## Phase 3D native authoring and bundle seam
+
+ABI v2 is the C-compatible contract in
+`firmware/esp32/include/ledgrid/native_background_abi_v2.h`. The caller owns
+aligned module state and the complete receiver-local RGB output buffer. Context,
+parameter, vibe, modifier, profile, request, result, and output pointers are
+borrowed only for their callback; the helper table/function pointers alone stay
+valid from successful initialize through cleanup. A successful first render
+must set `changed=1`. Later `changed=0` ignores the supplied output bytes and
+retains the previous complete local frame. Changed-frame evidence counts whole
+wall frames, not receiver callbacks.
+
+The ABI deadline is an absolute unsigned microsecond count since scene epoch;
+the bundle separately records
+`absolute_unscaled_microseconds_since_scene_epoch` alongside the generic
+descriptor's absolute-seconds semantic. Fixed-FPS results must return a future
+deadline no more than one cadence period away. Vibe luminance is bounded Q8.8
+`0..256` and is framework-owned: modules that claim `luminance` do not apply it,
+because the receiver's post-render presentation pass applies it exactly once.
+
+RGB output is receiver-native local-strip order. Physical origins
+`0/8/16/24` map to logical receiver IDs `0/1/3/2`; their native directions are
+forward, forward, reverse, reverse. The caller supplies the canonical origin
+and `reverse_local_strip_order`; global strip is `origin + local` when forward
+and `origin + local_strips - 1 - local` when reversed. Host preview exercises
+those four installed views and stitches each strip back by global coordinate.
+
+Frozen modifier IDs `1..14` are `illuminate`, `shadow`, `refract`, `hue_shift`,
+`liquid_glass`, `attractor`, `repulsor`, `slow_zone`, `obstacle`, `portal`,
+`bumper`, `hazard`, `habitat`, `emitter`. Profile section IDs `1..9` are
+`category`, `clearance`, `foliage_edge`, `globe_edge`, `obstacle_edge`,
+`globe_region`, `distance`, `normal_x`, `normal_y`; encodings `1..4` are
+unsigned-enum, unsigned-boolean, unsigned-byte, signed-byte. Category values are
+`0=open`, `1=foliage`, `2=globe`; globe-region `0` is none and `1..7` follow the
+stable region order defined below.
+
+An unsigned bundle is one canonical stored ZIP with exactly `manifest.json`,
+`payload/module.so`, and `preview/preview.webp`; it contains no signature,
+index, or frame track. Inspection re-encodes the ZIP canonically, verifies
+separate complete-bundle and ELF-payload SHA-256 identities, strict source/ABI
+provenance, toolchains and flags, bounded schema/defaults/vibe/profile metadata,
+the deterministic animated WebP, and the complete ESP32-S3 ELF class,
+endianness, OSABI, flags, load map, dynamic tags, one export, zero imports, and
+no initializer/finalizer surface. This freezes authoring artifacts only; it does
+not enable receiver loading, activation, or installed-wall execution.
 
 ## Phase 3A receiver ownership and status v3
 

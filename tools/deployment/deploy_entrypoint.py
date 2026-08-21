@@ -193,6 +193,21 @@ def _is_support_path(path: PurePosixPath) -> bool:
     return bool(path.parts and (path.parts[0] in SUPPORT_ROOTS or path.as_posix() in SUPPORT_FILES))
 
 
+def _is_native_build_path(path: PurePosixPath) -> bool:
+    """Return whether a tracked plugin path is receiver-native build input.
+
+    Native packages remain self-contained below the normal plugin root.  Only
+    the package-owned ``native`` subtree is build-only: manifests, presets,
+    tests, and gallery assets remain ordinary application inputs.
+    """
+
+    return bool(
+        len(path.parts) >= 5
+        and path.parts[0:2] == ("animation", "plugins")
+        and path.parts[3] == "native"
+    )
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -239,6 +254,7 @@ class SnapshotEvidence:
     source_identity: Mapping[str, Any]
     app_files: tuple[str, ...]
     support_files: tuple[str, ...]
+    native_build_files: tuple[str, ...]
     file_count: int
 
     def to_dict(self) -> dict[str, Any]:
@@ -248,6 +264,7 @@ class SnapshotEvidence:
             "source_identity": _json_safe(self.source_identity),
             "app_file_count": len(self.app_files),
             "support_file_count": len(self.support_files),
+            "native_build_file_count": len(self.native_build_files),
             "file_count": self.file_count,
         }
 
@@ -348,10 +365,17 @@ def freeze_snapshot(
                 )
 
         app_files = [
-            relative.as_posix() for relative in plan.selected if not _is_support_path(relative)
+            relative.as_posix()
+            for relative in plan.selected
+            if not _is_support_path(relative) and not _is_native_build_path(relative)
         ]
         support_files = [
             relative.as_posix() for relative in plan.selected if _is_support_path(relative)
+        ]
+        native_build_files = [
+            relative.as_posix()
+            for relative in plan.selected
+            if _is_native_build_path(relative)
         ]
         if preview_root.is_dir():
             app_files.extend(
@@ -361,7 +385,12 @@ def freeze_snapshot(
             )
         app_files = sorted(set(app_files))
         support_files = sorted(set(support_files))
-        overlap = set(app_files) & set(support_files)
+        native_build_files = sorted(set(native_build_files))
+        overlap = (
+            (set(app_files) & set(support_files))
+            | (set(app_files) & set(native_build_files))
+            | (set(support_files) & set(native_build_files))
+        )
         if overlap:
             raise RuntimeError(f"deployment lanes overlap: {sorted(overlap)}")
 
@@ -373,6 +402,13 @@ def freeze_snapshot(
         _write_json(
             deploy_metadata / "support-manifest.json",
             {"schema_version": SNAPSHOT_SCHEMA_VERSION, "files": support_files},
+        )
+        _write_json(
+            deploy_metadata / "native-build-manifest.json",
+            {
+                "schema_version": SNAPSHOT_SCHEMA_VERSION,
+                "files": native_build_files,
+            },
         )
 
         evidence = []
@@ -395,6 +431,7 @@ def freeze_snapshot(
             "scope": scope,
             "app_files": app_files,
             "support_files": support_files,
+            "native_build_files": native_build_files,
             "files": evidence,
         }
         snapshot_id = hashlib.sha256(
@@ -409,6 +446,7 @@ def freeze_snapshot(
             source_identity=identity,
             app_files=tuple(app_files),
             support_files=tuple(support_files),
+            native_build_files=tuple(native_build_files),
             file_count=len(evidence),
         )
     except BaseException:
@@ -1348,8 +1386,21 @@ def deployment_plan(config: DeploymentConfig) -> Mapping[str, Any]:
                 {"path": item.path.as_posix(), "reason": item.reason}
                 for item in plan.excluded
             ],
-            "app_inputs": [path.as_posix() for path in plan.selected if not _is_support_path(path)],
+            "app_inputs": [
+                path.as_posix()
+                for path in plan.selected
+                if not _is_support_path(path) and not _is_native_build_path(path)
+            ],
             "support_inputs": [path.as_posix() for path in plan.selected if _is_support_path(path)],
+            "native_build_inputs": [
+                path.as_posix()
+                for path in plan.selected
+                if _is_native_build_path(path)
+            ],
+            "receiver_background_work": {
+                "outcome": "skipped",
+                "reason": "native build/publish uses the explicit native workflow",
+            },
             "steps": [
                 {"id": step.id, "mutating": step.mutating, "description": step.description}
                 for step in deployment.steps()
@@ -1358,6 +1409,9 @@ def deployment_plan(config: DeploymentConfig) -> Mapping[str, Any]:
                 "incoming": f"{config.deploy_dir}/.incoming/<deployment-id>",
                 "app_releases": f"{config.deploy_dir}/releases/<content-digest>",
                 "support_releases": f"{config.deploy_dir}/support_releases/<content-digest>",
+                "native_background_library": (
+                    f"{config.deploy_dir}/receiver_library/native_backgrounds"
+                ),
                 "current": f"{config.deploy_dir}/current",
                 "receipts": f"{config.deploy_dir}/run_state/deploy_receipts",
             },

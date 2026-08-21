@@ -115,10 +115,18 @@ class ReceiverStaticDescriptorTests(unittest.TestCase):
             second["build"]["runtime_proof"]["required_component_id"], 1
         )
 
-        # The receiver builtin is a catalog peer supplied by this module. It is
-        # never discovered as, or injected into, a Python plugin package.
+        # The compiled receiver builtin is a catalog peer supplied only by this
+        # module. Repository-native source peers may be discovered independently,
+        # but neither is injected into the Python execution projection and their
+        # stable component identities cannot collide.
         loader = AnimationPluginLoader()
-        self.assertEqual(loader.component_catalog(provider="receiver_native"), [])
+        native_ids = {
+            item["plugin_id"]
+            for item in loader.component_catalog(provider="receiver_native")
+        }
+        self.assertEqual(native_ids, {"aurora_curtains_native"})
+        self.assertNotIn(COMPILED_RAINBOW_PLUGIN_ID, native_ids)
+        self.assertNotIn("aurora_curtains_native", loader.scan_plugins())
         self.assertIsNone(loader.get_component_descriptor(COMPILED_RAINBOW_PLUGIN_ID))
 
     def test_parameter_validation_is_complete_bounded_and_fail_closed(self):

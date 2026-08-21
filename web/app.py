@@ -1941,10 +1941,17 @@ class AnimationWebInterface:
         if not safe_name or safe_name != animation_name:
             return None
         loader = getattr(self.preview_manager, 'plugin_loader', None)
-        plugin_dir = loader.get_plugin_dir(animation_name) if loader is not None else None
-        if plugin_dir is None:
+        if loader is None:
             return None
-        return plugin_dir / 'presets'
+        component_dir_getter = getattr(loader, 'get_component_dir', None)
+        component_dir = (
+            component_dir_getter(animation_name)
+            if callable(component_dir_getter)
+            else loader.get_plugin_dir(animation_name)
+        )
+        if component_dir is None:
+            return None
+        return component_dir / 'presets'
 
     def _animation_preset_path(self, animation_name: str, preset_id: str) -> Optional[Path]:
         """Resolve an animation/preset pair without allowing path traversal."""

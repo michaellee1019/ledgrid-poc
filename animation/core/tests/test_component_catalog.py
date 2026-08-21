@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import copy
 import json
 import sys
 import tempfile
@@ -51,6 +52,65 @@ class ExampleAnimation(StatefulAnimationBase):
 """
 
 
+def native_manifest(**changes):
+    payload = {
+        "manifest_version": 1,
+        "plugin_id": "native_example",
+        "name": "Native Example",
+        "description": "A repository-built analytic receiver background",
+        "icon": "🌌",
+        "gallery": "show",
+        "provider": "receiver_native",
+        "role": "background",
+        "entrypoint": "ledgrid.native-background-abi:2",
+        "cadence": {"mode": "fixed_fps", "preferred_fps": 60},
+        "parameter_schema": {
+            "speed": {
+                "type": "float", "min": 0.1, "max": 4.0, "default": 1.0,
+                "description": "Motion multiplier",
+            },
+            "palette": {
+                "type": "str", "options": ["aurora", "sunset"],
+                "default": "aurora", "description": "Color treatment",
+            },
+            "shimmer": {
+                "type": "bool", "default": True,
+                "description": "Enable bounded highlight texture",
+            },
+            "bands": {
+                "type": "int", "min": 1, "max": 8, "default": 3,
+                "description": "Number of analytic ribbons",
+            },
+        },
+        "vibe": {
+            "color_policy": "semantic",
+            "timing_adapter": "scaled_context",
+            "capabilities": ["palette_roles", "tempo", "luminance"],
+            "semantic_roles": [
+                "background_low", "background_mid", "background_high",
+            ],
+        },
+        "installation_profile_requirements": [],
+        "preview": {
+            "kind": "native_host_build",
+            "capture_seconds": [0, 0.5, 1.0, 2.0],
+            "simulation_fps": 60,
+            "framebuffer_readback": False,
+        },
+        "build": {
+            "artifact_kind": "receiver_native_module",
+            "bundle_schema": "ledgrid.native-background-bundle",
+            "bundle_version": 1,
+            "abi_schema": "ledgrid.native-background-abi",
+            "abi_version": 2,
+            "target": "esp32-s3",
+            "source": "native/background.cpp",
+        },
+    }
+    payload.update(changes)
+    return payload
+
+
 class ComponentCatalogTests(unittest.TestCase):
     def _package(
         self,
@@ -72,6 +132,33 @@ class ComponentCatalogTests(unittest.TestCase):
         (package / "manifest.json").write_text(
             json.dumps(payload), encoding="utf-8"
         )
+        return package
+
+    def _native_package(
+        self, root: str, *, manifest: dict | None = None, preset: bool = False
+    ) -> Path:
+        package = Path(root) / "native_example"
+        source_dir = package / "native"
+        source_dir.mkdir(parents=True)
+        (source_dir / "background.cpp").write_text(
+            'extern "C" int ledgrid_native_test_symbol = 1;\n', encoding="utf-8"
+        )
+        (package / "manifest.json").write_text(
+            json.dumps(manifest or native_manifest()), encoding="utf-8"
+        )
+        if preset:
+            preset_dir = package / "presets"
+            preset_dir.mkdir()
+            (preset_dir / "quiet.json").write_text(json.dumps({
+                "version": 1,
+                "preset_id": "quiet",
+                "name": "Quiet",
+                "animation": "native_example",
+                "params": {
+                    "speed": 0.5, "palette": "aurora",
+                    "shimmer": False, "bands": 2,
+                },
+            }), encoding="utf-8")
         return package
 
     @staticmethod
@@ -248,6 +335,278 @@ class ComponentCatalogTests(unittest.TestCase):
             self._package(root, manifest=partial)
             with self.assertRaisesRegex(ValueError, "missing"):
                 AnimationPluginLoader(root).scan_plugins()
+
+    def test_manifest_only_native_peer_is_catalog_and_preset_visible_not_executable(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._package(root)
+            native_dir = self._native_package(root, preset=True)
+            loader = AnimationPluginLoader(root, allowed_plugins={"example"})
+
+            self.assertEqual(
+                loader.scan_components(), ["example", "native_example"]
+            )
+            self.assertEqual(loader.scan_plugins(), ["example"])
+            self.assertEqual(
+                loader.get_component_dir("native_example"), native_dir.resolve()
+            )
+            self.assertIsNone(loader.get_plugin_dir("native_example"))
+            self.assertIsNone(loader.get_plugin_file("native_example"))
+            self.assertNotIn("native_example", loader.plugin_manifests)
+            self.assertIn("native_example", loader.component_manifests)
+
+            descriptor = loader.get_component_descriptor("native_example")
+            self.assertEqual(descriptor["provider"], "receiver_native")
+            self.assertEqual(descriptor["role"], "background")
+            self.assertEqual(
+                descriptor["entrypoint"], "ledgrid.native-background-abi:2"
+            )
+            self.assertEqual(descriptor["defaults"], {
+                "speed": 1.0, "palette": "aurora", "shimmer": True, "bands": 3,
+            })
+            self.assertEqual(
+                descriptor["build"]["source"], "native/background.cpp"
+            )
+            self.assertFalse(descriptor["preview"]["framebuffer_readback"])
+            self.assertEqual(
+                descriptor["compatibility"]["classification"],
+                "receiver_native_source",
+            )
+            self.assertTrue(descriptor["compatibility"]["composable"])
+            self.assertFalse(descriptor["compatibility"]["implementation_loaded"])
+            self.assertEqual(
+                loader.validate_component_parameters(
+                    "native_example", {"speed": 2.0, "palette": "sunset"}
+                ),
+                {"speed": 2.0, "palette": "sunset"},
+            )
+            for invalid in (
+                {"speed": float("inf")}, {"speed": 5.0}, {"bands": True},
+                {"palette": "missing"}, {"unknown": 1},
+            ):
+                with self.subTest(parameters=invalid), self.assertRaises(ValueError):
+                    loader.validate_component_parameters("native_example", invalid)
+
+            self.assertIsNone(loader.load_plugin("native_example"))
+            self.assertEqual(
+                [path.name for path in loader.iter_component_preset_files(
+                    provider="receiver_native"
+                )],
+                ["quiet.json"],
+            )
+            self.assertEqual(list(loader.iter_curated_preset_files("native_example")), [])
+            self.assertEqual(set(loader.load_all_plugins()), {"example"})
+
+    def test_native_package_rejects_python_package_and_class_without_importing(self):
+        marker = "_ledgrid_native_component_import_marker"
+        with tempfile.TemporaryDirectory() as root:
+            package = self._native_package(root)
+            (package / "__init__.py").write_text(
+                f"import builtins\nbuiltins.{marker} = True\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "must not contain __init__"):
+                AnimationPluginLoader(root).scan_components()
+            self.assertFalse(hasattr(builtins, marker))
+
+        with tempfile.TemporaryDirectory() as root:
+            payload = native_manifest()
+            payload["class"] = "NativeAnimation"
+            self._native_package(root, manifest=payload)
+            with self.assertRaisesRegex(ValueError, "unknown=.*class"):
+                AnimationPluginLoader(root).scan_components()
+
+    def test_native_manifest_fails_closed_on_contract_and_schema_drift(self):
+        cases = []
+
+        def case(label, mutate, message):
+            payload = copy.deepcopy(native_manifest())
+            mutate(payload)
+            cases.append((label, payload, message))
+
+        case("version", lambda p: p.update(manifest_version=2), "manifest_version")
+        case("boolean version", lambda p: p.update(manifest_version=True), "manifest_version")
+        case("float version", lambda p: p.update(manifest_version=1.0), "manifest_version")
+        case("role", lambda p: p.update(role="overlay"), "role")
+        case("entrypoint", lambda p: p.update(entrypoint="native:wrong"), "entrypoint")
+        case("cadence", lambda p: p.update(cadence={"mode": "event_driven"}), "fixed_fps")
+        case(
+            "cadence bound",
+            lambda p: p.update(cadence={"mode": "fixed_fps", "preferred_fps": 201}),
+            "1 to 200",
+        )
+        case(
+            "cadence lower bound",
+            lambda p: p.update(cadence={"mode": "fixed_fps", "preferred_fps": 0.5}),
+            "1 to 200",
+        )
+        case("unknown", lambda p: p.update(secret=True), "unknown=.*secret")
+        case(
+            "preview kind",
+            lambda p: p["preview"].update(kind="python_renderer"),
+            "preview kind",
+        )
+        case(
+            "preview readback",
+            lambda p: p["preview"].update(framebuffer_readback=True),
+            "framebuffer_readback",
+        )
+        case(
+            "preview cadence",
+            lambda p: p["preview"].update(simulation_fps=121),
+            "simulation_fps",
+        )
+        case(
+            "one preview frame",
+            lambda p: p["preview"].update(capture_seconds=[0.0]),
+            "2-16",
+        )
+        case(
+            "preview timestamp overflow",
+            lambda p: p["preview"].update(
+                capture_seconds=[0.0, (2**64 + 1) / 1_000_000]
+            ),
+            "uint64",
+        )
+        case(
+            "build target", lambda p: p["build"].update(target="host"),
+            "build contract",
+        )
+        case(
+            "boolean bundle version",
+            lambda p: p["build"].update(bundle_version=True),
+            "versions must be integers",
+        )
+        case(
+            "boolean ABI version",
+            lambda p: p["build"].update(abi_version=True),
+            "versions must be integers",
+        )
+        case(
+            "build source", lambda p: p["build"].update(source="../background.cpp"),
+            "escapes package",
+        )
+        case(
+            "reserved parameter",
+            lambda p: p["parameter_schema"].update(
+                plant_modifiers={
+                    "type": "bool", "default": False, "description": "Reserved",
+                }
+            ),
+            "parameter name",
+        )
+        case(
+            "default bound",
+            lambda p: p["parameter_schema"]["speed"].update(default=9.0),
+            "outside its bounds",
+        )
+        case(
+            "float32 overflow",
+            lambda p: p["parameter_schema"]["speed"].update(max=1e100),
+            "float32",
+        )
+        case(
+            "float32 underflow",
+            lambda p: p["parameter_schema"]["speed"].update(min=1e-100),
+            "float32",
+        )
+        case(
+            "enum default",
+            lambda p: p["parameter_schema"]["palette"].update(default="missing"),
+            "must be one of",
+        )
+        case(
+            "legacy mapping",
+            lambda p: p["vibe"].update(
+                legacy_parameter_mappings={"palette": {"quiet": "aurora"}}
+            ),
+            "legacy_parameter_mappings",
+        )
+        case(
+            "empty legacy mapping",
+            lambda p: p["vibe"].update(legacy_parameter_mappings={}),
+            "legacy_parameter_mappings",
+        )
+        case(
+            "missing vibe capability field",
+            lambda p: p["vibe"].pop("capabilities"),
+            "vibe.capabilities|vibe fields",
+        )
+        case(
+            "semantic vibe without roles",
+            lambda p: p["vibe"].pop("semantic_roles"),
+            "semantic.*role",
+        )
+        case(
+            "non-semantic vibe with roles",
+            lambda p: p["vibe"].update(color_policy="grade"),
+            "only .*semantic",
+        )
+        case(
+            "long installation requirement",
+            lambda p: p.update(installation_profile_requirements=["a" * 49]),
+            "48 characters",
+        )
+
+        for label, payload, message in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as root:
+                self._native_package(root, manifest=payload)
+                with self.assertRaisesRegex(ValueError, message):
+                    AnimationPluginLoader(root).scan_components()
+
+    def test_native_catalog_is_descriptor_only_when_build_source_is_not_deployed(self):
+        with tempfile.TemporaryDirectory() as root:
+            package = self._native_package(root)
+            (package / "native" / "background.cpp").unlink()
+            loader = AnimationPluginLoader(root)
+            self.assertEqual(loader.scan_components(), ["native_example"])
+            descriptor = loader.get_component_descriptor("native_example")
+            self.assertEqual(descriptor["build"]["source"], "native/background.cpp")
+            self.assertEqual(
+                descriptor["compatibility"]["classification"],
+                "receiver_native_source",
+            )
+
+    def test_native_nonsemantic_vibe_normalizes_bundle_compatible_empty_roles(self):
+        with tempfile.TemporaryDirectory() as root:
+            payload = native_manifest()
+            payload["vibe"] = {
+                "color_policy": "grade",
+                "timing_adapter": "legacy_speed_param",
+                "capabilities": ["luminance"],
+            }
+            self._native_package(root, manifest=payload)
+            loader = AnimationPluginLoader(root)
+            loader.scan_components()
+            self.assertEqual(
+                loader.component_manifests["native_example"]["vibe"],
+                {
+                    "color_policy": "grade",
+                    "timing_adapter": "legacy_speed_param",
+                    "capabilities": ["luminance"],
+                    "semantic_roles": [],
+                },
+            )
+
+    def test_native_package_directory_must_not_be_a_symlink(self):
+        with (
+            tempfile.TemporaryDirectory() as source_root,
+            tempfile.TemporaryDirectory() as plugins_root,
+        ):
+            package = self._native_package(source_root)
+            (Path(plugins_root) / "native_example").symlink_to(
+                package, target_is_directory=True
+            )
+            with self.assertRaisesRegex(ValueError, "package directory.*symlink"):
+                AnimationPluginLoader(plugins_root).scan_components()
+
+    def test_manifest_only_directory_with_malformed_json_fails_closed(self):
+        cases = ("{", "[]")
+        for content in cases:
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as root:
+                package = Path(root) / "broken_component"
+                package.mkdir()
+                (package / "manifest.json").write_text(content, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "invalid manifest|object"):
+                    AnimationPluginLoader(root).scan_components()
 
 
 if __name__ == "__main__":

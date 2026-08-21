@@ -3506,6 +3506,47 @@ to receivers.
 Build and validate an unsigned native peer without executing it on the installed
 wall.
 
+Implementation status (2026-08-21): **implementation complete; final clean
+deploy acceptance in progress**. This slice freezes the ABI v2 authoring seam,
+adds one repository-peer
+analytic background, and proves deterministic build, bundle validation, host
+preview, publication, and fake-cache behavior. It does not add receiver loader
+commands, make arbitrary paths buildable, install or execute a native module on
+the wall, or make a receiver-native bundle scene-selectable. Existing complete
+RGB streaming and the compiled static background remain the only runtime paths;
+the ordinary deployment gate remains separate and unchanged.
+
+Current bounded portable slice:
+
+- [x] Discover a receiver-native package from `manifest.json` without requiring
+  `__init__.py`, importing Python, or adding it to the Python execution allowlist;
+  validate provider-specific entrypoint, cadence, schema/defaults, build, preview,
+  and preset metadata while preserving existing Python discovery byte-for-byte.
+- [x] Freeze one ABI v2 header with global/local geometry, scene epoch and seed,
+  scaled/unscaled time, typed parameters, vibe/palette input, read-only profile and
+  modifier views, explicit context update, caller-owned RGB output, changed/deadline
+  render result, and bounded helpers.
+- [x] Add one analytic repository-peer background whose source lives only under
+  `animation/plugins/<plugin_id>/native/`, renders all four global offsets without
+  seams, and has deterministic default and maximum-work presets.
+- [x] Build deterministic host-preview and ESP32-S3 artifacts from tracked,
+  allowlisted package inputs using pinned toolchain identity; produce one canonical
+  unsigned bundle with separate bundle and payload digests and no signing fields.
+- [x] Fail closed on unsafe source paths, untracked package inputs, noncanonical or
+  extra bundle members, hash/identity drift, wrong ELF class/machine/type, wrong
+  ABI/target/geometry, missing or extra exports, forbidden imports, initializer or
+  finalizer sections, oversized payloads, malformed parameters, and output-canary
+  overwrite.
+- [x] Publish immutable bundles atomically into a Pi-authoritative managed library,
+  retain build/publish receipts, survive app stage/activate/rollback and full-sync
+  deletion, and prove fake receiver probe/install/activation/idempotency without
+  adding an installed-receiver transport.
+- [ ] Pass focused native/catalog/library coverage, all Python/plugin tests, rendering
+  acceptance, native firmware tests and both ESP32-S3 builds, deployment tests,
+  bundle regeneration equality, whitespace, deploy dry-runs/plan, and an ordinary
+  clean `just deploy` before closing the slice. Record desktop proxy timing and
+  artifact identities without claiming ESP32 or physical-wall performance.
+
 - Add explicit native descriptor validation to the unified catalog. A native
   package requires no `__init__.py` or Python class and cannot be imported as one.
 - Put one analytic pilot background in a self-contained plugin package.

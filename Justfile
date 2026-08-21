@@ -60,6 +60,24 @@ deploy-python-verbose:
 deploy-python-plan:
 	python3 tools/deployment/deploy_entrypoint.py plan --mode python --policy plan
 
+# Read-only, package-scoped source and action accounting for one native background.
+native-plan plugin_id:
+	{{python_env}} python tools/deployment/native_background_entrypoint.py \
+		plan "{{plugin_id}}"
+
+# Build, preview, validate, and retain one repository-owned native bundle locally.
+native-build plugin_id:
+	{{captured}} --phase receiver_background.build -- \
+		{{python_env}} --group firmware python tools/deployment/native_background_entrypoint.py \
+		build "{{plugin_id}}"
+
+# Publish a managed local bundle (or first build a plugin ID) to shared Pi state.
+# This never installs on receivers, changes display ownership, or restarts services.
+native-publish bundle_or_plugin:
+	{{captured}} --phase receiver_background.publish -- \
+		{{python_env}} --group firmware python tools/deployment/native_background_entrypoint.py \
+		publish "{{bundle_or_plugin}}"
+
 # Explicit recovery paths for the retained pre-cutover shell leaves.
 deploy-legacy:
 	{{captured}} --phase deploy.legacy.full -- python3 tools/deployment/deploy_entrypoint.py legacy --mode full --policy clean

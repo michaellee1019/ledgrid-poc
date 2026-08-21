@@ -46,6 +46,114 @@ role. Painter, stateful animations, and legacy Clock remain catalog-visible
 Root `presets/animations/<plugin_id>/` is a user-writable runtime overlay.
 Do not place curated source presets there.
 
+### Receiver-native source packages (Phase 3D)
+
+A repository-built receiver background is a peer in the same component catalog,
+not a Python plugin. Its package has no `__init__.py`, is never placed in the
+Python manager allowlist, and cannot be started, reloaded, or preview-constructed
+through `AnimationBase`:
+
+```text
+animation/plugins/<plugin_id>/
+├── manifest.json
+├── native/
+│   └── background.cpp
+└── presets/              # optional curated presets
+```
+
+The repository manifest is strict and complete. It uses descriptor version 1,
+the reserved ABI-v2 entrypoint, one fixed-FPS receiver-native background, a
+manifest-owned parameter schema, a host-build preview declaration, and the exact
+tracked source path:
+
+```json
+{
+  "manifest_version": 1,
+  "plugin_id": "example_native",
+  "name": "Example Native",
+  "description": "Analytic receiver-rendered background",
+  "icon": "🌌",
+  "gallery": "show",
+  "provider": "receiver_native",
+  "role": "background",
+  "entrypoint": "ledgrid.native-background-abi:2",
+  "cadence": {"mode": "fixed_fps", "preferred_fps": 60},
+  "parameter_schema": {
+    "speed": {
+      "type": "float",
+      "min": 0.1,
+      "max": 4.0,
+      "default": 1.0,
+      "description": "Motion multiplier"
+    }
+  },
+  "vibe": {
+    "color_policy": "semantic",
+    "timing_adapter": "scaled_context",
+    "capabilities": ["palette_roles", "tempo", "luminance"],
+    "semantic_roles": ["background_low", "background_mid", "background_high"]
+  },
+  "installation_profile_requirements": [],
+  "preview": {
+    "kind": "native_host_build",
+    "capture_seconds": [0, 0.5, 1, 2],
+    "simulation_fps": 60,
+    "framebuffer_readback": false
+  },
+  "build": {
+    "artifact_kind": "receiver_native_module",
+    "bundle_schema": "ledgrid.native-background-bundle",
+    "bundle_version": 1,
+    "abi_schema": "ledgrid.native-background-abi",
+    "abi_version": 2,
+    "target": "esp32-s3",
+    "source": "native/background.cpp"
+  }
+}
+```
+
+Every parameter definition requires a non-empty description and default.
+Numeric definitions require finite bounds; integers fit signed 32-bit values;
+option-backed strings have unique bounded options. Scene-global state such as
+vibe and plant modifiers is not a component parameter. Descriptor `defaults`
+are derived from the schema, so repository manifests cannot carry a second
+drift-prone defaults object. Unknown fields, path traversal, wrong
+ABI/target/cadence, or malformed defaults fail descriptor discovery. Runtime
+app releases deliberately omit native source bytes, so source existence,
+regular-file/symlink safety, package confinement, and Git tracking are enforced
+by the explicit native builder before either toolchain runs.
+
+Curated native presets use the ordinary plugin-owned preset envelope:
+
+```json
+{
+  "version": 2,
+  "preset_id": "quiet",
+  "name": "Quiet",
+  "animation": "example_native",
+  "category": "Ambient",
+  "description": "A dim, slow native background.",
+  "tags": ["ambient", "native"],
+  "created_at": "2026-08-21T00:00:00Z",
+  "updated_at": "2026-08-21T00:00:00Z",
+  "params": {"speed": 0.65}
+}
+```
+
+Preset discovery resolves the component package directory independently from a
+Python implementation. The component and preset APIs may expose the descriptor,
+curated presets, and generated host-preview metadata. Generated previews are
+authoring artifacts, explicitly not receiver framebuffer readback. Python
+animation APIs continue to return “not found” for the native ID.
+
+Phase 3D stops at deterministic planning, host/target build, validation,
+preview, and atomic publication. Use `just native-plan <plugin_id>`,
+`just native-build <plugin_id>`, and `just native-publish <plugin_id-or-bundle>`.
+These operations do not enable receiver execution, change display ownership,
+flash firmware, or make the component selectable in a scene. Scene validation,
+start, and live scene-preview requests remain rejected until the later dynamic
+loader phase explicitly expands provider policy.
+
 ## Minimal plugin
 
 `animation/plugins/example/__init__.py`:

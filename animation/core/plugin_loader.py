@@ -29,6 +29,7 @@ from .presentation_contracts import (
     VIBE_CAPABILITIES as CANONICAL_VIBE_CAPABILITIES,
     VIBE_COLOR_POLICIES as CANONICAL_VIBE_COLOR_POLICIES,
     VIBE_PALETTE_ROLES,
+    ComponentProvider,
     TimingAdapter,
 )
 
@@ -68,6 +69,8 @@ class AnimationPluginLoader:
         self.loaded_plugins: Dict[str, Type[AnimationBase]] = {}
         self.plugin_files: Dict[str, Path] = {}
         self.plugin_manifests: Dict[str, Dict[str, Any]] = {}
+        self.component_dirs: Dict[str, Path] = {}
+        self.component_manifests: Dict[str, Dict[str, Any]] = {}
         self.component_descriptors: Dict[str, Dict[str, Any]] = {}
         self._scan_completed = False
 
@@ -89,7 +92,10 @@ class AnimationPluginLoader:
             raise ValueError(f"manifest must contain an object: {manifest_path}")
         payload = validate_and_normalize_manifest(payload, manifest_path, plugin_name)
         preview = payload.get("preview")
-        if preview is not None:
+        if (
+            preview is not None
+            and payload.get("provider") != ComponentProvider.RECEIVER_NATIVE.value
+        ):
             if not isinstance(preview, dict):
                 raise ValueError(f"manifest preview must be an object: {manifest_path}")
             unknown = set(preview) - {"capture_seconds", "simulation_fps"}
@@ -129,6 +135,14 @@ class AnimationPluginLoader:
                     f"{manifest_path}"
                 )
         AnimationPluginLoader._normalize_vibe_manifest(payload, manifest_path)
+        if (
+            payload.get("provider") == ComponentProvider.RECEIVER_NATIVE.value
+            and payload["vibe"].get("legacy_parameter_mappings")
+        ):
+            raise ValueError(
+                "receiver-native manifests cannot declare legacy_parameter_mappings: "
+                f"{manifest_path}"
+            )
         return payload
 
     @classmethod
@@ -318,51 +332,98 @@ class AnimationPluginLoader:
             parameter: dict(values) for parameter, values in mappings.items()
         }
 
-    def scan_plugins(self) -> List[str]:
-        """Scan package and external flat plugins in deterministic ID order."""
+    def _scan_repository(self) -> None:
+        """Index component manifests and the narrower Python execution set."""
         self.plugin_files.clear()
         self.plugin_manifests.clear()
+        self.component_dirs.clear()
+        self.component_manifests.clear()
         self.component_descriptors.clear()
         self._scan_completed = True
         if not self.plugins_dir.is_dir():
-            return []
+            return
 
-        candidates: Dict[str, Path] = {}
-        manifests: Dict[str, Dict[str, Any]] = {}
+        flat_candidates: Dict[str, Path] = {}
+        package_candidates: Dict[str, tuple[Path, Path, Dict[str, Any]]] = {}
 
         for path in sorted(self.plugins_dir.iterdir(), key=lambda item: item.name):
             if path.name.startswith("__"):
                 continue
             if path.is_file() and path.suffix == ".py":
-                if path.stem in candidates:
+                if path.stem in flat_candidates or path.stem in package_candidates:
                     raise ValueError(f"duplicate flat and package plugin ID: {path.stem}")
-                candidates[path.stem] = path
+                flat_candidates[path.stem] = path
+                continue
+            if not path.is_dir():
                 continue
             init_path = path / "__init__.py"
             manifest_path = path / self.MANIFEST_FILENAME
-            if path.is_dir() and init_path.is_file():
-                if not manifest_path.is_file():
-                    raise ValueError(f"plugin package is missing manifest: {path}")
-                plugin_name = path.name
-                if plugin_name in candidates:
-                    raise ValueError(f"duplicate flat and package plugin ID: {plugin_name}")
-                manifests[plugin_name] = self._validate_manifest(manifest_path, plugin_name)
-                candidates[plugin_name] = init_path
+            if init_path.is_file() and not manifest_path.is_file():
+                raise ValueError(f"plugin package is missing manifest: {path}")
+            if not manifest_path.is_file():
+                continue
+            # A manifest-only directory is intentionally ignored unless it
+            # explicitly declares the receiver-native provider. This preserves
+            # the historical treatment of non-plugin data directories while
+            # allowing a native peer to require no Python package at all.
+            if not init_path.is_file():
+                try:
+                    peek = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise ValueError(f"invalid manifest {manifest_path}: {exc}") from exc
+                if not isinstance(peek, dict):
+                    raise ValueError(
+                        f"manifest must contain an object: {manifest_path}"
+                    )
+                if peek.get("provider") != ComponentProvider.RECEIVER_NATIVE.value:
+                    continue
+            plugin_name = path.name
+            if plugin_name in flat_candidates or plugin_name in package_candidates:
+                raise ValueError(f"duplicate flat and package plugin ID: {plugin_name}")
+            manifest = self._validate_manifest(manifest_path, plugin_name)
+            package_candidates[plugin_name] = (path, init_path, manifest)
 
-        for plugin_name in sorted(candidates):
+        all_candidate_ids = set(flat_candidates).union(package_candidates)
+        for plugin_name in sorted(all_candidate_ids):
+            package = package_candidates.get(plugin_name)
+            if package is not None:
+                package_dir, init_path, manifest = package
+                provider = manifest.get("provider", ComponentProvider.PYTHON.value)
+                if provider == ComponentProvider.RECEIVER_NATIVE.value:
+                    self.component_dirs[plugin_name] = package_dir
+                    self.component_manifests[plugin_name] = manifest
+                    self.component_descriptors[plugin_name] = scanned_descriptor(
+                        plugin_name, manifest
+                    )
+                    continue
+                if self.allowed_plugins is not None and plugin_name not in self.allowed_plugins:
+                    continue
+                self.plugin_files[plugin_name] = init_path
+                self.plugin_manifests[plugin_name] = manifest
+                self.component_dirs[plugin_name] = package_dir
+                self.component_manifests[plugin_name] = manifest
+                self.component_descriptors[plugin_name] = scanned_descriptor(
+                    plugin_name, manifest
+                )
+                continue
+
             if self.allowed_plugins is not None and plugin_name not in self.allowed_plugins:
                 continue
-            self.plugin_files[plugin_name] = candidates[plugin_name]
-            if plugin_name in manifests:
-                self.plugin_manifests[plugin_name] = manifests[plugin_name]
-                self.component_descriptors[plugin_name] = scanned_descriptor(
-                    plugin_name, manifests[plugin_name]
-                )
-            else:
-                self.component_descriptors[plugin_name] = scanned_descriptor(
-                    plugin_name, None, flat_file=candidates[plugin_name]
-                )
+            flat_file = flat_candidates[plugin_name]
+            self.plugin_files[plugin_name] = flat_file
+            self.component_descriptors[plugin_name] = scanned_descriptor(
+                plugin_name, None, flat_file=flat_file
+            )
+
+    def scan_plugins(self) -> List[str]:
+        """Return only executable Python packages and external flat plugins."""
+        self._scan_repository()
         return list(self.plugin_files)
+
+    def scan_components(self) -> List[str]:
+        """Return all catalog components without importing implementations."""
+        self._scan_repository()
+        return sorted(self.component_descriptors)
 
     def _module_name(self, plugin_name: str, file_path: Path) -> str:
         if (
@@ -470,12 +531,18 @@ class AnimationPluginLoader:
             return None
         return path.parent
 
+    def get_component_dir(self, plugin_name: str) -> Optional[Path]:
+        """Return a manifest package directory for either supported provider."""
+        if not self._scan_completed:
+            self.scan_components()
+        return self.component_dirs.get(plugin_name)
+
     def component_catalog(
         self, provider: Optional[str] = None, role: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Return one normalized provider/role-filterable component catalog."""
         if not self._scan_completed:
-            self.scan_plugins()
+            self.scan_components()
         descriptors = list(self.component_descriptors.values())
         descriptors.append(painter_descriptor())
         return filter_catalog(descriptors, provider=provider, role=role)
@@ -483,7 +550,7 @@ class AnimationPluginLoader:
     def get_component_descriptor(self, plugin_id: str) -> Optional[Dict[str, Any]]:
         """Return an isolated JSON descriptor for a plugin or painter mode."""
         if not self._scan_completed:
-            self.scan_plugins()
+            self.scan_components()
         if plugin_id == "painter":
             return painter_descriptor()
         descriptor = self.component_descriptors.get(plugin_id)
@@ -501,16 +568,43 @@ class AnimationPluginLoader:
             raise ValueError(f"unknown component {plugin_id!r}")
         return validate_parameter_overrides(descriptor, values)
 
-    def iter_curated_preset_files(self, plugin_name: Optional[str] = None) -> Iterator[Path]:
-        """Enumerate shipped, plugin-owned presets in stable path order."""
-        names = [plugin_name] if plugin_name is not None else self.scan_plugins()
+    def iter_component_preset_files(
+        self,
+        plugin_name: Optional[str] = None,
+        *,
+        provider: Optional[str] = None,
+    ) -> Iterator[Path]:
+        """Enumerate provider-filtered manifest-package presets deterministically."""
+        if not self._scan_completed:
+            self.scan_components()
+        if provider is not None:
+            try:
+                provider = ComponentProvider(provider).value
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"unsupported component provider {provider!r}") from exc
+        names = (
+            [plugin_name]
+            if plugin_name is not None
+            else sorted(self.component_descriptors)
+        )
         for name in names:
-            if name not in self.plugin_files:
-                self.scan_plugins()
-            plugin_file = self.plugin_files.get(name)
-            if plugin_file is None or plugin_file.name != "__init__.py":
+            descriptor = self.component_descriptors.get(name)
+            if descriptor is None or (
+                provider is not None and descriptor.get("provider") != provider
+            ):
                 continue
-            yield from sorted((plugin_file.parent / "presets").glob("*.json"))
+            component_dir = self.component_dirs.get(name)
+            if component_dir is None:
+                continue
+            yield from sorted((component_dir / "presets").glob("*.json"))
+
+    def iter_curated_preset_files(
+        self, plugin_name: Optional[str] = None
+    ) -> Iterator[Path]:
+        """Enumerate Python presets with the historical execution-only scope."""
+        yield from self.iter_component_preset_files(
+            plugin_name, provider=ComponentProvider.PYTHON.value
+        )
 
     def list_plugins(self) -> List[str]:
         return list(self.loaded_plugins)

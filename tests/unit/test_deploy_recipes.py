@@ -117,6 +117,40 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn("deploy-legacy:", justfile)
         self.assertIn("deploy-python-legacy:", justfile)
 
+    def test_native_recipes_use_only_the_separate_native_workflow(self):
+        plan = subprocess.run(
+            ["just", "--dry-run", "native-plan", "aurora_curtains_native"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        build = subprocess.run(
+            ["just", "--dry-run", "native-build", "aurora_curtains_native"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        publish = subprocess.run(
+            ["just", "--dry-run", "native-publish", "aurora_curtains_native"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        for output, command in (
+            (plan.stdout + plan.stderr, 'plan "aurora_curtains_native"'),
+            (build.stdout + build.stderr, 'build "aurora_curtains_native"'),
+            (publish.stdout + publish.stderr, 'publish "aurora_curtains_native"'),
+        ):
+            self.assertIn("native_background_entrypoint.py", output)
+            self.assertIn(command, output)
+            self.assertNotIn("deploy_entrypoint.py run", output)
+            self.assertNotIn("flash_esp32", output)
+            self.assertNotIn("systemctl", output)
+        self.assertIn("uv run --frozen", plan.stdout + plan.stderr)
+
     def test_deployment_gate_includes_every_phase_zero_policy_suite(self):
         justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
         for suite in (
@@ -138,6 +172,7 @@ class DeployRecipeTests(unittest.TestCase):
         )
         full = full.stdout + full.stderr
         self.assertEqual(full.count("deploy_entrypoint.py run --mode full --policy clean"), 1)
+        self.assertNotIn("native_background_entrypoint.py", full)
         self.assertNotIn("./tools/deployment/deploy.sh", full)
         self.assertNotIn("ssh ", full)
 
@@ -150,6 +185,7 @@ class DeployRecipeTests(unittest.TestCase):
         )
         fast = fast.stdout + fast.stderr
         self.assertEqual(fast.count("deploy_entrypoint.py run --mode python --policy clean"), 1)
+        self.assertNotIn("native_background_entrypoint.py", fast)
         self.assertNotIn("./tools/deployment/deploy_python.sh", fast)
         self.assertNotIn("ssh ", fast)
 

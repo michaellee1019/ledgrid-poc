@@ -7,6 +7,7 @@ dependencies = [
     "flask>=3.1.2,<4",
     "numpy>=2.2.6,<3",
     "pillow>=10,<13",
+    "pyelftools>=0.33,<1",
     "pyserial>=3.5,<4",
     "smbus2>=0.4,<1",
     "spidev>=3.6,<4; sys_platform == 'linux'",

@@ -112,10 +112,12 @@ class Phase2DColorPolicyInventoryTests(unittest.TestCase):
             receiver_static,
         ])
 
-        self.assertEqual(inventory["component_count"], len(self.plugin_ids) + 2)
+        # Python packages plus catalog-only Painter, the repository-native
+        # pilot, and the separately supplied compiled receiver builtin.
+        self.assertEqual(inventory["component_count"], len(self.plugin_ids) + 3)
         self.assertEqual(
             inventory["counts"],
-            {"grade": 39, "preserve": 12, "semantic": 2},
+            {"grade": 39, "preserve": 12, "semantic": 3},
         )
         identities = {
             (item["provider"], item["plugin_id"])
@@ -123,6 +125,7 @@ class Phase2DColorPolicyInventoryTests(unittest.TestCase):
         }
         self.assertEqual(len(identities), inventory["component_count"])
         self.assertIn(("python", "painter"), identities)
+        self.assertIn(("receiver_native", "aurora_curtains_native"), identities)
         self.assertIn(("receiver_native", "compiled_rainbow"), identities)
         self.assertTrue(all(item["color_policy"] for item in inventory["components"]))
 
