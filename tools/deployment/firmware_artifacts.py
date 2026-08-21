@@ -18,10 +18,14 @@ import re
 from typing import Any, Mapping, Optional, Sequence
 
 
-INSTALLATION_IDENTITY_SCHEMA_VERSION = 2
+INSTALLATION_IDENTITY_SCHEMA_VERSION = 3
 PLATFORMIO_TOOLCHAIN_IDENTITY = "platformio==6.1.19"
 GENERATED_LAYOUT_INPUTS = ("flash_args", "flasher_args.json")
-SOURCE_LAYOUT_INPUTS = ("platformio.ini", "sdkconfig.defaults")
+SOURCE_LAYOUT_INPUTS = (
+    "platformio.ini",
+    "partitions.csv",
+    "sdkconfig.defaults",
+)
 
 
 def _sha256_file(path: Path) -> str:

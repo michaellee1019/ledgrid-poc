@@ -6,6 +6,7 @@ import threading
 import time
 import types
 import unittest
+from unittest.mock import patch
 
 
 if "spidev" not in sys.modules:
@@ -457,9 +458,43 @@ class FirmwareHostPhase3AProtocolTests(unittest.TestCase):
         self.assertEqual(item.spi.packets[0][:-2], b"\x07\x08\x00\x8a\x00\x02")
         self.assert_packet_crc(item.spi.packets[0])
 
+    def test_config_provisions_native_direction_for_all_four_receivers(self):
+        native_directions = (False, False, True, True)
+        for logical_device_id, reversed_order in enumerate(native_directions):
+            with self.subTest(logical_device_id=logical_device_id):
+                item = controller()
+                item.logical_device_id = logical_device_id
+                item.reverse_native_strip_order = reversed_order
+                item._receiver_status_version = 3
+                item._receiver_capabilities = protocol.CAPABILITY_STATUS_V3
+
+                item.configure()
+
+                expected_flags = 0x80 if reversed_order else 0
+                self.assertEqual(
+                    item.spi.packets[0][:-2],
+                    bytes((0x07, 0x08, 0x00, 0x8A, expected_flags,
+                           logical_device_id)),
+                )
+                self.assert_packet_crc(item.spi.packets[0])
+
+    def test_config_native_direction_and_debug_flags_coexist(self):
+        item = controller()
+        item.debug = True
+        item.logical_device_id = 3
+        item.reverse_native_strip_order = True
+        item._receiver_status_version = 3
+        item._receiver_capabilities = protocol.CAPABILITY_STATUS_V3
+
+        item.configure()
+
+        self.assertEqual(item.spi.packets[0][:-2], b"\x07\x08\x00\x8a\x81\x03")
+        self.assert_packet_crc(item.spi.packets[0])
+
     def test_config_preserves_legacy_five_bytes_until_v3_is_observed(self):
         item = controller()
         item.logical_device_id = 2
+        item.reverse_native_strip_order = True
         for version, capabilities in ((0, 0), (1, 0), (2, 0), (3, 0)):
             with self.subTest(version=version, capabilities=capabilities):
                 item.spi.packets.clear()
@@ -467,6 +502,47 @@ class FirmwareHostPhase3AProtocolTests(unittest.TestCase):
                 item._receiver_capabilities = capabilities
                 item.configure()
                 self.assertEqual(item.spi.packets[0][:-2], b"\x07\x08\x00\x8a\x00")
+
+    def test_native_direction_inputs_are_strict_and_multi_device_mapped(self):
+        with self.assertRaisesRegex(
+            TypeError, "reverse_native_strip_order must be a boolean"
+        ):
+            protocol.LEDController(reverse_native_strip_order=1)
+        with self.assertRaisesRegex(
+            TypeError, "must be a 4-entry tuple of booleans"
+        ):
+            MultiDeviceLEDController(
+                reverse_native_strips_by_logical_receiver=[False] * 4
+            )
+
+        created = []
+
+        def make_device(**kwargs):
+            created.append(kwargs)
+            return object()
+
+        with patch("drivers.multi_device.LEDController", side_effect=make_device), patch.object(
+            MultiDeviceLEDController,
+            "_initialize_receiver_identity_observability",
+            return_value=None,
+        ):
+            wall = MultiDeviceLEDController(
+                num_devices=4,
+                device_map=[(0, 0), (0, 1), (1, 0), (1, 1)],
+                parallel=False,
+                reverse_native_strips_by_logical_receiver=(
+                    False, False, True, True,
+                ),
+            )
+
+        self.assertEqual(
+            wall.reverse_native_strips_by_logical_receiver,
+            (False, False, True, True),
+        )
+        self.assertEqual(
+            [entry["reverse_native_strip_order"] for entry in created],
+            [False, False, True, True],
+        )
 
     def test_control_ack_transaction_blocks_interleaved_legacy_spi_traffic(self):
         entered = threading.Event()

@@ -9,3 +9,6 @@ if os.environ.get("DEBUG") == "1":
 env["ENV"]["LEDGRID_LOCAL_BACKGROUND"] = (
     "1" if env.subst("$PIOENV") == "esp32-s3-devkitc-1-local-canary" else "0"
 )
+env["ENV"]["LEDGRID_INSTALLATION_PROFILES"] = (
+    "1" if env.subst("$PIOENV") == "esp32-s3-devkitc-1-local-canary" else "0"
+)

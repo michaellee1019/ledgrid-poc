@@ -145,6 +145,46 @@ bool encode_receiver_status_v4(
   return true;
 }
 
+bool encode_receiver_status_v5(
+    const ReceiverStatusV5& status,
+    std::uint8_t* output,
+    std::size_t output_size) {
+  if (output == nullptr || output_size < kStatusBytesV5) return false;
+  if (!encode_receiver_status_v4(status, output, output_size)) return false;
+  std::memcpy(output, "LGS5", 4);
+  output[4] = kStatusProtocolVersionV5;
+  const auto& profile = status.installation_profile;
+  output[416] = static_cast<std::uint8_t>(profile.result);
+  output[417] = static_cast<std::uint8_t>(profile.transfer_state);
+  output[418] = profile.decoder_error;
+  output[419] = profile.flags;
+  write_u32(output + 420, profile.capacity_bytes);
+  write_u32(output + 424, profile.used_bytes);
+  write_u32(output + 428, profile.free_bytes);
+  write_u32(output + 432, profile.reserve_bytes);
+  write_u32(output + 436, profile.reclaimable_bytes);
+  write_u32(output + 440, profile.received_bytes);
+  write_u32(output + 444, profile.total_bytes);
+  write_u64(output + 448, profile.state_generation);
+  write_u64(output + 456, profile.preflight_token);
+  std::memcpy(output + 464, profile.last_probe_payload_digest, 32);
+  std::memcpy(output + 496, profile.transfer_global_id, 32);
+  std::memcpy(output + 528, profile.transfer_payload_digest, 32);
+  std::memcpy(output + 560, profile.active_global_id, 32);
+  std::memcpy(output + 592, profile.active_payload_digest, 32);
+  std::memcpy(output + 624, profile.staged_global_id, 32);
+  std::memcpy(output + 656, profile.staged_payload_digest, 32);
+  std::memcpy(output + 688, profile.rollback_global_id, 32);
+  std::memcpy(output + 720, profile.rollback_payload_digest, 32);
+  write_u32(output + 752, profile.writes);
+  write_u32(output + 756, profile.evictions);
+  write_u16(output + 760, profile.stages);
+  write_u16(output + 762, profile.verifies);
+  write_u16(output + 764, profile.activations);
+  write_u16(output + 766, profile.restores);
+  return true;
+}
+
 bool command_may_claim_base(ReceiverCommand command) {
   return command == ReceiverCommand::SetAll ||
          command == ReceiverCommand::LocalBackgroundStart;
@@ -155,7 +195,8 @@ ReceiverDispatchDecision classify_receiver_dispatch(
     std::size_t size,
     std::size_t active_rgb_bytes,
     BaseMode base_mode,
-    bool local_background_enabled) {
+    bool local_background_enabled,
+    bool installation_profiles_enabled) {
   const auto reject = [](ReceiverOperationResult result) {
     return ReceiverDispatchDecision{
         ReceiverDispatchRoute::Reject, result, false, false};
@@ -212,12 +253,25 @@ ReceiverDispatchDecision classify_receiver_dispatch(
                                       false};
     case ReceiverCommand::StatusQuery:
       if (size == kStatusBytesV3 ||
-          (local_background_enabled && size == kStatusBytesV4)) {
+          (local_background_enabled && size == kStatusBytesV4) ||
+          (installation_profiles_enabled && size == kStatusBytesV5)) {
         return ReceiverDispatchDecision{ReceiverDispatchRoute::StatusQuery,
                                         ReceiverOperationResult::None, false,
                                         false};
       }
       return reject(ReceiverOperationResult::InvalidSize);
+    case ReceiverCommand::InstallationProfilePreflight:
+    case ReceiverCommand::InstallationProfileBegin:
+    case ReceiverCommand::InstallationProfileChunk:
+    case ReceiverCommand::InstallationProfileFinalize:
+    case ReceiverCommand::InstallationProfileVerify:
+    case ReceiverCommand::InstallationProfileActivate:
+    case ReceiverCommand::InstallationProfileRestore:
+    case ReceiverCommand::InstallationProfileAbort:
+      if (!installation_profiles_enabled) {
+        return reject(ReceiverOperationResult::Unsupported);
+      }
+      break;
     case ReceiverCommand::LocalBackgroundStart:
     case ReceiverCommand::LocalBackgroundStop:
     case ReceiverCommand::LocalBackgroundParameters:
@@ -234,6 +288,38 @@ ReceiverDispatchDecision classify_receiver_dispatch(
       break;
     default:
       return reject(ReceiverOperationResult::InvalidCommand);
+  }
+
+  if (id >= ReceiverCommand::InstallationProfilePreflight &&
+      id <= ReceiverCommand::InstallationProfileAbort) {
+    std::size_t expected = 0;
+    switch (id) {
+      case ReceiverCommand::InstallationProfilePreflight:
+        expected = kInstallationProfilePreflightBytes; break;
+      case ReceiverCommand::InstallationProfileBegin:
+        expected = kInstallationProfileBeginBytes; break;
+      case ReceiverCommand::InstallationProfileChunk:
+        if (size < 6 ||
+            size > kAnimationPipelineMaxTransactionBytes -
+                       kAnimationPipelineCrcBytes) {
+          return reject(ReceiverOperationResult::InvalidSize);
+        }
+        expected = size;
+        break;
+      case ReceiverCommand::InstallationProfileFinalize:
+        expected = kInstallationProfileFinalizeBytes; break;
+      case ReceiverCommand::InstallationProfileVerify:
+        expected = kInstallationProfileVerifyBytes; break;
+      case ReceiverCommand::InstallationProfileActivate:
+        expected = kInstallationProfileActivateBytes; break;
+      case ReceiverCommand::InstallationProfileRestore:
+        expected = kInstallationProfileRestoreBytes; break;
+      case ReceiverCommand::InstallationProfileAbort:
+        expected = kInstallationProfileAbortBytes; break;
+      default: break;
+    }
+    return exact(expected, ReceiverDispatchRoute::InstallationProfile,
+                 false, false);
   }
 
   if (!local_background_enabled) {
@@ -314,16 +400,26 @@ bool receiver_packet_crc_valid(
 }
 
 bool valid_status_query(const std::uint8_t* command, std::size_t size) {
-  return valid_status_query(command, size, false);
+  return valid_status_query(command, size, false, false);
 }
 
 bool valid_status_query(
     const std::uint8_t* command,
     std::size_t size,
     bool sparse_overlay_enabled) {
+  return valid_status_query(
+      command, size, sparse_overlay_enabled, false);
+}
+
+bool valid_status_query(
+    const std::uint8_t* command,
+    std::size_t size,
+    bool sparse_overlay_enabled,
+    bool installation_profiles_enabled) {
   if (command == nullptr ||
       (size != kStatusBytesV3 &&
-       !(sparse_overlay_enabled && size == kStatusBytesV4)) ||
+       !(sparse_overlay_enabled && size == kStatusBytesV4) &&
+       !(installation_profiles_enabled && size == kStatusBytesV5)) ||
       command[0] != static_cast<std::uint8_t>(ReceiverCommand::StatusQuery)) {
     return false;
   }

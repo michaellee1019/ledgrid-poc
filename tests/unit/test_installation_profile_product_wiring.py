@@ -344,6 +344,14 @@ class StartupProfileContextTests(unittest.TestCase):
                 run_controller_mode(self._controller_args(config))
 
         self.assertEqual([event[0] for event in events[:2]], ["resolve", "controller"])
+        controller_kwargs = next(
+            event[1] for event in events if event[0] == "controller"
+        )
+        self.assertFalse(controller_kwargs["receiver_geometry_profile"])
+        self.assertEqual(
+            controller_kwargs["reverse_native_strips_by_logical_receiver"],
+            (True, False, True, False),
+        )
         manager_kwargs = next(event[2] for event in events if event[0] == "manager")
         self.assertEqual(manager_kwargs["installation_profile_digest"], PROFILE_A)
         self.assertIsInstance(manager_kwargs["installation_profile_library"], Library)

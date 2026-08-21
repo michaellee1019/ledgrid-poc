@@ -35,23 +35,25 @@ change; these identifiers and versions may not change in place.
 | Rollout flags | `ledgrid.animation-pipeline-feature-flags` | 1 |
 | Foreground protocol | `ledgrid.foreground-protocol` | 1 |
 | Receiver presentation context | `ledgrid.receiver-presentation-golden` | 1 |
-| Receiver status | `ledgrid.receiver-status` | 4 (v3-compatible prefix) |
+| Receiver status | `ledgrid.receiver-status` | 5 (v4-compatible prefix) |
 | Native background ABI | `ledgrid.native-background-abi` | 2 (reserved) |
 | Unsigned native bundle | `ledgrid.native-background-bundle` | 1 (reserved) |
-| Installation profile | `ledgrid.installation-profile` | 1 (portable receiver decode; transport/runtime reserved) |
+| Installation profile | `ledgrid.installation-profile` | 1 |
 
 Contracts marked runtime-reserved are deliberately not accepted by current
 receiver runtime code. The installation-profile v1 bytes are frozen for the
 portable compiler, Python decoder, topology slicer, Pi-authoritative managed
 library, read-only host views, transport-neutral four-receiver transaction
-engine and fake, and a bounds-checked C++ receiver decoder/read-only view. There
-are no real profile transfer, activation, status, persistent receiver-cache, or
-receiver-optics commands in this phase.
+engine and fake, a bounds-checked C++ receiver decoder/read-only view, and the
+default-off receiver-profile staging contract below. Profile staging and
+activation are display-inert; receiver optics remain outside this contract.
 Status v4 is negotiated only after a legacy-safe v3 query exposes sparse
 foreground support. Its first 320 bytes preserve status v3 exactly apart from
 the `LGS4` magic/version. Status v3 preserves every v2 counter offset in its
 first 64 bytes but uses `LGS3`; compatibility is intentionally
-new-host-to-old-firmware. An old host that accepts only `LGS2` is not compatible
+new-host-to-old-firmware. Status v5 is likewise requested only after a v3 query
+exposes its capability; its first 416 bytes preserve all v4 field offsets apart
+from `LGS5` magic/version. An old host that accepts only `LGS2` is not compatible
 with new firmware.
 
 ## Component and presentation state
@@ -297,10 +299,11 @@ bound, enum and fixed-point ranges, category/region membership, obstacle
 containment in clearance, all edge-subset invariants, and the exact equivalence
 between zero distance and obstacle membership. Failure clears the output view.
 
-The portable Phase 3C stop boundary still forbids real receiver staging,
-activation, receiver status, persistent firmware storage, optics, and wall
-mutation. The transaction engine and C++ decoder are acceptance/runtime
-prerequisites only and perform no transport or display behavior.
+The completed portable prerequisite did not add real receiver staging,
+activation, receiver status, persistent firmware storage, optics, or wall
+mutation. The transaction engine and C++ decoder remain transport/display
+neutral; the separately gated runtime contract below composes them without
+changing the frozen profile bytes.
 
 ### Phase 3C host-library and fake-transaction contract
 
@@ -384,6 +387,143 @@ against the same target-owned library root, follows the live status digest, and
 retains its last valid view while reporting a rejected synchronization. There is
 no installation-profile mutator in the dashboard or runtime IPC command set in
 this slice.
+
+### Phase 3C receiver-profile staging and activation contract
+
+Receiver profiles use the existing 4,096-byte SPI transaction ceiling and
+trailing CRC-16/CCITT-FALSE. All integers are big-endian. The global profile ID
+is the canonical global LGIP content digest; the payload digest is ordinary
+SHA-256 over the exact receiver-specific 10,264-byte LGIP view. Every binding
+carries both identities. Commands `0x40` through `0x47` are reserved for this
+version-1 lifecycle:
+
+| Command | ID | Exact fields after ID | Exact bytes before CRC |
+| --- | ---: | --- | ---: |
+| `PROFILE_PREFLIGHT` | `0x40` | global ID `bytes[32]`, payload digest `bytes[32]`, payload bytes `u32` | 69 |
+| `PROFILE_BEGIN` | `0x41` | preflight token `u64`, global ID `bytes[32]`, payload digest `bytes[32]`, payload bytes `u32`, logical receiver ID `u8`, physical strip origin `u16`, flags `u8` | 81 |
+| `PROFILE_CHUNK` | `0x42` | payload offset `u32`, data `bytes[1..4089]` | 6 through 4,094 |
+| `PROFILE_FINALIZE` | `0x43` | global ID `bytes[32]`, payload digest `bytes[32]` | 65 |
+| `PROFILE_VERIFY` | `0x44` | global ID `bytes[32]`, payload digest `bytes[32]` | 65 |
+| `PROFILE_ACTIVATE` | `0x45` | expected binding generation `u64`, global ID `bytes[32]`, payload digest `bytes[32]` | 73 |
+| `PROFILE_RESTORE` | `0x46` | expected binding generation `u64`, then active/staged/rollback binding slots | 204 |
+| `PROFILE_ABORT` | `0x47` | none | 1 |
+
+One restore binding slot is `present:u8, global_id:bytes[32],
+payload_digest:bytes[32]`; absent slots require a zero present byte and 64 zero
+digest bytes. BEGIN flag bit 0 is receiver-view reversed strip order; all other
+bits are zero. Its logical ID, aligned physical origin, and direction must match
+provisioned receiver identity and installed topology before payload acceptance.
+
+The CRC leaves exactly 4,089 chunk-data bytes:
+
+```text
+4096 - command(1) - offset(4) - crc(2) = 4089
+```
+
+The canonical receiver view therefore transfers at offsets `0`, `4089`, and
+`8178` with data lengths `4089`, `4089`, and `2086`. Chunks are strictly
+contiguous. An exact retry of the latest accepted chunk is idempotent; a gap,
+overlap, conflicting retry, overflow, extra byte, or post-finalize chunk rejects
+without making partial data visible.
+
+PREFLIGHT is read-only. Success returns a nonzero opaque token bound to the
+candidate identities and size, receiver identity/topology, binding generation,
+capacity/reserve, and exact eviction plan. BEGIN consumes only that unchanged
+token. An intervening cache/binding mutation invalidates it, allowing all four
+receivers to preflight before the first mutation. FINALIZE verifies received
+size and payload SHA-256 before atomic temporary-to-content-addressed rename.
+VERIFY reopens the visible bytes, verifies both identities, and runs the strict
+LGIP receiver decoder with provisioned origin/direction. Only a verified
+binding may become staged or active.
+
+ACTIVATE compares its expected generation with the current binding generation.
+Success atomically promotes staged to active, prior active to rollback, clears
+staging, increments generation, and pins active/rollback payloads. Exact retry
+is idempotent; an older generation or different binding conflicts. RESTORE uses
+the same compare-and-swap and restores the complete active/staged/rollback
+snapshot only when every present binding has verified bytes. ABORT removes
+partial transfer state but never deletes visible cached payloads or changes
+bindings. Compensation is attempted on every receiver and accepted only after
+exact snapshot and backing-byte validity are re-proven.
+
+#### Persistent cache and partition contract
+
+The common 16 MiB image uses this explicit partition layout; changing any row
+is a complete firmware-installation change:
+
+| Name | Type/subtype | Offset | Size |
+| --- | --- | ---: | ---: |
+| `nvs` | data/nvs | `0x9000` | `0x5000` |
+| `otadata` | data/ota | `0xe000` | `0x2000` |
+| `ota_0` | app/ota_0 | `0x10000` | `0x600000` |
+| `ota_1` | app/ota_1 | `0x610000` | `0x600000` |
+| `profilecache` | data/spiffs | `0xc10000` | `0x3e0000` |
+
+`profilecache` is disposable receiver state, never authority. Final payload
+names are content-addressed and partial files never use the final name. At
+least `0x80000` bytes (512 KiB) of filesystem-reported free space remain after
+a transaction. Capacity uses reported usable/free bytes and filesystem
+overhead, not nominal partition size. Active, staged, and rollback bindings are
+pins; only inactive valid payloads may be evicted, in deterministic LRU order.
+Pinned deletion, reserve violation, corrupt content, unexpected names, or
+unprovable metadata fails closed. Cache loss is repaired from the Pi library.
+
+Binding metadata and generation survive an ordinary receiver restart. Startup
+exposes only complete checksum-valid metadata whose referenced payloads reopen
+and verify. Partial transfer is discarded. A corrupt active/staged/rollback
+binding sets cache integrity false and cannot be healthy or auto-activated.
+Profile recovery does not execute optics or change display ownership.
+
+#### Status v5 and acknowledgement
+
+Capability bits `1<<6` and `1<<7` mean installation-profile v1 and status v5.
+The host first issues the legacy-safe 320-byte v3 query. Only after both bits
+appear may it issue `STATUS_QUERY` followed by 767 zero bytes and parse the
+768-byte `LGS5`, version-5 response. Bytes 5 through 415 retain v4 semantics
+and offsets. The profile extension is:
+
+| Offset | Bytes | Field |
+| ---: | ---: | --- |
+| 416 | 1 | profile operation result |
+| 417 | 1 | transfer state |
+| 418 | 1 | LGIP decoder error |
+| 419 | 1 | flags |
+| 420 | 28 | capacity, used, free, reserve, reclaimable, received, total (`u32` each) |
+| 448 | 8 | binding generation |
+| 456 | 8 | preflight token |
+| 464 | 32 | last probed payload digest |
+| 496 | 64 | transfer global ID and payload digest |
+| 560 | 64 | active global ID and payload digest |
+| 624 | 64 | staged global ID and payload digest |
+| 688 | 64 | rollback global ID and payload digest |
+| 752 | 8 | cache writes and evictions (`u32` each) |
+| 760 | 8 | stage, verify, activate, and restore counters (`u16` each) |
+
+Flag bits 0 through 6 are cache integrity, preflight can-stage, last probe
+found, active present, staged present, rollback present, and transfer active;
+bit 7 is zero. Absent binding digests are zero. Transfer states are `Idle=0`,
+`PreflightReady=1`, `Receiving=2`, `Finalizing=3`, `Staged=4`, and `Failed=5`.
+Profile results are `None=0`, `Ok=1`, `Unsupported=2`, `InvalidSize=3`,
+`InvalidState=4`, `InvalidToken=5`, `InvalidOffset=6`, `DigestMismatch=7`,
+`InvalidProfile=8`, `WrongDevice=9`, `WrongGeometry=10`, `StorageError=11`,
+`NoSpace=12`, `NotFound=13`, `Conflict=14`, `Pinned=15`, and
+`IntegrityError=16`.
+
+Profile commands use the existing command/result operation-sequence rule. The
+host drains the two-deep response queue and accepts only matching command ID,
+next sequence, result, transfer state, token/generation, and digest fields. A
+v3 response clears host overlay and profile extensions; v4 preserves overlay
+and clears profile; v5 parses both atomically.
+
+The `receiver_geometry_profile` rollout gate defaults false. Receiver firmware
+uses the independently auditable compile gate
+`LEDGRID_ENABLE_INSTALLATION_PROFILES`, which defaults to `0`; only the named
+local canary and portable native-test environments set it to `1` in this slice.
+While either side is off, the receiver does not advertise bits 6/7, mount or
+mutate `profilecache`, or accept `0x40..0x47`, and the host emits no profile
+command. Enabling both changes only cache and binding state. Profile commands
+never claim base ownership, change foreground/output, start a renderer, apply
+an optic, or alter complete `SET_ALL` as the universal host takeover path.
 
 Dirty ranges are sorted, non-overlapping, half-open ranges. Movement/removal
 uses the union of old and new coverage. A complete clear covers every formerly

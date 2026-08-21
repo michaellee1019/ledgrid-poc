@@ -21,6 +21,10 @@ def _write_installation(firmware: Path) -> Path:
     build = firmware / ".pio" / "build" / ENVIRONMENT
     build.mkdir(parents=True)
     (firmware / "platformio.ini").write_text("board_build.flash_mode = dio\n")
+    (firmware / "partitions.csv").write_text(
+        "# Name,Type,SubType,Offset,Size,Flags\n"
+        "factory,app,factory,0x10000,1M,\n"
+    )
     (firmware / "sdkconfig.defaults").write_text("CONFIG_PARTITION_TABLE_OFFSET=0x8000\n")
     (firmware / f"sdkconfig.{ENVIRONMENT}").write_text(
         "CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y\n"
@@ -90,7 +94,7 @@ class FirmwareArtifactIdentityTests(unittest.TestCase):
             build = _write_installation(firmware)
             receipt = inspect_firmware_installation(firmware, ENVIRONMENT)
 
-            self.assertEqual(receipt["schema_version"], 2)
+            self.assertEqual(receipt["schema_version"], 3)
             self.assertEqual(
                 [(item["offset"], item["build_path"]) for item in receipt["flash_artifacts"]],
                 [
@@ -105,6 +109,7 @@ class FirmwareArtifactIdentityTests(unittest.TestCase):
                     f".pio/build/{ENVIRONMENT}/flash_args",
                     f".pio/build/{ENVIRONMENT}/flasher_args.json",
                     "platformio.ini",
+                    "partitions.csv",
                     "sdkconfig.defaults",
                     f"sdkconfig.{ENVIRONMENT}",
                 },
@@ -124,6 +129,7 @@ class FirmwareArtifactIdentityTests(unittest.TestCase):
             ("bootloader", lambda firmware, build: (build / "bootloader.bin").write_bytes(b"bootloader-v2")),
             ("partition", lambda firmware, build: (build / "partitions.bin").write_bytes(b"partitions-v2")),
             ("generated layout", lambda firmware, build: (build / "flash_args").write_text("changed layout\n")),
+            ("source partition", lambda firmware, build: (firmware / "partitions.csv").write_text("changed partition layout\n")),
             ("source layout", lambda firmware, build: (firmware / "sdkconfig.defaults").write_text("changed config\n")),
         )
         for name, mutate in mutations:
@@ -137,6 +143,22 @@ class FirmwareArtifactIdentityTests(unittest.TestCase):
                 self.assertNotEqual(
                     before["installation_digest"], after["installation_digest"]
                 )
+
+    def test_partition_source_is_required_and_must_be_a_regular_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            firmware = Path(temporary_dir) / "firmware"
+            _write_installation(firmware)
+            partition_source = firmware / "partitions.csv"
+            partition_source.unlink()
+
+            with self.assertRaisesRegex(RuntimeError, "layout input"):
+                inspect_firmware_installation(firmware, ENVIRONMENT)
+
+            outside = Path(temporary_dir) / "outside-partitions.csv"
+            outside.write_text("external\n", encoding="utf-8")
+            partition_source.symlink_to(outside)
+            with self.assertRaisesRegex(RuntimeError, "missing or unsafe"):
+                inspect_firmware_installation(firmware, ENVIRONMENT)
 
     def test_additional_platformio_flash_file_is_hashed_or_rejected_if_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

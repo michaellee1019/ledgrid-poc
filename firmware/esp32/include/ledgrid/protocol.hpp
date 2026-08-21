@@ -13,6 +13,16 @@ constexpr std::uint8_t kStatusProtocolVersionV3 = 3;
 constexpr std::size_t kStatusBytesV3 = 320;
 constexpr std::uint8_t kStatusProtocolVersionV4 = 4;
 constexpr std::size_t kStatusBytesV4 = 416;
+constexpr std::uint8_t kStatusProtocolVersionV5 = 5;
+constexpr std::size_t kStatusBytesV5 = 768;
+constexpr std::size_t kInstallationProfilePreflightBytes = 69;
+constexpr std::size_t kInstallationProfileBeginBytes = 81;
+constexpr std::size_t kInstallationProfileChunkHeaderBytes = 5;
+constexpr std::size_t kInstallationProfileFinalizeBytes = 65;
+constexpr std::size_t kInstallationProfileVerifyBytes = 65;
+constexpr std::size_t kInstallationProfileActivateBytes = 73;
+constexpr std::size_t kInstallationProfileRestoreBytes = 204;
+constexpr std::size_t kInstallationProfileAbortBytes = 1;
 
 enum class ReceiverCommand : std::uint8_t {
   SetPixel = 0x01,
@@ -36,6 +46,14 @@ enum class ReceiverCommand : std::uint8_t {
   OverlayClear = 0x33,
   OverlayRenew = 0x34,
   OverlayPatchBatch = 0x35,
+  InstallationProfilePreflight = 0x40,
+  InstallationProfileBegin = 0x41,
+  InstallationProfileChunk = 0x42,
+  InstallationProfileFinalize = 0x43,
+  InstallationProfileVerify = 0x44,
+  InstallationProfileActivate = 0x45,
+  InstallationProfileRestore = 0x46,
+  InstallationProfileAbort = 0x47,
   Ping = 0xFF,
 };
 
@@ -46,6 +64,8 @@ enum ReceiverCapability : std::uint32_t {
   kCapabilityExplicitBaseOwnership = 1U << 3U,
   kCapabilitySparseOverlayV1 = 1U << 4U,
   kCapabilitySparseOverlayBatchV1 = 1U << 5U,
+  kCapabilityInstallationProfileV1 = 1U << 6U,
+  kCapabilityStatusV5 = 1U << 7U,
 };
 
 enum class ReceiverOperationResult : std::uint8_t {
@@ -84,6 +104,20 @@ enum class ReceiverDispatchRoute : std::uint8_t {
   Runtime = 2,
   Operational = 3,
   HostFullFrame = 4,
+  InstallationProfile = 5,
+};
+
+enum class InstallationProfileResult : std::uint8_t {
+  None = 0, Ok = 1, Unsupported = 2, InvalidSize = 3, InvalidState = 4,
+  InvalidToken = 5, InvalidOffset = 6, DigestMismatch = 7,
+  InvalidProfile = 8, WrongDevice = 9, WrongGeometry = 10,
+  StorageError = 11, NoSpace = 12, NotFound = 13, Conflict = 14,
+  Pinned = 15, IntegrityError = 16,
+};
+
+enum class InstallationProfileTransferState : std::uint8_t {
+  Idle = 0, PreflightReady = 1, Receiving = 2, Finalizing = 3,
+  Staged = 4, Failed = 5,
 };
 
 // Portable command-envelope policy shared by native tests and the live SPI
@@ -202,6 +236,42 @@ struct ReceiverStatusV4 : ReceiverStatusV3 {
   std::uint32_t overlay_expirations = 0;
 };
 
+struct InstallationProfileStatusV1 {
+  InstallationProfileResult result = InstallationProfileResult::None;
+  InstallationProfileTransferState transfer_state =
+      InstallationProfileTransferState::Idle;
+  std::uint8_t decoder_error = 0;
+  std::uint8_t flags = 0;
+  std::uint32_t capacity_bytes = 0;
+  std::uint32_t used_bytes = 0;
+  std::uint32_t free_bytes = 0;
+  std::uint32_t reserve_bytes = 0;
+  std::uint32_t reclaimable_bytes = 0;
+  std::uint32_t received_bytes = 0;
+  std::uint32_t total_bytes = 0;
+  std::uint64_t state_generation = 0;
+  std::uint64_t preflight_token = 0;
+  std::uint8_t last_probe_payload_digest[32] = {};
+  std::uint8_t transfer_global_id[32] = {};
+  std::uint8_t transfer_payload_digest[32] = {};
+  std::uint8_t active_global_id[32] = {};
+  std::uint8_t active_payload_digest[32] = {};
+  std::uint8_t staged_global_id[32] = {};
+  std::uint8_t staged_payload_digest[32] = {};
+  std::uint8_t rollback_global_id[32] = {};
+  std::uint8_t rollback_payload_digest[32] = {};
+  std::uint32_t writes = 0;
+  std::uint32_t evictions = 0;
+  std::uint16_t stages = 0;
+  std::uint16_t verifies = 0;
+  std::uint16_t activations = 0;
+  std::uint16_t restores = 0;
+};
+
+struct ReceiverStatusV5 : ReceiverStatusV4 {
+  InstallationProfileStatusV1 installation_profile{};
+};
+
 bool encode_receiver_status_v2(
     const ReceiverStatusV2& status,
     std::uint8_t* output,
@@ -215,6 +285,10 @@ bool encode_receiver_status_v4(
     const ReceiverStatusV4& status,
     std::uint8_t* output,
     std::size_t output_size);
+bool encode_receiver_status_v5(
+    const ReceiverStatusV5& status,
+    std::uint8_t* output,
+    std::size_t output_size);
 
 bool command_may_claim_base(ReceiverCommand command);
 ReceiverDispatchDecision classify_receiver_dispatch(
@@ -222,7 +296,8 @@ ReceiverDispatchDecision classify_receiver_dispatch(
     std::size_t size,
     std::size_t active_rgb_bytes,
     BaseMode base_mode,
-    bool local_background_enabled);
+    bool local_background_enabled,
+    bool installation_profiles_enabled = false);
 bool receiver_packet_crc_valid(
     const std::uint8_t* packet,
     std::size_t packet_size,
@@ -232,6 +307,11 @@ bool valid_status_query(
     const std::uint8_t* command,
     std::size_t size,
     bool sparse_overlay_enabled);
+bool valid_status_query(
+    const std::uint8_t* command,
+    std::size_t size,
+    bool sparse_overlay_enabled,
+    bool installation_profiles_enabled);
 bool parse_logical_receiver_id(
     const std::uint8_t* command,
     std::size_t size,

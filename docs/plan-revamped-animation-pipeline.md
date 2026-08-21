@@ -3234,11 +3234,93 @@ receiver profile/runtime or physical-wall evidence):
   proves the host slice deploy/restore path only; it is not receiver profile or
   physical-wall acceptance.
 
-The next bounded Phase 3C lane is receiver profile staging and activation:
-define the reserved native ABI view, firmware cache/capacity behavior,
-unanimous digest/status agreement, and rollback independently of native
-background activation. Keep dashboard mutation and physical seam/timing claims
-out of that lane until the strict installed-wall gate can run.
+Current bounded receiver-profile staging/activation slice (2026-08-21): **in
+progress**. This lane makes the completed transport-neutral transaction real
+without applying a receiver optic or coupling profile activation to native
+background ownership. Dashboard mutation, automatic activation from read-only
+manager selection, `hue_shift`, native-module loading, and physical seam/timing
+claims remain outside this slice.
+
+- [x] Freeze command IDs `0x40..0x47`, exact 4,096-byte chunk envelopes,
+  compare-and-swap generation, persistent binding/pin semantics, and the
+  legacy-prefix 768-byte status-v5 layout before runtime wiring.
+- [x] Add one explicit 16 MiB partition table with two 6 MiB OTA app slots and
+  a bounded `profilecache` SPIFFS partition. Retain a 512 KiB reported-free
+  reserve and bind the source CSV, generated partition image, bootloader, app,
+  flash map, SDK configuration, environment, and toolchain through installation
+  identity schema v3.
+- [x] Implement the default-off receiver cache/runtime. Partial bytes remain
+  invisible; finalize verifies size and digest; verify reopens and strictly
+  decodes the installed-topology LGIP view; restart retains only complete valid
+  active/staged/rollback bindings.
+- [x] Extend the host protocol and queued-ack parser with capability-negotiated
+  v5 status, then implement the real structural wall adapter below the existing
+  transaction engine. All four receivers preflight before mutation, stage and
+  verify before commit, and attempt exact best-effort compensation after every
+  operational ambiguity.
+- [x] Prove profile traffic is display-inert: commands do not claim base,
+  change foreground/output, start local playback, apply optics, or weaken a
+  complete `SET_ALL` takeover. The all-zero host selection remains no profile
+  and emits no receiver traffic.
+- [x] Cover exact maximum chunks, interruption and exact/conflicting retries,
+  stale tokens/generations, wrong identity/topology/geometry, malformed LGIP,
+  corrupt reboot state, reserve/LRU/pins, every receiver/phase failure, queued
+  acknowledgements, v3/v4/v5 parsing, and mixed/degraded reporting in portable
+  native and host tests.
+- [x] Pass focused profile/protocol/transaction/deployment tests, fixture drift,
+  `just test`, explicit rendering acceptance, both production/canary builds,
+  whitespace checks, deploy dry-runs, and read-only deploy plan. Record exact
+  test counts, binary/RAM sizes, partition usage, and fixture identities only
+  after the integrated source is stable.
+- [ ] From a clean commit, run ordinary `just deploy` successfully and then an
+  identical second clean `just deploy` that proves the complete firmware
+  installation no-op. Record both receipts and restored display state before
+  closing this slice or the earlier receiver-runtime prerequisite deployment
+  gate.
+
+Portable acceptance for this slice requires deterministic three-chunk transfer
+of each current 10,264-byte receiver view; unanimous active global profile ID
+plus receiver payload digest; idempotent retry without flash rewrite; exact
+prior active/staged/rollback recovery at every injected boundary; explicit
+degraded status whenever recovery or acknowledgement is unprovable; restart
+reconciliation from persistent valid bytes; and unchanged host-frame display
+behavior with the rollout gate off. Installed release acceptance additionally
+requires readable all-four digest/status agreement and remains blocked by the
+SPI1 return-path fault. Camera evidence can later prove visible seam behavior,
+but cannot substitute for acknowledgement, integrity, or release acceptance.
+
+Integrated pre-deploy evidence captured on 2026-08-21 (development Mac; no
+receiver-profile activation, physical receiver-cache timing, or wall-release
+claim):
+
+- `just test` passed 1,235 Python/plugin tests and 1,757 subtests, 23 rendering
+  tests and 3 subtests, all 80 portable native firmware tests, both ESP32-S3
+  builds, and 181 deployment tests with 95 subtests. The explicit rendering
+  rerun passed the 4 ms gate with the highest observed p95 at 3.3860 ms for
+  `snake-max-density`; these are Mac proxy numbers, not Raspberry Pi timings.
+- The production build used 50,728 bytes RAM and 272,605 bytes flash, with a
+  273,008-byte `firmware.bin`. The local canary used 86,944 bytes RAM and
+  351,881 bytes flash, with a 352,288-byte `firmware.bin`. Both produced the
+  same 3,072-byte `partitions.bin` and 20,784-byte `bootloader.bin`; these sizes
+  establish portable build bounds, not on-device cache/render latency.
+- Golden regeneration `--check`, `git diff --check`, ordinary deploy and
+  Python-deploy dry-runs, and read-only `just deploy-plan` passed. The frozen
+  global profile fixture SHA-256 is
+  `3469bd38200b72b0c050d4cf01285c031b84a4a3de318be9bbb1fc3a315e3e13`,
+  the generated receiver-header SHA-256 is
+  `91c5594181cbca09c29d1d699f3c66bc6d3e0560ea61fea7f7b7385c011eb763`,
+  and the partition CSV SHA-256 is
+  `2e9a3cb0f502b63669aa8beaa7fcc0f9b117909f479c10e61e0d4e8e5853590f`.
+- Deployment planning classifies `firmware/esp32/partitions.csv` as a support
+  input and the host adapter, host protocol/tests, deployment identity helper,
+  and deployment tests as application inputs. The complete firmware install
+  identity includes the partition source plus every generated flashed image,
+  including initial OTA data.
+- Physical power-cut recovery, real SPIFFS backend latency/wear behavior,
+  strict readable all-four digest agreement, the successful clean deployment,
+  and the following identical firmware no-op deployment remain open. This
+  evidence does not prove a real receiver profile was activated or close the
+  physical Phase 3C gate.
 
 - [x] Freeze the portable v1 header, section table, section vocabulary,
   canonical ordering, CRC/content/calibration digests, global-derivative rules,

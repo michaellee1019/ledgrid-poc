@@ -1,5 +1,6 @@
 """Regression checks for fast, recoverable deployment recipes."""
 
+import csv
 from pathlib import Path
 import os
 import subprocess
@@ -11,6 +12,41 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class DeployRecipeTests(unittest.TestCase):
+    def test_receiver_profile_partition_layout_is_explicit_and_bounded(self):
+        partition_path = ROOT / "firmware/esp32/partitions.csv"
+        with partition_path.open(newline="", encoding="utf-8") as stream:
+            rows = [
+                tuple(field.strip() for field in row)
+                for row in csv.reader(stream)
+                if row and not row[0].lstrip().startswith("#")
+            ]
+
+        self.assertEqual(
+            rows,
+            [
+                ("nvs", "data", "nvs", "0x9000", "0x5000", ""),
+                ("otadata", "data", "ota", "0xe000", "0x2000", ""),
+                ("ota_0", "app", "ota_0", "0x10000", "0x600000", ""),
+                ("ota_1", "app", "ota_1", "0x610000", "0x600000", ""),
+                (
+                    "profilecache",
+                    "data",
+                    "spiffs",
+                    "0xc10000",
+                    "0x3e0000",
+                    "",
+                ),
+            ],
+        )
+        prior_end = 0x9000
+        for name, _type, _subtype, raw_offset, raw_size, _flags in rows:
+            offset = int(raw_offset, 0)
+            size = int(raw_size, 0)
+            self.assertGreaterEqual(offset, prior_end, name)
+            prior_end = offset + size
+        self.assertLessEqual(prior_end, 16 * 1024 * 1024)
+        self.assertGreaterEqual(int(rows[-1][4], 0), 512 * 1024)
+
     def test_ai_ssh_key_recipe_generates_ignored_ed25519_and_refuses_overwrite(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             key = Path(temporary_dir) / "agent key"
@@ -211,12 +247,14 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn("releases/download/55.03.39/", platformio)
         self.assertNotIn("releases/download/stable/", platformio)
         self.assertIn('platform = native@1.2.1', platformio)
+        self.assertIn("board_build.partitions = partitions.csv", platformio)
         self.assertIn('platformio==${EXPECTED_PLATFORMIO_VERSION}', setup)
         self.assertIn("version 6\\.1\\.19", flash)
         artifact_identity = (
             ROOT / "tools/deployment/firmware_artifacts.py"
         ).read_text(encoding="utf-8")
         self.assertIn("platformio.ini", artifact_identity)
+        self.assertIn("partitions.csv", artifact_identity)
         self.assertIn("sdkconfig.defaults", artifact_identity)
 
     def test_fast_deploy_can_recover_when_old_web_process_is_broken(self):

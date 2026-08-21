@@ -105,6 +105,17 @@ class MultiDeviceLEDController:
             self._sparse_overlay_session_id = None
             self._sparse_overlay_generation = 0
             self._sparse_overlay_snapshot_digest = None
+        if not hasattr(self, "_installation_profile_wall"):
+            self._installation_profile_wall = None
+            self._installation_profile_status = {
+                "state": "idle",
+                "operation": "legacy_initialize",
+                "rollout_enabled": False,
+            }
+        if not hasattr(self, "_receiver_geometry_profile_enabled"):
+            # Legacy/test instances predate the rollout gate and therefore
+            # retain the product-safe, command-silent default.
+            self._receiver_geometry_profile_enabled = False
         return self._transport_lock
     
     def __init__(self, 
@@ -116,7 +127,11 @@ class MultiDeviceLEDController:
                  leds_per_strip: int = DEFAULT_LEDS_PER_STRIP,
                  debug: bool = False,
                  parallel: bool = True,
-                 device_map: Optional[List[DeviceMapEntry]] = None):
+                 device_map: Optional[List[DeviceMapEntry]] = None,
+                 receiver_geometry_profile: bool = False,
+                 reverse_native_strips_by_logical_receiver: tuple[
+                     bool, bool, bool, bool
+                 ] = (False, False, False, False)):
         """
         Initialize multi-device LED controller
         
@@ -130,7 +145,27 @@ class MultiDeviceLEDController:
             debug: Enable debug output
             parallel: Send data to devices in parallel using threads
             device_map: Optional list of (bus, device) tuples for each device
+            receiver_geometry_profile: Explicit host rollout gate for receiver
+                profile traffic. Defaults off, so ordinary deployments never
+                emit commands 0x40 through 0x47.
+            reverse_native_strips_by_logical_receiver: Native renderer lane
+                direction for logical receivers 0 through 3. This is separate
+                from host-frame strip reversal and defaults false everywhere.
         """
+        if type(receiver_geometry_profile) is not bool:
+            raise TypeError("receiver_geometry_profile must be a boolean")
+        if (
+            type(reverse_native_strips_by_logical_receiver) is not tuple
+            or len(reverse_native_strips_by_logical_receiver) != 4
+            or any(
+                type(reverse) is not bool
+                for reverse in reverse_native_strips_by_logical_receiver
+            )
+        ):
+            raise TypeError(
+                "reverse_native_strips_by_logical_receiver must be a "
+                "4-entry tuple of booleans"
+            )
         self.num_devices = num_devices
         self.strips_per_device = strips_per_device
         self.leds_per_strip = leds_per_strip
@@ -160,6 +195,16 @@ class MultiDeviceLEDController:
         self._sparse_overlay_session_id = None
         self._sparse_overlay_generation = 0
         self._sparse_overlay_snapshot_digest = None
+        self._installation_profile_wall = None
+        self._receiver_geometry_profile_enabled = receiver_geometry_profile
+        self.reverse_native_strips_by_logical_receiver = (
+            reverse_native_strips_by_logical_receiver
+        )
+        self._installation_profile_status: Dict[str, Any] = {
+            "state": "idle",
+            "operation": "initialize",
+            "rollout_enabled": receiver_geometry_profile,
+        }
         self._monotonic_ns = time.monotonic_ns
         
         # For compatibility with animation system
@@ -206,6 +251,9 @@ class MultiDeviceLEDController:
                 leds_per_strip=leds_per_strip,
                 debug=debug,
                 logical_device_id=device_index,
+                reverse_native_strip_order=(
+                    self.reverse_native_strips_by_logical_receiver[device_index]
+                ),
             )
             self.devices.append(device)
 
@@ -275,6 +323,65 @@ class MultiDeviceLEDController:
                 "errors": errors,
             }
             return dict(self._receiver_status_refresh)
+
+    def installation_profile_wall(self):
+        """Return the stable real-receiver facade in logical receiver order."""
+
+        from drivers.installation_profile_receiver import SpiInstallationProfileWall
+
+        with self._controller_lock():
+            if not self._receiver_geometry_profile_enabled:
+                raise RuntimeError(
+                    "receiver_geometry_profile rollout gate is disabled"
+                )
+            if self.num_devices != 4 or len(self.devices) != 4:
+                raise RuntimeError(
+                    "installation-profile transactions require exactly four receivers"
+                )
+            if self._installation_profile_wall is None:
+                self._installation_profile_wall = SpiInstallationProfileWall(
+                    self.devices, enabled=True
+                )
+            return self._installation_profile_wall
+
+    def install_installation_profile(self, candidate):
+        """Run one display-inert, all-board profile cache transaction.
+
+        The controller-wide lock prevents complete frames, sparse traffic, and
+        profile chunks from interleaving on SPI. Receivers retain their current
+        display base throughout; this method never changes ownership state.
+        """
+
+        from animation.core.installation_profile_transaction import (
+            InstallationProfileTransaction,
+        )
+
+        with self._controller_lock():
+            wall = self.installation_profile_wall()
+            result = InstallationProfileTransaction(wall).install(candidate)
+            self._installation_profile_status = {
+                "state": (
+                    "active"
+                    if result.success
+                    else (
+                        "compensated" if result.compensated else "degraded"
+                    )
+                ),
+                "operation": "install",
+                "rollout_enabled": True,
+                "success": result.success,
+                "changed": result.changed,
+                "profile_id": result.profile_id,
+                "failed_phase": (
+                    result.failed_phase.value if result.failed_phase else None
+                ),
+                "failed_receiver_id": result.failed_receiver_id,
+                "compensated": result.compensated,
+                "error": result.error,
+                "wall_health": result.wall_status.health.value,
+                "active_profile_id": result.wall_status.active_profile_id,
+            }
+            return result
     
     def _split_frame(self, colors: List[Tuple[int, int, int]]) -> List[List[Tuple[int, int, int]]]:
         """
@@ -1705,6 +1812,10 @@ class MultiDeviceLEDController:
                 'local_background': dict(getattr(
                     self, '_local_background_status',
                     {'state': 'host_full_scene', 'operation': 'legacy_status'},
+                )),
+                'installation_profile': dict(getattr(
+                    self, '_installation_profile_status',
+                    {'state': 'idle', 'operation': 'legacy_status'},
                 )),
                 'last_frame_duration_ms': last_frame_ms,
                 'avg_frame_duration_ms': avg_frame_ms,

@@ -67,6 +67,10 @@ def _write_firmware_artifacts(
     build = firmware / ".pio" / "build" / environment
     build.mkdir(parents=True, exist_ok=True)
     (firmware / "platformio.ini").write_text("board_build.flash_mode = dio\n")
+    (firmware / "partitions.csv").write_text(
+        "# Name,Type,SubType,Offset,Size,Flags\n"
+        "factory,app,factory,0x10000,1M,\n"
+    )
     (firmware / "sdkconfig.defaults").write_text("CONFIG_PARTITION_TABLE_OFFSET=0x8000\n")
     (firmware / f"sdkconfig.{environment}").write_text("CONFIG_FLASH_SIZE=16MB\n")
     binary = build / "firmware.bin"
@@ -177,6 +181,10 @@ class _GitFixture:
         self.write("tools/deployment/deploy_target.py", b"print('target')\n", executable=True)
         self.write("requirements-pi.lock", b"flask==3.1.3\n")
         self.write("requirements-platformio.lock", b"platformio==6.1.19\n")
+        self.write(
+            "firmware/esp32/partitions.csv",
+            b"profilecache,data,spiffs,0xc10000,0x3e0000,\n",
+        )
         self.write("firmware/esp32/src/main.cpp", b"void setup() {}\n")
         self.write("hardware/wiring.txt", b"four receivers\n")
         subprocess.run(("git", "init", "-q", root), check=True)
@@ -1028,6 +1036,7 @@ class FrozenSnapshotEntrypointTests(unittest.TestCase):
         self.assertEqual(
             set(evidence.support_files),
             {
+                "firmware/esp32/partitions.csv",
                 "firmware/esp32/src/main.cpp",
                 "hardware/wiring.txt",
                 "requirements-platformio.lock",
@@ -1119,7 +1128,9 @@ class FrozenSnapshotEntrypointTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertIn("scripts/start_server.py", plan["app_inputs"])
         self.assertNotIn("firmware/esp32/src/main.cpp", plan["app_inputs"])
+        self.assertNotIn("firmware/esp32/partitions.csv", plan["app_inputs"])
         self.assertIn("firmware/esp32/src/main.cpp", plan["support_inputs"])
+        self.assertIn("firmware/esp32/partitions.csv", plan["support_inputs"])
         self.assertEqual(
             [step["id"] for step in plan["steps"]],
             [item[0] for item in FULL_STEP_ORDER],

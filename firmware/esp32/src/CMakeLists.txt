@@ -11,3 +11,11 @@ else()
   target_compile_definitions(${COMPONENT_LIB} PRIVATE
     LEDGRID_ENABLE_LOCAL_BACKGROUND=0)
 endif()
+
+if("$ENV{LEDGRID_INSTALLATION_PROFILES}" STREQUAL "1")
+  target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    LEDGRID_ENABLE_INSTALLATION_PROFILES=1)
+else()
+  target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    LEDGRID_ENABLE_INSTALLATION_PROFILES=0)
+endif()

@@ -383,6 +383,11 @@ def run_controller_mode(args):
             leds_per_strip=args.leds_per_strip,
             debug=args.controller_debug,
             parallel=True,
+            receiver_geometry_profile=feature_flags.receiver_geometry_profile,
+            reverse_native_strips_by_logical_receiver=(
+                installation_profile_topology
+                .reverse_native_strips_by_logical_receiver
+            ),
         )
         controller = select_receiver_hybrid_controller(
             controller, receiver_hybrid_config

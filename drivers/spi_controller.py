@@ -35,10 +35,12 @@ RECEIVER_STATUS_MAGIC = (ord('L'), ord('G'), ord('S'), ord('1'))
 RECEIVER_STATUS_MAGIC_V2 = (ord('L'), ord('G'), ord('S'), ord('2'))
 RECEIVER_STATUS_MAGIC_V3 = (ord('L'), ord('G'), ord('S'), ord('3'))
 RECEIVER_STATUS_MAGIC_V4 = (ord('L'), ord('G'), ord('S'), ord('4'))
+RECEIVER_STATUS_MAGIC_V5 = (ord('L'), ord('G'), ord('S'), ord('5'))
 RECEIVER_STATUS_BYTES = 29
 RECEIVER_STATUS_BYTES_V2 = 64
 RECEIVER_STATUS_BYTES_V3 = 320
 RECEIVER_STATUS_BYTES_V4 = 416
+RECEIVER_STATUS_BYTES_V5 = 768
 # The ESP32 slave keeps two response buffers queued. A command's result is
 # therefore observable after two complete status-query transfers.
 SPI_RESPONSE_QUEUE_DEPTH = 2
@@ -120,6 +122,14 @@ CMD_OVERLAY_COMMIT = 0x32
 CMD_OVERLAY_CLEAR = 0x33
 CMD_OVERLAY_RENEW = 0x34
 CMD_OVERLAY_PATCH_BATCH = 0x35
+CMD_PROFILE_PREFLIGHT = 0x40
+CMD_PROFILE_BEGIN = 0x41
+CMD_PROFILE_CHUNK = 0x42
+CMD_PROFILE_FINALIZE = 0x43
+CMD_PROFILE_VERIFY = 0x44
+CMD_PROFILE_ACTIVATE = 0x45
+CMD_PROFILE_RESTORE = 0x46
+CMD_PROFILE_ABORT = 0x47
 CMD_PING = 0xFF
 
 LOCAL_BACKGROUND_RAINBOW = 1
@@ -154,6 +164,41 @@ MAX_RGBA_PIXELS_PER_BATCH_SPAN = (
     - OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
     - CRC_BYTES
 ) // 4
+PROFILE_BINDING_BYTES = 64
+PROFILE_PREFLIGHT_BYTES = 69
+PROFILE_BEGIN_BYTES = 81
+PROFILE_CHUNK_HEADER_BYTES = 5
+MAX_PROFILE_CHUNK_BYTES = MAX_SPI_TRANSFER - PROFILE_CHUNK_HEADER_BYTES - CRC_BYTES
+PROFILE_BINDING_COMMAND_BYTES = 65
+PROFILE_ACTIVATE_BYTES = 73
+PROFILE_RESTORE_BYTES = 204
+PROFILE_RESULT_NAMES = {
+    0: "none",
+    1: "ok",
+    2: "unsupported",
+    3: "invalid_size",
+    4: "invalid_state",
+    5: "invalid_token",
+    6: "invalid_offset",
+    7: "digest_mismatch",
+    8: "invalid_profile",
+    9: "wrong_device",
+    10: "wrong_geometry",
+    11: "storage_error",
+    12: "no_space",
+    13: "not_found",
+    14: "conflict",
+    15: "pinned",
+    16: "integrity_error",
+}
+PROFILE_TRANSFER_STATE_NAMES = {
+    0: "idle",
+    1: "preflight_ready",
+    2: "receiving",
+    3: "finalizing",
+    4: "staged",
+    5: "failed",
+}
 OVERLAY_OPERATION_RESULT_NAMES = {
     0: "none",
     1: "ok",
@@ -186,6 +231,8 @@ CAPABILITY_STATUS_V3 = 1 << 2
 CAPABILITY_EXPLICIT_BASE_OWNERSHIP = 1 << 3
 CAPABILITY_SPARSE_OVERLAY_V1 = 1 << 4
 CAPABILITY_SPARSE_OVERLAY_BATCH_V1 = 1 << 5
+CAPABILITY_INSTALLATION_PROFILE_V1 = 1 << 6
+CAPABILITY_STATUS_V5 = 1 << 7
 
 
 class LEDController:
@@ -193,11 +240,15 @@ class LEDController:
     
     def __init__(self, bus=SPI_BUS, device=SPI_DEVICE, speed=SPI_SPEED, mode=SPI_MODE,
                  strips=DEFAULT_NUM_STRIPS, leds_per_strip=DEFAULT_LED_PER_STRIP,
-                 debug=False, logical_device_id=None):
+                 debug=False, logical_device_id=None,
+                 reverse_native_strip_order=False):
+        if type(reverse_native_strip_order) is not bool:
+            raise TypeError("reverse_native_strip_order must be a boolean")
         self.debug = debug
         self.bus = bus
         self.device = device
         self.logical_device_id = self._optional_logical_device_id(logical_device_id)
+        self.reverse_native_strip_order = reverse_native_strip_order
         self.spi = spidev.SpiDev()
         self.spi.open(bus, device)
         self.spi.max_speed_hz = speed
@@ -302,6 +353,34 @@ class LEDController:
         self._receiver_overlay_max_composite_us = 0
         self._receiver_overlay_commits = 0
         self._receiver_overlay_expirations = 0
+        self._receiver_profile_result = 0
+        self._receiver_profile_transfer_state = 0
+        self._receiver_profile_decoder_error = 0
+        self._receiver_profile_flags = 0
+        self._receiver_profile_capacity_bytes = 0
+        self._receiver_profile_used_bytes = 0
+        self._receiver_profile_free_bytes = 0
+        self._receiver_profile_reserve_bytes = 0
+        self._receiver_profile_reclaimable_bytes = 0
+        self._receiver_profile_received_bytes = 0
+        self._receiver_profile_total_bytes = 0
+        self._receiver_profile_state_generation = 0
+        self._receiver_profile_preflight_token = 0
+        self._receiver_profile_last_probe_payload_digest = None
+        self._receiver_profile_transfer_global_digest = None
+        self._receiver_profile_transfer_payload_digest = None
+        self._receiver_profile_active_global_digest = None
+        self._receiver_profile_active_payload_digest = None
+        self._receiver_profile_staged_global_digest = None
+        self._receiver_profile_staged_payload_digest = None
+        self._receiver_profile_rollback_global_digest = None
+        self._receiver_profile_rollback_payload_digest = None
+        self._receiver_profile_writes = 0
+        self._receiver_profile_evictions = 0
+        self._receiver_profile_stages = 0
+        self._receiver_profile_verifies = 0
+        self._receiver_profile_activations = 0
+        self._receiver_profile_restores = 0
         self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V3
         self._presentation_commit_context_cache = {}
         self._monotonic_ns = time.monotonic_ns
@@ -408,6 +487,35 @@ class LEDController:
         return cls._fixed_bytes("controller_session_id", value, CONTROLLER_SESSION_BYTES)
 
     @staticmethod
+    def _profile_digest(name, value):
+        if not isinstance(value, str) or len(value) != 64 or value != value.lower():
+            raise ValueError(f"{name} must be a lowercase SHA-256 hex digest")
+        try:
+            decoded = bytes.fromhex(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"{name} must be a lowercase SHA-256 hex digest"
+            ) from exc
+        if decoded.hex() != value:
+            raise ValueError(f"{name} must be a lowercase SHA-256 hex digest")
+        return decoded
+
+    @classmethod
+    def _profile_binding(cls, binding, *, field):
+        if binding is None:
+            return b"\0" + bytes(PROFILE_BINDING_BYTES)
+        if isinstance(binding, tuple) and len(binding) == 2:
+            profile_id, payload_digest = binding
+        else:
+            profile_id = getattr(binding, "profile_id", None)
+            payload_digest = getattr(binding, "payload_digest", None)
+        return (
+            b"\1"
+            + cls._profile_digest(f"{field}.profile_id", profile_id)
+            + cls._profile_digest(f"{field}.payload_digest", payload_digest)
+        )
+
+    @staticmethod
     def _premultiplied_rgba_bytes(value, *, maximum=MAX_RGBA_PIXELS_PER_PATCH):
         if isinstance(value, np.ndarray):
             if value.dtype != np.uint8:
@@ -473,6 +581,9 @@ class LEDController:
             return
 
         magic = tuple(int(response[index]) for index in range(4))
+        if magic == RECEIVER_STATUS_MAGIC_V5 and len(response) >= RECEIVER_STATUS_BYTES_V5:
+            self._update_receiver_status_v5(response)
+            return
         if magic == RECEIVER_STATUS_MAGIC_V4 and len(response) >= RECEIVER_STATUS_BYTES_V4:
             self._update_receiver_status_v4(response)
             return
@@ -597,7 +708,12 @@ class LEDController:
         self._receiver_logical_device = int(response[312])
         self._receiver_last_processed_command = int(response[313])
         self._receiver_operation_sequence = self._response_u32(response, 316)
-        if self._receiver_capabilities & CAPABILITY_SPARSE_OVERLAY_V1:
+        if (
+            self._receiver_capabilities & CAPABILITY_INSTALLATION_PROFILE_V1
+            and self._receiver_capabilities & CAPABILITY_STATUS_V5
+        ):
+            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V5
+        elif self._receiver_capabilities & CAPABILITY_SPARSE_OVERLAY_V1:
             # Status v4 preserves this entire prefix. Discover support through
             # the legacy-safe 320-byte query before asking for the extension.
             self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V4
@@ -614,6 +730,7 @@ class LEDController:
         response_magic = tuple(int(response[index]) for index in range(4))
         if response_magic == RECEIVER_STATUS_MAGIC_V3:
             self._clear_receiver_overlay_status()
+            self._clear_receiver_profile_status()
 
     def _clear_receiver_overlay_status(self):
         """Drop v4-only telemetry after an actual status-v3 response."""
@@ -666,6 +783,101 @@ class LEDController:
         self._receiver_overlay_max_composite_us = self._response_u16(response, 406)
         self._receiver_overlay_commits = self._response_u32(response, 408)
         self._receiver_overlay_expirations = self._response_u32(response, 412)
+        if tuple(int(response[index]) for index in range(4)) == RECEIVER_STATUS_MAGIC_V4:
+            self._clear_receiver_profile_status()
+
+    def _clear_receiver_profile_status(self):
+        """Drop status-v5-only profile telemetry after a real downgrade."""
+        self._receiver_profile_result = 0
+        self._receiver_profile_transfer_state = 0
+        self._receiver_profile_decoder_error = 0
+        self._receiver_profile_flags = 0
+        self._receiver_profile_capacity_bytes = 0
+        self._receiver_profile_used_bytes = 0
+        self._receiver_profile_free_bytes = 0
+        self._receiver_profile_reserve_bytes = 0
+        self._receiver_profile_reclaimable_bytes = 0
+        self._receiver_profile_received_bytes = 0
+        self._receiver_profile_total_bytes = 0
+        self._receiver_profile_state_generation = 0
+        self._receiver_profile_preflight_token = 0
+        for name in (
+            "_receiver_profile_last_probe_payload_digest",
+            "_receiver_profile_transfer_global_digest",
+            "_receiver_profile_transfer_payload_digest",
+            "_receiver_profile_active_global_digest",
+            "_receiver_profile_active_payload_digest",
+            "_receiver_profile_staged_global_digest",
+            "_receiver_profile_staged_payload_digest",
+            "_receiver_profile_rollback_global_digest",
+            "_receiver_profile_rollback_payload_digest",
+        ):
+            setattr(self, name, None)
+        self._receiver_profile_writes = 0
+        self._receiver_profile_evictions = 0
+        self._receiver_profile_stages = 0
+        self._receiver_profile_verifies = 0
+        self._receiver_profile_activations = 0
+        self._receiver_profile_restores = 0
+
+    @staticmethod
+    def _optional_digest_from_response(response, offset, *, present=True):
+        digest = bytes(response[offset:offset + 32])
+        return digest.hex() if present and any(digest) else None
+
+    def _update_receiver_status_v5(self, response):
+        """Parse the status-v5 profile extension after its exact v4 prefix."""
+        self._update_receiver_status_v4(response)
+        flags = int(response[419])
+        self._receiver_profile_result = int(response[416])
+        self._receiver_profile_transfer_state = int(response[417])
+        self._receiver_profile_decoder_error = int(response[418])
+        self._receiver_profile_flags = flags
+        self._receiver_profile_capacity_bytes = self._response_u32(response, 420)
+        self._receiver_profile_used_bytes = self._response_u32(response, 424)
+        self._receiver_profile_free_bytes = self._response_u32(response, 428)
+        self._receiver_profile_reserve_bytes = self._response_u32(response, 432)
+        self._receiver_profile_reclaimable_bytes = self._response_u32(response, 436)
+        self._receiver_profile_received_bytes = self._response_u32(response, 440)
+        self._receiver_profile_total_bytes = self._response_u32(response, 444)
+        self._receiver_profile_state_generation = self._response_u64(response, 448)
+        self._receiver_profile_preflight_token = self._response_u64(response, 456)
+        self._receiver_profile_last_probe_payload_digest = (
+            self._optional_digest_from_response(response, 464, present=bool(flags & 0x04))
+        )
+        self._receiver_profile_transfer_global_digest = (
+            self._optional_digest_from_response(response, 496, present=bool(flags & 0x40))
+        )
+        self._receiver_profile_transfer_payload_digest = (
+            self._optional_digest_from_response(response, 528, present=bool(flags & 0x40))
+        )
+        binding_fields = (
+            ("active", 0x08, 560, 592),
+            ("staged", 0x10, 624, 656),
+            ("rollback", 0x20, 688, 720),
+        )
+        for name, bit, global_offset, payload_offset in binding_fields:
+            present = bool(flags & bit)
+            setattr(
+                self,
+                f"_receiver_profile_{name}_global_digest",
+                self._optional_digest_from_response(
+                    response, global_offset, present=present
+                ),
+            )
+            setattr(
+                self,
+                f"_receiver_profile_{name}_payload_digest",
+                self._optional_digest_from_response(
+                    response, payload_offset, present=present
+                ),
+            )
+        self._receiver_profile_writes = self._response_u32(response, 752)
+        self._receiver_profile_evictions = self._response_u32(response, 756)
+        self._receiver_profile_stages = self._response_u16(response, 760)
+        self._receiver_profile_verifies = self._response_u16(response, 762)
+        self._receiver_profile_activations = self._response_u16(response, 764)
+        self._receiver_profile_restores = self._response_u16(response, 766)
 
     def query_receiver_status(self):
         """Clock out the newest discovered status snapshot without changing ownership."""
@@ -709,8 +921,8 @@ class LEDController:
             required_version = self._bounded_uint(
                 "required_status_version", required_status_version, 0xFF
             )
-            if required_version < 3 or required_version > 4:
-                raise ValueError("required_status_version must be 3 or 4")
+            if required_version < 3 or required_version > 5:
+                raise ValueError("required_status_version must be 3, 4, or 5")
             # The slave has to queue a response before it knows the length of
             # the master's next transfer. A sparse command therefore leaves
             # one legacy-safe v3 snapshot in the two-deep queue; clock one
@@ -719,7 +931,7 @@ class LEDController:
             # hardware, so continue polling within one small fixed bound while
             # still accepting only the exact next operation sequence.
             minimum_post_queries = SPI_RESPONSE_QUEUE_DEPTH + (
-                required_version == 4
+                required_version >= 4
             )
             status = None
             expected_sequence = prior_sequence + 1
@@ -808,6 +1020,163 @@ class LEDController:
 
     def update_local_background_params(self, **kwargs):
         return self._command_status(self.serialize_local_background_params(**kwargs))
+
+    @classmethod
+    def serialize_profile_preflight(
+        cls, *, profile_id, payload_digest, payload_size
+    ):
+        size = cls._bounded_uint("payload_size", payload_size, 0xFFFFFFFF)
+        if size == 0:
+            raise ValueError("payload_size must be positive")
+        return (
+            bytes((CMD_PROFILE_PREFLIGHT,))
+            + cls._profile_digest("profile_id", profile_id)
+            + cls._profile_digest("payload_digest", payload_digest)
+            + struct.pack(">I", size)
+        )
+
+    @classmethod
+    def serialize_profile_begin(
+        cls,
+        *,
+        preflight_token,
+        profile_id,
+        payload_digest,
+        payload_size,
+        logical_receiver_id,
+        strip_origin,
+        reversed_strip_order,
+    ):
+        token = cls._bounded_uint(
+            "preflight_token", preflight_token, 0xFFFFFFFFFFFFFFFF
+        )
+        if token == 0:
+            raise ValueError("preflight_token must be positive")
+        size = cls._bounded_uint("payload_size", payload_size, 0xFFFFFFFF)
+        if size == 0:
+            raise ValueError("payload_size must be positive")
+        logical = cls._bounded_uint("logical_receiver_id", logical_receiver_id, 3)
+        origin = cls._bounded_uint("strip_origin", strip_origin, 0xFFFF)
+        if type(reversed_strip_order) is not bool:
+            raise TypeError("reversed_strip_order must be a boolean")
+        return (
+            bytes((CMD_PROFILE_BEGIN,))
+            + struct.pack(">Q", token)
+            + cls._profile_digest("profile_id", profile_id)
+            + cls._profile_digest("payload_digest", payload_digest)
+            + struct.pack(">I", size)
+            + bytes((logical,))
+            + struct.pack(">H", origin)
+            + bytes((int(reversed_strip_order),))
+        )
+
+    @classmethod
+    def serialize_profile_chunk(cls, *, offset, data):
+        normalized_offset = cls._bounded_uint("offset", offset, 0xFFFFFFFF)
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise TypeError("profile chunk data must be bytes-like")
+        chunk = bytes(data)
+        if not 1 <= len(chunk) <= MAX_PROFILE_CHUNK_BYTES:
+            raise ValueError(
+                f"profile chunk data must contain 1..{MAX_PROFILE_CHUNK_BYTES} bytes"
+            )
+        if normalized_offset + len(chunk) > 0x100000000:
+            raise ValueError("profile chunk range exceeds uint32 address space")
+        return bytes((CMD_PROFILE_CHUNK,)) + struct.pack(">I", normalized_offset) + chunk
+
+    @classmethod
+    def _serialize_profile_binding_command(
+        cls, command, *, profile_id, payload_digest
+    ):
+        return (
+            bytes((command,))
+            + cls._profile_digest("profile_id", profile_id)
+            + cls._profile_digest("payload_digest", payload_digest)
+        )
+
+    @classmethod
+    def serialize_profile_finalize(cls, **kwargs):
+        return cls._serialize_profile_binding_command(
+            CMD_PROFILE_FINALIZE, **kwargs
+        )
+
+    @classmethod
+    def serialize_profile_verify(cls, **kwargs):
+        return cls._serialize_profile_binding_command(CMD_PROFILE_VERIFY, **kwargs)
+
+    @classmethod
+    def serialize_profile_activate(
+        cls, *, expected_generation, profile_id, payload_digest
+    ):
+        generation = cls._bounded_uint(
+            "expected_generation", expected_generation, 0xFFFFFFFFFFFFFFFF
+        )
+        return (
+            bytes((CMD_PROFILE_ACTIVATE,))
+            + struct.pack(">Q", generation)
+            + cls._profile_digest("profile_id", profile_id)
+            + cls._profile_digest("payload_digest", payload_digest)
+        )
+
+    @classmethod
+    def serialize_profile_restore(
+        cls,
+        *,
+        expected_generation,
+        active_binding,
+        staged_binding,
+        rollback_binding,
+    ):
+        generation = cls._bounded_uint(
+            "expected_generation", expected_generation, 0xFFFFFFFFFFFFFFFF
+        )
+        return (
+            bytes((CMD_PROFILE_RESTORE,))
+            + struct.pack(">Q", generation)
+            + cls._profile_binding(active_binding, field="active_binding")
+            + cls._profile_binding(staged_binding, field="staged_binding")
+            + cls._profile_binding(rollback_binding, field="rollback_binding")
+        )
+
+    def profile_preflight(self, **kwargs):
+        return self._command_status(
+            self.serialize_profile_preflight(**kwargs), required_status_version=5
+        )
+
+    def profile_begin(self, **kwargs):
+        return self._command_status(
+            self.serialize_profile_begin(**kwargs), required_status_version=5
+        )
+
+    def profile_chunk(self, **kwargs):
+        return self._command_status(
+            self.serialize_profile_chunk(**kwargs), required_status_version=5
+        )
+
+    def profile_finalize(self, **kwargs):
+        return self._command_status(
+            self.serialize_profile_finalize(**kwargs), required_status_version=5
+        )
+
+    def profile_verify(self, **kwargs):
+        return self._command_status(
+            self.serialize_profile_verify(**kwargs), required_status_version=5
+        )
+
+    def profile_activate(self, **kwargs):
+        return self._command_status(
+            self.serialize_profile_activate(**kwargs), required_status_version=5
+        )
+
+    def profile_restore(self, **kwargs):
+        return self._command_status(
+            self.serialize_profile_restore(**kwargs), required_status_version=5
+        )
+
+    def profile_abort(self):
+        return self._command_status(
+            bytes((CMD_PROFILE_ABORT,)), required_status_version=5
+        )
 
     @classmethod
     def serialize_controller_session_begin(
@@ -1246,6 +1615,11 @@ class LEDController:
                 and getattr(self, "_receiver_status_version", 0) >= 3
                 and getattr(self, "_receiver_capabilities", 0) & CAPABILITY_STATUS_V3
             ):
+                # Byte 4 remains the legacy debug byte for four/five-byte
+                # CONFIG.  Status-v3 receivers interpret bit 7 only when the
+                # logical receiver byte makes this the six-byte form.
+                if getattr(self, "reverse_native_strip_order", False):
+                    cfg[4] |= 0x80
                 cfg.append(logical_device_id)
             self._xfer(cfg)
             self._last_config_refresh = now
@@ -1567,6 +1941,100 @@ class LEDController:
             ),
             'receiver_overlay_expirations': getattr(
                 self, '_receiver_overlay_expirations', 0
+            ),
+            'receiver_profile_result': getattr(self, '_receiver_profile_result', 0),
+            'receiver_profile_result_name': PROFILE_RESULT_NAMES.get(
+                getattr(self, '_receiver_profile_result', 0), 'unknown'
+            ),
+            'receiver_profile_transfer_state': getattr(
+                self, '_receiver_profile_transfer_state', 0
+            ),
+            'receiver_profile_transfer_state_name': PROFILE_TRANSFER_STATE_NAMES.get(
+                getattr(self, '_receiver_profile_transfer_state', 0), 'unknown'
+            ),
+            'receiver_profile_decoder_error': getattr(
+                self, '_receiver_profile_decoder_error', 0
+            ),
+            'receiver_profile_flags': getattr(self, '_receiver_profile_flags', 0),
+            'receiver_profile_cache_integrity_ok': bool(
+                getattr(self, '_receiver_profile_flags', 0) & 0x01
+            ),
+            'receiver_profile_preflight_can_stage': bool(
+                getattr(self, '_receiver_profile_flags', 0) & 0x02
+            ),
+            'receiver_profile_last_probe_found': bool(
+                getattr(self, '_receiver_profile_flags', 0) & 0x04
+            ),
+            'receiver_profile_transfer_active': bool(
+                getattr(self, '_receiver_profile_flags', 0) & 0x40
+            ),
+            'receiver_profile_capacity_bytes': getattr(
+                self, '_receiver_profile_capacity_bytes', 0
+            ),
+            'receiver_profile_used_bytes': getattr(
+                self, '_receiver_profile_used_bytes', 0
+            ),
+            'receiver_profile_free_bytes': getattr(
+                self, '_receiver_profile_free_bytes', 0
+            ),
+            'receiver_profile_reserve_bytes': getattr(
+                self, '_receiver_profile_reserve_bytes', 0
+            ),
+            'receiver_profile_reclaimable_bytes': getattr(
+                self, '_receiver_profile_reclaimable_bytes', 0
+            ),
+            'receiver_profile_received_bytes': getattr(
+                self, '_receiver_profile_received_bytes', 0
+            ),
+            'receiver_profile_total_bytes': getattr(
+                self, '_receiver_profile_total_bytes', 0
+            ),
+            'receiver_profile_state_generation': getattr(
+                self, '_receiver_profile_state_generation', 0
+            ),
+            'receiver_profile_preflight_token': getattr(
+                self, '_receiver_profile_preflight_token', 0
+            ),
+            'receiver_profile_last_probe_payload_digest': getattr(
+                self, '_receiver_profile_last_probe_payload_digest', None
+            ),
+            'receiver_profile_transfer_global_digest': getattr(
+                self, '_receiver_profile_transfer_global_digest', None
+            ),
+            'receiver_profile_transfer_payload_digest': getattr(
+                self, '_receiver_profile_transfer_payload_digest', None
+            ),
+            'receiver_profile_active_global_digest': getattr(
+                self, '_receiver_profile_active_global_digest', None
+            ),
+            'receiver_profile_active_payload_digest': getattr(
+                self, '_receiver_profile_active_payload_digest', None
+            ),
+            'receiver_profile_staged_global_digest': getattr(
+                self, '_receiver_profile_staged_global_digest', None
+            ),
+            'receiver_profile_staged_payload_digest': getattr(
+                self, '_receiver_profile_staged_payload_digest', None
+            ),
+            'receiver_profile_rollback_global_digest': getattr(
+                self, '_receiver_profile_rollback_global_digest', None
+            ),
+            'receiver_profile_rollback_payload_digest': getattr(
+                self, '_receiver_profile_rollback_payload_digest', None
+            ),
+            'receiver_profile_writes': getattr(self, '_receiver_profile_writes', 0),
+            'receiver_profile_evictions': getattr(
+                self, '_receiver_profile_evictions', 0
+            ),
+            'receiver_profile_stages': getattr(self, '_receiver_profile_stages', 0),
+            'receiver_profile_verifies': getattr(
+                self, '_receiver_profile_verifies', 0
+            ),
+            'receiver_profile_activations': getattr(
+                self, '_receiver_profile_activations', 0
+            ),
+            'receiver_profile_restores': getattr(
+                self, '_receiver_profile_restores', 0
             ),
         }
 

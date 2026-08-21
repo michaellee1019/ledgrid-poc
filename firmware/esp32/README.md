@@ -94,7 +94,7 @@ Every command is followed by a big-endian CRC-16/CCITT-FALSE.
 | SET_RANGE | `0x05` | start high, start low, count, RGB bytes |
 | SET_ALL | `0x06` | tightly packed RGB bytes; publishes inline |
 | CONFIG | `0x07` | strips, length high, length low, optional debug byte |
-| STATUS_QUERY | `0x08` | 320-byte v3 query, or negotiated 416-byte v4 query; all bytes after ID zero |
+| STATUS_QUERY | `0x08` | 320-byte v3, negotiated 416-byte v4, or negotiated 768-byte v5 query; all bytes after ID zero |
 | LOCAL_BACKGROUND_START | `0x10` | component u16, cadence u16, global offset u32, seed u32, scene epoch u64 |
 | LOCAL_BACKGROUND_STOP | `0x11` | none |
 | LOCAL_BACKGROUND_PARAMETERS | `0x12` | cadence u16, global offset u32, seed u32 |
@@ -103,6 +103,13 @@ Every command is followed by a big-endian CRC-16/CCITT-FALSE.
 | OVERLAY_BEGIN/PATCH/COMMIT | `0x30`–`0x32` | generation/CAS binding, sorted RGBA8 patches, scheduled commit |
 | OVERLAY_CLEAR/RENEW | `0x33`–`0x34` | generation/revision clear, or active-generation lease renewal |
 | OVERLAY_PATCH_BATCH | `0x35` | session/generation, span count, sorted `(start, count, RGBA)` entries |
+| PROFILE_PREFLIGHT | `0x40` | global ID, receiver-payload digest, size |
+| PROFILE_BEGIN | `0x41` | preflight token, both digests, size, logical ID, strip origin, direction |
+| PROFILE_CHUNK | `0x42` | ordered offset u32 and at most 4,089 data bytes |
+| PROFILE_FINALIZE/VERIFY | `0x43`–`0x44` | global ID and receiver-payload digest |
+| PROFILE_ACTIVATE | `0x45` | expected generation and staged binding |
+| PROFILE_RESTORE | `0x46` | expected generation and exact active/staged/rollback snapshot |
+| PROFILE_ABORT | `0x47` | none |
 | PING | `0xFF` | none |
 
 SET_PIXEL and SET_RANGE modify the working frame. SHOW and CLEAR publish only
@@ -112,7 +119,9 @@ complete accepted SET_ALL publishes and takes host ownership.
 
 Legacy CONFIG packets remain four or five bytes. Six-byte CONFIG appends a
 logical receiver ID at byte 5 (0–3); local playback fails closed until this ID
-is provisioned. Byte 4 remains the legacy debug byte.
+is provisioned. Bit 7 of byte 4 is the explicit receiver-native strip-reversal
+flag. Installation-profile state remains inert until this full installed-topology
+form is received; the frozen v1 origins are `0,8,24,16` for logical IDs `0..3`.
 
 ## Receiver status v3
 
@@ -143,6 +152,28 @@ update/patch progress, coverage, committed/staged generations, scene/base
 binding, scheduled presentation, lease/remaining time, controller session, and
 composition timing/counters. A 320-byte query always returns exact `LGS3`, so
 discovery remains compatible with v3-only firmware.
+
+Status-v3 capability bits `1<<6` and `1<<7` negotiate installation profiles and
+status v5. `LGS5` keeps status-v4 fields at offsets 5–415 and extends the fixed
+snapshot to 768 bytes with transfer result/progress, cache capacity/reserve,
+preflight token, state generation, distinct global and receiver-payload digests,
+active/staged/rollback bindings, and store/transaction counters.
+
+## Installation-profile rollout boundary
+
+`LEDGRID_ENABLE_INSTALLATION_PROFILES` defaults to zero and is enabled only in
+the local-canary environment. The production image neither mounts the profile
+cache nor accepts profile commands. Both images share the explicit 16 MB layout:
+two 6 MB OTA application slots and a `0x3e0000`-byte `profilecache` SPIFFS
+partition. The Pi library remains authoritative; receivers keep a disposable
+content-addressed cache with a 512 KiB reserve.
+
+Preflight is read-only. Begin consumes its state-bound token and may evict only
+inactive least-recently-used entries. Chunks are ordered and exact retries are
+idempotent. Finalize checks payload SHA-256 and the complete LGIP decoder before
+atomic visibility. Activation and compensation use generation-CAS persistence;
+active, staged, and rollback payloads are all pinned. Profile traffic never
+changes base ownership, foreground state, render generation, or physical output.
 
 The host exposes these fields through `/api/status` and `/api/metrics`. Run the
 automated canary gate with:

@@ -136,6 +136,7 @@ class StartServerTests(unittest.TestCase):
         self.assertTrue(canary.receiver_local_background)
         self.assertTrue(canary.receiver_sparse_overlay)
         self.assertFalse(canary.receiver_native_modules)
+        self.assertFalse(canary.receiver_geometry_profile)
         with self.assertRaisesRegex(TypeError, "must be boolean"):
             receiver_hybrid_feature_flags(1)
 

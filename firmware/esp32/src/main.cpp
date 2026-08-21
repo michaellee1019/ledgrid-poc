@@ -11,6 +11,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "ledgrid/frame_mailbox.hpp"
+#include "ledgrid/esp_installation_profile_store.hpp"
 #include "ledgrid/parallel_led_driver.hpp"
 #include "ledgrid/protocol.hpp"
 #include "ledgrid/receiver_task_policy.hpp"
@@ -22,6 +23,9 @@ namespace {
 
 #ifndef LEDGRID_ENABLE_LOCAL_BACKGROUND
 #define LEDGRID_ENABLE_LOCAL_BACKGROUND 0
+#endif
+#ifndef LEDGRID_ENABLE_INSTALLATION_PROFILES
+#define LEDGRID_ENABLE_INSTALLATION_PROFILES 0
 #endif
 
 constexpr gpio_num_t kSpiMosi = GPIO_NUM_11;
@@ -54,6 +58,8 @@ static_assert(kSpiFrameBytes <= kSpiBufferSize,
               "maximum RGB frame plus CRC exceeds transport buffer");
 static_assert(ledgrid::kStatusBytesV3 + kCrcBytes <= kSpiBufferSize,
               "status query plus CRC exceeds transport buffer");
+static_assert(ledgrid::kStatusBytesV5 + kCrcBytes <= kSpiBufferSize,
+              "status-v5 query plus CRC exceeds transport buffer");
 
 DMA_ATTR std::uint8_t spi_rx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
 DMA_ATTR std::uint8_t spi_tx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
@@ -70,12 +76,23 @@ std::uint8_t mailbox_frames[ledgrid::kFrameMailboxSlots][kMaxRgbBytes] = {};
 ledgrid::LatestFrameMailbox frame_mailbox;
 portMUX_TYPE mailbox_mux = portMUX_INITIALIZER_UNLOCKED;
 SemaphoreHandle_t runtime_mutex = nullptr;
+SemaphoreHandle_t profile_mutex = nullptr;
 TaskHandle_t display_task_handle = nullptr;
 ledgrid::ParallelLedDriver led_driver;
 ledgrid::ReceiverRuntime receiver_runtime(LEDGRID_ENABLE_LOCAL_BACKGROUND != 0);
 ledgrid::ReceiverOutputState receiver_output(
     kDefaultStrips, kDefaultLedsPerStrip, kDefaultBrightness);
 ledgrid::ReceiverOperationTracker operation_tracker;
+#if LEDGRID_ENABLE_INSTALLATION_PROFILES
+ledgrid::EspInstallationProfileStore installation_profile_store;
+ledgrid::NvsInstallationProfilePersistence installation_profile_persistence;
+std::uint8_t installation_profile_scratch[
+    2U * ledgrid::kInstallationProfileReceiverBytesV1] = {};
+ledgrid::InstallationProfileManager installation_profile_manager(
+    &installation_profile_store, &installation_profile_persistence,
+    installation_profile_scratch, sizeof(installation_profile_scratch), true);
+std::atomic<bool> installation_profile_ready{false};
+#endif
 
 std::atomic<std::uint32_t> next_sequence{1};
 std::atomic<std::uint8_t> logical_receiver_id{0xFF};
@@ -101,6 +118,22 @@ void lock_runtime() {
 
 void unlock_runtime() {
   if (runtime_mutex != nullptr) xSemaphoreGive(runtime_mutex);
+}
+
+void lock_profile() {
+  if (profile_mutex != nullptr) xSemaphoreTake(profile_mutex, portMAX_DELAY);
+}
+
+void unlock_profile() {
+  if (profile_mutex != nullptr) xSemaphoreGive(profile_mutex);
+}
+
+bool installation_profiles_available() {
+#if LEDGRID_ENABLE_INSTALLATION_PROFILES
+  return installation_profile_ready.load(std::memory_order_acquire);
+#else
+  return false;
+#endif
 }
 
 ledgrid::FrameMailboxCounters mailbox_counters() {
@@ -362,9 +395,9 @@ void display_task(void*) {
   }
 }
 
-ledgrid::ReceiverStatusV4 status_snapshot() {
+ledgrid::ReceiverStatusV5 status_snapshot() {
   const auto counters = mailbox_counters();
-  ledgrid::ReceiverStatusV4 status{};
+  ledgrid::ReceiverStatusV5 status{};
   status.flags = 0x01U | (led_driver.in_flight() ? 0x02U : 0U);
   status.queued_transactions = queued_transactions.load(std::memory_order_relaxed);
   status.packets = packets_received.load(std::memory_order_relaxed);
@@ -396,6 +429,12 @@ ledgrid::ReceiverStatusV4 status_snapshot() {
                            ledgrid::kCapabilitySparseOverlayV1 |
                            ledgrid::kCapabilitySparseOverlayBatchV1;
   }
+#if LEDGRID_ENABLE_INSTALLATION_PROFILES
+  if (installation_profile_ready.load(std::memory_order_acquire)) {
+    status.capabilities |= ledgrid::kCapabilityInstallationProfileV1 |
+                           ledgrid::kCapabilityStatusV5;
+  }
+#endif
   status.base_mode = static_cast<std::uint8_t>(receiver_runtime.base_mode());
   status.foreground_state =
       static_cast<std::uint8_t>(receiver_runtime.foreground_state());
@@ -459,13 +498,22 @@ ledgrid::ReceiverStatusV4 status_snapshot() {
   status.overlay_commits = overlay_stats.commits;
   status.overlay_expirations = overlay_stats.expirations;
   unlock_runtime();
+#if LEDGRID_ENABLE_INSTALLATION_PROFILES
+  lock_profile();
+  status.installation_profile = installation_profile_manager.status();
+  unlock_profile();
+#endif
   status.logical_receiver_id = logical_receiver_id.load(std::memory_order_relaxed);
   return status;
 }
 
-bool queue_spi_transaction(std::size_t index, bool status_v4 = false) {
+bool queue_spi_transaction(
+    std::size_t index, bool status_v4 = false, bool status_v5 = false) {
   const auto status = status_snapshot();
-  if (status_v4 && receiver_runtime.local_background_enabled()) {
+  if (status_v5 && LEDGRID_ENABLE_INSTALLATION_PROFILES != 0) {
+    ledgrid::encode_receiver_status_v5(
+        status, spi_tx_buffers[index], kSpiBufferSize);
+  } else if (status_v4 && receiver_runtime.local_background_enabled()) {
     ledgrid::encode_receiver_status_v4(
         status, spi_tx_buffers[index], kSpiBufferSize);
   } else {
@@ -500,7 +548,8 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
   const ledgrid::ReceiverDispatchDecision decision =
       ledgrid::classify_receiver_dispatch(
           data, length, output.rgb_bytes(), current_mode,
-          LEDGRID_ENABLE_LOCAL_BACKGROUND != 0);
+          LEDGRID_ENABLE_LOCAL_BACKGROUND != 0,
+          installation_profiles_available());
 
   if (decision.route == ledgrid::ReceiverDispatchRoute::Reject) {
     if (command != ledgrid::ReceiverCommand::StatusQuery) {
@@ -513,7 +562,18 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
 
   if (decision.route == ledgrid::ReceiverDispatchRoute::StatusQuery)
     return ledgrid::valid_status_query(
-        data, length, LEDGRID_ENABLE_LOCAL_BACKGROUND != 0);
+        data, length, LEDGRID_ENABLE_LOCAL_BACKGROUND != 0,
+        installation_profiles_available());
+  if (decision.route == ledgrid::ReceiverDispatchRoute::InstallationProfile) {
+#if LEDGRID_ENABLE_INSTALLATION_PROFILES
+    lock_profile();
+    const auto result = installation_profile_manager.process(data, length);
+    unlock_profile();
+    return result == ledgrid::InstallationProfileResult::Ok;
+#else
+    return false;
+#endif
+  }
   if (decision.route == ledgrid::ReceiverDispatchRoute::Runtime) {
     ledgrid::ReceiverOperationResult result =
         ledgrid::ReceiverOperationResult::Unsupported;
@@ -654,6 +714,14 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
       unlock_runtime();
       if (!configured) return false;
       logical_receiver_id.store(new_logical_id, std::memory_order_release);
+#if LEDGRID_ENABLE_INSTALLATION_PROFILES
+      if (has_installed_direction) {
+        lock_profile();
+        installation_profile_manager.configure_identity(
+            new_logical_id, reverse_local_strip_order);
+        unlock_profile();
+      }
+#endif
       if (display_task_handle != nullptr) xTaskNotifyGive(display_task_handle);
       return true;
     }
@@ -713,10 +781,28 @@ extern "C" void app_main() {
   gpio_set_level(kStatusLed, 0);
 
   runtime_mutex = xSemaphoreCreateMutex();
-  if (runtime_mutex == nullptr) {
+#if LEDGRID_ENABLE_INSTALLATION_PROFILES
+  profile_mutex = xSemaphoreCreateMutex();
+#endif
+  if (runtime_mutex == nullptr
+#if LEDGRID_ENABLE_INSTALLATION_PROFILES
+      || profile_mutex == nullptr
+#endif
+  ) {
     ESP_LOGE(kLogTag, "receiver runtime mutex allocation failed");
     while (true) vTaskDelay(pdMS_TO_TICKS(1000));
   }
+
+#if LEDGRID_ENABLE_INSTALLATION_PROFILES
+  const bool store_ready = installation_profile_store.begin();
+  const bool persistence_ready = installation_profile_persistence.begin();
+  const bool manager_ready = installation_profile_manager.begin();
+  const bool profiles_ready = store_ready && persistence_ready && manager_ready;
+  installation_profile_ready.store(profiles_ready, std::memory_order_release);
+  if (!profiles_ready) {
+    ESP_LOGE(kLogTag, "installation-profile cache initialization failed");
+  }
+#endif
 
   if (!led_driver.begin(kLedPins, kMaxStrips, kMaxLedsPerStrip)) {
     ESP_LOGE(kLogTag, "LCD/I80 parallel LED driver initialization failed");
@@ -763,6 +849,7 @@ extern "C" void app_main() {
     const std::size_t bytes = completed->trans_len / 8U;
     const std::uint8_t* packet = spi_rx_buffers[index];
     bool request_v4 = false;
+    bool request_v5 = false;
 
     if (bytes < 1U + kCrcBytes) {
       ++crc_errors;
@@ -791,6 +878,8 @@ extern "C" void app_main() {
             process_command(packet, payload_bytes);
         request_v4 = status_query && accepted &&
             payload_bytes == ledgrid::kStatusBytesV4;
+        request_v5 = status_query && accepted &&
+            payload_bytes == ledgrid::kStatusBytesV5;
         if (!status_query && dispatch_allowed) {
           lock_runtime();
           if (packet[0] < 0x10 || packet[0] == 0xFF) {
@@ -802,6 +891,6 @@ extern "C" void app_main() {
         }
       }
     }
-    queue_spi_transaction(index, request_v4);
+    queue_spi_transaction(index, request_v4, request_v5);
   }
 }
