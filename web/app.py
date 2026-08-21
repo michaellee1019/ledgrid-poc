@@ -6,8 +6,8 @@ Flask-based web server for controlling animations and adjusting parameters in
 real time.
 """
 
-import json
 import inspect
+import json
 import math
 import os
 import re
@@ -19,16 +19,22 @@ from typing import Any, Dict, List, Optional
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
-from animation.core.manager import AnimationManager, PreviewLEDController
+from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.feature_flags import AnimationPipelineFeatureFlags
 from animation.core.installation_profile_library import InstallationProfileLibrary
 from animation.core.installation_profile_topology import (
     IDENTITY_INSTALLATION_PROFILE_TOPOLOGY,
     InstallationProfileTopology,
 )
-from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
+from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.preview_assets import load_catalog, merge_catalogs
+from drivers.frame_codec import (
+    FRAME_ENCODING_NAME,
+    decode_frame_data,
+    encode_frame_data,
+)
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 from ipc.control_channel import FileControlChannel
 from ipc.scene_contract import (
     DEFAULT_SCENE_PROVIDER_POLICY,
@@ -43,14 +49,7 @@ from ipc.scene_contract import (
     normalize_scene_payload,
     scene_preview_identity,
 )
-from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
-from drivers.frame_codec import (
-    decode_frame_data,
-    encode_frame_data,
-    FRAME_ENCODING_NAME,
-)
 from web.preview_worker import RuntimePreviewWorker
-
 
 PAINTER_MASK_TYPES = (
     {
@@ -135,6 +134,51 @@ class AnimationWebInterface:
         def index():
             """Main dashboard"""
             animations = self._dashboard_animations()
+            component_catalog = self._component_catalog()
+            component_id_counts: Dict[str, int] = {}
+            for component in component_catalog:
+                component_id = component.get('plugin_id')
+                if isinstance(component_id, str):
+                    component_id_counts[component_id] = (
+                        component_id_counts.get(component_id, 0) + 1
+                    )
+            ambiguous_component_ids = {
+                component_id
+                for component_id, count in component_id_counts.items()
+                if count > 1
+            }
+            animation_by_id = {
+                item.get('plugin_name'): item
+                for item in animations
+                if isinstance(item.get('plugin_name'), str)
+            }
+            component_previews = {}
+            component_presets = {}
+            for component in component_catalog:
+                component_id = component.get('plugin_id')
+                if not isinstance(component_id, str):
+                    continue
+                provider = component.get('provider')
+                if not isinstance(provider, str):
+                    continue
+                component_key = f'{provider}:{component_id}'
+                if component_id in ambiguous_component_ids:
+                    # Preview catalogs and preset paths predate provider-qualified
+                    # identities. Never decorate the wrong provider by guessing.
+                    component_previews[component_key] = None
+                    component_presets[component_key] = []
+                    continue
+                animation = animation_by_id.get(component_id)
+                component_previews[component_key] = (
+                    animation.get('preview')
+                    if animation is not None
+                    else self._preview_metadata(component_id)
+                )
+                component_presets[component_key] = (
+                    animation.get('presets', [])
+                    if animation is not None
+                    else self._list_animation_presets(component_id)
+                )
             status = self._status_payload()
             return render_template(
                 'index.html',
@@ -142,7 +186,18 @@ class AnimationWebInterface:
                 test_animations=[item for item in animations if item['is_test']],
                 status=status,
                 vibe_profiles=self._vibe_profile_catalog(),
-                component_catalog=self._component_catalog(),
+                component_catalog=component_catalog,
+                component_index={
+                    f"{item.get('provider')}:{item['plugin_id']}": item
+                    for item in component_catalog
+                    if (
+                        isinstance(item.get('plugin_id'), str)
+                        and isinstance(item.get('provider'), str)
+                    )
+                },
+                component_previews=component_previews,
+                component_presets=component_presets,
+                ambiguous_component_ids=ambiguous_component_ids,
                 receiver_hybrid_enabled=(
                     self._scene_provider_policy().compiled_rainbow_enabled
                 ),
@@ -269,13 +324,28 @@ class AnimationWebInterface:
 
         @self.app.route('/api/v1/components/<component_id>/presets')
         def api_list_component_presets(component_id: str):
-            if not any(
-                item.get('plugin_id') == component_id for item in self._component_catalog()
-            ):
+            matches = [
+                item for item in self._component_catalog()
+                if item.get('plugin_id') == component_id
+            ]
+            if not matches:
                 return jsonify({'error': 'Component not found'}), 404
+            if len(matches) != 1:
+                return jsonify({
+                    'error': (
+                        'Component preset discovery is ambiguous across providers; '
+                        'provider-qualified preset storage is required'
+                    ),
+                    'component_id': component_id,
+                    'providers': sorted({
+                        str(item.get('provider')) for item in matches
+                    }),
+                }), 409
+            component = matches[0]
             return jsonify({
                 'schema': 'ledgrid.component-preset-list', 'schema_version': 1,
                 'component_id': component_id,
+                'component': component,
                 'presets': self._list_animation_presets(component_id),
             })
 

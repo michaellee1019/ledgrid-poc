@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
-from datetime import datetime, timezone
 import json
-from pathlib import Path
-import random
 import tempfile
 import unittest
+from copy import deepcopy
+from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 
@@ -18,7 +17,6 @@ from animation.plugins.clock import ClockAnimation
 from animation.plugins.lava_lamp import LavaLampAnimation
 from animation.plugins.simple_test import SimpleTestAnimation
 from animation.plugins.snake import SnakeAnimation
-
 
 PILOT_IDS = ("clock", "lava_lamp", "snake", "simple_test")
 ROLES = {
@@ -135,9 +133,9 @@ class VibePilotContractTests(unittest.TestCase):
         expected = {
             "clock": ("semantic", TimingAdapter.WALL_CLOCK,
                       {"palette_roles", "luminance"}),
-            "lava_lamp": ("grade", TimingAdapter.SCALED_CONTEXT,
+            "lava_lamp": ("semantic", TimingAdapter.SCALED_CONTEXT,
                           {"palette_roles", "tempo", "luminance"}),
-            "snake": ("grade", TimingAdapter.SCALED_CONTEXT,
+            "snake": ("semantic", TimingAdapter.SCALED_CONTEXT,
                       {"palette_roles", "tempo", "luminance"}),
             "simple_test": ("preserve", TimingAdapter.WALL_CLOCK,
                             {"luminance"}),

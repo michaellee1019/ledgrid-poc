@@ -9,7 +9,6 @@ import numpy as np
 
 from animation import AnimationBase
 
-
 PALETTES = {
     "moonlit": ((2, 5, 13), (25, 43, 68), (142, 169, 184)),
     "predawn": ((8, 5, 18), (69, 41, 73), (210, 126, 91)),
@@ -211,6 +210,14 @@ class LongformSceneBase(AnimationBase):
         now = datetime.now().astimezone()
         return (now.hour + now.minute / 60 + now.second / 3600 + float(self.params.get("time_offset", 0.0))) % 24
 
+    def _circadian_palette(self):
+        """Return the authored night, daylight, and twilight colors."""
+        return (
+            np.asarray((2, 5, 18), dtype=np.float32),
+            np.asarray((90, 151, 207), dtype=np.float32),
+            np.asarray((240, 104, 53), dtype=np.float32),
+        )
+
     def _render_circadian(self, t: float, motion: float, density: float):
         hour = self._current_hour(t)
         sun = max(0.0, np.sin((hour - 6.0) / 12.0 * np.pi))
@@ -223,9 +230,7 @@ class LongformSceneBase(AnimationBase):
         sky *= 1.0 - np.clip(cloud - (1.1 - density * 0.7), 0, 1) * 0.28
         stars = (np.sin(self._x * 173 + self._y * 271 + self._phases[4]) > 0.992 - density * 0.01)
         sky += stars * (1.0 - sun) * 0.32
-        low = np.asarray((2, 5, 18), dtype=np.float32)
-        day = np.asarray((90, 151, 207), dtype=np.float32)
-        warm = np.asarray((240, 104, 53), dtype=np.float32)
+        low, day, warm = self._circadian_palette()
         self._rgb[:] = low + day * sky[..., None]
         self._rgb += warm * (horizon * twilight * (1.0 - sun * 0.6))[..., None] * 0.32
 

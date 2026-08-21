@@ -218,6 +218,16 @@ class PlantGlowAnimation(AnimationBase):
             self._rebuild_geometry()
 
     def _color(self, prefix: str) -> np.ndarray:
+        context = self.presentation_context
+        if context is not None and context.vibe_id != "neutral":
+            role = {
+                "background": "background_low",
+                "foliage": "primary",
+                "foliage_halo": "secondary",
+                "globe": "accent",
+                "globe_halo": "secondary",
+            }[prefix]
+            return np.asarray(context.palette_roles[role], dtype=np.float32)
         return np.asarray(
             [self.params[f"{prefix}_red"], self.params[f"{prefix}_green"], self.params[f"{prefix}_blue"]],
             dtype=np.float32,

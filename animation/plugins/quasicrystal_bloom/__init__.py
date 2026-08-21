@@ -1,5 +1,6 @@
 """Non-periodic rotational symmetries made from interfering plane waves."""
 import numpy as np
+
 from animation.libraries.procedural_sculptures import CadencedSculpture
 
 
@@ -20,6 +21,20 @@ class QuasicrystalBloomAnimation(CadencedSculpture):
             "spatial_scale":{"type":"float","min":0.8,"max":5,"default":2.4,"description":"Rosette spatial frequency"},
             "warp":{"type":"float","min":0,"max":1,"default":0.18,"description":"Radial phase modulation"},
         });return s
+
+    def palette(self, mood):
+        context = self.presentation_context
+        if context is None or context.vibe_id == "neutral":
+            return super().palette(mood)
+        roles = context.palette_roles
+        return np.asarray(
+            (roles["background_low"], roles["primary"], roles["accent"]),
+            dtype=np.float32,
+        )
+
+    def on_presentation_context_changed(self, _old, _new):
+        self._render_key = None
+        self._cached_pixels = None
 
     def generate_frame(self,time_elapsed,frame_count):
         tick,cached=self.begin_frame(time_elapsed)

@@ -116,5 +116,19 @@ class ReactionDiffusionGardenAnimation(ProceduralLivingBase):
             canvas[front] = np.maximum(canvas[front], light * (.12 + .25*illuminate))
         return self._finish_canvas(np.clip(canvas,0,255).astype(np.uint8))
 
+    def _palette(self):
+        context = self.presentation_context
+        if context is None or context.vibe_id == "neutral":
+            return super()._palette()
+        roles = context.palette_roles
+        return tuple(
+            np.asarray(roles[role], dtype=np.float32)
+            for role in ("background_low", "primary", "accent")
+        )
+
+    def on_presentation_context_changed(self, _old, _new):
+        self._last_render_elapsed = None
+        self._cached_frame = None
+
     def logical_state(self):
         return (self.u.tobytes(), self.v.tobytes(), self.age.tobytes(), round(self._next_perturbation, 5))

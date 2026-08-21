@@ -8,8 +8,9 @@
     "simulation_fps": 30
   },
   "vibe": {
-    "color_policy": "grade",
+    "color_policy": "semantic",
     "timing_adapter": "scaled_context",
-    "capabilities": ["palette_roles", "tempo", "luminance"]
+    "capabilities": ["palette_roles", "tempo", "luminance"],
+    "semantic_roles": ["secondary", "primary", "accent"]
   }
 }

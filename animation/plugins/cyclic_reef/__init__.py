@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import colorsys
+
 import numpy as np
 
 from animation.libraries.procedural_living import ProceduralLivingBase
@@ -85,17 +86,47 @@ class CyclicReefAnimation(ProceduralLivingBase):
     def _render_scene(self,elapsed):
         nstates=int(np.clip(self.params.get("state_count",5),3,8)); mood=self.params.get("mood","reef")
         hue0={"reef":.48,"moon":.52,"violet":.72,"ember":.02,"dusk":.1}.get(mood,.48)
-        palette=np.array([[int(c*255) for c in colorsys.hsv_to_rgb((hue0+i/nstates*.48)%1,.72,.56)] for i in range(nstates)],dtype=np.float32)
+        context = self.presentation_context
+        if context is None or context.vibe_id == "neutral":
+            palette=np.array([[int(c*255) for c in colorsys.hsv_to_rgb((hue0+i/nstates*.48)%1,.72,.56)] for i in range(nstates)],dtype=np.float32)
+            edge_color = np.asarray((70, 75, 80), dtype=np.float32)
+        else:
+            roles = context.palette_roles
+            anchors = np.asarray(
+                (
+                    roles["primary"],
+                    roles["secondary"],
+                    roles["accent"],
+                    roles["primary"],
+                ),
+                dtype=np.float32,
+            )
+            positions = np.linspace(
+                0.0, 3.0, nstates, endpoint=False, dtype=np.float32
+            )
+            palette = np.column_stack(
+                tuple(
+                    np.interp(
+                        positions, (0.0, 1.0, 2.0, 3.0), anchors[:, channel]
+                    )
+                    for channel in range(3)
+                )
+            ).astype(np.float32, copy=False)
+            edge_color = np.asarray(roles["background_high"], dtype=np.float32)
         canvas=np.zeros((self.height,self.width,3),dtype=np.float32)
         valid=self.state!=255; canvas[valid]=palette[self.state[valid]]
         boundary=np.zeros(self.state.shape,dtype=bool)
         for dy,dx in ((1,0),(-1,0),(0,1),(0,-1)): boundary|=self._shift(self.state,dy,dx)!=self.state
-        canvas[boundary&valid]+=np.asarray((70,75,80),dtype=np.float32)*float(self.params.get("edge_glow",.55))
+        canvas[boundary&valid]+=edge_color*float(self.params.get("edge_glow",.55))
         # Presentation-only gentle interpolation fades newly changed polyps in.
         blend=np.clip(self.age/.25,0,1); old_valid=self.previous!=255
         old=np.zeros_like(canvas); old[old_valid]=palette[self.previous[old_valid]]
         canvas=old*(1-blend[...,None])+canvas*blend[...,None]
         return self._finish_canvas(np.clip(canvas,0,255).astype(np.uint8))
+
+    def on_presentation_context_changed(self, _old, _new):
+        self._last_render_elapsed = None
+        self._cached_frame = None
 
     def logical_state(self):
         return (self.state.tobytes(),self.age.tobytes(),self.gx.tobytes(),self.gy.tobytes())

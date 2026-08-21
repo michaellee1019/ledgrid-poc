@@ -12,7 +12,6 @@ import numpy as np
 from animation import AnimationBase
 from animation.core.plant_awareness import GLOBE_REGION_ORDER
 
-
 PALETTES = {
     "classic": ((92, 8, 0), (255, 64, 4), (255, 215, 70), (255, 80, 8)),
     "ruby": ((70, 0, 14), (225, 8, 40), (255, 138, 95), (255, 24, 52)),
@@ -23,6 +22,8 @@ PALETTES = {
     "solar": ((80, 12, 0), (255, 115, 0), (255, 250, 150), (255, 155, 15)),
     "mono": ((24, 24, 28), (145, 150, 165), (255, 255, 255), (190, 200, 225)),
 }
+
+SEMANTIC_PALETTE_ROLES = ("secondary", "primary", "accent", "background_high")
 
 
 class LavaLampAnimation(AnimationBase):
@@ -189,6 +190,30 @@ class LavaLampAnimation(AnimationBase):
     def on_presentation_context_changed(self, old_context, new_context) -> None:
         """Refresh presentation without resetting wax state or consuming RNG."""
         self._last_render_tick = None
+
+    def _presentation_palette(self):
+        """Resolve wax colors without changing authored palette identity.
+
+        Neutral and direct/headless rendering deliberately return the original
+        authored palette.  Active semantic profiles replace the four visual
+        palette slots only; simulation state, timing, parameters, and RNG are
+        not consulted or mutated here.
+        """
+        authored = PALETTES[
+            str(getattr(self, "effective_params", self.params).get("palette", "classic"))
+        ]
+        context = self.presentation_context
+        if (
+            context is None
+            or context.vibe_id == "neutral"
+            or self.VIBE_COLOR_POLICY != "semantic"
+            or "palette_roles" not in self.VIBE_CAPABILITIES
+        ):
+            return authored
+        return tuple(
+            context.palette_roles.get(role, authored[index])
+            for index, role in enumerate(SEMANTIC_PALETTE_ROLES)
+        )
 
     def _reconcile_blob_count(self) -> None:
         target = max(3, min(12, int(self.params.get("blob_count", 7))))
@@ -550,9 +575,7 @@ class LavaLampAnimation(AnimationBase):
         halo = np.clip((self._field - 0.12) / 0.52, 0.0, 1.0) * glow_strength
         cool, warm, hot, glow_color = (
             np.asarray(color, dtype=np.float32)
-            for color in PALETTES[
-                str(getattr(self, "effective_params", self.params).get("palette", "classic"))
-            ]
+            for color in self._presentation_palette()
         )
         heat_mix = np.clip(temperature, 0.0, 1.0)[..., None]
         wax_color = cool + (warm - cool) * np.minimum(1.0, heat_mix * 1.5)

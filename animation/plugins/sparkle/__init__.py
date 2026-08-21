@@ -6,8 +6,10 @@ Keeps only the sparkle effect from the previous effects collection so it can
 stand alone as a single plugin.
 """
 
+from typing import Any, Dict
+
 import numpy as np
-from typing import Dict, Any
+
 from animation import AnimationBase
 from animation.libraries.mask_effects import build_halo_weights
 
@@ -93,10 +95,41 @@ class SparkleAnimation(AnimationBase):
     def _accent_plant_cores(self, frame):
         """Render distinct, subdued leaf and glass landmarks."""
         brightness = float(self.params.get('brightness', 1.0))
-        foliage = np.rint(np.asarray((18, 112, 38)) * brightness).astype(np.uint8)
-        globe = np.rint(np.asarray((176, 48, 150)) * brightness).astype(np.uint8)
+        context = self.presentation_context
+        if context is None or context.vibe_id == "neutral":
+            foliage_color = (18, 112, 38)
+            globe_color = (176, 48, 150)
+        else:
+            foliage_color = context.palette_roles["primary"]
+            globe_color = context.palette_roles["accent"]
+        foliage = np.rint(
+            np.asarray(foliage_color) * brightness
+        ).astype(np.uint8)
+        globe = np.rint(
+            np.asarray(globe_color) * brightness
+        ).astype(np.uint8)
         frame[self._plant_foliage] = foliage
         frame[self._plant_globes] = globe
+
+    def _presentation_colors(self):
+        context = self.presentation_context
+        if context is not None and context.vibe_id != "neutral":
+            return (
+                np.asarray(context.palette_roles["background_low"], dtype=np.float32),
+                np.asarray(context.palette_roles["accent"], dtype=np.float32),
+            )
+        return (
+            np.asarray([
+                self.params.get('base_red', 0),
+                self.params.get('base_green', 0),
+                self.params.get('base_blue', 20),
+            ], dtype=np.float32),
+            np.asarray([
+                self.params.get('sparkle_red', 255),
+                self.params.get('sparkle_green', 255),
+                self.params.get('sparkle_blue', 255),
+            ], dtype=np.float32),
+        )
 
     def _legacy_plant_aware(self):
         payload = self.params.get('plant_modifiers')
@@ -179,17 +212,7 @@ class SparkleAnimation(AnimationBase):
         """Generate sparkle frame. Returns (N,3) uint8 ndarray."""
         total_pixels = self.get_pixel_count()
 
-        base = np.array([
-            self.params.get('base_red', 0),
-            self.params.get('base_green', 0),
-            self.params.get('base_blue', 20),
-        ], dtype=np.float32)
-
-        sparkle = np.array([
-            self.params.get('sparkle_red', 255),
-            self.params.get('sparkle_green', 255),
-            self.params.get('sparkle_blue', 255),
-        ], dtype=np.float32)
+        base, sparkle = self._presentation_colors()
 
         sparkle_prob = self.params.get('sparkle_probability', 0.02)
         fade_speed = self.params.get('fade_speed', 0.9)

@@ -13,8 +13,15 @@ import numpy as np
 
 from animation import AnimationBase
 
-
 Color = Tuple[float, float, float]
+
+# Fireworks intentionally retains the framework grade policy. Its authored
+# palette is semantic content, not merely presentation: named festival,
+# patriotic, gold, cool, sunset, forest, and monochrome shells select and store
+# full-spectrum hues that identify both presets and individual burst events.
+# Replacing those hues with a small role palette would make the palette,
+# base_hue, and hue_spread controls dishonest.
+FRAMEWORK_GRADE_RATIONALE = "authored full-spectrum shell palette identity"
 
 
 @dataclass

@@ -15,7 +15,6 @@ import numpy as np
 from animation import AnimationBase
 from animation.core.plant_awareness import GLOBE_REGION_ORDER
 
-
 Cell = Tuple[int, int]
 Direction = Tuple[int, int]
 UP: Direction = (0, -1)
@@ -26,6 +25,7 @@ DIRECTIONS = (UP, RIGHT, DOWN, LEFT)
 OPPOSITE = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}
 MAX_SIMULATION_STEPS = 4
 SNAKE_SPEED_BASELINE = 10.0
+SEMANTIC_PALETTE_ROLES = ("secondary", "primary", "accent")
 
 
 @dataclass
@@ -186,6 +186,7 @@ class SnakeAnimation(AnimationBase):
         ):
             self._refresh_plant_geometry()
             self._build_walls_and_portals()
+        self._build_palette()
         self.last_render_elapsed = None
 
     def get_runtime_stats(self) -> Dict[str, Any]:
@@ -237,7 +238,10 @@ class SnakeAnimation(AnimationBase):
         moves_per_second = self._effective_moves_per_second()
         self._step_accumulator += dt * moves_per_second
         steps = 0
-        while self._step_accumulator >= 1.0 and steps < MAX_SIMULATION_STEPS:
+        # A presentation-only cache invalidation can legitimately request a
+        # repaint at the same semantic timestamp.  Do not drain capped
+        # simulation backlog unless semantic time actually advanced.
+        while dt > 0.0 and self._step_accumulator >= 1.0 and steps < MAX_SIMULATION_STEPS:
             self._step_game()
             self._step_accumulator -= 1.0
             steps += 1
@@ -392,6 +396,27 @@ class SnakeAnimation(AnimationBase):
                 hue, saturation, value = phase, 0.92, 0.62 + 0.38 * phase
             red, green, blue = colorsys.hsv_to_rgb(hue % 1.0, saturation, value)
             self._palette[index] = (int(red * 255), int(green * 255), int(blue * 255))
+
+        context = self.presentation_context
+        if (
+            context is None
+            or context.vibe_id == "neutral"
+            or self.VIBE_COLOR_POLICY != "semantic"
+            or "palette_roles" not in self.VIBE_CAPABILITIES
+        ):
+            return
+        authored = tuple(self._palette[index].copy() for index in (0, 127, 255))
+        secondary, primary, accent = (
+            np.asarray(context.palette_roles.get(role, authored[index]), dtype=np.float32)
+            for index, role in enumerate(SEMANTIC_PALETTE_ROLES)
+        )
+        weights = np.linspace(0.0, 1.0, 128, dtype=np.float32)[:, None]
+        self._palette[:128] = (
+            secondary + (primary - secondary) * weights
+        ).astype(np.uint8)
+        self._palette[128:] = (
+            primary + (accent - primary) * weights
+        ).astype(np.uint8)
 
     def _build_background(self):
         self._background.fill(0)

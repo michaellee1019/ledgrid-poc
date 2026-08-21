@@ -1571,13 +1571,19 @@
         setTimeout(() => toast.remove(), 3000);
     }
 
-    function sceneComponentDescriptor(componentId) {
-        return SCENE_COMPONENT_CATALOG.find(item => item.plugin_id === componentId) || null;
+    function sceneComponentDescriptor(componentId, provider = null) {
+        const matches = SCENE_COMPONENT_CATALOG.filter(item => (
+            item.plugin_id === componentId
+            && (provider === null || item.provider === provider)
+        ));
+        return matches.length === 1 ? matches[0] : null;
     }
 
-    function sceneComponentRef(componentId, authoredParameters = null) {
-        const descriptor = sceneComponentDescriptor(componentId);
-        if (!descriptor) throw new Error(`Unknown scene component: ${componentId}`);
+    function sceneComponentRef(componentId, authoredParameters = null, expectedProvider = null) {
+        const descriptor = sceneComponentDescriptor(componentId, expectedProvider);
+        if (!descriptor) {
+            throw new Error(`Unknown or ambiguous scene component: ${expectedProvider || '?'}:${componentId}`);
+        }
         const provider = descriptor.provider || 'python';
         const overrides = authoredParameters ? {...authoredParameters} : {};
         const ref = {
@@ -1599,17 +1605,57 @@
         return ref;
     }
 
+    function sceneProviderLabel(provider) {
+        return provider === 'receiver_native' ? 'Receiver native' : 'Host Python';
+    }
+
+    function sceneRoleLabel(role) {
+        return String(role || 'component')
+            .split('_')
+            .map(part => part ? part[0].toUpperCase() + part.slice(1) : '')
+            .join(' ');
+    }
+
     function syncSceneProviderControls() {
-        const componentId = document.getElementById('sceneBackgroundSelect')?.value;
-        const receiverNative = sceneComponentDescriptor(componentId)?.provider === 'receiver_native';
+        const selected = document.getElementById('sceneBackgroundSelect')?.selectedOptions?.[0];
+        const componentId = selected?.dataset.componentId || selected?.value;
+        const descriptor = sceneComponentDescriptor(componentId, selected?.dataset.provider || null);
+        const receiverNative = descriptor?.provider === 'receiver_native';
         const fallbackField = document.getElementById('scenePythonFallbackField');
         const receiverParameters = document.getElementById('sceneReceiverParameters');
         if (fallbackField) fallbackField.hidden = !receiverNative;
         if (receiverParameters) receiverParameters.hidden = !receiverNative;
+
+        const providerBadge = document.getElementById('sceneBackgroundProvider');
+        if (providerBadge) {
+            providerBadge.textContent = descriptor
+                ? sceneProviderLabel(descriptor.provider)
+                : 'Provider unavailable';
+            providerBadge.dataset.providerLabel = descriptor?.provider || 'unavailable';
+        }
+        safeSetText(
+            'sceneBackgroundRole',
+            descriptor ? sceneRoleLabel(descriptor.role) : 'Role unavailable'
+        );
+        const compatibility = descriptor?.scene_compatibility || {};
+        const availability = document.getElementById('sceneBackgroundAvailability');
+        if (availability) {
+            availability.textContent = compatibility.selectable
+                ? 'Scene selectable'
+                : 'Catalog only';
+            availability.className = `badge component-availability-badge ${
+                compatibility.selectable ? 'is-selectable' : 'is-catalog-only'
+            }`;
+        }
+        safeSetText(
+            'sceneBackgroundDiagnostic',
+            compatibility.diagnostic
+                || (descriptor ? 'Compatible with the fixed background slot.' : 'Choose a compatible background.')
+        );
     }
 
-    function receiverBackgroundParameters(backgroundId) {
-        if (sceneComponentDescriptor(backgroundId)?.provider !== 'receiver_native') return null;
+    function receiverBackgroundParameters(backgroundId, provider) {
+        if (sceneComponentDescriptor(backgroundId, provider)?.provider !== 'receiver_native') return null;
         return {
             preferred_cadence_hz: Number(
                 document.getElementById('sceneReceiverCadence')?.value || 30
@@ -1629,16 +1675,21 @@
     }
 
     function editedScenePayload() {
-        const backgroundId = document.getElementById('sceneBackgroundSelect')?.value;
+        const backgroundOption = document.getElementById('sceneBackgroundSelect')?.selectedOptions?.[0];
+        const backgroundId = backgroundOption?.dataset.componentId || backgroundOption?.value;
+        const backgroundProvider = backgroundOption?.dataset.provider || null;
         if (!backgroundId) throw new Error('Choose a compatible background.');
         const background = sceneComponentRef(
-            backgroundId, receiverBackgroundParameters(backgroundId)
+            backgroundId,
+            receiverBackgroundParameters(backgroundId, backgroundProvider),
+            backgroundProvider
         );
         let fallback = {...background};
         if (background.provider === 'receiver_native') {
-            const fallbackId = document.getElementById('scenePythonFallbackSelect')?.value;
+            const fallbackOption = document.getElementById('scenePythonFallbackSelect')?.selectedOptions?.[0];
+            const fallbackId = fallbackOption?.dataset.componentId || fallbackOption?.value;
             if (!fallbackId) throw new Error('Choose a Python fallback for receiver playback.');
-            fallback = sceneComponentRef(fallbackId);
+            fallback = sceneComponentRef(fallbackId, null, 'python');
         }
         const overlays = [];
         if (document.getElementById('sceneOverlayEnabled')?.checked) {
@@ -1647,7 +1698,9 @@
             if (stalePolicy === 'clear_after_lease') stale.lease_ms = 1000;
             overlays.push({
                 slot_id: 'clock_overlay',
-                component: sceneComponentRef('clock_overlay', clockOverlayParameters()),
+                component: sceneComponentRef(
+                    'clock_overlay', clockOverlayParameters(), 'python'
+                ),
                 enabled: true,
                 opacity: Number(document.getElementById('sceneOverlayOpacity')?.value || 255),
                 placement: {
@@ -1729,10 +1782,21 @@
 
     function loadSceneIntoEditor(scene) {
         const background = document.getElementById('sceneBackgroundSelect');
-        if (background) background.value = scene.background.plugin_id;
+        if (background) {
+            const option = Array.from(background.options).find(item => (
+                (item.dataset.componentId || item.value) === scene.background.plugin_id
+                && item.dataset.provider === scene.background.provider
+            ));
+            background.selectedIndex = option ? option.index : -1;
+        }
         const fallback = document.getElementById('scenePythonFallbackSelect');
         if (fallback && scene.background.provider === 'receiver_native') {
-            fallback.value = scene.known_python_fallback.plugin_id;
+            const option = Array.from(fallback.options).find(item => (
+                (item.dataset.componentId || item.value)
+                    === scene.known_python_fallback.plugin_id
+                && item.dataset.provider === 'python'
+            ));
+            fallback.selectedIndex = option ? option.index : -1;
         }
         const receiverParameters = scene.background.parameter_overrides || {};
         const cadence = document.getElementById('sceneReceiverCadence');
@@ -1766,7 +1830,7 @@
         const host = document.getElementById('receiverHybridStatus');
         if (!host) return;
         const scene = status?.scene || {};
-        const receiver = scene.receiver || null;
+        const receiver = scene.receiver || status?.receiver_hybrid || null;
         const publisher = receiver?.publisher || {};
         const state = document.getElementById('receiverAgreementState');
 
@@ -1787,6 +1851,7 @@
                 stateKind = 'waiting';
             }
         }
+        host.dataset.state = stateKind;
         if (state) {
             state.textContent = stateLabel;
             state.dataset.state = stateKind;
@@ -1799,7 +1864,29 @@
             'receiverForegroundGeneration',
             publisher.generation != null ? publisher.generation : '--'
         );
-        safeSetText('receiverFallbackState', receiver?.fallback_active ? 'Active' : 'No');
+        safeSetText(
+            'receiverFallbackState',
+            receiver?.fallback_active ? 'Active · Python fallback' : 'Standby'
+        );
+        safeSetText(
+            'receiverTelemetryState',
+            receiver?.telemetry_complete === true
+                ? 'Complete'
+                : receiver?.telemetry_complete === false
+                    ? 'Incomplete · degraded return path'
+                    : '--'
+        );
+        safeSetText(
+            'receiverReleaseAcceptance',
+            receiver?.release_acceptance === true
+                ? 'Accepted'
+                : receiver?.release_acceptance === false
+                    ? 'Not proven'
+                    : '--'
+        );
+        safeSetText('receiverTransportPolicy', receiver?.transport_policy || '--');
+
+        safeSetText('receiverQuarantineState', 'Not supported in this phase');
 
         const agreement = [];
         if (receiver?.source_scene_revision != null) {
@@ -1808,7 +1895,14 @@
         if (receiver?.context_revision != null) {
             agreement.push(`context ${receiver.context_revision}`);
         }
+        if (Array.isArray(receiver?.readable_devices)) {
+            agreement.push(`readable ${receiver.readable_devices.join(',') || 'none'}`);
+        }
+        if (Array.isArray(receiver?.unverified_devices) && receiver.unverified_devices.length) {
+            agreement.push(`unverified ${receiver.unverified_devices.join(',')}`);
+        }
         if (publisher.last_operation) agreement.push(publisher.last_operation);
+        if (receiver?.error) agreement.push(`error: ${receiver.error}`);
         if (publisher.last_error) agreement.push(`error: ${publisher.last_error}`);
         safeSetText('receiverHybridDetail', agreement.join(' · ') || '--');
     }

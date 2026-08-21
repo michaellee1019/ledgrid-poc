@@ -646,6 +646,11 @@ class AsciiDropAnimation(AnimationBase):
     def _color(self, prefix: str) -> Tuple[int, int, int]:
         brightness = min(1.0, max(0.0, float(self.params.get("brightness", 1.0))))
         defaults = {"character": (0, 255, 100), "background": (0, 0, 5)}[prefix]
+        context = self.presentation_context
+        if context is not None and context.vibe_id != "neutral":
+            role = "primary" if prefix == "character" else "background_low"
+            defaults = context.palette_roles[role]
+            return tuple(int(channel * brightness) for channel in defaults)
         return tuple(
             max(0, min(255, int(float(self.params.get(f"{prefix}_{channel}", default)) * brightness)))
             for channel, default in zip(("red", "green", "blue"), defaults)
@@ -707,6 +712,10 @@ class AsciiDropAnimation(AnimationBase):
 
     def _landmark_color(self, color: Tuple[int, int, int], strength: float) -> Tuple[int, int, int]:
         brightness = min(1.0, max(0.0, float(self.params.get("brightness", 1.0))))
+        context = self.presentation_context
+        if context is not None and context.vibe_id != "neutral":
+            role = "secondary" if color == (20, 150, 42) else "accent"
+            color = context.palette_roles[role]
         return tuple(int(channel * brightness * strength) for channel in color)
 
     def _reset_scene(self):

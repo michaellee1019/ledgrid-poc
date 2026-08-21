@@ -1,5 +1,6 @@
 """Coherent luminous filaments advected through an analytic curl field."""
 import numpy as np
+
 from animation.libraries.procedural_sculptures import CadencedSculpture
 
 
@@ -46,6 +47,20 @@ class FlowFieldSilkAnimation(CadencedSculpture):
         p[:,1]=(p[:,1]+vy*.16*(.3+float(self.params["motion"])))%self._shape[1]
 
     def reset_simulation(self): super().reset_simulation(); self._init_threads()
+
+    def palette(self, mood):
+        context = self.presentation_context
+        if context is None or context.vibe_id == "neutral":
+            return super().palette(mood)
+        roles = context.palette_roles
+        return np.asarray(
+            (roles["background_low"], roles["primary"], roles["accent"]),
+            dtype=np.float32,
+        )
+
+    def on_presentation_context_changed(self, _old, _new):
+        self._render_key = None
+        self._cached_pixels = None
 
     def generate_frame(self,time_elapsed,frame_count):
         tick,cached=self.begin_frame(time_elapsed)

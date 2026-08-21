@@ -2,23 +2,53 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import random
 import unittest
+from copy import deepcopy
 
 import numpy as np
 
 from animation.core.component_catalog import color_policy_inventory
 from animation.core.manager import AnimationManager
 from animation.core.plugin_loader import AnimationPluginLoader
-from animation.core.presentation_contracts import AnimationRuntimeContext
+from animation.core.presentation_contracts import AnimationRuntimeContext, resolve_vibe
 from animation.core.receiver_static_component import (
     receiver_static_component_descriptor,
 )
-from animation.core.presentation_contracts import resolve_vibe
 
-
-SEMANTIC_IDS = frozenset(("clock", "clock_overlay"))
+SEMANTIC_IDS = frozenset((
+    "ascii_drop",
+    "aurora_curtains",
+    "cellular_tapestry",
+    "clock",
+    "clock_overlay",
+    "cloud_canyon",
+    "circadian_window",
+    "cyclic_reef",
+    "desert_wind",
+    "firefly_synchrony",
+    "flame_burst",
+    "flow_field_silk",
+    "fluid_tank",
+    "frostwork",
+    "lava_lamp",
+    "living_stained_glass",
+    "moonlit_fog_banks",
+    "night_train_windows",
+    "physarum_network",
+    "pixel_chase",
+    "plant_glow",
+    "quasicrystal_bloom",
+    "rain_on_glass",
+    "reaction_diffusion_garden",
+    "snake",
+    "sparkle",
+    "spiral_single",
+    "tidal_bioluminescence",
+    "waterfall_veil",
+    "wave",
+    "wind_in_the_reeds",
+))
 PRESERVE_IDS = frozenset((
     "emoji",
     "emoji_arranger",
@@ -32,11 +62,38 @@ PRESERVE_IDS = frozenset((
     "world_flags",
 ))
 VIBE_ENABLED_IDS = frozenset((
+    "ascii_drop",
+    "aurora_curtains",
+    "cellular_tapestry",
     "clock",
     "clock_overlay",
+    "cloud_canyon",
+    "circadian_window",
+    "cyclic_reef",
+    "desert_wind",
+    "firefly_synchrony",
+    "flame_burst",
+    "flow_field_silk",
+    "fluid_tank",
+    "frostwork",
     "lava_lamp",
+    "living_stained_glass",
+    "moonlit_fog_banks",
+    "night_train_windows",
+    "physarum_network",
+    "pixel_chase",
+    "plant_glow",
+    "quasicrystal_bloom",
+    "rain_on_glass",
+    "reaction_diffusion_garden",
     "simple_test",
     "snake",
+    "sparkle",
+    "spiral_single",
+    "tidal_bioluminescence",
+    "waterfall_veil",
+    "wave",
+    "wind_in_the_reeds",
 ))
 
 
@@ -117,7 +174,7 @@ class Phase2DColorPolicyInventoryTests(unittest.TestCase):
         self.assertEqual(inventory["component_count"], len(self.plugin_ids) + 3)
         self.assertEqual(
             inventory["counts"],
-            {"grade": 39, "preserve": 12, "semantic": 3},
+            {"grade": 10, "preserve": 12, "semantic": 32},
         )
         identities = {
             (item["provider"], item["plugin_id"])
@@ -165,7 +222,7 @@ class Phase2DColorPolicyInventoryTests(unittest.TestCase):
 
     def test_classification_only_manifests_cannot_activate_vibe_behavior(self):
         classification_only = set(self.plugin_ids).difference(VIBE_ENABLED_IDS)
-        self.assertEqual(len(classification_only), 46)
+        self.assertEqual(len(classification_only), 19)
         for plugin_id in sorted(classification_only):
             with self.subTest(plugin=plugin_id):
                 vibe = self.loader.plugin_manifests[plugin_id]["vibe"]

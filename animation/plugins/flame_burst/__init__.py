@@ -8,8 +8,10 @@ pushes outward in hot gradients.
 
 import heapq
 import math
+from typing import Any, Dict
+
 import numpy as np
-from typing import Dict, Any
+
 from animation import AnimationBase
 
 
@@ -49,6 +51,36 @@ class FlameBurstAnimation(AnimationBase):
         self._plant_route_scale = 1.0
         self._plant_origin = None
         self._plant_geometry = None
+
+    def _write_flame_colors(
+        self,
+        intensity: np.ndarray,
+        saturation_boost: float,
+        value_boost: float,
+        out: np.ndarray,
+    ) -> None:
+        """Color the unchanged heat field with authored or semantic colors."""
+        context = self.presentation_context
+        if context is None or context.vibe_id == "neutral":
+            hue = (0.02 + 0.1 * intensity) % 1.0
+            saturation = np.minimum(
+                1.0, (0.75 + 0.25 * intensity) * saturation_boost
+            )
+            value = np.minimum(
+                1.0, (0.45 + 0.55 * intensity) * value_boost
+            )
+            self.hsv_to_rgb_array(hue, saturation, value, out=out)
+            return
+
+        roles = context.palette_roles
+        low = np.asarray(roles["background_low"], dtype=np.float32)
+        primary = np.asarray(roles["primary"], dtype=np.float32)
+        accent = np.asarray(roles["accent"], dtype=np.float32)
+        lower = np.minimum(intensity * 2.0, 1.0)
+        upper = np.maximum(intensity * 2.0 - 1.0, 0.0)
+        colors = low + (primary - low) * lower[:, None]
+        colors += (accent - primary) * upper[:, None]
+        out[:] = np.clip(colors, 0.0, 255.0)
 
     def _build_coord_arrays(self, strip_count, leds_per_strip, visible_leds, serpentine):
         """Pre-compute flat pixel coordinate arrays."""
@@ -281,16 +313,25 @@ class FlameBurstAnimation(AnimationBase):
             intensity[plant_masks.clearance_flat] *= 0.10
         np.clip(intensity, 0.0, 1.0, out=intensity)
 
-        hue = (0.02 + 0.1 * intensity) % 1.0
-        saturation = np.minimum(1.0, (0.75 + 0.25 * intensity) * saturation_boost)
-        value = np.minimum(1.0, (0.45 + 0.55 * intensity) * value_boost)
-
         result = self.next_frame_buffer(clear=False)
-        self.hsv_to_rgb_array(hue, saturation, value, out=result)
+        self._write_flame_colors(
+            intensity, saturation_boost, value_boost, result
+        )
         if plant_masks is not None:
             pulse = 0.35 + 0.65 * envelope
-            foliage = np.rint(np.asarray((24, 176, 52)) * pulse).astype(np.uint8)
-            globes = np.rint(np.asarray((255, 82, 18)) * pulse).astype(np.uint8)
+            context = self.presentation_context
+            if context is None or context.vibe_id == "neutral":
+                foliage_color = (24, 176, 52)
+                globe_color = (255, 82, 18)
+            else:
+                foliage_color = context.palette_roles["primary"]
+                globe_color = context.palette_roles["accent"]
+            foliage = np.rint(
+                np.asarray(foliage_color) * pulse
+            ).astype(np.uint8)
+            globes = np.rint(
+                np.asarray(globe_color) * pulse
+            ).astype(np.uint8)
             result[plant_masks.foliage_flat] = foliage
             result[plant_masks.globes_flat] = globes
         return self.apply_brightness_array(result, out=result)

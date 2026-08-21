@@ -1,1 +1,1 @@
-{"plugin_id":"tidal_bioluminescence","class":"TidalBioluminescenceAnimation","icon":"🪼","gallery":"show","vibe":{"color_policy":"grade","timing_adapter":"legacy_speed_param","capabilities":[]}}
+{"plugin_id":"tidal_bioluminescence","class":"TidalBioluminescenceAnimation","icon":"🪼","gallery":"show","vibe":{"color_policy":"semantic","timing_adapter":"legacy_speed_param","capabilities":["luminance","palette_roles"],"semantic_roles":["accent","background_low","primary"]}}

@@ -1342,9 +1342,9 @@ acceptance, and clean wall-deploy gate are complete. Phase 3A portable
 implementation and integrated repository gates are complete; clean degraded
 deployment and readable-receiver physical canaries have passed, while strict
 all-four status remains blocked by the SPI1 return-path fault. Phase 2D's
-explicit color-policy
-inventory is complete across the unified 53-component selectable catalog, while
-semantic palette migration and visual product work remain open. Phase 3B0's
+semantic-palette migration and provider/role product rollout are implementation
+complete across the unified 54-component generated inventory; the integrated
+repository gate is green and only the clean wall-deploy gate remains. Phase 3B0's
 contract, portable runtime, fake wall, batch/ack payload, product lifecycle,
 strict readable-receiver runner, and explicitly degraded showcase runner are
 complete and both deterministic payload gates are green. Strict readable-0/1
@@ -1952,25 +1952,71 @@ an obvious everyday product benefit while the receiver return path is awaiting
 repair. This host/product lane depends only on Phase 2C and may run in parallel
 with portable Phases 3B and 3D.
 
-Implementation status (2026-08-13): **explicit color-policy inventory complete;
-semantic migration and visual product rollout remain open and are authorized
-under the temporary SPI1 return-path constraint**. Phase 2A proved the contract
-with four pilots and Phase 2C shipped the global vibe control and scene editor.
-Every selectable component now exposes an explicit policy without silently
-enabling any presentation behavior. This phase still needs to expand the visible
-benefit deliberately rather than treating the pilot mappings or classifications
-as the finished palette product.
+Implementation status (2026-08-21): **semantic-palette and provider/role product
+implementation plus the integrated repository gate are complete; the clean
+wall-deploy gate remains**. Phase 2A proved the contract with four pilots and Phase 2C
+shipped the global vibe control and scene editor. Phase 2D migrated 29 additional
+Python renderers to direct semantic-role consumption, retired the remaining
+legacy palette mappings, added reproducible visual evidence, and made provider,
+role, compatibility, and preview provenance visible without enabling unsupported
+receiver-native execution.
 
-- [x] All 51 shipped Python packages declare `semantic`, `grade`, or `preserve`;
-  Painter and the compiled receiver-static component make the unified generated
-  inventory 53 components: 39 grade, 12 preserve, and 2 semantic.
-- [x] The 46 newly classified packages retain zero vibe capabilities, mappings,
-  or semantic roles. A 32 x 138 render-parity gate proves neutral versus vivid is
-  byte-exact and leaves authored parameters unchanged until migration explicitly
-  opts a component in.
-- [ ] Convert palette-capable procedural families, review neutral/non-neutral
-  visuals and curated presets, produce contact-sheet evidence, and finish the
-  provider/role product presentation described below.
+- [x] All 51 shipped Python packages declare `semantic`, `grade`, or `preserve`.
+  The repository-native pilot, catalog-only Painter peer, and separately supplied
+  compiled receiver builtin make the generated inventory 54 components: 10
+  grade, 12 preserve, and 32 semantic. The default-off dashboard correctly shows
+  53 because the compiled receiver builtin remains feature-gated.
+- [x] The 19 classification-only packages retain zero vibe capabilities,
+  mappings, or semantic roles. A 32 x 138 render-parity gate proves neutral
+  versus vivid is byte-exact and leaves authored parameters unchanged until a
+  migration explicitly opts a component in.
+- [x] Palette-capable procedural families consume direct semantic roles; the
+  last Lava Lamp and Clock-family legacy mappings are removed; neutral and
+  non-neutral visuals, curated presets, contact-sheet evidence, and the
+  provider/role product presentation pass focused acceptance.
+
+The remaining ten grade components are intentional compatibility boundaries,
+not forgotten palette tables:
+
+| Components | Why direct role replacement is not honest |
+| --- | --- |
+| `fireworks`, `rainbow` | Full-spectrum hue selection is the authored event/content identity. |
+| `conway_life`, `living_ecosystem` | Color carries inherited lineage, age, terrain, species, and simulation state. |
+| `canopy_cup`, `maze_chase`, `pinball`, `pixel_quest`, `tetris` | Stable character, team, board, biome, score, and game-state colors are gameplay-readable authored content. |
+| `christmas_tree` | Red/green/gold tree, ornament, gift, and seasonal iconography is the preset identity. |
+
+Portable product evidence on 2026-08-21 (development Mac, not Pi/ESP32 timing
+evidence):
+
+- Thirty-one Python components now consume semantic palette roles directly;
+  every migrated lane pins its pre-migration neutral frame sequence, proves all
+  declared roles change output, and holds logical state, RNG, event history,
+  cadence, authored parameters, and preset identity constant across vibes.
+- Every curated preset in each migrated family validates and renders under all
+  five canonical vibes. Default and stress 32 x 138 gates enforce 4 ms p95; the
+  slowest accepted migrated path in the focused lanes was Snake stress at 3.345
+  ms p95.
+- [`phase2d-semantic-vibe-contact-sheet.png`](phase2d-semantic-vibe-contact-sheet.png)
+  is a deterministic 746 x 1836, 20-tile comparison of atmosphere, living, math,
+  and the feature-gated compiled-rainbow-plus-clock hybrid under every canonical
+  vibe. It is labeled host simulation, not receiver framebuffer readback, and
+  regenerates byte-for-byte at SHA-256
+  `6d0800196e93e63c5b746fa0884d2f7e3be776e576b4dee6b0f77d42c5bcbd92`.
+- The rendered dashboard exposes one responsive provider-qualified catalog,
+  provider/role/availability badges, explicit host-preview provenance, and
+  degraded receiver agreement/telemetry details. Duplicate cross-provider IDs
+  withhold ID-only decorations and return HTTP 409; the repository-native pilot
+  has no scene option or execution action.
+- The integrated `just test` gate passes 1,383 Python tests plus 2,710 subtests,
+  23 rendering/contract tests plus 3 subtests, all 94 native firmware tests,
+  both pinned ESP32-S3 firmware builds, and 185 deployment tests plus 100
+  subtests. The dedicated Phase 2D/UI set passes 81 tests plus 931 subtests.
+  Independent review repeats the combined product and legacy surface at 99
+  tests and the adjacent preset/vibe/scene/native-preview surface at 154 tests.
+- Conway retains framework grade because RGB lineage is simulation state, but
+  its exact-output vectorized occupancy/render cache removes the prior timing
+  outlier: twelve independent canonical stress runs measured 3.094--3.445 ms
+  p95, while frozen frames, final state, and RNG state remained byte-exact.
 
 - Classify every shipped component as `semantic`, `grade`, or `preserve` color
   policy and make the policy visible in its descriptor. Preserve-color assets,
@@ -3672,9 +3718,9 @@ foregrounds, or general artifact-provider abstractions.
 
 Broaden the system after the vertical slice is production-accepted.
 
-- Remove remaining temporary vibe bridges only when Phase 2D evidence and
-  ordinary use show their procedural families retain preset intent; palette
-  migration itself is no longer delayed until this phase.
+- Keep the Phase 2D zero-bridge invariant. Future palette work must consume
+  direct semantic roles with neutral/preset evidence; do not reintroduce
+  parameter-mapping bridges as a shortcut.
 - Add two or three analytic native backgrounds with materially different work
   profiles and geometry use.
 - Add another sparse overlay only if the aggregate foreground contract supports

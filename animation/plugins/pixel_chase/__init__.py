@@ -148,7 +148,10 @@ class PixelChaseAnimation(AnimationBase):
             != new_context.installation_profile_identity
         ):
             self._rebuild_path()
-            self._clear_path_presentation()
+        # Color-only vibe switches must redraw the current source-rate step.
+        # These buffers are presentation caches; traversal phase is elapsed-time
+        # derived and remains unchanged.
+        self._clear_path_presentation()
 
     def _clear_path_presentation(self) -> None:
         for frame in self._frame_buffers:
@@ -164,21 +167,43 @@ class PixelChaseAnimation(AnimationBase):
 
     def _pixel_color(self, path_index: int, head_index: int, step: int, rate: float):
         prefix = ""
+        semantic_role = "primary"
         if self.plant_aware_enabled():
             kind = int(self._path_kind[path_index])
             if kind == self._FOLIAGE:
                 prefix = "plant_foliage_"
+                semantic_role = "secondary"
             elif kind == self._GLOBE:
                 prefix = "plant_globe_"
+                semantic_role = "accent"
         brightness = min(1.0, max(0.0, float(self.params.get("brightness", 1.0))))
+        context = self.presentation_context
+        semantic = context is not None and context.vibe_id != "neutral"
         if str(self.params.get("color_mode", "fixed")) == "rainbow" and not prefix:
             count = self._resolved_pixel_count()
             cycle_speed = min(
                 4.0, max(0.0, float(self.params.get("color_cycle_speed", 0.2)))
             )
             hue = ((step / rate) * cycle_speed + head_index / count) % 1.0
+            if semantic:
+                anchors = tuple(
+                    np.asarray(context.palette_roles[role], dtype=np.float32)
+                    for role in ("primary", "secondary", "accent", "primary")
+                )
+                position = hue * 3.0
+                segment = min(2, int(position))
+                amount = position - segment
+                rgb = anchors[segment] + (
+                    anchors[segment + 1] - anchors[segment]
+                ) * amount
+                return tuple(int(channel * brightness) for channel in rgb)
             rgb = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
             return tuple(int(channel * 255.0 * brightness) for channel in rgb)
+        if semantic:
+            return tuple(
+                int(channel * brightness)
+                for channel in context.palette_roles[semantic_role]
+            )
         return tuple(
             int(max(0, min(255, int(self.params.get(f"{prefix}{channel}", 255)))) * brightness)
             for channel in ("red", "green", "blue")
@@ -221,6 +246,13 @@ class PixelChaseAnimation(AnimationBase):
         count = self._resolved_pixel_count()
         style, tail_length = self._resolved_tail()
         offsets = (np.arange(count, dtype=np.int64) * self._path.size) // count
+        color_by_kind = {}
+        for kind in np.unique(self._path_kind):
+            representative = int(np.flatnonzero(self._path_kind == kind)[0])
+            color_by_kind[int(kind)] = tuple(
+                self._pixel_color(representative, head_index, step, rate)
+                for head_index in range(count)
+            )
         painted = []
         heads = []
         # Paint oldest tail pixels first so every head remains full intensity.
@@ -233,7 +265,7 @@ class PixelChaseAnimation(AnimationBase):
             for head_index, offset in enumerate(offsets):
                 path_index = int((step + int(offset) - depth) % self._path.size)
                 pixel = int(self._path[path_index])
-                color = self._pixel_color(path_index, head_index, step, rate)
+                color = color_by_kind[int(self._path_kind[path_index])][head_index]
                 if intensity < 1.0:
                     color = tuple(int(channel * intensity) for channel in color)
                 frame[pixel] = color

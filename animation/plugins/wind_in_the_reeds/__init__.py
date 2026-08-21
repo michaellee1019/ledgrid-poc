@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from animation.libraries.atmospheric_palette import (
+    resolve_atmospheric_palette,
+    semantic_atmospheric_palette_active,
+)
 from animation.libraries.procedural_living import ProceduralLivingBase
 
 
@@ -127,6 +131,14 @@ class WindInTheReedsAnimation(ProceduralLivingBase):
             py = np.clip(self.pollen_y.astype(int), 0, self.height - 1)
             canvas[py, px] = np.maximum(canvas[py, px], (np.asarray(light) * .55).astype(np.uint8))
         return self._finish_canvas(canvas)
+
+    def _palette(self):
+        return resolve_atmospheric_palette(self, super()._palette())
+
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        super().on_presentation_context_changed(old_context, new_context)
+        if semantic_atmospheric_palette_active(self):
+            self._last_render_elapsed = None
 
     def logical_state(self):
         return (round(self.gust_phase, 6), self.bend.tobytes(), self.pollen_x.tobytes(), self.pollen_y.tobytes(), self.pollen_life.tobytes())

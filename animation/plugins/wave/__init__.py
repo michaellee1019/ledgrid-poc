@@ -119,8 +119,19 @@ class WaveAnimation(AnimationBase):
     def _accent_plant_cores(self, frame: np.ndarray, brightness: float) -> None:
         """Replace clipped crests with subdued, distinct plant landmarks."""
         intensity = min(1.0, max(0.0, float(brightness)))
-        foliage = np.rint(np.asarray((20, 126, 48)) * intensity).astype(np.uint8)
-        globe = np.rint(np.asarray((180, 42, 158)) * intensity).astype(np.uint8)
+        context = self.presentation_context
+        if context is None or context.vibe_id == "neutral":
+            foliage_color = (20, 126, 48)
+            globe_color = (180, 42, 158)
+        else:
+            foliage_color = context.palette_roles["primary"]
+            globe_color = context.palette_roles["accent"]
+        foliage = np.rint(
+            np.asarray(foliage_color) * intensity
+        ).astype(np.uint8)
+        globe = np.rint(
+            np.asarray(globe_color) * intensity
+        ).astype(np.uint8)
         frame[self._plant_foliage] = foliage
         frame[self._plant_globes] = globe
 
@@ -129,6 +140,10 @@ class WaveAnimation(AnimationBase):
         return normalized_axis_positions(width, height, axis)
 
     def _color(self, prefix: str) -> np.ndarray:
+        context = self.presentation_context
+        if context is not None and context.vibe_id != "neutral":
+            role = "primary" if prefix == "wave" else "background_low"
+            return np.asarray(context.palette_roles[role], dtype=np.float32)
         defaults = (0, 255, 255) if prefix == "wave" else (0, 0, 12)
         return np.asarray([
             max(0, min(255, int(self.params.get(f"{prefix}_{channel}", default))))

@@ -303,7 +303,9 @@ Changing it does not mutate authored parameters or dirty preset identity.
 Every shipped plugin declares a `semantic`, `grade`, or `preserve` color policy
 in its strict `vibe` manifest object. Capabilities remain the opt-in boundary for
 actual palette, tempo, or luminance behavior, so a classification-only manifest
-with `"capabilities": []` is an exact presentation no-op. For example:
+with `"capabilities": []` is an exact presentation no-op. The compatibility
+schema still accepts the following legacy shape, although no shipped plugin now
+uses a palette mapping:
 
 ```json
 {
@@ -330,6 +332,25 @@ their source colors. Framework luminance is applied once after plant optics.
 Legacy parameter mappings are ephemeral render inputs and may target only
 declared schema parameters; they never rewrite an authored preset. `neutral`
 must not declare a mapping and remains byte-compatible.
+
+The Phase 2D inventory contains 51 Python packages: 31 direct semantic
+renderers, 10 intentional framework-grade compatibility components, and 10
+preserve components. With the semantic repository-native pilot plus the
+preserve Painter and compiled-receiver peers, the generated inventory is 54
+components: 32 semantic, 10 grade, and 12 preserve. No palette legacy mappings
+remain. The grade holdouts retain authored full-spectrum, lineage, seasonal, or
+game-state colors whose replacement with a small global role set would make
+their controls and presets dishonest. They claim no vibe capability and remain
+presentation no-ops until a future renderer-specific semantic design is proven.
+
+The dashboard presents these descriptors in one provider-qualified catalog.
+Provider, role, scene compatibility, and preview provenance are separate facts:
+a receiver-native source may be visible as **Catalog / build only** without
+becoming scene-selectable. Host-build previews are explicitly labeled as host
+simulation rather than current wall output or receiver framebuffer readback.
+ID-only preset/preview decoration fails closed when two providers declare the
+same plugin ID. The reproducible 32 x 138 comparison is checked in as
+[`phase2d-semantic-vibe-contact-sheet.png`](phase2d-semantic-vibe-contact-sheet.png).
 
 Timing is explicit. `legacy_speed_param` receives unscaled elapsed time and an
 effective `speed`; `scaled_context` receives continuously scaled elapsed time

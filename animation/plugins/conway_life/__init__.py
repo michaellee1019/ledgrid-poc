@@ -13,7 +13,6 @@ from animation.libraries.mask_effects import dilate_8
 from animation.libraries.palette_field import AnimatedPaletteField
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
-
 Color = Tuple[int, int, int]
 
 
@@ -546,13 +545,145 @@ class ConwayLifeAnimation(AnimationBase):
                 self._background_cache = frame.copy()
         if self._plant_effects_enabled():
             self._render_plant_habitat(frame)
-        for x, y in self._render_cells:
-            color = self._cell_color(x, y)
-            if color:
-                self._set_pixel(frame, x, y, color)
+        if not self._render_cells_vectorized(frame):
+            for x, y in self._render_cells:
+                color = self._cell_color(x, y)
+                if color:
+                    self._set_pixel(frame, x, y, color)
 
         self._last_frame = frame
         return self.rendered_frame(frame)
+
+    def _render_cells_vectorized(self, frame: np.ndarray) -> bool:
+        """Render normal lineage state in bulk, retaining scalar truncation."""
+        if not self._render_cells:
+            return True
+
+        coordinates = self._render_coordinates
+        x = coordinates[:, 0]
+        y = coordinates[:, 1]
+        current_grid = self._render_current_grid
+        next_grid = self._render_next_grid
+        neighbor_grid = self._render_neighbor_grid
+        age_now = current_grid[y, x]
+        age_next = next_grid[y, x]
+        alive_now = age_now > 0
+        alive_next = age_next > 0
+
+        if not self._render_lineage_complete:
+            # Hand-authored/debug grids may omit lineage RGB. The scalar path
+            # intentionally creates those missing colors from the RNG stream.
+            return False
+
+        natural_now = self._render_natural_now
+        natural_next = self._render_natural_next
+        palette_now = self._palette_colors_vectorized(x, y, age_now, natural_now)
+        palette_next = self._palette_colors_vectorized(
+            x, y, age_next, natural_next
+        )
+        intensity = 0.65 + (neighbor_grid[y, x].astype(np.float64) / 8.0) * 0.55
+        np.clip(intensity, 0.4, 1.3, out=intensity)
+        colors = np.zeros((coordinates.shape[0], 3), dtype=np.int64)
+        active = np.zeros(coordinates.shape[0], dtype=bool)
+        phase_frames = max(1, int(self.params.get("phase_frames", 10) or 10))
+        phase_ratio = (
+            0.0
+            if phase_frames <= 1
+            else self.phase_frame / (phase_frames - 1)
+        )
+        die = np.asarray((255, 40, 20), dtype=np.int64)
+
+        if self.phase == "color":
+            active = alive_now
+            dying = alive_now & ~alive_next
+            stable = alive_now & alive_next
+            if np.any(dying):
+                blended = (
+                    palette_now[dying] * (1.0 - phase_ratio)
+                    + die * phase_ratio
+                ).astype(np.int64)
+                colors[dying] = (
+                    blended * intensity[dying, None]
+                ).astype(np.int64)
+            if np.any(stable):
+                shimmer_phase = (
+                    self.generation * phase_frames + self.phase_frame
+                ) / max(1.0, phase_frames)
+                shimmer = 0.92 + 0.08 * math.sin(shimmer_phase * math.tau)
+                colors[stable] = (
+                    palette_now[stable] * intensity[stable, None] * shimmer
+                ).astype(np.int64)
+        else:
+            stable = alive_now & alive_next
+            dying = alive_now & ~alive_next
+            born = ~alive_now & alive_next
+            active = stable | dying | born
+            if np.any(stable):
+                colors[stable] = (
+                    palette_now[stable] * intensity[stable, None]
+                ).astype(np.int64)
+            fade = 1.0 - phase_ratio
+            if np.any(dying):
+                colors[dying] = (
+                    die * intensity[dying, None] * fade
+                ).astype(np.int64)
+            if np.any(born):
+                spawn = np.asarray((0, 255, 0), dtype=np.int64)
+                blended = (
+                    spawn * (1.0 - phase_ratio)
+                    + palette_next[born] * phase_ratio
+                ).astype(np.int64)
+                colors[born] = (
+                    blended * intensity[born, None] * phase_ratio
+                ).astype(np.int64)
+
+        np.clip(colors, 0, 255, out=colors)
+        brightness = float(self.params.get("brightness", 1.0))
+        colors = (colors * brightness).astype(np.uint8)
+        physical = x * self.leds_per_strip + (self.leds_per_strip - 1 - y)
+        frame[physical[active]] = colors[active]
+        return True
+
+    def _palette_colors_vectorized(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        age: np.ndarray,
+        natural: np.ndarray,
+    ) -> np.ndarray:
+        strength = max(
+            0.0,
+            min(
+                1.0,
+                float(self.params.get("evolution_color_strength", 0.85) or 0.0),
+            ),
+        )
+        progress = np.minimum(1.0, np.maximum(0, age.astype(np.int16) - 1) / 19.0)
+        progress *= strength
+        palette = str(self.params.get("palette", "natural"))
+        if palette == "natural":
+            young = natural
+            mature = np.asarray((255, 232, 138), dtype=np.int64)
+            ratio = progress
+        else:
+            endpoints = self.PALETTE_ENDPOINTS.get(
+                palette, self.PALETTE_ENDPOINTS["aurora"]
+            )
+            young = np.broadcast_to(
+                np.asarray(endpoints[0], dtype=np.int64), natural.shape
+            )
+            mature = np.asarray(endpoints[1], dtype=np.int64)
+            hue_offset = (
+                np.remainder(
+                    x * 0.037 + y * 0.021 + self.generation * 0.008,
+                    1.0,
+                )
+                * (1.0 - strength)
+            )
+            ratio = np.minimum(1.0, progress + hue_offset * 0.25)
+        return (
+            young * (1.0 - ratio[:, None]) + mature * ratio[:, None]
+        ).astype(np.int64)
 
     def _initialize_grid(
         self,
@@ -681,6 +812,18 @@ class ConwayLifeAnimation(AnimationBase):
 
     def _compute_next_state(self):
         wrap = bool(self.params.get("wrap_edges", True)) and self._tile_ids is None
+        obstacle_enabled = self._obstacle_enabled()
+        habitat_enabled = self._habitat_enabled() and bool(
+            self.params.get("plant_nursery", True)
+        )
+        if self._tile_ids is None and not self._hazard_enabled():
+            self._compute_vectorized_next_state(
+                wrap,
+                obstacle_enabled=obstacle_enabled,
+                habitat_enabled=habitat_enabled,
+            )
+            return
+
         self.next_grid = [[0 for _ in range(self.width)] for _ in range(self.height)]
         self.next_natural_grid = [[None for _ in range(self.width)] for _ in range(self.height)]
         self.neighbor_counts = [[0 for _ in range(self.width)] for _ in range(self.height)]
@@ -785,6 +928,242 @@ class ConwayLifeAnimation(AnimationBase):
         self._render_cells = render_cells
         self._next_plant_hazard_deaths = hazard_deaths
         self._next_state_fingerprint = (next_fingerprint, next_population)
+        self._refresh_vector_render_cache()
+
+    def _compute_vectorized_next_state(
+        self,
+        wrap: bool,
+        *,
+        obstacle_enabled: bool,
+        habitat_enabled: bool,
+    ) -> None:
+        """Vectorize B3/S23 occupancy while preserving lineage ordering."""
+        current = np.asarray(self.grid, dtype=np.uint8)
+        alive = current > 0
+        counts = np.zeros((self.height, self.width), dtype=np.uint8)
+        if wrap:
+            for dy, dx in (
+                (-1, -1), (-1, 0), (-1, 1),
+                (0, -1), (0, 1),
+                (1, -1), (1, 0), (1, 1),
+            ):
+                counts += np.roll(alive, (dy, dx), axis=(0, 1))
+        else:
+            padded = np.pad(alive, 1, mode="constant", constant_values=False)
+            for dy, dx in (
+                (-1, -1), (-1, 0), (-1, 1),
+                (0, -1), (0, 1),
+                (1, -1), (1, 0), (1, 1),
+            ):
+                counts += padded[
+                    1 + dy : 1 + dy + self.height,
+                    1 + dx : 1 + dx + self.width,
+                ]
+
+        blocked = (
+            self._plant_blocked
+            if obstacle_enabled
+            else np.zeros_like(alive)
+        )
+        if obstacle_enabled:
+            counts[blocked] = 0
+        survives = alive & ~blocked & ((counts == 2) | (counts == 3))
+        nursery_births = (
+            ~alive & ~blocked & self._plant_fertile & (counts == 2)
+            if habitat_enabled
+            else np.zeros_like(alive)
+        )
+        births = ~alive & ~blocked & ((counts == 3) | nursery_births)
+        next_alive = survives | births
+        next_values = np.zeros_like(current)
+        next_values[survives] = np.minimum(current[survives] + 1, 20)
+        next_values[births] = 1
+
+        next_natural: List[List[Optional[Color]]] = [
+            [None for _ in range(self.width)] for _ in range(self.height)
+        ]
+        natural_source = np.zeros(
+            (self.height, self.width, 3), dtype=np.int32
+        )
+        natural_valid = np.zeros_like(alive)
+        for y_value, x_value in np.argwhere(alive):
+            y = int(y_value)
+            x = int(x_value)
+            color = self.natural_grid[y][x]
+            if color is not None:
+                natural_source[y, x] = color
+                natural_valid[y, x] = True
+            if survives[y, x]:
+                next_natural[y][x] = color
+
+        next_natural_source = np.zeros_like(natural_source)
+        next_natural_source[survives] = natural_source[survives]
+        next_natural_valid = survives & natural_valid
+
+        colored_alive = alive & natural_valid
+        neighbor_color_count = np.zeros_like(counts)
+        neighbor_color_sum = np.zeros_like(natural_source)
+        if wrap:
+            for dy, dx in (
+                (-1, -1), (-1, 0), (-1, 1),
+                (0, -1), (0, 1),
+                (1, -1), (1, 0), (1, 1),
+            ):
+                neighbor_color_count += np.roll(
+                    colored_alive, (dy, dx), axis=(0, 1)
+                )
+                neighbor_color_sum += np.roll(
+                    natural_source, (dy, dx), axis=(0, 1)
+                )
+        else:
+            padded_valid = np.pad(
+                colored_alive, 1, mode="constant", constant_values=False
+            )
+            padded_color = np.pad(
+                natural_source,
+                ((1, 1), (1, 1), (0, 0)),
+                mode="constant",
+                constant_values=0,
+            )
+            for dy, dx in (
+                (-1, -1), (-1, 0), (-1, 1),
+                (0, -1), (0, 1),
+                (1, -1), (1, 0), (1, 1),
+            ):
+                neighbor_color_count += padded_valid[
+                    1 + dy : 1 + dy + self.height,
+                    1 + dx : 1 + dx + self.width,
+                ]
+                neighbor_color_sum += padded_color[
+                    1 + dy : 1 + dy + self.height,
+                    1 + dx : 1 + dx + self.width,
+                ]
+        for y_value, x_value in np.argwhere(births):
+            y = int(y_value)
+            x = int(x_value)
+            if nursery_births[y, x]:
+                next_natural[y][x] = (255, 176, 48)
+            else:
+                color_count = int(neighbor_color_count[y, x])
+                if color_count <= 0:
+                    next_natural[y][x] = self._random_natural_color()
+                else:
+                    color_sum = neighbor_color_sum[y, x]
+                    next_natural[y][x] = (
+                        int(color_sum[0] / color_count),
+                        int(color_sum[1] / color_count),
+                        int(color_sum[2] / color_count),
+                    )
+            if next_natural[y][x] is not None:
+                next_natural_source[y, x] = next_natural[y][x]
+                next_natural_valid[y, x] = True
+
+        next_fingerprint = 14695981039346656037
+        flat_population = np.flatnonzero(next_alive)
+        for flat_index in flat_population:
+            next_fingerprint ^= int(flat_index) + 1
+            next_fingerprint = (
+                next_fingerprint * 1099511628211
+            ) & 0xFFFFFFFFFFFFFFFF
+
+        self.next_grid = next_values.tolist()
+        self.next_natural_grid = next_natural
+        self.neighbor_counts = counts.tolist()
+        self.births_last_generation = int(np.count_nonzero(births))
+        self.deaths_last_generation = int(np.count_nonzero(alive & ~next_alive))
+        self._render_cells = [
+            (int(x), int(y)) for y, x in np.argwhere(alive | next_alive)
+        ]
+        self._next_plant_hazard_deaths = 0
+        self._next_state_fingerprint = (
+            next_fingerprint,
+            int(flat_population.size),
+        )
+        self._refresh_vector_render_cache(
+            current_grid=current,
+            next_grid=next_values,
+            neighbor_grid=counts,
+            natural_now=natural_source,
+            natural_next=next_natural_source,
+            lineage_complete=(
+                bool(np.all(natural_valid[alive]))
+                and bool(np.all(next_natural_valid[next_alive]))
+            ),
+        )
+
+    def _refresh_vector_render_cache(
+        self,
+        *,
+        current_grid: Optional[np.ndarray] = None,
+        next_grid: Optional[np.ndarray] = None,
+        neighbor_grid: Optional[np.ndarray] = None,
+        natural_now: Optional[np.ndarray] = None,
+        natural_next: Optional[np.ndarray] = None,
+        lineage_complete: Optional[bool] = None,
+    ) -> None:
+        coordinates = np.asarray(self._render_cells, dtype=np.intp)
+        if coordinates.size == 0:
+            coordinates = np.empty((0, 2), dtype=np.intp)
+        self._render_coordinates = coordinates
+        self._render_current_grid = (
+            current_grid
+            if current_grid is not None
+            else np.asarray(self.grid, dtype=np.uint8)
+        )
+        self._render_next_grid = (
+            next_grid
+            if next_grid is not None
+            else np.asarray(self.next_grid, dtype=np.uint8)
+        )
+        self._render_neighbor_grid = (
+            neighbor_grid
+            if neighbor_grid is not None
+            else np.asarray(self.neighbor_counts, dtype=np.uint8)
+        )
+        if natural_now is not None and natural_next is not None:
+            y = coordinates[:, 1]
+            x = coordinates[:, 0]
+            self._render_lineage_complete = bool(lineage_complete)
+            self._render_natural_now = natural_now[y, x].astype(
+                np.int64, copy=False
+            )
+            self._render_natural_next = natural_next[y, x].astype(
+                np.int64, copy=False
+            )
+            return
+        natural_now_values = [
+            self.natural_grid[y][x] for x, y in self._render_cells
+        ]
+        natural_next_values = [
+            self.next_natural_grid[y][x] for x, y in self._render_cells
+        ]
+        age_now = self._render_current_grid[
+            coordinates[:, 1], coordinates[:, 0]
+        ]
+        age_next = self._render_next_grid[
+            coordinates[:, 1], coordinates[:, 0]
+        ]
+        self._render_lineage_complete = not any(
+            value is None
+            for value, required in zip(natural_now_values, age_now > 0)
+            if required
+        ) and not any(
+            value is None
+            for value, required in zip(natural_next_values, age_next > 0)
+            if required
+        )
+        if self._render_lineage_complete:
+            self._render_natural_now = np.asarray(
+                [value or (0, 0, 0) for value in natural_now_values],
+                dtype=np.int64,
+            )
+            self._render_natural_next = np.asarray(
+                [value or (0, 0, 0) for value in natural_next_values],
+                dtype=np.int64,
+            )
+        else:
+            self._render_natural_now = np.empty((0, 3), dtype=np.int64)
+            self._render_natural_next = np.empty((0, 3), dtype=np.int64)
 
     def _fingerprint_grid(self) -> Tuple[int, int]:
         """Return a compact fingerprint of logical occupancy, excluding visual age/color."""

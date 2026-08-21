@@ -7,7 +7,10 @@ from typing import Any, Dict, Mapping, Optional
 import numpy as np
 
 from animation import AnimationBase
-
+from animation.libraries.atmospheric_palette import (
+    resolve_atmospheric_palette,
+    semantic_atmospheric_palette_active,
+)
 
 MOOD_PALETTES: Mapping[str, Mapping[str, tuple[float, float, float]]] = {
     "moonlit": {"low": (1, 5, 14), "mid": (8, 38, 64), "high": (76, 178, 205)},
@@ -97,6 +100,12 @@ class ProceduralAtmosphereBase(AnimationBase):
             self._reset_seeded_state()
         self._last_source_tick = None
 
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Refresh only presentation pixels when the semantic palette changes."""
+        super().on_presentation_context_changed(old_context, new_context)
+        if semantic_atmospheric_palette_active(self):
+            self._last_source_tick = None
+
     def generate_frame(self, time_elapsed: float, frame_count: int):
         fps = float(np.clip(self.params.get("source_fps", 30.0), 20.0, 40.0))
         tick = int(max(0.0, float(time_elapsed)) * fps + 1.0e-7)
@@ -123,7 +132,11 @@ class ProceduralAtmosphereBase(AnimationBase):
     def _palette(self):
         palette = MOOD_PALETTES.get(str(self.params.get("mood", self.DEFAULT_MOOD)),
                                     MOOD_PALETTES[self.DEFAULT_MOOD])
-        return tuple(np.asarray(palette[key], dtype=np.float32) for key in ("low", "mid", "high"))
+        authored = tuple(
+            np.asarray(palette[key], dtype=np.float32)
+            for key in ("low", "mid", "high")
+        )
+        return resolve_atmospheric_palette(self, authored)
 
     def _paint(self, field: np.ndarray, accent: Optional[np.ndarray] = None) -> None:
         low, mid, high = self._palette()

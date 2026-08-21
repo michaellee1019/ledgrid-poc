@@ -3,12 +3,12 @@
 Single pixel spiral animation.
 """
 
-from typing import List, Tuple, Dict, Any
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
 from animation import AnimationBase
-from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 
 class SpiralSingleAnimation(AnimationBase):
@@ -59,6 +59,11 @@ class SpiralSingleAnimation(AnimationBase):
         schema.pop('speed', None)
         return schema
 
+    def on_presentation_context_changed(self, _old_context, _new_context) -> None:
+        """Invalidate only the presentation cache; the route tick is semantic."""
+        self._last_step_number = None
+        self._last_frame = None
+
     def generate_frame(self, time_elapsed: float, frame_count: int) -> np.ndarray:
         if self.total_pixels <= 0:
             return np.empty((0, 3), dtype=np.uint8)
@@ -82,7 +87,13 @@ class SpiralSingleAnimation(AnimationBase):
         self.step_index = step_number % len(route)
         idx = route[self.step_index]
         semantic = semantics[self.step_index] if semantics else 0
-        if semantic == 2:
+        context = self.presentation_context
+        if context is not None and context.vibe_id != "neutral":
+            role = "accent" if semantic == 2 else (
+                "secondary" if semantic == 1 else "primary"
+            )
+            color = context.palette_roles[role]
+        elif semantic == 2:
             color = (255, 80, 220)  # Rooting globe boundary.
         elif semantic == 1:
             color = (48, 255, 80)  # Foliage boundary.

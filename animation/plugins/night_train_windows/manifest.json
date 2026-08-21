@@ -1,1 +1,1 @@
-{"plugin_id":"night_train_windows","class":"NightTrainWindowsAnimation","icon":"🚆","gallery":"show","vibe":{"color_policy":"grade","timing_adapter":"legacy_speed_param","capabilities":[]}}
+{"plugin_id":"night_train_windows","class":"NightTrainWindowsAnimation","icon":"🚆","gallery":"show","vibe":{"color_policy":"semantic","timing_adapter":"legacy_speed_param","capabilities":["luminance","palette_roles"],"semantic_roles":["background_low","primary","accent"]}}

@@ -115,6 +115,25 @@ class FluidTankAnimation(AnimationBase):
             self._plant_geometry_identity = None
             self._water_grid_cache_time = -1.0
 
+    def on_presentation_context_changed(self, _old_context, _new_context) -> None:
+        """Discard color-bearing caches without advancing the water simulation."""
+        self._water_grid_cache_time = -1.0
+
+    def _presentation_color(
+        self,
+        role: str,
+        authored,
+        *,
+        semantic_scale: float = 1.0,
+    ) -> np.ndarray:
+        context = self.presentation_context
+        if context is None or context.vibe_id == "neutral":
+            return np.asarray(authored)
+        return (
+            np.asarray(context.palette_roles[role], dtype=np.float32)
+            * np.float32(semantic_scale)
+        )
+
     @property
     def capacity_cells(self) -> float:
         return float(self.width * self.height)
@@ -194,19 +213,22 @@ class FluidTankAnimation(AnimationBase):
         self.last_time = time_elapsed
         # Gravity, pressure and water transport use real elapsed time. The
         # manager's global animation speed scale must not slow physical water.
-        dt = max(0.001, dt_real)
+        # A presentation-only redraw can legitimately repeat the same elapsed
+        # timestamp. It must not sneak a millisecond into water physics.
+        dt = max(0.0, dt_real)
 
-        self._maybe_auto_hole(time_elapsed)
-        if not self.holes and not self.awaiting_cycle_reset:
-            self._queue_inflow(dt_real)
-        self._drain_holes(dt, time_elapsed)
-        self._update_surface(dt)
-        self._update_inlet_particles(dt, time_elapsed)
-        self._update_bubbles(dt, time_elapsed)
-        self._update_spray(dt)
-        self._update_patch_flashes(dt)
-        self.hole_cooldown_timer = max(0.0, self.hole_cooldown_timer - dt)
-        self._maybe_reset_cycle(time_elapsed)
+        if dt_real > 0.0:
+            self._maybe_auto_hole(time_elapsed)
+            if not self.holes and not self.awaiting_cycle_reset:
+                self._queue_inflow(dt_real)
+            self._drain_holes(dt, time_elapsed)
+            self._update_surface(dt)
+            self._update_inlet_particles(dt, time_elapsed)
+            self._update_bubbles(dt, time_elapsed)
+            self._update_spray(dt)
+            self._update_patch_flashes(dt)
+            self.hole_cooldown_timer = max(0.0, self.hole_cooldown_timer - dt)
+            self._maybe_reset_cycle(time_elapsed)
 
         coverage, surface_y = self._coverage_and_surface()
         self.water = (coverage >= 0.5).astype(np.int8)
@@ -600,7 +622,9 @@ class FluidTankAnimation(AnimationBase):
             grid[core] *= 0.28
             upper_rim = rim * np.clip(0.75 - dy / max(0.3, bubble['radius']), 0.15, 1.0)
             t = upper_rim[:, :, None]
-            grid = grid * (1.0 - t * 0.72) + np.array([174.0, 232.0, 255.0]) * t * 0.72
+            grid = grid * (1.0 - t * 0.72) + self._presentation_color(
+                "accent", np.array([174.0, 232.0, 255.0])
+            ) * t * 0.72
 
         # Inlet streaks and spray are deliberately brighter than the body.
         for p in self.inlet_particles:
@@ -615,26 +639,36 @@ class FluidTankAnimation(AnimationBase):
                     alpha = 1.0 - tail / max(1.0, trail_length + 0.5)
                     # Direct assignment avoids dozens of tiny temporary NumPy
                     # arrays per frame on the Raspberry Pi.
-                    grid[py, px] = (170.0 * alpha, 220.0 * alpha, 255.0 * alpha)
+                    grid[py, px] = self._presentation_color(
+                        "accent", (170.0, 220.0, 255.0)
+                    ) * alpha
         for p in self.spray_particles:
             px, py = int(round(p['x'])), int(round(p['y']))
             if 0 <= px < width and 0 <= py < height:
                 alpha = min(1.0, p['life'] * 2.0)
-                grid[py, px] = (205.0 * alpha, 240.0 * alpha, 255.0 * alpha)
+                grid[py, px] = self._presentation_color(
+                    "accent", (205.0, 240.0, 255.0)
+                ) * alpha
 
         # A puncture reads as a black aperture with a turbulent bright rim.
         for hole in self.holes:
             dist = np.sqrt((xx - hole.x) ** 2 + (yy - hole.y) ** 2)
             core = dist <= hole.radius * 0.62
             rim = (dist > hole.radius * 0.62) & (dist <= hole.radius * 1.28)
-            grid[core] = np.array([0.0, 1.0, 2.0])
+            grid[core] = self._presentation_color(
+                "background_low", np.array([0.0, 1.0, 2.0])
+            )
             flicker = 0.72 + 0.28 * math.sin(now * 17.0 + hole.x)
             rim_alpha = np.clip(1.0 - np.abs(dist - hole.radius) / max(0.3, hole.radius * 0.55), 0.0, 1.0) * rim * flicker
-            grid = grid * (1.0 - rim_alpha[:, :, None]) + np.array([135.0, 218.0, 255.0]) * rim_alpha[:, :, None]
+            grid = grid * (1.0 - rim_alpha[:, :, None]) + self._presentation_color(
+                "accent", np.array([135.0, 218.0, 255.0])
+            ) * rim_alpha[:, :, None]
         for flash in self.patch_flashes:
             dist = np.sqrt((xx - flash['x']) ** 2 + (yy - flash['y']) ** 2)
             alpha = np.clip(1.0 - dist / (flash['radius'] * 1.5), 0.0, 1.0) * (flash['life'] / max(0.001, flash['max_life']))
-            grid = grid * (1.0 - alpha[:, :, None]) + np.array([150.0, 225.0, 255.0]) * alpha[:, :, None]
+            grid = grid * (1.0 - alpha[:, :, None]) + self._presentation_color(
+                "accent", np.array([150.0, 225.0, 255.0])
+            ) * alpha[:, :, None]
 
         if self.plant_modifier_enabled('refract'):
             grid = self._apply_plant_refraction(grid)
@@ -666,9 +700,17 @@ class FluidTankAnimation(AnimationBase):
         depth = np.maximum(0.0, yy + 0.5 - surface_y[None, :])
         depth_t = np.clip(depth / max(8.0, self.height * 0.72), 0.0, 1.0)
 
-        air = np.array([1.0, 2.0, 4.0], dtype=np.float32)
-        surface_color = np.array([52.0, 145.0, 238.0], dtype=np.float32)
-        deep_color = np.array([3.0, 31.0, 67.0], dtype=np.float32)
+        air = self._presentation_color(
+            "background_low", np.array([1.0, 2.0, 4.0], dtype=np.float32)
+        )
+        surface_color = self._presentation_color(
+            "primary", np.array([52.0, 145.0, 238.0], dtype=np.float32)
+        )
+        deep_color = self._presentation_color(
+            "primary",
+            np.array([3.0, 31.0, 67.0], dtype=np.float32),
+            semantic_scale=0.28,
+        )
         water_color = surface_color[None, None, :] * (1.0 - depth_t[:, :, None]) + deep_color[None, None, :] * depth_t[:, :, None]
 
         caustic_strength = float(self.params.get('caustic_strength', 0.18))
@@ -686,10 +728,14 @@ class FluidTankAnimation(AnimationBase):
 
         surface_band = np.clip(1.0 - np.abs(depth - 0.55) / 1.25, 0.0, 1.0)
         shimmer = float(self.params.get('surface_shimmer', 0.35))
-        water_color += surface_band[:, :, None] * np.array([45.0, 62.0, 72.0]) * shimmer
+        water_color += surface_band[:, :, None] * self._presentation_color(
+            "secondary", np.array([45.0, 62.0, 72.0]), semantic_scale=0.35
+        ) * shimmer
 
         meniscus = self._edge_light * np.clip(1.0 - depth / 3.5, 0.0, 1.0)
-        water_color += meniscus[:, :, None] * np.array([38.0, 58.0, 72.0])
+        water_color += meniscus[:, :, None] * self._presentation_color(
+            "secondary", np.array([38.0, 58.0, 72.0]), semantic_scale=0.35
+        )
 
         grid = air[None, None, :] * (1.0 - coverage[:, :, None]) + water_color * coverage[:, :, None]
 
@@ -703,26 +749,41 @@ class FluidTankAnimation(AnimationBase):
                 foliage_light = np.clip(
                     0.55 + 0.45 * self._caustic_cache, 0.15, 1.0
                 )[:, :, None]
-                foliage_color = np.array([5.0, 84.0, 38.0]) * foliage_light
+                foliage_color = self._presentation_color(
+                    "secondary", np.array([5.0, 84.0, 38.0]), semantic_scale=0.45
+                ) * foliage_light
                 grid[foliage] = grid[foliage] * 0.38 + foliage_color[foliage] * 0.62
             globes = self._plant_globes
             if np.any(globes):
-                globe_color = np.empty_like(grid)
-                globe_color[:, :, 0] = 118.0 + 34.0 * np.clip(self._caustic_cache, -1.0, 1.0)
-                globe_color[:, :, 1] = 82.0 + 18.0 * np.clip(self._caustic_cache, -1.0, 1.0)
-                globe_color[:, :, 2] = 38.0
+                context = self.presentation_context
+                if context is None or context.vibe_id == "neutral":
+                    globe_color = np.empty_like(grid)
+                    globe_color[:, :, 0] = 118.0 + 34.0 * np.clip(self._caustic_cache, -1.0, 1.0)
+                    globe_color[:, :, 1] = 82.0 + 18.0 * np.clip(self._caustic_cache, -1.0, 1.0)
+                    globe_color[:, :, 2] = 38.0
+                else:
+                    globe_light = (
+                        0.78 + 0.22 * np.clip(self._caustic_cache, -1.0, 1.0)
+                    )[:, :, None]
+                    globe_color = self._presentation_color(
+                        "accent", (118.0, 82.0, 38.0), semantic_scale=0.65
+                    ) * globe_light
                 grid[globes] = grid[globes] * 0.22 + globe_color[globes] * 0.78
 
         if self.plant_modifier_enabled('slow_zone'):
             radius = max(2.0, float(self.params.get('plant_clearance', 1)) + 3.0)
             halo = np.clip(1.0 - self._plant_distance / radius, 0.0, 1.0)
             halo *= 0.18 * self.plant_modifier_strength('slow_zone')
-            grid = grid * (1.0 - halo[:, :, None]) + np.array([40.0, 72.0, 108.0]) * halo[:, :, None]
+            grid = grid * (1.0 - halo[:, :, None]) + self._presentation_color(
+                "secondary", np.array([40.0, 72.0, 108.0])
+            ) * halo[:, :, None]
 
         wave_energy = np.abs(self.surface_velocity)[None, :]
         foam = (surface_band > 0.42) & (wave_energy > (1.4 - float(self.params.get('foam_bias', 0.25)))) & (coverage > 0.05)
         if np.any(foam):
-            grid[foam] = grid[foam] * 0.25 + np.array([190.0, 225.0, 245.0]) * 0.75
+            grid[foam] = grid[foam] * 0.25 + self._presentation_color(
+                "accent", np.array([190.0, 225.0, 245.0])
+            ) * 0.75
         return grid
 
     def _map_grid_to_pixels(self, grid: np.ndarray) -> np.ndarray:

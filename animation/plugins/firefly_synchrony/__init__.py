@@ -6,6 +6,8 @@ import numpy as np
 
 from animation.libraries.procedural_living import ProceduralLivingBase
 
+SEMANTIC_PALETTE_ROLES = ("background_low", "primary", "accent")
+
 
 class FireflySynchronyAnimation(ProceduralLivingBase):
     ANIMATION_NAME = "Firefly Synchrony"
@@ -36,6 +38,30 @@ class FireflySynchronyAnimation(ProceduralLivingBase):
     def update_parameters(self,new_params):
         structural="population" in new_params; super().update_parameters(new_params)
         if structural: self.rng=np.random.default_rng(int(self.params["seed"])); self._initialize_simulation()
+
+    def _palette(self):
+        authored = super()._palette()
+        context = self.presentation_context
+        if (
+            context is None
+            or context.vibe_id == "neutral"
+            or self.VIBE_COLOR_POLICY != "semantic"
+            or "palette_roles" not in self.VIBE_CAPABILITIES
+        ):
+            return authored
+        return tuple(
+            context.palette_roles.get(role, authored[index])
+            for index, role in enumerate(SEMANTIC_PALETTE_ROLES)
+        )
+
+    def on_presentation_context_changed(self, old_context, new_context) -> None:
+        """Invalidate the color cache without consuming simulation or RNG."""
+        self._last_render_elapsed = None
+
+    def _advance(self, elapsed: float):
+        if self._last_elapsed is not None and elapsed == self._last_elapsed:
+            return
+        super()._advance(elapsed)
 
     def _initialize_simulation(self):
         n=max(10,min(self.MAX_FIREFLIES,int(self.params.get("population",100)*float(np.clip(self.params.get("density",1),.2,2)))))
