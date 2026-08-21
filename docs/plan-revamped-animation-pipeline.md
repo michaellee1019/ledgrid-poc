@@ -1344,7 +1344,7 @@ deployment and readable-receiver physical canaries have passed, while strict
 all-four status remains blocked by the SPI1 return-path fault. Phase 2D's
 semantic-palette migration and provider/role product rollout are implementation
 complete across the unified 54-component generated inventory; the integrated
-repository gate is green and only the clean wall-deploy gate remains. Phase 3B0's
+repository and clean wall-deploy gates are green. Phase 3B0's
 contract, portable runtime, fake wall, batch/ack payload, product lifecycle,
 strict readable-receiver runner, and explicitly degraded showcase runner are
 complete and both deterministic payload gates are green. Strict readable-0/1
@@ -1953,8 +1953,8 @@ repair. This host/product lane depends only on Phase 2C and may run in parallel
 with portable Phases 3B and 3D.
 
 Implementation status (2026-08-21): **semantic-palette and provider/role product
-implementation plus the integrated repository gate are complete; the clean
-wall-deploy gate remains**. Phase 2A proved the contract with four pilots and Phase 2C
+implementation, integrated repository gate, and clean wall-deploy gate are
+complete**. Phase 2A proved the contract with four pilots and Phase 2C
 shipped the global vibe control and scene editor. Phase 2D migrated 29 additional
 Python renderers to direct semantic-role consumption, retired the remaining
 legacy palette mappings, added reproducible visual evidence, and made provider,
@@ -2017,6 +2017,12 @@ evidence):
   its exact-output vectorized occupancy/render cache removes the prior timing
   outlier: twelve independent canonical stress runs measured 3.094--3.445 ms
   p95, while frozen frames, final state, and RNG state remained byte-exact.
+- Clean ordinary deployment `1c2d42a939094652acf7265bf5d29e08` completed all
+  14 phases from commit `b12c2c0` in 3m10s. It activated app release
+  `26b38c5964b1c7d0de6d05ee36b9de7352b8b648c2296d323200343e98318abe`,
+  skipped the unchanged production receiver firmware build and flash, restored
+  the exact `lava_lamp/before-deploy` desired state, and passed two-sample
+  readiness with all four receivers present.
 
 - Classify every shipped component as `semantic`, `grade`, or `preserve` color
   policy and make the policy visible in its descriptor. Preserve-color assets,
