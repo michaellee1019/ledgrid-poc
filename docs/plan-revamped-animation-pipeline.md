@@ -3506,9 +3506,8 @@ to receivers.
 Build and validate an unsigned native peer without executing it on the installed
 wall.
 
-Implementation status (2026-08-21): **implementation complete; final clean
-deploy acceptance in progress**. This slice freezes the ABI v2 authoring seam,
-adds one repository-peer
+Implementation status (2026-08-21): **complete**. This slice freezes the ABI v2
+authoring seam, adds one repository-peer
 analytic background, and proves deterministic build, bundle validation, host
 preview, publication, and fake-cache behavior. It does not add receiver loader
 commands, make arbitrary paths buildable, install or execute a native module on
@@ -3541,11 +3540,50 @@ Current bounded portable slice:
   retain build/publish receipts, survive app stage/activate/rollback and full-sync
   deletion, and prove fake receiver probe/install/activation/idempotency without
   adding an installed-receiver transport.
-- [ ] Pass focused native/catalog/library coverage, all Python/plugin tests, rendering
+- [x] Pass focused native/catalog/library coverage, all Python/plugin tests, rendering
   acceptance, native firmware tests and both ESP32-S3 builds, deployment tests,
   bundle regeneration equality, whitespace, deploy dry-runs/plan, and an ordinary
   clean `just deploy` before closing the slice. Record desktop proxy timing and
   artifact identities without claiming ESP32 or physical-wall performance.
+
+Closeout evidence (2026-08-21):
+
+- [x] The integrated focused native, catalog, product, preview, library, and deploy
+  gate passed 174 tests plus 326 subtests. Independent adversarial review passed
+  66 focused tests, including real two-root byte equality, Darwin host-library
+  load/render, Xtensa ELF and bundle rejection, subprocess crash/hang/canaries,
+  topology stitching, deadlines, fake four-receiver compensation, and deployment
+  isolation. The later first-install deployment parser regression adds 66 passing
+  deployment tests plus 19 subtests, including noisy progress and missing,
+  malformed, trailing, or non-object control output.
+- [x] The full `just test` gate passed 1,313 Python tests plus 1,930 subtests,
+  rendering acceptance (23 tests plus 3 subtests), all 94 portable native firmware
+  tests, production and local-canary ESP32-S3 builds, and 183 deployment tests plus
+  95 subtests. `uv lock --check --offline`, Ruff, Python compilation, whitespace,
+  deploy recipe dry-runs, and the ordinary deploy plan also passed.
+- [x] Clean commit `9598a78` regenerated the deterministic pilot bundle as
+  `a901327528dbf643e568b67cd48eed2ec62f695ff7f05e3aedf2c939e3f674cc`
+  (21,995 bytes), with target payload
+  `29ea264e8de8de83f54e08da0b2753f4f2142631c125cd715864224681c9650d`
+  (4,572 bytes) and preview (12,164 bytes). The desktop host-preview proxy measured
+  default mean/p95/p99/max `0.823/1.006/1.156/1.156 ms` and stress
+  `0.931/0.953/1.008/1.050 ms`, with every requested frame changed and zero missed
+  deadlines. These are workstation proxy measurements, not ESP32 or physical-wall
+  performance claims.
+- [x] The first real clean deploy correctly stopped before firmware flash or app
+  activation when first-time runtime installation progress preceded its JSON
+  control record. Commit `49ca9cd` made that boundary tolerant of preceding tool
+  progress but fail closed on an invalid final record. The complete retry then
+  succeeded in 2m58s as receipt `f4b53f5e37cc4477bd365abe00507aa7`
+  from clean commit `49ca9cd`, activated app release
+  `32b8d35988eaacf37d35cb99adb280d477581b7d97660ae0e25df8a49d6a5360`,
+  reused support release
+  `8142beaf734d891f9fd16b72ded391fc33e5718e652cdb9603bb778aed665142`,
+  retained firmware
+  `0d823c6712feb9a8fa30c12afdd0f77136a4565e7de9a776d2169588b1452ced`,
+  restored operator state, and passed fresh 32 x 138/four-receiver readiness.
+  The ordinary deploy did not publish, install, select, or execute the native
+  bundle.
 
 - Add explicit native descriptor validation to the unified catalog. A native
   package requires no `__init__.py` or Python class and cannot be imported as one.
