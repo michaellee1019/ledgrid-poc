@@ -1333,7 +1333,7 @@ a loader-capable baseline. Host-only contract and prototype work may be develope
 locally, but no later phase is production-ready until its relevant Phase 0
 prerequisite passes.
 
-Implementation status (2026-08-14): **Phase 0 delivery foundation,
+Implementation status (2026-08-21): **Phase 0 delivery foundation,
 coordinator cutover, and Phase 1 contract freeze/portable baseline are complete.
 Phase 2A top-level vibe, portable acceptance, and clean wall-deploy gate are
 complete. Phase 2B fixed host composition, portable acceptance, and clean
@@ -1354,7 +1354,10 @@ have passed without claiming release acceptance for write-only receivers 2/3.
 Phase 3C's deterministic portable profile compiler/codec, checked-in golden,
 identity/installed topology round trip, and bounded managed profile library are
 complete. Read-only host runtime/preview selection and its clean deployment are
-complete; receiver runtime work and strict physical acceptance remain open**.
+complete. Receiver profile staging/activation implementation and its clean
+deployment/no-op acceptance are complete; actual profile activation, optics,
+physical power-cut/backend-latency evidence, and strict readable all-four
+acceptance remain open**.
 
 - [x] Phase 0A–0B implementation: quiet captured phase logs; explicit clean,
   dirty, plan, and verbose modes; complete source accounting; locked Python
@@ -2954,12 +2957,12 @@ timing evidence):
   accounts for both new core modules and the generator in the immutable app
   release while preserving the ordinary clean-source deployment policy.
 
-The implemented stop boundary remains strict: there are no receiver profile
-commands, cache/storage, activation/status, firmware optics, live `hue_shift`,
-service flags, or wall mutation. The next bounded Phase 3C host lane may add the
+At that portable slice's stop boundary there were no receiver profile commands,
+cache/storage, activation/status, firmware optics, live `hue_shift`, service
+flags, or wall mutation. Its then-next bounded host lane was the
 content-addressed Pi profile library, read-only preview view, and fake-wall
 stage/rollback model without activating installed receivers. Firmware protocol,
-real activation, and physical seam acceptance remain separate later gates.
+real activation, and physical seam acceptance were separate later gates.
 
 Parallel physical work remains open but is not the next portable phase: repair
 SPI1 MISO/MOSI, rerun strict all-four streamed and Phase 3B gates, and collect
@@ -3015,10 +3018,11 @@ Portable compiler, golden-vector, profile-library, host-preview, and fake-wall
 work may proceed before the SPI1 repair. Strict profile activation, digest
 agreement, receiver timing, and physical seam acceptance remain release-blocked.
 
-Implementation status (2026-08-14): **portable deterministic-profile,
-bounded host-library/fake-transaction, and read-only host-context slices are
-complete and cleanly deployed; receiver runtime, optics, and physical
-acceptance remain open**.
+Implementation status (2026-08-21): **portable deterministic-profile, bounded
+host-library/fake-transaction, read-only host-context, and receiver-profile
+staging/activation implementation slices are complete and cleanly deployed;
+actual profile activation, optics, physical power-cut/backend latency, and
+strict readable all-four acceptance remain open**.
 The v1 binary schema, digest domains, category/region encodings, fixed global
 derivatives, receiver-view orientation, strict decoder bounds, and 65,535-byte
 maximum are frozen in `ANIMATION_PIPELINE_CONTRACT_V1.md`. Compiler/codec,
@@ -3031,17 +3035,17 @@ the future four-receiver transaction against an in-memory fake only. It does
 not add an SPI command, firmware storage, live activation, dashboard mutation,
 or installed-wall operation.
 
-Current receiver-profile runtime prerequisite slice (2026-08-14): **in
-progress**. The initial audit found that the receiver firmware layout has no
-filesystem partition and that deployment identity currently verifies only
+Current receiver-profile runtime prerequisite slice (2026-08-21): **complete**.
+The initial audit found that the receiver firmware layout had no filesystem
+partition and that deployment identity verified only
 `firmware.bin`, even though PlatformIO also flashes the bootloader and partition
 table. Persistent receiver caching must not begin until every flashed artifact
 and the partition-layout inputs participate in build/install identity. This
-bounded slice therefore hardens that deployment boundary, generalizes the
-already-accepted transaction engine for a future real transport adapter, and
-freezes an inert portable receiver data/view contract before persistent
-storage, manager mutation, or wall operation. Production behavior and complete
-RGB takeover remain unchanged throughout the slice.
+bounded slice therefore hardened that deployment boundary, generalized the
+already-accepted transaction engine for the real transport adapter used by the
+following slice, and froze an inert portable receiver data/view contract before
+persistent storage, manager mutation, or wall operation. Production behavior
+and complete RGB takeover remain unchanged throughout the slice.
 
 - [x] Bind firmware install identity and early-skip decisions to every flashed
   image plus partition-layout inputs; preserve a true no-op for identical
@@ -3052,7 +3056,7 @@ RGB takeover remain unchanged throughout the slice.
 - [x] Add a bounds-checked portable C++ decoder/read-only view for all four
   installed-topology LGIP receiver slices, generated from the authoritative
   Python compiler, with byte/semantic parity and malformed-input rejection.
-- [ ] Pass focused coverage, the full Python/rendering/firmware/deployment
+- [x] Pass focused coverage, the full Python/rendering/firmware/deployment
   gates, both ESP32-S3 builds, fixture regeneration checks, whitespace checks,
   deploy dry-run/plan, and an ordinary clean `just deploy` before closing this
   prerequisite slice.
@@ -3089,8 +3093,9 @@ claim):
   `target.connect`: this workstation could not resolve `ledgridwall.local`, and
   the repository-documented `192.168.1.62` fallback timed out from the current
   `192.168.8.0/24` network. Successful marker migration and the following
-  identical firmware no-op therefore remain open; the final checklist item and
-  slice status stay incomplete.
+  identical firmware no-op remained open at that point. The later clean deploy
+  pair recorded in the staging/activation slice closes this prerequisite gate
+  without reinterpreting that failed attempt as a deployment.
 
 - [x] Publish validated canonical profiles atomically under their frozen
   content digest, make identical publication idempotent, reject corruption and
@@ -3234,9 +3239,10 @@ receiver profile/runtime or physical-wall evidence):
   proves the host slice deploy/restore path only; it is not receiver profile or
   physical-wall acceptance.
 
-Current bounded receiver-profile staging/activation slice (2026-08-21): **in
-progress**. This lane makes the completed transport-neutral transaction real
-without applying a receiver optic or coupling profile activation to native
+Current bounded receiver-profile staging/activation implementation slice
+(2026-08-21): **complete and cleanly deployed**. This lane makes the completed
+transport-neutral transaction real without applying a receiver optic or
+coupling profile activation to native
 background ownership. Dashboard mutation, automatic activation from read-only
 manager selection, `hue_shift`, native-module loading, and physical seam/timing
 claims remain outside this slice.
@@ -3272,7 +3278,7 @@ claims remain outside this slice.
   whitespace checks, deploy dry-runs, and read-only deploy plan. Record exact
   test counts, binary/RAM sizes, partition usage, and fixture identities only
   after the integrated source is stable.
-- [ ] From a clean commit, run ordinary `just deploy` successfully and then an
+- [x] From a clean commit, run ordinary `just deploy` successfully and then an
   identical second clean `just deploy` that proves the complete firmware
   installation no-op. Record both receipts and restored display state before
   closing this slice or the earlier receiver-runtime prerequisite deployment
@@ -3316,11 +3322,49 @@ claim):
   and deployment tests as application inputs. The complete firmware install
   identity includes the partition source plus every generated flashed image,
   including initial OTA data.
-- Physical power-cut recovery, real SPIFFS backend latency/wear behavior,
-  strict readable all-four digest agreement, the successful clean deployment,
-  and the following identical firmware no-op deployment remain open. This
-  evidence does not prove a real receiver profile was activated or close the
+- Physical power-cut recovery, real SPIFFS backend latency/wear behavior, and
+  strict readable all-four digest agreement remained outside this pre-deploy
+  evidence. It did not prove a real receiver profile was activated or close the
   physical Phase 3C gate.
+
+Clean deployment-pair evidence captured on 2026-08-21 from commit
+`69ec5461e393ef8c36ea88d371627a492f4ecddc`:
+
+- First clean receipt `f735188c71f743e0a6c8780d93290db1` succeeded in
+  18m40s. It published app release
+  `e8a78f08334c1bf8681099d189809e06b24d0e752d8c60d65080a0c50fb52dc5`
+  and support release
+  `d3a33082cca7bed86e8867f0eddc604babb95c348f47d78e2b232df9f493e370`,
+  built `esp32-s3-devkitc-1-local-canary`, and sequentially flashed
+  `/dev/ttyACM0` through `/dev/ttyACM3`. The firmware SHA-256 was
+  `cad9a3472d659f520c3372cd9082a2d582852314a8fac8f7ea29ae684747ebe2`
+  and complete installation digest was
+  `05e1a585526f1b9c0a57ed14e68c5d2081b7f90c31255ff1dc698b6e28902ce3`.
+- The first receipt's state-restore step explicitly restored
+  `lava_lamp/before-deploy`; the current live state confirms Lava Lamp preset
+  `Busy Bubbles`. Readiness accepted four receivers at 32×138, two stable
+  samples, and exact desired/observed release consistency.
+- Second clean receipt `76dd21690de44524b1dc6327e79d6e47` succeeded in
+  2m23s with the same source and identities. It reused both app and support
+  releases, skipped firmware build in 1.4s, skipped unchanged firmware flash in
+  2.2s, and skipped app activation, service restart, state restore, and release
+  pruning while readiness still passed.
+- Local and target receipt bytes agreed. The first receipt SHA-256 was
+  `68c41a9a650e51eb81a24fc8f398784f2f43ad9939739332b1756de63c9a2854`;
+  the second was
+  `e867c2c70b3da8982e4ad6900bc487db3e4a352cf25c83b01485150fc598eede`.
+- Live post-deploy status is release-consistent with no installation profile
+  selected. The host rollout gate is disabled and idle. Readable logical
+  receivers 0/1 report status v5, cache integrity true, 3,727,601 bytes of
+  capacity/free space, and no active profile. Logical receivers 2/3 remain
+  unreadable through the known SPI1 return-path fault.
+
+This pair closes the implementation slice's clean-deploy/no-op gate and the
+earlier receiver-runtime prerequisite. It does not prove profile payload
+transfer or activation on real receivers, physical power-cut recovery,
+SPIFFS latency/wear bounds, optics, seam behavior, or strict all-four release
+acceptance. The next bounded Phase 3C lane is `hue_shift` parity plus a
+read-only native geometry canary; it must retain those physical stop gates.
 
 - [x] Freeze the portable v1 header, section table, section vocabulary,
   canonical ordering, CRC/content/calibration digests, global-derivative rules,
@@ -3344,7 +3388,7 @@ claim):
   binary installation profile.
 - Golden-test global masks, clearance, edges, globe regions, distance/normals,
   slicing, coordinate orientation, and halos against Python geometry.
-- Add receiver staging/activation, digest/status, and rollback for profiles
+- [x] Add receiver staging/activation, digest/status, and rollback for profiles
   independently of native backgrounds, using the completed Pi library and fake
   transaction contract.
 - [x] Wire the completed read-only managed profile views through host runtime and
