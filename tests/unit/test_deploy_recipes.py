@@ -101,6 +101,7 @@ class DeployRecipeTests(unittest.TestCase):
             "deploy-dirty:",
             "deploy-plan:",
             "deploy-verbose:",
+            "deploy-force-firmware:",
             "deploy-python:",
             "deploy-python-dirty:",
             "deploy-python-plan:",
@@ -116,6 +117,7 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn("deploy_entrypoint.py plan --mode python", justfile)
         self.assertIn("deploy-legacy:", justfile)
         self.assertIn("deploy-python-legacy:", justfile)
+        self.assertIn("--force-firmware", justfile)
 
     def test_native_recipes_use_only_the_separate_native_workflow(self):
         plan = subprocess.run(
@@ -157,6 +159,7 @@ class DeployRecipeTests(unittest.TestCase):
             "tests/unit/test_deploy_*.py",
             "tests/unit/test_app_releases.py",
             "tests/unit/test_firmware_reconciliation.py",
+            "tests/unit/test_receiver_firmware_inventory.py",
             "tests/unit/test_gate_policy.py",
             "tests/unit/test_preserve_deploy_settings.py",
         ):
@@ -188,6 +191,17 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertNotIn("native_background_entrypoint.py", fast)
         self.assertNotIn("./tools/deployment/deploy_python.sh", fast)
         self.assertNotIn("ssh ", fast)
+
+        forced = subprocess.run(
+            ["just", "--dry-run", "deploy-force-firmware"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        forced = forced.stdout + forced.stderr
+        self.assertEqual(forced.count("deploy_entrypoint.py run --mode full"), 1)
+        self.assertIn("--force-firmware", forced)
 
     def test_full_deploy_uses_digest_environment_and_reports_startup_failures(self):
         script = (ROOT / "tools/deployment/deploy.sh").read_text(encoding="utf-8")
@@ -230,7 +244,10 @@ class DeployRecipeTests(unittest.TestCase):
             script,
         )
         self.assertNotIn("-t nobuild", script)
-        self.assertIn("Flashing firmware to $port_count ESP32 device(s) sequentially", script)
+        self.assertIn(
+            "Flashing firmware to $port_count selected ESP32 device(s) sequentially",
+            script,
+        )
         self.assertIn("verify_firmware_installation", script)
         self.assertIn('if [ "${FIRMWARE_PREBUILT:-0}" = "1" ]', script)
         self.assertIn('FIRMWARE_ENVIRONMENT:-esp32-s3-devkitc-1', script)
@@ -240,6 +257,8 @@ class DeployRecipeTests(unittest.TestCase):
         self.assertIn("firmware_artifacts.py", script)
         self.assertIn('hash_storage="$(resolve_hash_storage)"', script)
         self.assertIn("EXPECTED_FIRMWARE_HASH_FILE", script)
+        self.assertIn("FIRMWARE_FLASH_PORTS", script)
+        self.assertIn("FORCE_FIRMWARE_FLASH", script)
         self.assertIn('mktemp "${validated_hash_storage}.tmp.XXXXXX"', script)
         self.assertIn('mv "$marker_temporary" "$validated_hash_storage"', script)
         self.assertNotIn('mv "$marker_temporary" "$HASH_FILE"', script)
@@ -249,7 +268,7 @@ class DeployRecipeTests(unittest.TestCase):
             "the exact selected binary must be verified before early skip",
         )
         upload_section = script.split(
-            'log_info "Flashing firmware to $port_count ESP32 device(s) sequentially..."',
+            'log_info "Flashing firmware to $port_count selected ESP32 device(s) sequentially..."',
             1,
         )[1]
         self.assertNotIn("pids=(", upload_section)

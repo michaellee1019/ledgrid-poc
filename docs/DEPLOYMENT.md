@@ -31,6 +31,7 @@ Use `just` recipes rather than invoking deployment helpers directly:
 | `just deploy` | Clean-tree coordinated release, provision, changed-firmware reconciliation, activation, and fresh health |
 | `just deploy-dirty` | Explicit coordinated deployment of tracked edits plus allowlisted safe untracked source |
 | `just deploy-verbose` | Clean full deployment with normally captured phase output streamed live |
+| `just deploy-force-firmware` | Clean full deployment that deliberately reflashes every attached receiver |
 | `just deploy-python` | Clean-tree application sync/restart without provisioning or firmware flash |
 | `just deploy-python-plan` | Read-only Python-only source accounting and coordinator step plan |
 | `just deploy-python-dirty` | Explicit Python-only deployment of the dirty source manifest |
@@ -78,7 +79,8 @@ Prerequisites:
 - Raspberry Pi OS with SSH enabled
 - passwordless SSH for `ledgridwall@ledgridwall.local`
 - the deploy user able to obtain passwordless sudo after setup
-- all expected ESP32 USB serial devices attached when firmware must be flashed
+- all expected ESP32 USB serial devices attached, each exposing a unique factory
+  USB serial and physical USB location
 - a reboot window if SPI device-tree settings need to change
 
 Run:
@@ -156,6 +158,37 @@ to a fresh, digest-addressed `.venvs/` environment keyed by the hash-pinned
 runtime lock and the Pi Python/platform identity. A candidate environment must
 import both controller and web entrypoints before it can become active; an
 unchanged identity performs no installation.
+
+### Receiver hardware reconciliation
+
+Before deciding that receiver firmware is unchanged, the Pi passively asks
+PlatformIO for the devices currently attached to its USB bus. The coordinator
+requires exactly the configured receiver count, a unique ESP32 factory USB
+serial for every board, and a unique physical USB location. A changing
+`/dev/ttyACM*` number is never treated as hardware identity.
+
+Successful installations are recorded atomically in the target-owned
+`run_state/receiver_firmware_inventory.json` ledger. Each record binds one
+factory hardware serial to the complete flash-installation digest, selected
+PlatformIO environment, and application-image digest. An ordinary full deploy
+then behaves as follows:
+
+- A missing ledger causes one initialization flash of all attached boards. This
+  is intentional: the old aggregate marker cannot prove which physical boards
+  were flashed.
+- A newly installed board has no matching record, so only its currently
+  discovered port is flashed.
+- A firmware, flash-layout, or selected-environment change flashes every board
+  whose record no longer matches.
+- A fully matching roster skips the flash helper entirely.
+- Missing, malformed, or duplicate device identities fail closed before any
+  upload begins.
+
+This is successful-install evidence tied to actual hardware, not a byte-for-byte
+readback of ESP32 flash. Reading the factory USB descriptor avoids resetting
+healthy receivers into the ROM bootloader on every deployment. Use
+`just deploy-force-firmware` when the ledger should be overridden and every
+attached receiver deliberately reconciled.
 
 Production startup invokes `venv/bin/python` directly. Do not source
 `venv/bin/activate`: activation scripts embed the temporary build location,
@@ -364,8 +397,8 @@ tools/deployment/stop_remote.sh stop
 - If precheck fails, fix the local failure; do not bypass it.
 - If setup changes boot configuration, reboot and verify device nodes before
   continuing.
-- If firmware flash fails, the source hash is not recorded, so the next full
-  deployment retries it.
+- If firmware flash fails, neither the aggregate marker nor the per-device
+  ledger is advanced, so the next full deployment retries the affected roster.
 - The desired-state planner fails closed for missing, duplicate, unexpected, or
   unready receivers. A partial flash preserves per-device success/failure/pending
   evidence, keeps the service stopped, and blocks candidate app activation.

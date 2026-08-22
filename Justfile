@@ -43,6 +43,10 @@ deploy-dirty:
 deploy-verbose:
 	{{captured}} --verbose --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --verbose
 
+# Reconcile every attached receiver even when its recorded firmware identity matches.
+deploy-force-firmware:
+	{{captured}} --verbose --phase deploy.full -- python3 tools/deployment/deploy_entrypoint.py run --mode full --policy clean --verbose --force-firmware
+
 # Read-only source accounting plus the authoritative coordinator sequence.
 deploy-plan:
 	python3 tools/deployment/deploy_entrypoint.py plan --mode full --policy plan
@@ -170,6 +174,7 @@ test-deployment:
 		tests/unit/test_deploy_*.py \
 		tests/unit/test_app_releases.py \
 		tests/unit/test_firmware_reconciliation.py \
+		tests/unit/test_receiver_firmware_inventory.py \
 		tests/unit/test_gate_policy.py \
 		tests/unit/test_preserve_deploy_settings.py
 	for script in tools/deployment/*.sh; do bash -n "$script"; done

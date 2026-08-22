@@ -472,6 +472,7 @@ class DeploymentConfig:
     strips: int = 32
     leds_per_strip: int = 138
     receiver_count: int = 4
+    force_firmware: bool = False
     release_retention: int = DEFAULT_RELEASE_RETENTION
     health_timeout: float = 30.0
     ssh_options: tuple[str, ...] = DEFAULT_SSH_OPTIONS
@@ -494,6 +495,8 @@ class DeploymentConfig:
                 raise ValueError(f"{label} must be a positive integer")
         if isinstance(self.release_retention, bool) or self.release_retention < 2:
             raise ValueError("release_retention must preserve at least two releases")
+        if self.force_firmware and self.mode != "full":
+            raise ValueError("forced firmware flashing requires a full deployment")
 
 
 @dataclass(frozen=True)
@@ -820,6 +823,8 @@ class CoordinatorDeployment:
         )
         if isinstance(installation_digest, str):
             args.extend(("--expected-installation-digest", installation_digest))
+        if self.config.force_firmware:
+            args.append("--force")
         if os.environ.get("DEBUG", "0") == "1":
             args.append("--debug")
         result = self.target.run("flash-firmware", *args)
@@ -1350,6 +1355,8 @@ def run_legacy(config: DeploymentConfig) -> int:
     """Run the retained monolithic leaf only through an explicit compatibility path."""
     if config.policy == "plan":
         raise ValueError("the plan source policy is read-only and cannot run the legacy leaf")
+    if config.force_firmware:
+        raise ValueError("forced firmware flashing is unavailable through the legacy leaf")
     scope = "full" if config.mode == "full" else "fast"
     plan = manifest_plan(config.root, scope)
     _validate_source_policy(config.root, plan, config.policy)
@@ -1401,6 +1408,7 @@ def deployment_plan(config: DeploymentConfig) -> Mapping[str, Any]:
                 "outcome": "skipped",
                 "reason": "native build/publish uses the explicit native workflow",
             },
+            "force_firmware": config.force_firmware,
             "steps": [
                 {"id": step.id, "mutating": step.mutating, "description": step.description}
                 for step in deployment.steps()
@@ -1430,6 +1438,13 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--skip-tests", action="store_true")
     parser.add_argument("--skip-previews", action="store_true")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--force-firmware",
+        action="store_true",
+        default=os.environ.get("FORCE_FIRMWARE_FLASH", "0").lower()
+        in {"1", "true", "yes"},
+        help="flash every attached receiver even when per-device evidence matches",
+    )
     parser.add_argument("--strips", type=int, default=int(os.environ.get("STRIPS", "32")))
     parser.add_argument("--leds-per-strip", type=int, default=int(os.environ.get("LEDS_PER_STRIP", "138")))
     parser.add_argument("--receivers", type=int, default=int(os.environ.get("EXPECTED_ESP32_DEVICES", "4")))
@@ -1460,6 +1475,7 @@ def _add_rollback_options(parser: argparse.ArgumentParser) -> None:
         policy="clean",
         skip_tests=True,
         skip_previews=True,
+        force_firmware=False,
     )
 
 
@@ -1478,6 +1494,7 @@ def _add_readonly_target_options(parser: argparse.ArgumentParser) -> None:
         leds_per_strip=138,
         receivers=4,
         retain_releases=DEFAULT_RELEASE_RETENTION,
+        force_firmware=False,
     )
 
 
@@ -1496,6 +1513,7 @@ def _config(args: argparse.Namespace) -> DeploymentConfig:
         strips=args.strips,
         leds_per_strip=args.leds_per_strip,
         receiver_count=args.receivers,
+        force_firmware=args.force_firmware,
         release_retention=args.retain_releases,
         ssh_options=_ssh_options(root, args.ssh_key),
     )

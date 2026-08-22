@@ -58,6 +58,9 @@ firmware_binary="$FIRMWARE_DIR/.pio/build/$firmware_environment/firmware.bin"
 expected_firmware_sha256="${EXPECTED_FIRMWARE_SHA256:-}"
 expected_installation_digest="${EXPECTED_FIRMWARE_INSTALLATION_DIGEST:-}"
 expected_hash_file="${EXPECTED_FIRMWARE_HASH_FILE:-}"
+force_firmware_flash="${FORCE_FIRMWARE_FLASH:-0}"
+selected_firmware_ports="${FIRMWARE_FLASH_PORTS:-}"
+expected_port_count="${EXPECTED_FIRMWARE_PORT_COUNT:-}"
 if [ -n "$expected_firmware_sha256" ] \
     && ! [[ "$expected_firmware_sha256" =~ ^[0-9a-f]{64}$ ]]; then
   log_warning "Expected firmware digest is malformed"
@@ -66,6 +69,15 @@ fi
 if [ -n "$expected_installation_digest" ] \
     && ! [[ "$expected_installation_digest" =~ ^[0-9a-f]{64}$ ]]; then
   log_warning "Expected firmware installation digest is malformed"
+  exit 1
+fi
+if [ "$force_firmware_flash" != "0" ] && [ "$force_firmware_flash" != "1" ]; then
+  log_warning "FORCE_FIRMWARE_FLASH must be 0 or 1"
+  exit 1
+fi
+if [ -n "$expected_port_count" ] \
+    && ! [[ "$expected_port_count" =~ ^[1-9][0-9]*$ ]]; then
+  log_warning "EXPECTED_FIRMWARE_PORT_COUNT must be a positive integer"
   exit 1
 fi
 
@@ -148,7 +160,8 @@ previous_hash="$(tr -d '\n' < "$hash_storage")"
 # Their source-only identity intentionally differs from the v2 artifact/layout
 # identity and causes one safe migration flash; subsequent unchanged deploys
 # retain the same marker and are true no-ops.
-if [ "$current_hash" = "$previous_hash" ]; then
+if [ "$current_hash" = "$previous_hash" ] \
+    && [ "$force_firmware_flash" != "1" ]; then
   log_info "Firmware unchanged; skipping ESP32 flash"
   printf 'FIRMWARE_INSTALLATION_DIGEST=%s\n' "$current_hash"
   exit 0
@@ -176,7 +189,22 @@ fi
 
 # Discover ports: scan /dev directly for ttyACM and ttyUSB devices,
 # then supplement with anything pio device list reports.
-ports="$(DEBUG="$DEBUG" PIO_CMD="$PIO_CMD" python3 - <<'PY'
+if [ -n "$selected_firmware_ports" ]; then
+  ports="$selected_firmware_ports"
+  while IFS= read -r selected_port; do
+    if ! [[ "$selected_port" =~ ^/dev/tty(ACM|USB)[0-9]+$ ]]; then
+      log_warning "Unsafe selected ESP32 port: $selected_port"
+      exit 1
+    fi
+  done <<< "$ports"
+  unique_port_count="$(printf '%s\n' "$ports" | sort -u | wc -l | tr -d ' ')"
+  selected_port_count="$(printf '%s\n' "$ports" | wc -l | tr -d ' ')"
+  if [ "$unique_port_count" != "$selected_port_count" ]; then
+    log_warning "Selected ESP32 ports contain duplicates"
+    exit 1
+  fi
+else
+  ports="$(DEBUG="$DEBUG" PIO_CMD="$PIO_CMD" python3 - <<'PY'
 import glob, json, os, subprocess, sys
 
 debug = os.environ.get("DEBUG") == "1"
@@ -215,6 +243,7 @@ for path in sorted(found):
     print(path)
 PY
 )"
+fi
 
 if [ -z "$ports" ]; then
   log_warning "No ESP32 devices detected; skipping flash"
@@ -223,12 +252,16 @@ if [ -z "$ports" ]; then
 fi
 
 port_count="$(echo "$ports" | wc -l | tr -d ' ')"
+if [ -n "$expected_port_count" ] && [ "$port_count" != "$expected_port_count" ]; then
+  log_warning "Selected $port_count ESP32 device(s); expected $expected_port_count"
+  exit 1
+fi
 log_info "Detected $port_count ESP32 device(s)"
 while IFS= read -r p; do
   log_info "  -> $p"
 done <<< "$ports"
 
-log_info "Flashing firmware to $port_count ESP32 device(s) sequentially..."
+log_info "Flashing firmware to $port_count selected ESP32 device(s) sequentially..."
 all_ok=true
 while IFS= read -r port; do
   log_file=$(mktemp)
@@ -275,7 +308,7 @@ if $all_ok; then
   printf '%s\n' "$current_hash" > "$marker_temporary"
   mv "$marker_temporary" "$validated_hash_storage"
   printf 'FIRMWARE_INSTALLATION_DIGEST=%s\n' "$current_hash"
-  log_success "All $port_count ESP32 device(s) flashed successfully"
+  log_success "All $port_count selected ESP32 device(s) flashed successfully"
 else
   log_warning "Some devices failed to flash; hash NOT updated (will retry next deploy)"
   exit 1

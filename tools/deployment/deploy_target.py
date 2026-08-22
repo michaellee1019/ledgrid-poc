@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-import glob
 import hashlib
 import json
 import os
@@ -628,6 +627,15 @@ def _make_build_workspace_writable(workspace: Path) -> None:
     workspace.chmod(0o755)
 
 
+def _platformio_executable() -> str:
+    pio = shutil.which("pio") or os.fspath(
+        Path.home() / ".platformio-venv" / "bin" / "pio"
+    )
+    if not Path(pio).is_file() and shutil.which(pio) is None:
+        raise RuntimeError("PlatformIO is unavailable on the target; run setup first")
+    return pio
+
+
 def build_firmware(root: Path, support_id: Optional[str]) -> Mapping[str, Any]:
     hybrid_config = resolve_receiver_hybrid_config(root)
     firmware_environment = hybrid_config.firmware_environment
@@ -664,9 +672,7 @@ def build_firmware(root: Path, support_id: Optional[str]) -> Mapping[str, Any]:
                 "receiver_hybrid_config_digest": hybrid_config.selection_digest,
                 "firmware_environment": firmware_environment,
             }
-    pio = shutil.which("pio") or os.fspath(Path.home() / ".platformio-venv" / "bin" / "pio")
-    if not Path(pio).is_file() and shutil.which(pio) is None:
-        raise RuntimeError("PlatformIO is unavailable on the target; run setup first")
+    pio = _platformio_executable()
     if shutil.which("ccache") is None:
         raise RuntimeError("ccache is unavailable on the target; run setup first")
     build_cache = root / "build" / "firmware" / PLATFORMIO_BUILD_CACHE
@@ -704,6 +710,26 @@ def build_firmware(root: Path, support_id: Optional[str]) -> Mapping[str, Any]:
     }
 
 
+def _receiver_inventory_module():
+    """Load the flash-only helper without coupling app-only rollback commands."""
+
+    try:
+        from tools.deployment import receiver_firmware_inventory
+    except ModuleNotFoundError:
+        import receiver_firmware_inventory  # type: ignore[no-redef]
+    return receiver_firmware_inventory
+
+
+def _discover_receiver_devices(*, receiver_count: int) -> tuple[Any, ...]:
+    pio = _platformio_executable()
+    completed = _command(
+        (pio, "device", "list", "--json-output"), timeout=15.0
+    )
+    return _receiver_inventory_module().parse_platformio_receiver_devices(
+        completed.stdout, receiver_count=receiver_count
+    )
+
+
 def flash_firmware(
     root: Path,
     support_id: Optional[str],
@@ -714,6 +740,7 @@ def flash_firmware(
     expected_firmware_environment: Optional[str] = None,
     expected_config_digest: Optional[str] = None,
     expected_installation_digest: Optional[str] = None,
+    force: bool = False,
 ) -> Mapping[str, Any]:
     hybrid_config = resolve_receiver_hybrid_config(root)
     firmware_environment = hybrid_config.firmware_environment
@@ -757,15 +784,47 @@ def flash_firmware(
         raise RuntimeError(
             "firmware installation artifacts changed between build and flash"
         )
-    ports = sorted(set(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*")))
-    if len(ports) != receiver_count:
-        raise RuntimeError(
-            f"expected exactly {receiver_count} ESP32 serial devices; found {len(ports)}: {ports}"
-        )
+    devices = _discover_receiver_devices(receiver_count=receiver_count)
+    ports = [device.port for device in devices]
+    receiver_inventory = _receiver_inventory_module()
     # Preserve the target-owned marker path and atomic update behavior. A
-    # schema-v1 digest remains readable, but cannot equal the complete v2
+    # schema-v1 digest remains readable, but cannot equal the complete v3
     # artifact identity and therefore causes one deliberate migration flash.
     shared_marker = _prepare_shared_firmware_marker(root, workspace)
+    installed_marker_before = _read_shared_firmware_marker(shared_marker)
+    installed_inventory = receiver_inventory.read_firmware_inventory(root)
+    targets = receiver_inventory.plan_receiver_flashes(
+        devices,
+        installed_inventory,
+        installation_digest=installation_digest,
+        firmware_environment=firmware_environment,
+        firmware_sha256=firmware_sha256,
+        force=force,
+        aggregate_marker_matches=(installed_marker_before == installation_digest),
+    )
+    target_ports = [target.device.port for target in targets]
+    inventory_details = {
+        "schema_version": 1,
+        "path": os.fspath(root / "run_state" / "receiver_firmware_inventory.json"),
+        "observed_devices": [device.to_dict() for device in devices],
+        "recorded_devices_before": sorted(installed_inventory),
+        "flash_targets": [target.to_dict() for target in targets],
+        "forced": force,
+    }
+    if not targets:
+        return {
+            "outcome": "skipped",
+            "ports": ports,
+            "flashed_ports": [],
+            "firmware_sha256": firmware_sha256,
+            "firmware_artifacts": installation,
+            "firmware_environment": firmware_environment,
+            "firmware_installation_digest": installation_digest,
+            "receiver_firmware_inventory": inventory_details,
+            "receiver_hybrid_config": hybrid_config.to_dict(),
+            "receiver_hybrid_config_digest": hybrid_config.selection_digest,
+            "output_tail": "All attached receiver hardware already has successful install evidence.\n",
+        }
     env = dict(os.environ)
     env.update(
         {
@@ -779,6 +838,11 @@ def flash_firmware(
             "EXPECTED_FIRMWARE_SHA256": firmware_sha256,
             "EXPECTED_FIRMWARE_INSTALLATION_DIGEST": installation_digest,
             "EXPECTED_FIRMWARE_HASH_FILE": os.fspath(shared_marker),
+            # The target-side inventory has selected exact hardware ports. The
+            # shell leaf must not reapply its aggregate legacy skip decision.
+            "FORCE_FIRMWARE_FLASH": "1",
+            "FIRMWARE_FLASH_PORTS": "\n".join(target_ports),
+            "EXPECTED_FIRMWARE_PORT_COUNT": str(len(target_ports)),
             "IDF_CCACHE_ENABLE": "1",
             "CCACHE_DIR": os.fspath(
                 root / "build" / "firmware" / CCACHE_DIRECTORY
@@ -788,9 +852,9 @@ def flash_firmware(
             ),
         }
     )
-    # The helper serializes four ordinary upload targets. Each invocation may
-    # perform PlatformIO's incremental graph check, but reuses the exact
-    # build-phase SCons state without racing either its signature database or
+    # The helper serializes the selected ordinary upload targets. Each
+    # invocation may perform PlatformIO's incremental graph check, but reuses
+    # the exact build-phase SCons state without racing its signature database or
     # the shared workspace-local .pio/build output tree.
     # Deployment helpers are app-lane source, not support-lane source. Use the
     # explicitly selected candidate helper while directing all build/hash state
@@ -821,7 +885,9 @@ def flash_firmware(
         _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
         detail = f"; {artifact_error}" if artifact_error else ""
         raise RuntimeError(f"receiver firmware flash failed{detail}: {output[-4000:]}")
-    skipped = "Firmware unchanged; skipping" in output
+    if "Firmware unchanged; skipping" in output:
+        _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
+        raise RuntimeError("receiver firmware helper skipped selected hardware")
     installed_marker = _read_shared_firmware_marker(shared_marker)
     if not re.fullmatch(r"[0-9a-f]{64}", installed_marker):
         _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
@@ -831,13 +897,35 @@ def flash_firmware(
         raise RuntimeError(
             "receiver firmware helper installed marker disagrees with selected artifacts"
         )
+    try:
+        inventory_path = receiver_inventory.write_firmware_inventory(
+            root,
+            devices,
+            installation_digest=installation_digest,
+            firmware_environment=firmware_environment,
+            firmware_sha256=firmware_sha256,
+        )
+    except Exception as exc:
+        _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
+        raise RuntimeError(
+            "receiver firmware was flashed but per-device evidence could not be recorded"
+        ) from exc
+    inventory_details = {
+        **inventory_details,
+        "path": os.fspath(inventory_path),
+        "recorded_devices_after": sorted(
+            device.hardware_serial for device in devices
+        ),
+    }
     return {
-        "outcome": "skipped" if skipped else "executed",
+        "outcome": "executed",
         "ports": ports,
+        "flashed_ports": target_ports,
         "firmware_sha256": firmware_sha256,
         "firmware_artifacts": installation,
         "firmware_environment": firmware_environment,
         "firmware_installation_digest": installed_marker,
+        "receiver_firmware_inventory": inventory_details,
         "receiver_hybrid_config": hybrid_config.to_dict(),
         "receiver_hybrid_config_digest": hybrid_config.selection_digest,
         "output_tail": output[-2000:],
@@ -1164,6 +1252,7 @@ def _parser() -> argparse.ArgumentParser:
     flash.add_argument("--expected-environment")
     flash.add_argument("--expected-config-digest")
     flash.add_argument("--expected-installation-digest")
+    flash.add_argument("--force", action="store_true")
     subparsers.add_parser("capture-state")
     activate_parser = subparsers.add_parser("activate")
     activate_parser.add_argument("release_id")
@@ -1217,6 +1306,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             expected_firmware_environment=args.expected_environment,
             expected_config_digest=args.expected_config_digest,
             expected_installation_digest=args.expected_installation_digest,
+            force=args.force,
         )
     elif args.command == "capture-state":
         result = capture_state(root)

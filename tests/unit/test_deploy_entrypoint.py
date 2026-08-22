@@ -39,12 +39,24 @@ from tools.deployment.receiver_hybrid_config import (
     PRODUCTION_FIRMWARE_ENVIRONMENT,
     write_receiver_hybrid_config,
 )
+from tools.deployment.receiver_firmware_inventory import ReceiverUSBDevice
 
 
 ROOT = Path(__file__).resolve().parents[2]
 FIRMWARE_SHA256 = "e" * 64
 ROLLOUT_CONFIG_DIGEST = "f" * 64
 FIRMWARE_INSTALLATION_DIGEST = "a" * 64
+
+
+def _receiver_devices() -> tuple[ReceiverUSBDevice, ...]:
+    return tuple(
+        ReceiverUSBDevice(
+            port=f"/dev/ttyACM{index}",
+            hardware_serial=f"02:00:00:00:00:{index:02x}",
+            physical_location=f"1-1.{index + 1}:1.0",
+        )
+        for index in range(4)
+    )
 
 
 @contextmanager
@@ -866,7 +878,7 @@ class TargetFirmwareBuildTests(unittest.TestCase):
             root = Path(temporary_dir)
             with (
                 patch.object(deploy_target, "_copy_support_workspace") as workspace,
-                patch.object(deploy_target.glob, "glob") as discover,
+                patch.object(deploy_target, "_discover_receiver_devices") as discover,
                 patch.object(deploy_target, "_command") as command,
                 self.assertRaisesRegex(RuntimeError, "selection changed"),
             ):
@@ -902,7 +914,7 @@ class TargetFirmwareFailureTests(unittest.TestCase):
             helper = root / "current/tools/deployment/flash_esp32.sh"
             helper.parent.mkdir(parents=True)
             helper.write_text("#!/bin/bash\n", encoding="utf-8")
-            ports = [f"/dev/ttyACM{index}" for index in range(4)]
+            devices = _receiver_devices()
 
             def command(args, **kwargs):
                 (root / ".esp32_firmware_hash").write_text(
@@ -921,7 +933,9 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 patch.object(
                     deploy_target, "_copy_support_workspace", return_value=(workspace, True),
                 ),
-                patch.object(deploy_target.glob, "glob", side_effect=(ports, [])),
+                patch.object(
+                    deploy_target, "_discover_receiver_devices", return_value=devices,
+                ),
                 patch.object(
                     deploy_target,
                     "_command",
@@ -965,6 +979,124 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 flash_env["CCACHE_DIR"],
                 os.fspath(root / "build/firmware/.ccache"),
             )
+            self.assertEqual(flash_env["FORCE_FIRMWARE_FLASH"], "1")
+            self.assertEqual(
+                flash_env["FIRMWARE_FLASH_PORTS"].splitlines(),
+                [device.port for device in devices],
+            )
+            self.assertEqual(flash_env["EXPECTED_FIRMWARE_PORT_COUNT"], "4")
+            inventory = result["receiver_firmware_inventory"]
+            self.assertEqual(len(inventory["observed_devices"]), 4)
+            self.assertEqual(
+                {item["reason"] for item in inventory["flash_targets"]},
+                {"aggregate_marker_mismatch"},
+            )
+
+    def test_missing_inventory_migrates_once_then_matching_hardware_skips(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            self._production_binary(workspace)
+            helper = root / "current/tools/deployment/flash_esp32.sh"
+            helper.parent.mkdir(parents=True)
+            helper.write_text("#!/bin/bash\n", encoding="utf-8")
+            devices = _receiver_devices()
+            installation = deploy_target.inspect_firmware_installation(
+                workspace / "firmware/esp32", PRODUCTION_FIRMWARE_ENVIRONMENT
+            )
+            (root / ".esp32_firmware_hash").write_text(
+                installation["installation_digest"] + "\n", encoding="utf-8"
+            )
+
+            def command(args, **kwargs):
+                (root / ".esp32_firmware_hash").write_text(
+                    kwargs["env"]["EXPECTED_FIRMWARE_INSTALLATION_DIGEST"] + "\n",
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess(args, 0, "All flashed\n", "")
+
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace", return_value=(workspace, True),
+                ),
+                patch.object(
+                    deploy_target, "_discover_receiver_devices", return_value=devices,
+                ),
+                patch.object(deploy_target, "_command", side_effect=command) as runner,
+            ):
+                migrated = deploy_target.flash_firmware(
+                    root, "a" * 64, receiver_count=4, debug=False,
+                )
+                unchanged = deploy_target.flash_firmware(
+                    root, "a" * 64, receiver_count=4, debug=False,
+                )
+
+            self.assertEqual(migrated["outcome"], "executed")
+            self.assertEqual(
+                {item["reason"] for item in migrated["receiver_firmware_inventory"]["flash_targets"]},
+                {"unrecorded_hardware"},
+            )
+            self.assertEqual(unchanged["outcome"], "skipped")
+            self.assertEqual(unchanged["flashed_ports"], [])
+            self.assertEqual(runner.call_count, 1)
+
+    def test_replaced_hardware_selects_only_its_current_port(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            self._production_binary(workspace)
+            helper = root / "current/tools/deployment/flash_esp32.sh"
+            helper.parent.mkdir(parents=True)
+            helper.write_text("#!/bin/bash\n", encoding="utf-8")
+            original = _receiver_devices()
+            replacement = ReceiverUSBDevice(
+                port=original[2].port,
+                hardware_serial="0a:0b:0c:0d:0e:0f",
+                physical_location=original[2].physical_location,
+            )
+            replaced = (*original[:2], replacement, *original[3:])
+
+            def command(args, **kwargs):
+                (root / ".esp32_firmware_hash").write_text(
+                    kwargs["env"]["EXPECTED_FIRMWARE_INSTALLATION_DIGEST"] + "\n",
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess(args, 0, "All flashed\n", "")
+
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace", return_value=(workspace, True),
+                ),
+                patch.object(
+                    deploy_target,
+                    "_discover_receiver_devices",
+                    side_effect=(original, replaced),
+                ),
+                patch.object(deploy_target, "_command", side_effect=command) as runner,
+            ):
+                deploy_target.flash_firmware(
+                    root, "a" * 64, receiver_count=4, debug=False,
+                )
+                result = deploy_target.flash_firmware(
+                    root, "a" * 64, receiver_count=4, debug=False,
+                )
+
+            self.assertEqual(result["outcome"], "executed")
+            self.assertEqual(result["flashed_ports"], [replacement.port])
+            self.assertEqual(
+                result["receiver_firmware_inventory"]["flash_targets"][0]["reason"],
+                "unrecorded_hardware",
+            )
+            self.assertEqual(
+                runner.call_args.kwargs["env"]["FIRMWARE_FLASH_PORTS"],
+                replacement.port,
+            )
+            self.assertEqual(
+                runner.call_args.kwargs["env"]["EXPECTED_FIRMWARE_PORT_COUNT"],
+                "1",
+            )
 
     def test_flash_failure_exit_or_failure_marker_never_becomes_success(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -975,7 +1107,7 @@ class TargetFirmwareFailureTests(unittest.TestCase):
             helper = root / "current/tools/deployment/flash_esp32.sh"
             helper.parent.mkdir(parents=True)
             helper.write_text("#!/bin/bash\n", encoding="utf-8")
-            ports = [f"/dev/ttyACM{index}" for index in range(4)]
+            devices = _receiver_devices()
             failures = (
                 subprocess.CompletedProcess(("bash",), 1, "serial failed", ""),
                 subprocess.CompletedProcess(
@@ -988,13 +1120,18 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                     patch.object(
                         deploy_target, "_copy_support_workspace", return_value=(workspace, True),
                     ),
-                    patch.object(deploy_target.glob, "glob", side_effect=(ports, [])),
+                    patch.object(
+                        deploy_target, "_discover_receiver_devices", return_value=devices,
+                    ),
                     patch.object(deploy_target, "_command", return_value=completed),
                     self.assertRaisesRegex(RuntimeError, "flash failed"),
                 ):
                     deploy_target.flash_firmware(
                         root, "a" * 64, receiver_count=4, debug=False,
                     )
+                self.assertFalse(
+                    (root / "run_state/receiver_firmware_inventory.json").exists()
+                )
 
     def test_flash_rejects_missing_build_artifact_before_helper_or_serial_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -1027,7 +1164,7 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 helper = root / "current/tools/deployment/flash_esp32.sh"
                 helper.parent.mkdir(parents=True)
                 helper.write_text("#!/bin/bash\n", encoding="utf-8")
-                ports = [f"/dev/ttyACM{index}" for index in range(4)]
+                devices = _receiver_devices()
 
                 def command(args, **_kwargs):
                     if tuple(args[:3]) == ("sudo", "systemctl", "stop"):
@@ -1043,7 +1180,9 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                         deploy_target, "_copy_support_workspace",
                         return_value=(workspace, True),
                     ),
-                    patch.object(deploy_target.glob, "glob", side_effect=(ports, [])),
+                    patch.object(
+                        deploy_target, "_discover_receiver_devices", return_value=devices,
+                    ),
                     patch.object(deploy_target, "_command", side_effect=command),
                     self.assertRaisesRegex(RuntimeError, expected),
                 ):
@@ -1289,7 +1428,8 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
         self.temporary_dir.cleanup()
 
     def _deployment(
-        self, *, unchanged: bool = False, firmware_changed: bool = False
+        self, *, unchanged: bool = False, firmware_changed: bool = False,
+        force_firmware: bool = False,
     ):
         runner = _Runner()
         context = DeployContext(
@@ -1310,6 +1450,7 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
             run_tests=False,
             generate_previews=False,
             health_timeout=1.0,
+            force_firmware=force_firmware,
         )
         deployment = deploy_entrypoint.CoordinatorDeployment(config, context)
         target = _FakeTarget(
@@ -1445,6 +1586,28 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                 ),
             ),
         )
+
+    def test_forced_firmware_flag_reaches_candidate_target_helper(self) -> None:
+        deployment, context, _runner, target = self._deployment(force_firmware=True)
+        context.state.update(
+            {
+                "support_id": target.support,
+                "release_id": target.candidate,
+                "firmware_selection": {
+                    "firmware_environment": PRODUCTION_FIRMWARE_ENVIRONMENT,
+                    "receiver_hybrid_config_digest": ROLLOUT_CONFIG_DIGEST,
+                    "firmware_sha256": FIRMWARE_SHA256,
+                    "firmware_installation_digest": FIRMWARE_INSTALLATION_DIGEST,
+                },
+            },
+        )
+        try:
+            deployment._firmware_flash(context)
+        finally:
+            deployment.close()
+
+        self.assertEqual(target.calls[-1][0], "flash-firmware")
+        self.assertEqual(target.calls[-1][1][-1], "--force")
 
 
 class _RecordingReceiptSink:

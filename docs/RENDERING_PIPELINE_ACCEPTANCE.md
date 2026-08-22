@@ -271,7 +271,10 @@ The slice passes only when:
 - the isolated rollback helper includes every imported deployment module, a
   pre-existing shared-marker symlink/non-regular file is rejected without
   touching its target, a legacy marker triggers one explicit migration flash,
-  and the next identical deployment is a true firmware no-op;
+  the Pi requires unique factory USB identities and physical locations for all
+  four receivers, a replacement board selects only its current port, and the
+  next identical deployment is a true firmware no-op backed by target-owned
+  per-device installation evidence;
 - focused profile/deployment tests, the complete Python/rendering/firmware and
   deployment gates, both ESP32-S3 builds, fixture regeneration, whitespace,
   deploy dry-run/plan, and an ordinary clean `just deploy` pass.

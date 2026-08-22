@@ -698,10 +698,13 @@ DeployReceipt
 - If provisioning requires reboot, persist the phase, reboot, wait for SSH,
   rediscover target state, and resume idempotently with a strict loop bound.
 - Build the common receiver image before downtime and flash only receivers whose
-  firmware identity differs, using stable provisioned paths. During migration,
-  existing device-specific images remain supported until logical identity is
-  externalized. Missing, duplicate, unexpected, or failed receivers fail the
-  operation.
+  recorded installation identity differs. Discover the current roster from
+  each ESP32's passive factory USB serial plus physical USB location; do not use
+  a mutable tty number as identity. Persist successful per-board evidence in
+  target-owned state. During migration, a missing ledger causes one all-board
+  initialization flash because the prior aggregate marker cannot prove which
+  physical receivers it covered. Missing, duplicate, unexpected, or failed
+  receivers fail the operation.
 - On partial flash failure, do not activate the candidate app. Leave the service
   stopped, retain prior/candidate images and evidence, and require explicit
   firmware recovery. Do not claim automatic whole-system rollback.
@@ -1561,8 +1564,9 @@ physical acceptance.
 
 - Reconcile desired/observed host and firmware state, resume bounded reboot
   phases idempotently, build before downtime, and flash the common image only to
-  receivers whose firmware identity differs while reconciling logical identity
-  as provisioned state.
+  receivers whose hardware-bound installation evidence differs. Interrogate
+  passive factory USB serials and physical locations before the skip decision;
+  retain the mapping as target-owned provisioned state.
 - Fail on missing, duplicate, unexpected, or failed receivers. On partial flash,
   preserve evidence and require explicit recovery rather than activating the app
   or claiming rollback.

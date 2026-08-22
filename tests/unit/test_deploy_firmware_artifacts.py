@@ -276,6 +276,66 @@ class FirmwareArtifactIdentityTests(unittest.TestCase):
             )
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "unchanged\n")
 
+    def test_helper_flashes_only_coordinator_selected_ports(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            firmware = root / "firmware" / "esp32"
+            _write_installation(firmware)
+            selected = inspect_firmware_installation(firmware, ENVIRONMENT)
+            marker = root / ".esp32_firmware_hash"
+            marker.write_text(
+                selected["installation_digest"] + "\n", encoding="utf-8"
+            )
+            upload_log = root / "pio-uploads.log"
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            pio = fake_bin / "pio"
+            pio.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"--version\" ]; then\n"
+                "  echo 'PlatformIO Core, version 6.1.19'\n"
+                "  exit 0\n"
+                "fi\n"
+                "printf '%s\\n' \"$*\" >> \"$PIO_TEST_LOG\"\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            pio.chmod(0o755)
+            environment = {
+                **os.environ,
+                "PATH": os.fspath(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+                "DEPLOY_DIR": os.fspath(root),
+                "FIRMWARE_PREBUILT": "1",
+                "FIRMWARE_ENVIRONMENT": ENVIRONMENT,
+                "EXPECTED_FIRMWARE_SHA256": selected["firmware_sha256"],
+                "EXPECTED_FIRMWARE_INSTALLATION_DIGEST": selected[
+                    "installation_digest"
+                ],
+                "EXPECTED_FIRMWARE_HASH_FILE": os.fspath(marker),
+                "FORCE_FIRMWARE_FLASH": "1",
+                "FIRMWARE_FLASH_PORTS": "/dev/ttyACM7\n/dev/ttyUSB2",
+                "EXPECTED_FIRMWARE_PORT_COUNT": "2",
+                "PIO_TEST_LOG": os.fspath(upload_log),
+            }
+
+            helper = ROOT / "tools" / "deployment" / "flash_esp32.sh"
+            completed = subprocess.run(
+                ("bash", helper), env=environment, text=True, capture_output=True
+            )
+
+            self.assertEqual(
+                completed.returncode, 0, completed.stdout + completed.stderr
+            )
+            uploads = upload_log.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(uploads), 2)
+            self.assertIn("--upload-port /dev/ttyACM7", uploads[0])
+            self.assertIn("--upload-port /dev/ttyUSB2", uploads[1])
+            self.assertNotIn("Firmware unchanged; skipping", completed.stdout)
+            self.assertEqual(
+                marker.read_text(encoding="utf-8").strip(),
+                selected["installation_digest"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
