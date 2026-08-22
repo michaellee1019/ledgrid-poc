@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Wall Conductor: a local interaction prototype for operating a tall living LED plant wall.">
+    <title>Wall Conductor — Living LED wall prototype</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">Skip to workspace</a>
+
+    <div class="app-shell" data-view="now">
+      <aside class="place-rail" aria-label="Places">
+        <a class="brand" href="#now" data-nav="now" aria-label="Wall Conductor home">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <span class="brand-word">Conductor</span>
+        </a>
+        <nav class="place-nav" aria-label="Primary navigation">
+          <button class="place-link is-active" type="button" data-nav="now" aria-current="page">
+            <span class="place-glyph glyph-now" aria-hidden="true"></span>
+            <span>Now</span>
+          </button>
+          <button class="place-link" type="button" data-nav="find">
+            <span class="place-glyph glyph-find" aria-hidden="true"></span>
+            <span>Find</span>
+          </button>
+          <button class="place-link" type="button" data-nav="compose">
+            <span class="place-glyph glyph-compose" aria-hidden="true"></span>
+            <span>Compose</span>
+          </button>
+          <button class="place-link" type="button" data-nav="touch">
+            <span class="place-glyph glyph-touch" aria-hidden="true"></span>
+            <span>Touch</span>
+          </button>
+          <button class="place-link" type="button" data-nav="health">
+            <span class="place-glyph glyph-health" aria-hidden="true"></span>
+            <span>Health</span>
+          </button>
+          <button class="place-link" type="button" data-nav="more">
+            <span class="place-glyph glyph-more" aria-hidden="true"></span>
+            <span>More</span>
+          </button>
+        </nav>
+        <button class="rail-status" type="button" data-open-health aria-label="Wall is connected. Open health details.">
+          <span class="status-orb" aria-hidden="true"></span>
+          <span aria-hidden="true">Online</span>
+        </button>
+      </aside>
+
+      <div class="main-column">
+        <header class="live-strip" aria-label="Current wall state">
+          <button class="live-identity" type="button" data-nav="now">
+            <span class="state-flag state-live">Live</span>
+            <span class="live-copy">
+              <strong id="liveTitle">Nocturne Ferns</strong>
+              <span id="liveSubtitle">Cozy Canopy · saved preset</span>
+            </span>
+          </button>
+          <div class="live-facts" aria-label="Live settings">
+            <span><b id="livePower">On</b> power</span>
+            <span><b id="liveBrightness">176</b> brightness</span>
+            <span><b id="liveVibe">Cozy</b> vibe</span>
+          </div>
+          <div class="strip-actions">
+            <button class="quiet-button room-button" type="button" data-room-toggle aria-expanded="false">
+              <span class="room-dot" aria-hidden="true"></span>
+              Room layers
+              <span class="button-count" id="layerCount">3</span>
+            </button>
+            <button class="stop-button" type="button" data-stop>Stop wall</button>
+          </div>
+        </header>
+
+        <main id="workspace" class="workspace" tabindex="-1"></main>
+      </div>
+    </div>
+
+    <section class="room-drawer" id="roomDrawer" aria-label="Independent room layers" aria-hidden="true">
+      <div class="drawer-head">
+        <div>
+          <span class="eyebrow">Independent of content</span>
+          <h2>Room layers</h2>
+          <p>These global choices follow future starts and scenes. Preview overrides stay isolated.</p>
+        </div>
+        <button class="icon-button" type="button" data-room-close aria-label="Close room layers">×</button>
+      </div>
+      <div class="drawer-section">
+        <div class="section-heading">
+          <div>
+            <h3>Vibe</h3>
+            <p>Semantic palette, tempo, and luminance where supported.</p>
+          </div>
+          <span class="scope-badge">Global</span>
+        </div>
+        <div class="segmented vibe-options" role="group" aria-label="Global vibe">
+          <button type="button" data-vibe="Neutral">Neutral</button>
+          <button type="button" data-vibe="Quiet">Quiet</button>
+          <button class="is-selected" type="button" data-vibe="Cozy">Cozy</button>
+          <button type="button" data-vibe="Vivid">Vivid</button>
+          <button type="button" data-vibe="Celebration">Celebration</button>
+        </div>
+      </div>
+      <div class="drawer-section">
+        <div class="section-heading">
+          <div>
+            <h3>Plant material</h3>
+            <p>Only compatible content responds. Conflicting field and surface effects replace one another.</p>
+          </div>
+          <label class="switch-label"><input id="plantAware" type="checkbox" checked><span></span> Enabled</label>
+        </div>
+        <div class="modifier-list" id="modifierList">
+          <div class="modifier-row" data-modifier="illuminate">
+            <div><strong>Foliage · illuminate</strong><span>Light the calibrated leaf silhouettes</span></div>
+            <input type="range" min="0" max="1" step="0.05" value="0.7" aria-label="Foliage illuminate strength">
+            <output>70%</output>
+          </div>
+          <div class="modifier-row" data-modifier="refract">
+            <div><strong>Globes · refract</strong><span>Bend motion through seven glass regions</span></div>
+            <input type="range" min="0" max="1" step="0.05" value="0.45" aria-label="Globe refract strength">
+            <output>45%</output>
+          </div>
+          <div class="modifier-row" data-modifier="slow_zone">
+            <div><strong>Globes · slow zone</strong><span>One active field modifier</span></div>
+            <input type="range" min="0" max="1" step="0.05" value="0.3" aria-label="Globe slow zone strength">
+            <output>30%</output>
+          </div>
+          <button class="text-button" type="button" data-add-modifier>+ Add a compatible modifier</button>
+        </div>
+      </div>
+      <div class="drawer-actions">
+        <span id="roomSaveState">All changes apply globally</span>
+        <button class="primary-button" type="button" data-room-apply>Apply room layers</button>
+      </div>
+    </section>
+    <button class="scrim" type="button" aria-label="Close drawer" data-room-close hidden></button>
+
+    <dialog class="confirm-dialog" id="takeLiveDialog" aria-labelledby="takeLiveTitle">
+      <form method="dialog">
+        <span class="eyebrow">From isolated preview</span>
+        <h2 id="takeLiveTitle">Take this look live?</h2>
+        <div class="handoff-diagram" aria-label="Preview will replace live output">
+          <span class="state-flag state-preview">Preview</span>
+          <b id="dialogDraftTitle">Selected preset</b>
+          <span aria-hidden="true">→</span>
+          <span class="state-flag state-live">Live</span>
+          <b id="dialogLiveTitle">Current wall</b>
+        </div>
+        <p id="dialogDescription">The current wall output will be replaced. Global vibe and plant layers remain independent.</p>
+        <label class="dialog-option"><input id="atomicPower" type="checkbox" checked> Ensure wall power is on and keep brightness at <span id="dialogBrightness">176</span></label>
+        <div class="dialog-actions">
+          <button class="quiet-button" value="cancel">Keep previewing</button>
+          <button class="live-button" id="confirmTakeLive" value="confirm">Take live now</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="comparison-dialog" id="comparisonDialog" aria-labelledby="comparisonTitle">
+      <header class="comparison-dialog-head">
+        <div>
+          <span class="eyebrow">Isolated visual comparison</span>
+          <h2 id="comparisonTitle">Compare three tall looks</h2>
+          <p>All previews share the wall’s 32:138 proportions. Nothing here changes live output.</p>
+        </div>
+        <form method="dialog"><button class="icon-button" value="close" aria-label="Close comparison">×</button></form>
+      </header>
+      <div class="comparison-grid" id="comparisonGrid"></div>
+      <footer class="comparison-dialog-foot">
+        <span>Use horizontal scrolling on a phone. Full names and identities remain visible.</span>
+        <form method="dialog"><button class="quiet-button" value="close">Close comparison</button></form>
+      </footer>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+    <script src="app.js"></script>
+  </body>
+</html>

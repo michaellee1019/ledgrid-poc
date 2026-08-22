@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#171a17">
+  <title>Room Tune — living wall remote concept</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to controls</a>
+  <div class="shell" id="app">
+    <header class="topbar">
+      <button class="wordmark" type="button" data-route="tune" aria-label="Room Tune home">
+        <span class="wordmark-mark" aria-hidden="true"></span>
+        <span>room tune</span>
+      </button>
+
+      <section class="live-lozenge" aria-labelledby="live-label">
+        <span class="live-signal" aria-hidden="true"></span>
+        <div class="live-copy">
+          <span class="eyebrow live-eyebrow" id="live-label">Live wall · living room</span>
+          <strong id="live-name">Boreal Hush</strong>
+          <span id="live-detail">Cozy · 42% · saved exactly</span>
+        </div>
+        <button class="quiet-button" id="inspect-live" type="button">Inspect</button>
+        <button class="stop-button" id="stop-live" type="button">Stop wall</button>
+      </section>
+
+      <button class="round-button" id="more-button" type="button" aria-expanded="false" aria-controls="more-menu">
+        <span aria-hidden="true">•••</span><span class="sr-only">More controls</span>
+      </button>
+    </header>
+
+    <nav class="intent-nav" aria-label="What should the room do?">
+      <span class="intent-question">Make the room…</span>
+      <button type="button" data-intent="settle" aria-pressed="true">settle</button>
+      <button type="button" data-intent="gather" aria-pressed="false">welcome people</button>
+      <button type="button" data-intent="focus" aria-pressed="false">help me focus</button>
+      <button type="button" data-intent="play" aria-pressed="false">play</button>
+      <button type="button" data-intent="know" aria-pressed="false">keep me posted</button>
+      <button type="button" data-intent="make" aria-pressed="false">make something</button>
+    </nav>
+
+    <main id="main" tabindex="-1">
+      <section class="route route-tune is-active" data-view="tune" aria-labelledby="tune-title">
+        <div class="tune-copy">
+          <p class="eyebrow">Room intention</p>
+          <h1 id="tune-title">Let the room exhale.</h1>
+          <p id="intent-description">Slow, low-contrast movement selected for winding down. Nothing changes on the wall while you look.</p>
+          <label class="search-field">
+            <span class="sr-only">Describe a feeling or search by complete name</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
+            <input id="catalog-search" type="search" autocomplete="off" placeholder="Describe a feeling or find a name">
+          </label>
+          <div class="feel-scale" aria-labelledby="motion-label">
+            <span id="motion-label">How much movement?</span>
+            <div class="segmented-control" id="motion-control">
+              <button type="button" data-motion="still" aria-pressed="false">Almost still</button>
+              <button type="button" data-motion="gentle" aria-pressed="true">Gently moving</button>
+              <button type="button" data-motion="lively" aria-pressed="false">Lively</button>
+            </div>
+          </div>
+          <button class="text-button" id="all-catalog" type="button">Browse all 52 sources and 292 presets</button>
+        </div>
+
+        <div class="wall-stage" aria-label="Isolated preview of selected look">
+          <div class="preview-tape">Preview only · isolated from live</div>
+          <div class="wall-frame">
+            <canvas class="pixel-wall" id="hero-wall" width="32" height="138" role="img" aria-label="Tall simulated LED wall preview, 32 by 138 logical pixels"></canvas>
+            <div class="plant-shadow" aria-hidden="true">
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+          </div>
+          <p class="wall-scale">32 × 138 · 4,416 LEDs · simulated at exact logical scale</p>
+        </div>
+
+        <section class="selection" aria-labelledby="selection-name">
+          <div class="selection-position"><span id="selection-index">01</span><span aria-hidden="true">—</span><span id="selection-count">24</span></div>
+          <p class="eyebrow" id="selection-source">Aurora Curtains · Python on host</p>
+          <h2 id="selection-name">Boreal Hush</h2>
+          <p id="selection-description">Dim ribbons drift behind the leaves without demanding attention.</p>
+          <p class="provider-note" id="provider-note" hidden></p>
+          <div class="selection-actions">
+            <button class="round-button previous" id="previous-look" type="button" aria-label="Previous look">←</button>
+            <button class="round-button next" id="next-look" type="button" aria-label="Next look">→</button>
+            <button class="quiet-button compare-button" id="compare-look" type="button">Compare</button>
+          </div>
+          <button class="primary-action" id="set-live" type="button">
+            <span>Set the live wall to</span>
+            <strong>“Boreal Hush”</strong>
+          </button>
+          <button class="text-button compose-from-look" id="compose-from-look" type="button">Add a clock over this look</button>
+        </section>
+
+        <section class="catalog-river" aria-labelledby="catalog-heading">
+          <div class="catalog-heading-row">
+            <div>
+              <p class="eyebrow">The look river</p>
+              <h2 id="catalog-heading">Selected for “settle”</h2>
+            </div>
+            <p id="catalog-summary">24 matches · complete names always shown</p>
+          </div>
+          <ol class="catalog-list" id="catalog-list"></ol>
+          <button class="quiet-button load-more" id="load-more" type="button">Show more names</button>
+        </section>
+      </section>
+
+      <section class="route route-scene" data-view="scene" aria-labelledby="scene-title" hidden>
+        <header class="route-heading scene-heading">
+          <div>
+            <p class="eyebrow">A two-sheet scene</p>
+            <h1 id="scene-title">Put time over the atmosphere.</h1>
+            <p>Build safely in an isolated preview. A saved scene remembers only these two sheets—not vibe, plants, brightness, or speed.</p>
+          </div>
+          <div class="memory-state" id="memory-state" data-state="saved">
+            <span aria-hidden="true"></span>
+            <strong>Saved exactly</strong>
+            <small>Matches “Evening time”</small>
+          </div>
+        </header>
+
+        <div class="scene-workbench">
+          <div class="wall-stage scene-stage">
+            <div class="preview-tape">Scene preview only · live remains <span id="scene-live-name">Boreal Hush</span></div>
+            <div class="wall-frame">
+              <canvas class="pixel-wall" id="scene-wall" width="32" height="138" role="img" aria-label="Isolated scene composition preview"></canvas>
+              <output class="clock-sheet" id="clock-sheet" aria-label="Clock overlay preview">8:42</output>
+              <div class="plant-shadow" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            </div>
+            <p class="provider-note scene-provider-note" id="scene-provider-note" hidden></p>
+          </div>
+
+          <div class="sheet-stack">
+            <section class="sheet-step is-open" data-sheet="background">
+              <button class="sheet-heading" type="button" aria-expanded="true">
+                <span class="sheet-number">1</span>
+                <span><small>Underneath</small><strong>Moving atmosphere</strong></span>
+                <span aria-hidden="true">⌄</span>
+              </button>
+              <div class="sheet-body">
+                <p><strong id="scene-background-name">Boreal Hush</strong><br><span id="scene-background-provider">Aurora Curtains · Python on host</span></p>
+                <button class="quiet-button" id="change-background" type="button">Choose another look</button>
+              </div>
+            </section>
+
+            <section class="sheet-step is-open" data-sheet="clock">
+              <button class="sheet-heading" type="button" aria-expanded="true">
+                <span class="sheet-number">2</span>
+                <span><small>On top</small><strong>Clock sheet</strong></span>
+                <span aria-hidden="true">⌄</span>
+              </button>
+              <div class="sheet-body clock-controls">
+                <label class="switch-line"><span>Show the clock</span><input id="clock-enabled" type="checkbox" checked><i aria-hidden="true"></i></label>
+                <label class="range-line"><span>Clock visibility <output id="opacity-output">84%</output></span><input id="clock-opacity" type="range" min="0" max="100" value="84"></label>
+                <fieldset class="plain-fieldset">
+                  <legend>Place it</legend>
+                  <div class="segmented-control placement-control">
+                    <button type="button" data-placement="top" aria-pressed="true">Top</button>
+                    <button type="button" data-placement="middle" aria-pressed="false">Middle</button>
+                    <button type="button" data-placement="bottom" aria-pressed="false">Bottom</button>
+                  </div>
+                </fieldset>
+                <details class="expert-fold">
+                  <summary>Fine placement and stale behavior</summary>
+                  <label class="range-line"><span>Across <output id="clock-x-output">0</output> px</span><input id="clock-x" type="range" min="-12" max="12" value="0"></label>
+                  <label class="range-line"><span>Down <output id="clock-y-output">0</output> px</span><input id="clock-y" type="range" min="-50" max="50" value="0"></label>
+                  <fieldset class="plain-fieldset">
+                    <legend>If clock updates stop</legend>
+                    <label><input type="radio" name="stale" value="hold" checked> Hold the last clock frame</label>
+                    <label><input type="radio" name="stale" value="clear"> Clear after 2.5 seconds</label>
+                  </fieldset>
+                </details>
+              </div>
+            </section>
+
+            <section class="sheet-step is-open" data-sheet="fallback">
+              <button class="sheet-heading" type="button" aria-expanded="true">
+                <span class="sheet-number">3</span>
+                <span><small>Safety net</small><strong>Known host fallback</strong></span>
+                <span aria-hidden="true">⌄</span>
+              </button>
+              <div class="sheet-body">
+                <p>If a receiver-native background cannot start, use <strong>Boreal Hush · Python on host</strong> with no clock.</p>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div class="scene-actions">
+          <button class="quiet-button" id="validate-scene" type="button">Check this scene</button>
+          <button class="quiet-button" id="save-scene" type="button">Save layout only</button>
+          <button class="primary-action" id="apply-scene" type="button"><span>Apply this scene to</span><strong>the live wall</strong></button>
+        </div>
+        <p class="validation-line" id="validation-line" role="status">Preview is isolated. No live command has been sent.</p>
+        <button class="text-button drift-demo" id="drift-demo" type="button">Prototype: simulate a change from another remote</button>
+      </section>
+
+      <section class="route route-atmosphere" data-view="atmosphere" aria-labelledby="atmosphere-title" hidden>
+        <header class="route-heading atmosphere-heading">
+          <div>
+            <p class="eyebrow">Independent room character</p>
+            <h1 id="atmosphere-title">Set the character, then teach the light about plants.</h1>
+            <p>These choices follow the wall globally. They are never stored inside a look or scene.</p>
+          </div>
+          <div class="mini-wall-wrap"><canvas class="pixel-wall" id="vibe-wall" width="32" height="138" aria-label="Vibe preview"></canvas><span>Preview only</span></div>
+        </header>
+
+        <section class="vibe-line" aria-labelledby="vibe-heading">
+          <h2 id="vibe-heading">Room character</h2>
+          <div class="vibe-choices" id="vibe-choices">
+            <button type="button" data-vibe="neutral" aria-pressed="false"><i></i><strong>Neutral</strong><span>Authored color and pace</span></button>
+            <button type="button" data-vibe="quiet" aria-pressed="false"><i></i><strong>Quiet</strong><span>Dim, cool, unhurried</span></button>
+            <button type="button" data-vibe="cozy" aria-pressed="true"><i></i><strong>Cozy</strong><span>Warm and easygoing</span></button>
+            <button type="button" data-vibe="vivid" aria-pressed="false"><i></i><strong>Vivid</strong><span>Bright, crisp, awake</span></button>
+            <button type="button" data-vibe="celebration" aria-pressed="false"><i></i><strong>Celebration</strong><span>Colorful, energetic</span></button>
+          </div>
+        </section>
+
+        <section class="plant-language" aria-labelledby="plant-heading">
+          <header>
+            <div><p class="eyebrow">Plant behavior</p><h2 id="plant-heading">When light meets leaves…</h2></div>
+            <p id="plant-sentence">Leaves bend the light like glass. Motion treats foliage as a soft barrier.</p>
+          </header>
+          <div class="plant-groups">
+            <fieldset class="plant-group visual-group">
+              <legend>Light can do several at once</legend>
+              <label><input type="checkbox" value="illuminate"><span><strong>Light the edges</strong><small>Illuminate</small></span></label>
+              <label><input type="checkbox" value="shadow"><span><strong>Cast soft shadows</strong><small>Shadow</small></span></label>
+              <label><input type="checkbox" value="refract" checked><span><strong>Bend like glass</strong><small>Refract</small></span></label>
+              <label><input type="checkbox" value="hue_shift"><span><strong>Shift color at leaves</strong><small>Hue shift</small></span></label>
+              <label><input type="checkbox" value="liquid_glass"><span><strong>Ripple through leaves</strong><small>Liquid glass</small></span></label>
+              <label><input type="checkbox" value="emitter"><span><strong>Let globes create motion</strong><small>Emitter</small></span></label>
+            </fieldset>
+            <fieldset class="plant-group field-group">
+              <legend>Motion field · choose one</legend>
+              <label><input type="radio" name="field" value="none" checked><span><strong>No pull</strong><small>Off</small></span></label>
+              <label><input type="radio" name="field" value="attractor"><span><strong>Draw toward plants</strong><small>Attractor</small></span></label>
+              <label><input type="radio" name="field" value="repulsor"><span><strong>Push away from plants</strong><small>Repulsor</small></span></label>
+              <label><input type="radio" name="field" value="slow_zone"><span><strong>Slow down nearby</strong><small>Slow zone</small></span></label>
+            </fieldset>
+            <fieldset class="plant-group surface-group">
+              <legend>Plant surface · choose one</legend>
+              <label><input type="radio" name="surface" value="none"><span><strong>Pass through</strong><small>Off</small></span></label>
+              <label><input type="radio" name="surface" value="obstacle" checked><span><strong>Flow around</strong><small>Obstacle</small></span></label>
+              <label><input type="radio" name="surface" value="portal"><span><strong>Enter and emerge</strong><small>Portal</small></span></label>
+              <label><input type="radio" name="surface" value="bumper"><span><strong>Bounce away</strong><small>Bumper</small></span></label>
+              <label><input type="radio" name="surface" value="hazard"><span><strong>Disappear on contact</strong><small>Hazard</small></span></label>
+              <label><input type="radio" name="surface" value="habitat"><span><strong>Gather and live there</strong><small>Habitat</small></span></label>
+            </fieldset>
+          </div>
+          <label class="range-line strength-line"><span>Selected effect strength <output id="plant-strength-output">45%</output></span><input id="plant-strength" type="range" min="0" max="100" value="45"></label>
+        </section>
+
+        <details class="operator-fold">
+          <summary>Whole-wall output and operator controls</summary>
+          <div class="operator-controls">
+            <label class="range-line"><span>Brightness <output id="brightness-output">42%</output></span><input id="brightness" type="range" min="0" max="100" value="42"></label>
+            <label>Frame target<select id="fps"><option>20 FPS</option><option selected>30 FPS</option><option>40 FPS</option><option>60 FPS</option></select></label>
+            <label>Animation pace<select id="speed"><option>0.5×</option><option selected>0.85×</option><option>1×</option><option>1.25×</option><option>1.5×</option></select></label>
+          </div>
+        </details>
+        <button class="primary-action atmosphere-apply" id="apply-atmosphere" type="button"><span>Apply room character and plant behavior</span><strong>independently to the live wall</strong></button>
+      </section>
+
+      <section class="route route-play" data-view="play" aria-labelledby="play-title" hidden>
+        <header class="route-heading play-heading">
+          <div><p class="eyebrow">Live play remote</p><h1 id="play-title">Touch the wall without touching the plants.</h1><p>Point, make a hole, or steer when the current look supports it. This prototype animates locally and never contacts hardware.</p></div>
+          <span class="prototype-flag">Prototype-only interaction demo</span>
+        </header>
+        <div class="play-space">
+          <div class="interactive-wall-wrap">
+            <canvas class="pixel-wall interactive-wall" id="play-wall" width="32" height="138" tabindex="0" role="application" aria-label="Interactive 32 by 138 wall. Tap or use arrow keys to place a point."></canvas>
+            <span class="tap-hint">Tap or drag a point</span>
+          </div>
+          <div class="remote-pad">
+            <div class="interaction-mode segmented-control">
+              <button type="button" data-interaction="point" aria-pressed="true">Point</button>
+              <button type="button" data-interaction="hole" aria-pressed="false">Make a hole</button>
+            </div>
+            <div class="dpad" aria-label="Direction pad">
+              <button type="button" data-direction="up" aria-label="Up">↑</button>
+              <button type="button" data-direction="left" aria-label="Left">←</button>
+              <button type="button" data-direction="center" aria-label="Action">●</button>
+              <button type="button" data-direction="right" aria-label="Right">→</button>
+              <button type="button" data-direction="down" aria-label="Down">↓</button>
+            </div>
+            <label class="range-line"><span>Gesture strength <output id="interaction-strength-output">60%</output></span><input id="interaction-strength" type="range" min="10" max="100" value="60"></label>
+            <p id="interaction-log" role="status">Ready for a point.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="route route-make" data-view="make" aria-labelledby="make-title" hidden>
+        <header class="route-heading">
+          <div><p class="eyebrow">Hands-on tools</p><h1 id="make-title">Draw, arrange, and map the living wall.</h1><p>These secondary concepts are intentionally lower fidelity. They establish where specialist tools live without pretending their workflows are resolved.</p></div>
+          <span class="prototype-flag">Lower-fidelity zone</span>
+        </header>
+        <div class="tool-index" role="list">
+          <button type="button" data-tool="paint" role="listitem"><span>01</span><strong>Paint pixels</strong><small>Brush a 32 × 138 frame, save a painter preset, or apply sparse updates.</small><b>Open concept →</b></button>
+          <button type="button" data-tool="emoji" role="listitem"><span>02</span><strong>Arrange emoji</strong><small>Place, size, and layer friendly symbols without learning coordinates.</small><b>Open concept →</b></button>
+          <button type="button" data-tool="mask" role="listitem"><span>03</span><strong>Map leaves and globes</strong><small>Paint foliage masks, seven fixed globe regions, and clearance areas.</small><b>Open concept →</b></button>
+        </div>
+      </section>
+
+      <section class="route route-health" data-view="health" aria-labelledby="health-title" hidden>
+        <header class="route-heading health-heading">
+          <div>
+            <p class="eyebrow">Wall care · plain-language first</p>
+            <h1 id="health-title">The picture is reaching all four wall sections.</h1>
+            <p>Two sections do not report back under the current expected-degraded wiring policy. The wall may look correct, but software cannot fully verify those sections.</p>
+          </div>
+          <span class="health-state">Working · verification incomplete</span>
+        </header>
+        <div class="receiver-wall" aria-label="Four receiver sections">
+          <div><strong>Section 1</strong><span>Picture sent</span><small>Reports back · healthy</small></div>
+          <div><strong>Section 2</strong><span>Picture sent</span><small>Reports back · healthy</small></div>
+          <div class="unverified"><strong>Section 3</strong><span>Picture sent</span><small>Write-only · visually verify</small></div>
+          <div class="unverified"><strong>Section 4</strong><span>Picture sent</span><small>Write-only · visually verify</small></div>
+        </div>
+        <section class="symptom-path" aria-labelledby="symptom-heading">
+          <h2 id="symptom-heading">What are you noticing?</h2>
+          <div class="symptom-choices">
+            <button type="button" data-symptom="dark">A dark section</button>
+            <button type="button" data-symptom="flash">An occasional flash</button>
+            <button type="button" data-symptom="slow">Motion feels sluggish</button>
+            <button type="button" data-symptom="clock">The clock stopped</button>
+          </div>
+          <div class="diagnosis" id="diagnosis"><strong>No symptom selected.</strong><p>Choose what you see and the remote will translate it into the next safest evidence to gather.</p></div>
+        </section>
+        <details class="evidence-fold">
+          <summary>Technical evidence</summary>
+          <div class="evidence-grid">
+            <dl><div><dt>Actual / target</dt><dd>29.7 / 30 FPS</dd></div><div><dt>Frame time</dt><dd>8.1 ms</dd></div><div><dt>Generate / send</dt><dd>4.2 / 3.1 ms</dd></div><div><dt>Uptime</dt><dd>6 h 14 min</dd></div></dl>
+            <dl><div><dt>Transport</dt><dd>Operational</dd></div><div><dt>Telemetry</dt><dd>Incomplete</dd></div><div><dt>CRC errors</dt><dd>0 reported</dd></div><div><dt>Acceptance</dt><dd>Blocked</dd></div></dl>
+          </div>
+          <p class="caution-note">Zero receiver errors does not prove the LEDs, level shifters, power, or ground are healthy; strips do not acknowledge what they displayed.</p>
+          <button class="quiet-button" id="refresh-evidence" type="button">Refresh evidence</button>
+          <button class="text-button" type="button" data-route="developer">Open developer evidence and tools</button>
+        </details>
+      </section>
+
+      <section class="route route-developer" data-view="developer" aria-labelledby="developer-title" hidden>
+        <header class="route-heading">
+          <div><p class="eyebrow">For maintainers</p><h1 id="developer-title">Developer shelf</h1><p>Quarantined content, build-only native packages, diagnostics, calibration evidence, and raw contracts remain reachable without becoming the household-facing home screen.</p></div>
+          <span class="prototype-flag">Secondary expert area</span>
+        </header>
+        <div class="developer-ledger">
+          <button type="button"><strong>Catalog exceptions</strong><span>3 unavailable · 2 build-only · 1 quarantined</span></button>
+          <button type="button"><strong>Native package evidence</strong><span>Provider binding, bundle digest, payload digest, host simulation notes</span></button>
+          <button type="button"><strong>Receiver diagnostics</strong><span>Four-device status, queues, CRC, copy, encode, and show timing</span></button>
+          <button type="button"><strong>Calibration evidence</strong><span>Camera homography, 32 × 138 geometry, foliage, seven globes, photographed acceptance</span></button>
+          <button type="button"><strong>Test and developer content</strong><span>Strip Order, Simple Test, Plant Calibration, mask highlights</span></button>
+        </div>
+      </section>
+    </main>
+
+    <nav class="utility-nav" aria-label="Wall controls">
+      <button type="button" data-route="tune" aria-current="page"><span aria-hidden="true">◌</span>Tune</button>
+      <button type="button" data-route="scene"><span aria-hidden="true">▱</span>Scene</button>
+      <button type="button" data-route="atmosphere"><span aria-hidden="true">◑</span>Room + plants</button>
+      <button type="button" data-route="play"><span aria-hidden="true">✣</span>Play</button>
+      <button type="button" data-route="health"><span aria-hidden="true">⌁</span>Wall care</button>
+    </nav>
+
+    <aside class="more-menu" id="more-menu" hidden>
+      <button type="button" data-route="make"><span>Make something</span><small>Painter, emoji, masks</small></button>
+      <button type="button" data-route="health"><span>Wall care</span><small>Plain-language diagnosis</small></button>
+      <button type="button" data-route="developer"><span>For maintainers</span><small>Developer tools and evidence</small></button>
+    </aside>
+  </div>
+
+  <dialog class="compare-dialog" id="compare-dialog" aria-labelledby="compare-title">
+    <form method="dialog" class="dialog-shell">
+      <header><div><p class="eyebrow">Two isolated previews</p><h2 id="compare-title">Compare at wall shape</h2></div><button class="round-button" value="close" aria-label="Close comparison">×</button></header>
+      <div class="comparison-bay" id="comparison-bay"></div>
+      <p class="dialog-note">Neither side is live. Timing is synchronized for comparison.</p>
+    </form>
+  </dialog>
+
+  <dialog class="confirm-dialog" id="confirm-dialog" aria-labelledby="confirm-title">
+    <form method="dialog" class="dialog-shell">
+      <header><div><p class="eyebrow">Live change</p><h2 id="confirm-title">Change the physical wall?</h2></div><button class="round-button" value="cancel" aria-label="Cancel">×</button></header>
+      <div class="confirmation-contrast">
+        <div><span class="live-signal"></span><small>Live now</small><strong id="confirm-live">Boreal Hush</strong></div>
+        <span aria-hidden="true">→</span>
+        <div><span class="preview-dot"></span><small>Will become live</small><strong id="confirm-next">Boreal Hush</strong></div>
+      </div>
+      <p id="confirm-detail">This sends one start/apply action. The isolated preview itself never touches the wall.</p>
+      <div class="dialog-actions"><button class="quiet-button" value="cancel">Keep live wall</button><button class="primary-action" id="confirm-apply" value="default"><span>Yes, set the live wall to</span><strong id="confirm-button-name">“Boreal Hush”</strong></button></div>
+    </form>
+  </dialog>
+
+  <dialog class="tool-dialog" id="tool-dialog" aria-labelledby="tool-title">
+    <form method="dialog" class="dialog-shell">
+      <header><div><p class="eyebrow">Lower-fidelity concept</p><h2 id="tool-title">Paint pixels</h2></div><button class="round-button" value="close" aria-label="Close tool">×</button></header>
+      <div id="tool-body"></div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -205,6 +205,161 @@ class AnimationWebInterface:
                 speed_baseline=DEFAULT_ANIMATION_SPEED_SCALE,
                 local_mode=self.local_mode,
             )
+
+        @self.app.route('/studio-next')
+        def studio_next():
+            """Studio Next shell; authoritative state is fetched after load."""
+            return render_template('studio_next.html', local_mode=self.local_mode)
+
+        @self.app.route('/api/v1/studio-next/bootstrap')
+        def api_studio_next_bootstrap():
+            """One provider-safe, non-mutating read model for Studio Next."""
+            status = self._status_payload()
+            scene = self._current_scene_payload(status)
+            return jsonify({
+                'schema': 'ledgrid.studio-next-bootstrap',
+                'schema_version': 1,
+                'local_mode': self.local_mode,
+                'generated_at': time.time(),
+                'status': status,
+                'scene': {
+                    'schema': 'ledgrid.scene-api',
+                    'schema_version': 1,
+                    'scene': scene,
+                    'active': scene is not None,
+                    'preset_diagnostics': self._scene_preset_diagnostics(scene),
+                },
+                'vibe_profiles': self._vibe_profile_catalog(),
+                'scene_presets': self._list_scene_presets(),
+                'catalog': self._studio_next_catalog(),
+            })
+
+        @self.app.route('/api/v1/studio-next/take-look', methods=['POST'])
+        def api_studio_next_take_look():
+            """Start one exact, ready Host Python background preset."""
+            payload = request.get_json(silent=True)
+            required = {'provider', 'plugin_id', 'preset_id'}
+            if not isinstance(payload, dict):
+                return jsonify({'error': 'request body must be a JSON object'}), 400
+            if set(payload) != required:
+                missing = sorted(required - set(payload))
+                unknown = sorted(set(payload) - required)
+                details = []
+                if missing:
+                    details.append(f"missing: {', '.join(missing)}")
+                if unknown:
+                    details.append(f"unsupported: {', '.join(unknown)}")
+                return jsonify({
+                    'error': (
+                        'take-look requires exactly provider, plugin_id, and preset_id'
+                        + (f" ({'; '.join(details)})" if details else '')
+                    )
+                }), 400
+
+            provider = payload['provider']
+            plugin_id = payload['plugin_id']
+            preset_id = payload['preset_id']
+            if any(
+                not isinstance(value, str) or not value
+                for value in (provider, plugin_id, preset_id)
+            ):
+                return jsonify({
+                    'error': 'provider, plugin_id, and preset_id must be non-empty strings'
+                }), 400
+            if self._sanitize_preset_id(preset_id) != preset_id:
+                return jsonify({'error': 'preset_id must be a stable identifier'}), 400
+
+            catalog = self._component_catalog()
+            providers = {
+                str(item.get('provider'))
+                for item in catalog
+                if item.get('plugin_id') == plugin_id
+            }
+            if len(providers) > 1:
+                return jsonify({
+                    'error': (
+                        'Look execution is disabled because this plugin ID occurs '
+                        'under multiple providers and presets are not provider-qualified'
+                    ),
+                    'code': 'provider_collision',
+                    'plugin_id': plugin_id,
+                    'providers': sorted(providers),
+                }), 409
+
+            matches = [
+                item for item in catalog
+                if (
+                    item.get('provider') == provider
+                    and item.get('plugin_id') == plugin_id
+                )
+            ]
+            if not matches:
+                return jsonify({'error': 'Provider-qualified component not found'}), 404
+            if len(matches) != 1:
+                return jsonify({
+                    'error': 'Provider-qualified component identity is ambiguous',
+                    'code': 'identity_ambiguous',
+                }), 409
+
+            action = self._studio_next_look_action(matches[0])
+            if not action['take_look_enabled']:
+                return jsonify({
+                    'error': action['reason'],
+                    'code': action['code'],
+                    'identity': {
+                        'key': f'{provider}:{plugin_id}:{preset_id}',
+                        'provider': provider,
+                        'plugin_id': plugin_id,
+                        'preset_id': preset_id,
+                    },
+                }), 409
+
+            preset = self._load_animation_preset(plugin_id, preset_id)
+            if preset is None or preset.get('animation') != plugin_id:
+                return jsonify({'error': 'Preset not found'}), 404
+            validation_error = self._validate_animation_params(
+                plugin_id, dict(preset['params'])
+            )
+            if validation_error:
+                return jsonify({
+                    'error': f'Preset is not executable: {validation_error}',
+                    'code': 'invalid_preset',
+                }), 409
+
+            command = self.control_channel.send_command(
+                'start', animation=plugin_id, config=dict(preset['params']),
+                preset=self._animation_preset_selection(preset),
+            )
+            identity = {
+                'key': f'{provider}:{plugin_id}:{preset_id}',
+                'component_key': f'{provider}:{plugin_id}',
+                'provider': provider,
+                'plugin_id': plugin_id,
+                'preset_id': preset_id,
+            }
+            return jsonify({
+                'success': True,
+                'identity': identity,
+                'preset': self._animation_preset_summary(preset),
+                'command_id': self._command_id(command),
+            })
+
+        @self.app.route('/api/v1/studio-next/take-scene', methods=['POST'])
+        def api_studio_next_take_scene():
+            """Start only the deliberately narrow Studio Next scene slice."""
+            try:
+                scene = self._validated_studio_next_scene_request(
+                    request.get_json(silent=True)
+                )
+            except SceneValidationError as exc:
+                return jsonify({'error': str(exc)}), 400
+            command = self.control_channel.send_command('start_scene', scene=scene)
+            return jsonify({
+                'success': True,
+                'scene': scene,
+                'preset_diagnostics': self._scene_preset_diagnostics(scene),
+                'command_id': self._command_id(command),
+            })
         
         @self.app.route('/api/animations')
         def api_list_animations():
@@ -519,11 +674,15 @@ class AnimationWebInterface:
             preset = self._load_animation_preset(animation_name, preset_id)
             if not preset:
                 return jsonify({'error': 'Preset not found'}), 404
-            self.control_channel.send_command(
+            command = self.control_channel.send_command(
                 'start', animation=animation_name, config=preset['params'],
                 preset=self._animation_preset_selection(preset),
             )
-            return jsonify({'success': True, 'preset': preset})
+            return jsonify({
+                'success': True,
+                'preset': preset,
+                'command_id': self._command_id(command),
+            })
 
         @self.app.route('/api/animations/<animation_name>/presets/<preset_id>', methods=['DELETE'])
         def api_delete_animation_preset(animation_name: str, preset_id: str):
@@ -553,8 +712,11 @@ class AnimationWebInterface:
         @self.app.route('/api/stop', methods=['POST'])
         def api_stop_animation():
             """API: Stop current animation"""
-            self.control_channel.send_command('stop')
-            return jsonify({'success': True})
+            command = self.control_channel.send_command('stop')
+            return jsonify({
+                'success': True,
+                'command_id': self._command_id(command),
+            })
 
         @self.app.route('/api/device/state', methods=['POST'])
         def api_set_device_state():
@@ -608,8 +770,14 @@ class AnimationWebInterface:
                 command_data['config'] = dict(preset['params'])
                 command_data['preset'] = self._animation_preset_selection(preset)
 
-            self.control_channel.send_command('set_device_state', **command_data)
-            return jsonify({'success': True, 'state': payload})
+            command = self.control_channel.send_command(
+                'set_device_state', **command_data
+            )
+            return jsonify({
+                'success': True,
+                'state': payload,
+                'command_id': self._command_id(command),
+            })
         
         @self.app.route('/api/status')
         def api_get_status():
@@ -695,10 +863,14 @@ class AnimationWebInterface:
                 return jsonify({'error': 'target_fps must be an integer'}), 400
             if target_fps < 1 or target_fps > 200:
                 return jsonify({'error': 'target_fps must be between 1 and 200'}), 400
-            self.control_channel.send_command(
+            command = self.control_channel.send_command(
                 'set_target_fps', target_fps=target_fps
             )
-            return jsonify({'success': True, 'target_fps': target_fps})
+            return jsonify({
+                'success': True,
+                'target_fps': target_fps,
+                'command_id': self._command_id(command),
+            })
 
         @self.app.route('/api/config/animation-speed', methods=['POST'])
         def api_set_animation_speed():
@@ -710,13 +882,14 @@ class AnimationWebInterface:
             if not math.isfinite(multiplier) or multiplier <= 0:
                 return jsonify({'error': 'multiplier must be a positive finite number'}), 400
             speed_scale = DEFAULT_ANIMATION_SPEED_SCALE * multiplier
-            self.control_channel.send_command(
+            command = self.control_channel.send_command(
                 'set_animation_speed_scale', animation_speed_scale=speed_scale
             )
             return jsonify({
                 'success': True,
                 'multiplier': multiplier,
                 'animation_speed_scale': speed_scale,
+                'command_id': self._command_id(command),
             })
 
         @self.app.route('/api/config/brightness', methods=['POST'])
@@ -730,10 +903,14 @@ class AnimationWebInterface:
                 )
             except ValueError as exc:
                 return jsonify({'error': str(exc)}), 400
-            self.control_channel.send_command(
+            command = self.control_channel.send_command(
                 'set_output_brightness', brightness=brightness
             )
-            return jsonify({'success': True, 'brightness': brightness})
+            return jsonify({
+                'success': True,
+                'brightness': brightness,
+                'command_id': self._command_id(command),
+            })
 
         @self.app.route('/api/config/plant-aware', methods=['POST'])
         def api_set_plant_aware():
@@ -756,10 +933,14 @@ class AnimationWebInterface:
             serialized = state.to_dict()
             if not self.local_mode and hasattr(self.preview_manager, 'set_plant_modifiers'):
                 self.preview_manager.set_plant_modifiers(serialized)
-            self.control_channel.send_command(
+            command = self.control_channel.send_command(
                 'set_plant_modifiers', plant_modifiers=serialized
             )
-            return jsonify({'success': True, 'plant_modifiers': serialized})
+            return jsonify({
+                'success': True,
+                'plant_modifiers': serialized,
+                'command_id': self._command_id(command),
+            })
 
         @self.app.route('/api/hardware/stats')
         def api_get_hardware_stats():
@@ -1184,6 +1365,237 @@ class AnimationWebInterface:
             'role': item.get('role', 'background'),
         } for item in self.preview_manager.list_animations()), provider_policy=policy)
 
+    @staticmethod
+    def _command_id(command: Any) -> Any:
+        """Extract correlation when the configured control channel supplies it."""
+        return command.get('command_id') if isinstance(command, dict) else None
+
+    def _studio_next_look_action(
+        self, component: Dict[str, Any], *, provider_collision: bool = False
+    ) -> Dict[str, Any]:
+        """Return the one fail-closed direct-look execution decision."""
+        if provider_collision:
+            return {
+                'take_look_enabled': False,
+                'code': 'provider_collision',
+                'reason': (
+                    'This plugin ID occurs under multiple providers. Legacy presets '
+                    'and previews cannot be assigned safely.'
+                ),
+            }
+        provider = component.get('provider')
+        if provider != 'python':
+            return {
+                'take_look_enabled': False,
+                'code': 'unsupported_provider',
+                'reason': 'Direct Looks support ready Host Python backgrounds only.',
+            }
+        if component.get('role') != 'background':
+            return {
+                'take_look_enabled': False,
+                'code': 'unsupported_role',
+                'reason': 'Direct Looks require a background component.',
+            }
+        if component.get('gallery') != 'show' or component.get('is_test') is True:
+            return {
+                'take_look_enabled': False,
+                'code': 'developer_only',
+                'reason': 'Test and developer components are available through Tools only.',
+            }
+
+        readiness_values = {
+            str(component.get(field) or '').strip().casefold().replace('-', '_')
+            for field in ('status', 'availability', 'readiness')
+        }
+        forbidden_readiness = {
+            'build_only', 'unavailable', 'quarantined', 'disabled', 'error',
+        }
+        blocked = sorted(readiness_values & forbidden_readiness)
+        if blocked:
+            return {
+                'take_look_enabled': False,
+                'code': blocked[0],
+                'reason': f"Component readiness is {blocked[0].replace('_', ' ')}.",
+            }
+
+        compatibility = component.get('compatibility')
+        if not isinstance(compatibility, dict):
+            compatibility = {}
+        if compatibility.get('composable') is not True:
+            return {
+                'take_look_enabled': False,
+                'code': 'not_composable',
+                'reason': str(
+                    compatibility.get('diagnostic')
+                    or 'The component is not composable as a background.'
+                ),
+            }
+        if compatibility.get('implementation_loaded') is not True:
+            return {
+                'take_look_enabled': False,
+                'code': 'build_only',
+                'reason': 'The Host Python implementation is not loaded.',
+            }
+
+        getter = getattr(self.preview_manager, 'get_animation_info', None)
+        try:
+            loaded = getter(component.get('plugin_id')) if callable(getter) else None
+        except (KeyError, TypeError, ValueError):
+            loaded = None
+        if not loaded:
+            return {
+                'take_look_enabled': False,
+                'code': 'implementation_unavailable',
+                'reason': 'The preview manager has not loaded this implementation.',
+            }
+        return {
+            'take_look_enabled': True,
+            'code': 'ready',
+            'reason': 'Ready Host Python background.',
+        }
+
+    @staticmethod
+    def _studio_next_preview(
+        provider: str,
+        descriptor_preview: Any,
+        asset_preview: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """Combine safe preview metadata while preserving explicit provenance."""
+        metadata: Dict[str, Any] = {}
+        if isinstance(descriptor_preview, dict):
+            metadata.update(descriptor_preview)
+        if isinstance(asset_preview, dict):
+            metadata.update(asset_preview)
+        if not metadata:
+            return None
+        metadata['live_state_mutated'] = False
+        metadata.setdefault('framebuffer_readback', False)
+        if provider == 'receiver_native':
+            metadata['provenance'] = 'receiver_host_simulation'
+            metadata['label'] = (
+                'Host simulation preview — not receiver framebuffer readback'
+            )
+        else:
+            metadata['provenance'] = 'isolated_host_preview'
+            metadata['label'] = (
+                'Isolated host preview — never changes the physical wall'
+            )
+        return metadata
+
+    def _studio_next_catalog(self) -> Dict[str, Any]:
+        """Build provider-qualified components and flattened preset records."""
+        raw_components = self._component_catalog()
+        providers_by_id: Dict[str, set] = {}
+        for component in raw_components:
+            plugin_id = component.get('plugin_id')
+            provider = component.get('provider')
+            if isinstance(plugin_id, str) and isinstance(provider, str):
+                providers_by_id.setdefault(plugin_id, set()).add(provider)
+        collisions = {
+            plugin_id: sorted(providers)
+            for plugin_id, providers in providers_by_id.items()
+            if len(providers) > 1
+        }
+
+        components: List[Dict[str, Any]] = []
+        presets: List[Dict[str, Any]] = []
+        withheld_presets = 0
+        diagnostics = []
+        for plugin_id, providers in sorted(collisions.items()):
+            discovered = self._list_animation_presets(plugin_id)
+            withheld_presets += len(discovered)
+            diagnostics.append({
+                'code': 'provider_collision',
+                'plugin_id': plugin_id,
+                'providers': providers,
+                'withheld_legacy_presets': len(discovered),
+                'message': (
+                    'Legacy preset and preview records are withheld because their '
+                    'provider cannot be determined safely.'
+                ),
+            })
+
+        for raw in sorted(
+            raw_components,
+            key=lambda item: (
+                str(item.get('name') or item.get('plugin_id') or '').casefold(),
+                str(item.get('provider') or ''),
+            ),
+        ):
+            component = json.loads(json.dumps(raw))
+            plugin_id = component.get('plugin_id')
+            provider = component.get('provider')
+            if not isinstance(plugin_id, str) or not isinstance(provider, str):
+                continue
+            component_key = f'{provider}:{plugin_id}'
+            collision = plugin_id in collisions
+            descriptor_preview = component.get('preview')
+            asset_preview = None if collision else self._preview_metadata(plugin_id)
+            component['key'] = component_key
+            component['provider_collision'] = collision
+            component['preview_contract'] = (
+                descriptor_preview if isinstance(descriptor_preview, dict) else {}
+            )
+            component['preview'] = (
+                None
+                if collision
+                else self._studio_next_preview(
+                    provider, descriptor_preview, asset_preview
+                )
+            )
+            component['action'] = self._studio_next_look_action(
+                component, provider_collision=collision
+            )
+            component['preset_keys'] = []
+
+            if not collision:
+                for preset in self._list_animation_presets(plugin_id):
+                    preset_id = preset.get('preset_id')
+                    if not isinstance(preset_id, str):
+                        continue
+                    preset_key = f'{component_key}:{preset_id}'
+                    item = dict(preset)
+                    item.update({
+                        'key': preset_key,
+                        'component_key': component_key,
+                        'provider': provider,
+                        'plugin_id': plugin_id,
+                        'preview': self._studio_next_preview(
+                            provider,
+                            descriptor_preview,
+                            preset.get('preview'),
+                        ),
+                        'action': dict(component['action']),
+                    })
+                    component['preset_keys'].append(preset_key)
+                    presets.append(item)
+            components.append(component)
+
+        presets.sort(
+            key=lambda item: (
+                str(item.get('name') or item.get('preset_id') or '').casefold(),
+                str(item.get('key') or ''),
+            )
+        )
+        provider_totals: Dict[str, int] = {}
+        for component in components:
+            provider = str(component.get('provider') or 'unknown')
+            provider_totals[provider] = provider_totals.get(provider, 0) + 1
+        return {
+            'schema': 'ledgrid.studio-next-catalog',
+            'schema_version': 1,
+            'components': components,
+            'presets': presets,
+            'totals': {
+                'components': len(components),
+                'presets': len(presets),
+                'presets_withheld': withheld_presets,
+                'components_by_provider': provider_totals,
+                'provider_collisions': len(collisions),
+            },
+            'diagnostics': diagnostics,
+        }
+
     def _scene_provider_policy(self) -> SceneProviderPolicy:
         """Resolve the manager's explicit rollout policy, failing safely off."""
         getter = getattr(self.preview_manager, 'scene_provider_policy', None)
@@ -1210,15 +1622,38 @@ class AnimationWebInterface:
     def _validated_scene_request(self, payload: Any) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise SceneValidationError('request body must contain a scene object')
+        catalog = self._component_catalog()
         scene = normalize_scene_payload(
             payload,
-            catalog=self._component_catalog(),
+            catalog=catalog,
             provider_policy=self._scene_provider_policy(),
         )
+        descriptors = {
+            (item.get('provider'), item.get('plugin_id')): item
+            for item in catalog
+            if isinstance(item.get('provider'), str)
+            and isinstance(item.get('plugin_id'), str)
+        }
         components = [scene['background'], scene['known_python_fallback']]
         components.extend(overlay['component'] for overlay in scene['overlays'])
         for component in components:
             component_id = component['plugin_id']
+            provider = component['provider']
+            descriptor = descriptors.get((provider, component_id))
+            if descriptor is None:
+                raise SceneValidationError(
+                    f'Provider-qualified component {provider}:{component_id} does not exist'
+                )
+            if provider == 'python':
+                getter = getattr(self.preview_manager, 'get_animation_info', None)
+                try:
+                    loaded = getter(component_id) if callable(getter) else None
+                except (KeyError, TypeError, ValueError):
+                    loaded = None
+                if not loaded:
+                    raise SceneValidationError(
+                        f'Host Python implementation {component_id} is not loaded'
+                    )
             for field in ('parameter_overrides', 'resolved_parameters'):
                 params = component.get(field) or {}
                 error = self._validate_animation_params(component_id, params)
@@ -1231,6 +1666,69 @@ class AnimationWebInterface:
                     raise SceneValidationError(
                         f"Component preset {component_id}/{preset_id} does not exist"
                     )
+        return scene
+
+    def _validated_studio_next_scene_request(
+        self, payload: Any
+    ) -> Dict[str, Any]:
+        """Enforce Studio Next's ready Host background plus fixed-clock slice."""
+        scene = self._validated_scene_request(payload)
+        catalog = self._component_catalog()
+        descriptors = {
+            (item.get('provider'), item.get('plugin_id')): item
+            for item in catalog
+            if isinstance(item.get('provider'), str)
+            and isinstance(item.get('plugin_id'), str)
+        }
+        background = scene['background']
+        descriptor = descriptors.get(
+            (background.get('provider'), background.get('plugin_id'))
+        )
+        if descriptor is None:
+            raise SceneValidationError('Studio Next background is not in the catalog')
+        action = self._studio_next_look_action(descriptor)
+        if not action['take_look_enabled']:
+            raise SceneValidationError(
+                f"Studio Next background is unavailable: {action['reason']}"
+            )
+        fallback = scene['known_python_fallback']
+        if (
+            fallback.get('provider') != background.get('provider')
+            or fallback.get('plugin_id') != background.get('plugin_id')
+        ):
+            raise SceneValidationError(
+                'Studio Next requires the known Python fallback to match its Host background'
+            )
+        overlays = scene['overlays']
+        if len(overlays) > 1:
+            raise SceneValidationError('Studio Next supports at most one clock overlay')
+        if overlays:
+            overlay = overlays[0]
+            component = overlay['component']
+            overlay_descriptor = descriptors.get(
+                (component.get('provider'), component.get('plugin_id'))
+            )
+            readiness_values = {
+                str(overlay_descriptor.get(field) or '')
+                .strip().casefold().replace('-', '_')
+                for field in ('status', 'availability', 'readiness')
+            } if overlay_descriptor is not None else set()
+            blocked_readiness = readiness_values & {
+                'build_only', 'unavailable', 'quarantined', 'disabled', 'error',
+            }
+            if (
+                overlay.get('slot_id') != 'clock_overlay'
+                or component.get('provider') != 'python'
+                or component.get('plugin_id') != 'clock_overlay'
+                or overlay_descriptor is None
+                or overlay_descriptor.get('role') != 'overlay'
+                or overlay_descriptor.get('gallery') != 'show'
+                or overlay_descriptor.get('is_test') is True
+                or blocked_readiness
+            ):
+                raise SceneValidationError(
+                    'Studio Next supports only the ready Host Python clock_overlay slot'
+                )
         return scene
 
     def _scene_preset_diagnostics(
@@ -1281,8 +1779,10 @@ class AnimationWebInterface:
             preset.get('animation'), preset.get('preset_id'), preset.get('params') or {}
         )
 
-    def _current_scene_payload(self) -> Optional[Dict[str, Any]]:
-        status = self._status_payload()
+    def _current_scene_payload(
+        self, status: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
+        status = status if isinstance(status, dict) else self._status_payload()
         raw_scene = status.get('scene_state')
         if not isinstance(raw_scene, dict) or not raw_scene.get('schema'):
             raw_scene = status.get('scene')

@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10231c">
+  <title>Lumen Path — living wall journeys</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to the journey</a>
+  <div class="app-shell">
+    <header class="topbar">
+      <button class="brand" data-route="trailhead" aria-label="Lumen Path home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span><strong>Lumen Path</strong><small>living wall journeys</small></span>
+      </button>
+
+      <button class="live-ribbon" id="liveRibbon" aria-expanded="false">
+        <span class="live-orb" aria-hidden="true"></span>
+        <span class="live-copy"><small>LIVE NOW</small><strong id="liveSceneName">Deep Current · North Star</strong></span>
+        <span class="sync-badge synced" id="syncBadge">Matches saved</span>
+        <span class="chevron" aria-hidden="true">⌄</span>
+      </button>
+
+      <div class="top-actions">
+        <button class="quiet-button atmosphere-trigger" aria-label="Open vibe and plant behavior">
+          <span aria-hidden="true">◐</span><span class="desktop-label">Vibe & plants</span>
+        </button>
+        <button class="avatar-button" aria-label="Open operator menu">RT</button>
+      </div>
+    </header>
+
+    <aside class="live-drawer" id="liveDrawer" aria-hidden="true">
+      <div class="drawer-scrim" data-close="liveDrawer"></div>
+      <section class="drawer-panel" aria-label="Live wall controls">
+        <header>
+          <div><p class="eyebrow">THE PHYSICAL WALL</p><h2>Live controls</h2></div>
+          <button class="icon-button" data-close="liveDrawer" aria-label="Close">×</button>
+        </header>
+        <div class="live-summary-card">
+          <div class="mini-wall"><canvas class="wall-canvas" data-scene="deep-current" width="32" height="138"></canvas></div>
+          <div>
+            <span class="status-dot"><i></i> Running on wall</span>
+            <h3 id="drawerSceneName">Deep Current</h3>
+            <p>North Star clock · Quiet vibe</p>
+            <p class="status-line" id="drawerSyncLine">Saved as “Evening settle” · no drift</p>
+          </div>
+        </div>
+        <label class="range-row"><span>Brightness <b id="brightnessValue">58%</b></span><input id="brightnessRange" type="range" min="0" max="100" value="58"></label>
+        <div class="control-pair">
+          <button class="secondary-button" id="liveStopButton">■ Stop scene</button>
+          <button class="power-button on" id="powerButton"><span>Power</span><b>On</b></button>
+        </div>
+        <div class="drawer-meta">
+          <span><small>Target</small><b id="fpsSummary">60 FPS</b></span>
+          <span><small>Motion</small><b id="speedSummary">1.0×</b></span>
+          <button class="text-button" data-route="care">View wall care →</button>
+        </div>
+      </section>
+    </aside>
+
+    <nav class="side-nav" aria-label="Primary">
+      <button class="nav-item active" data-route="trailhead"><span aria-hidden="true">⌂</span><b>Trailhead</b><small>Choose a purpose</small></button>
+      <button class="nav-item" data-route="journey"><span aria-hidden="true">↝</span><b>Journey</b><small>Shape the room</small></button>
+      <button class="nav-item" data-route="field-guide"><span aria-hidden="true">✣</span><b>Field guide</b><small>292 possibilities</small></button>
+      <button class="nav-item" data-route="studio"><span aria-hidden="true">⌘</span><b>Scene studio</b><small>Compose a moment</small></button>
+      <button class="nav-item" data-route="care"><span aria-hidden="true">♡</span><b>Wall care</b><small>Health & diagnosis</small></button>
+      <div class="side-foot">
+        <span class="connection-good"><i></i> Wall reachable</span>
+        <button class="text-button" id="tuningTrigger">Room tuning</button>
+      </div>
+    </nav>
+
+    <main id="main" tabindex="-1">
+      <section class="view active" id="view-trailhead" data-view="trailhead">
+        <div class="trailhead-layout">
+          <section class="hero-copy">
+            <p class="eyebrow">SATURDAY · 4:18 PM</p>
+            <h1>What should the room<br><em>become?</em></h1>
+            <p class="hero-subtitle">Start with what people need. Lumen Path turns it into a living sequence for the wall.</p>
+            <div class="goal-grid" id="goalGrid">
+              <button class="goal-card calm" data-goal="calm"><span class="goal-glyph">≈</span><span><strong>Calm the room</strong><small>Soften energy over 20–90 min</small></span><i>↗</i></button>
+              <button class="goal-card host" data-goal="host"><span class="goal-glyph">✦</span><span><strong>Host guests</strong><small>Arrival, gathering, afterglow</small></span><i>↗</i></button>
+              <button class="goal-card play" data-goal="play"><span class="goal-glyph">◇</span><span><strong>Play together</strong><small>Co-op games and wall gestures</small></span><i>↗</i></button>
+              <button class="goal-card paint" data-goal="paint"><span class="goal-glyph">✎</span><span><strong>Paint with light</strong><small>Pixels, emoji, masks and marks</small></span><i>↗</i></button>
+              <button class="goal-card diagnose" data-goal="diagnose"><span class="goal-glyph">⌁</span><span><strong>Check the wall</strong><small>A calm, guided health check</small></span><i>↗</i></button>
+              <button class="goal-card schedule" data-goal="schedule"><span class="goal-glyph">◴</span><span><strong>Author an arc</strong><small>Schedule how the room changes</small></span><i>↗</i></button>
+            </div>
+          </section>
+
+          <aside class="now-column">
+            <article class="now-card">
+              <header><span class="status-dot"><i></i> On the wall</span><button class="kebab-button" aria-label="More live options">•••</button></header>
+              <div class="living-preview large">
+                <canvas class="wall-canvas" data-scene="deep-current" width="32" height="138"></canvas>
+                <div class="foliage foliage-left"></div><div class="foliage foliage-right"></div>
+                <span class="wall-clock">4:18</span>
+              </div>
+              <h2>Deep Current</h2>
+              <p>with North Star clock</p>
+              <div class="now-tags"><span>Quiet</span><span>Plants: shadow + obstacle</span></div>
+              <button class="secondary-button full-width" id="touchToolsTrigger">Interact with this moment</button>
+            </article>
+            <article class="today-arc-card">
+              <header><div><p class="eyebrow">ROOM ARC</p><h3>Later today</h3></div><button class="text-button" data-route="journey" data-goal="schedule">Edit</button></header>
+              <div class="arc-row"><time>6:30</time><i class="amber"></i><span><b>Warm welcome</b><small>Guest arrival · 45 min</small></span></div>
+              <div class="arc-row"><time>8:15</time><i class="violet"></i><span><b>Afterglow</b><small>Until stopped</small></span></div>
+            </article>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-journey" data-view="journey">
+        <header class="page-header journey-header">
+          <div>
+            <button class="back-link" data-route="trailhead">← Trailhead</button>
+            <p class="eyebrow" id="journeyEyebrow">A GUIDED JOURNEY</p>
+            <h1 id="journeyTitle">Calm the room</h1>
+            <p id="journeyIntro">A gradual descent from restless to settled—no content hunting required.</p>
+          </div>
+          <div class="draft-state"><span class="draft-dot"></span><span><b id="draftLabel">Draft saved locally</b><small id="draftSub">The physical wall is untouched</small></span></div>
+        </header>
+
+        <div class="journey-toolbar">
+          <div class="duration-control"><span>Length</span><button>20 min</button><button class="active">45 min</button><button>90 min</button><button>Until I stop it</button></div>
+          <label class="start-control"><span>Begins</span><select id="journeyStart"><option>Now</option><option>At 6:30 PM</option><option>At sunset · 7:42 PM</option><option>Choose time…</option></select></label>
+        </div>
+
+        <div class="journey-workspace">
+          <section class="journey-path" aria-label="Journey moments">
+            <div class="path-line"><span></span></div>
+            <article class="moment-card active" data-moment="exhale" data-scene="breathing-moss">
+              <div class="moment-node"><b>1</b><span>NOW</span></div>
+              <div class="moment-thumb soft-teal"></div>
+              <div class="moment-copy"><span class="moment-time">0–12 min</span><h3>Exhale</h3><p>Breathing Moss settles the room slowly.</p><div><span>background</span><span>no clock</span></div></div>
+              <button class="moment-more" aria-label="Edit Exhale">•••</button>
+            </article>
+            <article class="moment-card" data-moment="gather" data-scene="ember-moss">
+              <div class="moment-node"><b>2</b><span>+12</span></div>
+              <div class="moment-thumb amber-moss"></div>
+              <div class="moment-copy"><span class="moment-time">12–34 min</span><h3>Gather inward</h3><p>Ember Moss warms as the room settles.</p><div><span>background</span><span>Quiet vibe</span></div></div>
+              <button class="moment-more" aria-label="Edit Gather inward">•••</button>
+            </article>
+            <article class="moment-card" data-moment="land" data-scene="night-canopy">
+              <div class="moment-node"><b>3</b><span>+34</span></div>
+              <div class="moment-thumb night"></div>
+              <div class="moment-copy"><span class="moment-time">34–45 min</span><h3>Land softly</h3><p>Night Canopy brings the clock back.</p><div><span>background + overlay</span><span>fade transition</span></div></div>
+              <button class="moment-more" aria-label="Edit Land softly">•••</button>
+            </article>
+            <button class="add-moment" id="addMomentButton"><span>＋</span>Add another turn</button>
+          </section>
+
+          <aside class="rehearsal-panel">
+            <header><div><p class="eyebrow">PRIVATE REHEARSAL</p><h2 id="rehearsalTitle">Exhale</h2></div><span class="safe-badge">Wall unaffected</span></header>
+            <div class="rehearsal-stage">
+              <div class="stage-time">Preview at <button id="previewTime">06:00</button></div>
+              <div class="living-preview rehearsal-wall">
+                <canvas id="journeyCanvas" class="wall-canvas" data-scene="breathing-moss" width="32" height="138"></canvas>
+                <div class="foliage foliage-left"></div><div class="foliage foliage-right"></div>
+                <span class="wall-clock hidden" id="journeyClock">4:18</span>
+              </div>
+              <input class="time-scrubber" id="journeyScrubber" type="range" min="0" max="45" value="6" aria-label="Preview journey time">
+              <div class="scrub-labels"><span>Start</span><span>12m</span><span>34m</span><span>45m</span></div>
+            </div>
+            <div class="moment-settings">
+              <div><small>Moment recipe</small><strong id="recipeName">Breathing Moss · Tidepool preset</strong></div>
+              <button class="text-button" data-route="studio">Tune this moment</button>
+            </div>
+            <div class="journey-actions">
+              <button class="secondary-button" id="saveJourneyButton">Save journey only</button>
+              <button class="primary-button take-live-trigger" data-source="journey">Take journey live <span>→</span></button>
+            </div>
+            <p class="action-note">You’ll review exactly what replaces “Deep Current” before anything changes.</p>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-field-guide" data-view="field-guide">
+        <header class="page-header field-header">
+          <div><p class="eyebrow">THE FIELD GUIDE</p><h1>Every possibility,<br><em>seen in context.</em></h1><p>Browse by what a moment needs. Nothing here can alter the wall until you confirm it.</p></div>
+          <div class="guide-count"><strong id="guideCount">292</strong><span>of 292<br>possibilities shown</span></div>
+        </header>
+        <div class="guide-controls">
+          <label class="search-box"><span>⌕</span><input id="guideSearch" type="search" placeholder="Try “quiet clock”, “touchable”, or “native”…"><kbd>⌘ K</kbd></label>
+          <button class="filter-button active" data-filter="all">Everything</button>
+          <button class="filter-button" data-filter="calm">Softens</button>
+          <button class="filter-button" data-filter="host">Welcomes</button>
+          <button class="filter-button" data-filter="play">Invites play</button>
+          <button class="filter-button" data-filter="readable">Keeps time</button>
+          <button class="filter-button" data-filter="care">Wall care</button>
+          <button class="filter-button" id="availabilityFilter">Any readiness ▾</button>
+        </div>
+        <div class="guide-meta-row"><span id="guideMeta">Showing the full field guide · ready, build-only, unavailable and quarantined items are labeled</span><button class="compare-dock-button" id="openCompareButton" disabled>Compare <b id="compareCount">0</b></button></div>
+        <div class="possibility-grid" id="possibilityGrid" aria-live="polite"></div>
+        <div class="guide-end"><span>✣</span><strong>End of the field guide</strong><p id="guideEndCopy">All 292 possibilities are present. There is no hidden “load more.”</p></div>
+      </section>
+
+      <section class="view" id="view-studio" data-view="studio">
+        <header class="page-header studio-header">
+          <div><button class="back-link" data-route="journey">← Back to journey</button><p class="eyebrow">SCENE STUDIO</p><h1>Compose one moment.</h1><p>A scene is one background, plus an optional clock. Rehearse it safely, then save or take it live.</p></div>
+          <div class="draft-state changed"><span class="draft-dot"></span><span><b id="studioDraftLabel">Draft · untouched</b><small>The physical wall still shows Deep Current</small></span></div>
+        </header>
+        <div class="studio-layout">
+          <section class="layers-panel">
+            <div class="layer-step active">
+              <span class="step-number">1</span><div class="layer-copy"><small>FOUNDATION</small><h2>Background</h2><button class="recipe-selector" id="backgroundSelector"><span class="recipe-swatch soft-teal"></span><span><strong id="backgroundName">Breathing Moss</strong><small id="backgroundMeta">Tidepool · Python host</small></span><i>Change</i></button></div>
+            </div>
+            <div class="layer-step">
+              <span class="step-number">2</span><div class="layer-copy"><small>OPTIONAL COMPANION</small><h2>Clock overlay</h2><label class="switch-row"><span><strong>North Star clock</strong><small>Python overlay · ready</small></span><input type="checkbox" id="overlayEnabled" checked><i></i></label>
+                <div class="inline-controls" id="overlayControls">
+                  <label>Opacity <span id="opacityValue">82%</span><input type="range" id="opacityRange" min="0" max="100" value="82"></label>
+                  <div class="placement-control"><span>Placement</span><div class="dpad mini" id="placementPad"><button data-direction="up">↑</button><button data-direction="left">←</button><button data-direction="center">•</button><button data-direction="right">→</button><button data-direction="down">↓</button></div><small id="placementValue">Centered · y −12</small></div>
+                  <label>When clock feed is stale<select id="stalePolicy"><option value="hold">Hold the last time</option><option value="clear">Clear after 30 seconds</option></select></label>
+                </div>
+              </div>
+            </div>
+            <div class="layer-step">
+              <span class="step-number">3</span><div class="layer-copy"><small>SAFETY NET</small><h2>Fallback</h2><p>If the receiver-native foundation cannot start, use:</p><button class="fallback-selector"><span class="recipe-swatch amber-moss"></span><span><strong>Ember Moss</strong><small>Known Python fallback · ready</small></span><i>Change</i></button></div>
+            </div>
+            <button class="advanced-disclosure" id="advancedDisclosure"><span>Overrides & timing</span><small>speed 0.8× · palette tidepool · 60 FPS</small><i>⌄</i></button>
+            <div class="advanced-controls" id="advancedControls">
+              <label>Background speed<input type="range" id="sceneSpeed" min="25" max="200" value="80"><span id="sceneSpeedValue">0.8×</span></label>
+              <label>Palette<select><option>Tidepool</option><option>Lichen</option><option>Moonlit</option><option>Original</option></select></label>
+              <p>Overrides belong to this saved scene; global brightness, FPS, vibe and plant behavior remain independent.</p>
+            </div>
+          </section>
+          <aside class="scene-rehearsal">
+            <header><div><p class="eyebrow">ISOLATED SCENE PREVIEW</p><h2>Breathing Moss + clock</h2></div><span class="safe-badge">Not the live wall</span></header>
+            <div class="scene-stage">
+              <div class="living-preview composer-wall"><canvas id="studioCanvas" class="wall-canvas" data-scene="breathing-moss" width="32" height="138"></canvas><div class="foliage foliage-left"></div><div class="foliage foliage-right"></div><span class="wall-clock" id="studioClock">4:18</span></div>
+              <div class="composition-readout"><span>32 × 138 physical preview</span><span id="providerReadout">Host-rendered background</span></div>
+            </div>
+            <div class="validation-result" id="validationResult"><span>◇</span><div><strong>Ready to validate</strong><p>Checks role, provider, preset identity, placement, fallback and stale policy.</p></div></div>
+            <div class="studio-actions">
+              <button class="secondary-button" id="validateSceneButton">Validate scene</button>
+              <button class="secondary-button" id="saveLayoutButton">Save layout only</button>
+              <button class="primary-button take-live-trigger" data-source="scene">Review & take live</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-care" data-view="care">
+        <header class="page-header care-header">
+          <div><p class="eyebrow">WALL CARE</p><h1>The wall is ready<br><em>for the room.</em></h1><p>Health is translated into what you can safely do. Deep diagnostics stay one layer down.</p></div>
+          <button class="secondary-button" id="refreshHealthButton">↻ Refresh check</button>
+        </header>
+        <div class="health-hero">
+          <div class="health-glyph"><span>✓</span></div><div><span class="status-dot"><i></i> READY</span><h2>Good to host, play, paint or schedule</h2><p>All 32 strips are presenting frames. Render cadence is steady. Two receivers have expected one-way telemetry limits.</p></div>
+        </div>
+        <div class="health-grid">
+          <section class="health-section receivers">
+            <header><div><p class="eyebrow">FOUR RECEIVERS · 32 STRIPS</p><h2>Physical path</h2></div><span class="expected-badge">Expected degraded ≠ failed</span></header>
+            <div class="receiver-map">
+              <article><span class="lane-preview lane-a"></span><b>Lane 1</b><small>Receiver 0 · healthy</small><i class="health-ok">✓</i></article>
+              <article><span class="lane-preview lane-b"></span><b>Lane 2</b><small>Receiver 1 · healthy</small><i class="health-ok">✓</i></article>
+              <article class="expected"><span class="lane-preview lane-c"></span><b>Lane 3</b><small>Receiver 3 · sending, no return path</small><i>~</i></article>
+              <article class="expected"><span class="lane-preview lane-d"></span><b>Lane 4</b><small>Receiver 2 · sending, no return path</small><i>~</i></article>
+            </div>
+            <details><summary>Why “expected degraded” is okay here</summary><p>These lanes are write-only in the installed topology. Host transfer counters prove outbound traffic, not receiver acknowledgement. Visible output and cadence are healthy; release acceptance remains honestly unavailable.</p></details>
+          </section>
+          <section class="health-section performance">
+            <header><div><p class="eyebrow">PRESENTATION</p><h2>Cadence & load</h2></div><span>Last 60 seconds</span></header>
+            <div class="metric"><div><strong>59.9</strong><small>actual FPS</small></div><span><i style="width:99.8%"></i></span><b>60 target</b></div>
+            <div class="metric"><div><strong>2.1 ms</strong><small>render p95</small></div><span><i style="width:42%"></i></span><b>5 ms budget</b></div>
+            <div class="metric"><div><strong>0</strong><small>missed cadence</small></div><span><i style="width:3%"></i></span><b>healthy</b></div>
+            <button class="advanced-disclosure"><span>Open performance trace</span><small>Developer tool · secondary prototype</small><i>↗</i></button>
+          </section>
+          <section class="health-section calibration">
+            <header><div><p class="eyebrow">LIVING MATERIAL</p><h2>Plant geometry</h2></div><span class="health-ok">✓ Current</span></header>
+            <div class="calibration-visual"><div class="cal-wall"></div><div class="cal-legend"><span><i class="foliage-key"></i>Foliage occlusion</span><span><i class="globe-key"></i>7 rooting globes</span><span><i class="safe-key"></i>Clear display area</span></div></div>
+            <p>Calibration profile matches the installed 32 × 138 geometry.</p>
+            <button class="secondary-button" id="maskEditorTrigger">Inspect masks</button>
+          </section>
+          <section class="health-section deep-tools">
+            <header><div><p class="eyebrow">FOR DEVELOPERS</p><h2>Deep tools</h2></div><span>Lower fidelity</span></header>
+            <button><span>⇄</span><b>Transport counters</b><small>Packets, CRC, sequence</small><i>→</i></button>
+            <button><span>⌁</span><b>Provider packages</b><small>Builds, quarantine, digests</small><i>→</i></button>
+            <button><span>▦</span><b>Calibration console</b><small>Camera & homography workflow</small><i>→</i></button>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <nav class="mobile-nav" aria-label="Mobile primary">
+      <button class="active" data-route="trailhead"><span>⌂</span><small>Home</small></button>
+      <button data-route="journey"><span>↝</span><small>Journey</small></button>
+      <button data-route="field-guide"><span>✣</span><small>Explore</small></button>
+      <button data-route="care"><span>♡</span><small>Care</small></button>
+    </nav>
+  </div>
+
+  <div class="modal" id="atmosphereModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="atmosphereTitle">
+    <div class="modal-scrim" data-close="atmosphereModal"></div>
+    <section class="modal-card atmosphere-card">
+      <header><div><p class="eyebrow">GLOBAL ATMOSPHERE</p><h2 id="atmosphereTitle">Tune the material, not the recipe</h2><p>Vibe and plant behavior are independent of scenes and journeys.</p></div><button class="icon-button" data-close="atmosphereModal" aria-label="Close">×</button></header>
+      <div class="atmosphere-grid">
+        <section><h3>Vibe</h3><p>A global grade across compatible content.</p><div class="vibe-orbit" id="vibeOrbit"><button data-vibe="neutral">Neutral<small>Original</small></button><button class="active" data-vibe="quiet">Quiet<small>Lower & slower</small></button><button data-vibe="cozy">Cozy<small>Warm & close</small></button><button data-vibe="vivid">Vivid<small>Clear & bright</small></button><button data-vibe="celebration">Celebration<small>Bold & kinetic</small></button><div class="orbit-core"><span>◐</span><small>GLOBAL</small></div></div></section>
+        <section class="plant-material"><h3>Plant material</h3><p>How animations meet foliage and seven globes.</p><div class="modifier-family"><span>Light</span><button class="active" data-modifier="shadow">Shadow <b>60%</b></button><button data-modifier="illuminate">Illuminate</button><button data-modifier="refract">Refract</button></div><div class="modifier-family"><span>Field</span><button class="active" data-modifier="none-field">None</button><button data-modifier="attractor">Attract</button><button data-modifier="slow_zone">Slow zone</button></div><div class="modifier-family"><span>Surface</span><button class="active" data-modifier="obstacle">Obstacle <b>100%</b></button><button data-modifier="portal">Portal</button><button data-modifier="habitat">Habitat</button></div><p class="compatibility-note">ⓘ Each recipe shows which material behaviors it supports. Unsupported modifiers remain visible and honest—they are never silently applied.</p></section>
+      </div>
+      <footer><span id="atmosphereSummary">Quiet · shadow 60% · obstacle 100%</span><button class="secondary-button" data-close="atmosphereModal">Keep as draft</button><button class="primary-button" id="applyAtmosphereButton">Apply globals to live wall</button></footer>
+    </section>
+  </div>
+
+  <div class="modal" id="takeLiveModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="takeLiveTitle">
+    <div class="modal-scrim" data-close="takeLiveModal"></div>
+    <section class="modal-card take-live-card">
+      <header><div><p class="eyebrow">PHYSICAL CHANGE</p><h2 id="takeLiveTitle">Ready to take this live?</h2></div><button class="icon-button" data-close="takeLiveModal" aria-label="Close">×</button></header>
+      <div class="change-comparison">
+        <div><span class="comparison-label">ON WALL NOW</span><div class="small-composition"><div class="mini-wall"><canvas class="wall-canvas" data-scene="deep-current" width="32" height="138"></canvas></div><span><b id="confirmCurrentName">Deep Current</b><small>North Star clock · Quiet</small></span></div></div>
+        <span class="change-arrow">→</span>
+        <div><span class="comparison-label proposed">PROPOSED</span><div class="small-composition proposed"><div class="mini-wall"><canvas id="confirmCanvas" class="wall-canvas" data-scene="breathing-moss" width="32" height="138"></canvas></div><span><b id="confirmProposedName">Calm the room</b><small id="confirmProposedMeta">3 moments · begins now · 45 min</small></span></div></div>
+      </div>
+      <div class="impact-list"><div><span>✓</span><p><b>Validated</b><small>Background, overlay, placement and Python fallback are compatible.</small></p></div><div><span>◴</span><p><b id="impactTiming">Runs for 45 minutes</b><small>Then leaves the final moment running until stopped.</small></p></div><div><span>↺</span><p><b>Preview remains a rehearsal</b><small>The wall changes only after the hold gesture below completes.</small></p></div></div>
+      <label class="acknowledge"><input type="checkbox" id="confirmAcknowledge"><span>I’m looking at the intended physical wall.</span></label>
+      <button class="hold-button" id="holdLiveButton" disabled><span class="hold-fill"></span><span class="hold-copy"><b>Press and hold to take live</b><small>Hold for 1 second · release to cancel</small></span></button>
+      <button class="text-button cancel-live" data-close="takeLiveModal">Keep rehearsing</button>
+    </section>
+  </div>
+
+  <div class="modal" id="compareModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="compareTitle">
+    <div class="modal-scrim" data-close="compareModal"></div>
+    <section class="modal-card compare-card"><header><div><p class="eyebrow">REHEARSAL DECK</p><h2 id="compareTitle">Compare on the wall’s real shape</h2><p>Tall previews are isolated simulations. Receiver-native items are clearly labeled.</p></div><button class="icon-button" data-close="compareModal" aria-label="Close">×</button></header><div class="compare-grid" id="compareGrid"></div><footer><span class="safe-badge">Comparing never changes live</span><button class="secondary-button" data-close="compareModal">Back to field guide</button></footer></section>
+  </div>
+
+  <div class="modal" id="interactionModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="interactionTitle">
+    <div class="modal-scrim" data-close="interactionModal"></div>
+    <section class="modal-card interaction-card"><header><div><p class="eyebrow">HANDS-ON TOOLS · SECONDARY PROTOTYPE</p><h2 id="interactionTitle">Touch, play or paint</h2><p>Gestures begin in a sandbox. A separate send action is required for the live wall.</p></div><button class="icon-button" data-close="interactionModal" aria-label="Close">×</button></header>
+      <div class="tool-tabs"><button class="active" data-tool="gesture">Point & move</button><button data-tool="paint">Paint / emoji</button><button data-tool="masks">Plant masks</button></div>
+      <div class="tool-panel active" data-tool-panel="gesture"><div class="gesture-stage"><div class="living-preview tool-wall" id="gestureWall"><canvas id="gestureCanvas" class="wall-canvas" data-scene="deep-current" width="32" height="138"></canvas><span class="gesture-point" id="gesturePoint"></span></div><div class="gesture-controls"><label>Gesture<select id="gestureKind"><option>Point</option><option>Punch a hole</option></select></label><div class="dpad" id="gesturePad"><button data-direction="up">↑</button><button data-direction="left">←</button><button data-direction="center">•</button><button data-direction="right">→</button><button data-direction="down">↓</button></div><p id="gestureCoords">x 16 · y 69 · preview only</p><button class="primary-button" id="sendGestureButton">Review one live gesture</button></div></div></div>
+      <div class="tool-panel" data-tool-panel="paint"><div class="paint-empty"><span class="paint-emoji">☺</span><h3>Pixel painter</h3><p>Choose emoji, draw sparse marks, clear, or save a frame. This lower-fidelity branch demonstrates the handoff; the full 32 × 138 editor is not prototyped here.</p><div class="emoji-row"><button>☺</button><button>♥</button><button>✦</button><button>☂</button><button>＋</button></div><button class="secondary-button">Open full painter workspace →</button></div></div>
+      <div class="tool-panel" data-tool-panel="masks"><div class="mask-inspector"><div class="mask-wall"></div><div><h3>Two semantic layers</h3><p><b>Foliage</b> is soft occlusion. <b>Seven globes</b> are solid landmarks. Editing calibration changes physical semantics and requires its own acceptance flow.</p><button class="secondary-button">Open calibration workflow →</button></div></div></div>
+    </section>
+  </div>
+
+  <div class="modal" id="tuningModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="tuningTitle"><div class="modal-scrim" data-close="tuningModal"></div><section class="modal-card tuning-card"><header><div><p class="eyebrow">GLOBAL ROOM TUNING</p><h2 id="tuningTitle">Output and motion</h2><p>These controls are independent of the active recipe.</p></div><button class="icon-button" data-close="tuningModal" aria-label="Close">×</button></header><label>Brightness <b id="tuningBrightnessValue">58%</b><input id="tuningBrightness" type="range" min="0" max="100" value="58"></label><label>Target FPS <b id="tuningFpsValue">60</b><input id="tuningFps" type="range" min="1" max="200" value="60"></label><label>Global speed <b id="tuningSpeedValue">1.0×</b><input id="tuningSpeed" type="range" min="25" max="200" value="100"></label><footer><span>Draft until applied</span><button class="primary-button" id="applyTuningButton">Apply globals</button></footer></section></div>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
+  <script src="app.js"></script>
+</body>
+</html>
