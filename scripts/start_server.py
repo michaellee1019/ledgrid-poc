@@ -22,6 +22,10 @@ from web.app import create_app
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from tools.deployment.preserve_deploy_settings import load_saved_state, save_status
 
+# Spread the eight I80 rising edges across the 3-sample WS2812 symbol. One
+# phase is the original all-lanes-together waveform (kStaggerOff).
+PRODUCTION_STAGGER_PHASES = 3
+
 # Try to import the real LED controller, fall back to mock for testing
 try:
     from drivers.multi_device import MultiDeviceLEDController as LEDController
@@ -49,6 +53,17 @@ except ImportError:
 
             def configure(self):
                 pass
+
+            def set_stagger_phases(self, phases):
+                pass
+
+
+def apply_production_stagger(controller, phases: int = PRODUCTION_STAGGER_PHASES) -> bool:
+    """Enable WS2812 edge staggering on a live controller. Safe no-op on mocks."""
+    if not hasattr(controller, "set_stagger_phases"):
+        return False
+    controller.set_stagger_phases(phases)
+    return True
 
 
 def device_count_for_strips(strip_count: int, strips_per_device: int = 8) -> int:
@@ -92,6 +107,12 @@ def run_controller_mode(args):
             leds_per_strip=args.leds_per_strip,
             debug=args.controller_debug,
         )
+    try:
+        if apply_production_stagger(controller):
+            print(f"  WS2812 stagger: {PRODUCTION_STAGGER_PHASES} phases")
+    except Exception as exc:
+        print(f"⚠️ Failed to set WS2812 stagger to {PRODUCTION_STAGGER_PHASES}: {exc}")
+
     startup_speed_scale = (
         saved_state.get('animation_speed_scale', args.animation_speed_scale)
         if saved_state else args.animation_speed_scale

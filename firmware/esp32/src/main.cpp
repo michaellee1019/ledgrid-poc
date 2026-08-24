@@ -42,6 +42,8 @@ constexpr std::uint8_t kCmdClear = 0x04;
 constexpr std::uint8_t kCmdSetRange = 0x05;
 constexpr std::uint8_t kCmdSetAll = 0x06;
 constexpr std::uint8_t kCmdConfig = 0x07;
+constexpr std::uint8_t kCmdSetLaneMask = 0x08;
+constexpr std::uint8_t kCmdSetStagger = 0x09;
 constexpr std::uint8_t kCmdPing = 0xFF;
 
 constexpr std::size_t kCrcBytes = 2;
@@ -78,6 +80,10 @@ std::atomic<std::uint16_t> last_crc_us{0};
 std::atomic<std::uint16_t> last_copy_us{0};
 std::atomic<std::uint32_t> last_accepted_sequence{0};
 std::atomic<std::uint32_t> last_displayed_sequence{0};
+std::atomic<std::uint8_t> requested_lane_mask{ledgrid::kAllLanesMask};
+std::atomic<std::uint8_t> applied_lane_mask{ledgrid::kAllLanesMask};
+std::atomic<std::uint8_t> requested_stagger_phases{ledgrid::kStaggerOff};
+std::atomic<std::uint8_t> applied_stagger_phases{ledgrid::kStaggerOff};
 
 constexpr std::uint16_t kCrc16NibbleTable[16] = {
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7,
@@ -186,6 +192,19 @@ void display_task(void*) {
       portEXIT_CRITICAL(&mailbox_mux);
       if (slot < 0) break;
 
+      const std::uint8_t wanted =
+          requested_lane_mask.load(std::memory_order_relaxed);
+      if (wanted != led_driver.lane_mask() && led_driver.set_lane_mask(wanted)) {
+        applied_lane_mask = wanted;
+      }
+
+      const std::uint8_t wanted_stagger =
+          requested_stagger_phases.load(std::memory_order_relaxed);
+      if (wanted_stagger != led_driver.stagger_phases() &&
+          led_driver.set_stagger_phases(wanted_stagger)) {
+        applied_stagger_phases = wanted_stagger;
+      }
+
       const bool submitted = led_driver.submit(
           mailbox_frames[slot],
           metadata.byte_count,
@@ -218,6 +237,7 @@ ledgrid::ReceiverStatusV2 status_snapshot() {
   ledgrid::ReceiverStatusV2 status{};
   status.flags = 0x01U | (led_driver.in_flight() ? 0x02U : 0U);
   status.active_strips = active_strips;
+  status.lane_mask = applied_lane_mask.load(std::memory_order_relaxed);
   status.leds_per_strip = leds_per_strip;
   status.queued_transactions = queued_transactions.load(std::memory_order_relaxed);
   status.packets = packets_received.load(std::memory_order_relaxed);
@@ -237,6 +257,8 @@ ledgrid::ReceiverStatusV2 status_snapshot() {
   status.last_displayed_sequence =
       last_displayed_sequence.load(std::memory_order_relaxed);
   status.display_errors = display_errors.load(std::memory_order_relaxed);
+  status.stagger_phases =
+      applied_stagger_phases.load(std::memory_order_relaxed);
   return status;
 }
 
@@ -318,6 +340,19 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
       publish_working_frame();
       return true;
     }
+
+    case kCmdSetLaneMask:
+      if (length != 2) return false;
+      requested_lane_mask = data[1];
+      return true;
+
+    case kCmdSetStagger:
+      if (length != 2 || data[1] < ledgrid::kStaggerOff ||
+          data[1] > ledgrid::kMaxStaggerPhases) {
+        return false;
+      }
+      requested_stagger_phases = data[1];
+      return true;
 
     case kCmdConfig: {
       if (length < 4 || length > 5) return false;

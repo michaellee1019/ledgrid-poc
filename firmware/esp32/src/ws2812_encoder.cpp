@@ -33,6 +33,24 @@ constexpr auto kExpandTable = make_expand_table();
 
 }  // namespace
 
+std::uint8_t stagger_phase_lanes(
+    std::uint8_t phase,
+    std::uint8_t stagger_phases,
+    std::uint8_t active_mask) {
+  const std::uint8_t phases =
+      (stagger_phases == 0 || stagger_phases > kMaxStaggerPhases)
+          ? kStaggerOff
+          : stagger_phases;
+  if (phase >= phases) return 0;
+  std::uint8_t lanes = 0;
+  for (std::uint8_t lane = 0; lane < kMaxParallelStrips; ++lane) {
+    if (lane % phases == phase) {
+      lanes = static_cast<std::uint8_t>(lanes | (1U << lane));
+    }
+  }
+  return static_cast<std::uint8_t>(lanes & active_mask);
+}
+
 std::size_t ws2812_reset_samples(
     std::uint16_t reset_us,
     std::uint32_t sample_rate_hz) {
@@ -60,14 +78,18 @@ EncodeResult encode_parallel_grb(
     std::uint8_t* output,
     std::size_t output_capacity,
     std::uint16_t reset_us,
-    std::uint32_t sample_rate_hz) {
+    std::uint32_t sample_rate_hz,
+    std::uint8_t lane_mask,
+    std::uint8_t stagger_phases) {
   if (!initialize_parallel_grb_waveform(
           strip_count,
           leds_per_strip,
           output,
           output_capacity,
           reset_us,
-          sample_rate_hz)) {
+          sample_rate_hz,
+          lane_mask,
+          stagger_phases)) {
     return {};
   }
   return encode_parallel_grb_pixels(
@@ -79,7 +101,9 @@ EncodeResult encode_parallel_grb(
       output,
       output_capacity,
       reset_us,
-      sample_rate_hz);
+      sample_rate_hz,
+      lane_mask,
+      stagger_phases);
 }
 
 bool initialize_parallel_grb_waveform(
@@ -88,7 +112,9 @@ bool initialize_parallel_grb_waveform(
     std::uint8_t* output,
     std::size_t output_capacity,
     std::uint16_t reset_us,
-    std::uint32_t sample_rate_hz) {
+    std::uint32_t sample_rate_hz,
+    std::uint8_t lane_mask,
+    std::uint8_t stagger_phases) {
   if (output == nullptr || strip_count == 0 ||
       strip_count > kMaxParallelStrips || leds_per_strip == 0 ||
       sample_rate_hz == 0) {
@@ -98,15 +124,26 @@ bool initialize_parallel_grb_waveform(
       ws2812_encoded_size(leds_per_strip, reset_us, sample_rate_hz);
   if (required_output == 0 || output_capacity < required_output) return false;
 
-  const std::uint8_t active_mask =
+  const std::uint8_t strip_mask =
       strip_count == 8 ? 0xFFU
                        : static_cast<std::uint8_t>((1U << strip_count) - 1U);
+  const std::uint8_t active_mask =
+      static_cast<std::uint8_t>(strip_mask & lane_mask);
   const std::size_t data_samples =
       static_cast<std::size_t>(leds_per_strip) * 3U * 8U * 3U;
-  for (std::size_t sample = 0; sample < data_samples; sample += 3U) {
-    output[sample] = active_mask;
-    output[sample + 1U] = 0;
-    output[sample + 2U] = 0;
+
+  // Sample s carries the leading high edge for whichever lanes sit at phase
+  // (s % kSamplesPerBit). With staggering off that is every active lane on
+  // every third sample, which is the original all-lanes-together waveform.
+  std::uint8_t phase_lanes[kSamplesPerBit];
+  for (std::uint8_t phase = 0; phase < kSamplesPerBit; ++phase) {
+    phase_lanes[phase] =
+        stagger_phase_lanes(phase, stagger_phases, active_mask);
+  }
+  for (std::size_t sample = 0; sample < data_samples; sample += kSamplesPerBit) {
+    output[sample] = phase_lanes[0];
+    output[sample + 1U] = phase_lanes[1];
+    output[sample + 2U] = phase_lanes[2];
   }
   std::memset(output + data_samples, 0, required_output - data_samples);
   return true;
@@ -121,7 +158,9 @@ EncodeResult encode_parallel_grb_pixels(
     std::uint8_t* output,
     std::size_t output_capacity,
     std::uint16_t reset_us,
-    std::uint32_t sample_rate_hz) {
+    std::uint32_t sample_rate_hz,
+    std::uint8_t lane_mask,
+    std::uint8_t stagger_phases) {
   if (rgb == nullptr || output == nullptr || strip_count == 0 ||
       strip_count > kMaxParallelStrips || leds_per_strip == 0 ||
       sample_rate_hz == 0) {
@@ -151,6 +190,29 @@ EncodeResult encode_parallel_grb_pixels(
   }
 
   const std::size_t lane_stride = static_cast<std::size_t>(leds_per_strip) * 3U;
+  // Each of the eight bytes packed into parallel_bits holds one lane bit per
+  // position, so replicating the mask into every byte silences a lane across
+  // all eight bits of the channel at once.
+  const std::uint64_t lane_bits = 0x0101010101010101ULL * lane_mask;
+
+  const std::uint8_t strip_mask =
+      strip_count == 8 ? 0xFFU
+                       : static_cast<std::uint8_t>((1U << strip_count) - 1U);
+  const std::uint8_t active_mask =
+      static_cast<std::uint8_t>(strip_mask & lane_mask);
+  const std::uint8_t phases =
+      (stagger_phases == 0 || stagger_phases > kMaxStaggerPhases)
+          ? kStaggerOff
+          : stagger_phases;
+  // A lane at phase p puts its data sample at p+1 within the symbol, so the
+  // byte at that offset also carries the leading high edge of the lanes one
+  // phase later. Both halves are disjoint lane sets, so the write stays a
+  // plain store rather than a read-modify-write.
+  std::uint8_t phase_lanes[kSamplesPerBit];
+  for (std::uint8_t phase = 0; phase < kSamplesPerBit; ++phase) {
+    phase_lanes[phase] = stagger_phase_lanes(phase, phases, active_mask);
+  }
+
   std::uint8_t* dynamic_sample = output + 1U;
 
   for (std::uint16_t pixel = 0; pixel < leds_per_strip; ++pixel) {
@@ -173,16 +235,52 @@ EncodeResult encode_parallel_grb_pixels(
         }
       }
 
-      dynamic_sample[0] = static_cast<std::uint8_t>(parallel_bits);
-      dynamic_sample[3] = static_cast<std::uint8_t>(parallel_bits >> 8U);
-      dynamic_sample[6] = static_cast<std::uint8_t>(parallel_bits >> 16U);
-      dynamic_sample[9] = static_cast<std::uint8_t>(parallel_bits >> 24U);
-      dynamic_sample[12] = static_cast<std::uint8_t>(parallel_bits >> 32U);
-      dynamic_sample[15] = static_cast<std::uint8_t>(parallel_bits >> 40U);
-      dynamic_sample[18] = static_cast<std::uint8_t>(parallel_bits >> 48U);
-      dynamic_sample[21] = static_cast<std::uint8_t>(parallel_bits >> 56U);
+      parallel_bits &= lane_bits;
+
+      for (std::uint8_t phase = 0; phase < phases; ++phase) {
+        const std::uint8_t data_lanes = phase_lanes[phase];
+        const std::uint8_t high_lanes =
+            phase_lanes[(phase + 1U) % kSamplesPerBit];
+        std::uint8_t* symbol = dynamic_sample + phase;
+        symbol[0] = static_cast<std::uint8_t>(
+            high_lanes | (static_cast<std::uint8_t>(parallel_bits) & data_lanes));
+        symbol[3] = static_cast<std::uint8_t>(
+            high_lanes |
+            (static_cast<std::uint8_t>(parallel_bits >> 8U) & data_lanes));
+        symbol[6] = static_cast<std::uint8_t>(
+            high_lanes |
+            (static_cast<std::uint8_t>(parallel_bits >> 16U) & data_lanes));
+        symbol[9] = static_cast<std::uint8_t>(
+            high_lanes |
+            (static_cast<std::uint8_t>(parallel_bits >> 24U) & data_lanes));
+        symbol[12] = static_cast<std::uint8_t>(
+            high_lanes |
+            (static_cast<std::uint8_t>(parallel_bits >> 32U) & data_lanes));
+        symbol[15] = static_cast<std::uint8_t>(
+            high_lanes |
+            (static_cast<std::uint8_t>(parallel_bits >> 40U) & data_lanes));
+        symbol[18] = static_cast<std::uint8_t>(
+            high_lanes |
+            (static_cast<std::uint8_t>(parallel_bits >> 48U) & data_lanes));
+        symbol[21] = static_cast<std::uint8_t>(
+            high_lanes |
+            (static_cast<std::uint8_t>(parallel_bits >> 56U) & data_lanes));
+      }
       dynamic_sample += 24U;
     }
+  }
+
+  // The trailing phase's last write lands on the first sample of the reset
+  // region and carries the leading high edge of a symbol that never gets a
+  // data sample. Left alone that is a spurious 416ns pulse on the phase-0
+  // lanes; clearing it lets the reset window start idle. Only the data bits
+  // of the trailing phase's lanes belong in that byte, and the two lane sets
+  // are disjoint, so the mask cannot disturb them.
+  if (phases > kStaggerOff) {
+    const std::size_t data_samples =
+        static_cast<std::size_t>(leds_per_strip) * 3U * 8U * kSamplesPerBit;
+    output[data_samples] = static_cast<std::uint8_t>(
+        output[data_samples] & ~phase_lanes[phases % kSamplesPerBit]);
   }
 
   return {true, required_output};

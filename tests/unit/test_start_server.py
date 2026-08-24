@@ -2,7 +2,12 @@
 
 import unittest
 
-from scripts.start_server import device_count_for_strips, handle_command
+from scripts.start_server import (
+    PRODUCTION_STAGGER_PHASES,
+    apply_production_stagger,
+    device_count_for_strips,
+    handle_command,
+)
 
 
 class _Manager:
@@ -74,7 +79,24 @@ class _Manager:
         self.calls.append(("clear",))
 
 
+class _StaggerController:
+    def __init__(self):
+        self.phases = None
+
+    def set_stagger_phases(self, phases):
+        self.phases = phases
+
+
 class StartServerTests(unittest.TestCase):
+    def test_production_stagger_is_three_phases(self):
+        self.assertEqual(PRODUCTION_STAGGER_PHASES, 3)
+        controller = _StaggerController()
+        self.assertTrue(apply_production_stagger(controller))
+        self.assertEqual(controller.phases, 3)
+
+    def test_production_stagger_is_a_noop_without_the_method(self):
+        self.assertFalse(apply_production_stagger(object()))
+
     def test_device_count_uses_ceiling_division(self):
         self.assertEqual(device_count_for_strips(1), 1)
         self.assertEqual(device_count_for_strips(8), 1)
