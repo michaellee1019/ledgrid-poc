@@ -4,19 +4,39 @@
 
 This document freezes the names, bytes, state boundaries, and rollout gates
 needed by Phase 1 and activated incrementally through the bounded host-library,
-host-context, receiver-decoder prerequisites, and trusted native authoring/build
-slice of Phase 3D of
+host-context, receiver-decoder prerequisites, trusted native authoring/build
+slice of Phase 3D, and gated native runtime slice of Phase 4 of
 [plan-revamped-animation-pipeline.md](plan-revamped-animation-pipeline.md).
-The scene/provider rollout flags remain off, while Phase 3A activates explicit
-receiver ownership and status v3. Ordinary production firmware keeps the
-statically linked local-background capability disabled until its one-receiver
-canary; complete host frames remain the accepted wall path.
+All receiver-local and managed-native rollout flags remain off in ordinary
+production. Explicit local and native canaries activate only their named bounded
+contracts; complete host frames remain the accepted wall path until H0-H4 pass.
 
 Machine-readable reference vectors live in
 `tests/fixtures/animation_pipeline_v1.json`. Phase 3A receiver-presentation
 vectors live in `tests/fixtures/receiver_presentation_v1.json`. Python and
 portable C++ tests must consume or reproduce those exact values before the
 corresponding behavior is activated.
+
+### Finalized topology amendment (2026-08-25)
+
+The installed geometry is now 33×138 across five receivers with logical widths
+`(8,8,8,8,1)`. Transport routes are `0→0.0`, `1→0.1`, `2→1.1`, `3→1.0`, and
+`4→1.2`; physical left-to-right logical order is `(0,1,3,2,4)` and native
+global offsets by logical ID are `(0,8,24,16,32)`. Host and native reversal
+flags by logical ID are `(false,false,true,true,false)`, and output masks are
+`(0xff,0xff,0xff,0xff,0x01)`. This supersedes the frozen 32×138/four-uniform-
+receiver operating assumption below while retaining old fixtures as historical
+evidence at their measured geometry.
+
+No schema is reinterpreted silently. Dimensions already encoded in profile,
+bundle, ABI, and receiver configuration payloads must now carry the new values;
+old 32×138 managed artifacts remain content-addressed but are not activatable on
+the finalized wall. Exact-roster operations require all five receivers. Decoder,
+cache, preview, orchestration, and acceptance code consumes explicit per-receiver
+width and offset rather than `receiver_id * 8`. Logical width, transport route,
+physical output-lane mask, host strip direction, and receiver-native direction
+are independent fields. A fifth receiver may own one logical strip without
+claiming that all eight of its output lanes are semantically populated.
 
 ## Frozen schema and protocol identities
 
@@ -36,18 +56,18 @@ change; these identifiers and versions may not change in place.
 | Rollout flags | `ledgrid.animation-pipeline-feature-flags` | 1 |
 | Foreground protocol | `ledgrid.foreground-protocol` | 1 |
 | Receiver presentation context | `ledgrid.receiver-presentation-golden` | 1 |
-| Receiver status | `ledgrid.receiver-status` | 5 (v4-compatible prefix) |
+| Receiver status | `ledgrid.receiver-status` | 6 (v5-compatible prefix) |
 | Native background ABI | `ledgrid.native-background-abi` | 2 |
 | Unsigned native bundle | `ledgrid.native-background-bundle` | 1 |
 | Installation profile | `ledgrid.installation-profile` | 1 |
 | Receiver optic coefficients | `ledgrid.receiver-optics` | 1 |
 
 The native ABI and bundle are accepted by the trusted repository authoring,
-host-preview, validation, and Pi-library tools, but remain runtime-reserved:
-current receivers do not load or execute them. The installation-profile v1
+host-preview, validation, Pi-library, and feature-gated Phase 4 runtime. Ordinary
+production firmware does not load or execute them. The installation-profile v1
 bytes are frozen for the
 portable compiler, Python decoder, topology slicer, Pi-authoritative managed
-library, read-only host views, transport-neutral four-receiver transaction
+library, read-only host views, transport-neutral five-receiver transaction
 engine and fake, a bounds-checked C++ receiver decoder/read-only view, and the
 default-off receiver-profile staging contract below. Profile staging remains
 display-inert. Activation never changes ownership or starts a renderer; after
@@ -61,7 +81,12 @@ first 64 bytes but uses `LGS3`; compatibility is intentionally
 new-host-to-old-firmware. Status v5 is likewise requested only after a v3 query
 exposes its capability; its first 416 bytes preserve all v4 field offsets apart
 from `LGS5` magic/version. An old host that accepts only `LGS2` is not compatible
-with new firmware.
+with new firmware. Status v6 is requested only when the v3 capability report
+advertises it. Its 1,216-byte record preserves the complete 768-byte v5 layout
+apart from `LGS6` magic/version, then adds native operation/result/watchdog state,
+capacity and transfer counters, active/staged/rollback/quarantine identities,
+typed-parameter binding, exact active geometry, timing, cache, and lifecycle
+counters. Feature-off firmware does not advertise the v6/native capability set.
 
 ## Component and presentation state
 
@@ -255,8 +280,9 @@ Coordinates are global logical strip-major coordinates:
 flat_index = strip * leds_per_strip + led
 ```
 
-The installed wall is 32×138. Receivers own global strip offsets 0, 8, 16, and
-24, each with 1,104 local pixels. A receiver-local index is
+The historical Phase 1 fixture wall is 32×138. The finalized topology amendment
+above changes the installed wall to 33×138 and adds a fifth one-strip slice.
+Receivers own explicit global offsets and widths; a receiver-local index is
 `(global_strip - strip_offset) * 138 + led`. Canvas coordinates and wiring/color
 transforms do not cross this boundary.
 
@@ -339,13 +365,16 @@ replaced by zero. Each payload uses standard IEEE CRC-32. A decoder validates
 all sizes, offsets, encodings, counts, reserved values, CRCs, digests, category
 and region bounds before exposing a view.
 
-The global golden has origin 0, all 32 strips, and canonical ascending strip
-order. A receiver view has eight strips and its physical lane origin; bit 0 is
-set only when its payload rows are stored in descending physical strip order.
-Reassembly uses the origin and flag to recover canonical global order.
+The historical global golden has origin 0, all 32 strips, and canonical
+ascending strip order. The finalized-wall golden has origin 0 and all 33 strips.
+Its receiver views carry explicit widths `(8,8,8,8,1)` and physical origins;
+bit 0 is set only when payload rows are stored in descending physical strip
+order. Reassembly uses origin, width, and flag to recover canonical global order.
 
-The portable C++ receiver decoder accepts only the exact 10,264-byte
-eight-strip view for an explicitly expected aligned origin and strip direction.
+The portable C++ receiver decoder accepts the exact canonical byte count for the
+explicitly expected local width (1 through 8), origin, and strip direction. The
+four eight-strip views remain 10,264 bytes; the fifth one-strip view is smaller
+according to the same header/table/section formula.
 Before it exposes non-owning const section pointers, it validates the complete
 frozen header/table, reserved bytes, content digest, every section CRC and
 bound, enum and fixed-point ranges, category/region membership, obstacle
@@ -372,16 +401,16 @@ implicitly. Identical publication returns the original receipt.
 
 Managed IDs are exactly 64 lowercase hexadecimal characters. Resolution
 revalidates immutable artifact bytes and receipt metadata before exposing the
-canonical global profile and four immutable receiver views. Receiver-view cache
+canonical global profile and five immutable receiver views. Receiver-view cache
 identity contains the global content digest, physical lane order, and native
 strip direction. Transport routes and host-frame strip direction remain named
 but do not change profile semantics or receiver bytes.
 
-The portable transaction engine binds one global profile ID to four
+The portable transaction engine binds one global profile ID to five
 receiver-specific payload SHA-256 values and operates through a small
 transport-neutral receiver interface. Its lifecycle is deterministic
 `preflight`, `stage`, `verify`, `commit`, and failure compensation. Capacity
-plus reserve is checked on all four targets before mutation; active, rollback,
+plus reserve is checked on all five targets before mutation; active, rollback,
 and staged payloads are pinned; only inactive payloads may be evicted in
 least-recently-used order. A partial operation attempts compensation on every
 receiver and reports compensation only after exact staged/active/rollback
@@ -401,7 +430,7 @@ legacy JSON-backed `PlantMaskGeometry` path, and must not create or mutate the
 managed-library filesystem. Every nonzero selection is a lowercase SHA-256
 content digest and resolves only through the Pi-authoritative managed library.
 
-Resolution, artifact validation, topology slicing, 32x138 controller-geometry
+Resolution, artifact validation, topology slicing, 33x138 controller-geometry
 validation, and immutable runtime-view construction all complete before the
 active selection changes. A rejection leaves the prior digest, selection
 revision, runtime view, scene components, preview session, authored parameters,
@@ -414,7 +443,7 @@ geometry identity, the separately named topology, and one immutable
 ordered region arrays are non-writeable. Runtime contexts pass that view by
 reference to single animations, fixed-scene components, receiver-hybrid Python
 foregrounds, ordinary previews, and scene previews; they do not copy or
-serialize the 32x138 arrays per frame. The managed category, clearance, edge,
+serialize the installed 33x138 arrays per frame. The managed category, clearance, edge,
 distance, and region fields reproduce the portable artifact exactly. Signed
 Q0.7 normals are dequantized once to Python float fields at this boundary. An
 explicit `get_plant_masks(radius)` call derives only a non-writeable clearance
@@ -482,7 +511,7 @@ without making partial data visible.
 PREFLIGHT is read-only. Success returns a nonzero opaque token bound to the
 candidate identities and size, receiver identity/topology, binding generation,
 capacity/reserve, and exact eviction plan. BEGIN consumes only that unchanged
-token. An intervening cache/binding mutation invalidates it, allowing all four
+token. An intervening cache/binding mutation invalidates it, allowing all five
 receivers to preflight before the first mutation. FINALIZE verifies received
 size and payload SHA-256 before atomic temporary-to-content-addressed rename.
 VERIFY reopens the visible bytes, verifies both identities, and runs the strict
@@ -793,11 +822,12 @@ letting edge color erase region identity. Category zero with clearance one is
 clearance-only; category zero with clearance zero is empty. Foliage must have
 region zero, and a globe must have one of the seven frozen region IDs.
 
-Portable acceptance stitches the four installed receiver views in logical
-order and proves all 18 classes, all three semantic fields, all four strip
-origins/directions, every receiver boundary, and read-only profile bytes.
+Portable acceptance stitches the five installed receiver views in physical
+order and proves all 18 classes, all three semantic fields, all five strip
+origins/directions, every receiver boundary, the heterogeneous one-strip tail,
+and read-only profile bytes.
 This diagnostic does not constitute installed-wall profile activation,
-photographic seam acceptance, ESP32 timing evidence, or strict all-four
+photographic seam acceptance, ESP32 timing evidence, or strict all-five
 receiver health acceptance.
 
 ## Feature-gated foreground wire contract
@@ -911,9 +941,36 @@ ordering/overlap/conflict, base binding, incomplete staging, expired lease, and
 invalid state. Later implementations must publish the exact result rather than
 collapse these cases into a generic failure.
 
+### Phase 4 managed-native runtime amendment
+
+`receiver_native_modules` is independent from the generic receiver-hybrid gate
+and defaults off. When explicitly enabled, the host accepts only a
+`ResolvedNativeBackground` from the Pi-authoritative managed library; IPC carries
+the content digest, never an arbitrary filesystem path or module bytes. Before
+probe or mutation, the controller proves the exact logical IDs `0..4`, widths
+`(8,8,8,8,1)`, offsets `(0,8,24,16,32)`, native direction flags, output-lane
+masks, required capability mask, bundle digest, and payload digest.
+
+Install and activation are exact-roster transactions under one operation lock.
+Every target is probed, staged, verified, and bound before activation; a partial
+failure compensates every receiver and is healthy only after the complete prior
+active/staged/rollback state is re-proven. Activation additionally binds the
+typed-parameter digest, presentation context, installation-profile digest, vibe,
+plant-modifier state, and scene revision. Restart adoption performs those same
+unanimous checks without mutation before the manager republishes the foreground
+snapshot.
+
+A native load/callback/watchdog failure records the exact payload quarantine and
+selects the compiled fallback; it is never retried automatically. Clearing
+quarantine is an explicit exact-bundle operator action that verifies all five
+receivers before reinstall may proceed. Complete host recovery is likewise an
+explicit transition: the manager retains observable native ownership and error
+state until a complete Python frame takeover and exact host-authority status are
+positively acknowledged.
+
 ## Display ownership and command effects
 
-The future state is orthogonal:
+The gated state is orthogonal:
 
 - base: `StartupFallback`, `LocalBackground`, `HostFullScene`;
 - foreground: `Cleared`, `Staging`, `Active`;
@@ -948,7 +1005,7 @@ Failure recovery is equally explicit:
 | Pi disconnect during local background | Continue healthy base; expire time-sensitive foreground by lease |
 | Native start/load/context/render/cleanup failure | Attribute failure, quarantine when applicable, return to fallback, clear invalid binding |
 | Maintenance transfer failure | Remove partial visibility, return maintenance inactive, retain prior active display |
-| Mixed four-board stage | Do not report success or activate a healthy mixed scene; replay or compensate |
+| Mixed five-board stage | Do not report success or activate a healthy mixed scene; replay or compensate |
 | Complete host frame | Reclaim host ownership and bypass/clear receiver foreground |
 
 ## Lease defaults

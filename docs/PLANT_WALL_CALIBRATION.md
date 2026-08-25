@@ -1,7 +1,10 @@
 # Plant-wall webcam calibration
 
-This runbook rebuilds the 32 × 138 foliage and globe masks after plant growth,
-plant movement, or webcam movement. It is a closed loop: capture, derive,
+This runbook rebuilds the photographed 32 × 138 foliage and globe evidence
+after plant growth, plant movement, or webcam movement. The installation-profile
+compiler appends the finalized wall's unobserved 33rd column as explicitly
+unmasked until a new 33-column photographic calibration replaces these
+legacy-named artifacts. It is a closed loop: capture, derive,
 illuminate, photograph, measure, and repeat until photographed light agrees
 with the physical objects.
 
@@ -148,7 +151,8 @@ capture ambient-lit foliage-only, globe-only, and combined frames. Then start
 
 Accept only when:
 
-- geometry is 32 × 138 = 4,416 pixels and the dimension probe agrees;
+- installed geometry is 33 × 138 = 4,554 pixels across the exact five-receiver
+  roster and a fresh dimension probe agrees;
 - all projected LED centers lie inside the wall quadrilateral;
 - foliage and globe masks have zero overlap;
 - every globe is an 8 × 8 circular footprint with center error at most 0.75 LED;
@@ -158,6 +162,10 @@ Accept only when:
 
 Save corner, foliage, globe, and Plant Glow overlays/reports together. Images
 are calibration evidence; JSON files are the production source of truth.
+The current `*_32x138` JSON and 2026-07-21 capture remain historical evidence,
+not sufficient H3 acceptance for the finalized 33rd column. Preserve them until
+a fresh 33-column candidate passes this loop, then version the replacement
+rather than silently rewriting their stated geometry.
 
 ## Calibration rules
 

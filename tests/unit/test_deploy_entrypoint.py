@@ -19,8 +19,9 @@ import sys
 import tempfile
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from types import SimpleNamespace
+from typing import Mapping
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from animation.core.plugin_loader import AnimationPluginLoader
 from tools.deployment import deploy_entrypoint, deploy_target
@@ -36,7 +37,9 @@ from tools.deployment.deploy_coordinator import (
 )
 from tools.deployment.receiver_hybrid_config import (
     DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+    NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
     PRODUCTION_FIRMWARE_ENVIRONMENT,
+    RECEIVER_HYBRID_CONFIG_RELATIVE_PATH,
     write_receiver_hybrid_config,
 )
 from tools.deployment.receiver_firmware_inventory import ReceiverUSBDevice
@@ -55,7 +58,7 @@ def _receiver_devices() -> tuple[ReceiverUSBDevice, ...]:
             hardware_serial=f"02:00:00:00:00:{index:02x}",
             physical_location=f"1-1.{index + 1}:1.0",
         )
-        for index in range(4)
+        for index in range(5)
     )
 
 
@@ -255,6 +258,34 @@ class _FakeTarget:
             return {"release_id": self.candidate, "reused": self.unchanged}
         if command == "cleanup-snapshot":
             return {"removed": True}
+        if command == "bootstrap-legacy-app":
+            return {
+                "outcome": "skipped",
+                "reason": "an immutable app release is already selected",
+                "selected": False,
+                "current_release": self.previous,
+                "bootstrap_release_id": None,
+                "recovery_release": None,
+            }
+        if command == "migrate-receiver-topology":
+            return {
+                "outcome": "skipped",
+                "migrated": False,
+                "strips": 33,
+                "receivers": 5,
+                "receiver_hybrid_config_digest": ROLLOUT_CONFIG_DIGEST,
+                "receiver_hybrid_config": {
+                    "receiver_strip_counts": [8, 8, 8, 8, 1],
+                    "receiver_global_strip_offsets": [0, 8, 24, 16, 32],
+                    "physical_output_lane_masks": [255, 255, 255, 255, 1],
+                    "reverse_strips_by_logical_receiver": [
+                        False, False, True, True, False,
+                    ],
+                    "reverse_native_strips_by_logical_receiver": [
+                        False, False, True, True, False,
+                    ],
+                },
+            }
         if command == "build-firmware":
             return {
                 "outcome": "skipped",
@@ -263,6 +294,17 @@ class _FakeTarget:
                 "firmware_sha256": FIRMWARE_SHA256,
                 "firmware_installation_digest": FIRMWARE_INSTALLATION_DIGEST,
                 "receiver_hybrid_config_digest": ROLLOUT_CONFIG_DIGEST,
+                "receiver_hybrid_config": {
+                    "receiver_strip_counts": [8, 8, 8, 8, 1],
+                    "receiver_global_strip_offsets": [0, 8, 24, 16, 32],
+                    "physical_output_lane_masks": [255, 255, 255, 255, 1],
+                    "reverse_strips_by_logical_receiver": [
+                        False, False, True, True, False,
+                    ],
+                    "reverse_native_strips_by_logical_receiver": [
+                        False, False, True, True, False,
+                    ],
+                },
             }
         if command == "provision":
             return {
@@ -307,6 +349,8 @@ class _FakeTarget:
                 "observed_release": args[0],
                 "stable_samples": 2,
             }
+        if command == "complete-legacy-bootstrap":
+            return {"outcome": "skipped", "reason": "no legacy bootstrap lifecycle"}
         if command == "record-deploy":
             return {"recorded": True}
         if command == "prune-releases":
@@ -376,6 +420,112 @@ class TargetSnapshotIntegrationTests(unittest.TestCase):
             inspected["receipt_directory"],
             str(self.target / "run_state/deploy_receipts"),
         )
+
+    def _legacy_bootstrap_fixture(self) -> tuple[AppReleaseManager, str]:
+        files = {
+            "scripts/start_systemd.sh": "#!/bin/bash\n",
+            "scripts/start_server.py": "print('legacy')\n",
+            "tools/deployment/preserve_deploy_settings.py": "print('save')\n",
+            "drivers/led_layout.py": "DEFAULT_STRIP_COUNT = 33\n",
+            "web/app.py": "def create_app(): return None\n",
+        }
+        for relative, contents in files.items():
+            path = self.target / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(contents, encoding="utf-8")
+        (self.target / "scripts/.env").write_text("TOKEN=not-a-release-input\n")
+        cache = self.target / "tools/build"
+        cache.mkdir(parents=True)
+        (cache / "cached.bin").write_bytes(b"cache")
+        candidate_source = self.base / "candidate.txt"
+        candidate_source.write_text("candidate\n", encoding="utf-8")
+        manager = AppReleaseManager(self.target)
+        candidate = manager.stage({"candidate.txt": candidate_source})
+        return manager, candidate.id
+
+    def test_first_cutover_bootstrap_is_immutable_idempotent_and_resume_safe(self) -> None:
+        manager, candidate_id = self._legacy_bootstrap_fixture()
+        with patch.object(
+            deploy_target,
+            "_legacy_service_working_directory",
+            return_value=self.target.resolve(),
+        ):
+            first = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
+
+        bootstrap_id = first["bootstrap_release_id"]
+        self.assertTrue(first["selected"])
+        self.assertNotEqual(bootstrap_id, candidate_id)
+        self.assertEqual(manager.current_release_id(), bootstrap_id)
+        bootstrap = manager.validate(bootstrap_id)
+        self.assertFalse(bootstrap.path.stat().st_mode & stat.S_IWUSR)
+        self.assertTrue((bootstrap.path / "scripts/start_systemd.sh").is_file())
+        self.assertFalse((bootstrap.path / "scripts/.env").exists())
+        self.assertFalse((bootstrap.path / "tools/build/cached.bin").exists())
+
+        repeated = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
+        self.assertEqual(repeated["outcome"], "skipped")
+        self.assertEqual(repeated["bootstrap_release_id"], bootstrap_id)
+        self.assertEqual(manager.current_release_id(), bootstrap_id)
+
+        activated = deploy_target.activate(self.target, candidate_id)
+        self.assertEqual(activated["previous_release"], bootstrap_id)
+        resumed = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
+        self.assertEqual(resumed["recovery_release"], bootstrap_id)
+        self.assertEqual(resumed["phase"], "candidate_pending")
+
+        restored = deploy_target.activate(self.target, bootstrap_id)
+        self.assertEqual(restored["previous_release"], candidate_id)
+        selected = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
+        self.assertEqual(selected["phase"], "selected")
+        self.assertIsNone(selected["recovery_release"])
+
+        deploy_target.activate(self.target, candidate_id)
+        completed = deploy_target.complete_legacy_bootstrap(
+            self.target, candidate_id
+        )
+        self.assertEqual(completed["phase"], "complete")
+        final = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
+        self.assertEqual(final["phase"], "complete")
+        self.assertIsNone(final["recovery_release"])
+
+    def test_prepared_bootstrap_record_recovers_atomic_selection(self) -> None:
+        manager, candidate_id = self._legacy_bootstrap_fixture()
+        with patch.object(
+            deploy_target,
+            "_legacy_service_working_directory",
+            return_value=self.target.resolve(),
+        ):
+            first = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
+        record_path = self.target / deploy_target.LEGACY_BOOTSTRAP_RECORD.as_posix()
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        deploy_target._write_legacy_bootstrap_record(
+            self.target, {**record, "phase": "prepared"}
+        )
+        manager.current_path.unlink()
+
+        resumed = deploy_target.bootstrap_legacy_app(self.target, candidate_id)
+
+        self.assertTrue(resumed["selected"])
+        self.assertEqual(manager.current_release_id(), first["bootstrap_release_id"])
+        self.assertEqual(
+            json.loads(record_path.read_text(encoding="utf-8"))["phase"],
+            "selected",
+        )
+
+    def test_bootstrap_rejects_symlinked_source_input(self) -> None:
+        _manager, candidate_id = self._legacy_bootstrap_fixture()
+        (self.target / "drivers/linked.py").symlink_to(
+            self.target / "drivers/led_layout.py"
+        )
+        with (
+            patch.object(
+                deploy_target,
+                "_legacy_service_working_directory",
+                return_value=self.target.resolve(),
+            ),
+            self.assertRaisesRegex(RuntimeError, "regular non-symlink"),
+        ):
+            deploy_target.bootstrap_legacy_app(self.target, candidate_id)
 
     def test_snapshot_verification_rejects_mutability_and_byte_tampering(self) -> None:
         selected = self.snapshot / "scripts/start_server.py"
@@ -460,6 +610,98 @@ class TargetSnapshotIntegrationTests(unittest.TestCase):
 
 
 class TargetHealthIntegrationTests(unittest.TestCase):
+    @staticmethod
+    def _receiver_contract(environment: str) -> Mapping[str, object]:
+        return deploy_entrypoint.receiver_firmware_health_contract(
+            environment,
+            {
+                "receiver_strip_counts": [8, 8, 8, 8, 1],
+                "receiver_global_strip_offsets": [0, 8, 24, 16, 32],
+                "physical_output_lane_masks": [255, 255, 255, 255, 1],
+                "reverse_strips_by_logical_receiver": [
+                    False, False, True, True, False,
+                ],
+                "reverse_native_strips_by_logical_receiver": [
+                    False, False, True, True, False,
+                ],
+            },
+            leds_per_strip=138,
+            receiver_count=5,
+        )
+
+    @staticmethod
+    def _receiver_statuses(
+        *, version: int, capabilities: int, responses: int = 2,
+    ) -> tuple[Mapping[str, object], ...]:
+        widths = (8, 8, 8, 8, 1)
+        offsets = (0, 8, 24, 16, 32)
+        masks = (255, 255, 255, 255, 1)
+        return tuple(
+            {
+                "receiver_status_seen": True,
+                "receiver_status_responses": responses,
+                "receiver_status_version": version,
+                "receiver_capabilities": capabilities,
+                "receiver_logical_device": logical_id,
+                "receiver_active_strips": widths[logical_id],
+                "receiver_global_strip_offset": offsets[logical_id],
+                "receiver_lane_mask": masks[logical_id],
+                "receiver_leds_per_strip": 138,
+            }
+            for logical_id in range(5)
+        )
+
+    @staticmethod
+    def _receiver_device_map() -> tuple[Mapping[str, object], ...]:
+        routes = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
+        widths = (8, 8, 8, 8, 1)
+        offsets = (0, 8, 24, 16, 32)
+        reversals = (False, False, True, True, False)
+        masks = (255, 255, 255, 255, 1)
+        return tuple(
+            {
+                "logical_device": logical_id,
+                "bus": routes[logical_id][0],
+                "chip_select": routes[logical_id][1],
+                "local_strip_count": widths[logical_id],
+                "global_strip_offset": offsets[logical_id],
+                "reverse_host_strip_order": reversals[logical_id],
+                "reverse_native_strip_order": reversals[logical_id],
+                "physical_output_lane_mask": masks[logical_id],
+                "spi_speed_hz": 8_000_000,
+                "spi_mode": 0,
+            }
+            for logical_id in range(5)
+        )
+
+    def test_receiver_status_refresh_uses_the_controller_command_endpoint(self) -> None:
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "accepted": True,
+            "request_id": "phase4-health-1",
+        }).encode()
+        with patch.object(deploy_target, "urlopen", return_value=response) as opener:
+            request_id = deploy_target._request_receiver_status_refresh(
+                "http://127.0.0.1:5000/api/status"
+            )
+
+        request = opener.call_args.args[0]
+        self.assertEqual(request_id, "phase4-health-1")
+        self.assertEqual(request.full_url, (
+            "http://127.0.0.1:5000/api/v1/receivers/status/refresh"
+        ))
+        self.assertEqual(request.get_method(), "POST")
+
+    def test_receiver_status_refresh_rejects_an_unrelated_api_url(self) -> None:
+        with (
+            patch.object(deploy_target, "urlopen") as opener,
+            self.assertRaisesRegex(RuntimeError, "must end with /api/status"),
+        ):
+            deploy_target._request_receiver_status_refresh(
+                "http://127.0.0.1:5000/status"
+            )
+        opener.assert_not_called()
+
     def test_sample_health_parses_release_geometry_and_topology(self) -> None:
         active = subprocess.CompletedProcess(("systemctl",), 0, "", "")
         status = {
@@ -685,8 +927,300 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         self.assertEqual(reader.call_count, 4)
         self.assertEqual(result["last_controller_updated_at"], 100.7)
 
+    def test_firmware_health_contracts_accept_exact_environment_capabilities(self) -> None:
+        cases = (
+            (PRODUCTION_FIRMWARE_ENVIRONMENT, 3, 0x000C),
+            (DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT, 5, 0x00FF),
+            (NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT, 6, 0x3FFF),
+        )
+        for environment, version, capabilities in cases:
+            with self.subTest(environment=environment):
+                contract = self._receiver_contract(environment)
+                samples = tuple(
+                    deploy_target.TargetHealthSample(
+                        sampled_at,
+                        updated_at,
+                        "a" * 64,
+                        33,
+                        138,
+                        5,
+                        (0, 1, 2, 3, 4),
+                        receiver_device_map=self._receiver_device_map(),
+                        receiver_statuses=self._receiver_statuses(
+                            version=version,
+                            capabilities=capabilities,
+                            responses=responses,
+                        ),
+                    )
+                    for sampled_at, updated_at, responses in (
+                        (100.2, 100.1, 2), (100.4, 100.3, 3),
+                    )
+                )
+                with (
+                    patch.object(
+                        deploy_target,
+                        "_request_receiver_status_refresh",
+                        return_value="health-request",
+                    ),
+                    patch.object(deploy_target, "_sample_health", side_effect=samples),
+                    patch.object(
+                        deploy_target.time,
+                        "monotonic",
+                        side_effect=(0.0, 0.0, 0.0),
+                    ),
+                    patch.object(deploy_target.time, "sleep"),
+                ):
+                    result = deploy_target.fresh_health(
+                        Path("/target"),
+                        "a" * 64,
+                        restart_started_at=100.0,
+                        strips=33,
+                        leds_per_strip=138,
+                        receivers=5,
+                        stable_samples=1,
+                        timeout=1.0,
+                        unit="ledgrid.service",
+                        api_url="http://local/status",
+                        receiver_contract=contract,
+                    )
+
+                self.assertEqual(
+                    result["receiver_contract"],
+                    {
+                        "minimum_status_version": version,
+                        "required_capabilities": capabilities,
+                        "verified_logical_devices": [0, 1, 2, 3, 4],
+                        "status_response_evidence": [
+                            {
+                                "logical_device": logical_id,
+                                "before": 2,
+                                "after": 3,
+                            }
+                            for logical_id in range(5)
+                        ],
+                    },
+                )
+
+    def test_receiver_contract_rejects_each_host_device_map_mutation(self) -> None:
+        contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
+        mutations = (
+            ("bus", 1),
+            ("chip_select", 2),
+            ("local_strip_count", 7),
+            ("global_strip_offset", 1),
+            ("physical_output_lane_mask", 127),
+            ("reverse_host_strip_order", True),
+            ("reverse_native_strip_order", True),
+            ("spi_mode", 1),
+        )
+        for field, value in mutations:
+            with self.subTest(field=field):
+                device_map = [dict(item) for item in self._receiver_device_map()]
+                device_map[0][field] = value
+                sample = deploy_target.TargetHealthSample(
+                    100.2,
+                    100.1,
+                    "a" * 64,
+                    33,
+                    138,
+                    5,
+                    (0, 1, 2, 3, 4),
+                    receiver_device_map=tuple(device_map),
+                    receiver_statuses=self._receiver_statuses(
+                        version=3, capabilities=0x000C,
+                    ),
+                )
+                with (
+                    patch.object(
+                        deploy_target,
+                        "_request_receiver_status_refresh",
+                        return_value="health-request",
+                    ),
+                    patch.object(deploy_target, "_sample_health", return_value=sample),
+                    patch.object(
+                        deploy_target.time,
+                        "monotonic",
+                        side_effect=(0.0, 0.0, 2.0),
+                    ),
+                    patch.object(deploy_target.time, "sleep"),
+                    self.assertRaisesRegex(RuntimeError, field),
+                ):
+                    deploy_target.fresh_health(
+                        Path("/target"),
+                        "a" * 64,
+                        restart_started_at=100.0,
+                        strips=33,
+                        leds_per_strip=138,
+                        receivers=5,
+                        stable_samples=2,
+                        timeout=1.0,
+                        unit="ledgrid.service",
+                        api_url="http://local/status",
+                        receiver_contract=contract,
+                    )
+
+    def test_receiver_contract_rejects_one_stale_receiver_response_counter(self) -> None:
+        contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
+        advanced = [dict(item) for item in self._receiver_statuses(
+            version=3, capabilities=0x000C, responses=3,
+        )]
+        advanced[4]["receiver_status_responses"] = 2
+        samples = (
+            deploy_target.TargetHealthSample(
+                100.2,
+                100.1,
+                "a" * 64,
+                33,
+                138,
+                5,
+                (0, 1, 2, 3, 4),
+                receiver_device_map=self._receiver_device_map(),
+                receiver_statuses=self._receiver_statuses(
+                    version=3, capabilities=0x000C, responses=2,
+                ),
+            ),
+            deploy_target.TargetHealthSample(
+                100.4,
+                100.3,
+                "a" * 64,
+                33,
+                138,
+                5,
+                (0, 1, 2, 3, 4),
+                receiver_device_map=self._receiver_device_map(),
+                receiver_statuses=tuple(advanced),
+            ),
+        )
+        with (
+            patch.object(
+                deploy_target,
+                "_request_receiver_status_refresh",
+                return_value="health-request",
+            ),
+            patch.object(deploy_target, "_sample_health", side_effect=samples),
+            patch.object(
+                deploy_target.time,
+                "monotonic",
+                side_effect=(0.0, 0.0, 0.0, 2.0),
+            ),
+            patch.object(deploy_target.time, "sleep"),
+            self.assertRaisesRegex(RuntimeError, r"did not advance.*\[4\]"),
+        ):
+            deploy_target.fresh_health(
+                Path("/target"),
+                "a" * 64,
+                restart_started_at=100.0,
+                strips=33,
+                leds_per_strip=138,
+                receivers=5,
+                stable_samples=2,
+                timeout=1.0,
+                unit="ledgrid.service",
+                api_url="http://local/status",
+                receiver_contract=contract,
+            )
+
+    def test_production_contract_rejects_live_legacy_status_and_fifth_lane_shape(self) -> None:
+        contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
+        cases = []
+        legacy = list(self._receiver_statuses(version=2, capabilities=0))
+        cases.append((tuple(legacy), "below required v3"))
+        wrong_fifth = [dict(item) for item in self._receiver_statuses(
+            version=3, capabilities=0x000C
+        )]
+        wrong_fifth[4].update({
+            "receiver_active_strips": 8,
+            "receiver_lane_mask": 255,
+        })
+        cases.append((tuple(wrong_fifth), "receiver_active_strips=8"))
+        missing_identity = [dict(item) for item in self._receiver_statuses(
+            version=3, capabilities=0x000C
+        )]
+        missing_identity[4]["receiver_logical_device"] = None
+        cases.append((tuple(missing_identity), "logical identities"))
+
+        for statuses, expected in cases:
+            with self.subTest(expected=expected):
+                sample = deploy_target.TargetHealthSample(
+                    100.2,
+                    100.1,
+                    "a" * 64,
+                    33,
+                    138,
+                    5,
+                    (0, 1, 2, 3, 4),
+                    receiver_device_map=self._receiver_device_map(),
+                    receiver_statuses=statuses,
+                )
+                with (
+                    patch.object(
+                        deploy_target,
+                        "_request_receiver_status_refresh",
+                        return_value="health-request",
+                    ),
+                    patch.object(deploy_target, "_sample_health", return_value=sample),
+                    patch.object(
+                        deploy_target.time,
+                        "monotonic",
+                        side_effect=(0.0, 0.0, 2.0),
+                    ),
+                    patch.object(deploy_target.time, "sleep"),
+                    self.assertRaisesRegex(RuntimeError, expected),
+                ):
+                    deploy_target.fresh_health(
+                        Path("/target"),
+                        "a" * 64,
+                        restart_started_at=100.0,
+                        strips=33,
+                        leds_per_strip=138,
+                        receivers=5,
+                        stable_samples=1,
+                        timeout=1.0,
+                        unit="ledgrid.service",
+                        api_url="http://local/status",
+                        receiver_contract=contract,
+                    )
+
 
 class TargetProvisioningTests(unittest.TestCase):
+    def test_systemd_unit_uses_finalized_geometry_and_receiver_roster(self) -> None:
+        text = deploy_target._unit_text(
+            Path("/target"), "ledgridwall", strips=33, receivers=5
+        )
+        self.assertIn("Environment=STRIPS=33", text)
+        self.assertIn("Environment=EXPECTED_ESP32_DEVICES=5", text)
+        self.assertIn("WorkingDirectory=/target/current", text)
+        with self.assertRaisesRegex(ValueError, "strips"):
+            deploy_target._unit_text(
+                Path("/target"), "ledgridwall", strips=0, receivers=5
+            )
+
+    def test_target_topology_migration_is_receipted_and_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            path = root / RECEIVER_HYBRID_CONFIG_RELATIVE_PATH
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({
+                "schema": "ledgrid.receiver-hybrid-rollout",
+                "schema_version": 1,
+                "enabled": True,
+                "transport_policy": "degraded_spi1_01_readable",
+                "physical_lane_order": [0, 1, 3, 2],
+                "reverse_strips_by_logical_receiver": [False, False, True, True],
+                "reverse_native_strips_by_logical_receiver": [False, False, True, True],
+            }))
+            migrated = deploy_target.migrate_receiver_topology(root)
+            repeated = deploy_target.migrate_receiver_topology(root)
+
+        self.assertEqual(migrated["outcome"], "executed")
+        self.assertTrue(migrated["migrated"])
+        self.assertEqual(migrated["strips"], 33)
+        self.assertEqual(migrated["receivers"], 5)
+        self.assertRegex(
+            migrated["receiver_hybrid_config_digest"], r"^[0-9a-f]{64}$"
+        )
+        self.assertEqual(repeated["outcome"], "skipped")
+
     def test_runtime_ensure_accepts_first_install_progress_before_final_json(self) -> None:
         root = Path("/target")
         release_id = "a" * 64
@@ -769,7 +1303,9 @@ class TargetProvisioningTests(unittest.TestCase):
         self.assertEqual(before_reboot["spi"]["status"], "needs_reboot")
         self.assertEqual(after_reboot["unit"], unit_result)
         self.assertEqual(after_reboot["spi"]["status"], "ready")
-        ensure_unit.assert_called_once_with(root, user="ledgridwall")
+        ensure_unit.assert_called_once_with(
+            root, user="ledgridwall", strips=33, receivers=5
+        )
 
 
 class TargetFirmwareBuildTests(unittest.TestCase):
@@ -827,7 +1363,7 @@ class TargetFirmwareBuildTests(unittest.TestCase):
                 os.fspath(root / "build/firmware/.ccache"),
             )
 
-    def test_enabled_degraded_policy_builds_only_allowlisted_canary_environment(self) -> None:
+    def test_enabled_local_policy_builds_only_allowlisted_canary_environment(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
             write_receiver_hybrid_config(root, enabled=True)
@@ -873,6 +1409,47 @@ class TargetFirmwareBuildTests(unittest.TestCase):
             )
             self.assertTrue(result["receiver_hybrid_config"]["enabled"])
 
+    def test_managed_native_gate_builds_only_native_canary_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            write_receiver_hybrid_config(
+                root, enabled=True, native_modules_enabled=True
+            )
+            workspace = root / "workspace"
+            firmware = workspace / "firmware/esp32"
+            firmware.mkdir(parents=True)
+            calls = []
+
+            def command(args, **_kwargs):
+                calls.append(tuple(args))
+                if args[-1] == "--version":
+                    return subprocess.CompletedProcess(
+                        args, 0, "PlatformIO Core, version 6.1.19\n", "",
+                    )
+                _write_firmware_artifacts(
+                    firmware,
+                    NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+                    application=b"managed native firmware",
+                )
+                return subprocess.CompletedProcess(args, 0, "build passed\n", "")
+
+            with (
+                patch.object(
+                    deploy_target,
+                    "_copy_support_workspace",
+                    return_value=(workspace, False),
+                ),
+                patch.object(deploy_target.shutil, "which", return_value="/fake/pio"),
+                patch.object(deploy_target, "_command", side_effect=command),
+            ):
+                result = deploy_target.build_firmware(root, "a" * 64)
+
+            self.assertEqual(calls[1], (
+                "/fake/pio", "run", "-e",
+                NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+            ))
+            self.assertTrue(result["receiver_hybrid_config"]["native_modules_enabled"])
+
     def test_flash_rejects_rollout_config_drift_before_port_or_helper_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
@@ -885,7 +1462,7 @@ class TargetFirmwareBuildTests(unittest.TestCase):
                 deploy_target.flash_firmware(
                     root,
                     "a" * 64,
-                    receiver_count=4,
+                    receiver_count=5,
                     debug=False,
                     expected_firmware_environment=(
                         DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT
@@ -943,7 +1520,7 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 ) as command,
             ):
                 result = deploy_target.flash_firmware(
-                    root, "a" * 64, receiver_count=4, debug=False,
+                    root, "a" * 64, receiver_count=5, debug=False,
                 )
 
             self.assertEqual(result["outcome"], "executed")
@@ -984,9 +1561,9 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 flash_env["FIRMWARE_FLASH_PORTS"].splitlines(),
                 [device.port for device in devices],
             )
-            self.assertEqual(flash_env["EXPECTED_FIRMWARE_PORT_COUNT"], "4")
+            self.assertEqual(flash_env["EXPECTED_FIRMWARE_PORT_COUNT"], "5")
             inventory = result["receiver_firmware_inventory"]
-            self.assertEqual(len(inventory["observed_devices"]), 4)
+            self.assertEqual(len(inventory["observed_devices"]), 5)
             self.assertEqual(
                 {item["reason"] for item in inventory["flash_targets"]},
                 {"aggregate_marker_mismatch"},
@@ -1026,10 +1603,10 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 patch.object(deploy_target, "_command", side_effect=command) as runner,
             ):
                 migrated = deploy_target.flash_firmware(
-                    root, "a" * 64, receiver_count=4, debug=False,
+                    root, "a" * 64, receiver_count=5, debug=False,
                 )
                 unchanged = deploy_target.flash_firmware(
-                    root, "a" * 64, receiver_count=4, debug=False,
+                    root, "a" * 64, receiver_count=5, debug=False,
                 )
 
             self.assertEqual(migrated["outcome"], "executed")
@@ -1077,10 +1654,10 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 patch.object(deploy_target, "_command", side_effect=command) as runner,
             ):
                 deploy_target.flash_firmware(
-                    root, "a" * 64, receiver_count=4, debug=False,
+                    root, "a" * 64, receiver_count=5, debug=False,
                 )
                 result = deploy_target.flash_firmware(
-                    root, "a" * 64, receiver_count=4, debug=False,
+                    root, "a" * 64, receiver_count=5, debug=False,
                 )
 
             self.assertEqual(result["outcome"], "executed")
@@ -1127,7 +1704,7 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                     self.assertRaisesRegex(RuntimeError, "flash failed"),
                 ):
                     deploy_target.flash_firmware(
-                        root, "a" * 64, receiver_count=4, debug=False,
+                        root, "a" * 64, receiver_count=5, debug=False,
                     )
                 self.assertFalse(
                     (root / "run_state/receiver_firmware_inventory.json").exists()
@@ -1147,7 +1724,7 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "run build-firmware"),
             ):
                 deploy_target.flash_firmware(
-                    root, "a" * 64, receiver_count=4, debug=False,
+                    root, "a" * 64, receiver_count=5, debug=False,
                 )
             command.assert_not_called()
 
@@ -1187,7 +1764,7 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                     self.assertRaisesRegex(RuntimeError, expected),
                 ):
                     deploy_target.flash_firmware(
-                        root, "a" * 64, receiver_count=4, debug=False,
+                        root, "a" * 64, receiver_count=5, debug=False,
                     )
 
 
@@ -1412,6 +1989,10 @@ class FrozenSnapshotEntrypointTests(unittest.TestCase):
             plan["target_layout"]["native_background_library"],
             "ledgrid-pod/receiver_library/native_backgrounds",
         )
+        self.assertEqual(
+            plan["target_layout"]["legacy_app_bootstrap"],
+            "ledgrid-pod/run_state/legacy_app_bootstrap.json",
+        )
         self.assertFalse((self.repo.root / "receipts").exists())
 
 
@@ -1493,6 +2074,7 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                 "stage-support",
                 "stage-app",
                 "cleanup-snapshot",
+                "bootstrap-legacy-app",
                 "build-firmware",
                 "capture-state",
                 "provision",
@@ -1503,7 +2085,9 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                 "restart",
                 "restore-state",
                 "health",
+                "complete-legacy-bootstrap",
                 "record-deploy",
+                "migrate-receiver-topology",
                 "prune-releases",
             ],
         )
@@ -1576,7 +2160,7 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                     "--app-release",
                     target.candidate,
                     "--receivers",
-                    "4",
+                    "5",
                     "--expected-environment",
                     PRODUCTION_FIRMWARE_ENVIRONMENT,
                     "--expected-config-digest",
@@ -1665,6 +2249,8 @@ class _RollbackTarget:
                 "stable_samples": 2,
                 "last_controller_updated_at": 101.0,
             }
+        if command == "complete-legacy-bootstrap":
+            return {"outcome": "skipped", "reason": "no legacy bootstrap lifecycle"}
         if command == "record-deploy":
             return {"recorded": True}
         if command == "prune-releases":
@@ -1734,6 +2320,7 @@ class RollbackEntrypointIntegrationTests(unittest.TestCase):
                 "restart",
                 "restore-state",
                 "health",
+                "complete-legacy-bootstrap",
                 "record-deploy",
                 "prune-releases",
             ],
@@ -1761,11 +2348,11 @@ class RollbackEntrypointIntegrationTests(unittest.TestCase):
                 "--boundary",
                 "100.0",
                 "--strips",
-                "32",
+                "33",
                 "--leds-per-strip",
                 "138",
                 "--receivers",
-                "4",
+                "5",
                 "--timeout",
                 "1.0",
             ),
@@ -1994,6 +2581,73 @@ class _CompensationTarget:
             return {"restored": True}
         if command == "health":
             return {"desired_release": args[0], "observed_release": args[0]}
+        if command == "complete-legacy-bootstrap":
+            return {"outcome": "skipped", "reason": "no legacy bootstrap lifecycle"}
+        if command == "record-deploy":
+            return {"recorded": True}
+        raise AssertionError(command)
+
+
+class _BootstrapCompensationTarget:
+    def __init__(self, fail_command: str, *, resumed: bool = False) -> None:
+        self.fail_command = fail_command
+        self.failed = False
+        self.bootstrap = "b" * 64
+        self.candidate = "c" * 64
+        self.current = self.candidate if resumed else None
+        self.phase = "candidate_pending" if resumed else "none"
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def run(self, command: str, *args: str):
+        self.calls.append((command, args))
+        if command == "bootstrap-legacy-app":
+            if self.phase == "none":
+                self.current = self.bootstrap
+                self.phase = "selected"
+                return {
+                    "outcome": "executed",
+                    "selected": True,
+                    "bootstrap_release_id": self.bootstrap,
+                    "bootstrap_digest": self.bootstrap,
+                    "recovery_release": None,
+                }
+            return {
+                "outcome": "skipped",
+                "selected": self.current == self.bootstrap,
+                "bootstrap_release_id": self.bootstrap,
+                "bootstrap_digest": self.bootstrap,
+                "recovery_release": (
+                    self.bootstrap if self.phase == "candidate_pending" else None
+                ),
+            }
+        if command == "current-release":
+            return {"current_release": self.current}
+        if command == "activate":
+            before = self.current
+            self.current = args[0]
+            self.phase = (
+                "candidate_pending"
+                if self.current == self.candidate else "selected"
+            )
+            return {
+                "changed": before != self.current,
+                "release_id": self.current,
+                "previous_release": before,
+                "selected_at": 101.0,
+            }
+        should_fail = command == self.fail_command and not self.failed
+        if should_fail:
+            self.failed = True
+            raise RuntimeError(f"injected {command} failure")
+        if command == "restart":
+            return {"restart_started_at": 102.0}
+        if command == "restore-state":
+            return {"restored": True}
+        if command == "health":
+            return {"desired_release": args[0], "observed_release": args[0]}
+        if command == "complete-legacy-bootstrap":
+            self.phase = "complete"
+            return {"outcome": "executed", "phase": "complete"}
         if command == "record-deploy":
             return {"recorded": True}
         raise AssertionError(command)
@@ -2023,6 +2677,9 @@ class PostActivationCompensationTests(unittest.TestCase):
                 "activated": True,
                 "state_captured": True,
                 "acceptance_boundary": 100.0,
+                "firmware_selection": {
+                    "receiver_health_contract": {"schema_version": 1},
+                },
             }
         )
         target = _CompensationTarget(fail_command)
@@ -2054,6 +2711,84 @@ class PostActivationCompensationTests(unittest.TestCase):
                 )
                 self.assertEqual(target.calls[-4][1], ("b" * 64,))
                 self.assertEqual(target.calls[-1][1][0], "b" * 64)
+                self.assertNotIn(
+                    "--receiver-contract-json", target.calls[-1][1]
+                )
+
+    def test_first_cutover_restart_restore_and_health_failures_restore_bootstrap(self) -> None:
+        cases = {
+            "restart": lambda deployment, context: deployment._restart(context),
+            "restore-state": lambda deployment, context: deployment._restore(context),
+            "health": lambda deployment, context: deployment._health(context),
+        }
+        for failed_command, execute in cases.items():
+            with self.subTest(failed_command=failed_command):
+                context = DeployContext(
+                    target="fake@wall",
+                    mode="full",
+                    source_identity={},
+                    attempt_id=f"bootstrap-{failed_command}",
+                )
+                config = deploy_entrypoint.DeploymentConfig(
+                    root=Path.cwd(), mode="python", policy="dirty",
+                    target="fake@wall", health_timeout=1.0,
+                )
+                deployment = deploy_entrypoint.CoordinatorRollback(
+                    config, context, "c" * 64
+                )
+                context.state.update({
+                    "release_id": "c" * 64,
+                    "state_captured": True,
+                })
+                target = _BootstrapCompensationTarget(failed_command)
+                deployment.target = target
+
+                bootstrap = deployment._bootstrap_legacy(context)
+                self.assertEqual(
+                    bootstrap.artifacts[0].kind, "legacy_app_bootstrap"
+                )
+                deployment._activate(context)
+                context.state["acceptance_boundary"] = 101.0
+                with self.assertRaises(
+                    deploy_entrypoint.RemoteActivationFailed
+                ) as caught:
+                    execute(deployment, context)
+
+                self.assertTrue(caught.exception.failure.restored)
+                self.assertEqual(
+                    caught.exception.failure.previous_release, target.bootstrap
+                )
+                self.assertEqual(target.current, target.bootstrap)
+
+    def test_interrupted_candidate_resume_retains_bootstrap_compensation(self) -> None:
+        context = DeployContext(
+            target="fake@wall", mode="full", source_identity={},
+            attempt_id="bootstrap-resume",
+        )
+        config = deploy_entrypoint.DeploymentConfig(
+            root=Path.cwd(), mode="python", policy="dirty",
+            target="fake@wall", health_timeout=1.0,
+        )
+        deployment = deploy_entrypoint.CoordinatorRollback(
+            config, context, "c" * 64
+        )
+        context.state.update({
+            "release_id": "c" * 64,
+            "state_captured": True,
+            "acceptance_boundary": 101.0,
+        })
+        target = _BootstrapCompensationTarget("health", resumed=True)
+        deployment.target = target
+
+        deployment._bootstrap_legacy(context)
+        activation = deployment._activate(context)
+        self.assertTrue(activation.details["recovery_guarded"])
+        self.assertTrue(context.state["activated"])
+        with self.assertRaises(deploy_entrypoint.RemoteActivationFailed) as caught:
+            deployment._health(context)
+
+        self.assertTrue(caught.exception.failure.restored)
+        self.assertEqual(target.current, target.bootstrap)
 
 
 class EntrypointReceiptExitTests(unittest.TestCase):

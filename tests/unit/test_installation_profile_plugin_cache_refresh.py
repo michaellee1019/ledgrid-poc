@@ -5,7 +5,6 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
-import random
 import tempfile
 import unittest
 
@@ -45,7 +44,7 @@ GOLDEN_PATH = ROOT / "tests" / "fixtures" / "installation_profile_v1.bin"
 
 
 class _Controller:
-    strip_count = 32
+    strip_count = 33
     leds_per_strip = 138
     total_leds = strip_count * leds_per_strip
     debug = False
@@ -58,10 +57,10 @@ def _context(view: InstallationProfileRuntimeView) -> AnimationRuntimeContext:
         scaled_elapsed=4.0,
         frame_index=20,
         scene_epoch=8,
-        global_width=32,
+        global_width=33,
         height=138,
         local_strip_offset=0,
-        local_width=32,
+        local_width=33,
         vibe_id="neutral",
         vibe_profile_version=1,
         palette_roles={},

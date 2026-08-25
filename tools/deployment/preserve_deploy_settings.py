@@ -18,13 +18,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ipc.control_channel import FileControlChannel
-from animation.core.defaults import DEFAULT_PLANT_AWARE
-from animation.core.plant_awareness import PlantModifierState
-from animation.core.presentation_contracts import (
+from ipc.control_channel import FileControlChannel  # noqa: E402
+from animation.core.defaults import DEFAULT_PLANT_AWARE  # noqa: E402
+from animation.core.plant_awareness import PlantModifierState  # noqa: E402
+from animation.core.presentation_contracts import (  # noqa: E402
     VibeState, component_preset_fingerprint, resolve_vibe,
 )
-from ipc.scene_contract import (
+from ipc.scene_contract import (  # noqa: E402
     DEFAULT_SCENE_PROVIDER_POLICY,
     DESIRED_DISPLAY_SCHEMA,
     DESIRED_DISPLAY_VERSION,
@@ -33,8 +33,7 @@ from ipc.scene_contract import (
     background_only_scene,
     normalize_scene_payload,
 )
-from tools.deployment.receiver_hybrid_config import (
-    DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY,
+from tools.deployment.receiver_hybrid_config import (  # noqa: E402
     ReceiverHybridConfig,
     resolve_receiver_hybrid_config,
 )
@@ -43,7 +42,15 @@ from tools.deployment.receiver_hybrid_config import (
 PRESET_ID = "before-deploy"
 STATE_VERSION = 5
 UNKNOWN_INSTALLATION_PROFILE_DIGEST = "0" * 64
+FINALIZED_NATIVE_TOPOLOGY = {
+    0: (8, 0, False),
+    1: (8, 8, False),
+    2: (8, 24, True),
+    3: (8, 16, True),
+    4: (1, 32, False),
+}
 RECEIVER_HYBRID_CANARY_ENV = "LEDGRID_RECEIVER_HYBRID_CANARY"
+RECEIVER_NATIVE_MODULES_CANARY_ENV = "LEDGRID_RECEIVER_NATIVE_MODULES_CANARY"
 
 
 def receiver_hybrid_canary_enabled(value: Any = None) -> bool:
@@ -65,12 +72,34 @@ def receiver_hybrid_canary_enabled(value: Any = None) -> bool:
     )
 
 
-def receiver_hybrid_provider_policy(enabled: bool) -> SceneProviderPolicy:
+def receiver_native_modules_canary_enabled(value: Any = None) -> bool:
+    """Resolve the independent managed-native rollout switch, defaulting off."""
+
+    if value is None:
+        value = os.environ.get(RECEIVER_NATIVE_MODULES_CANARY_ENV, "0")
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, str):
+        raise TypeError("receiver native modules canary must be a boolean or string")
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(
+        f"{RECEIVER_NATIVE_MODULES_CANARY_ENV} must be a boolean switch"
+    )
+
+
+def receiver_hybrid_provider_policy(
+    enabled: bool, *, receiver_native_modules: bool = False
+) -> SceneProviderPolicy:
     if type(enabled) is not bool:
         raise TypeError("receiver hybrid canary state must be boolean")
     return SceneProviderPolicy(
         receiver_local_background=enabled,
         receiver_sparse_overlay=enabled,
+        receiver_native_modules=receiver_native_modules,
     )
 
 
@@ -84,6 +113,9 @@ def _status_provider_policy(status: dict[str, Any]) -> SceneProviderPolicy:
         ),
         receiver_sparse_overlay=(
             flags.get("receiver_sparse_overlay") is True
+        ),
+        receiver_native_modules=(
+            flags.get("receiver_native_modules") is True
         ),
     )
 
@@ -277,7 +309,7 @@ def _desired_display_state(
     digest = status.get("installation_profile_digest", prior_digest)
     if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
         digest = UNKNOWN_INSTALLATION_PROFILE_DIGEST
-    return {
+    result = {
         "schema": DESIRED_DISPLAY_SCHEMA,
         "schema_version": DESIRED_DISPLAY_VERSION,
         "revision": time.time_ns() & (2**64 - 1),
@@ -298,6 +330,42 @@ def _desired_display_state(
             "target_fps": target_fps,
         },
     }
+    background = scene.get("background") if isinstance(scene, dict) else None
+    if (
+        isinstance(background, dict)
+        and background.get("provider") == "receiver_native"
+        and background.get("plugin_id") != "compiled_rainbow"
+    ):
+        receiver_status = status.get("receiver_hybrid")
+        driver = (
+            receiver_status.get("driver")
+            if isinstance(receiver_status, dict) else None
+        )
+        if not isinstance(driver, dict):
+            raise RuntimeError(
+                "Controller status has no managed-native restoration authority"
+            )
+        parameter_digest = driver.get("parameter_digest")
+        if (
+            driver.get("bundle_digest") != background.get("bundle_digest")
+            or driver.get("payload_digest")
+            != background.get("expected_payload_digest")
+            or not isinstance(parameter_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", parameter_digest) is None
+        ):
+            raise RuntimeError(
+                "Controller status has no exact managed-native parameter binding"
+            )
+        result["native_expectation"] = {
+            "bundle_digest": background["bundle_digest"],
+            "payload_digest": background["expected_payload_digest"],
+            "parameter_digest": parameter_digest,
+        }
+    elif isinstance(prior.get("native_expectation"), dict):
+        # Retain the exact authority across idle global-control updates. It is
+        # ignored when provider policy deliberately restores the Python fallback.
+        result["native_expectation"] = dict(prior["native_expectation"])
+    return result
 
 
 def _apply_independent_status(
@@ -662,7 +730,10 @@ def restore(
     )
     state = load_saved_state(
         state_path,
-        provider_policy=receiver_hybrid_provider_policy(hybrid_config.enabled),
+        provider_policy=receiver_hybrid_provider_policy(
+            hybrid_config.enabled,
+            receiver_native_modules=hybrid_config.native_modules_enabled,
+        ),
     )
     animation = state["animation"]
 
@@ -701,7 +772,10 @@ def restore(
                     or (
                         scene_background == animation
                         and _restored_scene_proof(
-                            status, state["scene"], hybrid_config
+                            status,
+                            state["scene"],
+                            hybrid_config,
+                            native_expectation=state.get("native_expectation"),
                         )
                     )
                 )
@@ -778,6 +852,8 @@ def _restored_scene_proof(
     status: dict[str, Any],
     expected_scene: dict[str, Any],
     hybrid_config: ReceiverHybridConfig,
+    *,
+    native_expectation: Any = None,
 ) -> bool:
     """Require exact desired state and, for native scenes, operational proof."""
 
@@ -792,16 +868,130 @@ def _restored_scene_proof(
     receiver = status.get("receiver_hybrid")
     if not isinstance(scene_status, dict) or not isinstance(receiver, dict):
         return False
-    return bool(
-        scene_status.get("provider_mode") == "receiver_hybrid"
-        and receiver.get("operational") is True
+    expected_ids = sorted(FINALIZED_NATIVE_TOPOLOGY)
+    if sorted(int(value) for value in hybrid_config.physical_lane_order) != expected_ids:
+        return False
+    common = bool(
+        receiver.get("operational") is True
         and receiver.get("fallback_active") is False
         and receiver.get("error") is None
-        and receiver.get("transport_policy")
-            == DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY
-        and receiver.get("telemetry_complete") is False
-        and receiver.get("readable_devices") == [0, 1]
-        and receiver.get("unverified_devices") == [2, 3]
+    )
+    if not common:
+        return False
+    if background.get("plugin_id") == "compiled_rainbow":
+        return bool(
+            scene_status.get("provider_mode") == "receiver_hybrid"
+            and receiver.get("healthy") is True
+            and receiver.get("telemetry_complete") is True
+            and receiver.get("transport_policy") == "strict_all_readable_v1"
+            and sorted(receiver.get("readable_devices", [])) == expected_ids
+            and receiver.get("unverified_devices") == []
+        )
+
+    if not getattr(hybrid_config, "native_modules_enabled", False):
+        return False
+    if not isinstance(native_expectation, dict):
+        return False
+    driver = receiver.get("driver")
+    if not isinstance(driver, dict):
+        return False
+    capability_report = driver.get("capability_report")
+    devices = (
+        capability_report.get("devices")
+        if isinstance(capability_report, dict) else None
+    )
+    if not isinstance(devices, list):
+        return False
+    agreement = driver.get("agreement")
+    if not isinstance(agreement, dict):
+        return False
+    required_capabilities = capability_report.get("required_capabilities")
+    if (
+        type(required_capabilities) is not int
+        or required_capabilities <= 0
+        or agreement.get("exact_roster") is not True
+        or agreement.get("verified_receiver_ids") != expected_ids
+    ):
+        return False
+    observed_topology = {
+        item.get("logical_device"): (
+            item.get("local_strip_count"), item.get("global_strip_offset"),
+            item.get("reverse_native_strip_order"),
+        )
+        for item in devices if isinstance(item, dict)
+    }
+    capability_masks = {
+        item.get("logical_device"): item.get("capabilities")
+        for item in devices if isinstance(item, dict)
+    }
+    driver_stats = status.get("driver_stats")
+    device_statuses = (
+        driver_stats.get("devices") if isinstance(driver_stats, dict) else None
+    )
+    if not isinstance(device_statuses, list) or len(device_statuses) != 5:
+        return False
+    by_id = {
+        item.get("receiver_logical_device"): item
+        for item in device_statuses if isinstance(item, dict)
+    }
+    if set(by_id) != set(expected_ids):
+        return False
+    parameter_digest = native_expectation.get("parameter_digest")
+    context_digest = driver.get("context_digest")
+    profile_digest = status.get("installation_profile_digest")
+    if not all(
+        isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+        for value in (parameter_digest, context_digest, profile_digest)
+    ):
+        return False
+    unanimous_fields = (
+        "receiver_vibe_revision",
+        "receiver_vibe_digest",
+        "receiver_plant_modifier_revision",
+        "receiver_plant_modifier_digest",
+    )
+    unanimous_values = {
+        field: by_id[0].get(field) for field in unanimous_fields
+    }
+    if any(value in (None, "") for value in unanimous_values.values()):
+        return False
+    for receiver_id in expected_ids:
+        device = by_id[receiver_id]
+        capabilities = capability_masks.get(receiver_id)
+        if (
+            type(capabilities) is not int
+            or capabilities & required_capabilities != required_capabilities
+            or device.get("receiver_status_seen") is not True
+            or int(device.get("receiver_status_version", 0) or 0) < 6
+            or device.get("receiver_native_executing") is not True
+            or device.get("receiver_native_cache_integrity_ok") is not True
+            or device.get("receiver_native_active_bundle_digest")
+            != background.get("bundle_digest")
+            or device.get("receiver_native_active_payload_digest")
+            != background.get("expected_payload_digest")
+            or device.get("receiver_native_active_parameter_digest")
+            != parameter_digest
+            or device.get("receiver_active_context_digest") != context_digest
+            or device.get("receiver_profile_active_global_digest") != profile_digest
+            or any(
+                device.get(field) != value
+                for field, value in unanimous_values.items()
+            )
+        ):
+            return False
+    return bool(
+        scene_status.get("provider_mode") == "receiver_native"
+        and receiver.get("healthy") is True
+        and driver.get("state") == "active"
+        and driver.get("bundle_digest") == background.get("bundle_digest")
+        and driver.get("payload_digest")
+            == background.get("expected_payload_digest")
+        and driver.get("bundle_digest") == native_expectation.get("bundle_digest")
+        and driver.get("payload_digest") == native_expectation.get("payload_digest")
+        and driver.get("parameter_digest") == parameter_digest
+        and driver.get("installation_profile_digest") == profile_digest
+        and sorted(observed_topology) == expected_ids
+        and observed_topology == FINALIZED_NATIVE_TOPOLOGY
     )
 
 

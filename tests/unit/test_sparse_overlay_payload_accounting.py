@@ -73,7 +73,11 @@ class SparseOverlayWireAccountingTests(unittest.TestCase):
         self.assertEqual(accounting.MAX_RGBA_PIXELS_PER_PATCH, 1016)
         self.assertEqual(accounting.MAX_RGBA_PIXELS_PER_BATCH_SPAN, 1015)
         self.assertEqual(accounting.LOCAL_RGB_PACKET_BYTES, 3315)
-        self.assertEqual(accounting.FULL_WALL_RGB_PACKET_BYTES, 13260)
+        self.assertEqual(
+            accounting.RECEIVER_RGB_PACKET_BYTES,
+            (3315, 3315, 3315, 3315, 417),
+        )
+        self.assertEqual(accounting.FULL_WALL_RGB_PACKET_BYTES, 13677)
         self.assertEqual(accounting.STATUS_V3_QUERY_TRANSFER_BYTES, 322)
         self.assertEqual(accounting.STATUS_V4_QUERY_TRANSFER_BYTES, 418)
 
@@ -89,7 +93,7 @@ class SparseOverlayWireAccountingTests(unittest.TestCase):
         self.assertEqual(result.to_dict()["bidirectional_endpoint_bytes"], 4252)
         self.assertEqual(result.acknowledgement_count, 1)
 
-    def test_full_snapshot_uses_two_exact_batched_spans_and_eighty_nine_pixel_tail(self):
+    def test_full_snapshot_uses_exact_heterogeneous_receiver_spans(self):
         ranges = accounting._full_snapshot_ranges()
         self.assertEqual(ranges, ((0, 1015), (1015, 1104)))
         self.assertEqual(accounting.batch_packet_bytes((ranges[0],)), 4094)
@@ -97,8 +101,13 @@ class SparseOverlayWireAccountingTests(unittest.TestCase):
         self.assertEqual(accounting.batch_packet_bytes(ranges), 4484)
         self.assertEqual(accounting.patch_packet_bytes(ranges), 4480)
         self.assertEqual(
-            accounting.batch_packet_bytes(ranges) * accounting.RECEIVER_COUNT,
-            17936,
+            sum(
+                accounting.batch_packet_bytes(
+                    accounting._full_snapshot_ranges(local_pixels)
+                )
+                for local_pixels in accounting.RECEIVER_PIXELS
+            ),
+            18522,
         )
 
     def test_invalid_patch_accounting_cannot_hide_zero_or_oversized_body(self):
@@ -129,18 +138,18 @@ class SparseOverlayPayloadTraceTests(unittest.TestCase):
         self.assertEqual(tick["batch_overhead_bytes"], 50)
         self.assertEqual(tick["legacy_single_span_packet_bytes"], 224)
         self.assertEqual(tick["patch_packet_bytes_including_headers_crc"], 114)
-        self.assertEqual(tick["full_wall_rgb_packet_bytes"], 13260)
-        self.assertAlmostEqual(tick["patch_ratio"], 0.008597, places=6)
+        self.assertEqual(tick["full_wall_rgb_packet_bytes"], 13677)
+        self.assertAlmostEqual(tick["patch_ratio"], 0.008335, places=6)
         self.assertTrue(tick["below_10_percent"])
         # The patch-only gate is distinct from total acknowledged traffic: the
         # changed receiver batch still receives a complete queued-response proof.
         acknowledged = tick["acknowledged_generation_plus_renewal"]
-        self.assertEqual(acknowledged["command_count"], 13)
-        self.assertEqual(acknowledged["status_query_count"], 65)
-        self.assertEqual(acknowledged["spi_clocked_bytes"], 27892)
+        self.assertEqual(acknowledged["command_count"], 16)
+        self.assertEqual(acknowledged["status_query_count"], 80)
+        self.assertEqual(acknowledged["spi_clocked_bytes"], 34314)
         self.assertAlmostEqual(
             tick["acknowledged_ratio_to_one_full_wall_packet"],
-            2.103469,
+            2.508884,
             places=6,
         )
 
@@ -150,35 +159,35 @@ class SparseOverlayPayloadTraceTests(unittest.TestCase):
         events = sparse["event_counts"]
         self.assertEqual(trace["clock_changed_ticks"], 60)
         self.assertEqual(trace["repair_snapshots"], 2)
-        self.assertEqual(events["controller_session_begin"], 4)
-        self.assertEqual(events["repair_patch_batch"], 16)
-        self.assertEqual(events["delta_patch_batch"], 81)
-        self.assertEqual(events["lease_renew"], 240)
+        self.assertEqual(events["controller_session_begin"], 5)
+        self.assertEqual(events["repair_patch_batch"], 18)
+        self.assertEqual(events["delta_patch_batch"], 62)
+        self.assertEqual(events["lease_renew"], 300)
         self.assertEqual(events["exact_batch_retry"], 2)
         self.assertEqual(self.report["policy"]["retry_receivers"], [1, 2])
-        self.assertEqual(events["publish_preflight_query"], 240)
-        self.assertEqual(events["publish_verification_query"], 240)
-        self.assertEqual(events["renewal_preflight_query"], 240)
-        self.assertEqual(sparse["command_count"], 823)
-        self.assertEqual(sparse["acknowledgement_count"], 823)
-        self.assertEqual(sparse["status_query_count"], 4835)
-        self.assertEqual(events["status_v3_query"], 4)
-        self.assertEqual(events["status_v4_query"], 4831)
-        self.assertEqual(sparse["command_packet_bytes"], 78126)
-        self.assertEqual(sparse["status_query_transfer_bytes"], 2020646)
-        self.assertEqual(sparse["meaningful_status_response_bytes"], 2010976)
-        self.assertEqual(sparse["spi_clocked_bytes"], 2098772)
-        self.assertEqual(sparse["mosi_bytes"], 2098772)
-        self.assertEqual(sparse["miso_bytes"], 2098772)
-        self.assertEqual(sparse["bidirectional_endpoint_bytes"], 4197544)
+        self.assertEqual(events["publish_preflight_query"], 300)
+        self.assertEqual(events["publish_verification_query"], 300)
+        self.assertEqual(events["renewal_preflight_query"], 300)
+        self.assertEqual(sparse["command_count"], 987)
+        self.assertEqual(sparse["acknowledgement_count"], 987)
+        self.assertEqual(sparse["status_query_count"], 5835)
+        self.assertEqual(events["status_v3_query"], 5)
+        self.assertEqual(events["status_v4_query"], 5830)
+        self.assertEqual(sparse["command_packet_bytes"], 87908)
+        self.assertEqual(sparse["status_query_transfer_bytes"], 2438550)
+        self.assertEqual(sparse["meaningful_status_response_bytes"], 2426880)
+        self.assertEqual(sparse["spi_clocked_bytes"], 2526458)
+        self.assertEqual(sparse["mosi_bytes"], 2526458)
+        self.assertEqual(sparse["miso_bytes"], 2526458)
+        self.assertEqual(sparse["bidirectional_endpoint_bytes"], 5052916)
         self.assertEqual(trace["baseline_full_rgb_frames"], 3600)
-        self.assertEqual(trace["baseline_spi_clocked_bytes"], 47736000)
-        self.assertEqual(trace["baseline_bidirectional_endpoint_bytes"], 95472000)
-        self.assertAlmostEqual(trace["savings_ratio"], 0.956034, places=6)
+        self.assertEqual(trace["baseline_spi_clocked_bytes"], 49237200)
+        self.assertEqual(trace["baseline_bidirectional_endpoint_bytes"], 98474400)
+        self.assertAlmostEqual(trace["savings_ratio"], 0.948688, places=6)
         self.assertTrue(trace["at_least_90_percent_savings"])
         cause = self.report["architectural_cause"]
         self.assertAlmostEqual(cause["ordinary_header_crc_fraction"], 0.438596, places=6)
-        self.assertAlmostEqual(cause["trace_status_query_fraction"], 0.962775, places=6)
+        self.assertAlmostEqual(cause["trace_status_query_fraction"], 0.965205, places=6)
         self.assertIn("implemented: batch multiple sorted spans", cause["required_direction"])
 
     def test_passing_acceptance_is_stable_evidence(self):

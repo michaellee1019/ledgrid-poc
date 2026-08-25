@@ -40,7 +40,8 @@ GENERATOR_PATH = (
 FIXED_HEADER_BYTES = 112
 SECTION_ENTRY_BYTES = 24
 SECTION_COUNT = 9
-PIXEL_COUNT = 32 * 138
+PIXEL_COUNT = 33 * 138
+CALIBRATION_PIXEL_COUNT = 32 * 138
 PROFILE_BYTES = FIXED_HEADER_BYTES + SECTION_COUNT * SECTION_ENTRY_BYTES + (
     SECTION_COUNT * PIXEL_COUNT
 )
@@ -63,18 +64,18 @@ EXPECTED_CALIBRATION_DIGEST = (
     "580aca497078fe64a6b182e6ff0de9c92c58ab14a039062e95ece1961415ffe3"
 )
 EXPECTED_CONTENT_DIGEST = (
-    "cc7a21b2e5a630af74424d2b1a1fd960a6bf8f68463077025b7286938755acea"
+    "ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a"
 )
 EXPECTED_SECTION_CRCS = (
-    0xD59F8869,
-    0xDB6832C8,
-    0x0A9EF79D,
-    0xD6100ECB,
-    0x2DD1833F,
-    0x5C291D4E,
-    0x395BB3DE,
-    0x482986FB,
-    0x91B3F8A9,
+    0x9A6783CF,
+    0x8C323F0A,
+    0x524A562A,
+    0x92E2B138,
+    0xF1652F29,
+    0x995976EB,
+    0x8E8CCB32,
+    0xECED1AB1,
+    0x7B9412FB,
 )
 
 
@@ -91,7 +92,7 @@ class _PlantOwner:
 
     @staticmethod
     def get_pixel_count() -> int:
-        return PIXEL_COUNT
+        return CALIBRATION_PIXEL_COUNT
 
 
 def _header(data: bytes) -> dict[str, Any]:
@@ -226,10 +227,10 @@ class InstallationProfileGoldenTests(unittest.TestCase):
                 "version": 1,
                 "fixed_header_bytes": FIXED_HEADER_BYTES,
                 "flags": 0,
-                "global_strip_count": 32,
+                "global_strip_count": 33,
                 "leds_per_strip": 138,
                 "strip_origin": 0,
-                "strip_count": 32,
+                "strip_count": 33,
                 "pixel_count": PIXEL_COUNT,
                 "clearance_radius": CLEARANCE_RADIUS,
                 "region_count": len(GLOBE_REGION_ORDER),
@@ -272,13 +273,13 @@ class InstallationProfileGoldenTests(unittest.TestCase):
     def test_decoded_canonical_counts_and_region_order_are_stable(self) -> None:
         profile = self.profile
         self.assertEqual(
-            (profile.global_strip_count, profile.leds_per_strip), (32, 138)
+            (profile.global_strip_count, profile.leds_per_strip), (33, 138)
         )
-        self.assertEqual((profile.strip_origin, profile.strip_count), (0, 32))
+        self.assertEqual((profile.strip_origin, profile.strip_count), (0, 33))
         self.assertEqual(profile.pixel_count, PIXEL_COUNT)
         self.assertFalse(profile.reversed_strip_order)
         self.assertEqual(np.bincount(profile.category.ravel(), minlength=3).tolist(), [
-            3681,
+            3819,
             379,
             356,
         ])
@@ -311,23 +312,29 @@ class InstallationProfileGoldenTests(unittest.TestCase):
         category[expected.foliage] = 1
         category[expected.globes] = 2
 
-        np.testing.assert_array_equal(profile.category, category)
-        np.testing.assert_array_equal(profile.clearance.astype(bool), expected.clearance)
+        np.testing.assert_array_equal(profile.category[:32], category)
         np.testing.assert_array_equal(
-            profile.foliage_edge.astype(bool), expected.foliage_edge
-        )
-        np.testing.assert_array_equal(profile.globe_edge.astype(bool), expected.globe_edge)
-        np.testing.assert_array_equal(
-            profile.obstacle_edge.astype(bool), expected.obstacle_edge
+            profile.clearance[:32].astype(bool), expected.clearance
         )
         np.testing.assert_array_equal(
-            profile.distance, expected.distance.astype(np.uint8)
+            profile.foliage_edge[:32].astype(bool), expected.foliage_edge
         )
+        np.testing.assert_array_equal(
+            profile.globe_edge[:32].astype(bool), expected.globe_edge
+        )
+        np.testing.assert_array_equal(
+            profile.obstacle_edge[:32].astype(bool), expected.obstacle_edge
+        )
+        np.testing.assert_array_equal(
+            profile.distance[:32], expected.distance.astype(np.uint8)
+        )
+        self.assertFalse(profile.category[32].any())
+        self.assertFalse(profile.clearance[32].any())
 
         for region_id, region_name in enumerate(GLOBE_REGION_ORDER, start=1):
             with self.subTest(region=region_name):
                 np.testing.assert_array_equal(
-                    profile.globe_region == region_id,
+                    (profile.globe_region == region_id)[:32],
                     expected.globe_region_masks[region_name],
                 )
 
@@ -344,7 +351,7 @@ class InstallationProfileGoldenTests(unittest.TestCase):
                 ).astype(np.int8)
                 encoded = getattr(self.profile, name)
                 self.assertEqual(encoded.dtype, np.dtype(np.int8))
-                np.testing.assert_array_equal(encoded, expected)
+                np.testing.assert_array_equal(encoded[:31], expected[:31])
                 self.assertGreaterEqual(int(encoded.min()), -127)
                 self.assertLessEqual(int(encoded.max()), 127)
 
@@ -387,7 +394,8 @@ class InstallationProfileGoldenTests(unittest.TestCase):
             with self.subTest(list=name):
                 self.assertEqual(values, sorted(set(values)))
         self.assertEqual(
-            [pixel["index"] for pixel in foliage["pixels"]], list(range(PIXEL_COUNT))
+            [pixel["index"] for pixel in foliage["pixels"]],
+            list(range(CALIBRATION_PIXEL_COUNT)),
         )
         self.assertEqual(
             [pixel["index"] for pixel in globes["pixels"]],

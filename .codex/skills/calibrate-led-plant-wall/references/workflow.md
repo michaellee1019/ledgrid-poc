@@ -4,7 +4,7 @@
 
 | Gate | Required result |
 | --- | --- |
-| Physical geometry | 32 strips x 138 LEDs = 4,416 |
+| Physical geometry | 33 strips x 138 LEDs = 4,554 across five receivers |
 | Dimension edge | row 137 magenta at top, row 136 cyan below, no rows above |
 | Camera geometry | all four corners in frame; automatic confidence >= 0.60 |
 | Foliage baseline | current full-white occlusion plus current ambient segmentation |

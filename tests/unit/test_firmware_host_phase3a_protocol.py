@@ -509,7 +509,7 @@ class FirmwareHostPhase3AProtocolTests(unittest.TestCase):
         ):
             protocol.LEDController(reverse_native_strip_order=1)
         with self.assertRaisesRegex(
-            TypeError, "must be a 4-entry tuple of booleans"
+            TypeError, "must be a tuple of one boolean per receiver"
         ):
             MultiDeviceLEDController(
                 reverse_native_strips_by_logical_receiver=[False] * 4

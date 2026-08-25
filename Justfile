@@ -82,6 +82,24 @@ native-publish bundle_or_plugin:
 		{{python_env}} --group firmware python tools/deployment/native_background_entrypoint.py \
 		publish "{{bundle_or_plugin}}"
 
+# Install a published managed bundle on the exact configured receiver roster.
+native-install plugin_or_digest:
+	{{captured}} --phase receiver_background.install -- \
+		{{python_env}} python tools/deployment/native_background_entrypoint.py \
+		install "{{plugin_or_digest}}"
+
+# Activate a published package with its authored defaults and a known Python fallback.
+native-start plugin_or_digest fallback="aurora_curtains":
+	{{captured}} --phase receiver_background.activate -- \
+		{{python_env}} python tools/deployment/native_background_entrypoint.py \
+		start "{{plugin_or_digest}}" --fallback "{{fallback}}"
+
+# Convenience composition: build/publish, install idempotently, and activate.
+native-run plugin_id fallback="aurora_curtains":
+	{{captured}} --phase receiver_background.run -- \
+		{{python_env}} --group firmware python tools/deployment/native_background_entrypoint.py \
+		run "{{plugin_id}}" --fallback "{{fallback}}"
+
 # Explicit recovery paths for the retained pre-cutover shell leaves.
 deploy-legacy:
 	{{captured}} --phase deploy.legacy.full -- python3 tools/deployment/deploy_entrypoint.py legacy --mode full --policy clean
@@ -166,6 +184,7 @@ test-firmware:
 	uv run --frozen --group firmware pio test -d firmware/esp32 -e native
 	uv run --frozen --group firmware pio run -d firmware/esp32 -e esp32-s3-devkitc-1
 	uv run --frozen --group firmware pio run -d firmware/esp32 -e esp32-s3-devkitc-1-local-canary
+	uv run --frozen --group firmware pio run -d firmware/esp32 -e esp32-s3-devkitc-1-native-canary
 	if rg -n 'FastLED|fastled' firmware/esp32/src firmware/esp32/include firmware/esp32/platformio.ini; then exit 1; fi
 
 # Run deployment behavior tests and validate every maintained shell script.
@@ -173,10 +192,12 @@ test-deployment:
 	{{python_env}} pytest -q \
 		tests/unit/test_deploy_*.py \
 		tests/unit/test_app_releases.py \
+		tests/unit/test_configure_spi.py \
 		tests/unit/test_firmware_reconciliation.py \
 		tests/unit/test_receiver_firmware_inventory.py \
 		tests/unit/test_gate_policy.py \
-		tests/unit/test_preserve_deploy_settings.py
+		tests/unit/test_preserve_deploy_settings.py \
+		tests/unit/test_receiver_hybrid_config.py
 	for script in tools/deployment/*.sh; do bash -n "$script"; done
 
 # Full local readiness gate.
@@ -198,9 +219,38 @@ receiver-streamed-wall-acceptance duration="60" min_fps="150" target_fps="160":
 	duration="${duration#duration=}"; min_fps="${min_fps#min_fps=}"; \
 	target_fps="${target_fps#target_fps=}"; \
 	{{python_env}} python tools/benchmarks/receiver_acceptance.py \
-		--device 0 --device 1 --device 2 --device 3 \
+		--device 0 --device 1 --device 2 --device 3 --device 4 \
 		--duration "$duration" --min-displayed-fps "$min_fps" \
 		--target-fps "$target_fps" --animation rainbow
+
+# Collect H2 binding/topology/skew/drift supporting evidence. Transaction
+# injection, restart/lease repair, streamed capacity, and the Python sweep remain
+# explicit companion subgates. The default is a real 30-minute evidence run.
+receiver-native-h2-evidence selector="aurora_curtains_native" duration="1800" sample_interval="5" target="ledgridwall.local":
+	selector="{{selector}}"; duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; \
+	selector="${selector#selector=}"; duration="${duration#duration=}"; \
+	sample_interval="${sample_interval#sample_interval=}"; target="${target#target=}"; \
+	{{python_env}} python tools/benchmarks/receiver_native_physical_acceptance.py \
+		"$selector" --gate H2 --target "$target" --duration "$duration" \
+		--sample-interval "$sample_interval"
+
+# H4 supporting soak at authored defaults; this intentionally defaults to 1800 s.
+receiver-native-h4-default-soak selector="aurora_curtains_native" duration="1800" sample_interval="5" target="ledgridwall.local":
+	selector="{{selector}}"; duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; \
+	selector="${selector#selector=}"; duration="${duration#duration=}"; \
+	sample_interval="${sample_interval#sample_interval=}"; target="${target#target=}"; \
+	{{python_env}} python tools/benchmarks/receiver_native_physical_acceptance.py \
+		"$selector" --gate H4-default --target "$target" --duration "$duration" \
+		--sample-interval "$sample_interval"
+
+# Separate H4 maximum-work supporting soak; this also defaults to 1800 s.
+receiver-native-h4-maximum-soak selector="aurora_curtains_native" duration="1800" sample_interval="5" target="ledgridwall.local":
+	selector="{{selector}}"; duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; \
+	selector="${selector#selector=}"; duration="${duration#duration=}"; \
+	sample_interval="${sample_interval#sample_interval=}"; target="${target#target=}"; \
+	{{python_env}} python tools/benchmarks/receiver_native_physical_acceptance.py \
+		"$selector" --gate H4-maximum --target "$target" --duration "$duration" \
+		--sample-interval "$sample_interval"
 
 # Temporary installed-wall exception: require full receiver telemetry on SPI0,
 # prove outbound host traffic on write-only SPI1, and require visual inspection.

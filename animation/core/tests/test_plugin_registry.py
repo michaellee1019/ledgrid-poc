@@ -153,6 +153,17 @@ class ExternalAnimation(AnimationBase):
                 "capabilities": ["tempo", "luminance"],
             },
             "installation_profile_requirements": [],
+            "geometry": {
+                "global_strips": 33,
+                "leds_per_strip": 138,
+                "receiver_views": [
+                    {"logical_receiver_id": 0, "global_strip_offset": 0, "local_strips": 8, "reverse_local_strip_order": False},
+                    {"logical_receiver_id": 1, "global_strip_offset": 8, "local_strips": 8, "reverse_local_strip_order": False},
+                    {"logical_receiver_id": 3, "global_strip_offset": 16, "local_strips": 8, "reverse_local_strip_order": True},
+                    {"logical_receiver_id": 2, "global_strip_offset": 24, "local_strips": 8, "reverse_local_strip_order": True},
+                    {"logical_receiver_id": 4, "global_strip_offset": 32, "local_strips": 1, "reverse_local_strip_order": False},
+                ],
+            },
             "preview": {
                 "kind": "native_host_build",
                 "capture_seconds": [0, 1],

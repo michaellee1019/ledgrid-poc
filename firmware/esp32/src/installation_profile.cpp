@@ -159,7 +159,9 @@ bool decode_installation_profile_receiver_v1(
   }
   *view = {};
   if (error != nullptr) *error = InstallationProfileError::None;
-  if (encoded_size != kInstallationProfileReceiverBytesV1 ||
+  if (encoded_size != installation_profile_receiver_bytes_v1(
+                          expectation.strip_count,
+                          expectation.leds_per_strip) ||
       encoded_size > kInstallationProfileMaximumBytesV1) {
     return fail(InstallationProfileError::InvalidSize, view, error);
   }
@@ -187,13 +189,15 @@ bool decode_installation_profile_receiver_v1(
   const std::uint16_t origin = read_u16(encoded + 16);
   const std::uint16_t strip_count = read_u16(encoded + 18);
   const std::uint32_t pixel_count = read_u32(encoded + 20);
-  if (global_strips != kInstallationProfileGlobalStripsV1 ||
-      leds_per_strip != kInstallationProfileLedsPerStripV1 ||
-      strip_count != kInstallationProfileReceiverStripsV1 ||
-      pixel_count != kInstallationProfileReceiverPixelsV1) {
+  if (global_strips != expectation.global_strip_count ||
+      leds_per_strip != expectation.leds_per_strip ||
+      strip_count != expectation.strip_count || strip_count == 0 ||
+      strip_count > kInstallationProfileReceiverStripsV1 ||
+      pixel_count != static_cast<std::uint32_t>(strip_count) *
+                         leds_per_strip) {
     return fail(InstallationProfileError::WrongGeometry, view, error);
   }
-  if (origin != expectation.strip_origin || origin % strip_count != 0 ||
+  if (origin != expectation.strip_origin ||
       origin + strip_count > global_strips) {
     return fail(InstallationProfileError::WrongOrigin, view, error);
   }

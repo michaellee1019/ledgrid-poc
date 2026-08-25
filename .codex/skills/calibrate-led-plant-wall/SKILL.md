@@ -1,6 +1,6 @@
 ---
 name: calibrate-led-plant-wall
-description: Recalibrate the ledgrid-poc living plant wall from its attached webcam, including camera homography, physical 32x138 dimension verification, foliage occlusion mask, seven fixed-size globe masks, live illumination feedback, and photographed acceptance. Use after the webcam, plants, vines, or rooting globes move; after significant growth or pruning; when animations shine through foliage; or when asked to refresh plant calibration maps.
+description: Recalibrate the ledgrid-poc living plant wall from its attached webcam, including camera homography, physical 33x138 dimension verification, foliage occlusion mask, seven fixed-size globe masks, live illumination feedback, and photographed acceptance. Use after the webcam, plants, vines, or rooting globes move; after significant growth or pruning; when animations shine through foliage; or when asked to refresh plant calibration maps.
 ---
 
 # Calibrate LED Plant Wall
@@ -18,7 +18,8 @@ the authoritative command-level runbook.
 ## Workflow
 
 1. Inspect repository status and preserve unrelated user changes.
-2. Confirm the controller is healthy and reports 32 strips by 138 LEDs.
+2. Confirm the controller is healthy and reports 33 strips by 138 LEDs across
+   the exact five-receiver finalized topology.
 3. Capture a fresh low-room-light wall-off/orientation/full-white/dimension set.
 4. Reacquire camera corners from full-white minus wall-off. Never reuse a moved
    camera's homography. Refuse automatic updates when a wall corner is clipped.
@@ -53,7 +54,7 @@ the authoritative command-level runbook.
   camera to be repositioned; a clipped corner is not recoverable confidently.
 - If power, controller, webcam, or network access is unavailable, report the
   failed check and preserve generated artifacts.
-- If the dimension probe differs from 32x138, stop mask work and correct the
+- If the dimension probe differs from 33x138, stop mask work and correct the
   host/firmware geometry mismatch first.
 
 ## Completion report

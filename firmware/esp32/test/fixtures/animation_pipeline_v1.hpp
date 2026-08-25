@@ -64,7 +64,9 @@ struct CoordinateVector {
 
 struct BoardSliceVector {
   std::uint8_t board_index;
+  std::uint8_t logical_receiver_id;
   std::uint16_t global_strip_offset;
+  std::uint8_t local_strip_count;
   std::uint32_t start_flat_index;
   std::uint32_t end_flat_index;
   std::uint32_t pixel_count;
@@ -106,7 +108,7 @@ struct ReceiverSliceVector {
   std::uint32_t global_start;
   std::uint32_t global_end;
   std::size_t expected_count;
-  ReceiverSlice expected_slices[4];
+  ReceiverSlice expected_slices[5];
 };
 
 struct CounterOrderVector {
@@ -205,25 +207,29 @@ constexpr DirtyRangeVector kDirtyRangeVectors[] = {
 };
 
 constexpr CoordinateVector kCoordinateVectors[] = {
-    {"wall_origin", 0, 0, 0, 32, 8, 138, true, true, 0, 0},
-    {"board_0_last", 7, 137, 0, 32, 8, 138, true, true, 1103, 1103},
-    {"board_1_first", 8, 0, 8, 32, 8, 138, true, true, 1104, 0},
-    {"board_1_last", 15, 137, 8, 32, 8, 138, true, true, 2207, 1103},
-    {"board_2_first", 16, 0, 16, 32, 8, 138, true, true, 2208, 0},
-    {"board_2_last", 23, 137, 16, 32, 8, 138, true, true, 3311, 1103},
-    {"board_3_first", 24, 0, 24, 32, 8, 138, true, true, 3312, 0},
-    {"wall_last", 31, 137, 24, 32, 8, 138, true, true, 4415, 1103},
-    {"before_local_offset", 7, 137, 8, 32, 8, 138, true, false, 1103, 0},
-    {"after_local_range", 16, 0, 8, 32, 8, 138, true, false, 2208, 0},
-    {"led_out_of_range", 24, 138, 24, 32, 8, 138, false, false, 0, 0},
-    {"strip_out_of_range", 32, 0, 24, 32, 8, 138, false, false, 0, 0},
+    {"wall_origin", 0, 0, 0, 33, 8, 138, true, true, 0, 0},
+    {"receiver_0_last", 7, 137, 0, 33, 8, 138, true, true, 1103, 1103},
+    {"receiver_1_first", 8, 0, 8, 33, 8, 138, true, true, 1104, 0},
+    {"receiver_1_last", 15, 137, 8, 33, 8, 138, true, true, 2207, 1103},
+    {"receiver_2_first", 16, 0, 16, 33, 8, 138, true, true, 2208, 0},
+    {"receiver_2_last", 23, 137, 16, 33, 8, 138, true, true, 3311, 1103},
+    {"receiver_3_first", 24, 0, 24, 33, 8, 138, true, true, 3312, 0},
+    {"receiver_3_last", 31, 137, 24, 33, 8, 138, true, true, 4415, 1103},
+    {"tail_first", 32, 0, 32, 33, 1, 138, true, true, 4416, 0},
+    {"wall_last", 32, 137, 32, 33, 1, 138, true, true, 4553, 137},
+    {"before_local_offset", 7, 137, 8, 33, 8, 138, true, false, 1103, 0},
+    {"after_local_range", 16, 0, 8, 33, 8, 138, true, false, 2208, 0},
+    {"after_tail_range", 33, 0, 32, 33, 1, 138, false, false, 0, 0},
+    {"led_out_of_range", 24, 138, 24, 33, 8, 138, false, false, 0, 0},
+    {"strip_out_of_range", 33, 0, 24, 33, 8, 138, false, false, 0, 0},
 };
 
 constexpr BoardSliceVector kBoardSlices[] = {
-    {0, 0, 0, 1104, 1104},
-    {1, 8, 1104, 2208, 1104},
-    {2, 16, 2208, 3312, 1104},
-    {3, 24, 3312, 4416, 1104},
+    {0, 0, 0, 8, 0, 1104, 1104},
+    {1, 1, 8, 8, 1104, 2208, 1104},
+    {2, 3, 16, 8, 2208, 3312, 1104},
+    {3, 2, 24, 8, 3312, 4416, 1104},
+    {4, 4, 32, 1, 4416, 4554, 138},
 };
 
 constexpr SnapshotPatchVector kFullSnapshotPatches[] = {
@@ -1439,14 +1445,16 @@ constexpr MalformedBatchPacketVector kMalformedBatchPacketVectors[] = {
 };
 
 constexpr ReceiverSliceVector kReceiverSliceVectors[] = {
-    {"receiver_0_full", 0, 1104, 1, {{0, 0, 1104, 0, 1104, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
-    {"receiver_1_full", 1104, 2208, 1, {{1, 1104, 2208, 0, 1104, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
-    {"receiver_2_full", 2208, 3312, 1, {{2, 2208, 3312, 0, 1104, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
-    {"receiver_3_full", 3312, 4416, 1, {{3, 3312, 4416, 0, 1104, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
-    {"boundary_0_to_1", 1103, 1105, 2, {{0, 1103, 1104, 1103, 1104, 0}, {1, 1104, 1105, 0, 1, 1}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
-    {"boundary_1_to_2", 2207, 2209, 2, {{1, 2207, 2208, 1103, 1104, 0}, {2, 2208, 2209, 0, 1, 1}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
-    {"boundary_2_to_3", 3311, 3313, 2, {{2, 3311, 3312, 1103, 1104, 0}, {3, 3312, 3313, 0, 1, 1}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
-    {"whole_wall", 0, 4416, 4, {{0, 0, 1104, 0, 1104, 0}, {1, 1104, 2208, 0, 1104, 1104}, {2, 2208, 3312, 0, 1104, 2208}, {3, 3312, 4416, 0, 1104, 3312}}},
+    {"receiver_0_full", 0, 1104, 1, {{0, 0, 1104, 0, 1104, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
+    {"receiver_1_full", 1104, 2208, 1, {{1, 1104, 2208, 0, 1104, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
+    {"receiver_2_full", 2208, 3312, 1, {{2, 2208, 3312, 0, 1104, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
+    {"receiver_3_full", 3312, 4416, 1, {{3, 3312, 4416, 0, 1104, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
+    {"receiver_4_tail_full", 4416, 4554, 1, {{4, 4416, 4554, 0, 138, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
+    {"boundary_0_to_1", 1103, 1105, 2, {{0, 1103, 1104, 1103, 1104, 0}, {1, 1104, 1105, 0, 1, 1}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
+    {"boundary_1_to_2", 2207, 2209, 2, {{1, 2207, 2208, 1103, 1104, 0}, {2, 2208, 2209, 0, 1, 1}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
+    {"boundary_2_to_3", 3311, 3313, 2, {{2, 3311, 3312, 1103, 1104, 0}, {3, 3312, 3313, 0, 1, 1}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
+    {"boundary_3_to_tail", 4415, 4417, 2, {{3, 4415, 4416, 1103, 1104, 0}, {4, 4416, 4417, 0, 1, 1}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}}},
+    {"whole_wall", 0, 4554, 5, {{0, 0, 1104, 0, 1104, 0}, {1, 1104, 2208, 0, 1104, 1104}, {2, 2208, 3312, 0, 1104, 2208}, {3, 3312, 4416, 0, 1104, 3312}, {4, 4416, 4554, 0, 138, 4416}}},
 };
 
 constexpr CounterOrderVector kCounterOrderVectors[] = {

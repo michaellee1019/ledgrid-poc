@@ -88,7 +88,11 @@ struct PresentationContext {
   std::uint8_t vibe_id = 0;
   std::uint32_t vibe_profile_version = 0;
   std::uint64_t vibe_revision = 0;
+  std::uint8_t vibe_palette[LEDGRID_NATIVE_BACKGROUND_PALETTE_ROLES][3] = {};
+  std::uint16_t tempo_q8_8 = kQ8_8One;
   std::uint16_t luminance_q8_8 = kQ8_8One;
+  std::uint16_t chroma_q8_8 = kQ8_8One;
+  std::uint16_t energy_q8_8 = kQ8_8One;
   std::uint64_t modifier_revision = 0;
   std::uint8_t context_digest[32] = {};
   std::uint8_t vibe_digest[32] = {};
@@ -199,6 +203,11 @@ class ReceiverRuntime {
       std::size_t size,
       std::uint64_t local_monotonic_us = 0);
   void complete_host_frame();
+  bool native_background_started(std::uint16_t cadence_hz,
+                                 std::uint32_t global_strip_offset,
+                                 std::uint32_t common_seed,
+                                 std::uint64_t scene_epoch);
+  void native_background_stopped(bool failed);
   void receiver_restart();
   bool local_render_failed_if_current(std::uint32_t generation);
 

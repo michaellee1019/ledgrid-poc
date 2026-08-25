@@ -186,7 +186,7 @@ def test_malformed_batch_packets_are_crc_valid_and_pin_exact_rejections():
 def test_receiver_slicing_vectors_cover_each_board_and_every_seam():
     protocol = build_fixture()["firmware_protocol"]
     vectors = protocol["receiver_slice_vectors"]
-    full_receivers = vectors[:4]
+    full_receivers = vectors[:5]
     assert [
         vector["expected_slices"][0]["board_index"] for vector in full_receivers
     ] == [
@@ -194,20 +194,24 @@ def test_receiver_slicing_vectors_cover_each_board_and_every_seam():
         1,
         2,
         3,
+        4,
     ]
-    assert all(
-        vector["expected_slices"][0]["local_start"] == 0
-        and vector["expected_slices"][0]["local_end"] == protocol["local_pixels"]
+    assert [
+        vector["expected_slices"][0]["local_end"]
         for vector in full_receivers
-    )
+    ] == [protocol["local_pixels"]] * 4 + [138]
 
-    seams = vectors[4:7]
+    seams = [
+        vector for vector in vectors
+        if vector["id"].startswith("boundary_")
+    ]
     assert [
         [item["board_index"] for item in vector["expected_slices"]] for vector in seams
     ] == [
         [0, 1],
         [1, 2],
         [2, 3],
+        [3, 4],
     ]
     for vector in vectors:
         expected_size = vector["global_end"] - vector["global_start"]

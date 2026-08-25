@@ -17,6 +17,21 @@ independent stages:
 The receiver has no FastLED dependency. It uses the public ESP-IDF LCD/I80 API
 directly so buffering, completion, timing, and overload behavior are explicit.
 
+## Finalized installed topology (2026-08-25)
+
+Current release acceptance targets 33×138 across five receivers with logical
+widths `(8,8,8,8,1)`, physical left-to-right IDs `(0,1,3,2,4)`, and native
+global offsets by logical ID `(0,8,24,16,32)`. The fifth receiver uses SPI1
+CE2. All strict status, dense-streamed, sweep, sparse-overlay, profile, and native
+module gates require fresh evidence from all five receivers. Historical 32×138,
+four-receiver, and degraded-SPI1 results below remain labeled evidence for the
+hardware state on which they ran; they cannot qualify the finalized topology.
+
+Logical width and physical output-lane selection are independent. Acceptance
+must prove the added logical column without treating seven padded/mirrored lanes
+on the fifth receiver as semantic pixels. The old degraded return-path recipes
+are retained only as recovery diagnostics and are not current release gates.
+
 At 2.4 MHz, each WS2812 data bit is represented by three parallel samples:
 
 - zero: `100`
@@ -36,7 +51,7 @@ All of these must pass before a hardware flash:
   device-to-bus/chip-select map.
 - Every active frame-based animation returns a canonical contiguous `uint8`
   frame without errors and renders at or below 4.0 ms p95 for the installed
-  32 x 138 geometry in the headless benchmark.
+  33 x 138 geometry in the headless benchmark.
 - The three accepted host scenes (Gradient, Aurora Curtains, and Sparkle under
   Clock Overlay) meet the same 4.0 ms p95 generation-plus-composition gate.
   The benchmark also reports p50/p99/max, scene and overlay changed ratios,
@@ -59,25 +74,26 @@ All of these must pass before a hardware flash:
   - bounds rejection for invalid strip counts, lengths, and output buffers;
   - latest-frame-wins mailbox behavior without overwriting a frame being read;
   - deterministic accounting of accepted, displayed, and superseded frames.
-- The production firmware builds for `esp32-s3-devkitc1-n16r8` using the pinned
-  pioarduino/ESP-IDF 5 toolchain.
-- The dedicated local-canary image builds from the same pinned inputs with only
-  `LEDGRID_ENABLE_LOCAL_BACKGROUND=1`; compilation evidence proves the ordinary
-  production image uses `0` and the canary uses `1`.
+- The production, local-canary, and managed-native-canary firmware images build
+  for `esp32-s3-devkitc1-n16r8` from the same pinned pioarduino/ESP-IDF 5 inputs.
+  Production keeps all receiver-execution gates off; local canary enables only
+  the bounded local-background path; native canary additionally includes the
+  dynamic loader/cache/status-v6 surface. A durable allowlisted environment
+  selection, not a free-form build name, chooses among them.
 - The production image uses no FastLED symbols or dependency.
 
 ## Phase 3A one-receiver local canary
 
 Run this only after the feature-off production image passes the ordinary
-streamed-frame gates on all four receivers. Flash the named feature-on image to
-one explicitly recorded serial port, leave the other three on production, and
+streamed-frame gates on all five receivers. Flash the named feature-on image to
+one explicitly recorded serial port, leave the other four on production, and
 prepare the production image and restore command before stopping the service.
 
 The canary passes only when:
 
 - a controller-requested fresh serialized status drain reports v3 plus the
   status-v3 and explicit-ownership capabilities, and receiver-reported logical
-  IDs 0 through 3 on the full wall; only the selected receiver must advertise
+  IDs 0 through 4 on the full wall; only the selected receiver must advertise
   the static-background and presentation-context capabilities;
 - exact staged context plus explicit start enters `LocalBackground`, then frame
   and cadence counters advance for at least 60 seconds after the Pi/controller
@@ -95,7 +111,7 @@ The canary passes only when:
   the full-wall status, dense 60-second streamed canary, and animation sweep pass
   again before the canary is closed.
 
-The portable four-board compensation test must sample every receiver at one
+The portable five-receiver compensation test must sample every receiver at one
 shared host instant and keep scene-time skew at or below 5 ms. That bound is a
 protocol/orchestration gate, not a claim that sequential SPI commands activate
 on the same microsecond. Visual lane/seam inspection remains mandatory because
@@ -151,7 +167,7 @@ only with measured evidence and an updated theoretical budget.
 
 ## Full-wall gates
 
-After all four controllers are flashed:
+After all five controllers are flashed:
 
 ```bash
 just receiver-streamed-wall-acceptance duration=60 min_fps=150 target_fps=160
@@ -161,9 +177,10 @@ just live-animation-sweep seconds=2
 The trailing `key=value` arguments are normalized by the Just recipes; literal
 strings such as `duration=60` are never forwarded to the Python parsers.
 
-The strict commands above remain the release gates. While the installed SPI1
-MISO net is physically shorted to MOSI, this separate temporary diagnostic gate
-may qualify only the feature-off streamed path:
+The strict commands above remain the release gates. The following historical
+temporary diagnostics were used while the installed SPI1 MISO net was physically
+shorted to MOSI; after the reported repair they are recovery tools only and
+cannot qualify the finalized wall:
 
 ```bash
 just receiver-phase3a-status-degraded-spi1
@@ -184,26 +201,27 @@ must visually inspect all SPI1 lanes throughout the run; outbound host counters
 do not prove that an ESP32 received, decoded, or displayed a frame.
 
 The separately named degraded live sweep applies that same exact topology on
-every animation. Strict `live-animation-sweep` requires telemetry from all four
+every animation. Strict `live-animation-sweep` requires telemetry from all five
 receivers and never silently skips a missing return path.
 Because metrics can be sampled while the parallel SPI workers are presenting a
 frame, per-device host frame deltas may differ by one at a sample boundary; a
 spread greater than one fails the degraded sweep.
 
-This temporary gate cannot satisfy the strict all-four status or telemetry
+This temporary gate cannot satisfy the strict all-five status or telemetry
 gates, cannot qualify a local-background canary on a write-only receiver, and
 cannot authorize all-board receiver-native, sparse-overlay, upload, or other
 MISO-acknowledged work. Repair the return path and rerun the strict commands to
 close those gates.
 
-### Degraded hybrid visual evidence
+### Historical degraded hybrid visual evidence
 
-The installed wall may deliberately run the named feature-on firmware with the
-explicit `degraded_spi1_01_readable` policy for a receiver-native background plus
-Pi-authored sparse foreground. This is an operational product mode, not a strict
-release gate. It must always report `telemetry_complete: false`,
-`release_acceptance: false`, readable devices `[0,1]`, and unverified devices
-`[2,3]`.
+The retired four-receiver installation could deliberately run the named feature-on
+firmware with the explicit `degraded_spi1_01_readable` policy for a compiled
+background plus Pi-authored sparse foreground. That schema-v1 product mode is
+retained only as a recovery diagnostic and historical evidence source; schema v2
+does not allow it as a current selection or release gate. Its reports must remain
+honest: `telemetry_complete: false`, `release_acceptance: false`, readable devices
+`[0,1]`, and unverified devices `[2,3]`.
 
 Visual acceptance for that mode has independent sub-gates:
 
@@ -214,9 +232,9 @@ Visual acceptance for that mode has independent sub-gates:
 - Host strip direction: 32 distinct strip colors plus boundary-crossing sparse
   content establish local order and old-pixel clearing. Four receiver colors do
   not exercise this property.
-- Receiver-native direction: an obvious signed diagonal/phase field crosses all
-  8-strip boundaries without a fold, mirror, or phase reset. Clock legibility is
-  not evidence for this gate.
+- Receiver-native direction: an obvious direction-marked diagonal/phase field
+  crosses all 8-strip boundaries without a fold, mirror, or phase reset. Clock
+  legibility is not evidence for this gate.
 - Combined scene: the final background and foreground both pass in one process
   after restart, then again after ordinary `just deploy` restores the exact
   desired scene and target-owned config.
@@ -247,16 +265,16 @@ acceptance on logical receivers 2/3.
 - record host generation, SPI send, receiver encode, receiver DMA, accepted,
   displayed, and superseded rates in the deployment report.
 
-## Phase 3C portable receiver-profile prerequisites
+## Historical Phase 3C portable receiver-profile prerequisites
 
-The first receiver-profile implementation slice is deliberately non-operational:
-it adds no SPI profile command, persistent receiver cache, status field, optic,
+The first receiver-profile implementation slice was deliberately non-operational:
+it added no SPI profile command, persistent receiver cache, status field, optic,
 manager mutation, or wall activation. Its acceptance evidence is portable and
 must not be described as receiver-profile or physical-wall acceptance.
 
-The slice passes only when:
+The slice passed only when:
 
-- four Python-generated installed-topology 8 x 138 payloads decode in portable
+- four Python-generated 8 x 138 payloads plus one 1 x 138 payload decode in portable
   C++ with exact origin/direction, header/table, CRC/content digest, section,
   range, and cross-section semantic parity; every malformed case clears the
   output view before exposing a pointer;
@@ -272,35 +290,76 @@ The slice passes only when:
   pre-existing shared-marker symlink/non-regular file is rejected without
   touching its target, a legacy marker triggers one explicit migration flash,
   the Pi requires unique factory USB identities and physical locations for all
-  four receivers, a replacement board selects only its current port, and the
+  five receivers, a replacement board selects only its current port, and the
   next identical deployment is a true firmware no-op backed by target-owned
   per-device installation evidence;
 - focused profile/deployment tests, the complete Python/rendering/firmware and
   deployment gates, both ESP32-S3 builds, fixture regeneration, whitespace,
   deploy dry-run/plan, and an ordinary clean `just deploy` pass.
 
-Receiver staging, activation, restart recovery, capacity/eviction, status
-agreement, transform timing, seams, and photographed evidence remain open. They
-require the later default-off protocol/storage slice and the strict one-receiver
-then all-four hardware gates after the SPI1 return path is repaired.
+That slice did not prove receiver staging, activation, restart recovery,
+capacity/eviction, status agreement, transform timing, seams, or photographed
+evidence. The later gated software now implements those contracts portably, but
+their one-receiver and all-five physical gates remain open.
 
-## Rollback
+## Phase 4 receiver-native software and physical evidence
 
-Keep the previously validated firmware binaries until full-wall acceptance passes.
-A failed canary is restored before further firmware changes are deployed.
+The gated Phase 4 software now implements trusted repository-owned unsigned
+modules, status v6, the content-addressed receiver cache, exact-five transactions,
+typed parameters, watchdog/quarantine handling, managed scene selection, sparse
+Clock composition, build-time previews, persistence/adoption, and explicit Python
+recovery. Ordinary production and `just deploy` remain feature-off; portable
+completion is not physical acceptance.
 
-## Later receiver-native modes
+Use the API-only evidence recipes only after H0/H1 authorize the explicit native
+canary:
 
-The [unified roadmap](plan-revamped-animation-pipeline.md) next adds sparse RGBA
-foreground, an installation profile, and eventually trusted unsigned native
-modules. Those gates extend this file's streamed-frame requirements; they never
-replace or lower them.
+```bash
+just receiver-native-h2-evidence
+just receiver-native-h4-default-soak
+just receiver-native-h4-maximum-soak
+```
+
+Each defaults to 1,800 seconds. The H2 runner slice proves exact IDs `0..4`,
+heterogeneous widths/offsets/directions, unanimous bundle/payload/parameter,
+context/profile/vibe/plant agreement, counter continuity, and measured start
+skew/drift. It does not perform stage/unplug compensation, boundary/lease/restart
+repair, the dense streamed canary, or the complete Python animation sweep.
+
+The separate H4 runs exercise authored-default and maximum-work native parameters
+with the exact enabled Clock overlay and stale policy. They retain sampled
+render/composite/encode/display values without calling them receiver event
+histograms, plus SPI, memory/cache, reset/boot, watchdog, error, cadence, skew, and
+drift series. Each run must return to the recorded Python full scene without a
+reboot or flash. Retained timing distributions and rollback artifacts, plus the
+other H4 soak, remain explicit companion evidence.
+
+Short durations are supporting diagnostics only. A complete-gate claim requires
+both requested and observed duration of at least 1,800 seconds and validates only
+same-release/same-artifact companion reports with nonempty evidence for every
+outstanding subgate. Reports enumerate covered and outstanding subgates and remain
+failed when any required status field, exact binding, Clock state, reset/cadence
+counter, or Python restoration proof is missing. No H2 or H4 gate is accepted by
+the portable runner alone.
+
+## Rollback, fallback, and quarantine
+
+Keep the previously validated firmware binaries, recorded Python fallback, and
+prior pinned native bundle/payload until full-wall acceptance passes. A failed
+canary is restored before further firmware changes are deployed.
+
+Native callback or watchdog failure quarantines the exact payload and selects the
+compiled fallback without automatic retry. Clearing quarantine is a separate
+digest-bound operator action and must prove the exact five-receiver roster before
+reinstall. Explicit receiver-native recovery presents the recorded Python fallback
+as a complete frame; manager state is cleared only after host authority is
+positively verified. A rejection or exception retains observable native/degraded
+ownership and the error so a later recovery can retry safely. App downgrade is
+refused while incompatible native state remains active and may proceed only after
+that exact Python recovery.
 
 The `native-animations` branch remains an organ donor for portable ABI/loader,
-package-validation, status, timing, cache, quarantine, and four-board
-failure-injection tests. Its historical passing software tests are not current
-main-branch or physical-wall evidence. Re-port each relevant test with its
-implementation, update it for the unsigned bundle and base-plus-foreground
-contracts, then re-run the roadmap's one-receiver and four-receiver gates. The
-branch's unresolved SPI1 MISO/MOSI coupling fault makes fresh Gate H0 wiring and
-streamed-baseline evidence mandatory before receiver-native wall acceptance.
+package-validation, status, timing, cache, and quarantine ideas. Its historical
+four-receiver tests and passing results are not current main-branch or
+physical-wall evidence; the replacement contract is the finalized heterogeneous
+five-receiver implementation and the fresh H0-H4 gates above.

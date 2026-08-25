@@ -274,7 +274,9 @@ void test_generated_json_golden_vectors_match_firmware_exactly() {
         vector.end_flat_index,
         "board end");
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(
-        ledgrid::kContractLocalPixels, vector.pixel_count, "board pixels");
+        static_cast<std::uint32_t>(vector.local_strip_count) *
+            ledgrid::kContractLedsPerStrip,
+        vector.pixel_count, "receiver pixels");
   }
   TEST_ASSERT_EQUAL_UINT32(
       ledgrid::kContractFullSnapshotPatchCount,
@@ -563,15 +565,15 @@ void test_generated_malformed_batch_packets_keep_crc_valid_for_runtime_rejection
   }
 }
 
-void test_generated_receiver_slice_vectors_cover_four_boards_and_seams() {
+void test_generated_receiver_slice_vectors_cover_five_receivers_and_seams() {
   using namespace ledgrid::golden_v1;
-  constexpr std::uint32_t kPixelsPerBoard = ledgrid::kContractLocalPixels;
   for (const auto& vector : kReceiverSliceVectors) {
     std::size_t actual_count = 0;
     std::uint32_t represented_pixels = 0;
-    for (std::uint8_t board = 0; board < 4U; ++board) {
-      const std::uint32_t board_start = board * kPixelsPerBoard;
-      const std::uint32_t board_end = board_start + kPixelsPerBoard;
+    for (const auto& receiver : kBoardSlices) {
+      const std::uint8_t board = receiver.board_index;
+      const std::uint32_t board_start = receiver.start_flat_index;
+      const std::uint32_t board_end = receiver.end_flat_index;
       const std::uint32_t clipped_start =
           vector.global_start > board_start ? vector.global_start : board_start;
       const std::uint32_t clipped_end =
@@ -857,7 +859,7 @@ void test_fixed_point_alpha_endpoints_rounding_saturation_and_fold_order() {
       bottom_then_top.alpha == top_then_bottom.alpha);
 }
 
-void test_logical_to_local_coordinates_cover_all_board_boundaries() {
+void test_logical_to_local_coordinates_cover_all_receiver_boundaries() {
   std::uint32_t index = UINT32_MAX;
   TEST_ASSERT_TRUE(
       ledgrid::logical_to_local_pixel(0, 0, 0, 8, 138, &index));
@@ -866,19 +868,22 @@ void test_logical_to_local_coordinates_cover_all_board_boundaries() {
       ledgrid::logical_to_local_pixel(7, 137, 0, 8, 138, &index));
   TEST_ASSERT_EQUAL_UINT32(1103, index);
 
-  constexpr std::uint16_t offsets[] = {0, 8, 16, 24};
-  for (std::size_t board = 0; board < 4; ++board) {
+  for (const auto& receiver : ledgrid::golden_v1::kBoardSlices) {
     TEST_ASSERT_TRUE(ledgrid::logical_to_local_pixel(
-        offsets[board], 0, offsets[board], 8, 138, &index));
+        receiver.global_strip_offset, 0, receiver.global_strip_offset,
+        receiver.local_strip_count, 138, &index));
     TEST_ASSERT_EQUAL_UINT32(0, index);
     TEST_ASSERT_TRUE(ledgrid::logical_to_local_pixel(
-        static_cast<std::uint16_t>(offsets[board] + 7U),
+        static_cast<std::uint16_t>(receiver.global_strip_offset +
+                                   receiver.local_strip_count - 1U),
         137,
-        offsets[board],
-        8,
+        receiver.global_strip_offset,
+        receiver.local_strip_count,
         138,
         &index));
-    TEST_ASSERT_EQUAL_UINT32(1103, index);
+    TEST_ASSERT_EQUAL_UINT32(
+        static_cast<std::uint32_t>(receiver.local_strip_count) * 138U - 1U,
+        index);
   }
 
   TEST_ASSERT_FALSE(
@@ -906,7 +911,7 @@ int main(int, char**) {
   RUN_TEST(test_crc_contract_matches_ccitt_false_and_exact_packet);
   RUN_TEST(test_generated_wire_packets_match_exact_headers_payloads_and_crc);
   RUN_TEST(test_generated_malformed_batch_packets_keep_crc_valid_for_runtime_rejection);
-  RUN_TEST(test_generated_receiver_slice_vectors_cover_four_boards_and_seams);
+  RUN_TEST(test_generated_receiver_slice_vectors_cover_five_receivers_and_seams);
   RUN_TEST(test_generated_counter_generation_cas_and_lease_vectors_match_runtime);
   RUN_TEST(test_version_session_and_counter_order_reject_stale_inputs);
   RUN_TEST(test_generation_begin_enforces_cas_and_exact_idempotency);
@@ -914,6 +919,6 @@ int main(int, char**) {
   RUN_TEST(test_delta_patches_allow_gaps_but_reject_reverse_order_and_bounds);
   RUN_TEST(test_zero_patch_delta_is_generation_agreement_noop_only);
   RUN_TEST(test_fixed_point_alpha_endpoints_rounding_saturation_and_fold_order);
-  RUN_TEST(test_logical_to_local_coordinates_cover_all_board_boundaries);
+  RUN_TEST(test_logical_to_local_coordinates_cover_all_receiver_boundaries);
   return UNITY_END();
 }

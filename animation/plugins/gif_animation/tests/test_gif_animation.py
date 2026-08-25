@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,6 +45,31 @@ class GifAnimationAssetTests(unittest.TestCase):
         for path in sorted(self.asset_dir.glob("*.gif")):
             with self.subTest(gif=path.name), Image.open(path) as image:
                 self.assertEqual(image.size, (DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP))
+
+    def test_curated_assets_preserve_the_32_strip_source_and_black_tail(self):
+        repository_root = Path(__file__).resolve().parents[4]
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(repository_root / "tools" / "normalize_gif_assets_33.py"),
+                "--check",
+            ],
+            cwd=repository_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for path in sorted(self.asset_dir.glob("*.gif")):
+            with self.subTest(gif=path.name), Image.open(path) as image:
+                for frame in ImageSequence.Iterator(image):
+                    tail = frame.convert("RGBA").crop(
+                        (DEFAULT_STRIP_COUNT - 1, 0, DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP)
+                    )
+                    self.assertEqual(
+                        tail.tobytes(),
+                        bytes((0, 0, 0, 255)) * DEFAULT_LEDS_PER_STRIP,
+                    )
 
     def test_every_pack_gif_is_animated_and_infinite(self):
         for path in self.pack_gifs:

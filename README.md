@@ -1,9 +1,10 @@
 # LED Grid Control System
 
-Controller, web UI, animation plugins, and ESP32-S3 firmware for a 32 x 138
-(4,416-pixel) plant-wall installation. A Raspberry Pi renders frames and sends
-them over two SPI buses to four receivers; each receiver drives eight WS2812
-lanes in parallel.
+Controller, web UI, animation plugins, and ESP32-S3 firmware for a 33 x 138
+(4,554-pixel) plant-wall installation. A Raspberry Pi renders frames and sends
+them over two SPI buses to five receivers. Four receivers expose eight logical
+WS2812 lanes and the fifth exposes one logical lane through an explicit physical
+output mask.
 
 ## Local development
 
@@ -67,6 +68,18 @@ immutable release, atomically select `current`, require advancing release-aware
 health, and persist matching local/target receipts. Use `just releases` to
 inspect release state, `just rollback <release-id>` for an application-only
 rollback, and the explicitly named `*-legacy` recipes only for recovery.
+
+Receiver-native software is present but remains default-off and is not yet a
+production-accepted wall path. Repository-owned modules use the explicit
+`just native-plan`, `just native-build`, `just native-publish`,
+`just native-install`, `just native-start`, and `just native-run` recipes;
+ordinary `just deploy` never installs or activates a
+module. The H2 and H4 evidence recipes default to real 1,800-second observations,
+always run the Python restoration path, fail unless host takeover is positively
+proved, and remain supporting evidence until every companion and photographed
+gate is complete. See
+[Deployment](docs/DEPLOYMENT.md#receiver-native-deployment) and
+[Rendering acceptance](docs/RENDERING_PIPELINE_ACCEPTANCE.md#phase-4-receiver-native-software-and-physical-evidence).
 
 ## Required checks
 

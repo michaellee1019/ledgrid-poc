@@ -1,0 +1,1159 @@
+{
+  "$schema": "ledgrid.gif-asset-normalization",
+  "assets": {
+    "axolotl-bubble-column.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "4d11f2d7dd9b6e47a91dffe97f5cc58ffc174f182e4b6bb85f9bdca752daceb8",
+        "6d2f69fcc3d5e3c15a62d49dc802c20a0d1bb1ab8091983dfe42676ba04840c3",
+        "8f39dec0a1dddda431c7acbd816ee21090c23b4beabaf898724b0b485a348252",
+        "42f437af856a6b11a3a1c789cb79e9fb019694a43f28ddc1fa33e14999537a57",
+        "bb52847c2664421f02648f5a0a51012ffbc2e8509b2406c62e1b2d02a87c75b2",
+        "eb4f978e01e7b25e02c294b97db021f8ff166213ab5ff8d2c01255947bdd2d09",
+        "9a9e84144af96e5c4e7a197b0bfbaf5bb7c9610cd2fe867fe184f76ae4d98ce2",
+        "62c6046bf65e1623f0f96f471c8bdfccd0c4a6949c64112252e38c6fac7a350a"
+      ],
+      "transparency": null
+    },
+    "balloon-blobs.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "74e46e4737b2f4e5f2040a913c40af884a168c47e9d3cb6806e2e87a6637da3a",
+        "78b7a2f3d0e07f2704dab170c68597d7a0bfb2230ba8b0c3d26bd989d9a33c40",
+        "0ec96cfa2aecc9755488054482724489ddea422b07c1aad7394f1aca6b6cefa4",
+        "436fbad07118f926c4af2b0983c458f6a5a5014d6803a9cb9f59ac2b2ac454d6",
+        "d280cc717c98e390bac8a6f01383d278303ed4a7666924f912a881fa041c41b4",
+        "c3d2d9c27b949f4543e55079bf2b3cef04da881fc25efeca64e096469b1c52eb",
+        "faa01e91ee6a3e2614bfb81a99787a4d66f03a2f5e66932f846d6431b9e37472",
+        "37fb5a3ae4f94e21aa96af51fa0300d24554795bb2cdd7755525054c34f9d477"
+      ],
+      "transparency": null
+    },
+    "bumblebee-garden.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "7496e1b36922a5ed0a041511281d27298d54fc60e87b7ccd350f7520f91e7dca",
+        "ff6904a5df5e418bec84aca2cf0d932923f15ee233366f6e772d8219bad05fe3",
+        "89d3a3b2c0816071280937c53f1738ceb5191249c7dd0e238ab04ea46dbf47f9",
+        "e9d4b7addcd7bfc57b2103b1e05c513af585216bf57e85db83088c336838add1",
+        "0aff43bc96b1c064b36c3599aea6b5aab401118f7295444e35a1fc8e01bf4098",
+        "828402b034ee6714602a7aa01428df93fe2d5763cdad8c8dcfe12c6eb2df262d",
+        "666ed99501c47027ff35c37c52dd477ff32f62d645ff251c13c2956846dc83f8",
+        "c8a6c4dc44136c533c35c359c68dd401d9c214948b8bfaad16be5b810c79c9a1"
+      ],
+      "transparency": null
+    },
+    "cactus-bloom-dance.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "7df56d2fe19d804fa0230606df6b65a9da967cf49b56d26b8fd07219e778928e",
+        "ec9e35965573e218b57dab1997e5325a35d33572141beee69514a75c4c219fcb",
+        "e9c335fcbb3ddcf09bbf972648e9a9e05a2d07f476c337e5a3770f8366c9fd97",
+        "5952d31f540fde0b7651c2909f5aa7038d28380ab8bc2df2e2ff9a237f41d870",
+        "7c74f2b353dada7ec9e6ac8125b9d0ca27651680f162d4e73816ba115a1953cc",
+        "8ebf67e5a0dda6a18f4bedc3f2e6d28775e2d1f05042c885d60cc63e0a99e016",
+        "f7134d6908bfe029e929030d34482e5634d608c12270e29e53311b49fab328f0",
+        "571b5363ffdf8a3d67a737d14f25ddfa84b68b92a3a103fbb00f7966b36d71df"
+      ],
+      "transparency": null
+    },
+    "campfire-ghost-stories.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "f02fb74a2754ee24b9e30389a5a72ad1a8ac974c37d49faf9c5eadde70043cb5",
+        "83476bc62f14ed94b3e2a929288fb4ccda8cb1aab38d575e3ee179a655324daa",
+        "ab4e879fdc8a70f6fd8639439cf7baa709b70848b801de8b3b484976fda5f18c",
+        "b7d9e9ab72350b495641af07dd812caef0163216825d4dfdd55b1f94c1441107",
+        "5fac70342a746668ae13a1d3074e7debfb375bdb41714d9c0afee722f42b001c",
+        "7f49fad408755c9a8c6aafdec60033595df4ac099775e733f786239b33d29490",
+        "021f39702ac37ccef8a711023ce19fe4eb7e32cca88d0164c8aa280dcedd2b78",
+        "464109e627ce4e1d2a4b20990c17e37c76c78da39931b0f6a7b91e0286c43624"
+      ],
+      "transparency": null
+    },
+    "coral-fish-friends.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "8b076a3cd5e27c718e88d4e8bea84d75e5733f14be3d031c9562dd0ca7b3ff1d",
+        "307d4a0a95baf5ca80eda28c16e721f43c6dd7b7cfe2b7ee4615097df6f6abb9",
+        "31729a5db613b36340dc4e3017999ec9f57ffe231819296409a818d1b0c775f5",
+        "de06b326fb6128782b88c9f90f63006d7fc04aefe418f17d1103543e1c17d2d8",
+        "b7ff63dd03fcf80000c3907229fa1753a94e676890319cad4829d1139db30a2f",
+        "912c8a0d6290fe4a561d9193c4c1f61bd8f23e22563dc9a553ee2be1e8a05cdd",
+        "95ee34ed567e406c8aded23d1ea8c15d3e16b48299094254e24d1777b814a7d2",
+        "62c14004b63ea200c37cbc4ec87a3eb1cbe679278eb727be759f3dbafe6817e4"
+      ],
+      "transparency": null
+    },
+    "cotton-candy-clouds.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "d98ce9a0e0582dfda7fe6fa50c77234737820c7a23500e1f6c46f451f75952aa",
+        "8ca7b9da7c76507bdbc5cf1bc0b55bbd46fce9f2f0c978f0b44eabe921e5307b",
+        "993d664daa0ebc4ee91cf42f6b0f7f43fb3d0e08e65a26b23b11231308334988",
+        "c25f3bf934e97619a6f62c4e77d8d3aabee1757cd0f6ccd65fbe837291dc750b",
+        "15b88a57af1b0ec156cffff6a6947884963887eeba8c4712151bd632b6e2824e",
+        "7418a17b38b6727a1c6e5d443bbd85643e7934fd076da9ef145722e1a2a73395",
+        "e31237cd2bafbc3fd90cedecfc01fd07c26f06298fba868698d5c5508d2162b7",
+        "f707db73386c838bdbcf6d434aa50e70dd21a8c1ecdcc1df9d0bb0f3d75c97dd"
+      ],
+      "transparency": null
+    },
+    "cozy-shelf-naps.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "677be0ba13e159e033437c3b47eabcc1d1d480543acbf896db54e9d2c510cd0d",
+        "0f0038b928f21f1b203331da9c8c5a30ffd4e879c9180e9d2e613d2bfaac36a5",
+        "9fe5a99530b23cf1ec3b240fe154f74e74ac0658f6e07c1f4eaa2ea386d9dad6",
+        "328855091ef39422741b75d64b20d33f912ee55e77417473de49679a2b84cb36",
+        "b2ba66a4f98fb2d0e3d1567a744cf17272d6c1771397c0e0262c81ae6d59d88f",
+        "ccda16f1f4c1cb377a77502e07877b258f3291c9fb192d77803712603522f7aa",
+        "1e2633c876365aa327843ed1a0d7160ab28cf23aa428e8cff3fc38a011ce38e5",
+        "562c5074df4f4bf27d6281140260900b7c305d3e65b7274c2c707246dc48e7af"
+      ],
+      "transparency": null
+    },
+    "cozy-window-cats.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "6fd6302e2867b37537f7d025205af5b9fd8973f06ffe8c782558334164e4837a",
+        "f3b449480323e44c59bdec3736e0af9c3d19022d2fa2acafaf4eb45c242f408a",
+        "b4e013bf7c6514c259df9573e26deb1ce60a18ff81c50e5b1b443f3d8050ce82",
+        "c9d98fbdd2f18b6c6434c876efe8704f8676cc4620a3398e9b482759fa9fb3e9",
+        "a8aaa6abf67875e659e9374ec57b791135964d344984f0dc47d62cb556a5c882",
+        "fc7dca267061f447dd9ea7a9b26c673225ec35ed392490fc61bf54fbdb5528fc",
+        "dd1f258173bc51616ed19c01ef574f6ae498fafb1a294462ad576cda0064ba68",
+        "d4fe242ac288cc236e4331847c04022c02d3cb8d921dacce83741d5c708f3edb"
+      ],
+      "transparency": null
+    },
+    "cupcake-sprinkle-party.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "aba10e98762ea8179f07f45e19d4a0af689f9b408473af0ca67a6118668f345a",
+        "cf5f289914b271e476a1a0ef50fd3db1e239e9950799eb9920a8cb53b04b2b6f",
+        "0d4127b74ee528c604c3da58887e8fa85651966d365b66dab41520240d6ea43a",
+        "6598bf7e40016ffd320c2360acc140aafd4dd8dd7714811b87b7edf2b849ff8f",
+        "c8c6679a244c36fc9ba78c404a4113395f89a97fe52ab48cf04157a630939351",
+        "f321443ed570b4e216c00eaac92a1aedb758a763c481135b5377e6cc3f62e5d3",
+        "a6be36c774cf423e606228f26dab7678f48a96e227c89234af7740dcae837a88",
+        "f1920d25011c8749c74ed4df528918da553ddf9aa729e2cbdbcaccb4536a1e25"
+      ],
+      "transparency": null
+    },
+    "curtain-cat-watch.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "622483afe202b7dd0403f5498f56bf5079f3ea67d55ab8ff8f01a86aaab33784",
+        "0d0210e29e4bd4b974bd735e1b9e19c0320787be31c9d86c226f9d9de3dd83e9",
+        "b9f2f755e5ac0c5535b1757d48510f275896a0001754933eff0dae7d7b8baa66",
+        "55c9e229ca8baaf8075e8b69881730eb3a2741292883f4289fac1292d6eab977",
+        "74b5823e4add13f5e97ea9baf57e20026c6b08970effad2ff5cb368f738b0420",
+        "1e7fb49498b8c645643b4279d4b9b118b60da1f81c145744791a2091fdefe430",
+        "2adbd9dc833387a61dcf269ebd16a25d445b6f0922a8ab5661d8465b8c740ab4",
+        "5d97841f49b131e2a9a74ccceb9f8f7d7d2bd634694cbd5ae94e13d000a20f15"
+      ],
+      "transparency": null
+    },
+    "firefly-bottle.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "1f26886692d52c8b02b4b90bdc6e1a34a6103600421ef5f1d3d9fb874ddafaef",
+        "6213b47a78bbb04842dd75300d5877e2cb8107abf46ea44da50d442d3c24aa7d",
+        "9e502713f53d6f613e3545caee3ae5ede3955941a03d00ff90d717ad79aa4fbc",
+        "cc57986bc8d40899ab64eebd70757ab2c0438626a2ed93c133e4a64b6129beb7",
+        "0a8a94f89bc151587bf55644f9b10c94afed5a0a15a54ca63922a4db9f575378",
+        "3ff2e98ccaf5cc3bf5365aede93564d34d427ac644d5e5a6c370f1ef801b57cd",
+        "6744dd0bda69da305ddbe4c49e118fc0bc88e58f0f363532352a672c93af0dcc",
+        "e61090707ed13dc862397a55711427507451f86833f1a1dea5901c4bf17e8850"
+      ],
+      "transparency": null
+    },
+    "frog-pond-ripple.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "7625630e2a18d6029b169287981c3b0e1cca9cfbbd9db9788ecb3b4e3f820a36",
+        "cd5d276b2fd03f3d4f4906b4448dadf8f287163e38f1a9d3cd40b28246dd4c8b",
+        "a5846f87882d7e469ac90a8c61e06844431626166324f824331e95d235256607",
+        "cff1878f321e0e7073a03bc5b6c8516efb7270931dacd335c4e8cca0d0068fc3",
+        "fbcc41d7fbae2acca984e837cbc30e00f7da207e44c2bf792785fdc7be09103a",
+        "a15268e1e1cbc6246b0a8136de0faebd9d2b4444a1b97a1b7cce3e01e216c67b",
+        "3160354493f1f954747e57cd763ed89b6bf9756dc91c0337dc4a8b4039c94dc8",
+        "a7effd94cb99c169cf595c6ed8caea6c4a86e19901be87609d2d8473f9a99139"
+      ],
+      "transparency": null
+    },
+    "grape-bounce.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "1cf7097818f76bc0ed80e1245d257707aa5df99dc605dd1fb5d50601c11ec0e3",
+        "9fbf43f3422afaff32730357b86e5ab6e06d4c34efeef25e4e03faa552f7c03b",
+        "a2bd584464290a78d034113aee2b2aa7e08e57df8ca9289f917a4ba4f1572469",
+        "b7069d722fdc3eb361b2c220041065f02337ab721a076a04f741a656be418b3b",
+        "9dfecf6da82cdec12fc52e1abd0f913b7594ce8d1d01a56566fe792a061c395f",
+        "44be79dd1b6c1066a4de643debbbbdb84c74d9bb2827310808e9b0a9eb7cca47",
+        "32b8dc0ccd86617b65b4561300906ca23981b063ef181cb9d2b11883040a3604",
+        "0fcb5339275af0aa9aa79759dac7ee7a601ba13d058dab8bf858fa7bf2b52baa"
+      ],
+      "transparency": null
+    },
+    "happy-star-fall.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "7b21bdd8232cf9827901a7237ef19ab80277be526f7cb230715f5fd00a61d615",
+        "8717ff70d209e913fb07e2f03bc315034e063aa97db55f489457ac304270eb3a",
+        "bf71b88d93b718a3281c5a4f5b5938f83c4d2e8d2c122a15d0edd68528bd6c16",
+        "4c95c679b0b2011c9016cb098b2374f8658aa337d44b0855595adc0cf4ff2ce4",
+        "f9365a7228a701bbea845ee2fd766edd55555c9638a6180bdce7e3e6533beaef",
+        "b937e24a5e17a9b838e02823c3de0f876eb5eb2f94693080a24814726c2c5d52",
+        "7a39e2c64697c614015529028d5487cb5a118e4cf98d2ade2adab86d1782a03e",
+        "164afd49bb432763e5ebf28b5d732de76fc1187bdc21156527b6d82a99782396"
+      ],
+      "transparency": null
+    },
+    "hydrangea-rain.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "0446d9b8cab2c93b28cb8b4aecc2917f5739ca0ec6b1cd60e80ee05d23b8da64",
+        "d192c5ea33376ef0f0add6738338048dfede90cc7f4cdd528d52dbde93370959",
+        "d57a1defb5a5ff5f3093fbd5e3283f5833f1f6ad7bd977af5c3ad83913e13434",
+        "25df441ff604ebb8b59cb40880b214f9d630cbac4ea933ca2df73495f94fe15e",
+        "5a1575b90c7bf7852c1f7715a7d0952d6485df4153b55178832b5405acff6d7f",
+        "bac809fd8609fb858ae56a44566c16770fc17d65adc13c5b3b36e480a240e782",
+        "debbde2d35c8b6fd98953b5f7a503c1a099162090ef6057f262bbe3c8d4b5d10",
+        "b7157e5578183b3b14b4d79cf848e62e079ad7f3281c457d783bbd5ac3f429c8"
+      ],
+      "transparency": null
+    },
+    "jellyfish-lanterns.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "6fdfba1a569912a25e84eb66943ab7d0375f0cf4947dcc9c6535c8a24352206b",
+        "9dd8b77301102309eadf086868564ba4becdc6700e11d4818671d6745e1bd99e",
+        "4964ccbbebf88ca3d82056e43c76c728cdcab497f79eb4cb5572447cf549db3c",
+        "e0ddfc79e87aba67aabc5999442313245e9b154c28a9a8dd5364935d8464f9ea",
+        "13f87d3924faf8671c37b65eb636c8de01df71f6798156f8ae99706bd7c77935",
+        "64a05964f30e4edbf0f0574a3eb0a5a6893dc567de12b5c39d927105cf1e5d87",
+        "213706130a606ac4d276849e965344fea50ca1c618738196ded3f7901e0df044",
+        "600c4064862ed71dcb4cbbe646da93b6d3b11d27b2ae2805d340974973dd5ec0"
+      ],
+      "transparency": null
+    },
+    "jolly-slime-stack.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "f48c03b663be52c6445cfcfa0c7e20a78ac62a1a0679fc28b0558a0fc2c4d7ef",
+        "341780a559db1fa6bab5291dfd096512f97e59807d6e98b7a799cf6164ad2e59",
+        "9155027a3b1c2766fe46d8ce7a21612f1dd4a012daf43dca4ec2f8842a32c811",
+        "49bf58dfbafd9de0a215ca49965e7b55652543835f482d280c8ee80e0548026e",
+        "8131e4bc81c9a2d6954fa0e484d49f94aec6d0b2860ba7d3423ad00d5aa1edc0",
+        "dab7f6cd2bf70b0ce2be321cee29709f885267321a8157632d9c3641dc69ea95",
+        "c894d477d2d305cec3aaa8d54e238adeffe5d0f9eddfc1eb7f428e63219fb532",
+        "12494dad6e56850397e4dd9e8e87b21658a4d1ca7b047854941b12eddc27cdd5"
+      ],
+      "transparency": null
+    },
+    "koi-ribbon.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "3548395d2e8906aff896fdf3b3fa839a26ea33f130452249ab65b4fc2daff426",
+        "067818ae32918fd12827bf85c3bb70a9d0a66e844cee753d4a0266847a8e44cc",
+        "26a67610a38f884bce445e8e5d2891996b979980bc39fd8614f7249b4ad85cbe",
+        "dfa2be8ff433e50bec30bf2da00a60a0d470ab19beeb8a2c7a3351f5bfaec984",
+        "1d0da39cc0e4af34732396648074e5ed8e78bc475543732e918e31c827344d1f",
+        "a95532a0ed0d6492ea5b30dc4617380b972564ba2fcf850f411384ac7d7c1003",
+        "22efaff8980d8ca4678c9eaf24dd97d594ac4f455da4e269251a9533915c5f13",
+        "c22587e9ab06a1e266a95d069320c2b78b80973b36831589c2c2a2fe8056db54"
+      ],
+      "transparency": null
+    },
+    "lantern-tree.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "bb0fa3ea96a1b4d9b262fbd57d565ba076c7079f40f678e1bac40a4c28ca9efc",
+        "08841cd10cd20925f107b4100fad14572564929d0bb58fa33e8dc90236dd5e13",
+        "a23dba753232b04e1080f8e90a6e757d9e177015264303b3a4b9488f07b32d1b",
+        "f89b1264287ab0a588350030a8b9e95905154c3695ed162b856f658a7fb86656",
+        "be10e93e7c4506db6efaaadbc88989141061d7d8e02c0637361e4d0542e5556d",
+        "3a36d402af0d009cffba40a38acde9e649113fdf783d096ee2715c8510bbfdba",
+        "bd460e6a5eac2e85db8ae073f606144eeca0961c1e4a1292d23c674d804620f4",
+        "a00a542a6c0b0481264f271b960aaaad595c80fb00be038a7a664fa8e75034b2"
+      ],
+      "transparency": null
+    },
+    "moon-bunny-meadow.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "e7f3db69b48b4b8860d9980ea4aba8225c750817f2eb1c01e0f38ecc117ecf54",
+        "6f7607378aa9ce346728a3557d288d8a639e0f5213de5fc55138b8eefa7edd7b",
+        "35b6de449195555ef0aa597fa82cc32182b0a0e2676914e2dfbe208587c0ef16",
+        "f16251de0879bf589be8a6c62b20d7abe84c1b92c02092ade6ff3b12cef4d60c",
+        "b4acea9a96b2a146275eee12fabf1e618fea7ffa46019fd72c0a1f3911a6306b",
+        "3e003d1ce9f8c4612427e1228131a32e1b560f8ba315995f2b7c4c3665410a27",
+        "e9f099eaa3eebedd9f5477eff3e3742901cb25db3998a7f29d1a21a32155cc31",
+        "e577b61b3078407f238cd418f12067e0c46c971204976726a7d413e7e1b2ef60"
+      ],
+      "transparency": null
+    },
+    "moonlit-ducks.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "f948f2a5e570a02648ea91bef54748423f1a68afbf2e467be361511451305859",
+        "e1de79aa0510ade9b36199754ccb52e2d77a78d035c21bf35c8c1e2ec50d1e28",
+        "ac63ef248fadd736297553f8e882ee9ddc849edff9401d68baafc53b77e8d117",
+        "7954d7c36cfc2dfc7c0727971fb27ee4908758c2bfb7b00546f18766c4c6a3ec",
+        "b50a4acabe3f53b7612cebbb749194e29937856c093f41a883e5c6fd9a529cb3",
+        "0608789b2ae3bf6ccc71c644d2a26861f9c8d87597dab6abb5f5ff6699e735fa",
+        "b60c75d11dae48deb3df36f27df596bd61236d088117e850eb70bcb354f777b0",
+        "54ff5ce305b60b9de54f358c0ab5fd670438c604d8faafc5077579b66cac5c5a"
+      ],
+      "transparency": null
+    },
+    "mushroom-village.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "ff48d7999522e2c315e5105ec60f121747b1987a25b97917b8aaf28c4baef593",
+        "f6a283b3d61c7a83b54bf12eccdbba55069bccf7f208858107ec7469adb1c98c",
+        "2474b2ef5891482efd77cfae94b984d96455d9761c57f75dff5c8eb5b26641d2",
+        "21cd267e557838506149e4a62da02b45c9e58b75cb5450a3d551f29526dde88a",
+        "68bc28b71f91e15e26bacfa10d2cda5aa2db3b7521afe5520d6cb373f573c8d0",
+        "bb9918a02d85a0e9f6b63a787a5bf826d917cc7d64c0b3520d31fe157dc23885",
+        "d377c2182e4e7ebf25b0b264549ef66458f6c9bf1d2eeee4b7a00951bd04c3a4",
+        "d66a81be0eb16ee1b4ebd56fa5f21b072b9bce58bfe6be9de43a20fafb4ce169"
+      ],
+      "transparency": null
+    },
+    "peach-orchard.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "cf0147798d5d276679fbf466e79918b3fc338c84e15671e603ab84e98940402e",
+        "3dd05ecb542ba2f37b13b5e7e3ae625ce295b9a9fa9684f900d2c0924f050ac4",
+        "eb1dd42281e5e1dfbc766e0e3486aa9936772c2c85f69ffe9173ebe03d6502e3",
+        "496271ec0c1734afe9a6346e020746c01709a6b66e9dd8912a7fcaeef95b909e",
+        "175e54a73756047d5ed5cd32acdcc8075b17fa350dbd8197fa07b9e29ff6701a",
+        "89d42ed012bf8a18efa5645ec78af54ecac70a6d4a3ad2e7a2fff9f6eb531f2d",
+        "f8c4a88e7af372f8fa031d217d5ebaa3c77315af265d3f79c259e13011f1a308",
+        "0d041a3aedd2f7c3c900da84c6cc1e8ebb8df0b1b595cb8e96a3d6c7d01fdafb"
+      ],
+      "transparency": null
+    },
+    "penguin-ice-fishing.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "bcb429fe650c0a29b0c2ed0c56101f32add92b2612e7c84b930b67aa8f559f3e",
+        "d08217c4573944e0e577297f1dd29689a8f3db8a2f5e561982b296990862240b",
+        "11eb8fc9a1789a5b93b56ae75d7337209d6dae4231dd06d1a433948a29fbd1aa",
+        "c019395876a9d43077bca902e75b25b144e80fd73c50685dc096e33476b8c8d2",
+        "5fa30d3a6ff6376e5609428bf52bf640081aa742240eb929172b3de4cc858d6a",
+        "4ea61991ad430508f59a91d2b729b9b59f982ff31c3e632fdf936e91e54c9c45",
+        "d3400023fc96a9337adecc8f11259c4eee698f65cdbcb27b8c1c229bb40c6771",
+        "13a94126dd977af04aa389d97f7bed21af70d8bbbac8e462ca73d4d5ccd8cfa4"
+      ],
+      "transparency": null
+    },
+    "penguin_top_center.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        190,
+        190,
+        190,
+        190
+      ],
+      "frame_count": 4,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "0542a020bff447bb903bb3896e162f4bb81554a8716a7abcf8f58d1607bbd92d",
+        "e150f6a9dc10efe3c531fd3af8b474793d26dcc0f74bddb08965d1b3563f2648",
+        "502069a17c1737ebba6e378f1930290f739ecdc983aaffeff20a96bbf47d0bf1",
+        "dfad8e0e1066a47c8ffeb0fc1f3a3f5d3ab4dcdf31399aeb66bc0d63e9cb45cb"
+      ],
+      "transparency": null
+    },
+    "planet-parade.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "443f55f490d9a1a03e5c664d86613224c979967e7a4e508733b8ca01e2e045ef",
+        "aa6a5afe46a4b75cc8fc19331d21a3b35f471cec45e306f5ec3196b66ac113dd",
+        "726a671f946f12945fd9bb9b8b1f5ecc4d748049e14c32137a8d02e1d0dbd13e",
+        "8e0f5304a7a551a67de88d929e7b0ed92cc91cbe14765aaff331c5d834c65c51",
+        "d97cf7ac24f1f0887a3ee0d3f756870c05b78c1bb5251176f15f571ad68662ad",
+        "e30c9648836659186fefd7776e0c821760628205ef2bd99e9f6c3ef0ad227021",
+        "a43e1fe855af2dc90e88263fc7e6af065196dbf14356759825af206ae02d92ed",
+        "eedf8e7aaa436dad7d3d23bfb2fc98dabcf882898e7016e5f6d3cb7ee57a6bcd"
+      ],
+      "transparency": null
+    },
+    "pocket-rocket.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "9d43002dabe040324b205acd513b7020307baf22e1687cc1a694c510106f5a78",
+        "94fb5d884697c91116c44271dadad63ad80c9d20f7a1cd337a434a1e337a62ab",
+        "a8693deab19ed3f684242002544c70616552c8fee0c56f2f576ca5848a2fbdcb",
+        "ee85f0c0de8a62b0ad14002f33a783b4f77a76277f2f09c601f47cb27debfe4b",
+        "3a91dd64444a59ade93fbd5d930617d47225f4978afc8ef56f69b859c4f61392",
+        "e519f48f708c257b5d78dccbacaf9e7213ea3ae55853d32d95bd5c6a9d06a4f4",
+        "c1a717c592b1c9c07f13c78cfb9e2380da0be1d7e4217ad9dab331bd196409b8",
+        "c8bd93dd172a7d26ecfdeb10f1cbc3753987fbeeac9707da988edb92f01d87fe"
+      ],
+      "transparency": null
+    },
+    "shy-ghost-parade.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "bf913452a734b8c9ced444e4cedd4579f57cc7c6634463afc5b22030151eec23",
+        "2e88e7f9b3a1fbf9b03791388698872a95d8eca4ddfb91da25b44c478ab73f71",
+        "0621a6580ee1d33588d1c7085a6930bfb0734a97852cccdae615d07cfa4d0f85",
+        "e464d8be9cbb271c02bb3e0321ba918cd174f59ef65c6c91ca7d01f05b88182d",
+        "fdb985ae82dc1ddb44bee1bbb55589a735d745e6a15ff4d708bd70903eb10250",
+        "983277c52fa9008fbeb4163c02c238d4fe8d6d002bfeba8eb453f38be897512a",
+        "3e165d64e4129be18f254257a9859d5d40b6e91714cb66b0012463497b080921",
+        "924d46610b841fdcd34c3aedd6d43569d044d53f2a760c86ad21625d7d63c151"
+      ],
+      "transparency": null
+    },
+    "sleepy-bat-cave.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "5d75459825449c8e82c3590bf3561efb60076c3f5022968d370c1fb87857eb7a",
+        "0aed1244901133e170662bf7f32a6911eb64c47c6233a47b968459b337102e7a",
+        "cc54e0f6103429bfb52d17ea75dde47b33f755f85cdff2f25ffbb20fc2195bb6",
+        "6724b1853d1be6327679bfeddeeeea3302fd0fe236e02fb668bfe5acf3511a28",
+        "073eb109d2c9b327f67bc19a1d66a1e9028861713a3451f87fed1359d92c56bb",
+        "26f58ab13a0a7c071a7b33eb85eeaf3f8bdce925a1434c237a32c9f5a86c46ac",
+        "70b0b6e7237b8a412b5e22c5297bb1e620b6d0662dad45e22e8c07d0375046fd",
+        "fda70e415bef1d0badab07be29ad29881d382563c355a550fbe325d9aa52a036"
+      ],
+      "transparency": null
+    },
+    "snails-after-rain.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "02b3feaf9ec49a0f9c0613496caafb0f8192854367bb947c56711af543f4b62b",
+        "a3c5cda4a99f43338a364e0c28c7fb3b70968258b822c3d3e527059b42a05697",
+        "da5d8aabb7aa18e779f3803d0fc9f41622b5a9fa3aaf3f729337218cf0fd3e09",
+        "952aa18e8c921ff613a0e94e9b104a426842c5e8e4d5ffd4a86575fd5c01f4fa",
+        "c98ac446a686ae19afe12dab15868b981d6e242c13436335fa2584c30734c065",
+        "972a4b0c38a19a3b5d42044bf9f8da96a25eac2b9106f84071b3c16d3f830f49",
+        "1ac797d5ce3ddc80cab9b366e0530e178388686f54fe70b18961654cabe72242",
+        "e2a7f491c04c0d2de3e469b659c5564ad3ac54f3eb112421c743d2dcd31021d9"
+      ],
+      "transparency": null
+    },
+    "sunflower-hamsters.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "03965f8cb44b60be0915662bdc623c13be1a76a89b43d5ee36a42d3f35329dd5",
+        "43b719195c016d4c7322213da4d36e79914f7a8e72b4b485aabd2983130e605b",
+        "6b33665437201da9ad13066fedaf766c58e9b2752281c95468138d945bdec33c",
+        "4d00c235c69c751451906c3fe81d0f7c42a9c9d50476984bd40a332832a7fc80",
+        "a1450d38aaf1a14118b86355f20d99c434d71d43e1fda7ce825b2fd68e30368e",
+        "2b1cd51d5740c0077df58753d05d857575470c4c5f04a69f709cec7490837275",
+        "e2b05d2b0b873610a4f3d47e45df275203283535d481a86b84b4a7ceb7e54462",
+        "2c2fcdd3e1917386c2b2a27148ce177bbfcc8fb669289356de5dbb84ddbbf909"
+      ],
+      "transparency": null
+    },
+    "tiny-robot-patrol.gif": {
+      "disposal_methods": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "durations_ms": [
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140,
+        140
+      ],
+      "frame_count": 8,
+      "loop": 0,
+      "source_frame_rgba_sha256": [
+        "cdab83ad31fa01d6f3a6330104747b838d1dc09196dccd88ea4726bc4bb25db3",
+        "4aebc9f7b12543376877bd5bdb7fe1a18eac156a3f5c7a763ef12a1a228cb829",
+        "3354af8d1f8c084d7ed9c7d762605964d543b176db4bfdf1a1314f2bc254a6f3",
+        "ae32b6fb77dc5e7bf884f2f5886a8c66ede6772d792ce47ac22245dfd4e73851",
+        "b45b147c3384674178c07e63729858a8d4eeeebbd85716fc149533c871ec979b",
+        "7abffedcdca584f81107331a7b63bff52484937c4a36c2dfdc60d26208eaf2bc",
+        "8693dda05d485674bda2c9453ea4489e39aa97ea125de97b116c4e9d5be0a972",
+        "ccfea9e2abcec6221213b8bc683cfd6afe63fefdc23cb9a339dd22be2ec9bc09"
+      ],
+      "transparency": null
+    }
+  },
+  "digest_encoding": "decoded_frame_rgba_row_major_first_32_strips",
+  "installed_geometry": [
+    33,
+    138
+  ],
+  "source_geometry": [
+    32,
+    138
+  ],
+  "tail_policy": "append_opaque_black_strip_at_global_index_32",
+  "version": 1
+}

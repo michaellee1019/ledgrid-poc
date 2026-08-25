@@ -20,7 +20,7 @@ Use `just` recipes rather than invoking deployment helpers directly:
 | `just setup` | Prepare SSH, Pi permissions, SPI, and firmware tooling |
 | `just test-unit` | Run Python unit and plugin tests |
 | `just test-rendering` | Run frame-contract and render-performance checks |
-| `just test-firmware` | Run native firmware tests and build production firmware |
+| `just test-firmware` | Run portable firmware tests and build production, local-canary, and managed-native-canary images |
 | `just test-deployment` | Test deployment state and file selection logic |
 | `just test` | Run every required local gate |
 | `just preflight` | Alias for the full test gate |
@@ -37,9 +37,18 @@ Use `just` recipes rather than invoking deployment helpers directly:
 | `just deploy-python-dirty` | Explicit Python-only deployment of the dirty source manifest |
 | `just releases` | Inspect immutable releases, selected `current`, and target receipt state |
 | `just rollback <release-id>` | Coordinated application-only rollback; never provisions, reboots, builds, or flashes |
+| `just native-plan <plugin-id>` | Read-only package-scoped source and action accounting |
+| `just native-build <plugin-id>` | Deterministically build, preview, validate, and retain one repository-owned native bundle |
+| `just native-publish <plugin-or-bundle>` | Atomically publish one validated bundle to the Pi-authoritative library without receiver mutation |
+| `just native-install <plugin-or-digest>` | Install one published binding on the exact configured receiver roster without activation |
+| `just native-start <plugin-or-digest>` | Activate one installed binding with its authored defaults and recorded Python fallback |
+| `just native-run <plugin-id>` | Explicit composition of build, publish, install, and start |
+| `just receiver-native-h2-evidence` | Collect the non-destructive H2 exact-five/skew/drift supporting slice; defaults to 1,800 seconds |
+| `just receiver-native-h4-default-soak` | Collect the H4 authored-default supporting soak; defaults to 1,800 seconds |
+| `just receiver-native-h4-maximum-soak` | Collect the separate H4 maximum-work supporting soak; defaults to 1,800 seconds |
 | `just deploy-legacy` | Explicit clean recovery path through the retained pre-cutover full shell leaf |
 | `just deploy-python-legacy` | Explicit clean recovery path through the retained pre-cutover Python shell leaf |
-| `just fetch-presets` | Fetch Pi-saved runtime presets for review |
+| `just fetch-presets` | Compatibility alias that refreshes wall masks/data and Pi-saved runtime presets for review |
 
 `deploy-no-firmware` is retained as a compatibility alias for
 `deploy-python`; use the canonical name in new automation and documentation.
@@ -63,7 +72,7 @@ or health operation.
 | Full-deploy situation | Expected elapsed time | Investigate after |
 | --- | ---: | ---: |
 | App changed; receiver firmware already installed | 2–3 minutes | 4 minutes |
-| Receiver binary already built but four boards need flashing | 4–5 minutes | 6 minutes |
+| Receiver binary already built but five boards need flashing | 5–6 minutes | 7 minutes |
 | Firmware changed with a populated compiler cache | 5–8 minutes | 10 minutes |
 | First firmware build after cache reset | 16–18 minutes | 19 minutes |
 
@@ -112,7 +121,8 @@ workspaces share a persistent PlatformIO cache and ESP-IDF compiler cache below
 firmware digest without weakening the immutable source/workspace boundary. The
 full deployment applies the supported SPI boot configuration and reports
 whether a reboot is required. After that reboot, confirm the expected
-`/dev/spidev0.0`, `0.1`, `1.0`, and `1.1` nodes and rerun the full deployment.
+`/dev/spidev0.0`, `/dev/spidev0.1`, `/dev/spidev1.0`,
+`/dev/spidev1.1`, and `/dev/spidev1.2` nodes and rerun the full deployment.
 
 ## What is deployed
 
@@ -159,6 +169,16 @@ runtime lock and the Pi Python/platform identity. A candidate environment must
 import both controller and web entrypoints before it can become active; an
 unchanged identity performs no installation.
 
+Phase 4 first-cutover contract: immediately after `app.stage`, full deploy runs
+`app.bootstrap_legacy` when the target has no selected `current` release but
+still runs the recognized legacy mutable root. The
+step snapshots that application as a content-addressed immutable release and
+records a receipt artifact with kind `legacy_app_bootstrap`, schema `1`, and the
+snapshot digest/release ID. Candidate compensation must select that bootstrap;
+an unsafe, incomplete, or unprovable legacy root fails before activation. This
+bootstrap is a one-time rollback anchor, not acceptance of arbitrary mutable
+target content.
+
 ### Receiver hardware reconciliation
 
 Before deciding that receiver firmware is unchanged, the Pi passively asks
@@ -190,6 +210,18 @@ healthy receivers into the ROM bootloader on every deployment. Use
 `just deploy-force-firmware` when the ledger should be overridden and every
 attached receiver deliberately reconciled.
 
+Phase 4 post-flash contract: full-deploy health reports a `receiver_contract`
+derived from the selected firmware environment. It must prove the exact
+five-device roster, logical identities,
+finalized topology, and minimum status/capability set expected from that image;
+production requires at least status v3 and base ownership capabilities, local
+canary requires status v5 plus local/profile capabilities, and native canary
+requires status v6 plus the full native capability mask. Widths, offsets, output
+masks, and LEDs per strip must also match exactly. The flash ledger alone is not
+proof that a receiver booted the reconciled image.
+Application-only rollback deliberately omits this new-firmware contract so a
+known legacy application/firmware pair remains recoverable.
+
 Production startup invokes `venv/bin/python` directly. Do not source
 `venv/bin/activate`: activation scripts embed the temporary build location,
 which is intentionally replaced by the final digest path during atomic
@@ -216,9 +248,11 @@ Do not use the Python-only flow after changing any of:
 `run_state/receiver_hybrid.json` is the single target-owned authority used by
 startup, firmware selection, state restore, and deployment receipts. Absence or
 an explicit disabled selection chooses the feature-off production firmware.
-Only the allowlisted degraded policy chooses
-`esp32-s3-devkitc-1-local-canary`; callers cannot persist an arbitrary firmware
-environment beside it.
+The schema-v2 file also carries the finalized five-receiver topology: logical
+widths `(8,8,8,8,1)`, global offsets `(0,8,24,16,32)`, physical order
+`(0,1,3,2,4)`, and output masks `(255,255,255,255,1)`. Production, local
+receiver execution, and managed-native execution map to three allowlisted
+firmware environments; callers cannot persist an arbitrary environment.
 
 Inspect the live selection before a receiver-native deployment:
 
@@ -228,25 +262,22 @@ ssh ledgridwall@ledgridwall.local -- \
   --root /home/ledgridwall/ledgrid-pod show
 ```
 
-The currently camera-verified installed mapping is written atomically with:
+Enable the local receiver execution path (managed native modules still off):
 
 ```bash
 ssh ledgridwall@ledgridwall.local -- \
   python3 /home/ledgridwall/ledgrid-pod/current/tools/deployment/receiver_hybrid_config.py \
   --root /home/ledgridwall/ledgrid-pod \
-  --physical-lane-order 0,1,3,2 \
-  --reversed-logical-receivers 2,3 \
-  --reversed-native-logical-receivers 2,3 \
-  enable-degraded
+  enable-local
 ```
 
-Do not copy a host direction result into the native option without a separate
-camera diagnostic. `--reversed-logical-receivers` controls complete RGB and
-sparse RGBA slicing; `--reversed-native-logical-receivers` controls the
-firmware renderer's local-to-global coordinate transform. A four-color
-receiver-lane test determines only `--physical-lane-order`; use 32 distinct
-strip colors to determine host local direction and a signed receiver-native
-phase field to determine native direction.
+After H0/H1 acceptance, `enable-native` selects the managed-native firmware and
+runtime gate. `disable` restores feature-off production while retaining the
+finalized topology. A normal full deployment runs the idempotent `migrate`
+operation only after the first candidate passes health. Before that point the
+candidate recognizes the exact retired four-receiver schema as the same
+feature-off finalized selection, allowing build, flash, restart, and rollback
+without making the legacy service unbootable. Unknown legacy state fails closed.
 
 Changing the selection digest is a fail-closed scene-authority boundary. Restart
 the service, inspect whether the known Python fallback was selected, explicitly
@@ -282,8 +313,8 @@ the lowercase SHA-256 digest matches both its content-addressed directory and
 the target's selected `current` symlink. `/api/status` publishes web and
 controller release identities plus `release_consistent`. Acceptance requires
 active systemd, agreement between systemd/current/web/controller identities,
-two advancing post-boundary status samples, exact 32 x 138 geometry, ready
-state, and exactly four distinct logical receiver IDs `0..3`.
+two advancing post-boundary status samples, exact 33 x 138 geometry, ready
+state, and exactly five distinct logical receiver IDs `0..4`.
 
 The cutover sequence is deliberately graduated:
 
@@ -338,23 +369,11 @@ must not be curated.
 
    These recipes accept the shown trailing `key=value` form as well as their
    positional arguments and defaults. The streamed-wall recipe always names all
-   four logical receivers, neutralizes global plant modifiers for a deterministic
+   five logical receivers, neutralizes global plant modifiers for a deterministic
    transport load, and restores the prior scene, modifier state, and cadence.
-
-   While the installed SPI1 MISO net remains shorted, keep those strict commands
-   as open release gates and use only the separately named temporary diagnostics:
-
-   ```bash
-   just receiver-phase3a-status-degraded-spi1
-   just receiver-streamed-wall-acceptance-degraded-spi1 \
-     duration=60 min_fps=150 target_fps=160
-   just live-animation-sweep-degraded-spi1 seconds=2
-   ```
-
-   These require complete telemetry on logical receivers 0 and 1, the exact
-   known no-return state plus advancing outbound host traffic on 2 and 3, and
-   visual inspection of every SPI1 lane. They report incomplete telemetry and
-   cannot close MISO-dependent Phase 3A or later receiver-native gates.
+   The finalized hardware has five readable return paths, so the strict recipes
+   are the release gates. The old `*-degraded-spi1` recipes are recovery-only
+   historical diagnostics and cannot close acceptance.
 
    The Phase 3A status gate is intentionally separate from generic deployment
    health so a rollback to v2 firmware remains possible. It asks the controller
@@ -407,20 +426,77 @@ tools/deployment/stop_remote.sh stop
 - If electronic gates or visual acceptance fail, restore the last validated
   application/firmware pair before continuing experiments.
 
-## Planned receiver-native deployment
+## Receiver-native deployment
 
-The commands above are the current supported deployment surface. Phase 0 of the
+The commands above are the supported deployment surface. Phase 0 of the
 [unified roadmap](plan-revamped-animation-pipeline.md) supplies the coordinated,
 immutable delivery foundation; the legacy physical leaf is recovery-only.
-Later phases add separate native
-`build -> publish -> probe -> stage -> verify -> activate/compensate` steps so a
-background-source change does not imply an app restart, Pi reboot, or loader
-firmware flash.
+Phase 4 adds separate `native-plan`, `native-build`, `native-publish`,
+`native-install`, `native-start`, and `native-run` workflows around the fail-closed
+`build -> publish -> probe -> stage -> verify -> activate/compensate` lifecycle,
+so a background-source change does not imply an app restart, Pi reboot, or
+loader firmware flash. These actions require the explicit native-canary firmware
+selection and exact five-receiver readiness; the production firmware selection
+remains feature-off.
 
 The `native-animations` branch is an organ donor for firmware hashing/readiness,
-managed libraries, chunk upload, cache probing, and four-receiver transaction
-tests. Do not run or port its deployment recipe as the new workflow: it assumes
+managed libraries, chunk upload, cache probing, and historical four-receiver
+transaction tests. Do not run or port its deployment recipe as the new workflow: it assumes
 signing/key provisioning, signed capabilities, exclusive receiver playback, and
-branch-specific artifacts. Current `just deploy` also must not begin installing
-receiver-native packages until the roadmap's explicit Phase 3/4 and hardware
-gates pass.
+branch-specific artifacts. Ordinary `just deploy` deliberately reconciles the
+application, baseline firmware, finalized topology, and target-owned libraries
+without installing or activating a receiver-native package. Native activation
+remains an explicit, default-off operator action until H0–H4 are accepted.
+
+The supported explicit workflow is:
+
+```bash
+just native-plan aurora_curtains_native
+just native-build aurora_curtains_native
+just native-publish aurora_curtains_native
+just native-install aurora_curtains_native
+just native-start aurora_curtains_native
+# Or deliberately compose build, publish, install, and start:
+just native-run aurora_curtains_native
+```
+
+Build writes an append-only coordinator receipt under the local native-receipt
+directory. Publish writes the corresponding local receipt and a target receipt;
+the managed-library publication receipt separately binds bundle digest, payload
+digest, size, and publication metadata. Install and start do not manufacture
+deployment receipts: their JSON output is command-bound runtime evidence and
+succeeds only when current status proves the expected operation, bundle/payload,
+exact roster, capabilities, topology, parameter digest when active, and current
+context/profile agreement. Retain that output with physical-gate evidence when it
+authorizes a wall mutation.
+
+A quarantined payload is never retried automatically. After diagnosing the
+failure, clear only the exact managed binding through:
+
+```text
+POST /api/v1/native-backgrounds/<64-lowercase-hex-bundle>/clear-quarantine
+```
+
+The controller clears quarantine only after exact-five agreement and conflict
+checks; reinstall remains a separate explicit action. To abandon native playback,
+`POST /api/v1/receiver-native/recover` presents the recorded Python fallback as
+a complete frame and clears managed-native ownership only after host takeover is
+positively verified. Rejection or exception leaves degraded/native ownership and
+the error visible so the operator can retry recovery safely.
+
+The API-only physical runner covers only the subgates named in its report:
+
+```bash
+just receiver-native-h2-evidence
+just receiver-native-h4-default-soak
+just receiver-native-h4-maximum-soak
+```
+
+All three recipes default to a real 1,800-second observation, always execute the
+recorded Python full-scene restoration path, and fail unless host takeover is
+positively proved. Shorter durations are useful diagnostics but cannot satisfy a
+complete-gate claim. `--require-complete-gate` additionally requires at least
+1,800 observed seconds and same-release/same-artifact companion evidence for the
+explicitly outstanding transaction injection, restart/lease, dense-streamed,
+animation-sweep, retained-artifact, timing-distribution, or other soak subgates.
+The runner never turns supporting evidence into H2/H4 acceptance by itself.

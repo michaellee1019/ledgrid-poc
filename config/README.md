@@ -4,7 +4,8 @@ Place environment-specific configuration files here.
 
 ## Installed plant-wall geometry
 
-The canonical 32×138 Phase 3C compiler inputs are:
+The photographed Phase 3C calibration inputs remain 32×138 because that is
+the geometry for which the checked-in camera evidence was captured:
 
 - `plant_pixel_map_32x138.json`: foliage coverage in global strip-major pixel
   indices;
@@ -12,6 +13,12 @@ The canonical 32×138 Phase 3C compiler inputs are:
 - `plant_globe_regions_32x138.json`: the seven stable named globe regions;
 - `webcam_wall_calibration.json`: camera model, measured wall geometry, and
   homography evidence.
+
+The installation-profile compiler validates those dimensions, appends the
+finalized wall's 33rd column as explicitly unobserved and unmasked, and emits a
+33×138 global profile before receiver slicing. The legacy filenames are evidence
+identifiers, not the installed runtime geometry; do not rename or reinterpret
+them without a new photographed calibration set.
 
 The installation profile must be compiled from canonical global wall
 coordinates before receiver slicing. Do not bake the current SPI route, physical

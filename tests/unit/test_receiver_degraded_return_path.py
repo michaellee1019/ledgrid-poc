@@ -52,7 +52,7 @@ class DegradedStatusAcceptanceTests(unittest.TestCase):
     def setUp(self):
         self.devices = [
             readable_status(0), readable_status(1),
-            write_only_status(), write_only_status(),
+            write_only_status(), write_only_status(), readable_status(4),
         ]
 
     def evaluate(self, **kwargs):
@@ -80,7 +80,7 @@ class DegradedStatusAcceptanceTests(unittest.TestCase):
             "name": "temporary_degraded_spi1_return_path",
             "enabled": True,
             "telemetry_complete": False,
-            "readable_devices": [0, 1],
+            "readable_devices": [0, 1, 4],
             "known_write_only_devices": [2, 3],
             "write_only_streaming_proves_display_output": False,
             "visual_verification_required": True,
@@ -199,7 +199,7 @@ class DegradedStreamedAcceptanceTests(unittest.TestCase):
                 self.assertFalse(result["passed"])
                 self.assertTrue(any(expected in item for item in result["failures"]))
 
-    def test_cli_policy_requires_the_complete_four_receiver_scope(self):
+    def test_cli_policy_requires_the_complete_five_receiver_scope(self):
         argv = [
             "receiver_acceptance.py", "--allow-degraded-spi1-return-path",
             "--device", "0", "--device", "1",
@@ -244,24 +244,24 @@ class DegradedLiveSweepTests(unittest.TestCase):
     def samples(self):
         return (
             [self.readable(10), self.readable(10),
-             self.write_only(10), self.write_only(10)],
+             self.write_only(10), self.write_only(10), self.readable(10)],
             [self.readable(20), self.readable(20),
-             self.write_only(20), self.write_only(20)],
+             self.write_only(20), self.write_only(20), self.readable(20)],
         )
 
     def test_strict_sweep_never_silently_skips_unreadable_receivers(self):
         first, last = self.samples()
         result = live_animation_sweep.evaluate_receiver_topology(first, last)
         self.assertTrue(any("receiver 2" in item for item in result["failures"]))
-        self.assertEqual(result["observable_receivers"], [0, 1])
+        self.assertEqual(result["observable_receivers"], [0, 1, 4])
         self.assertEqual(result["write_only_receivers"], [])
 
     def test_strict_sweep_accepts_complete_readable_topology(self):
-        first = [self.readable(10) for _ in range(4)]
-        last = [self.readable(20) for _ in range(4)]
+        first = [self.readable(10) for _ in range(5)]
+        last = [self.readable(20) for _ in range(5)]
         result = live_animation_sweep.evaluate_receiver_topology(first, last)
         self.assertEqual(result["failures"], [])
-        self.assertEqual(result["observable_receivers"], [0, 1, 2, 3])
+        self.assertEqual(result["observable_receivers"], [0, 1, 2, 3, 4])
         self.assertEqual(result["write_only_receivers"], [])
 
     def test_explicit_sweep_policy_requires_exact_pair_and_host_progress(self):
@@ -270,7 +270,7 @@ class DegradedLiveSweepTests(unittest.TestCase):
             first, last, allow_degraded_spi1=True,
         )
         self.assertEqual(result["failures"], [])
-        self.assertEqual(result["observable_receivers"], [0, 1])
+        self.assertEqual(result["observable_receivers"], [0, 1, 4])
         self.assertEqual(result["write_only_receivers"], [2, 3])
         self.assertFalse(result["receivers"]["2"]["physical_display_verified"])
 
@@ -312,12 +312,12 @@ class DegradedLiveSweepTests(unittest.TestCase):
         )
         self.assertEqual(result["failures"], [])
 
-    def test_sweep_requires_exact_four_device_topology(self):
+    def test_sweep_requires_exact_five_device_topology(self):
         first, last = self.samples()
         result = live_animation_sweep.evaluate_receiver_topology(
             first[:-1], last[:-1], allow_degraded_spi1=True,
         )
-        self.assertTrue(any("exactly four" in item for item in result["failures"]))
+        self.assertTrue(any("exactly 5" in item for item in result["failures"]))
 
 
 if __name__ == "__main__":

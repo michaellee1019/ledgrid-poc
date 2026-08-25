@@ -56,7 +56,7 @@ class FakeNativeTransactionResult:
 
 
 class FakeNativeReceiverWall:
-    """Four-receiver cache/install/activation model with failure injection."""
+    """Exact-roster cache/install/activation model with failure injection."""
 
     def __init__(
         self,
@@ -65,11 +65,18 @@ class FakeNativeReceiverWall:
         failure_injector: FailureInjector | None = None,
     ) -> None:
         self.receivers = receivers or tuple(
-            FakeNativeReceiver(logical_id) for logical_id in range(4)
+            FakeNativeReceiver(logical_id) for logical_id in range(5)
         )
         logical_ids = tuple(receiver.logical_id for receiver in self.receivers)
-        if logical_ids != (0, 1, 2, 3):
-            raise ValueError("fake native wall requires logical receivers 0, 1, 2, 3")
+        if (
+            not logical_ids
+            or any(type(logical_id) is not int or logical_id < 0 for logical_id in logical_ids)
+            or len(set(logical_ids)) != len(logical_ids)
+        ):
+            raise ValueError(
+                "fake native wall requires a non-empty roster of unique "
+                "non-negative logical receiver IDs"
+            )
         self._failure_injector = failure_injector or (lambda _phase, _logical_id: None)
 
     @staticmethod

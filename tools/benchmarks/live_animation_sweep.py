@@ -13,12 +13,14 @@ if __package__:
     from tools.benchmarks.live_display_state import capture_scene, restore_scene
     from tools.benchmarks.receiver_acceptance import (
         DEGRADED_SPI1_WRITE_ONLY_DEVICES,
+        INSTALLED_RECEIVER_COUNT,
         evaluate_write_only_samples,
     )
 else:  # Direct script execution from the documented Just recipes.
     from live_display_state import capture_scene, restore_scene
     from receiver_acceptance import (
         DEGRADED_SPI1_WRITE_ONLY_DEVICES,
+        INSTALLED_RECEIVER_COUNT,
         evaluate_write_only_samples,
     )
 
@@ -69,14 +71,16 @@ def receiver_failures(first, last):
 def evaluate_receiver_topology(
     first_devices, last_devices, *, allow_degraded_spi1=False
 ):
-    """Evaluate all four logical receivers without silently dropping telemetry gaps."""
+    """Evaluate the exact installed receiver roster without dropping telemetry gaps."""
 
     failures = []
     receiver_results = {}
-    if len(first_devices) != 4 or len(last_devices) != 4:
+    if (len(first_devices) != INSTALLED_RECEIVER_COUNT
+            or len(last_devices) != INSTALLED_RECEIVER_COUNT):
         return {
             "failures": [
-                "receiver topology must contain exactly four devices in both samples"
+                "receiver topology must contain exactly "
+                f"{INSTALLED_RECEIVER_COUNT} devices in both samples"
             ],
             "observable_receivers": [],
             "write_only_receivers": [],
@@ -172,7 +176,7 @@ def main():
         action="store_true",
         help=(
             "temporary installed-wall policy: require full telemetry on logical "
-            "receivers 0 and 1 and exact write-only host evidence on 2 and 3"
+            "receivers 0, 1, and 4 and exact write-only host evidence on 2 and 3"
         ),
     )
     args = parser.parse_args()
@@ -233,7 +237,7 @@ def main():
                 "write_only_receivers": receiver_result["write_only_receivers"],
                 "telemetry_complete": len(
                     receiver_result["observable_receivers"]
-                ) == 4,
+                ) == INSTALLED_RECEIVER_COUNT,
                 "visual_verification_required": (
                     args.allow_degraded_spi1_return_path
                 ),

@@ -2,8 +2,9 @@
 # Configure SPI on the Raspberry Pi (idempotent).
 # Runs on the Pi (invoked remotely by deploy.sh).
 #
-# Wall layout (LEDGRID_HAT=0, default): 4 ESP32s x 8 strips = 32 strips
+# Wall layout (LEDGRID_HAT=0, default): five ESP32s, 33 logical strips
 #   /dev/spidev0.0 /dev/spidev0.1 /dev/spidev1.0 /dev/spidev1.1
+#   /dev/spidev1.2
 #
 # Alternate HAT compatibility layout (LEDGRID_HAT=1): 2 ESP32 modules x 8
 # strips = 16 strips. This is a host software mapping; the HAT schematic, PCB,
@@ -31,6 +32,7 @@ else
     "/dev/spidev0.1"
     "/dev/spidev1.0"
     "/dev/spidev1.1"
+    "/dev/spidev1.2"
   )
 fi
 
@@ -61,7 +63,7 @@ desired_spi_lines() {
   else
     printf '%s\n' \
       "dtparam=spi=on" \
-      "dtoverlay=spi1-2cs"
+      "dtoverlay=spi1-3cs,cs2_pin=24"
   fi
 }
 
@@ -82,11 +84,21 @@ config_is_correct() {
     return 0
   fi
 
-  while IFS= read -r line; do
-    if ! sudo grep -qF "$line" "$cfg" 2>/dev/null; then
-      return 1
-    fi
-  done < <(desired_spi_lines)
+  # The wall profile has one exact SPI enable and one exact SPI1 three-CS
+  # overlay. Merely finding the desired lines is insufficient: an old or
+  # duplicate spi overlay can claim CE pins differently and hide spidev1.2.
+  if [ "$(sudo grep -cE '^[[:space:]]*dtparam=spi=' "$cfg" 2>/dev/null || true)" -ne 1 ]; then
+    return 1
+  fi
+  if ! sudo grep -qE '^[[:space:]]*dtparam=spi=on[[:space:]]*$' "$cfg" 2>/dev/null; then
+    return 1
+  fi
+  if [ "$(sudo grep -cE '^[[:space:]]*dtoverlay=spi' "$cfg" 2>/dev/null || true)" -ne 1 ]; then
+    return 1
+  fi
+  if ! sudo grep -qE '^[[:space:]]*dtoverlay=spi1-3cs,cs2_pin=24[[:space:]]*$' "$cfg" 2>/dev/null; then
+    return 1
+  fi
 
   return 0
 }

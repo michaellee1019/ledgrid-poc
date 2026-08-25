@@ -107,7 +107,7 @@ class NativePilotWebProductTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         temporary_root = Path(self.temporary.name)
         self.manager = AnimationManager(
-            PreviewLEDController(strips=32, leds_per_strip=138), auto_start=False
+            PreviewLEDController(strips=33, leds_per_strip=138), auto_start=False
         )
         self.channel = _RecordingChannel()
         self.interface = AnimationWebInterface(
@@ -124,7 +124,7 @@ class NativePilotWebProductTests(unittest.TestCase):
             PILOT_ID, provider="receiver_native"
         ))
         self.preset_ids = [path.stem for path in paths]
-        catalog = empty_catalog(32, 138)
+        catalog = empty_catalog(33, 138)
         catalog["animations"][PILOT_ID] = {
             "status": "ready",
             "digest": "1" * 64,
@@ -239,6 +239,52 @@ class NativePilotWebProductTests(unittest.TestCase):
         self.assertEqual(self.channel.commands, [])
         self.assertIsNone(self.manager._preview_session)
         self.assertNotIn(PILOT_ID, self.manager.plugin_loader.loaded_plugins)
+
+    def test_native_operations_are_explicit_digest_bound_commands(self):
+        invalid = self.client.post(
+            "/api/v1/native-backgrounds/not-a-digest/install"
+        )
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(self.channel.commands, [])
+
+        install = self.client.post(
+            f"/api/v1/native-backgrounds/{'a' * 64}/install"
+        )
+        self.assertEqual(install.status_code, 202)
+        self.assertEqual(
+            self.channel.commands[-1],
+            {
+                "action": "install_native_background",
+                "data": {"bundle_digest": "a" * 64},
+                "command_id": 1,
+            },
+        )
+        clear = self.client.post(
+            f"/api/v1/native-backgrounds/{'a' * 64}/clear-quarantine"
+        )
+        self.assertEqual(clear.status_code, 202)
+        self.assertEqual(
+            self.channel.commands[-1]["action"],
+            "clear_native_background_quarantine",
+        )
+        recovery = self.client.post("/api/v1/receiver-native/recover")
+        self.assertEqual(recovery.status_code, 202)
+        self.assertEqual(
+            self.channel.commands[-1]["action"], "recover_receiver_native"
+        )
+
+    def test_dashboard_exposes_native_operation_health_and_explicit_recovery(self):
+        template = (ROOT / "web/templates/index.html").read_text(encoding="utf-8")
+        script = (ROOT / "web/static/js/dashboard.js").read_text(encoding="utf-8")
+        for marker in (
+            "receiverNativeOperation",
+            "receiverNativeArtifact",
+            "receiverNativeProgress",
+            "receiverNativeRecovery",
+        ):
+            self.assertIn(marker, template)
+            self.assertIn(marker, script)
+        self.assertIn("/api/v1/receiver-native/recover", script)
 
 
 if __name__ == "__main__":

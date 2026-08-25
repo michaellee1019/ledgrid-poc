@@ -1,10 +1,16 @@
 """Command routing and controller-startup helper tests."""
 
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from animation.core.receiver_static_component import (
     COMPILED_RAINBOW_BUNDLE_DIGEST,
     COMPILED_RAINBOW_EXPECTED_PAYLOAD_DIGEST,
+)
+from animation.core.installation_profile_topology import (
+    INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
 )
 from scripts.start_server import (
     PRODUCTION_STAGGER_PHASES,
@@ -13,6 +19,11 @@ from scripts.start_server import (
     device_count_for_strips,
     handle_command,
     receiver_hybrid_feature_flags,
+    receiver_geometry_for_runtime,
+    receiver_native_modules_for_runtime,
+    receiver_wiring_for_runtime,
+    resolve_receiver_hybrid_runtime_config,
+    run_controller_mode,
     select_receiver_hybrid_controller,
 )
 
@@ -123,6 +134,10 @@ class _Manager:
         self.calls.append(("scene_stop",))
         self.is_running = False
 
+    def clear_native_background_quarantine(self, bundle_digest):
+        self.calls.append(("clear_native_quarantine", bundle_digest))
+        return {"state": "ready", "operation": "clear_quarantine"}
+
 
 class _StaggerController:
     def __init__(self):
@@ -147,6 +162,192 @@ class StartServerTests(unittest.TestCase):
         self.assertEqual(device_count_for_strips(8), 1)
         self.assertEqual(device_count_for_strips(9), 2)
         self.assertEqual(device_count_for_strips(32), 4)
+        self.assertEqual(device_count_for_strips(33), 5)
+
+    def test_explicit_canary_over_durable_off_uses_exact_finalized_topology(self):
+        durable_off = SimpleNamespace(enabled=False)
+        with patch(
+            "scripts.start_server.resolve_receiver_hybrid_config",
+            return_value=durable_off,
+        ):
+            config = resolve_receiver_hybrid_runtime_config(
+                Path("."), explicit_enabled=True
+            )
+        self.assertEqual(config["physical_lane_order"], (0, 1, 3, 2, 4))
+        self.assertEqual(config["receiver_strip_counts"], (8, 8, 8, 8, 1))
+        self.assertEqual(
+            config["receiver_global_strip_offsets"], (0, 8, 24, 16, 32)
+        )
+        self.assertEqual(
+            config["physical_output_lane_masks"], (255, 255, 255, 255, 1)
+        )
+
+        self.assertEqual(
+            receiver_geometry_for_runtime(33, config),
+            (
+                5,
+                (8, 8, 8, 8, 1),
+                (0, 8, 24, 16, 32),
+                (255, 255, 255, 255, 1),
+            ),
+        )
+        self.assertEqual(
+            receiver_geometry_for_runtime(16, SimpleNamespace(enabled=False)),
+            (2, (8, 8), (0, 8), (255, 255)),
+        )
+
+    def test_disabled_finalized_config_keeps_exact_geometry_but_hat_falls_back(self):
+        disabled_finalized = {
+            "enabled": False,
+            "receiver_strip_counts": (8, 8, 8, 8, 1),
+            "receiver_global_strip_offsets": (0, 8, 24, 16, 32),
+            "physical_output_lane_masks": (255, 255, 255, 255, 1),
+        }
+        finalized_geometry = receiver_geometry_for_runtime(
+            33, disabled_finalized
+        )
+        self.assertEqual(
+            finalized_geometry,
+            (
+                5,
+                (8, 8, 8, 8, 1),
+                (0, 8, 24, 16, 32),
+                (255, 255, 255, 255, 1),
+            ),
+        )
+        self.assertIs(
+            receiver_wiring_for_runtime(
+                finalized_geometry,
+                disabled_finalized,
+                INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
+            ),
+            INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
+        )
+
+        hat_geometry = receiver_geometry_for_runtime(24, disabled_finalized)
+        self.assertEqual(
+            hat_geometry,
+            (3, (8, 8, 8), (0, 8, 16), (255, 255, 255)),
+        )
+        wiring = receiver_wiring_for_runtime(
+            hat_geometry,
+            disabled_finalized,
+            INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
+        )
+        self.assertEqual(
+            wiring.logical_to_transport_routes[:3], ((0, 0), (0, 1), (1, 0))
+        )
+        self.assertEqual(
+            wiring.reverse_host_strips_by_logical_receiver[:3],
+            (False, False, False),
+        )
+        self.assertEqual(
+            wiring.reverse_native_strips_by_logical_receiver[:3],
+            (False, False, False),
+        )
+
+    def test_pre_geometry_explicit_canary_uses_finalized_defaults_only_at_33(self):
+        legacy_canary = {
+            "enabled": True,
+            "physical_lane_order": (0, 1, 3, 2, 4),
+            "reverse_strips_by_logical_receiver": (
+                False, False, True, True, False,
+            ),
+            "reverse_native_strips_by_logical_receiver": (
+                False, False, True, True, False,
+            ),
+        }
+        geometry = receiver_geometry_for_runtime(33, legacy_canary)
+        self.assertEqual(
+            geometry,
+            (
+                5,
+                (8, 8, 8, 8, 1),
+                (0, 8, 24, 16, 32),
+                (255, 255, 255, 255, 1),
+            ),
+        )
+        self.assertIs(
+            receiver_wiring_for_runtime(
+                geometry,
+                legacy_canary,
+                INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
+            ),
+            INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
+        )
+        self.assertEqual(
+            receiver_geometry_for_runtime(16, legacy_canary),
+            (2, (8, 8), (0, 8), (255, 255)),
+        )
+
+    def test_controller_construction_keeps_finalized_wiring_domains_separate(self):
+        captured = {}
+
+        class CapturingMultiController:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def set_stagger_phases(self, _phases):
+                pass
+
+        args = SimpleNamespace(
+            receiver_hybrid_config=SimpleNamespace(
+                enabled=False,
+                native_modules_enabled=False,
+                receiver_strip_counts=(8, 8, 8, 8, 1),
+                receiver_global_strip_offsets=(0, 8, 24, 16, 32),
+                physical_output_lane_masks=(255, 255, 255, 255, 1),
+            ),
+            saved_state_file="/unused/state.json",
+            strips=33,
+            bus=0,
+            spi_speed=20_000_000,
+            leds_per_strip=138,
+            controller_debug=False,
+            animation_speed_scale=1.0,
+            brightness=128,
+            animations_dir="animations",
+        )
+        with (
+            patch("scripts.start_server.LEDController", CapturingMultiController),
+            patch(
+                "scripts.start_server.load_saved_state",
+                side_effect=RuntimeError("no state"),
+            ),
+            patch(
+                "scripts.start_server.installation_profile_startup_context",
+                return_value=(
+                    object(),
+                    "0" * 64,
+                    INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
+                ),
+            ),
+            patch("scripts.start_server.NativeBackgroundLibrary", return_value=object()),
+            patch(
+                "scripts.start_server.AnimationManager",
+                side_effect=RuntimeError("controller captured"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "controller captured"),
+        ):
+            run_controller_mode(args)
+
+        self.assertEqual(
+            captured["device_map"],
+            [(0, 0), (0, 1), (1, 1), (1, 0), (1, 2)],
+        )
+        self.assertEqual(captured["receiver_strip_counts"], (8, 8, 8, 8, 1))
+        self.assertEqual(
+            captured["receiver_global_strip_offsets"], (0, 8, 24, 16, 32)
+        )
+        self.assertEqual(captured["receiver_lane_masks"], (255, 255, 255, 255, 1))
+        self.assertEqual(
+            captured["reverse_host_strips_by_logical_receiver"],
+            (False, False, True, True, False),
+        )
+        self.assertEqual(
+            captured["reverse_native_strips_by_logical_receiver"],
+            (False, False, True, True, False),
+        )
 
     def test_receiver_hybrid_feature_flags_are_all_off_unless_explicitly_enabled(self):
         ordinary = receiver_hybrid_feature_flags(False)
@@ -155,9 +356,27 @@ class StartServerTests(unittest.TestCase):
         self.assertTrue(canary.receiver_local_background)
         self.assertTrue(canary.receiver_sparse_overlay)
         self.assertFalse(canary.receiver_native_modules)
-        self.assertFalse(canary.receiver_geometry_profile)
+        self.assertTrue(canary.receiver_geometry_profile)
         with self.assertRaisesRegex(TypeError, "must be boolean"):
             receiver_hybrid_feature_flags(1)
+        native = receiver_hybrid_feature_flags(
+            True, receiver_native_modules=True
+        )
+        self.assertTrue(native.receiver_native_modules)
+        with self.assertRaisesRegex(ValueError, "require receiver hybrid"):
+            receiver_hybrid_feature_flags(
+                False, receiver_native_modules=True
+            )
+
+    def test_native_module_gate_uses_durable_state_with_explicit_env_override(self):
+        durable = SimpleNamespace(native_modules_enabled=True)
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertTrue(receiver_native_modules_for_runtime(durable))
+        with patch.dict(
+            "os.environ", {"LEDGRID_RECEIVER_NATIVE_MODULES_CANARY": "0"},
+            clear=True,
+        ):
+            self.assertFalse(receiver_native_modules_for_runtime(durable))
 
     def test_service_controller_applies_only_explicit_degraded_transport_policy(self):
         class Controller:
@@ -194,17 +413,17 @@ class StartServerTests(unittest.TestCase):
         self.assertEqual(
             selected,
             (
-                "wrapped", "degraded_spi1_01_readable", (0, 1, 2, 3),
-                (False, False, False, False),
-                (False, False, False, False),
+                "wrapped", "degraded_spi1_01_readable", (0, 1, 3, 2, 4),
+                (False, False, True, True, False),
+                (False, False, True, True, False),
             ),
         )
         self.assertEqual(
             controller.policies,
             [(
-                "degraded_spi1_01_readable", (0, 1, 2, 3),
-                (False, False, False, False),
-                (False, False, False, False),
+                "degraded_spi1_01_readable", (0, 1, 3, 2, 4),
+                (False, False, True, True, False),
+                (False, False, True, True, False),
             )],
         )
 
@@ -356,6 +575,20 @@ class StartServerTests(unittest.TestCase):
             "component_id": 1,
         }))
         self.assertEqual(manager.calls, [])
+
+    def test_quarantine_clear_dispatches_only_the_exact_digest_operation(self):
+        manager = _Manager()
+        digest = "a" * 64
+
+        self.assertFalse(handle_command(
+            manager,
+            "clear_native_background_quarantine",
+            {"bundle_digest": digest},
+        ))
+        self.assertEqual(
+            manager.calls,
+            [("clear_native_quarantine", digest)],
+        )
 
     def test_feature_off_restore_selects_recorded_fallback_before_mutation(self):
         manager = _Manager()

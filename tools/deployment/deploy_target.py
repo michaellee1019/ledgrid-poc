@@ -27,18 +27,20 @@ import tempfile
 import time
 from typing import Any, Iterable, Mapping, Optional, Sequence
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 try:
     from tools.deployment.app_releases import AppReleaseManager
     from tools.deployment.firmware_artifacts import inspect_firmware_installation
     from tools.deployment.receiver_hybrid_config import (
+        migrate_legacy_receiver_hybrid_config,
         resolve_receiver_hybrid_config,
     )
 except ModuleNotFoundError:  # Direct execution from an uploaded snapshot.
     from app_releases import AppReleaseManager  # type: ignore[no-redef]
     from firmware_artifacts import inspect_firmware_installation  # type: ignore[no-redef]
     from receiver_hybrid_config import (  # type: ignore[no-redef]
+        migrate_legacy_receiver_hybrid_config,
         resolve_receiver_hybrid_config,
     )
 
@@ -49,8 +51,47 @@ RELEASE_PATTERN = re.compile(r"[0-9a-f]{64}")
 DEFAULT_RECEIPT_DIR = PurePosixPath("run_state/deploy_receipts")
 DEFAULT_SYSTEMD_UNIT = "ledgrid.service"
 DEFAULT_API_URL = "http://127.0.0.1:5000/api/status"
+STRICT_RECEIVER_HEALTH_POLL_SECONDS = 0.75
 PLATFORMIO_BUILD_CACHE = ".platformio-build-cache"
 CCACHE_DIRECTORY = ".ccache"
+
+# First-cutover bootstrap is deliberately narrower than a full deployment
+# manifest.  These are the source roots needed by the legacy service; target
+# state, firmware/support input, documentation, repository metadata and build
+# products never enter the immutable rollback snapshot.
+LEGACY_BOOTSTRAP_SOURCE_ROOTS = (
+    PurePosixPath("animation"),
+    PurePosixPath("config"),
+    PurePosixPath("drivers"),
+    PurePosixPath("ipc"),
+    PurePosixPath("scripts"),
+    PurePosixPath("tools"),
+    PurePosixPath("web"),
+)
+LEGACY_BOOTSTRAP_ROOT_FILES = (
+    PurePosixPath("pyproject.toml"),
+    PurePosixPath("requirements-pi.lock"),
+    PurePosixPath("requirements.txt"),
+    PurePosixPath("uv.lock"),
+)
+LEGACY_BOOTSTRAP_REQUIRED_FILES = (
+    PurePosixPath("scripts/start_systemd.sh"),
+    PurePosixPath("scripts/start_server.py"),
+    PurePosixPath("tools/deployment/preserve_deploy_settings.py"),
+)
+LEGACY_BOOTSTRAP_EXCLUDED_DIRECTORIES = frozenset({
+    ".git", ".mypy_cache", ".pio", ".pytest_cache", ".ruff_cache",
+    ".tox", ".venv", ".venvs", "__pycache__", "build", "dist",
+    "node_modules", "out", "releases", "support_releases", "venv",
+})
+LEGACY_BOOTSTRAP_SECRET_NAMES = frozenset({
+    ".env", ".netrc", "credentials", "credentials.json", "id_ed25519",
+    "id_rsa", "secrets", "secrets.json",
+})
+LEGACY_BOOTSTRAP_SECRET_SUFFIXES = frozenset({
+    ".key", ".p12", ".pfx", ".pem",
+})
+LEGACY_BOOTSTRAP_RECORD = PurePosixPath("run_state/legacy_app_bootstrap.json")
 
 
 def _path(value: os.PathLike[str] | str) -> Path:
@@ -62,6 +103,145 @@ def _safe_relative(value: str) -> PurePosixPath:
     if not path.parts or path.is_absolute() or ".." in path.parts or path == PurePosixPath("."):
         raise ValueError(f"unsafe snapshot path: {value!r}")
     return path
+
+
+def _legacy_bootstrap_sensitive(path: PurePosixPath) -> bool:
+    lowered = tuple(part.lower() for part in path.parts)
+    return bool(
+        any(
+            part in LEGACY_BOOTSTRAP_SECRET_NAMES
+            or part.startswith(".env.")
+            for part in lowered
+        )
+        or path.suffix.lower() in LEGACY_BOOTSTRAP_SECRET_SUFFIXES
+    )
+
+
+def _legacy_bootstrap_sources(root: Path) -> Mapping[PurePosixPath, Path]:
+    """Return the bounded, regular-file source set for first cutover."""
+
+    sources: dict[PurePosixPath, Path] = {}
+    for relative in LEGACY_BOOTSTRAP_ROOT_FILES:
+        candidate = root / relative.as_posix()
+        if not candidate.exists():
+            continue
+        metadata = candidate.lstat()
+        if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError(
+                f"legacy bootstrap input must be a regular non-symlink file: {relative}"
+            )
+        sources[relative] = candidate
+
+    for source_root in LEGACY_BOOTSTRAP_SOURCE_ROOTS:
+        directory = root / source_root.as_posix()
+        if not directory.exists():
+            continue
+        metadata = directory.lstat()
+        if directory.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+            raise RuntimeError(
+                f"legacy bootstrap source root must be a real directory: {source_root}"
+            )
+        for current, raw_directories, raw_files in os.walk(directory, followlinks=False):
+            current_path = Path(current)
+            retained_directories: list[str] = []
+            for name in sorted(raw_directories):
+                child = current_path / name
+                if name in LEGACY_BOOTSTRAP_EXCLUDED_DIRECTORIES:
+                    continue
+                if child.is_symlink():
+                    raise RuntimeError(
+                        "legacy bootstrap source contains a directory symlink: "
+                        f"{child.relative_to(root)}"
+                    )
+                if not stat.S_ISDIR(child.lstat().st_mode):
+                    raise RuntimeError(
+                        "legacy bootstrap source contains a non-directory entry: "
+                        f"{child.relative_to(root)}"
+                    )
+                retained_directories.append(name)
+            raw_directories[:] = retained_directories
+
+            for name in sorted(raw_files):
+                candidate = current_path / name
+                relative = PurePosixPath(candidate.relative_to(root).as_posix())
+                if _legacy_bootstrap_sensitive(relative):
+                    continue
+                metadata = candidate.lstat()
+                if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+                    raise RuntimeError(
+                        "legacy bootstrap input must be a regular non-symlink file: "
+                        f"{relative}"
+                    )
+                sources[relative] = candidate
+
+    missing = tuple(
+        relative for relative in LEGACY_BOOTSTRAP_REQUIRED_FILES
+        if relative not in sources
+    )
+    if missing:
+        raise RuntimeError(
+            "legacy mutable app lacks required boot inputs: "
+            + ", ".join(path.as_posix() for path in missing)
+        )
+    return dict(sorted(sources.items(), key=lambda item: item[0].as_posix()))
+
+
+def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(dict(payload), stream, sort_keys=True, separators=(",", ":"))
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _read_legacy_bootstrap_record(root: Path) -> Optional[dict[str, Any]]:
+    path = root / LEGACY_BOOTSTRAP_RECORD.as_posix()
+    if not path.exists():
+        if path.is_symlink():
+            raise RuntimeError(
+                "legacy bootstrap record must be a regular non-symlink file"
+            )
+        return None
+    if path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode):
+        raise RuntimeError("legacy bootstrap record must be a regular non-symlink file")
+    payload = _json_object(path)
+    if payload.get("schema_version") != 1:
+        raise RuntimeError("unsupported legacy bootstrap record version")
+    release_id = payload.get("bootstrap_release_id")
+    phase = payload.get("phase")
+    if (
+        not isinstance(release_id, str)
+        or RELEASE_PATTERN.fullmatch(release_id) is None
+        or phase not in {"prepared", "selected", "candidate_pending", "complete"}
+    ):
+        raise RuntimeError("legacy bootstrap record is malformed")
+    candidate = payload.get("candidate_release_id")
+    if candidate is not None and (
+        not isinstance(candidate, str)
+        or RELEASE_PATTERN.fullmatch(candidate) is None
+    ):
+        raise RuntimeError("legacy bootstrap candidate identity is malformed")
+    if phase == "candidate_pending" and candidate is None:
+        raise RuntimeError("pending legacy bootstrap record has no candidate")
+    return payload
+
+
+def _write_legacy_bootstrap_record(root: Path, payload: Mapping[str, Any]) -> None:
+    _atomic_json(root / LEGACY_BOOTSTRAP_RECORD.as_posix(), payload)
 
 
 def _is_beneath(path: PurePosixPath, parent: PurePosixPath) -> bool:
@@ -290,6 +470,160 @@ def stage_app(root: Path, snapshot: Path) -> Mapping[str, Any]:
     }
 
 
+def _legacy_service_working_directory(root: Path, unit: str) -> Path:
+    pid = _service_main_pid(unit)
+    if pid <= 0:
+        raise RuntimeError("legacy bootstrap requires a running mutable service")
+    try:
+        working_directory = Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
+    except OSError as exc:
+        raise RuntimeError("cannot identify the running legacy service source") from exc
+    if working_directory != root.resolve():
+        raise RuntimeError(
+            "legacy service is not running from the mutable deployment root"
+        )
+    return working_directory
+
+
+def bootstrap_legacy_app(
+    root: Path, candidate_release_id: str, *, unit: str = DEFAULT_SYSTEMD_UNIT,
+) -> Mapping[str, Any]:
+    """Publish the first immutable rollback release without restarting it."""
+
+    manager = _app_manager(root)
+    manager.validate(candidate_release_id)
+    current = manager.current_release_id()
+    record = _read_legacy_bootstrap_record(root)
+
+    if record is not None:
+        bootstrap_id = str(record["bootstrap_release_id"])
+        phase = str(record["phase"])
+        pending_candidate = record.get("candidate_release_id")
+        if phase != "complete":
+            bootstrap = manager.validate(bootstrap_id)
+            if bootstrap.digest != record.get("bootstrap_digest"):
+                raise RuntimeError("legacy bootstrap record digest disagrees with release")
+        else:
+            bootstrap = None
+
+        if current is None and phase == "prepared":
+            previous, selected = manager.activate_if_unset(bootstrap_id)
+            if previous is not None or not selected:
+                raise RuntimeError("legacy bootstrap lost its no-clobber selection boundary")
+            current = bootstrap_id
+            phase = "selected"
+            record = {
+                **record,
+                "phase": phase,
+                "selected_at": time.time(),
+            }
+            _write_legacy_bootstrap_record(root, record)
+
+        if phase == "candidate_pending":
+            if current not in {bootstrap_id, pending_candidate}:
+                raise RuntimeError(
+                    "pending legacy bootstrap disagrees with current release selection"
+                )
+            return {
+                "outcome": "skipped",
+                "reason": "resuming a candidate guarded by the legacy bootstrap",
+                "selected": current == bootstrap_id,
+                "current_release": current,
+                "bootstrap_release_id": bootstrap_id,
+                "bootstrap_digest": record["bootstrap_digest"],
+                "file_count": record.get("file_count"),
+                "phase": phase,
+                "recovery_release": bootstrap_id,
+                "candidate_release_id": pending_candidate,
+                "record_path": os.fspath(
+                    root / LEGACY_BOOTSTRAP_RECORD.as_posix()
+                ),
+            }
+        if phase in {"prepared", "selected"}:
+            if current != bootstrap_id:
+                raise RuntimeError(
+                    "legacy bootstrap record disagrees with current release selection"
+                )
+            return {
+                "outcome": "skipped",
+                "reason": "legacy bootstrap release is already selected",
+                "selected": True,
+                "current_release": current,
+                "bootstrap_release_id": bootstrap_id,
+                "bootstrap_digest": record["bootstrap_digest"],
+                "file_count": record.get("file_count"),
+                "phase": phase,
+                "recovery_release": None,
+                "record_path": os.fspath(
+                    root / LEGACY_BOOTSTRAP_RECORD.as_posix()
+                ),
+            }
+        if current is None:
+            raise RuntimeError(
+                "completed legacy bootstrap has no immutable current release"
+            )
+        manager.validate(current)
+        return {
+            "outcome": "skipped",
+            "reason": "legacy bootstrap lifecycle is complete",
+            "selected": False,
+            "current_release": current,
+            "bootstrap_release_id": record["bootstrap_release_id"],
+            "bootstrap_digest": record["bootstrap_digest"],
+            "file_count": record.get("file_count"),
+            "phase": phase,
+            "recovery_release": None,
+            "record_path": os.fspath(root / LEGACY_BOOTSTRAP_RECORD.as_posix()),
+        }
+
+    if current is not None:
+        manager.validate(current)
+        return {
+            "outcome": "skipped",
+            "reason": "an immutable app release is already selected",
+            "selected": False,
+            "current_release": current,
+            "bootstrap_release_id": None,
+            "recovery_release": None,
+        }
+
+    working_directory = _legacy_service_working_directory(root, unit)
+
+    sources = _legacy_bootstrap_sources(root)
+    info = manager.stage(sources)
+    verified = manager.validate(info.id)
+    record = {
+        "schema_version": 1,
+        "phase": "prepared",
+        "bootstrap_release_id": verified.id,
+        "bootstrap_digest": verified.digest,
+        "candidate_release_id": None,
+        "file_count": len(verified.files),
+        "source_working_directory": os.fspath(working_directory),
+        "prepared_at": time.time(),
+    }
+    _write_legacy_bootstrap_record(root, record)
+    previous, selected = manager.activate_if_unset(verified.id)
+    if previous is not None or not selected:
+        raise RuntimeError("legacy bootstrap lost its no-clobber selection boundary")
+    record = {**record, "phase": "selected", "selected_at": time.time()}
+    _write_legacy_bootstrap_record(root, record)
+    manager.validate(verified.id)
+    return {
+        "outcome": "executed",
+        "reason": "snapshotted the running mutable app before first cutover",
+        "selected": True,
+        "current_release": verified.id,
+        "bootstrap_release_id": verified.id,
+        "bootstrap_digest": verified.digest,
+        "file_count": len(verified.files),
+        "phase": "selected",
+        "recovery_release": None,
+        "record_path": os.fspath(root / LEGACY_BOOTSTRAP_RECORD.as_posix()),
+        "reused": info.reused,
+    }
+
+
 def _support_digest(files: Iterable[tuple[PurePosixPath, Path]]) -> str:
     digest = hashlib.sha256(b"ledgrid-support-release-v1\0")
     for relative, source in sorted(files, key=lambda item: item[0].as_posix()):
@@ -452,7 +786,13 @@ def ensure_runtime(root: Path, release_id: str) -> Mapping[str, Any]:
     return _final_stdout_json_object(result.stdout, label="runtime environment")
 
 
-def _unit_text(root: Path, user: str) -> str:
+def _unit_text(
+    root: Path, user: str, *, strips: int = 33, receivers: int = 5
+) -> str:
+    if isinstance(strips, bool) or strips <= 0:
+        raise ValueError("strips must be a positive integer")
+    if isinstance(receivers, bool) or receivers <= 0:
+        raise ValueError("receivers must be a positive integer")
     current = root / "current"
     return "\n".join(
         (
@@ -471,7 +811,8 @@ def _unit_text(root: Path, user: str) -> str:
             "Environment=PYTHONUNBUFFERED=1",
             "Environment=LEDGRID_SPI1_MODE=0",
             "Environment=LEDGRID_HAT=0",
-            "Environment=STRIPS=32",
+            f"Environment=STRIPS={strips}",
+            f"Environment=EXPECTED_ESP32_DEVICES={receivers}",
             "",
             "[Install]",
             "WantedBy=multi-user.target",
@@ -480,10 +821,17 @@ def _unit_text(root: Path, user: str) -> str:
     )
 
 
-def ensure_unit(root: Path, *, user: str, unit: str = DEFAULT_SYSTEMD_UNIT) -> Mapping[str, Any]:
+def ensure_unit(
+    root: Path,
+    *,
+    user: str,
+    strips: int = 33,
+    receivers: int = 5,
+    unit: str = DEFAULT_SYSTEMD_UNIT,
+) -> Mapping[str, Any]:
     if not re.fullmatch(r"[A-Za-z0-9_.@-]+\.service", unit):
         raise ValueError(f"unsafe systemd unit name: {unit!r}")
-    desired = _unit_text(root, user)
+    desired = _unit_text(root, user, strips=strips, receivers=receivers)
     destination = Path("/etc/systemd/system") / unit
     current = ""
     try:
@@ -534,7 +882,15 @@ def configure_spi(release: Path, *, hat: bool) -> Mapping[str, Any]:
     }
 
 
-def provision(root: Path, release_id: str, *, user: str, hat: bool) -> Mapping[str, Any]:
+def provision(
+    root: Path,
+    release_id: str,
+    *,
+    user: str,
+    hat: bool,
+    strips: int = 33,
+    receivers: int = 5,
+) -> Mapping[str, Any]:
     release = _release(root, release_id)
     runtime = ensure_runtime(root, release_id)
     spi = configure_spi(release, hat=hat)
@@ -544,7 +900,9 @@ def provision(root: Path, release_id: str, *, user: str, hat: bool) -> Mapping[s
     # bootable through the one allowed reboot. The idempotent resume installs
     # the current-aware unit after SPI reports ready.
     if spi.get("status") == "ready":
-        unit = ensure_unit(root, user=user)
+        unit = ensure_unit(
+            root, user=user, strips=strips, receivers=receivers
+        )
     else:
         unit = {
             "unit": DEFAULT_SYSTEMD_UNIT,
@@ -565,6 +923,20 @@ def provision(root: Path, release_id: str, *, user: str, hat: bool) -> Mapping[s
         "runtime": runtime,
         "unit": unit,
         "spi": spi,
+    }
+
+
+def migrate_receiver_topology(root: Path) -> Mapping[str, Any]:
+    """Reconcile the retired four-receiver rollout file before firmware work."""
+
+    config, migrated = migrate_legacy_receiver_hybrid_config(root)
+    return {
+        "outcome": "executed" if migrated else "skipped",
+        "migrated": migrated,
+        "receiver_hybrid_config": config.to_dict(),
+        "receiver_hybrid_config_digest": config.selection_digest,
+        "strips": config.strip_count,
+        "receivers": len(config.receiver_strip_counts),
     }
 
 
@@ -960,6 +1332,7 @@ def prune_releases(root: Path, *, retain: int) -> Mapping[str, Any]:
 def activate(root: Path, release_id: str) -> Mapping[str, Any]:
     manager = _app_manager(root)
     current = manager.current_release_id()
+    bootstrap = _read_legacy_bootstrap_record(root)
     if current == release_id:
         manager.validate(release_id)
         return {
@@ -968,12 +1341,97 @@ def activate(root: Path, release_id: str) -> Mapping[str, Any]:
             "changed": False,
             "selected_at": time.time(),
         }
+    if bootstrap is not None and bootstrap.get("phase") in {
+        "selected", "candidate_pending"
+    }:
+        bootstrap_id = bootstrap["bootstrap_release_id"]
+        pending_candidate = bootstrap.get("candidate_release_id")
+        if current == bootstrap_id and release_id != bootstrap_id:
+            if (
+                bootstrap.get("phase") == "candidate_pending"
+                and pending_candidate not in {None, release_id}
+            ):
+                raise RuntimeError(
+                    "legacy bootstrap already guards a different candidate release"
+                )
+            bootstrap = {
+                **bootstrap,
+                "phase": "candidate_pending",
+                "candidate_release_id": release_id,
+                "candidate_selected_at": time.time(),
+            }
+            _write_legacy_bootstrap_record(root, bootstrap)
+        elif (
+            release_id == bootstrap_id
+            and bootstrap.get("phase") == "candidate_pending"
+            and current == pending_candidate
+        ):
+            # Compensation is allowed to move the lifecycle back to its
+            # reusable selected state after the atomic app selection below.
+            pass
+        elif bootstrap.get("phase") == "candidate_pending":
+            raise RuntimeError(
+                "candidate activation disagrees with pending legacy bootstrap evidence"
+            )
     previous = manager.activate(release_id)
+    if (
+        bootstrap is not None
+        and release_id == bootstrap.get("bootstrap_release_id")
+        and bootstrap.get("phase") == "candidate_pending"
+    ):
+        _write_legacy_bootstrap_record(
+            root,
+            {
+                **bootstrap,
+                "phase": "selected",
+                "candidate_release_id": None,
+                "restored_at": time.time(),
+            },
+        )
     return {
         "release_id": release_id,
         "previous_release": previous,
         "changed": True,
         "selected_at": time.time(),
+    }
+
+
+def complete_legacy_bootstrap(
+    root: Path, candidate_release_id: str,
+) -> Mapping[str, Any]:
+    """Close pending bootstrap recovery only after candidate health succeeds."""
+
+    record = _read_legacy_bootstrap_record(root)
+    if record is None:
+        return {"outcome": "skipped", "reason": "no legacy bootstrap lifecycle"}
+    if record.get("phase") == "complete":
+        return {
+            "outcome": "skipped",
+            "reason": "legacy bootstrap lifecycle is already complete",
+            "bootstrap_release_id": record["bootstrap_release_id"],
+        }
+    current = _app_manager(root).current_release_id()
+    bootstrap_id = record["bootstrap_release_id"]
+    pending = record.get("candidate_release_id")
+    if current != candidate_release_id:
+        raise RuntimeError("cannot complete bootstrap for a non-current candidate")
+    if record.get("phase") == "candidate_pending" and pending != candidate_release_id:
+        raise RuntimeError("legacy bootstrap pending candidate identity changed")
+    if record.get("phase") == "selected" and candidate_release_id != bootstrap_id:
+        raise RuntimeError("legacy bootstrap was never bound to this candidate")
+    completed = {
+        **record,
+        "phase": "complete",
+        "candidate_release_id": candidate_release_id,
+        "completed_at": time.time(),
+    }
+    _write_legacy_bootstrap_record(root, completed)
+    return {
+        "outcome": "executed",
+        "bootstrap_release_id": bootstrap_id,
+        "candidate_release_id": candidate_release_id,
+        "phase": "complete",
+        "record_path": os.fspath(root / LEGACY_BOOTSTRAP_RECORD.as_posix()),
     }
 
 
@@ -1078,6 +1536,36 @@ def _api_status(api_url: str, timeout: float = 2.0) -> Mapping[str, Any]:
     return payload
 
 
+def _request_receiver_status_refresh(
+    api_url: str, timeout: float = 2.0,
+) -> str:
+    suffix = "/api/status"
+    if not api_url.endswith(suffix):
+        raise RuntimeError(
+            "receiver health API URL must end with /api/status for explicit refresh"
+        )
+    refresh_url = (
+        api_url[:-len(suffix)] + "/api/v1/receivers/status/refresh"
+    )
+    request = Request(refresh_url, method="POST")  # nosec: fixed/local operator URL
+    try:
+        with urlopen(request, timeout=timeout) as response:  # nosec: fixed/local operator URL
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, URLError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"cannot request fresh receiver status: {exc}"
+        ) from exc
+    request_id = payload.get("request_id") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("accepted") is not True
+        or not isinstance(request_id, str)
+        or not request_id
+    ):
+        raise RuntimeError("controller rejected fresh receiver status request")
+    return request_id
+
+
 @dataclass(frozen=True)
 class TargetHealthSample:
     sampled_at: float
@@ -1088,6 +1576,15 @@ class TargetHealthSample:
     receiver_count: int
     receiver_logical_ids: tuple[int, ...]
     ready: bool = True
+    receiver_device_map: tuple[Mapping[str, Any], ...] = ()
+    receiver_statuses: tuple[Mapping[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
+class ReceiverHealthContract:
+    minimum_status_version: int
+    required_capabilities: int
+    devices: tuple[Mapping[str, Any], ...]
 
 
 def _sample_health(root: Path, *, unit: str, api_url: str) -> TargetHealthSample:
@@ -1099,6 +1596,11 @@ def _sample_health(root: Path, *, unit: str, api_url: str) -> TargetHealthSample
     led_info = status.get("led_info") if isinstance(status.get("led_info"), dict) else {}
     driver = status.get("driver_stats") if isinstance(status.get("driver_stats"), dict) else {}
     aggregate = driver.get("aggregate") if isinstance(driver.get("aggregate"), dict) else {}
+    raw_statuses = driver.get("devices")
+    receiver_statuses = (
+        tuple(dict(item) for item in raw_statuses if isinstance(item, dict))
+        if isinstance(raw_statuses, list) else ()
+    )
     service_release = _service_release(root, unit)
     api_release = status.get("release_id")
     if status.get("release_consistent") is not True or api_release != service_release:
@@ -1108,8 +1610,11 @@ def _sample_health(root: Path, *, unit: str, api_url: str) -> TargetHealthSample
     device_map = aggregate.get("device_map")
     if not isinstance(device_map, list):
         raise RuntimeError("controller status lacks the receiver device map")
+    receiver_device_map = tuple(
+        dict(entry) if isinstance(entry, dict) else {} for entry in device_map
+    )
     logical_ids: list[int] = []
-    for entry in device_map:
+    for entry in receiver_device_map:
         logical_id = entry.get("logical_device") if isinstance(entry, dict) else None
         if isinstance(logical_id, bool) or not isinstance(logical_id, int):
             raise RuntimeError("controller receiver device map is malformed")
@@ -1132,7 +1637,146 @@ def _sample_health(root: Path, *, unit: str, api_url: str) -> TargetHealthSample
         receiver_count=int(aggregate["num_devices"]),
         receiver_logical_ids=tuple(logical_ids),
         ready=status.get("is_running") is True,
+        receiver_device_map=receiver_device_map,
+        receiver_statuses=receiver_statuses,
     )
+
+
+def _validate_receiver_health_contract(
+    contract: Mapping[str, Any], *, receivers: int,
+) -> ReceiverHealthContract:
+    if contract.get("schema_version") != 1:
+        raise ValueError("unsupported receiver health contract version")
+    minimum_version = contract.get("minimum_status_version")
+    required_capabilities = contract.get("required_capabilities")
+    raw_devices = contract.get("devices")
+    if (
+        type(minimum_version) is not int
+        or not 1 <= minimum_version <= 255
+        or type(required_capabilities) is not int
+        or not 0 <= required_capabilities <= 0xFFFFFFFF
+        or not isinstance(raw_devices, list)
+        or len(raw_devices) != receivers
+    ):
+        raise ValueError("receiver health contract is malformed")
+    devices: list[Mapping[str, Any]] = []
+    integer_fields = (
+        "logical_device", "bus", "chip_select",
+        "active_strips", "global_strip_offset",
+        "local_strip_count", "lane_mask", "physical_output_lane_mask",
+        "spi_mode", "leds_per_strip",
+    )
+    boolean_fields = (
+        "reverse_host_strip_order", "reverse_native_strip_order",
+    )
+    for logical_id, item in enumerate(raw_devices):
+        if not isinstance(item, dict) or any(
+            type(item.get(field)) is not int for field in integer_fields
+        ) or any(
+            type(item.get(field)) is not bool for field in boolean_fields
+        ):
+            raise ValueError("receiver health device contract is malformed")
+        if item["logical_device"] != logical_id:
+            raise ValueError("receiver health contract logical roster is not exact")
+        devices.append({
+            field: item[field] for field in (*integer_fields, *boolean_fields)
+        })
+    return ReceiverHealthContract(
+        minimum_status_version=minimum_version,
+        required_capabilities=required_capabilities,
+        devices=tuple(devices),
+    )
+
+
+def _receiver_health_rejection(
+    sample: TargetHealthSample,
+    *,
+    minimum_version: int,
+    required_capabilities: int,
+    expected_devices: Sequence[Mapping[str, Any]],
+) -> Optional[str]:
+    if len(sample.receiver_device_map) != len(expected_devices):
+        return "host receiver device map is incomplete"
+    host_by_id: dict[int, Mapping[str, Any]] = {}
+    for item in sample.receiver_device_map:
+        logical_id = item.get("logical_device")
+        if type(logical_id) is not int or logical_id in host_by_id:
+            return "host receiver device map identities are malformed"
+        host_by_id[logical_id] = item
+    if tuple(sorted(host_by_id)) != tuple(range(len(expected_devices))):
+        return "host receiver device map roster is not exact"
+
+    host_fields = (
+        "bus", "chip_select", "local_strip_count", "global_strip_offset",
+        "physical_output_lane_mask", "reverse_host_strip_order",
+        "reverse_native_strip_order", "spi_mode",
+    )
+    for expected in expected_devices:
+        logical_id = expected["logical_device"]
+        observed = host_by_id[logical_id]
+        for field in host_fields:
+            value = observed.get(field)
+            if type(value) is not type(expected[field]) or value != expected[field]:
+                return (
+                    f"host receiver {logical_id} reported {field}={value!r}, "
+                    f"expected {expected[field]!r}"
+                )
+
+    if len(sample.receiver_statuses) != len(expected_devices):
+        return "per-receiver status roster is incomplete"
+    by_id: dict[int, Mapping[str, Any]] = {}
+    for status in sample.receiver_statuses:
+        logical_id = status.get("receiver_logical_device")
+        if type(logical_id) is not int or logical_id in by_id:
+            return "per-receiver reported logical identities are malformed"
+        by_id[logical_id] = status
+    if tuple(sorted(by_id)) != tuple(range(len(expected_devices))):
+        return "per-receiver reported logical roster is not exact"
+
+    field_mapping = {
+        "active_strips": "receiver_active_strips",
+        "global_strip_offset": "receiver_global_strip_offset",
+        "lane_mask": "receiver_lane_mask",
+        "leds_per_strip": "receiver_leds_per_strip",
+    }
+    for expected in expected_devices:
+        logical_id = expected["logical_device"]
+        status = by_id[logical_id]
+        version = status.get("receiver_status_version")
+        capabilities = status.get("receiver_capabilities")
+        responses = status.get("receiver_status_responses")
+        if status.get("receiver_status_seen") is not True:
+            return f"receiver {logical_id} has no fresh status response"
+        if type(responses) is not int or responses <= 0:
+            return f"receiver {logical_id} status response evidence is not fresh"
+        if type(version) is not int or version < minimum_version:
+            return (
+                f"receiver {logical_id} status v{version!r} is below required "
+                f"v{minimum_version}"
+            )
+        if (
+            type(capabilities) is not int
+            or capabilities & required_capabilities != required_capabilities
+        ):
+            return f"receiver {logical_id} lacks required firmware capabilities"
+        for expected_name, observed_name in field_mapping.items():
+            if status.get(observed_name) != expected[expected_name]:
+                return (
+                    f"receiver {logical_id} reported {observed_name}="
+                    f"{status.get(observed_name)!r}, expected {expected[expected_name]}"
+                )
+    return None
+
+
+def _receiver_response_counters(
+    sample: TargetHealthSample,
+) -> dict[int, int]:
+    return {
+        int(status["receiver_logical_device"]): int(
+            status["receiver_status_responses"]
+        )
+        for status in sample.receiver_statuses
+    }
 
 
 def fresh_health(
@@ -1147,12 +1791,22 @@ def fresh_health(
     timeout: float,
     unit: str,
     api_url: str,
+    receiver_contract: Optional[Mapping[str, Any]] = None,
 ) -> Mapping[str, Any]:
+    if stable_samples < 1:
+        raise ValueError("stable_samples must be positive")
+    contract = None
+    if receiver_contract is not None:
+        contract = _validate_receiver_health_contract(
+            receiver_contract, receivers=receivers
+        )
     deadline = time.monotonic() + timeout
     accepted: list[TargetHealthSample] = []
     last_reason = "no health sample"
     while time.monotonic() <= deadline:
         try:
+            if contract is not None:
+                _request_receiver_status_refresh(api_url)
             sample = _sample_health(root, unit=unit, api_url=api_url)
             rejection: Optional[str] = None
             if sample.release_id != release_id:
@@ -1171,16 +1825,38 @@ def fresh_health(
                 rejection = "receiver topology does not match desired topology"
             elif sample.receiver_logical_ids != tuple(range(receivers)):
                 rejection = "receiver logical device map does not match desired topology"
+            elif contract is not None and (
+                receiver_rejection := _receiver_health_rejection(
+                    sample,
+                    minimum_version=contract.minimum_status_version,
+                    required_capabilities=contract.required_capabilities,
+                    expected_devices=contract.devices,
+                )
+            ) is not None:
+                rejection = receiver_rejection
             elif accepted and sample.controller_updated_at <= accepted[-1].controller_updated_at:
                 rejection = "controller status did not advance between stable samples"
+            elif contract is not None and accepted:
+                previous_responses = _receiver_response_counters(accepted[-1])
+                current_responses = _receiver_response_counters(sample)
+                stale_ids = [
+                    logical_id for logical_id in range(receivers)
+                    if current_responses[logical_id] <= previous_responses[logical_id]
+                ]
+                if stale_ids:
+                    rejection = (
+                        "receiver status responses did not advance for logical "
+                        f"devices {stale_ids}"
+                    )
 
             if rejection is not None:
                 accepted.clear()
                 last_reason = rejection
             else:
                 accepted.append(sample)
-                if len(accepted) >= stable_samples:
-                    return {
+                required_samples = max(stable_samples, 2 if contract is not None else 1)
+                if len(accepted) >= required_samples:
+                    health = {
                         "desired_release": release_id,
                         "observed_release": sample.release_id,
                         "stable_samples": len(accepted),
@@ -1188,10 +1864,30 @@ def fresh_health(
                         "geometry": {"strip_count": strips, "leds_per_strip": leds_per_strip},
                         "receiver_count": receivers,
                     }
+                    if contract is not None:
+                        first_responses = _receiver_response_counters(accepted[0])
+                        last_responses = _receiver_response_counters(sample)
+                        health["receiver_contract"] = {
+                            "minimum_status_version": contract.minimum_status_version,
+                            "required_capabilities": contract.required_capabilities,
+                            "verified_logical_devices": list(range(receivers)),
+                            "status_response_evidence": [
+                                {
+                                    "logical_device": logical_id,
+                                    "before": first_responses[logical_id],
+                                    "after": last_responses[logical_id],
+                                }
+                                for logical_id in range(receivers)
+                            ],
+                        }
+                    return health
         except Exception as exc:
             accepted.clear()
             last_reason = str(exc)
-        time.sleep(0.25)
+        time.sleep(
+            STRICT_RECEIVER_HEALTH_POLL_SECONDS
+            if contract is not None else 0.25
+        )
     raise RuntimeError(f"fresh release-aware readiness timed out: {last_reason}")
 
 
@@ -1232,6 +1928,9 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("--snapshot", type=_path, required=True)
     stage_app_parser = subparsers.add_parser("stage-app")
     stage_app_parser.add_argument("--snapshot", type=_path, required=True)
+    bootstrap = subparsers.add_parser("bootstrap-legacy-app")
+    bootstrap.add_argument("candidate_release_id")
+    bootstrap.add_argument("--unit", default=DEFAULT_SYSTEMD_UNIT)
     stage_support_parser = subparsers.add_parser("stage-support")
     stage_support_parser.add_argument("--snapshot", type=_path, required=True)
     cleanup = subparsers.add_parser("cleanup-snapshot")
@@ -1242,12 +1941,15 @@ def _parser() -> argparse.ArgumentParser:
     provision_parser.add_argument("release_id")
     provision_parser.add_argument("--user", required=True)
     provision_parser.add_argument("--hat", action="store_true")
+    provision_parser.add_argument("--strips", type=int, default=33)
+    provision_parser.add_argument("--receivers", type=int, default=5)
+    subparsers.add_parser("migrate-receiver-topology")
     build = subparsers.add_parser("build-firmware")
     build.add_argument("support_id", nargs="?")
     flash = subparsers.add_parser("flash-firmware")
     flash.add_argument("support_id", nargs="?")
     flash.add_argument("--app-release")
-    flash.add_argument("--receivers", type=int, default=4)
+    flash.add_argument("--receivers", type=int, default=5)
     flash.add_argument("--debug", action="store_true")
     flash.add_argument("--expected-environment")
     flash.add_argument("--expected-config-digest")
@@ -1256,19 +1958,22 @@ def _parser() -> argparse.ArgumentParser:
     subparsers.add_parser("capture-state")
     activate_parser = subparsers.add_parser("activate")
     activate_parser.add_argument("release_id")
+    complete_bootstrap = subparsers.add_parser("complete-legacy-bootstrap")
+    complete_bootstrap.add_argument("candidate_release_id")
     subparsers.add_parser("restart")
     restore = subparsers.add_parser("restore-state")
     restore.add_argument("--timeout", type=float, default=20.0)
     health = subparsers.add_parser("health")
     health.add_argument("release_id")
     health.add_argument("--boundary", type=float, required=True)
-    health.add_argument("--strips", type=int, default=32)
+    health.add_argument("--strips", type=int, default=33)
     health.add_argument("--leds-per-strip", type=int, default=138)
-    health.add_argument("--receivers", type=int, default=4)
+    health.add_argument("--receivers", type=int, default=5)
     health.add_argument("--stable-samples", type=int, default=2)
     health.add_argument("--timeout", type=float, default=30.0)
     health.add_argument("--unit", default=DEFAULT_SYSTEMD_UNIT)
     health.add_argument("--api-url", default=DEFAULT_API_URL)
+    health.add_argument("--receiver-contract-json")
     subparsers.add_parser("record-deploy")
     subparsers.add_parser("reboot")
     subparsers.add_parser("current-release")
@@ -1286,6 +1991,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = verify_snapshot(args.snapshot)
     elif args.command == "stage-app":
         result = stage_app(root, args.snapshot)
+    elif args.command == "bootstrap-legacy-app":
+        result = bootstrap_legacy_app(
+            root, args.candidate_release_id, unit=args.unit
+        )
     elif args.command == "stage-support":
         result = stage_support(root, args.snapshot)
     elif args.command == "cleanup-snapshot":
@@ -1293,7 +2002,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     elif args.command == "validate-app":
         result = validate_app(root, args.release_id)
     elif args.command == "provision":
-        result = provision(root, args.release_id, user=args.user, hat=args.hat)
+        result = provision(
+            root,
+            args.release_id,
+            user=args.user,
+            hat=args.hat,
+            strips=args.strips,
+            receivers=args.receivers,
+        )
+    elif args.command == "migrate-receiver-topology":
+        result = migrate_receiver_topology(root)
     elif args.command == "build-firmware":
         result = build_firmware(root, args.support_id)
     elif args.command == "flash-firmware":
@@ -1312,11 +2030,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = capture_state(root)
     elif args.command == "activate":
         result = activate(root, args.release_id)
+    elif args.command == "complete-legacy-bootstrap":
+        result = complete_legacy_bootstrap(root, args.candidate_release_id)
     elif args.command == "restart":
         result = restart_service()
     elif args.command == "restore-state":
         result = restore_state(root, timeout=args.timeout)
     elif args.command == "health":
+        receiver_contract = None
+        if args.receiver_contract_json is not None:
+            try:
+                receiver_contract = json.loads(args.receiver_contract_json)
+            except json.JSONDecodeError as exc:
+                raise ValueError("receiver health contract is not valid JSON") from exc
+            if not isinstance(receiver_contract, dict):
+                raise ValueError("receiver health contract must be an object")
         result = fresh_health(
             root,
             args.release_id,
@@ -1328,6 +2056,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             timeout=args.timeout,
             unit=args.unit,
             api_url=args.api_url,
+            receiver_contract=receiver_contract,
         )
     elif args.command == "record-deploy":
         result = record_deploy(root)

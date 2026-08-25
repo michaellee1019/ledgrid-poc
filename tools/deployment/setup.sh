@@ -108,7 +108,7 @@ sudo usermod -a -G dialout "$USER"
 echo "[SUCCESS] Added user to dialout group; re-login may be required"
 EOF
 
-EXPECTED_ESP32_DEVICES="${EXPECTED_ESP32_DEVICES:-4}"
+EXPECTED_ESP32_DEVICES="${EXPECTED_ESP32_DEVICES:-5}"
 log_info "Detecting connected ESP32 devices (expecting ${EXPECTED_ESP32_DEVICES})..."
 if ! ssh $SSH_OPTS "$PI_HOST" "bash -s" <<'EOF'
 set -euo pipefail
@@ -147,7 +147,7 @@ for entry in data:
         ports.append(path)
 
 ports = sorted(ports)
-expected = int(os.environ.get("EXPECTED_ESP32_DEVICES", "4") or "4")
+expected = int(os.environ.get("EXPECTED_ESP32_DEVICES", "5") or "5")
 print(f"[INFO] Detected {len(ports)} USB serial device(s): {ports}")
 if len(ports) < expected:
     print(f"[ERROR] Expected {expected} ESP32 device(s) for flashing")

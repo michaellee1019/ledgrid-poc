@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Characterize the deterministic 32x138 Clock baseline for Phase 1.
+"""Characterize the deterministic installed-wall Clock baseline for Phase 1.
 
 This benchmark exercises the existing full-scene Clock at the manager's 200 Hz
 call cadence.  It fixes wall time while advancing it with scenario time, so
@@ -291,8 +291,12 @@ def evaluate_acceptance(report: dict[str, Any]) -> list[str]:
 
     failures: list[str] = []
     geometry = report["geometry"]
-    if (geometry["strip_count"], geometry["leds_per_strip"]) != (32, 138):
-        failures.append("baseline geometry must be the installed 32 x 138 layout")
+    installed_geometry = (DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP)
+    if (geometry["strip_count"], geometry["leds_per_strip"]) != installed_geometry:
+        failures.append(
+            "baseline geometry must be the installed "
+            f"{installed_geometry[0]} x {installed_geometry[1]} layout"
+        )
     scenarios = {item["scenario_id"]: item for item in report["scenarios"]}
     for scenario_id in ("normal", "animated"):
         item = scenarios[scenario_id]
@@ -463,7 +467,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Full-frame payload facts",
         "",
-        f"One complete 32 x 138 RGB frame is **{facts['rgb_bytes']:,} bytes**. At a",
+        f"One complete {geometry['strip_count']} x {geometry['leds_per_strip']} "
+        f"RGB frame is **{facts['rgb_bytes']:,} bytes**. At a",
         f"dense {facts['manager_fps']} Hz that is **{facts['rgb_bytes_per_second_at_manager_fps']:,} bytes/s**",
         f"({facts['rgb_bits_per_second_at_manager_fps']:,} bits/s) before",
         f"{facts['excludes']}.",
@@ -480,7 +485,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Preview behavior",
         "",
-        f"The manifest has no custom Clock preview profile, so it inherits captures at",
+        "The manifest has no custom Clock preview profile, so it inherits captures at",
         f"`{preview['capture_seconds']}` and simulates intermediate steps at",
         f"{preview['simulation_fps']} FPS. Preview wall time is fixed at",
         f"`{preview['fixed_wall_clock']}`. Output is {preview['format']};",
@@ -506,7 +511,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         "  over the deterministic ten-second window; manager calls must not multiply",
         "  semantic/source ticks.",
         "- Every cached frame must remain byte-identical, every changed tick must change",
-        "  at least one pixel, and frames must remain contiguous `uint8` 32 x 138 RGB.",
+        "  at least one pixel, and frames must remain contiguous `uint8` "
+        f"{geometry['strip_count']} x {geometry['leds_per_strip']} RGB.",
         "- A normal Clock full-scene diff must change less than 10 percent of wall pixels.",
         "  This is a useful proxy for choosing the Clock as a sparse-overlay candidate,",
         "  while explicitly retaining that the current full scene transports the complete",

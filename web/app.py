@@ -27,6 +27,7 @@ from animation.core.installation_profile_topology import (
     InstallationProfileTopology,
 )
 from animation.core.manager import AnimationManager, PreviewLEDController
+from animation.core.native_background_library import NativeBackgroundLibrary
 from animation.core.plant_awareness import PlantModifierState
 from animation.core.preview_assets import load_catalog, merge_catalogs
 from drivers.frame_codec import (
@@ -431,6 +432,46 @@ class AnimationWebInterface:
                 'command_id': command.get('command_id') if isinstance(command, dict) else None,
             })
 
+        @self.app.route('/api/v1/receiver-native/recover', methods=['POST'])
+        def api_recover_receiver_native():
+            """Explicitly replace native playback with its recorded fallback."""
+            command = self.control_channel.send_command('recover_receiver_native')
+            return jsonify({
+                'success': True,
+                'operation': 'recover_to_known_python_fallback',
+                'command_id': self._command_id(command),
+            }), 202
+
+        @self.app.route(
+            '/api/v1/native-backgrounds/<bundle_digest>/<operation>',
+            methods=['POST'],
+        )
+        def api_native_background_operation(bundle_digest: str, operation: str):
+            if re.fullmatch(r'[0-9a-f]{64}', bundle_digest) is None:
+                return jsonify({'error': 'bundle digest must be lowercase SHA-256'}), 400
+            actions = {
+                'probe': 'probe_native_background',
+                'install': 'install_native_background',
+                'clear-quarantine': 'clear_native_background_quarantine',
+            }
+            action = actions.get(operation)
+            if action is None:
+                return jsonify({
+                    'error': (
+                        'native operation must be probe, install, or '
+                        'clear-quarantine'
+                    ),
+                }), 404
+            command = self.control_channel.send_command(
+                action, bundle_digest=bundle_digest
+            )
+            return jsonify({
+                'success': True,
+                'operation': operation,
+                'bundle_digest': bundle_digest,
+                'command_id': self._command_id(command),
+            }), 202
+
         @self.app.route('/api/v1/scene/components/<target>', methods=['PATCH'])
         def api_update_scene_component(target: str):
             try:
@@ -464,11 +505,29 @@ class AnimationWebInterface:
                 provider_policy=self._scene_provider_policy(),
             )
             if scene['background']['provider'] == 'receiver_native':
+                managed = scene['background']['plugin_id'] != 'compiled_rainbow'
+                selected = dict(scene['background'].get('resolved_parameters') or {})
+                selected.update(scene['background'].get('parameter_overrides') or {})
+                descriptor = next((
+                    item for item in self._component_catalog()
+                    if item.get('provider') == 'receiver_native'
+                    and item.get('plugin_id') == scene['background']['plugin_id']
+                ), {})
                 preview.update({
                     'preview': True,
                     'preview_label': (
+                        'Signed build-time bundle preview (authored defaults) — not receiver framebuffer readback'
+                        if managed else
                         'Host simulation preview — not receiver framebuffer readback'
                     ),
+                    'preview_kind': (
+                        'build_time_bundle' if managed else 'host_simulation'
+                    ),
+                    'parameter_exact': (
+                        selected == dict(descriptor.get('defaults') or {})
+                        if managed else True
+                    ),
+                    'vibe_exact': not managed,
                     'background_provider': 'receiver_native',
                     'live_state_mutated': False,
                     'framebuffer_readback': False,
@@ -2854,6 +2913,9 @@ def create_app(control_channel: FileControlChannel = None,
             preview_project_root / 'installation_profile_library'
         ),
         'installation_profile_topology': installation_profile_topology,
+        'native_background_library': NativeBackgroundLibrary(
+            preview_project_root / 'receiver_library/native_backgrounds'
+        ),
         'auto_start': False,
     }
     if feature_flags is not None:

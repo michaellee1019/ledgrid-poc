@@ -46,7 +46,8 @@ ledgrid::InstallationProfileViewV1 installed_view(std::size_t logical_id) {
       ledgrid::installation_profile_fixture::kInstalledReceivers[logical_id];
   ledgrid::InstallationProfileViewV1 view{};
   const ledgrid::InstallationProfileReceiverExpectationV1 expectation{
-      source.strip_origin, source.reversed_strip_order};
+      source.strip_origin, source.reversed_strip_order,
+      source.global_strip_count, source.strip_count, source.leds_per_strip};
   TEST_ASSERT_TRUE(ledgrid::decode_installation_profile_receiver_v1(
       source.bytes, source.size, expectation, &view));
   return view;
@@ -245,27 +246,35 @@ void test_generated_cross_language_rgb_vectors_match_exactly() {
 }
 
 void test_generated_installed_topology_digests_match_and_stitch_without_seams() {
+  constexpr std::size_t global_strips =
+      ledgrid::installation_profile_fixture::kInstalledReceivers[0]
+          .global_strip_count;
+  constexpr std::size_t leds_per_strip =
+      ledgrid::installation_profile_fixture::kInstalledReceivers[0]
+          .leds_per_strip;
   constexpr std::size_t global_pixels =
-      ledgrid::kInstallationProfileGlobalStripsV1 *
-      ledgrid::kInstallationProfileLedsPerStripV1;
+      global_strips * leds_per_strip;
   std::array<std::uint8_t, global_pixels * 3> stitched{};
-  std::array<std::uint8_t, ledgrid::kInstallationProfileGlobalStripsV1> seen{};
+  std::array<std::uint8_t, global_strips> seen{};
 
   for (const auto& vector :
        ledgrid::golden_receiver_optics_v1::kInstalledTopologyVectors) {
     stitched.fill(0);
     seen.fill(0);
-    for (std::size_t logical_id = 0; logical_id < 4; ++logical_id) {
+    for (std::size_t logical_id = 0;
+         logical_id < std::size(
+             ledgrid::installation_profile_fixture::kInstalledReceivers);
+         ++logical_id) {
       const auto view = installed_view(logical_id);
-      std::array<std::uint8_t, kRgbBytes> rgb{};
+      std::vector<std::uint8_t> rgb(
+          static_cast<std::size_t>(view.pixel_count) * 3U, 0);
       for (std::uint16_t local_strip = 0; local_strip < view.strip_count;
            ++local_strip) {
         const std::uint16_t global_strip = static_cast<std::uint16_t>(
             view.strip_origin +
             (view.reversed_strip_order ? view.strip_count - 1U - local_strip
                                        : local_strip));
-        TEST_ASSERT_LESS_THAN(ledgrid::kInstallationProfileGlobalStripsV1,
-                              global_strip);
+        TEST_ASSERT_LESS_THAN(global_strips, global_strip);
         ++seen[global_strip];
         for (std::uint16_t led = 0; led < view.leds_per_strip; ++led) {
           const std::size_t local_pixel =
@@ -378,13 +387,16 @@ void test_canary_palette_and_class_helper_are_mechanically_distinct() {
 
 void test_canary_covers_every_semantic_class_in_all_installed_views() {
   std::array<bool, ledgrid::kInstallationGeometryCanaryClassCountV1> seen{};
-  for (std::size_t logical_id = 0; logical_id < 4; ++logical_id) {
+  for (std::size_t logical_id = 0;
+       logical_id < std::size(
+           ledgrid::installation_profile_fixture::kInstalledReceivers);
+       ++logical_id) {
     const auto view = installed_view(logical_id);
-    std::array<std::uint8_t, kRgbBytes> rgb{};
-    rgb.fill(0xa5);
+    std::vector<std::uint8_t> rgb(
+        static_cast<std::size_t>(view.pixel_count) * 3U, 0xa5);
     TEST_ASSERT_TRUE(ledgrid::render_installation_geometry_canary(
         view, rgb.data(), rgb.size()));
-    for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
+    for (std::size_t pixel = 0; pixel < view.pixel_count; ++pixel) {
       const auto semantic_class = ledgrid::installation_geometry_canary_class_v1(
           view.category[pixel], view.clearance[pixel],
           view.obstacle_edge[pixel], view.globe_region[pixel]);
@@ -412,7 +424,9 @@ void test_canary_is_read_only_atomic_and_rejects_output_aliases() {
   const auto encoded_before = encoded;
   ledgrid::InstallationProfileViewV1 view{};
   const ledgrid::InstallationProfileReceiverExpectationV1 expectation{
-      fixture.strip_origin, fixture.reversed_strip_order};
+      fixture.strip_origin, fixture.reversed_strip_order,
+      fixture.global_strip_count, fixture.strip_count,
+      fixture.leds_per_strip};
   TEST_ASSERT_TRUE(ledgrid::decode_installation_profile_receiver_v1(
       encoded.data(), encoded.size(), expectation, &view));
   std::array<std::uint8_t, kRgbBytes> rgb{};
@@ -440,10 +454,16 @@ void test_canary_is_read_only_atomic_and_rejects_output_aliases() {
 }
 
 void test_installed_orientation_mapping_stitches_each_global_strip_once() {
-  std::array<std::uint8_t, 32> owner{};
-  std::array<std::uint8_t, 32> local_index{};
+  constexpr std::size_t global_strips =
+      ledgrid::installation_profile_fixture::kInstalledReceivers[0]
+          .global_strip_count;
+  std::array<std::uint8_t, global_strips> owner{};
+  std::array<std::uint8_t, global_strips> local_index{};
   owner.fill(0xff);
-  for (std::size_t logical_id = 0; logical_id < 4; ++logical_id) {
+  for (std::size_t logical_id = 0;
+       logical_id < std::size(
+           ledgrid::installation_profile_fixture::kInstalledReceivers);
+       ++logical_id) {
     const auto view = installed_view(logical_id);
     for (std::uint16_t local_strip = 0; local_strip < view.strip_count;
          ++local_strip) {
@@ -451,13 +471,13 @@ void test_installed_orientation_mapping_stitches_each_global_strip_once() {
           view.strip_origin +
           (view.reversed_strip_order ? view.strip_count - 1U - local_strip
                                      : local_strip));
-      TEST_ASSERT_LESS_THAN(32, global_strip);
+      TEST_ASSERT_LESS_THAN(global_strips, global_strip);
       TEST_ASSERT_EQUAL_UINT8(0xff, owner[global_strip]);
       owner[global_strip] = static_cast<std::uint8_t>(logical_id);
       local_index[global_strip] = static_cast<std::uint8_t>(local_strip);
     }
   }
-  for (std::size_t strip = 0; strip < 32; ++strip) {
+  for (std::size_t strip = 0; strip < global_strips; ++strip) {
     TEST_ASSERT_NOT_EQUAL(0xff, owner[strip]);
   }
 
@@ -469,11 +489,13 @@ void test_installed_orientation_mapping_stitches_each_global_strip_once() {
   TEST_ASSERT_EQUAL_UINT8(3, owner[16]);
   TEST_ASSERT_EQUAL_UINT8(3, owner[23]);
   TEST_ASSERT_EQUAL_UINT8(2, owner[24]);
+  TEST_ASSERT_EQUAL_UINT8(4, owner[32]);
   TEST_ASSERT_EQUAL_UINT8(7, local_index[7]);
   TEST_ASSERT_EQUAL_UINT8(0, local_index[8]);
   TEST_ASSERT_EQUAL_UINT8(7, local_index[16]);
   TEST_ASSERT_EQUAL_UINT8(0, local_index[23]);
   TEST_ASSERT_EQUAL_UINT8(7, local_index[24]);
+  TEST_ASSERT_EQUAL_UINT8(0, local_index[32]);
 }
 
 struct TimingSummary {

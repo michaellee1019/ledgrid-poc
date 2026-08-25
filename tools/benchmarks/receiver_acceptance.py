@@ -34,14 +34,21 @@ CAPABILITY_PRESENTATION_CONTEXT_V1 = 1 << 1
 CAPABILITY_STATUS_V3 = 1 << 2
 CAPABILITY_EXPLICIT_BASE_OWNERSHIP = 1 << 3
 DEGRADED_SPI1_WRITE_ONLY_DEVICES = frozenset((2, 3))
+INSTALLED_RECEIVER_STRIP_COUNTS = (8, 8, 8, 8, 1)
+INSTALLED_RECEIVER_COUNT = len(INSTALLED_RECEIVER_STRIP_COUNTS)
 
-# Installed full-frame timing facts. Each receiver owns eight 138-pixel lanes,
-# and one SET_ALL transaction carries one command byte, RGB8, and a two-byte CRC.
-INSTALLED_STRIPS_PER_RECEIVER = 8
+# Installed full-frame timing facts. Four receivers own eight 138-pixel lanes
+# and the tail receiver owns one. Every SET_ALL transaction carries its own
+# command byte, RGB8 body, and two-byte CRC.
+INSTALLED_STRIPS_PER_RECEIVER = max(INSTALLED_RECEIVER_STRIP_COUNTS)
 INSTALLED_LEDS_PER_STRIP = 138
 INSTALLED_SPI_SPEED_HZ = 20_000_000
 INSTALLED_FULL_FRAME_BYTES = (
     1 + INSTALLED_STRIPS_PER_RECEIVER * INSTALLED_LEDS_PER_STRIP * 3 + 2
+)
+INSTALLED_RECEIVER_FULL_FRAME_BYTES = tuple(
+    1 + width * INSTALLED_LEDS_PER_STRIP * 3 + 2
+    for width in INSTALLED_RECEIVER_STRIP_COUNTS
 )
 INSTALLED_FULL_FRAME_SPI_US = (
     INSTALLED_FULL_FRAME_BYTES * 8 * 1_000_000 // INSTALLED_SPI_SPEED_HZ
@@ -56,6 +63,9 @@ def installed_streamed_timing_facts():
 
     return {
         "strips_per_receiver": INSTALLED_STRIPS_PER_RECEIVER,
+        "receiver_strip_counts": list(INSTALLED_RECEIVER_STRIP_COUNTS),
+        "receiver_full_frame_bytes": list(INSTALLED_RECEIVER_FULL_FRAME_BYTES),
+        "full_wall_frame_bytes": sum(INSTALLED_RECEIVER_FULL_FRAME_BYTES),
         "leds_per_strip": INSTALLED_LEDS_PER_STRIP,
         "full_frame_bytes": INSTALLED_FULL_FRAME_BYTES,
         "spi_speed_hz": INSTALLED_SPI_SPEED_HZ,
@@ -108,7 +118,7 @@ def evaluate_phase3a_status(
     *,
     refresh=None,
     expected_refresh_id=None,
-    receiver_count=4,
+    receiver_count=INSTALLED_RECEIVER_COUNT,
     local_canary_device=None,
     allow_degraded_spi1_return_path=False,
 ):
@@ -446,7 +456,7 @@ def main():
         action="store_true",
         help=(
             "temporary installed-wall policy: permit only exact no-return status "
-            "on logical receivers 2 and 3 while requiring full telemetry from 0 and 1"
+            "on logical receivers 2 and 3 while requiring full telemetry from 0, 1, and 4"
         ),
     )
     args = parser.parse_args()
@@ -465,10 +475,10 @@ def main():
         parser.error("--min-displayed-fps cannot exceed --target-fps")
     if args.allow_degraded_spi1_return_path and not args.phase3a_status_only:
         requested_devices = set(args.devices or ())
-        if requested_devices != {0, 1, 2, 3}:
+        if requested_devices != set(range(INSTALLED_RECEIVER_COUNT)):
             parser.error(
                 "--allow-degraded-spi1-return-path requires exactly "
-                "--device 0 --device 1 --device 2 --device 3"
+                "--device 0 --device 1 --device 2 --device 3 --device 4"
             )
 
     base_url = args.base_url.rstrip("/")

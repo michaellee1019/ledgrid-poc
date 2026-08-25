@@ -8,6 +8,7 @@ the web/preview UI as separate Python processes that communicate via files.
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -17,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from animation.core.manager import AnimationManager
+from animation.core.native_background_library import NativeBackgroundLibrary
 from animation.core.feature_flags import AnimationPipelineFeatureFlags
 from animation.core.installation_profile_library import InstallationProfileLibrary
 from animation.core.installation_profile_runtime import (
@@ -41,14 +43,32 @@ from tools.deployment.preserve_deploy_settings import (
     load_saved_state,
     receiver_hybrid_canary_enabled,
     receiver_hybrid_provider_policy,
+    RECEIVER_NATIVE_MODULES_CANARY_ENV,
+    receiver_native_modules_canary_enabled,
     save_status,
 )
 try:
     from tools.deployment.receiver_hybrid_config import (
+        DEFAULT_PHYSICAL_LANE_ORDER,
+        DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS,
+        DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS,
+        DEFAULT_RECEIVER_STRIP_COUNTS,
+        DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
+        DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER,
         OFF_RECEIVER_HYBRID_CONFIG,
         resolve_receiver_hybrid_config,
     )
 except ImportError:  # Compatibility with an older deployed helper lane.
+    DEFAULT_PHYSICAL_LANE_ORDER = (0, 1, 3, 2, 4)
+    DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER = (
+        False, False, True, True, False,
+    )
+    DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER = (
+        False, False, True, True, False,
+    )
+    DEFAULT_RECEIVER_STRIP_COUNTS = (8, 8, 8, 8, 1)
+    DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS = (0, 8, 24, 16, 32)
+    DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0x01)
     OFF_RECEIVER_HYBRID_CONFIG = {
         "enabled": False,
         "transport_policy": "off",
@@ -166,6 +186,134 @@ def device_count_for_strips(strip_count: int, strips_per_device: int = 8) -> int
     return max(1, (max(1, strip_count) + strips_per_device - 1) // strips_per_device)
 
 
+def _has_finalized_receiver_topology_authority(receiver_hybrid_config) -> bool:
+    """Recognize schema-v2 state and its pre-geometry explicit canary shape."""
+
+    if _receiver_hybrid_config_value(receiver_hybrid_config, "enabled", False) is True:
+        return True
+    expected_count = len(DEFAULT_RECEIVER_STRIP_COUNTS)
+    for field in (
+        "physical_lane_order",
+        "reverse_strips_by_logical_receiver",
+        "reverse_native_strips_by_logical_receiver",
+    ):
+        value = _receiver_hybrid_config_value(receiver_hybrid_config, field, None)
+        if isinstance(value, (list, tuple)) and len(value) == expected_count:
+            return True
+    return False
+
+
+def receiver_geometry_for_runtime(strip_count: int, receiver_hybrid_config):
+    """Resolve semantic widths, logical offsets, and physical lane masks.
+
+    The feature-off path retains derived legacy/HAT geometry. An explicit
+    finalized receiver rollout uses the complete target-owned topology; lane
+    masks are never inferred from logical width when that authority exists.
+    """
+    strips_per_device = 8
+    num_devices = device_count_for_strips(strip_count, strips_per_device)
+    widths = tuple(
+        min(strips_per_device, strip_count - index * strips_per_device)
+        for index in range(num_devices)
+    )
+    offsets = tuple(index * strips_per_device for index in range(num_devices))
+    masks = tuple((1 << width) - 1 for width in widths)
+    configured_widths = tuple(_receiver_hybrid_config_value(
+        receiver_hybrid_config, "receiver_strip_counts", ()
+    ))
+    configured_offsets = tuple(_receiver_hybrid_config_value(
+        receiver_hybrid_config, "receiver_global_strip_offsets", ()
+    ))
+    configured_masks = tuple(_receiver_hybrid_config_value(
+        receiver_hybrid_config, "physical_output_lane_masks", ()
+    ))
+    configured_values_valid = (
+        len(configured_widths)
+        == len(configured_offsets)
+        == len(configured_masks)
+        == num_devices
+        and all(type(width) is int and 1 <= width <= 8 for width in configured_widths)
+        and all(type(offset) is int and offset >= 0 for offset in configured_offsets)
+        and all(
+            type(mask) is int
+            and 1 <= mask <= 0xFF
+            and mask.bit_count() >= width
+            for mask, width in zip(configured_masks, configured_widths)
+        )
+        and sum(configured_widths) == strip_count
+    )
+    configured_ranges = set()
+    if configured_values_valid:
+        configured_ranges = {
+            strip
+            for offset, width in zip(configured_offsets, configured_widths)
+            for strip in range(offset, offset + width)
+        }
+    exact_configured_topology = (
+        configured_values_valid
+        and configured_ranges == set(range(strip_count))
+    )
+    if exact_configured_topology:
+        return (
+            num_devices,
+            configured_widths,
+            configured_offsets,
+            configured_masks,
+        )
+    finalized_defaults = (
+        len(DEFAULT_RECEIVER_STRIP_COUNTS),
+        DEFAULT_RECEIVER_STRIP_COUNTS,
+        DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS,
+        DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS,
+    )
+    if (
+        strip_count == sum(DEFAULT_RECEIVER_STRIP_COUNTS)
+        and num_devices == len(DEFAULT_RECEIVER_STRIP_COUNTS)
+        and _has_finalized_receiver_topology_authority(receiver_hybrid_config)
+    ):
+        # Compatibility for the explicit pre-schema-v2 canary shape, which
+        # carried all independent wiring domains but not the geometry fields.
+        return finalized_defaults
+    return num_devices, widths, offsets, masks
+
+
+def receiver_wiring_for_runtime(
+    geometry, receiver_hybrid_config, installation_profile_topology
+):
+    """Use target-owned wiring only when its complete geometry was selected."""
+
+    _count, widths, offsets, masks = geometry
+    configured_geometry_selected = (
+        widths
+        == tuple(_receiver_hybrid_config_value(
+            receiver_hybrid_config, "receiver_strip_counts", ()
+        ))
+        and offsets
+        == tuple(_receiver_hybrid_config_value(
+            receiver_hybrid_config, "receiver_global_strip_offsets", ()
+        ))
+        and masks
+        == tuple(_receiver_hybrid_config_value(
+            receiver_hybrid_config, "physical_output_lane_masks", ()
+        ))
+    )
+    finalized_authority_selected = (
+        geometry
+        == (
+            len(DEFAULT_RECEIVER_STRIP_COUNTS),
+            DEFAULT_RECEIVER_STRIP_COUNTS,
+            DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS,
+            DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS,
+        )
+        and _has_finalized_receiver_topology_authority(receiver_hybrid_config)
+    )
+    return (
+        installation_profile_topology
+        if configured_geometry_selected or finalized_authority_selected
+        else IDENTITY_INSTALLATION_PROFILE_TOPOLOGY
+    )
+
+
 def controller_status_payload(
     manager: AnimationManager,
     *,
@@ -188,14 +336,22 @@ def controller_status_payload(
     return payload
 
 
-def receiver_hybrid_feature_flags(enabled: bool) -> AnimationPipelineFeatureFlags:
-    """Map the single canary switch to the two required rollout gates."""
+def receiver_hybrid_feature_flags(
+    enabled: bool, *, receiver_native_modules: bool = False
+) -> AnimationPipelineFeatureFlags:
+    """Map local and managed-native canaries to independent rollout gates."""
 
     if type(enabled) is not bool:
         raise TypeError("receiver hybrid canary state must be boolean")
+    if type(receiver_native_modules) is not bool:
+        raise TypeError("receiver native modules canary state must be boolean")
+    if receiver_native_modules and not enabled:
+        raise ValueError("receiver native modules require receiver hybrid mode")
     return AnimationPipelineFeatureFlags(
         receiver_local_background=enabled,
         receiver_sparse_overlay=enabled,
+        receiver_geometry_profile=enabled,
+        receiver_native_modules=receiver_native_modules,
     )
 
 
@@ -203,6 +359,17 @@ def _receiver_hybrid_config_value(config, name, default=None):
     if isinstance(config, dict):
         return config.get(name, default)
     return getattr(config, name, default)
+
+
+def receiver_native_modules_for_runtime(config) -> bool:
+    """Use durable schema-v2 state unless an explicit environment override exists."""
+
+    durable = bool(_receiver_hybrid_config_value(
+        config, "native_modules_enabled", False
+    ))
+    if RECEIVER_NATIVE_MODULES_CANARY_ENV in os.environ:
+        return receiver_native_modules_canary_enabled()
+    return durable
 
 
 def resolve_receiver_hybrid_runtime_config(
@@ -225,6 +392,17 @@ def resolve_receiver_hybrid_runtime_config(
         "enabled": True,
         "transport_policy": "strict_all_readable_v1",
         "firmware_environment": None,
+        "native_modules_enabled": False,
+        "physical_lane_order": DEFAULT_PHYSICAL_LANE_ORDER,
+        "reverse_strips_by_logical_receiver": (
+            DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+        ),
+        "reverse_native_strips_by_logical_receiver": (
+            DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER
+        ),
+        "receiver_strip_counts": DEFAULT_RECEIVER_STRIP_COUNTS,
+        "receiver_global_strip_offsets": DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS,
+        "physical_output_lane_masks": DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS,
     }
 
 
@@ -325,17 +503,19 @@ def select_receiver_hybrid_controller(controller, receiver_hybrid_config):
         receiver_hybrid_config, "transport_policy", "off"
     )
     physical_lane_order = _receiver_hybrid_config_value(
-        receiver_hybrid_config, "physical_lane_order", (0, 1, 2, 3)
+        receiver_hybrid_config,
+        "physical_lane_order",
+        DEFAULT_PHYSICAL_LANE_ORDER,
     )
     reverse_strips = _receiver_hybrid_config_value(
         receiver_hybrid_config,
         "reverse_strips_by_logical_receiver",
-        (False, False, False, False),
+        DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER,
     )
     reverse_native_strips = _receiver_hybrid_config_value(
         receiver_hybrid_config,
         "reverse_native_strips_by_logical_receiver",
-        (False, False, False, False),
+        DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
     )
     if not enabled:
         return controller
@@ -363,13 +543,20 @@ def run_controller_mode(args):
     receiver_hybrid_canary = bool(_receiver_hybrid_config_value(
         receiver_hybrid_config, "enabled", False
     ))
-    feature_flags = receiver_hybrid_feature_flags(receiver_hybrid_canary)
+    receiver_native_modules = receiver_native_modules_for_runtime(
+        receiver_hybrid_config
+    )
+    feature_flags = receiver_hybrid_feature_flags(
+        receiver_hybrid_canary,
+        receiver_native_modules=receiver_native_modules,
+    )
     saved_state = None
     try:
         saved_state = load_saved_state(
             Path(args.saved_state_file),
             provider_policy=receiver_hybrid_provider_policy(
-                receiver_hybrid_canary
+                receiver_hybrid_canary,
+                receiver_native_modules=receiver_native_modules,
             ),
         )
         print(f"💾 Restart default: {saved_state['animation']}/before-deploy")
@@ -388,7 +575,22 @@ def run_controller_mode(args):
     if hasattr(LEDController, '__name__') and 'Multi' in LEDController.__name__:
         # Multi-device controller - calculate number of devices from strip count
         strips_per_device = 8  # The receiver firmware contract exposes 8 lanes.
-        num_devices = device_count_for_strips(args.strips, strips_per_device)
+        (
+            num_devices,
+            receiver_strip_counts,
+            receiver_global_strip_offsets,
+            receiver_lane_masks,
+        ) = receiver_geometry_for_runtime(args.strips, receiver_hybrid_config)
+        controller_topology = receiver_wiring_for_runtime(
+            (
+                num_devices,
+                receiver_strip_counts,
+                receiver_global_strip_offsets,
+                receiver_lane_masks,
+            ),
+            receiver_hybrid_config,
+            installation_profile_topology,
+        )
         controller = LEDController(
             num_devices=num_devices,
             bus=args.bus,
@@ -399,9 +601,22 @@ def run_controller_mode(args):
             debug=args.controller_debug,
             parallel=True,
             receiver_geometry_profile=feature_flags.receiver_geometry_profile,
+            receiver_native_modules=feature_flags.receiver_native_modules,
+            receiver_strip_counts=receiver_strip_counts,
+            receiver_global_strip_offsets=receiver_global_strip_offsets,
+            receiver_lane_masks=receiver_lane_masks,
+            device_map=list(
+                controller_topology.logical_to_transport_routes[
+                    :num_devices
+                ]
+            ),
+            reverse_host_strips_by_logical_receiver=(
+                controller_topology
+                .reverse_host_strips_by_logical_receiver[:num_devices]
+            ),
             reverse_native_strips_by_logical_receiver=(
-                installation_profile_topology
-                .reverse_native_strips_by_logical_receiver
+                controller_topology
+                .reverse_native_strips_by_logical_receiver[:num_devices]
             ),
         )
         controller = select_receiver_hybrid_controller(
@@ -448,6 +663,9 @@ def run_controller_mode(args):
         installation_profile_library=installation_profile_library,
         installation_profile_digest=installation_profile_digest,
         installation_profile_topology=installation_profile_topology,
+        native_background_library=NativeBackgroundLibrary(
+            project_root / "receiver_library/native_backgrounds"
+        ),
         auto_start=not bool(saved_state and saved_state.get('scene')),
     )
     manager.target_fps = int(saved_state.get('target_fps', args.target_fps)) if saved_state else args.target_fps
@@ -554,6 +772,28 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
     elif action == 'stop_scene':
         stopper = getattr(manager, "stop_scene", manager.stop_animation)
         stopper()
+    elif action == 'recover_receiver_native':
+        try:
+            return bool(manager.recover_receiver_native())
+        except (RuntimeError, TypeError, ValueError) as exc:
+            print(f"⚠️ Receiver-native recovery rejected: {exc}")
+            return False
+    elif action in {
+        'probe_native_background',
+        'install_native_background',
+        'clear_native_background_quarantine',
+    }:
+        bundle_digest = data.get('bundle_digest')
+        operation = getattr(manager, action, None)
+        if not callable(operation):
+            return False
+        try:
+            result = operation(bundle_digest)
+            print(f"📦 {action}: {result.get('state', 'complete')}")
+            return False
+        except (RuntimeError, TypeError, ValueError) as exc:
+            print(f"⚠️ {action} rejected: {exc}")
+            return False
     elif action == 'restore_display_state':
         try:
             return _restore_display_state(manager, data.get("state"))
@@ -707,11 +947,14 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
 def run_web_mode(args):
     """Web/preview process."""
     receiver_hybrid_config = _receiver_hybrid_runtime_settings(args)
-    feature_flags = receiver_hybrid_feature_flags(bool(
-        _receiver_hybrid_config_value(
+    feature_flags = receiver_hybrid_feature_flags(
+        bool(_receiver_hybrid_config_value(
             receiver_hybrid_config, "enabled", False
-        )
-    ))
+        )),
+        receiver_native_modules=receiver_native_modules_for_runtime(
+            receiver_hybrid_config
+        ),
+    )
     channel = FileControlChannel(control_path=args.control_file, status_path=args.status_file)
     web_interface = create_app(
         control_channel=channel,

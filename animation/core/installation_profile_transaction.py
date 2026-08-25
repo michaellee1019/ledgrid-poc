@@ -5,7 +5,7 @@ The engine operates on the structural :class:`InstallationProfileWall` and
 the same preflight/stage/verify/commit/compensate orchestration as the fake.
 This module itself deliberately performs no transport, filesystem, SPI, or
 firmware work.  One candidate binds a canonical/global profile content ID to
-four receiver-specific payload content IDs, while the included fake models a
+five receiver-specific payload content IDs, while the included fake models a
 bounded disposable cache and its active, staged, and rollback pins.
 """
 
@@ -19,10 +19,13 @@ from typing import Final, Protocol
 
 from animation.core.installation_profile import encode_installation_profile
 from animation.core.installation_profile_library import ResolvedInstallationProfile
-from animation.core.installation_profile_topology import slice_installation_profile
+from animation.core.installation_profile_topology import (
+    RECEIVER_COUNT as TOPOLOGY_RECEIVER_COUNT,
+    slice_installation_profile,
+)
 
 
-RECEIVER_COUNT: Final = 4
+RECEIVER_COUNT: Final = TOPOLOGY_RECEIVER_COUNT
 RECEIVER_IDS: Final = tuple(range(RECEIVER_COUNT))
 
 
@@ -55,7 +58,9 @@ def _content_id(value: object, *, field: str) -> str:
 
 def _receiver_id(value: object) -> int:
     if type(value) is not int or value not in RECEIVER_IDS:
-        raise ValueError("receiver_id must be an integer from 0 through 3")
+        raise ValueError(
+            f"receiver_id must be an integer from 0 through {RECEIVER_COUNT - 1}"
+        )
     return value
 
 
@@ -87,11 +92,11 @@ class InstallationProfileCacheBinding:
 
 @dataclass(frozen=True, init=False)
 class InstallationProfileCandidate:
-    """One global profile identity and its four immutable receiver slices."""
+    """One global profile identity and its five immutable receiver slices."""
 
     profile_id: str
-    receiver_payloads: tuple[bytes, bytes, bytes, bytes]
-    receiver_payload_digests: tuple[str, str, str, str]
+    receiver_payloads: tuple[bytes, ...]
+    receiver_payload_digests: tuple[str, ...]
 
     def __init__(
         self, profile_id: str, receiver_payloads: Mapping[int, bytes]
@@ -106,7 +111,9 @@ class InstallationProfileCandidate:
             or set(keys) != set(RECEIVER_IDS)
         ):
             raise ValueError(
-                "receiver_payloads must contain each receiver ID 0,1,2,3 exactly once"
+                "receiver_payloads must contain each receiver ID "
+                + ",".join(str(item) for item in RECEIVER_IDS)
+                + " exactly once"
             )
         payloads = tuple(
             _immutable_payload(
@@ -134,10 +141,10 @@ class InstallationProfileCandidate:
 def candidate_from_resolved(
     resolved: ResolvedInstallationProfile,
 ) -> InstallationProfileCandidate:
-    """Build the exact four canonical receiver payloads from a managed resolve.
+    """Build the exact five canonical receiver payloads from a managed resolve.
 
     The helper is intentionally strict: the global encoded view must match its
-    managed content ID, receiver keys must be exactly ``0..3``, and every
+    managed content ID, receiver keys must be the exact roster, and every
     receiver view must equal a fresh slice of the global profile under the
     resolved topology.  This prevents an adapter from installing bytes whose
     logical receiver binding drifted from the topology used during resolution.
@@ -159,7 +166,9 @@ def candidate_from_resolved(
         or set(keys) != set(RECEIVER_IDS)
     ):
         raise ValueError(
-            "resolved receiver_profiles must contain receiver IDs 0,1,2,3 exactly once"
+            "resolved receiver_profiles must contain receiver IDs "
+            + ",".join(str(item) for item in RECEIVER_IDS)
+            + " exactly once"
         )
 
     expected_profiles = slice_installation_profile(
@@ -265,17 +274,12 @@ class InstallationProfileReceiverStatus:
 
 @dataclass(frozen=True)
 class InstallationProfileWallStatus:
-    """Immutable four-receiver health summary returned by a wall adapter."""
+    """Immutable exact-roster health summary returned by a wall adapter."""
 
     health: InstallationProfileWallHealth
     active_profile_id: str | None
     mixed_generation: bool
-    receiver_statuses: tuple[
-        InstallationProfileReceiverStatus,
-        InstallationProfileReceiverStatus,
-        InstallationProfileReceiverStatus,
-        InstallationProfileReceiverStatus,
-    ]
+    receiver_statuses: tuple[InstallationProfileReceiverStatus, ...]
 
     @property
     def healthy(self) -> bool:
@@ -329,7 +333,7 @@ class InstallationProfileReceiver(Protocol):
     Concrete adapters own cache/transport details. Plans returned by
     ``preflight_profile`` are opaque to the engine and are passed back only to
     the same receiver's ``stage_profile`` call. Adapters translate protocol and
-    state failures to ``InstallationProfileTransactionError`` and may propagate
+state failures to ``InstallationProfileTransactionError`` and may propagate
     transport/filesystem ``OSError`` subclasses; both trigger compensation.
     Programmer errors deliberately propagate.
     """
@@ -372,7 +376,7 @@ class InstallationProfileReceiver(Protocol):
 
 
 class InstallationProfileWall(Protocol):
-    """Structural four-receiver wall boundary required by the engine."""
+    """Structural exact-roster wall boundary required by the engine."""
 
     receivers: Sequence[InstallationProfileReceiver]
 
@@ -781,21 +785,25 @@ class FakeInstallationProfileReceiver:
         self._compensate(snapshot)
 
 
-def _four_values(value: int | Sequence[int], *, field: str) -> tuple[int, ...]:
+def _receiver_values(value: int | Sequence[int], *, field: str) -> tuple[int, ...]:
     if type(value) is int:
         return (value,) * RECEIVER_COUNT
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
-        raise TypeError(f"{field} must be an integer or four-integer sequence")
+        raise TypeError(
+            f"{field} must be an integer or {RECEIVER_COUNT}-integer sequence"
+        )
     normalized = tuple(value)
     if len(normalized) != RECEIVER_COUNT or any(
         type(item) is not int for item in normalized
     ):
-        raise ValueError(f"{field} must contain exactly four integers")
+        raise ValueError(
+            f"{field} must contain exactly {RECEIVER_COUNT} integers"
+        )
     return normalized
 
 
 class FakeInstallationProfileWall:
-    """Exactly four deterministic in-memory receiver profile caches."""
+    """Exact-roster deterministic in-memory receiver profile caches."""
 
     def __init__(
         self,
@@ -803,8 +811,8 @@ class FakeInstallationProfileWall:
         capacity_bytes: int | Sequence[int],
         reserve_bytes: int | Sequence[int] = 0,
     ) -> None:
-        capacities = _four_values(capacity_bytes, field="capacity_bytes")
-        reserves = _four_values(reserve_bytes, field="reserve_bytes")
+        capacities = _receiver_values(capacity_bytes, field="capacity_bytes")
+        reserves = _receiver_values(reserve_bytes, field="reserve_bytes")
         self.receivers = tuple(
             FakeInstallationProfileReceiver(
                 receiver_id,
@@ -818,7 +826,7 @@ class FakeInstallationProfileWall:
         return self.receivers[_receiver_id(receiver_id)]
 
     def seed_active(self, candidate: InstallationProfileCandidate) -> None:
-        """Seed one unanimous active generation on all four fake receivers."""
+        """Seed one unanimous active generation on all fake receivers."""
 
         if not isinstance(candidate, InstallationProfileCandidate):
             raise TypeError("candidate must be an InstallationProfileCandidate")
@@ -828,7 +836,7 @@ class FakeInstallationProfileWall:
             )
 
     def seed_rollback(self, candidate: InstallationProfileCandidate) -> None:
-        """Seed one unanimous rollback generation on all four fake receivers."""
+        """Seed one unanimous rollback generation on all fake receivers."""
 
         if not isinstance(candidate, InstallationProfileCandidate):
             raise TypeError("candidate must be an InstallationProfileCandidate")
@@ -886,7 +894,9 @@ class InstallationProfileTransaction:
             or len(receivers) != RECEIVER_COUNT
             or not callable(status)
         ):
-            raise TypeError("wall must implement the four-receiver profile wall interface")
+            raise TypeError(
+                f"wall must implement the {RECEIVER_COUNT}-receiver profile wall interface"
+            )
         required_methods = (
             "binding_is_valid",
             "transaction_snapshot",

@@ -96,6 +96,7 @@ def render_header(fixture: Mapping[str, Any]) -> str:
     dirty_ranges = fixture["dirty_range_vectors"]
     coordinates = fixture["coordinate_vectors"]
     boards = fixture["board_slices"]["boards"]
+    receiver_count = len(boards)
 
     blend_rows = _rows(
         f'{{"{vector["id"]}", {_bytes(vector["base_rgb"])}, '
@@ -133,7 +134,8 @@ def render_header(fixture: Mapping[str, Any]) -> str:
         for vector in coordinates
     )
     board_rows = _rows(
-        f"{{{board['board_index']}, {board['global_strip_offset']}, "
+        f"{{{board['board_index']}, {board['logical_receiver_id']}, "
+        f"{board['global_strip_offset']}, {board['local_strip_count']}, "
         f"{board['start_flat_index']}, {board['end_flat_index']}, "
         f"{board['pixel_count']}}}"
         for board in boards
@@ -167,7 +169,8 @@ def render_header(fixture: Mapping[str, Any]) -> str:
     )
     receiver_slice_rows = _rows(
         f'{{"{vector["id"]}", {vector["global_start"]}, {vector["global_end"]}, '
-        f"{len(vector['expected_slices'])}, {_slice_slots(vector['expected_slices'], 4)}}}"
+        f"{len(vector['expected_slices'])}, "
+        f"{_slice_slots(vector['expected_slices'], receiver_count)}}}"
         for vector in receiver_slices
     )
     counter_order_rows = _rows(
@@ -266,7 +269,9 @@ struct CoordinateVector {{
 
 struct BoardSliceVector {{
   std::uint8_t board_index;
+  std::uint8_t logical_receiver_id;
   std::uint16_t global_strip_offset;
+  std::uint8_t local_strip_count;
   std::uint32_t start_flat_index;
   std::uint32_t end_flat_index;
   std::uint32_t pixel_count;
@@ -308,7 +313,7 @@ struct ReceiverSliceVector {{
   std::uint32_t global_start;
   std::uint32_t global_end;
   std::size_t expected_count;
-  ReceiverSlice expected_slices[4];
+  ReceiverSlice expected_slices[{receiver_count}];
 }};
 
 struct CounterOrderVector {{

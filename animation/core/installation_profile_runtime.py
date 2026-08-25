@@ -16,7 +16,11 @@ from typing import Any
 
 import numpy as np
 
-from animation.core.installation_profile import FORMAT_VERSION
+from animation.core.installation_profile import (
+    FORMAT_VERSION,
+    GLOBAL_STRIP_COUNT,
+    LEDS_PER_STRIP,
+)
 from animation.core.installation_profile_library import (
     InstallationProfileLibrary,
     InstallationProfileLibraryError,
@@ -39,8 +43,9 @@ class InstallationProfileRuntimeError(RuntimeError):
 
 
 TopologyIdentity = tuple[
-    tuple[int, int, int, int],
-    tuple[bool, bool, bool, bool],
+    tuple[int, ...],
+    tuple[bool, ...],
+    tuple[int, ...],
 ]
 
 
@@ -50,6 +55,7 @@ def _topology_identity(topology: InstallationProfileTopology) -> TopologyIdentit
     return (
         topology.physical_lane_order,
         topology.reverse_native_strips_by_logical_receiver,
+        topology.strip_counts_by_logical_receiver,
     )
 
 
@@ -228,12 +234,13 @@ class InstallationProfileRuntimeView:
         if not isinstance(self.plant_masks, PlantMaskGeometry):
             raise TypeError("plant_masks must be a PlantMaskGeometry")
         if (self.global_width, self.height, self.pixel_count) != (
-            32,
-            138,
-            32 * 138,
+            GLOBAL_STRIP_COUNT,
+            LEDS_PER_STRIP,
+            GLOBAL_STRIP_COUNT * LEDS_PER_STRIP,
         ):
             raise InstallationProfileRuntimeError(
-                "runtime profile view must describe the global 32x138 wall"
+                "runtime profile view must describe the global "
+                f"{GLOBAL_STRIP_COUNT}x{LEDS_PER_STRIP} wall"
             )
         _validate_runtime_geometry(
             self.plant_masks, width=self.global_width, height=self.height
@@ -296,6 +303,9 @@ class InstallationProfileRuntimeView:
                 ),
                 "reverse_native_strips_by_logical_receiver": list(
                     topology.reverse_native_strips_by_logical_receiver
+                ),
+                "strip_counts_by_logical_receiver": list(
+                    topology.strip_counts_by_logical_receiver
                 ),
             },
         }

@@ -21,7 +21,14 @@ from drivers.spi_controller import (
     CAPABILITY_STATUS_V3,
     CAPABILITY_SPARSE_OVERLAY_V1,
     CAPABILITY_SPARSE_OVERLAY_BATCH_V1,
+    CAPABILITY_STATUS_V6,
+    CAPABILITY_NATIVE_MODULE_V2,
+    CAPABILITY_NATIVE_CACHE_V1,
+    CAPABILITY_NATIVE_TYPED_PARAMETERS_V1,
+    CAPABILITY_NATIVE_QUARANTINE_V1,
+    CAPABILITY_NATIVE_GUARDED_LOADER_V1,
     LEDController,
+    MAX_NATIVE_CHUNK_BYTES,
     MAX_RGBA_PIXELS_PER_BATCH_SPAN,
     OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
     OVERLAY_UPDATE_DELTA,
@@ -44,6 +51,16 @@ SPARSE_OVERLAY_REQUIRED_CAPABILITIES = (
     LOCAL_BACKGROUND_REQUIRED_CAPABILITIES
     | CAPABILITY_SPARSE_OVERLAY_V1
     | CAPABILITY_SPARSE_OVERLAY_BATCH_V1
+)
+NATIVE_BACKGROUND_REQUIRED_CAPABILITIES = (
+    CAPABILITY_STATUS_V6
+    | CAPABILITY_NATIVE_MODULE_V2
+    | CAPABILITY_NATIVE_CACHE_V1
+    | CAPABILITY_NATIVE_TYPED_PARAMETERS_V1
+    | CAPABILITY_NATIVE_QUARANTINE_V1
+    | CAPABILITY_NATIVE_GUARDED_LOADER_V1
+    | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
+    | CAPABILITY_PRESENTATION_CONTEXT_V1
 )
 
 
@@ -90,6 +107,49 @@ class MultiDeviceLEDController:
         """Lazily initialize orchestration state for legacy/test construction."""
         if not hasattr(self, "_transport_lock"):
             self._transport_lock = threading.RLock()
+        if not hasattr(self, "receiver_strip_counts"):
+            devices = tuple(getattr(self, "devices", ()))
+            if devices and all(
+                type(getattr(device, "strip_count", None)) is int
+                and getattr(device, "strip_count") > 0
+                for device in devices
+            ):
+                widths = tuple(device.strip_count for device in devices)
+            else:
+                widths = (getattr(self, "strips_per_device", 8),) * int(
+                    getattr(self, "num_devices", len(devices) or 1)
+                )
+            offsets = []
+            running = 0
+            for width in widths:
+                offsets.append(running)
+                running += width
+            self.receiver_strip_counts = widths
+            self.receiver_global_strip_offsets = tuple(offsets)
+            leds_per_strip = int(getattr(self, "leds_per_strip", 138))
+            self.receiver_pixel_counts = tuple(
+                width * leds_per_strip for width in widths
+            )
+            self.receiver_pixel_offsets = tuple(
+                offset * leds_per_strip for offset in offsets
+            )
+            if not hasattr(self, "strip_count"):
+                self.strip_count = running
+            if not hasattr(self, "total_leds"):
+                self.total_leds = running * leds_per_strip
+        if not hasattr(self, "reverse_native_strips_by_logical_receiver"):
+            self.reverse_native_strips_by_logical_receiver = (
+                False,
+            ) * len(self.receiver_strip_counts)
+        if not hasattr(self, "reverse_host_strips_by_logical_receiver"):
+            self.reverse_host_strips_by_logical_receiver = (
+                False,
+            ) * len(self.receiver_strip_counts)
+        if not hasattr(self, "receiver_lane_masks"):
+            self.receiver_lane_masks = tuple(
+                (1 << width) - 1 if width < 8 else 0xFF
+                for width in self.receiver_strip_counts
+            )
         if not hasattr(self, "_local_background_active"):
             self._local_background_active = False
             self._local_background_context_digest = None
@@ -116,6 +176,22 @@ class MultiDeviceLEDController:
             # Legacy/test instances predate the rollout gate and therefore
             # retain the product-safe, command-silent default.
             self._receiver_geometry_profile_enabled = False
+        if not hasattr(self, "_receiver_native_modules_enabled"):
+            self._receiver_native_modules_enabled = False
+            self._native_background_active = False
+            self._native_background_binding = None
+            self._native_background_descriptor = None
+            self._native_background_parameters = {}
+            self._native_background_candidate = None
+            self._native_background_context = None
+            self._native_background_profile_digest = None
+            self._native_background_parameter_set = None
+            self._native_background_status = {
+                "state": "idle",
+                "operation": "legacy_initialize",
+                "rollout_enabled": False,
+                "progress": 0.0,
+            }
         return self._transport_lock
     
     def __init__(self, 
@@ -129,9 +205,12 @@ class MultiDeviceLEDController:
                  parallel: bool = True,
                  device_map: Optional[List[DeviceMapEntry]] = None,
                  receiver_geometry_profile: bool = False,
-                 reverse_native_strips_by_logical_receiver: tuple[
-                     bool, bool, bool, bool
-                 ] = (False, False, False, False)):
+                 receiver_native_modules: bool = False,
+                 reverse_host_strips_by_logical_receiver: tuple[bool, ...] | None = None,
+                 reverse_native_strips_by_logical_receiver: tuple[bool, ...] | None = None,
+                 receiver_lane_masks: tuple[int, ...] | None = None,
+                 receiver_strip_counts: tuple[int, ...] | None = None,
+                 receiver_global_strip_offsets: tuple[int, ...] | None = None):
         """
         Initialize multi-device LED controller
         
@@ -148,35 +227,146 @@ class MultiDeviceLEDController:
             receiver_geometry_profile: Explicit host rollout gate for receiver
                 profile traffic. Defaults off, so ordinary deployments never
                 emit commands 0x40 through 0x47.
+            receiver_native_modules: Explicit host rollout gate for trusted
+                repository-native module traffic. Defaults off, so ordinary
+                streaming never emits commands 0x50 through 0x5c.
+            reverse_host_strips_by_logical_receiver: Host-streamed frame lane
+                direction by logical receiver. This affects only Pi-authored RGB
+                and overlay pixels; it never changes receiver-native coordinates.
             reverse_native_strips_by_logical_receiver: Native renderer lane
-                direction for logical receivers 0 through 3. This is separate
-                from host-frame strip reversal and defaults false everywhere.
+                direction by logical receiver. This is separate from host-frame
+                strip reversal and defaults false everywhere.
+            receiver_strip_counts: Exact local strip width by logical receiver.
+                Defaults to the legacy uniform ``strips_per_device`` layout.
+            receiver_global_strip_offsets: Exact global strip origin by logical
+                receiver. Defaults to contiguous origins in logical-ID order.
+            receiver_lane_masks: Exact physical output-lane mask by logical
+                receiver. Defaults to the lowest ``local_strip_count`` lanes;
+                the finalized one-strip tail therefore uses lane 0 only.
         """
         if type(receiver_geometry_profile) is not bool:
             raise TypeError("receiver_geometry_profile must be a boolean")
+        if type(receiver_native_modules) is not bool:
+            raise TypeError("receiver_native_modules must be a boolean")
+        if type(num_devices) is not int or not 1 <= num_devices <= 0xFF:
+            raise ValueError("num_devices must be an integer from 1 through 255")
+        if receiver_strip_counts is None:
+            receiver_strip_counts = (strips_per_device,) * num_devices
         if (
-            type(reverse_native_strips_by_logical_receiver) is not tuple
-            or len(reverse_native_strips_by_logical_receiver) != 4
-            or any(
-                type(reverse) is not bool
-                for reverse in reverse_native_strips_by_logical_receiver
-            )
+            type(receiver_strip_counts) is not tuple
+            or len(receiver_strip_counts) != num_devices
+            or any(type(width) is not int or not 1 <= width <= 8
+                   for width in receiver_strip_counts)
         ):
             raise TypeError(
-                "reverse_native_strips_by_logical_receiver must be a "
-                "4-entry tuple of booleans"
+                "receiver_strip_counts must be a tuple of one integer from 1 "
+                "through 8 per receiver"
+            )
+        if receiver_global_strip_offsets is None:
+            running_offset = 0
+            calculated_offsets = []
+            for width in receiver_strip_counts:
+                calculated_offsets.append(running_offset)
+                running_offset += width
+            receiver_global_strip_offsets = tuple(calculated_offsets)
+        if (
+            type(receiver_global_strip_offsets) is not tuple
+            or len(receiver_global_strip_offsets) != num_devices
+            or any(type(offset) is not int or not 0 <= offset <= 0xFFFF
+                   for offset in receiver_global_strip_offsets)
+        ):
+            raise TypeError(
+                "receiver_global_strip_offsets must be a tuple of one uint16 "
+                "origin per receiver"
+            )
+        occupied_strips = []
+        for receiver_id, (offset, width) in enumerate(zip(
+            receiver_global_strip_offsets, receiver_strip_counts
+        )):
+            occupied_strips.extend((strip, receiver_id)
+                                   for strip in range(offset, offset + width))
+        strip_ids = [strip for strip, _receiver_id in occupied_strips]
+        if len(set(strip_ids)) != len(strip_ids) or set(strip_ids) != set(
+            range(max(strip_ids) + 1)
+        ):
+            raise ValueError(
+                "receiver strip ranges must partition one contiguous global wall"
+            )
+        direction_fields = (
+            (
+                "reverse_host_strips_by_logical_receiver",
+                reverse_host_strips_by_logical_receiver,
+            ),
+            (
+                "reverse_native_strips_by_logical_receiver",
+                reverse_native_strips_by_logical_receiver,
+            ),
+        )
+        directions = {}
+        for field, value in direction_fields:
+            if value is None:
+                value = (False,) * num_devices
+            if type(value) is not tuple:
+                raise TypeError(
+                    f"{field} must be a tuple of one boolean per receiver"
+                )
+            if (
+                len(value) != num_devices
+                or any(type(reverse) is not bool for reverse in value)
+            ):
+                raise TypeError(
+                    f"{field} must be a tuple of {num_devices} booleans "
+                    "(one per receiver)"
+                )
+            directions[field] = value
+        if receiver_lane_masks is None:
+            receiver_lane_masks = tuple(
+                (1 << width) - 1 if width < 8 else 0xFF
+                for width in receiver_strip_counts
+            )
+        if (
+            type(receiver_lane_masks) is not tuple
+            or len(receiver_lane_masks) != num_devices
+            or any(type(mask) is not int or not 1 <= mask <= 0xFF
+                   for mask in receiver_lane_masks)
+        ):
+            raise TypeError(
+                "receiver_lane_masks must be a tuple of one nonzero byte per receiver"
+            )
+        if any(
+            mask.bit_count() < width
+            for mask, width in zip(receiver_lane_masks, receiver_strip_counts)
+        ):
+            raise ValueError(
+                "receiver_lane_masks cannot expose fewer physical lanes than "
+                "the receiver's logical strip width"
             )
         self.num_devices = num_devices
         self.strips_per_device = strips_per_device
+        self.receiver_strip_counts = receiver_strip_counts
+        self.receiver_global_strip_offsets = receiver_global_strip_offsets
+        self.receiver_lane_masks = receiver_lane_masks
         self.leds_per_strip = leds_per_strip
         self.debug = debug
         self.parallel = parallel
         self._executor = None
         
         # Calculate total dimensions
-        self.strip_count = num_devices * strips_per_device
+        self.strip_count = max(
+            offset + width for offset, width in zip(
+                self.receiver_global_strip_offsets, self.receiver_strip_counts
+            )
+        )
         self.total_leds = self.strip_count * leds_per_strip
+        # Retained for legacy callers on uniform layouts. Internal routing uses
+        # the exact per-receiver pixel counts below.
         self.leds_per_device = strips_per_device * leds_per_strip
+        self.receiver_pixel_counts = tuple(
+            width * leds_per_strip for width in self.receiver_strip_counts
+        )
+        self.receiver_pixel_offsets = tuple(
+            offset * leds_per_strip for offset in self.receiver_global_strip_offsets
+        )
         self._logical_frames_sent = 0
         self._transport_lock = threading.RLock()
         self._local_background_active = False
@@ -197,13 +387,31 @@ class MultiDeviceLEDController:
         self._sparse_overlay_snapshot_digest = None
         self._installation_profile_wall = None
         self._receiver_geometry_profile_enabled = receiver_geometry_profile
+        self._receiver_native_modules_enabled = receiver_native_modules
+        self.reverse_host_strips_by_logical_receiver = directions[
+            "reverse_host_strips_by_logical_receiver"
+        ]
         self.reverse_native_strips_by_logical_receiver = (
-            reverse_native_strips_by_logical_receiver
+            directions["reverse_native_strips_by_logical_receiver"]
         )
         self._installation_profile_status: Dict[str, Any] = {
             "state": "idle",
             "operation": "initialize",
             "rollout_enabled": receiver_geometry_profile,
+        }
+        self._native_background_active = False
+        self._native_background_binding = None
+        self._native_background_descriptor = None
+        self._native_background_parameters: Dict[str, Any] = {}
+        self._native_background_candidate = None
+        self._native_background_context = None
+        self._native_background_profile_digest = None
+        self._native_background_parameter_set = None
+        self._native_background_status: Dict[str, Any] = {
+            "state": "idle",
+            "operation": "initialize",
+            "rollout_enabled": receiver_native_modules,
+            "progress": 0.0,
         }
         self._monotonic_ns = time.monotonic_ns
         
@@ -221,7 +429,24 @@ class MultiDeviceLEDController:
             print(f"  Parallel mode: {parallel}")
         
         # Build device map (auto-detects SPI1 fallback if needed)
-        self.device_map = device_map or self._build_device_map(num_devices, bus)
+        if device_map is None:
+            self.device_map = self._build_device_map(num_devices, bus)
+        else:
+            if (
+                not isinstance(device_map, (list, tuple))
+                or len(device_map) != num_devices
+                or any(
+                    not isinstance(entry, (list, tuple))
+                    or len(entry) != 2
+                    or any(type(value) is not int or value < 0 for value in entry)
+                    for entry in device_map
+                )
+            ):
+                raise ValueError(
+                    "device_map must contain exactly one nonnegative "
+                    "(bus, chip_select) pair per receiver"
+                )
+            self.device_map = [tuple(entry) for entry in device_map]
         self._devices_by_bus = {}
         for device_id, (device_bus, _chip_select) in enumerate(self.device_map):
             self._devices_by_bus.setdefault(device_bus, []).append(device_id)
@@ -245,14 +470,17 @@ class MultiDeviceLEDController:
             device = LEDController(
                 bus=device_bus,
                 device=device_id,  # CE0, CE1, etc.
-                speed=speed,
+                speed=self._resolve_speed(device_bus, speed),
                 mode=self._resolve_mode(device_bus, mode),
-                strips=strips_per_device,
+                strips=self.receiver_strip_counts[device_index],
                 leds_per_strip=leds_per_strip,
                 debug=debug,
                 logical_device_id=device_index,
                 reverse_native_strip_order=(
                     self.reverse_native_strips_by_logical_receiver[device_index]
+                ),
+                global_strip_offset=(
+                    self.receiver_global_strip_offsets[device_index]
                 ),
             )
             self.devices.append(device)
@@ -273,6 +501,7 @@ class MultiDeviceLEDController:
                     device.query_receiver_status()
                 device.logical_device_id = index
                 device.configure()
+                device.set_lane_mask(self.receiver_lane_masks[index])
                 if int(device.get_stats().get("receiver_status_version", 0) or 0) >= 3:
                     status = None
                     for _ in range(2):
@@ -328,15 +557,17 @@ class MultiDeviceLEDController:
         """Return the stable real-receiver facade in logical receiver order."""
 
         from drivers.installation_profile_receiver import SpiInstallationProfileWall
+        from animation.core.installation_profile_transaction import RECEIVER_COUNT
 
         with self._controller_lock():
             if not self._receiver_geometry_profile_enabled:
                 raise RuntimeError(
                     "receiver_geometry_profile rollout gate is disabled"
                 )
-            if self.num_devices != 4 or len(self.devices) != 4:
+            if self.num_devices != RECEIVER_COUNT or len(self.devices) != RECEIVER_COUNT:
                 raise RuntimeError(
-                    "installation-profile transactions require exactly four receivers"
+                    "installation-profile transactions require exactly "
+                    f"{RECEIVER_COUNT} receivers"
                 )
             if self._installation_profile_wall is None:
                 self._installation_profile_wall = SpiInstallationProfileWall(
@@ -382,7 +613,1113 @@ class MultiDeviceLEDController:
                 "active_profile_id": result.wall_status.active_profile_id,
             }
             return result
+
+    def _managed_native_background(self, resolved):
+        from animation.core.native_background_operation import (
+            NativeReceiverTopology,
+            managed_native_background,
+        )
+
+        topology = tuple(
+            NativeReceiverTopology(
+                logical_receiver_id=receiver_id,
+                global_strip_offset=self.receiver_global_strip_offsets[receiver_id],
+                local_strips=self.receiver_strip_counts[receiver_id],
+                reverse_local_strip_order=(
+                    self.reverse_native_strips_by_logical_receiver[receiver_id]
+                ),
+            )
+            for receiver_id in range(self.num_devices)
+        )
+        candidate = managed_native_background(resolved, topology)
+        if (
+            candidate.global_strips != self.strip_count
+            or candidate.leds_per_strip != self.leds_per_strip
+        ):
+            raise RuntimeError(
+                "managed native background does not match controller geometry"
+            )
+        return candidate
+
+    def _require_native_enabled(self):
+        if not self._receiver_native_modules_enabled:
+            raise RuntimeError("receiver_native_modules rollout gate is disabled")
+
+    @staticmethod
+    def _native_status_binding(status, prefix):
+        from animation.core.native_background_operation import (
+            NativeBackgroundBinding,
+            NativeBackgroundOperationError,
+        )
+
+        bundle = status.get(f"receiver_native_{prefix}_bundle_digest")
+        payload = status.get(f"receiver_native_{prefix}_payload_digest")
+        if bundle is None and payload is None:
+            return None
+        if bundle is None or payload is None:
+            raise NativeBackgroundOperationError(
+                f"receiver reported incomplete {prefix} native binding"
+            )
+        return NativeBackgroundBinding(bundle, payload)
+
+    def _fresh_native_status(self, receiver_id, *, require_capabilities=True):
+        from animation.core.native_background_operation import (
+            NativeBackgroundOperationError,
+        )
+
+        if type(receiver_id) is not int or not 0 <= receiver_id < len(self.devices):
+            raise ValueError("receiver_id is outside the configured roster")
+        device = self.devices[receiver_id]
+        status = None
+        try:
+            # The first response can only discover status-v6. Two queued older
+            # snapshots plus one negotiated extension require four transfers
+            # for a causally fresh result.
+            for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 2):
+                status = device.query_receiver_status()
+        except Exception as exc:
+            raise NativeBackgroundOperationError(
+                f"receiver {receiver_id} native status refresh failed: {exc}"
+            ) from exc
+        if not isinstance(status, dict):
+            raise NativeBackgroundOperationError(
+                f"receiver {receiver_id} returned no native status"
+            )
+        capabilities = int(status.get("receiver_capabilities", 0) or 0)
+        if (
+            int(status.get("receiver_status_version", 0) or 0) < 6
+            or capabilities & CAPABILITY_STATUS_V6 != CAPABILITY_STATUS_V6
+        ):
+            raise NativeBackgroundOperationError(
+                f"receiver {receiver_id} returned no coherent native status-v6"
+            )
+        if require_capabilities and (
+            capabilities & NATIVE_BACKGROUND_REQUIRED_CAPABILITIES
+            != NATIVE_BACKGROUND_REQUIRED_CAPABILITIES
+        ):
+            raise NativeBackgroundOperationError(
+                f"receiver {receiver_id} lacks required native-module capabilities"
+            )
+        if status.get("receiver_logical_device") != receiver_id:
+            raise NativeBackgroundOperationError(
+                f"receiver {receiver_id} reported logical identity "
+                f"{status.get('receiver_logical_device')!r}"
+            )
+        flags = status.get("receiver_native_flags")
+        if type(flags) is not int or not 0 <= flags <= 0xFF:
+            raise NativeBackgroundOperationError(
+                f"receiver {receiver_id} reported invalid native flags"
+            )
+        if require_capabilities and (
+            not status.get("receiver_native_ready")
+            or not status.get("receiver_native_cache_integrity_ok")
+        ):
+            raise NativeBackgroundOperationError(
+                f"receiver {receiver_id} native cache/loader is not ready"
+            )
+        for prefix, bit in (("active", 0x08), ("staged", 0x10), ("rollback", 0x20)):
+            binding = self._native_status_binding(status, prefix)
+            if bool(flags & bit) != (binding is not None):
+                raise NativeBackgroundOperationError(
+                    f"receiver {receiver_id} reported inconsistent {prefix} binding"
+                )
+        return status
+
+    def _fresh_native_statuses(self, *, require_capabilities=True):
+        return tuple(
+            self._fresh_native_status(
+                receiver_id, require_capabilities=require_capabilities
+            )
+            for receiver_id in range(len(self.devices))
+        )
+
+    @staticmethod
+    def _require_native_ack(status, operation, receiver_id):
+        if not isinstance(status, dict):
+            raise RuntimeError(f"receiver {receiver_id} returned no {operation} status")
+        if int(status.get("receiver_status_version", 0) or 0) < 6:
+            raise RuntimeError(
+                f"receiver {receiver_id} returned pre-v6 {operation} status"
+            )
+        result = int(status.get("receiver_native_result", 0) or 0)
+        if result != 1:
+            raise RuntimeError(
+                f"receiver {receiver_id} rejected {operation}: "
+                f"{status.get('receiver_native_result_name', result)}"
+            )
+        return status
+
+    @staticmethod
+    def _native_snapshots(statuses):
+        return tuple({
+            "active": MultiDeviceLEDController._native_status_binding(status, "active"),
+            "staged": MultiDeviceLEDController._native_status_binding(status, "staged"),
+            "rollback": MultiDeviceLEDController._native_status_binding(status, "rollback"),
+        } for status in statuses)
+
+    def _restore_native_snapshots(self, snapshots):
+        errors = []
+        for receiver_id, (device, snapshot) in enumerate(zip(self.devices, snapshots)):
+            try:
+                current = self._fresh_native_status(receiver_id)
+                status = device.native_restore(
+                    expected_generation=current["receiver_native_state_generation"],
+                    active_binding=snapshot["active"],
+                    staged_binding=snapshot["staged"],
+                    rollback_binding=snapshot["rollback"],
+                )
+                self._require_native_ack(status, "native restore", receiver_id)
+            except Exception as exc:
+                errors.append({"logical_device": receiver_id, "error": str(exc)})
+        return errors
+
+    def _native_capability_report(self, statuses):
+        return {
+            "required_capabilities": NATIVE_BACKGROUND_REQUIRED_CAPABILITIES,
+            "devices": [
+                {
+                    "logical_device": receiver_id,
+                    "capabilities": int(status.get("receiver_capabilities", 0) or 0),
+                    "local_strip_count": self.receiver_strip_counts[receiver_id],
+                    "global_strip_offset": self.receiver_global_strip_offsets[receiver_id],
+                    "bus": self.device_map[receiver_id][0],
+                    "chip_select": self.device_map[receiver_id][1],
+                    "reverse_host_strip_order": (
+                        self.reverse_host_strips_by_logical_receiver[receiver_id]
+                    ),
+                    "reverse_native_strip_order": (
+                        self.reverse_native_strips_by_logical_receiver[receiver_id]
+                    ),
+                    "physical_output_lane_mask": self.receiver_lane_masks[receiver_id],
+                }
+                for receiver_id, status in enumerate(statuses)
+            ],
+        }
+
+    def _native_agreement(self, statuses):
+        return {
+            "exact_roster": True,
+            "verified_receiver_ids": list(range(self.num_devices)),
+            "state_generations": [
+                int(status["receiver_native_state_generation"])
+                for status in statuses
+            ],
+        }
+
+    @staticmethod
+    def _require_native_probe_identity(status, candidate, receiver_id, operation):
+        from animation.core.native_background_operation import (
+            NativeBackgroundOperationError,
+        )
+
+        echoed = status.get("receiver_native_last_probe_payload_digest")
+        if echoed != candidate.binding.payload_digest:
+            raise NativeBackgroundOperationError(
+                f"receiver {receiver_id} {operation} echoed payload digest "
+                f"{echoed!r}, expected {candidate.binding.payload_digest!r} "
+                f"for bundle {candidate.binding.bundle_digest}"
+            )
+        return status
+
+    def probe_native_background(self, resolved):
+        """Probe every exact receiver cache for one managed executable payload."""
+        candidate = self._managed_native_background(resolved)
+        with self._controller_lock():
+            self._require_native_enabled()
+            statuses = self._fresh_native_statuses()
+            devices = []
+            for receiver_id, device in enumerate(self.devices):
+                status = self._require_native_probe_identity(
+                    self._require_native_ack(
+                        device.native_probe(
+                            payload_digest=candidate.binding.payload_digest
+                        ),
+                        "native probe",
+                        receiver_id,
+                    ),
+                    candidate,
+                    receiver_id,
+                    "native probe",
+                )
+                devices.append({
+                    "logical_device": receiver_id,
+                    "found": bool(status.get("receiver_native_probe_found")),
+                    "payload_digest": status.get(
+                        "receiver_native_last_probe_payload_digest"
+                    ),
+                })
+            result = {
+                "state": "present" if all(item["found"] for item in devices) else "missing",
+                "operation": "probe",
+                "rollout_enabled": True,
+                "progress": 1.0,
+                "bundle_digest": candidate.binding.bundle_digest,
+                "payload_digest": candidate.binding.payload_digest,
+                "devices": devices,
+                "capability_report": self._native_capability_report(statuses),
+            }
+            self._native_background_status = result
+            return dict(result)
+
+    def install_native_background(self, resolved, *, retries=3):
+        """Preflight, resumably stage, and verify one binding on every receiver."""
+        from animation.core.native_background_operation import (
+            NativeBackgroundOperationError,
+        )
+
+        if type(retries) is not int or not 1 <= retries <= 10:
+            raise ValueError("retries must be an integer from 1 through 10")
+        candidate = self._managed_native_background(resolved)
+        descriptors = tuple(
+            candidate.descriptor_for(receiver_id)
+            for receiver_id in range(self.num_devices)
+        )
+        for descriptor in descriptors:
+            LEDController.serialize_native_preflight(**descriptor)
+            LEDController.serialize_native_begin(preflight_token=1, **descriptor)
+
+        with self._controller_lock():
+            self._require_native_enabled()
+            before = self._fresh_native_statuses()
+            snapshots = self._native_snapshots(before)
+            report = self._native_capability_report(before)
+            self._native_background_status = {
+                "state": "preflight",
+                "operation": "install",
+                "rollout_enabled": True,
+                "progress": 0.0,
+                "bundle_digest": candidate.binding.bundle_digest,
+                "payload_digest": candidate.binding.payload_digest,
+                "capability_report": report,
+            }
+            begun = []
+            try:
+                plans = []
+                for receiver_id, (device, descriptor) in enumerate(zip(self.devices, descriptors)):
+                    status = self._require_native_ack(
+                        device.native_preflight(**descriptor),
+                        "native preflight",
+                        receiver_id,
+                    )
+                    token = status.get("receiver_native_preflight_token")
+                    if (
+                        status.get("receiver_native_transfer_state") != 1
+                        or type(token) is not int
+                        or token <= 0
+                    ):
+                        raise NativeBackgroundOperationError(
+                            f"receiver {receiver_id} returned dishonest native preflight status"
+                        )
+                    plans.append(token)
+
+                sent = 0
+                total = len(candidate.payload) * self.num_devices
+                for receiver_id, (device, descriptor, token) in enumerate(
+                    zip(self.devices, descriptors, plans)
+                ):
+                    begun.append(receiver_id)
+                    status = self._require_native_ack(
+                        device.native_begin(preflight_token=token, **descriptor),
+                        "native begin",
+                        receiver_id,
+                    )
+                    if (
+                        self._native_status_binding(status, "staged")
+                        == candidate.binding
+                    ):
+                        sent += len(candidate.payload)
+                        continue
+                    if status.get("receiver_native_transfer_state") != 2:
+                        raise NativeBackgroundOperationError(
+                            f"receiver {receiver_id} did not enter native receiving state"
+                        )
+                    offset = int(status.get("receiver_native_received_bytes", -1))
+                    if not 0 <= offset <= len(candidate.payload):
+                        raise NativeBackgroundOperationError(
+                            f"receiver {receiver_id} reported an invalid resume offset"
+                        )
+                    sent += offset
+                    while offset < len(candidate.payload):
+                        chunk = candidate.payload[offset : offset + MAX_NATIVE_CHUNK_BYTES]
+                        error = None
+                        for _attempt in range(retries):
+                            try:
+                                status = self._require_native_ack(
+                                    device.native_chunk(offset=offset, data=chunk),
+                                    "native chunk",
+                                    receiver_id,
+                                )
+                                if status.get("receiver_native_received_bytes") != offset + len(chunk):
+                                    raise NativeBackgroundOperationError(
+                                        f"receiver {receiver_id} did not acknowledge exact chunk end"
+                                    )
+                                error = None
+                                break
+                            except (OSError, RuntimeError) as exc:
+                                error = exc
+                        if error is not None:
+                            raise error
+                        offset += len(chunk)
+                        sent += len(chunk)
+                        self._native_background_status["state"] = "staging"
+                        self._native_background_status["progress"] = (
+                            sent / total if total else 1.0
+                        )
+                    status = self._require_native_ack(
+                        device.native_finalize(
+                            bundle_digest=candidate.binding.bundle_digest,
+                            payload_digest=candidate.binding.payload_digest,
+                        ),
+                        "native finalize",
+                        receiver_id,
+                    )
+                    if self._native_status_binding(status, "staged") != candidate.binding:
+                        raise NativeBackgroundOperationError(
+                            f"receiver {receiver_id} finalized the wrong native binding"
+                        )
+
+                for receiver_id, device in enumerate(self.devices):
+                    status = self._require_native_ack(
+                        device.native_verify(
+                            bundle_digest=candidate.binding.bundle_digest,
+                            payload_digest=candidate.binding.payload_digest,
+                        ),
+                        "native verify",
+                        receiver_id,
+                    )
+                    if self._native_status_binding(status, "staged") != candidate.binding:
+                        raise NativeBackgroundOperationError(
+                            f"receiver {receiver_id} did not verify the staged native binding"
+                        )
+            except Exception as exc:
+                abort_errors = []
+                for receiver_id in reversed(begun):
+                    try:
+                        self._require_native_ack(
+                            self.devices[receiver_id].native_abort(),
+                            "native abort",
+                            receiver_id,
+                        )
+                    except Exception as abort_exc:
+                        abort_errors.append({
+                            "logical_device": receiver_id, "error": str(abort_exc)
+                        })
+                restore_errors = self._restore_native_snapshots(snapshots)
+                self._native_background_status.update({
+                    "state": "degraded" if restore_errors else "compensated",
+                    "error": str(exc),
+                    "abort_errors": abort_errors,
+                    "compensation_errors": restore_errors,
+                })
+                raise NativeBackgroundOperationError(
+                    f"native install failed; compensated={not restore_errors}: {exc}"
+                ) from exc
+
+            self._native_background_status.update({
+                "state": "ready",
+                "progress": 1.0,
+                "error": None,
+            })
+            return dict(self._native_background_status)
+
+    @staticmethod
+    def _required_profile_digest(value):
+        if value is None:
+            return None
+        if not isinstance(value, str) or len(value) != 64 or value != value.lower():
+            raise ValueError(
+                "installation_profile_digest must be a lowercase SHA-256 digest"
+            )
+        try:
+            if bytes.fromhex(value).hex() != value:
+                raise ValueError
+        except ValueError as exc:
+            raise ValueError(
+                "installation_profile_digest must be a lowercase SHA-256 digest"
+            ) from exc
+        return value
+
+    def _verify_native_active(
+        self, statuses, candidate, parameter_set, context, profile_digest
+    ):
+        self._validate_presentation_agreement(statuses, context)
+        for receiver_id, status in enumerate(statuses):
+            descriptor = candidate.descriptor_for(receiver_id)
+            expected = {
+                "receiver_base_mode": 1,
+                "receiver_active_context_digest": context.context_digest.hex(),
+                "receiver_active_session_id": context.controller_session_id.hex(),
+                "receiver_scene_epoch": context.scene_epoch,
+                "receiver_native_active_bundle_digest": candidate.binding.bundle_digest,
+                "receiver_native_active_payload_digest": candidate.binding.payload_digest,
+                "receiver_native_active_schema_revision": parameter_set.schema_revision,
+                "receiver_native_active_cadence_hz": descriptor["cadence_hz"],
+                "receiver_native_active_local_strips": descriptor["local_strips"],
+                "receiver_native_active_target": descriptor["target"],
+                "receiver_native_active_global_strips": descriptor["global_strips"],
+                "receiver_native_active_leds_per_strip": descriptor["leds_per_strip"],
+                "receiver_native_active_global_strip_offset": descriptor[
+                    "global_strip_offset"
+                ],
+                "receiver_native_active_parameter_size": len(parameter_set.blob),
+                "receiver_native_active_parameter_digest": parameter_set.digest,
+                "receiver_native_executing": True,
+            }
+            if profile_digest is not None:
+                expected["receiver_profile_active_global_digest"] = profile_digest
+            for key, value in expected.items():
+                if status.get(key) != value:
+                    raise RuntimeError(
+                        f"receiver {receiver_id} reported unexpected {key}: "
+                        f"{status.get(key)!r}, expected {value!r}"
+                    )
+            if self._native_status_binding(status, "active") != candidate.binding:
+                raise RuntimeError(
+                    f"receiver {receiver_id} did not activate the exact native binding"
+                )
+
+    def activate_native_background(
+        self,
+        resolved,
+        *,
+        context,
+        parameters=None,
+        installation_profile_digest=None,
+        deterministic_seed=0,
+    ):
+        """Commit context and activate one verified managed binding everywhere."""
+        from animation.core.native_background_operation import (
+            NativeBackgroundOperationError,
+        )
+        from animation.core.receiver_presentation import ReceiverPresentationContext
+
+        if not isinstance(context, ReceiverPresentationContext):
+            raise TypeError("context must be a ReceiverPresentationContext")
+        seed = LEDController._bounded_uint(
+            "deterministic_seed", deterministic_seed, 0xFFFFFFFF
+        )
+        profile_digest = self._required_profile_digest(installation_profile_digest)
+        candidate = self._managed_native_background(resolved)
+        parameter_set = candidate.encode_parameters(parameters)
+        for receiver_id in range(self.num_devices):
+            descriptor = candidate.descriptor_for(receiver_id)
+            LEDController.serialize_native_activate(
+                expected_generation=0,
+                bundle_digest=candidate.binding.bundle_digest,
+                payload_digest=candidate.binding.payload_digest,
+                scene_epoch=context.scene_epoch,
+                deterministic_seed=seed,
+                parameter_blob=parameter_set.blob,
+            )
+            if descriptor["parameter_schema_revision"] != parameter_set.schema_revision:
+                raise NativeBackgroundOperationError(
+                    "native parameter schema revision drifted from its descriptor"
+                )
+
+        with self._controller_lock():
+            self._require_native_enabled()
+            before = self._fresh_native_statuses()
+            snapshots = self._native_snapshots(before)
+            capability_report = self._native_capability_report(before)
+            for receiver_id, status in enumerate(before):
+                if self._native_status_binding(status, "staged") != candidate.binding:
+                    raise NativeBackgroundOperationError(
+                        f"receiver {receiver_id} does not hold the verified staged binding"
+                    )
+            prior_context = self._native_background_context
+            activated = []
+            self._native_background_status = {
+                "state": "activating",
+                "operation": "activate",
+                "rollout_enabled": True,
+                "progress": 0.0,
+                "bundle_digest": candidate.binding.bundle_digest,
+                "payload_digest": candidate.binding.payload_digest,
+                "capability_report": capability_report,
+            }
+            try:
+                for operation, method_name in (
+                    ("presentation begin", "begin_presentation_context"),
+                    ("presentation set", "set_presentation_context"),
+                ):
+                    for receiver_id, device in enumerate(self.devices):
+                        status = getattr(device, method_name)(context)
+                        self._require_ack(status, operation, receiver_id)
+                self._commit_presentation_contexts(context)
+                committed = self._fresh_native_statuses()
+                self._validate_presentation_agreement(committed, context)
+                if profile_digest is not None:
+                    for receiver_id, status in enumerate(committed):
+                        if status.get("receiver_profile_active_global_digest") != profile_digest:
+                            raise NativeBackgroundOperationError(
+                                f"receiver {receiver_id} has the wrong installation profile"
+                            )
+
+                for receiver_id, device in enumerate(self.devices):
+                    current = self._fresh_native_status(receiver_id)
+                    status = self._require_native_ack(
+                        device.native_activate(
+                            expected_generation=current[
+                                "receiver_native_state_generation"
+                            ],
+                            bundle_digest=candidate.binding.bundle_digest,
+                            payload_digest=candidate.binding.payload_digest,
+                            scene_epoch=context.scene_epoch,
+                            deterministic_seed=seed,
+                            parameter_blob=parameter_set.blob,
+                        ),
+                        "native activation",
+                        receiver_id,
+                    )
+                    activated.append(receiver_id)
+                    self._native_background_status["progress"] = (
+                        len(activated) / self.num_devices
+                    )
+                active = self._fresh_native_statuses()
+                self._verify_native_active(
+                    active, candidate, parameter_set, context, profile_digest
+                )
+            except Exception as exc:
+                restore_errors = self._restore_native_snapshots(snapshots)
+                context_errors = []
+                host_fallback = False
+                if prior_context is not None:
+                    try:
+                        for operation, method_name in (
+                            ("presentation rollback begin", "begin_presentation_context"),
+                            ("presentation rollback set", "set_presentation_context"),
+                        ):
+                            for receiver_id, device in enumerate(self.devices):
+                                status = getattr(device, method_name)(prior_context)
+                                self._require_ack(status, operation, receiver_id)
+                        self._commit_presentation_contexts(prior_context)
+                    except Exception as context_exc:
+                        context_errors.append({"error": str(context_exc)})
+                else:
+                    # A first activation has no controller-owned presentation
+                    # context to replay. Once the candidate context is committed,
+                    # restoring only the native cache ledger would leave an
+                    # untracked context authoritative. An exact black SET_ALL
+                    # takes full RGB ownership back on the configured roster.
+                    try:
+                        self._display_ownership_known = False
+                        self.set_all_pixels([(0, 0, 0)] * self.total_leds)
+                        host_fallback = (
+                            self._display_ownership_known
+                            and self._local_background_status.get("state")
+                            == "host_full_scene"
+                        )
+                        if not host_fallback:
+                            raise RuntimeError(
+                                "full-scene host fallback did not reach the exact roster"
+                            )
+                    except Exception as context_exc:
+                        context_errors.append({
+                            "operation": "host_full_scene_fallback",
+                            "error": str(context_exc),
+                        })
+                if host_fallback:
+                    self._native_background_active = False
+                    self._local_background_active = False
+                    self._native_background_binding = None
+                    self._native_background_candidate = None
+                    self._native_background_context = None
+                    self._native_background_parameter_set = None
+                    self._native_background_parameters = {}
+                    self._native_background_status = {
+                        "state": "fallback",
+                        "operation": "activation_failed_host_fallback",
+                        "rollout_enabled": self._receiver_native_modules_enabled,
+                        "progress": 0.0,
+                        "error": str(exc),
+                        "host_full_scene_authority": True,
+                        "restore_warnings": restore_errors,
+                        "compensation_errors": [],
+                    }
+                    return False
+                if restore_errors or context_errors:
+                    for receiver_id, device in enumerate(self.devices):
+                        try:
+                            self._require_native_ack(
+                                device.native_stop(), "native fallback stop", receiver_id
+                            )
+                        except Exception:
+                            pass
+                self._native_background_active = bool(restore_errors or context_errors)
+                self._native_background_status.update({
+                    "state": "degraded" if self._native_background_active else "compensated",
+                    "error": str(exc),
+                    "compensation_errors": restore_errors + context_errors,
+                })
+                return False
+
+            self._native_background_active = True
+            self._local_background_active = True
+            self._display_ownership_known = True
+            self._native_background_binding = candidate.binding
+            self._native_background_descriptor = tuple(
+                candidate.descriptor_for(receiver_id)
+                for receiver_id in range(self.num_devices)
+            )
+            self._native_background_candidate = candidate
+            self._native_background_context = context
+            self._native_background_profile_digest = profile_digest
+            self._native_background_parameter_set = parameter_set
+            self._native_background_parameters = dict(parameter_set.values)
+            self._native_background_status.update({
+                "state": "active", "progress": 1.0, "error": None,
+                "parameter_digest": parameter_set.digest,
+                "context_digest": context.context_digest.hex(),
+                "installation_profile_digest": profile_digest,
+                "capability_report": capability_report,
+                "agreement": self._native_agreement(active),
+            })
+            return True
+
+    def adopt_native_background(
+        self,
+        resolved,
+        *,
+        context,
+        parameters=None,
+        installation_profile_digest=None,
+    ):
+        """Adopt retained execution only after exact unanimous state proof."""
+        from animation.core.receiver_presentation import ReceiverPresentationContext
+
+        if not isinstance(context, ReceiverPresentationContext):
+            raise TypeError("context must be a ReceiverPresentationContext")
+        candidate = self._managed_native_background(resolved)
+        parameter_set = candidate.encode_parameters(parameters)
+        profile_digest = self._required_profile_digest(installation_profile_digest)
+        with self._controller_lock():
+            try:
+                self._require_native_enabled()
+                statuses = self._fresh_native_statuses()
+                self._verify_native_active(
+                    statuses, candidate, parameter_set, context, profile_digest
+                )
+                capability_report = self._native_capability_report(statuses)
+            except Exception as exc:
+                self._native_background_active = False
+                self._native_background_status = {
+                    "state": "adoption_rejected",
+                    "operation": "adopt",
+                    "rollout_enabled": self._receiver_native_modules_enabled,
+                    "progress": 0.0,
+                    "error": str(exc),
+                }
+                return False
+            self._native_background_active = True
+            self._local_background_active = True
+            self._display_ownership_known = True
+            self._native_background_binding = candidate.binding
+            self._native_background_candidate = candidate
+            self._native_background_context = context
+            self._native_background_profile_digest = profile_digest
+            self._native_background_parameter_set = parameter_set
+            self._native_background_parameters = dict(parameter_set.values)
+            self._native_background_status = {
+                "state": "active",
+                "operation": "adopt",
+                "rollout_enabled": True,
+                "progress": 1.0,
+                "bundle_digest": candidate.binding.bundle_digest,
+                "payload_digest": candidate.binding.payload_digest,
+                "parameter_digest": parameter_set.digest,
+                "context_digest": context.context_digest.hex(),
+                "installation_profile_digest": profile_digest,
+                "foreground_snapshot_required": True,
+                "capability_report": capability_report,
+                "agreement": self._native_agreement(statuses),
+            }
+            return True
+
+    def update_native_background_parameters(self, parameters):
+        """Apply one canonical parameter set everywhere or restore the prior set."""
+        with self._controller_lock():
+            self._require_native_enabled()
+            if not self._native_background_active or self._native_background_candidate is None:
+                raise RuntimeError("native background is not active")
+            candidate = self._native_background_candidate
+            prior = self._native_background_parameter_set
+            if prior is None:
+                raise RuntimeError("active native parameter authority is unavailable")
+            updated = candidate.encode_parameters(parameters)
+            LEDController.serialize_native_parameters(
+                bundle_digest=candidate.binding.bundle_digest,
+                payload_digest=candidate.binding.payload_digest,
+                parameter_schema_revision=updated.schema_revision,
+                parameter_blob=updated.blob,
+            )
+            changed = []
+            try:
+                for receiver_id, device in enumerate(self.devices):
+                    status = self._require_native_ack(
+                        device.native_parameters(
+                            bundle_digest=candidate.binding.bundle_digest,
+                            payload_digest=candidate.binding.payload_digest,
+                            parameter_schema_revision=updated.schema_revision,
+                            parameter_blob=updated.blob,
+                        ),
+                        "native parameter update",
+                        receiver_id,
+                    )
+                    changed.append(receiver_id)
+                statuses = self._fresh_native_statuses()
+                for receiver_id, status in enumerate(statuses):
+                    if (
+                        status.get("receiver_native_active_parameter_digest")
+                        != updated.digest
+                        or status.get("receiver_native_active_parameter_size")
+                        != len(updated.blob)
+                    ):
+                        raise RuntimeError(
+                            f"receiver {receiver_id} did not apply exact native parameters"
+                        )
+            except Exception as exc:
+                rollback_errors = []
+                for receiver_id in reversed(changed):
+                    try:
+                        self._require_native_ack(
+                            self.devices[receiver_id].native_parameters(
+                                bundle_digest=candidate.binding.bundle_digest,
+                                payload_digest=candidate.binding.payload_digest,
+                                parameter_schema_revision=prior.schema_revision,
+                                parameter_blob=prior.blob,
+                            ),
+                            "native parameter rollback",
+                            receiver_id,
+                        )
+                    except Exception as rollback_exc:
+                        rollback_errors.append({
+                            "logical_device": receiver_id,
+                            "error": str(rollback_exc),
+                        })
+                if rollback_errors:
+                    for receiver_id, device in enumerate(self.devices):
+                        try:
+                            self._require_native_ack(
+                                device.native_stop(), "native parameter fallback", receiver_id
+                            )
+                        except Exception:
+                            pass
+                    self._native_background_active = True
+                self._native_background_status.update({
+                    "state": "degraded" if rollback_errors else "active",
+                    "operation": "parameter_rollback",
+                    "error": str(exc),
+                    "rollback_errors": rollback_errors,
+                })
+                return False
+            self._native_background_parameter_set = updated
+            self._native_background_parameters = dict(updated.values)
+            self._native_background_status.update({
+                "state": "active",
+                "operation": "parameter_update",
+                "error": None,
+                "parameter_digest": updated.digest,
+            })
+            return True
+
+    def stop_native_background(self):
+        """Stop execution everywhere and prove compiled-fallback ownership."""
+        with self._controller_lock():
+            self._require_native_enabled()
+            command_errors = []
+            for receiver_id, device in enumerate(self.devices):
+                try:
+                    self._require_native_ack(
+                        device.native_stop(), "native stop", receiver_id
+                    )
+                except Exception as exc:
+                    command_errors.append({
+                        "logical_device": receiver_id, "error": str(exc)
+                    })
+            try:
+                statuses = self._fresh_native_statuses()
+                for receiver_id, status in enumerate(statuses):
+                    if (
+                        status.get("receiver_native_executing")
+                        or int(status.get("receiver_base_mode", -1)) != 0
+                    ):
+                        raise RuntimeError(
+                            f"receiver {receiver_id} did not enter compiled fallback"
+                        )
+            except Exception as exc:
+                command_errors.append({"logical_device": -1, "error": str(exc)})
+            if command_errors:
+                self._native_background_active = True
+                self._native_background_status.update({
+                    "state": "degraded",
+                    "operation": "stop",
+                    "error": "could not prove unanimous native stop",
+                    "command_errors": command_errors,
+                })
+                return False
+            self._native_background_active = False
+            self._local_background_active = False
+            self._native_background_binding = None
+            self._native_background_candidate = None
+            self._native_background_context = None
+            self._native_background_profile_digest = None
+            self._native_background_parameter_set = None
+            self._native_background_parameters = {}
+            self._native_background_status = {
+                "state": "fallback",
+                "operation": "stop",
+                "rollout_enabled": True,
+                "progress": 1.0,
+                "error": None,
+            }
+            return True
+
+    def recover_native_background_to_host(self, colors):
+        """Use the universal complete-RGB kill path and prove host ownership."""
+        self.set_all_pixels(colors)
+        with self._controller_lock():
+            try:
+                statuses = self._fresh_native_statuses(require_capabilities=False)
+                for receiver_id, status in enumerate(statuses):
+                    if int(status.get("receiver_base_mode", -1)) != 2:
+                        raise RuntimeError(
+                            f"receiver {receiver_id} did not enter HostFullScene"
+                        )
+                    if status.get("receiver_native_executing"):
+                        raise RuntimeError(
+                            f"receiver {receiver_id} retained native execution"
+                        )
+            except Exception as exc:
+                self._native_background_active = True
+                self._native_background_status.update({
+                    "state": "degraded",
+                    "operation": "host_recovery",
+                    "error": str(exc),
+                })
+                return False
+            return not self._native_background_active
+
+    def remove_native_background(self, resolved):
+        """Remove one inactive binding everywhere and prove payload absence."""
+        from animation.core.native_background_operation import (
+            NativeBackgroundOperationError,
+        )
+
+        candidate = self._managed_native_background(resolved)
+        with self._controller_lock():
+            self._require_native_enabled()
+            statuses = self._fresh_native_statuses()
+            for receiver_id, status in enumerate(statuses):
+                protected = tuple(
+                    self._native_status_binding(status, prefix)
+                    for prefix in ("active", "staged", "rollback")
+                )
+                if any(
+                    binding is not None
+                    and binding.payload_digest == candidate.binding.payload_digest
+                    for binding in protected
+                ):
+                    raise NativeBackgroundOperationError(
+                        f"receiver {receiver_id} protects the payload through an "
+                        "active/staged/rollback binding"
+                    )
+            removed = []
+            errors = []
+            for receiver_id, device in enumerate(self.devices):
+                try:
+                    self._require_native_ack(
+                        device.native_remove(
+                            bundle_digest=candidate.binding.bundle_digest,
+                            payload_digest=candidate.binding.payload_digest,
+                        ),
+                        "native removal",
+                        receiver_id,
+                    )
+                    removed.append(receiver_id)
+                except Exception as exc:
+                    errors.append({
+                        "logical_device": receiver_id, "error": str(exc)
+                    })
+            remaining = []
+            for receiver_id, device in enumerate(self.devices):
+                try:
+                    status = self._require_native_probe_identity(
+                        self._require_native_ack(
+                            device.native_probe(
+                                payload_digest=candidate.binding.payload_digest
+                            ),
+                            "native removal probe",
+                            receiver_id,
+                        ),
+                        candidate,
+                        receiver_id,
+                        "native removal probe",
+                    )
+                    if status.get("receiver_native_probe_found"):
+                        remaining.append(receiver_id)
+                except Exception as exc:
+                    errors.append({
+                        "logical_device": receiver_id, "error": str(exc)
+                    })
+            self._native_background_status = {
+                "state": "removed" if not errors and not remaining else "degraded",
+                "operation": "remove",
+                "rollout_enabled": True,
+                "progress": 1.0,
+                "bundle_digest": candidate.binding.bundle_digest,
+                "payload_digest": candidate.binding.payload_digest,
+                "removed_devices": removed,
+                "remaining_devices": remaining,
+                "errors": errors,
+            }
+            return not errors and not remaining
+
+    def clear_native_background_quarantine(self, resolved):
+        """Clear one exact quarantined payload across the configured roster.
+
+        The command is intentionally separate from installation. Clearing a
+        quarantine is an explicit operator recovery decision; a caller may
+        retry installation only after this method proves that no receiver
+        retains either the requested or a conflicting quarantine identity.
+        """
+        from animation.core.native_background_operation import (
+            NativeBackgroundOperationError,
+        )
+
+        candidate = self._managed_native_background(resolved)
+        target = candidate.binding.payload_digest
+        with self._controller_lock():
+            self._require_native_enabled()
+            before = self._fresh_native_statuses()
+            report = self._native_capability_report(before)
+            quarantined = []
+            conflicts = []
+            for receiver_id, status in enumerate(before):
+                digest = status.get("receiver_native_quarantine_payload_digest")
+                if digest is None:
+                    continue
+                if digest == target:
+                    quarantined.append(receiver_id)
+                else:
+                    conflicts.append({
+                        "logical_device": receiver_id,
+                        "payload_digest": digest,
+                    })
+            if conflicts:
+                raise NativeBackgroundOperationError(
+                    "receiver quarantine identities do not unanimously match the "
+                    f"managed payload: {conflicts!r}"
+                )
+
+            cleared = []
+            errors = []
+            for receiver_id in quarantined:
+                try:
+                    self._require_native_ack(
+                        self.devices[receiver_id].native_quarantine_clear(
+                            payload_digest=target
+                        ),
+                        "native quarantine clear",
+                        receiver_id,
+                    )
+                    cleared.append(receiver_id)
+                except Exception as exc:
+                    errors.append({
+                        "logical_device": receiver_id,
+                        "error": str(exc),
+                    })
+
+            remaining = []
+            verification_errors = []
+            try:
+                after = self._fresh_native_statuses()
+                for receiver_id, status in enumerate(after):
+                    digest = status.get(
+                        "receiver_native_quarantine_payload_digest"
+                    )
+                    if digest is not None:
+                        remaining.append({
+                            "logical_device": receiver_id,
+                            "payload_digest": digest,
+                        })
+            except Exception as exc:
+                after = ()
+                verification_errors.append(str(exc))
+
+            succeeded = not errors and not verification_errors and not remaining
+            result = {
+                "state": "ready" if succeeded else "degraded",
+                "operation": "clear_quarantine",
+                "rollout_enabled": True,
+                "progress": 1.0,
+                "bundle_digest": candidate.binding.bundle_digest,
+                "payload_digest": target,
+                "quarantined_devices": quarantined,
+                "cleared_devices": cleared,
+                "remaining_quarantines": remaining,
+                "errors": errors,
+                "verification_errors": verification_errors,
+                "capability_report": report,
+            }
+            if succeeded:
+                result["agreement"] = self._native_agreement(after)
+            self._native_background_status = result
+            return dict(result)
     
+    def _host_local_pixels(self, receiver_id: int, pixels):
+        """Map one canonical global slice into physical host-output strip order."""
+
+        if not self.reverse_host_strips_by_logical_receiver[receiver_id]:
+            return pixels
+        width = self.receiver_strip_counts[receiver_id]
+        height = self.leds_per_strip
+        if isinstance(pixels, np.ndarray):
+            shape = (width, height) + pixels.shape[1:]
+            return np.ascontiguousarray(pixels.reshape(shape)[::-1]).reshape(
+                pixels.shape
+            )
+        strips = [
+            pixels[start:start + height]
+            for start in range(0, width * height, height)
+        ]
+        return [pixel for strip in reversed(strips) for pixel in strip]
+
+    def _receiver_local_dirty_ranges(self, receiver_id: int, dirty_ranges):
+        """Map global pixel intervals into sorted receiver-local intervals."""
+
+        global_first = self.receiver_pixel_offsets[receiver_id]
+        global_last = global_first + self.receiver_pixel_counts[receiver_id]
+        width = self.receiver_strip_counts[receiver_id]
+        height = self.leds_per_strip
+        reverse = self.reverse_host_strips_by_logical_receiver[receiver_id]
+        mapped = []
+        for start, end in sorted(dirty_ranges or ()):
+            cursor = max(global_first, max(0, int(start)))
+            clipped_end = min(global_last, min(self.total_leds, int(end)))
+            while cursor < clipped_end:
+                global_strip = cursor // height
+                global_strip_end = min(clipped_end, (global_strip + 1) * height)
+                logical_local_strip = global_strip - (
+                    self.receiver_global_strip_offsets[receiver_id]
+                )
+                physical_local_strip = (
+                    width - 1 - logical_local_strip
+                    if reverse else logical_local_strip
+                )
+                led_first = cursor % height
+                led_last = led_first + (global_strip_end - cursor)
+                local_first = physical_local_strip * height + led_first
+                mapped.append((local_first, physical_local_strip * height + led_last))
+                cursor = global_strip_end
+        mapped.sort()
+        merged = []
+        for start, end in mapped:
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+        return merged
+
     def _split_frame(self, colors: List[Tuple[int, int, int]]) -> List[List[Tuple[int, int, int]]]:
         """
         Split full frame into per-device chunks
@@ -393,23 +1730,26 @@ class MultiDeviceLEDController:
         Returns:
             List of color lists, one per device
         """
-        pixels_per_device = self.strips_per_device * self.leds_per_strip
-
         if isinstance(colors, np.ndarray):
-            total_needed = self.num_devices * pixels_per_device
+            total_needed = self.total_leds
             if colors.shape[0] < total_needed:
                 colors = np.concatenate([colors, np.zeros((total_needed - colors.shape[0], 3), dtype=np.uint8)])
             device_frames = []
             for device_id in range(self.num_devices):
-                start = device_id * pixels_per_device
-                device_frames.append(colors[start:start + pixels_per_device])
+                start = self.receiver_pixel_offsets[device_id]
+                count = self.receiver_pixel_counts[device_id]
+                device_frames.append(self._host_local_pixels(
+                    device_id, colors[start:start + count]
+                ))
             return device_frames
 
         device_frames = []
         for device_id in range(self.num_devices):
             device_colors = []
-            for local_strip in range(self.strips_per_device):
-                global_strip = device_id * self.strips_per_device + local_strip
+            for local_strip in range(self.receiver_strip_counts[device_id]):
+                global_strip = (
+                    self.receiver_global_strip_offsets[device_id] + local_strip
+                )
                 start_idx = global_strip * self.leds_per_strip
                 end_idx = start_idx + self.leds_per_strip
 
@@ -423,7 +1763,7 @@ class MultiDeviceLEDController:
 
                 device_colors.extend(strip_pixels[:self.leds_per_strip])
 
-            device_frames.append(device_colors)
+            device_frames.append(self._host_local_pixels(device_id, device_colors))
 
         return device_frames
     
@@ -453,7 +1793,7 @@ class MultiDeviceLEDController:
                 continue
             try:
                 dirty_pixels = sum(end - start for start, end in ranges)
-                if dirty_pixels > self.leds_per_device * 0.35:
+                if dirty_pixels > self.receiver_pixel_counts[device_id] * 0.35:
                     self.devices[device_id].set_all_pixels(device_frames[device_id])
                 else:
                     self.devices[device_id].set_partial_frame(device_frames[device_id], ranges)
@@ -470,6 +1810,7 @@ class MultiDeviceLEDController:
         """
         with self._controller_lock():
             was_local = self._local_background_active
+            was_native = self._native_background_active
             had_sparse_authority = (
                 getattr(self, "_sparse_overlay_session_id", None) is not None
             )
@@ -491,7 +1832,8 @@ class MultiDeviceLEDController:
                     successful = self._send_to_device(device_id, device_colors) and successful
             self._logical_frames_sent += 1
             if successful and (
-                was_local or had_sparse_authority or not self._display_ownership_known
+                was_local or was_native or had_sparse_authority
+                or not self._display_ownership_known
             ):
                 try:
                     statuses = []
@@ -528,6 +1870,14 @@ class MultiDeviceLEDController:
             if successful:
                 self._display_ownership_known = True
                 self._local_background_active = False
+                self._native_background_active = False
+                self._native_background_binding = None
+                self._native_background_descriptor = None
+                self._native_background_parameters = {}
+                self._native_background_candidate = None
+                self._native_background_context = None
+                self._native_background_profile_digest = None
+                self._native_background_parameter_set = None
                 self._local_background_context_digest = None
                 self._local_background_parameters = {}
                 self._sparse_overlay_session_id = None
@@ -535,6 +1885,48 @@ class MultiDeviceLEDController:
                 self._sparse_overlay_snapshot_digest = None
                 self._local_background_status = {
                     "state": "host_full_scene", "operation": "set_all_takeover"
+                }
+                if was_native:
+                    self._native_background_status = {
+                        "state": "host_full_scene",
+                        "operation": "set_all_takeover",
+                        "rollout_enabled": self._receiver_native_modules_enabled,
+                        "progress": 1.0,
+                        "error": None,
+                        "agreement": {
+                            "exact_roster": True,
+                            "verified_receiver_ids": list(range(self.num_devices)),
+                        },
+                    }
+            elif was_native:
+                stop_errors = []
+                for receiver_id, device in enumerate(self.devices):
+                    try:
+                        self._require_native_ack(
+                            device.native_stop(),
+                            "native partial-takeover compensation",
+                            receiver_id,
+                        )
+                    except Exception as exc:
+                        stop_errors.append({
+                            "logical_device": receiver_id,
+                            "error": str(exc),
+                        })
+                self._native_background_active = bool(stop_errors)
+                if not stop_errors:
+                    self._local_background_active = False
+                    self._native_background_binding = None
+                    self._native_background_candidate = None
+                    self._native_background_context = None
+                    self._native_background_parameter_set = None
+                    self._native_background_parameters = {}
+                self._native_background_status = {
+                    "state": "degraded" if stop_errors else "fallback",
+                    "operation": "set_all_takeover_failed",
+                    "rollout_enabled": self._receiver_native_modules_enabled,
+                    "progress": 0.0,
+                    "error": "complete RGB takeover did not reach the exact roster",
+                    "compensation_errors": stop_errors,
                 }
             elif was_local or self._any_receiver_may_be_local():
                 # A lost complete frame can otherwise leave a mixed wall. The
@@ -564,22 +1956,13 @@ class MultiDeviceLEDController:
 
         with self._controller_lock():
             device_frames = self._split_frame(colors)
-            pixels_per_device = self.leds_per_device
             device_ranges = {}
-            for start, end in sorted(dirty_ranges):
-                start = max(0, int(start))
-                end = min(self.total_leds, int(end))
-                while start < end:
-                    device_id = start // pixels_per_device
-                    device_end = min(end, (device_id + 1) * pixels_per_device)
-                    local_start = start - device_id * pixels_per_device
-                    local_end = device_end - device_id * pixels_per_device
-                    ranges = device_ranges.setdefault(device_id, [])
-                    if ranges and ranges[-1][1] >= local_start:
-                        ranges[-1] = (ranges[-1][0], max(ranges[-1][1], local_end))
-                    else:
-                        ranges.append((local_start, local_end))
-                    start = device_end
+            for device_id in range(self.num_devices):
+                ranges = self._receiver_local_dirty_ranges(
+                    device_id, dirty_ranges
+                )
+                if ranges:
+                    device_ranges[device_id] = ranges
 
             if self._executor is not None:
                 futures = [
@@ -606,11 +1989,16 @@ class MultiDeviceLEDController:
 
             strip = pixel // self.leds_per_strip
             led_in_strip = pixel % self.leds_per_strip
-            device_id = strip // self.strips_per_device
-            local_strip = strip % self.strips_per_device
-            local_pixel = local_strip * self.leds_per_strip + led_in_strip
-            if device_id < self.num_devices:
-                self.devices[device_id].set_pixel(local_pixel, r, g, b)
+            for device_id, (offset, width) in enumerate(zip(
+                self.receiver_global_strip_offsets, self.receiver_strip_counts
+            )):
+                if offset <= strip < offset + width:
+                    local_strip = strip - offset
+                    if self.reverse_host_strips_by_logical_receiver[device_id]:
+                        local_strip = width - 1 - local_strip
+                    local_pixel = local_strip * self.leds_per_strip + led_in_strip
+                    self.devices[device_id].set_pixel(local_pixel, r, g, b)
+                    break
     
     def set_brightness(self, brightness: int):
         """Set global brightness on all devices"""
@@ -748,16 +2136,19 @@ class MultiDeviceLEDController:
             prior_end = end
         return tuple(normalized)
 
-    @staticmethod
     def _local_overlay_patches(
+        self,
         pixels: np.ndarray,
         *,
-        local_start: int,
-        local_end: int,
+        receiver_id: int,
         update_kind: int,
         dirty_ranges,
     ):
-        local_pixels = pixels[local_start:local_end]
+        local_start = self.receiver_pixel_offsets[receiver_id]
+        local_end = local_start + self.receiver_pixel_counts[receiver_id]
+        local_pixels = self._host_local_pixels(
+            receiver_id, pixels[local_start:local_end]
+        )
         if update_kind == OVERLAY_UPDATE_FULL_SNAPSHOT:
             return [
                 (start, local_pixels[start:start + MAX_RGBA_PIXELS_PER_BATCH_SPAN])
@@ -766,18 +2157,7 @@ class MultiDeviceLEDController:
                 )
             ]
 
-        ranges = []
-        for start, end in dirty_ranges or ():
-            clipped_start = max(local_start, start)
-            clipped_end = min(local_end, end)
-            if clipped_start >= clipped_end:
-                continue
-            local_first = clipped_start - local_start
-            local_last = clipped_end - local_start
-            if ranges and local_first <= ranges[-1][1]:
-                ranges[-1] = (ranges[-1][0], max(ranges[-1][1], local_last))
-            else:
-                ranges.append((local_first, local_last))
+        ranges = self._receiver_local_dirty_ranges(receiver_id, dirty_ranges)
         patches = []
         for start, end in ranges:
             while start < end:
@@ -802,6 +2182,7 @@ class MultiDeviceLEDController:
         full_snapshot=False,
     ):
         """Stage and schedule one authoritative aggregate foreground generation."""
+        self._controller_lock()
         overlay = self._normalize_overlay_pixels(pixels)
         session = LEDController._controller_session(controller_session_id)
         overlay_generation = LEDController._bounded_uint(
@@ -843,11 +2224,9 @@ class MultiDeviceLEDController:
 
         per_device_patches = []
         for index in range(self.num_devices):
-            local_start = index * self.leds_per_device
             per_device_patches.append(self._local_overlay_patches(
                 overlay,
-                local_start=local_start,
-                local_end=local_start + self.leds_per_device,
+                receiver_id=index,
                 update_kind=update_kind,
                 dirty_ranges=normalized_ranges,
             ))
@@ -1458,13 +2837,14 @@ class MultiDeviceLEDController:
         common_seed=0,
     ):
         """Atomically stage one context and start the static canary everywhere."""
+        self._controller_lock()
         # Validate every field through the single-device serializer before any
         # receiver is touched. Each board differs only by its global offset.
         for index in range(self.num_devices):
             LEDController.serialize_local_background_start(
                 component_id=component_id,
                 preferred_cadence_hz=preferred_cadence_hz,
-                global_strip_offset=index * self.strips_per_device,
+                global_strip_offset=self.receiver_global_strip_offsets[index],
                 common_seed=common_seed,
                 scene_epoch=context.scene_epoch,
             )
@@ -1505,7 +2885,7 @@ class MultiDeviceLEDController:
                     status = device.start_local_background(
                         component_id=component_id,
                         preferred_cadence_hz=preferred_cadence_hz,
-                        global_strip_offset=index * self.strips_per_device,
+                        global_strip_offset=self.receiver_global_strip_offsets[index],
                         common_seed=common_seed,
                         scene_epoch=context.scene_epoch,
                     )
@@ -1518,7 +2898,9 @@ class MultiDeviceLEDController:
                         "receiver_base_mode": 1,
                         "receiver_component_id": component_id,
                         "receiver_declared_cadence_hz": preferred_cadence_hz,
-                        "receiver_global_strip_offset": index * self.strips_per_device,
+                        "receiver_global_strip_offset": (
+                            self.receiver_global_strip_offsets[index]
+                        ),
                         "receiver_common_seed": common_seed,
                         "receiver_scene_epoch": context.scene_epoch,
                         "receiver_active_scene_revision": context.scene_revision,
@@ -1571,10 +2953,11 @@ class MultiDeviceLEDController:
         self, *, preferred_cadence_hz, common_seed
     ):
         """Update all boards or restore the prior parameters on partial failure."""
+        self._controller_lock()
         for index in range(self.num_devices):
             LEDController.serialize_local_background_params(
                 preferred_cadence_hz=preferred_cadence_hz,
-                global_strip_offset=index * self.strips_per_device,
+                global_strip_offset=self.receiver_global_strip_offsets[index],
                 common_seed=common_seed,
             )
         with self._controller_lock():
@@ -1586,7 +2969,7 @@ class MultiDeviceLEDController:
                 for index, device in enumerate(self.devices):
                     status = device.update_local_background_params(
                         preferred_cadence_hz=preferred_cadence_hz,
-                        global_strip_offset=index * self.strips_per_device,
+                        global_strip_offset=self.receiver_global_strip_offsets[index],
                         common_seed=common_seed,
                     )
                     self._require_ack(status, "local-background parameters", index)
@@ -1596,7 +2979,9 @@ class MultiDeviceLEDController:
                     expected = {
                         "receiver_base_mode": 1,
                         "receiver_declared_cadence_hz": preferred_cadence_hz,
-                        "receiver_global_strip_offset": index * self.strips_per_device,
+                        "receiver_global_strip_offset": (
+                            self.receiver_global_strip_offsets[index]
+                        ),
                         "receiver_common_seed": common_seed,
                     }
                     for key, expected_value in expected.items():
@@ -1611,7 +2996,9 @@ class MultiDeviceLEDController:
                     try:
                         status = self.devices[index].update_local_background_params(
                             preferred_cadence_hz=prior["preferred_cadence_hz"],
-                            global_strip_offset=index * self.strips_per_device,
+                            global_strip_offset=(
+                                self.receiver_global_strip_offsets[index]
+                            ),
                             common_seed=prior["common_seed"],
                         )
                         self._require_ack(status, "parameter rollback", index)
@@ -1630,7 +3017,7 @@ class MultiDeviceLEDController:
                                 != prior["preferred_cadence_hz"]
                                 or status.get("receiver_common_seed") != prior["common_seed"]
                                 or status.get("receiver_global_strip_offset")
-                                != index * self.strips_per_device
+                                != self.receiver_global_strip_offsets[index]
                             ):
                                 raise RuntimeError(
                                     f"receiver {index} did not restore prior parameters"
@@ -1671,6 +3058,7 @@ class MultiDeviceLEDController:
 
     def get_stats(self):
         """Return aggregated stats across all devices."""
+        self._controller_lock()
         device_stats = []
         total_leds = 0
         max_frames_sent = 0
@@ -1780,6 +3168,7 @@ class MultiDeviceLEDController:
             'devices': device_stats,
             'aggregate': {
                 'num_devices': self.num_devices,
+                'strip_count': self.strip_count,
                 'total_leds': total_leds,
                 'frames_sent': max_frames_sent,
                 'logical_frames_sent': self._logical_frames_sent,
@@ -1789,6 +3178,29 @@ class MultiDeviceLEDController:
                         'logical_device': logical_device,
                         'bus': bus,
                         'chip_select': chip_select,
+                        'local_strip_count': self.receiver_strip_counts[
+                            logical_device
+                        ],
+                        'global_strip_offset': self.receiver_global_strip_offsets[
+                            logical_device
+                        ],
+                        'reverse_host_strip_order': (
+                            self.reverse_host_strips_by_logical_receiver[
+                                logical_device
+                            ]
+                        ),
+                        'reverse_native_strip_order': (
+                            self.reverse_native_strips_by_logical_receiver[
+                                logical_device
+                            ]
+                        ),
+                        'physical_output_lane_mask': self.receiver_lane_masks[
+                            logical_device
+                        ],
+                        'spi_speed_hz': device_stats[logical_device].get(
+                            'spi_speed_hz'
+                        ),
+                        'spi_mode': device_stats[logical_device].get('spi_mode'),
                     }
                     for logical_device, (bus, chip_select) in enumerate(self.device_map)
                 ],
@@ -1837,9 +3249,16 @@ class MultiDeviceLEDController:
                     self, '_installation_profile_status',
                     {'state': 'idle', 'operation': 'legacy_status'},
                 )),
+                'native_background': dict(getattr(
+                    self, '_native_background_status',
+                    {'state': 'idle', 'operation': 'legacy_status'},
+                )),
                 'last_frame_duration_ms': last_frame_ms,
                 'avg_frame_duration_ms': avg_frame_ms,
                 'spi_speed_hz': device_stats[0].get('spi_speed_hz') if device_stats else None,
+                'spi_speeds_hz': [
+                    stats.get('spi_speed_hz') for stats in device_stats
+                ],
                 'spi_mode': device_stats[0].get('spi_mode') if device_stats else None,
             }
         }
@@ -1903,12 +3322,15 @@ class MultiDeviceLEDController:
             return map_entries
         
         # For 3+ devices, check if CE2+ exist on primary bus
-        # If not, fall back to SPI1 for devices 3-4
+        # If not, fall back to SPI1. The finalized wall uses logical devices
+        # 0/1 on SPI0 CE0/CE1 and 2/3/4 on SPI1 CE1/CE0/CE2.
         if not self._device_exists(primary_bus, 2) and self._device_exists(1, 0):
-            # Wall left-to-right: SPI0 CE0, SPI0 CE1, SPI1 CE1, SPI1 CE0
-            # (SPI1 chip-selects are swapped so logical groups 3 and 4 match
-            # physical board order on the wall.)
-            spi1_ces = [1, 0]  # CE1 then CE0
+            spi1_ces = [1, 0, 2]
+            if num_devices - 2 > len(spi1_ces):
+                raise ValueError(
+                    "automatic SPI1 fallback supports at most five receivers; "
+                    "set LEDGRID_DEVICE_MAP for a larger topology"
+                )
             for idx in range(num_devices):
                 if idx < 2:
                     map_entries.append((primary_bus, idx))
@@ -1916,7 +3338,10 @@ class MultiDeviceLEDController:
                     map_entries.append((1, spi1_ces[idx - 2]))
 
             if self.debug:
-                print("[INFO] Using SPI1 fallback for devices 2 and 3 (CE1, CE0)")
+                print(
+                    "[INFO] Using SPI1 fallback for logical receivers 2+ "
+                    "(CE1, CE0, CE2)"
+                )
         else:
             # All devices on primary bus
             for device_id in range(num_devices):
@@ -1944,3 +3369,16 @@ class MultiDeviceLEDController:
             return int(raw)
         except (TypeError, ValueError):
             return default_mode
+
+    @staticmethod
+    def _resolve_speed(bus: int, default_speed: int) -> int:
+        """Resolve an optional positive per-bus SPI clock override."""
+        env_key = f"LEDGRID_SPI{bus}_SPEED"
+        raw = os.environ.get(env_key)
+        if raw is None:
+            return default_speed
+        try:
+            resolved = int(raw)
+        except (TypeError, ValueError):
+            return default_speed
+        return resolved if resolved > 0 else default_speed

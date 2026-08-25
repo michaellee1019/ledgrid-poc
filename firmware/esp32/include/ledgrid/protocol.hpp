@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "ledgrid/animation_pipeline_contract.hpp"
+#include "ledgrid/native_module.hpp"
 
 namespace ledgrid {
 
@@ -18,6 +19,8 @@ constexpr std::uint8_t kStatusProtocolVersionV4 = 4;
 constexpr std::size_t kStatusBytesV4 = 416;
 constexpr std::uint8_t kStatusProtocolVersionV5 = 5;
 constexpr std::size_t kStatusBytesV5 = 768;
+constexpr std::uint8_t kStatusProtocolVersionV6 = 6;
+constexpr std::size_t kStatusBytesV6 = 1216;
 constexpr std::size_t kInstallationProfilePreflightBytes = 69;
 constexpr std::size_t kInstallationProfileBeginBytes = 81;
 constexpr std::size_t kInstallationProfileChunkHeaderBytes = 5;
@@ -59,6 +62,19 @@ enum class ReceiverCommand : std::uint8_t {
   InstallationProfileActivate = 0x45,
   InstallationProfileRestore = 0x46,
   InstallationProfileAbort = 0x47,
+  NativeModuleProbe = 0x50,
+  NativeModulePreflight = 0x51,
+  NativeModuleBegin = 0x52,
+  NativeModuleChunk = 0x53,
+  NativeModuleFinalize = 0x54,
+  NativeModuleVerify = 0x55,
+  NativeModuleActivate = 0x56,
+  NativeModuleStop = 0x57,
+  NativeModuleParameters = 0x58,
+  NativeModuleRemove = 0x59,
+  NativeModuleAbort = 0x5A,
+  NativeModuleRestore = 0x5B,
+  NativeModuleQuarantineClear = 0x5C,
   Ping = 0xFF,
 };
 
@@ -71,6 +87,12 @@ enum ReceiverCapability : std::uint32_t {
   kCapabilitySparseOverlayBatchV1 = 1U << 5U,
   kCapabilityInstallationProfileV1 = 1U << 6U,
   kCapabilityStatusV5 = 1U << 7U,
+  kCapabilityStatusV6 = 1U << 8U,
+  kCapabilityNativeModuleV2 = 1U << 9U,
+  kCapabilityNativeModuleCacheV1 = 1U << 10U,
+  kCapabilityNativeTypedParametersV1 = 1U << 11U,
+  kCapabilityNativeQuarantineV1 = 1U << 12U,
+  kCapabilityNativeGuardedLoaderV1 = 1U << 13U,
 };
 
 enum class ReceiverOperationResult : std::uint8_t {
@@ -110,6 +132,7 @@ enum class ReceiverDispatchRoute : std::uint8_t {
   Operational = 3,
   HostFullFrame = 4,
   InstallationProfile = 5,
+  NativeModule = 6,
 };
 
 enum class InstallationProfileResult : std::uint8_t {
@@ -280,6 +303,12 @@ struct ReceiverStatusV5 : ReceiverStatusV4 {
   InstallationProfileStatusV1 installation_profile{};
 };
 
+// Status v6 is negotiated only when the native-module capability is present.
+// Bytes 0..767 remain an exact status-v5 prefix.
+struct ReceiverStatusV6 : ReceiverStatusV5 {
+  NativeModuleStatusV1 native_module{};
+};
+
 bool encode_receiver_status_v2(
     const ReceiverStatusV2& status,
     std::uint8_t* output,
@@ -297,6 +326,10 @@ bool encode_receiver_status_v5(
     const ReceiverStatusV5& status,
     std::uint8_t* output,
     std::size_t output_size);
+bool encode_receiver_status_v6(
+    const ReceiverStatusV6& status,
+    std::uint8_t* output,
+    std::size_t output_size);
 
 bool command_may_claim_base(ReceiverCommand command);
 ReceiverDispatchDecision classify_receiver_dispatch(
@@ -305,7 +338,8 @@ ReceiverDispatchDecision classify_receiver_dispatch(
     std::size_t active_rgb_bytes,
     BaseMode base_mode,
     bool local_background_enabled,
-    bool installation_profiles_enabled = false);
+    bool installation_profiles_enabled = false,
+    bool receiver_native_modules_enabled = false);
 bool receiver_packet_crc_valid(
     const std::uint8_t* packet,
     std::size_t packet_size,
@@ -320,10 +354,23 @@ bool valid_status_query(
     std::size_t size,
     bool sparse_overlay_enabled,
     bool installation_profiles_enabled);
+bool valid_status_query(
+    const std::uint8_t* command,
+    std::size_t size,
+    bool sparse_overlay_enabled,
+    bool installation_profiles_enabled,
+    bool receiver_native_modules_enabled);
 bool parse_logical_receiver_id(
     const std::uint8_t* command,
     std::size_t size,
     std::uint8_t current_id,
     std::uint8_t* logical_receiver_id);
+bool parse_receiver_topology(
+    const std::uint8_t* command,
+    std::size_t size,
+    std::uint8_t current_id,
+    std::uint16_t current_global_offset,
+    std::uint8_t* logical_receiver_id,
+    std::uint16_t* global_strip_offset);
 
 }  // namespace ledgrid

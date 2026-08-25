@@ -17,7 +17,7 @@ uv run --with numpy --with pillow tools/benchmarks/clock_baseline.py --check --m
 
 ## Measurement envelope
 
-- Geometry: 32 strips x 138 LEDs = 4416 RGB pixels.
+- Geometry: 33 strips x 138 LEDs = 4554 RGB pixels.
 - Manager timeline: 200 Hz for 10.0
   simulated seconds (2000 back-to-back measured calls) per
   scenario after one untimed warm-up.
@@ -36,8 +36,8 @@ declares no `dirty_ranges`, so every changed tick still sends complete RGB.
 
 | Scenario | Changed/calls | Changed ratio | Observed cadence | All-call ms | Changed-call ms | Dirty pixels | Derived ranges | Declared dirty frames |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| normal | 10/2000 | 0.500% | 1.0 Hz | 0.0028/0.0037/0.0095/0.2344 | 0.2057/0.2344/0.2344/0.2344 | 11.0/19.0/19.0/19 | 5.0/9.0/9.0/9 | 0 |
-| animated | 120/2000 | 6.000% | 12.0 Hz | 0.003/0.4111/0.461/0.6314 | 0.4252/0.528/0.6032/0.6314 | 2476.0/2615.0/2672.0/2700 | 91.0/110.0/117.0/117 | 0 |
+| normal | 10/2000 | 0.500% | 1.0 Hz | 0.004/0.0043/0.0114/0.2299 | 0.2066/0.2299/0.2299/0.2299 | 11.0/19.0/19.0/19 | 5.0/9.0/9.0/9 | 0 |
+| animated | 120/2000 | 6.000% | 12.0 Hz | 0.004/0.431/0.4483/0.5385 | 0.4405/0.4676/0.5195/0.5385 | 2558.0/2705.0/2754.0/2777 | 92.0/112.0/113.0/118 | 0 |
 
 The normal scenario is: Default digital face and non-animated gradient background.
 The animated scenario is: Existing animation-render stress Clock: aurora background, hourglass face, and maximum supported density/glow/motion/speed.
@@ -46,15 +46,15 @@ zero changed signals without a real pixel delta.
 
 ## Full-frame payload facts
 
-One complete 32 x 138 RGB frame is **13,248 bytes**. At a
-dense 200 Hz that is **2,649,600 bytes/s**
-(21,196,800 bits/s) before
+One complete 33 x 138 RGB frame is **13,662 bytes**. At a
+dense 200 Hz that is **2,732,400 bytes/s**
+(21,859,200 bits/s) before
 command headers, CRC, status, retries, and physical encoding.
 
 | Scenario | Current complete-RGB bytes/s | Idealized byte-diff RGB bytes/s | Diff/full ratio on changed frames |
 | --- | ---: | ---: | ---: |
-| normal | 13,248.00 | 34.20 | 0.258% |
-| animated | 158,976.00 | 89,526.30 | 56.314% |
+| normal | 13,662.00 | 34.20 | 0.250% |
+| animated | 163,944.00 | 92,383.50 | 56.351% |
 
 The idealized byte-diff column is not an on-wire forecast: it counts three RGB
 bytes per changed pixel and excludes range/patch headers, alpha, clears, CRC,
@@ -89,7 +89,7 @@ ms; capture-time gaps are not represented as variable WebP durations.
   over the deterministic ten-second window; manager calls must not multiply
   semantic/source ticks.
 - Every cached frame must remain byte-identical, every changed tick must change
-  at least one pixel, and frames must remain contiguous `uint8` 32 x 138 RGB.
+  at least one pixel, and frames must remain contiguous `uint8` 33 x 138 RGB.
 - A normal Clock full-scene diff must change less than 10 percent of wall pixels.
   This is a useful proxy for choosing the Clock as a sparse-overlay candidate,
   while explicitly retaining that the current full scene transports the complete

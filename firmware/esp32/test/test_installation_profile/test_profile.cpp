@@ -66,7 +66,9 @@ ledgrid::InstallationProfileReceiverExpectationV1 expectation(
     std::size_t logical_id = 0) {
   const auto& source =
       ledgrid::installation_profile_fixture::kInstalledReceivers[logical_id];
-  return {source.strip_origin, source.reversed_strip_order};
+  return {source.strip_origin, source.reversed_strip_order,
+          source.global_strip_count, source.strip_count,
+          source.leds_per_strip};
 }
 
 void assert_rejected(
@@ -87,7 +89,10 @@ void assert_rejected(
 }
 
 void test_all_installed_receiver_views_decode_with_exact_identity() {
-  for (std::size_t logical_id = 0; logical_id < 4; ++logical_id) {
+  for (std::size_t logical_id = 0;
+       logical_id < std::size(
+           ledgrid::installation_profile_fixture::kInstalledReceivers);
+       ++logical_id) {
     const auto& source =
         ledgrid::installation_profile_fixture::kInstalledReceivers[logical_id];
     ledgrid::InstallationProfileViewV1 view{};
@@ -100,24 +105,26 @@ void test_all_installed_receiver_views_decode_with_exact_identity() {
         static_cast<std::uint8_t>(error));
     TEST_ASSERT_EQUAL_PTR(source.bytes, view.encoded);
     TEST_ASSERT_EQUAL_UINT32(source.size, view.encoded_size);
-    TEST_ASSERT_EQUAL_UINT16(32, view.global_strip_count);
-    TEST_ASSERT_EQUAL_UINT16(138, view.leds_per_strip);
+    TEST_ASSERT_EQUAL_UINT16(source.global_strip_count, view.global_strip_count);
+    TEST_ASSERT_EQUAL_UINT16(source.leds_per_strip, view.leds_per_strip);
     TEST_ASSERT_EQUAL_UINT16(source.strip_origin, view.strip_origin);
-    TEST_ASSERT_EQUAL_UINT16(8, view.strip_count);
-    TEST_ASSERT_EQUAL_UINT32(kPixels, view.pixel_count);
+    TEST_ASSERT_EQUAL_UINT16(source.strip_count, view.strip_count);
+    const std::size_t pixels =
+        static_cast<std::size_t>(source.strip_count) * source.leds_per_strip;
+    TEST_ASSERT_EQUAL_UINT32(pixels, view.pixel_count);
     TEST_ASSERT_EQUAL_UINT8(1, view.clearance_radius);
     TEST_ASSERT_EQUAL(source.reversed_strip_order, view.reversed_strip_order);
     TEST_ASSERT_EQUAL_PTR(source.bytes + kSectionPayloadOffset, view.category);
-    TEST_ASSERT_EQUAL_PTR(view.category + kPixels, view.clearance);
-    TEST_ASSERT_EQUAL_PTR(view.clearance + kPixels, view.foliage_edge);
-    TEST_ASSERT_EQUAL_PTR(view.foliage_edge + kPixels, view.globe_edge);
-    TEST_ASSERT_EQUAL_PTR(view.globe_edge + kPixels, view.obstacle_edge);
-    TEST_ASSERT_EQUAL_PTR(view.obstacle_edge + kPixels, view.globe_region);
-    TEST_ASSERT_EQUAL_PTR(view.globe_region + kPixels, view.distance);
-    TEST_ASSERT_EQUAL_PTR(view.distance + kPixels,
+    TEST_ASSERT_EQUAL_PTR(view.category + pixels, view.clearance);
+    TEST_ASSERT_EQUAL_PTR(view.clearance + pixels, view.foliage_edge);
+    TEST_ASSERT_EQUAL_PTR(view.foliage_edge + pixels, view.globe_edge);
+    TEST_ASSERT_EQUAL_PTR(view.globe_edge + pixels, view.obstacle_edge);
+    TEST_ASSERT_EQUAL_PTR(view.obstacle_edge + pixels, view.globe_region);
+    TEST_ASSERT_EQUAL_PTR(view.globe_region + pixels, view.distance);
+    TEST_ASSERT_EQUAL_PTR(view.distance + pixels,
                           reinterpret_cast<const std::uint8_t*>(view.normal_x));
     TEST_ASSERT_EQUAL_PTR(
-        reinterpret_cast<const std::uint8_t*>(view.normal_x) + kPixels,
+        reinterpret_cast<const std::uint8_t*>(view.normal_x) + pixels,
         reinterpret_cast<const std::uint8_t*>(view.normal_y));
     TEST_ASSERT_EQUAL_MEMORY(source.bytes + 36, view.calibration_digest, 32);
     TEST_ASSERT_EQUAL_MEMORY(source.bytes + 68, view.content_digest, 32);

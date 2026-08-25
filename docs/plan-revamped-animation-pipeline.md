@@ -37,23 +37,60 @@ with a small, explicit presentation model:
   then a statically linked firmware background with a sparse clock overlay, and
   only then introduce uploadable native modules.
 
-The existing 32 x 138 wall, four 8 x 138 receivers, 160 Hz installed full-frame
-target, and compiled startup rainbow remain the operating envelope and fallback.
+The finalized 33 x 138 wall, four 8 x 138 receivers plus one 1 x 138 receiver,
+160 Hz installed full-frame target, and compiled startup rainbow are the current
+operating envelope and fallback. Historical 32 x 138/four-receiver measurements
+remain evidence for the geometry on which they ran, not acceptance for the added
+strip and receiver.
 Target 200 is retained only for output-rate saturation characterization. Existing
 Python plugins and presets must continue to work throughout migration. Every
 phase is independently useful, has an acceptance gate, and stops before the next
 risk domain.
 
-The installed SPI1 MISO fault limits evidence, not outbound presentation. MOSI,
-chip select, host transfer accounting, and the complete-host-frame fallback still
-work on all four receivers. Host UX, semantic-palette migration, portable sparse
-foreground and geometry work, repository-native build/library work, strict
-one-receiver canaries on readable SPI0, and an explicitly degraded visual
-four-wall showcase may therefore proceed. The fault still blocks strict
-acknowledgement-based all-board acceptance, transactional activation claims, and
-production enablement of receiver-local features.
+The operator reports that the former SPI1 MISO fault has now been repaired and
+that the hardware layout is finalized. Treat the installed mapping and direction
+domains as fixed inputs, but do not convert that report into release evidence:
+TX echo and rerun the streamed baseline. Until that succeeds, the historical
+Gate H0 must still capture fresh identity/status from all five receivers with no
+TX echo and rerun the streamed baseline. Until that succeeds, the historical
+TX echo and rerun the streamed baseline. Until that succeeds, the historical
+degraded evidence remains useful but strict acknowledgement-based all-board
+acceptance, transactional activation claims, and production enablement of
+receiver-local features remain open.
 
 ## Plan Authority and Resolved Decisions
+
+### Finalized installed topology amendment (2026-08-25)
+
+The live service reports `STRIPS=33`, five status-capable receivers, and the
+route map `0→0.0`, `1→0.1`, `2→1.1`, `3→1.0`, `4→1.2`. The fifth receiver owns
+one logical strip at global offset 32; the other four own eight strips each.
+The target boot source confirms `dtoverlay=spi1-3cs,cs2_pin=24`, so SPI1 CE2 is
+GPIO24/physical pin 18 and `/dev/spidev1.2` is a required readiness node.
+The physical left-to-right order extends the accepted prior mapping to
+`(0,1,3,2,4)`, with native global offsets by logical ID `(0,8,24,16,32)`.
+Host direction, native direction, physical lane selection, and transport route
+remain independent domains.
+
+This amendment supersedes every forward-looking assumption of exactly four
+uniform receivers or a 32-strip global geometry. Historical evidence below is
+left at its measured geometry. New builders, previews, profiles, transactions,
+health checks, acceptance runners, and deployment reconciliation must consume an
+explicit roster of per-receiver widths and offsets. They must not pad the fifth
+receiver into an apparent eight-strip semantic slice, infer physical output lane
+from its one-strip logical width, or weaken unanimity from five to four. The live
+legacy service currently mirrors the added column across the fifth board's lanes;
+Phase 4 replaces that implicit workaround with an explicit logical-width and
+physical-lane contract before release acceptance.
+
+The first read-only integrity delta on this topology did not pass H0. Across a
+10.03-second window, logical receivers 0, 1, 2, and 4 added zero CRC, SPI-queue,
+or display errors, while logical receiver 3 added 13 CRC errors and accepted 13
+fewer frames than the clean peers. This proves that all return paths are readable
+but not that transport integrity is clean. Re-run after the reconciled firmware
+deployment and diagnose a repeatable software/timing cause before any Phase 4
+release claim; do not waive the zero-new-error gate merely because wiring is now
+final.
 
 - This is the sole forward-looking `docs/plan*` document. It consolidates the
   former build/deploy, uploadable-native-animation, and revamped-animation plans;
@@ -210,7 +247,7 @@ tested prototype material, not proof that the installed system is qualified.
   and restored without flashing baseline firmware.
 - The Pi library is authoritative; receiver caches can be erased and rebuilt
   without reconstructing an artifact.
-- The receiver reports enough state to prove that all four boards agree on the
+- The receiver reports enough state to prove that all five boards agree on the
   controller session, scene revision, background bundle/payload binding,
   foreground generation, resolved vibe and plant-modifier revisions, and
   installation profile.
@@ -290,8 +327,8 @@ tested prototype material, not proof that the installed system is qualified.
     authenticity mechanism before expanding scope.
 
 11. **Preserve physical acceptance boundaries.**
-    Host simulation and desktop timings are useful gates but never substitute
-    for Raspberry Pi, one-receiver, four-receiver, and photographed wall evidence.
+   Host simulation and desktop timings are useful gates but never substitute
+   for Raspberry Pi, one-receiver, five-receiver, and photographed wall evidence.
 
 12. **Use the existing tools at their natural boundaries.**
     `just` remains the operator interface, `uv` and PlatformIO own reproducible
@@ -584,14 +621,16 @@ native application:
 - `animation/libraries/` owns genuinely shared palette, clock-face, geometry,
   and fixed-point composition helpers.
 - `drivers/spi_controller.py` owns exact single-receiver wire commands and status;
-  `drivers/multi_device.py` owns global slicing and four-receiver coordination.
+  `drivers/multi_device.py` owns topology-driven global slicing and exact-roster
+  coordination across the installed five receivers.
 - `firmware/esp32/` owns display state, foreground buffers, installation-profile
   views, native execution, cache, quarantine, and receiver timing.
 - `ipc/control_channel.py` and `web/` own managed commands, status presentation,
   unified catalog/scene UX, and previews; neither owns hardware or compiles
   target code.
-- `tools/deployment/`, the `Justfile`, and future native build helpers own
-  deterministic build/publish/install/activate steps and receipts.
+- `tools/deployment/`, the `Justfile`, and native build helpers own deterministic
+  build/publish/install/activate steps, build/publication receipts, and command-
+  bound runtime evidence for install/activation.
 - `tests/` and `tools/benchmarks/` own cross-domain golden fixtures,
   compatibility tests, performance evidence, and failure injection.
 
@@ -870,7 +909,7 @@ PRESENTATION_CONTEXT_COMMIT(scene_epoch, present_at_scene_time)
 ```
 
 The Pi is authoritative for exact vibe scalars/palette bytes and resolved plant
-modifier IDs/strengths. All four receivers stage and verify the same context
+modifier IDs/strengths. All five receivers stage and verify the same context
 digest before it becomes active. Host and firmware share fixed-point golden
 vectors for luminance and any accepted grade/optic; status reports the resolved
 digests rather than relying only on human-readable IDs.
@@ -911,7 +950,7 @@ OVERLAY_RENEW(controller_session_id, generation, lease)
 - A full foreground snapshot is always available for initial synchronization,
   periodic repair, and Pi/controller restart. Deltas are only an optimization.
 - Alpha-zero patches remove old content and reveal the current base.
-- The controller stages the same generation on all four receivers before commit.
+- The controller stages the same generation on all five receivers before commit.
   Partial commit triggers replay or compensation and a degraded status; it is
   never reported as a healthy scene.
 - Commits use one future `present_at_scene_time` after all boards acknowledge
@@ -994,7 +1033,8 @@ The compiled profile contains:
 - per-section lengths, CRCs, and an overall content digest.
 
 Compile all geometry globally, then slice it. Do not independently dilate or
-derive neighbor-dependent fields on four receivers and create artificial seams.
+derive neighbor-dependent fields independently on receivers and create artificial
+seams.
 The Pi retains the source calibration evidence and authoritative compiled
 profile; receivers cache only the bounded binary data needed at runtime.
 
@@ -1014,7 +1054,7 @@ sampling contract passes cross-receiver seam tests. Missing required geometry
 rejects component start; missing optional geometry produces an explicit no-op and
 diagnostic.
 
-Profile activation is separately staged on all four receivers. A scene never
+Profile activation is separately staged on all five receivers. A scene never
 runs with silently mixed calibration generations.
 
 ## Unsigned Native Background Lifecycle
@@ -1097,8 +1137,9 @@ Compile source twice:
   process.
 
 The target ELF is never executed by the web or controller process. The host
-preview renders all four 8 x 138 offsets and stitches a 32 x 138 result so global
-coordinate errors are visible before packaging.
+preview renders the explicit installed slices `(8,8,8,8,1)` at native offsets
+`(0,8,24,16,32)` and stitches a 33 x 138 result so global-coordinate and
+heterogeneous-width errors are visible before packaging.
 
 Build validation includes deterministic source/toolchain fingerprints, ELF
 class/machine/type, ABI, target, geometry, exact export, import allowlist, size,
@@ -1109,19 +1150,25 @@ prototype until real packages justify a change.
 Expose separate operations:
 
 ```text
+just native-plan <plugin-id>
 just native-build <plugin-id>
+just native-publish <plugin-id-or-bundle>
 just native-install <plugin-id-or-digest>
 just native-start <plugin-id-or-digest>
 just native-run <plugin-id>
 ```
 
 `native-run` is convenience composition of build, preview, validate, publish,
-probe, stage, verify, and activate. The underlying receipt retains each step.
-These native-source commands operate on the selected package's exact working-tree
-digest without requiring unrelated repository files to be clean. Modified tracked
-package source is allowed only through this explicit development workflow and is
-recorded in the receipt; arbitrary paths and untracked executable inputs remain
-rejected. This does not weaken the clean-tree requirement for `just deploy`.
+probe, stage, verify, and activate. Build and publish retain append-only
+coordinator/publication receipts. Install and start instead return command-bound
+runtime evidence that must prove the requested operation, exact roster/topology/
+capabilities, bundle/payload, parameters when active, and current context/profile;
+they do not manufacture deployment receipts. These native-source commands operate
+on the selected package's exact working-tree digest without requiring unrelated
+repository files to be clean. Modified tracked package source is allowed only
+through this explicit development workflow and is recorded in the receipt;
+arbitrary paths and untracked executable inputs remain rejected. This does not
+weaken the clean-tree requirement for `just deploy`.
 
 ### Pi library and receiver cache
 
@@ -1131,7 +1178,7 @@ rejected. This does not weaken the clean-tree requirement for `just deploy`.
   atomically under a library lock.
 - Never send large binary payloads through the single JSON control file. IPC
   carries managed IDs and progress/status only.
-- Probe all four receiver caches before transfer. Existing matching content is
+- Probe all five receiver caches before transfer. Existing matching content is
   never rewritten.
 - Upload ordered, bounded, retryable chunks to `.part` state; verify size and
   digest before atomic visibility.
@@ -1229,7 +1276,7 @@ only process that mutates receiver state.
 - Restore only after validating provider capabilities and managed artifact
   existence. Unknown schema/provider/bundle binding falls back to the known
   Python scene rather than competing with unexplained receiver-local playback.
-- On Pi restart, adopt receiver-native state only when all four boards report the
+- On Pi restart, adopt receiver-native state only when all five boards report the
   expected bundle/payload binding, epoch, vibe, resolved plant-modifier revision,
   profile, and no quarantine. Then republish the complete foreground snapshot
   before deltas.
@@ -2112,7 +2159,8 @@ restored one-receiver physical canary followed by strict streamed reacceptance.
   release health and scene restoration; the separately named degraded status,
   dense streamed-frame baseline, and full animation sweep pass on the known
   readable/write-only topology without pretending telemetry is complete.
-- [ ] After the wire repair, fresh strict Phase 3A status proves all four
+- [ ] After the wire repair and finalized-topology migration, fresh strict Phase
+  3A status proves all five
   receivers remain on the production feature-off image and the strict dense
   streamed-frame baseline plus animation sweep pass without receiver integrity,
   cadence, or takeover regressions.
@@ -2896,7 +2944,8 @@ Portable-slice evidence and open gates (2026-08-13):
   readable IDs 0/1, renewals increasing 121/131/141, and zero publisher,
   queue, or display errors. SPI1 receivers 2/3 remain explicitly
   display-unverified and this does not claim release acceptance.
-- [ ] Repair SPI1 MISO/MOSI and repeat strict all-four streamed and Phase 3B
+- [ ] Verify the reported SPI1 repair, migrate the finalized fifth receiver, and
+  repeat strict all-five streamed and Phase 3B
   acceptance, including receiver timing, disconnect/expiry, restored streaming,
   and soak evidence. The completed strict readable-0/1 canaries and explicitly
   degraded four-wall camera showcase remain useful evidence but do not close
@@ -3665,7 +3714,7 @@ Closeout evidence (2026-08-21):
   class/machine/type, wrong ABI/target/geometry, missing export, forbidden import,
   initializer/finalizer sections, oversized payload, malformed schema/default,
   or output-canary overwrite.
-- Host preview renders and stitches all four global offsets. Mean/p95/p99/max are
+- Host preview renders and stitches all five global offsets. Mean/p95/p99/max are
   reported as workstation proxy evidence only.
 - A native source change produces a build/publish plan without app restart,
   dependency work, reboot, or firmware flash.
@@ -3675,10 +3724,176 @@ Closeout evidence (2026-08-21):
 
 Do not expose arbitrary upload or execute dynamic modules on installed receivers.
 
-### Phase 4: Dynamic Loader, Cache, Four-Board Orchestration, and Release
+### Phase 4: Dynamic Loader, Cache, Five-Receiver Orchestration, and Release
 
 Activate trusted unsigned modules only after the earlier contracts and hardware
 prerequisites are proven.
+
+Execution status (2026-08-25): **in progress**. The work is split into three
+parallel, non-overlapping lanes: receiver loader/cache/watchdog/quarantine;
+host protocol and exact-roster transactions; and scene/API/dashboard/persistence/
+deployment product integration. The master plan and shared contracts remain
+root-owned during convergence. The operator reports the hardware repair and
+final physical layout complete; fresh H0 evidence is still required before any
+old blocked gate is marked accepted. All receiver-native behavior remains
+default-off, and ordinary complete-frame streaming plus `just deploy` are
+mandatory regression gates throughout this phase.
+
+Read-only discovery evidence (2026-08-25; not H0 acceptance): the live API
+reported 33×138, five receiver status records, device routes
+`(0.0,0.1,1.1,1.0,1.2)`, and approximately 156 displayed FPS. Systemd carries
+`STRIPS=33`. The target was running from the legacy mutable deploy root with no
+`current` symlink and status-v2 firmware, so the next ordinary deployment is
+also a migration/reconciliation test; it must not assume an already-selected
+immutable release. Lifetime receiver CRC counters were nonzero on the new SPI1
+devices, so fresh delta-based H0 and soak evidence is required. This probe proves
+reachability and topology discovery only, not clean integrity, capability, or
+release acceptance.
+
+Read-only USB discovery (2026-08-25): the Pi currently exposes only
+`/dev/ttyACM0` and one Espressif factory identity under `/dev/serial/by-id`;
+`/dev/ttyACM1` through `/dev/ttyACM4` are absent. Five-receiver SPI/API
+reachability does not satisfy the exact-five USB flash inventory. Deployment
+must remain fail-closed, and ordinary deploy plus every physical gate remain
+blocked until the other four programming links are attached.
+
+The preserved target-owned `receiver_hybrid.json` is also a migration input: it
+still contains the old enabled four-entry `(0,1,3,2)` mapping and
+`degraded_spi1_01_readable` policy. Phase 4 must atomically migrate that exact
+known state to the five-entry topology with receiver execution disabled, record
+the mutation in the deployment receipt, and retain the Python full-scene
+baseline. Strict local/native policy is a later explicit action after fresh
+capability proof. Merely preserving the old file would
+make the new five-receiver service select an incompatible degraded facade, so
+ordinary deployment must preflight and reconcile it explicitly.
+
+Current convergence checklist:
+
+Software convergence evidence (2026-08-25, still pre-deployment): the target
+rollout file now has a fail-closed schema-v1-to-v2 migrator that accepts only
+the exact observed legacy payload, materializes the finalized 33-strip/five-
+receiver topology with all receiver execution gates off, and runs as the stable
+post-health `receiver.topology_migrate` coordinator step. Until health passes,
+the candidate recognizes only that exact v1 payload as the semantically
+identical feature-off finalized selection; this keeps a pre-activation failure
+bootable by the legacy service and prevents the schema migration from weakening
+rollback. The
+systemd, setup, health, flash, and SPI boot defaults now require five receivers;
+boot reconciliation selects the as-built `spi1-3cs,cs2_pin=24` overlay and
+includes `/dev/spidev1.2`. Thirty
+focused config/coordinator tests pass, including atomic interruption,
+idempotence, unknown-legacy refusal, native/local firmware selection, step
+ordering, and target geometry agreement. Target evidence remains open below.
+The expanded deployment/config/preservation regression gate now
+passes 214 tests plus 126 subtests, including the post-health migration order.
+
+First-cutover hardening is implemented and tested. Its contract places
+`app.bootstrap_legacy` immediately after `app.stage` when no
+immutable `current` exists, records a content-addressed `legacy_app_bootstrap`
+schema-v1 receipt artifact, and uses that release as the compensation target.
+Full-deploy health must also emit an environment-derived `receiver_contract`
+proving exact five-roster identity/topology and minimum status/capabilities after
+flash: production requires v3/base ownership, local canary requires v5/local and
+profile capabilities, and native canary requires v6/the full native mask. Widths,
+offsets, output masks, and LEDs per strip are exact. The inventory ledger alone
+is not post-boot proof. The final local software gate is recorded below; keep
+the ordinary-deploy checklist item open until exact-five USB inventory,
+deployment, and fresh post-boot health pass.
+
+The Phase 4 product lane is integrated: managed catalog binding, install/
+activate/adopt/update/recovery, startup-only adoption with deterministic Python
+fallback, bundle-bound build-time previews, generic parameter controls, API/IPC and
+dashboard operation health, durable native gating, app-downgrade recovery, and
+separate native build/publish/install/start/run workflows are covered by 157
+focused tests plus 125 subtests. A further 57 host-bound topology/protocol/
+profile tests plus 113 subtests and a final 67-test integration rerun pass;
+Ruff, Python compilation, JavaScript syntax, and diff checks are clean. The later
+fail-closed adversarial pass and quarantine-control integration reran the combined
+product/deployment/runner scope at 142 tests plus 80 subtests, including takeover
+rejection/exception recovery, exact restore proofs, stale receipt rejection,
+symlink confinement, and exact digest-bound quarantine clear.
+
+The physical-evidence surface now has API-only H2 and separate default/maximum
+H4 recipes with real 1,800-second defaults. The runner samples exact five-board
+binding/context/profile/topology, counter continuity, skew/drift, status-exposed
+timing, SPI, memory, and cache state, and always proves recovery to a Python full
+scene. It labels its output supporting evidence, enumerates uncovered H2/H4
+subgates, and accepts only same-release/same-artifact companion evidence before
+`--require-complete-gate` can succeed. It deliberately does not mislabel sampled
+last-value timings as receiver event histograms or claim transaction injection,
+clock-boundary/restart repair, dense streaming, animation sweep, retained
+artifacts, or the other soak as covered. Complete-gate claims require both
+requested and observed duration of at least 1,800 seconds, exact requested native
+and Clock parameters, stable release identity, every required telemetry field,
+zero reset/boot/watchdog/cadence/error deltas, and positively verified Python
+restoration. The hardened runner module passes 14 tests plus 10 subtests; no
+physical gate is accepted yet.
+
+The finalized geometry also exposed that all 33 curated GIF assets were authored
+at the historical 32×138 resolution. They are now deterministically normalized
+to 33×138 by appending one opaque-black column at global strip 32 without
+resampling; decoded source-column digests, frame counts, durations, loop,
+disposal, and transparency metadata are retained in a checked normalization
+manifest. The verifier currently accepts all 33 assets, so the runtime keeps its
+strict exact-resolution rule rather than hiding the mismatch with implicit
+scaling or padding.
+
+The receiver implementation now passes all seven portable suites (124 tests)
+and builds of all three embedded environments: production feature-off (275,421
+bytes reported image; 50,872 bytes RAM), local canary (361,097 bytes; 87,096
+bytes RAM), and managed-native canary with the real `esp_dlfcn` loader (521,449
+bytes; 97,528 bytes RAM). The cache includes boot-time SPIFFS orphan/corrupt-
+pair reconciliation while preserving valid and unrelated files; failed-phase
+unload/replacement recovery and watchdog callback/disarm races are covered.
+Committed ELF bytes are re-hashed during VERIFY, ACTIVATE, and boot
+reconciliation, so same-size post-commit corruption is removed or rejected
+before loader entry.
+Protocol-boundary review additionally aligned successful negative PROBE,
+payload-level pin protection for shared ELF bytes, typed parameter IDs,
+operation-sequence/result latching, and exact-roster quarantine-clear/reinstall;
+28 final cross-language/golden tests pass with no remaining mismatch found.
+Library ordering now parses the frozen UTC-Z receipt timestamp into an instant
+instead of comparing ISO text, rejects offsets and malformed forms, and uses the
+bundle digest as a deterministic equal-instant tie-breaker.
+This is portable/build evidence only; no Phase 4 firmware has yet been deployed
+to the wall.
+
+Final local convergence evidence (2026-08-25): `just test` passed from the
+complete implementation tree. The main Python collection contains 1,502 tests;
+rendering acceptance passed 23 tests plus 3 subtests with every stress-scene p95
+below the 4 ms budget; all 124 portable firmware cases passed; all three
+firmware images built at the sizes above; and deployment passed 231 tests plus
+154 subtests. All five cross-language/receiver golden generators are
+regeneration-equal. The 33-GIF normalizer, 51-plugin compatibility inventory,
+Clock baseline, sparse payload acceptance (94.8688% modeled savings), and native
+preview proxy also pass; the native stress proxy measured 1.027792 ms p95 with
+zero missed deadlines. `uv lock --check --offline`, Python compilation,
+changed-file Ruff `F` checks across 84 files, shell syntax through the deployment
+suite, `git diff --check`, and the authoritative 16-step `just deploy-plan` pass.
+This closes the local software gate only; it does not manufacture a deployment
+or physical acceptance result.
+
+- [x] Freeze and cross-test the 33×138/five-receiver topology, heterogeneous
+  CONFIG/status wire contract, logical/physical direction domains, profile views,
+  native bundle identity, and stitched host preview.
+- [x] Complete the receiver loader, persistent content-addressed cache, reserve/
+  pins/LRU rules, upload/finalize/verify, typed parameters, all-phase watchdog
+  attribution, quarantine, status v6, and feature-off compatibility.
+- [x] Complete single-receiver protocol plus exact-roster probe/stage/verify/
+  activate/compensate/adopt/stop/update/remove workflows with operation locking
+  and every receiver/phase/ack failure injected.
+- [x] Complete scene/provider selection, catalog preview, API/IPC/dashboard,
+  persistence/adoption, explicit Python recovery and exact-bundle quarantine
+  clear, downgrade refusal, deployment build/publish receipts, command-bound
+  install/activation evidence, and legacy target-config migration.
+- [x] Pass focused coverage, full Python/rendering/deployment gates, portable
+  firmware tests, all three firmware builds, deterministic artifact regeneration,
+  dry-run/plan, whitespace, and source-policy checks.
+- [ ] Commit a clean software checkpoint and pass ordinary `just deploy` without
+  losing the 33rd strip, fifth receiver, operator state, fallback, or target-owned
+  libraries.
+- [ ] Pass H0, H1, H2, H3, and both H4 soaks with fresh machine-readable and
+  photographed evidence before enabling `receiver_native_modules` by default.
 
 - Port the dynamic loader, content-addressed cache, ordered upload, atomic commit,
   inactive LRU eviction, reserve, typed parameters, watchdog, quarantine, and
@@ -3692,7 +3907,7 @@ prerequisites are proven.
   native scene.
 - Preserve and pin the prior accepted bundle binding and payload, compiled
   fallback, known Python fallback, and previous firmware images through soak.
-- Execute the one-receiver and four-receiver physical gates below before changing
+- Execute the one-receiver and five-receiver physical gates below before changing
   any feature default.
 
 #### Acceptance
@@ -3707,7 +3922,8 @@ prerequisites are proven.
 - Watchdog attribution covers load/relocation, entrypoint, initialization,
   context update, render, cleanup, and unload; each phase has a deliberate
   failure/reset/quarantine test.
-- Fake four-receiver tests fail every receiver/operation/ack point and never end
+- Fake five-receiver tests use the installed heterogeneous widths, fail every
+  receiver/operation/ack point, and never end
   with the manager claiming a healthy mixed wall.
 - Pi restart adoption requires unanimous bundle/payload binding, mode, vibe,
   resolved plant-modifier revision, and profile, then republishes the foreground
@@ -3715,7 +3931,7 @@ prerequisites are proven.
 - App downgrade preflight refuses while incompatible receiver-native state is
   active; after the explicit recovery operation establishes a known Python full
   scene, app-only rollback succeeds without mutating receivers.
-- One receiver and then all four pass physical install/start/update/stop,
+- One receiver and then all five pass physical install/start/update/stop,
   disconnect/restart, crash/fallback, overlay, geometry, switchback, skew/drift,
   and soak acceptance.
 
@@ -3768,6 +3984,7 @@ Further expansion requires a new measured problem statement and acceptance gate.
 | One receiver missing during stage | Activate nothing; leave previous scene running |
 | One receiver fails after partial start | Stop candidate, restore the pinned prior bundle/payload binding or use complete host fallback, report degraded state |
 | Native callback error or watchdog | Quarantine payload digest and run compiled fallback when firmware remains healthy; no automatic retry |
+| Operator retries quarantined payload | Require explicit exact-bundle quarantine clear with unanimous five-receiver verification, then perform a separate reinstall |
 | Native cache loss | Rehydrate from Pi library before activation |
 | Installation-profile mismatch | Reject required-profile start or use declared optional no-op; never mix silently |
 | Mixed receiver capabilities | Continue legacy streaming; refuse native activation |
@@ -3801,7 +4018,7 @@ Add focused suites for:
   ownership, scheduled commit skew, leases, and legacy-host compatibility;
 - deterministic native builds, package/ELF validation, host preview, managed
   library, and deploy receipts;
-- receiver cache, loader, quarantine, status, failure recovery, and four-board
+- receiver cache, loader, quarantine, status, failure recovery, and exact-roster
   compensation;
 - geometry packing, global slicing, category/region parity, halos, modifier
   no-op parity, and nonzero host/firmware transform parity.
@@ -3831,15 +4048,32 @@ At minimum:
 Hardware work is never implied by code completion. Schedule it explicitly after
 portable tests pass. These gates control release claims and default enablement,
 not host UX, portable implementation, preview, fake orchestration, or an
-explicitly degraded visual showcase. Before the SPI1 repair, strict canaries may
-target readable receiver 0 or 1; write-only receivers 2 and 3 can contribute only
-host-counter plus visual demonstration evidence.
+explicitly degraded visual showcase. Before the SPI1 repair, strict canaries
+could target readable receiver 0 or 1; write-only receivers 2 and 3 contributed
+only host-counter plus visual demonstration evidence. That evidence remains
+historical and cannot qualify the finalized five-receiver wall.
+
+The non-destructive API-only slices have exact recipes:
+
+```bash
+just receiver-native-h2-evidence
+just receiver-native-h4-default-soak
+just receiver-native-h4-maximum-soak
+```
+
+Each defaults to 1,800 seconds, always executes Python full-scene restoration,
+and fails unless host takeover is positively proved. Short runs are diagnostics
+only. These recipes report covered and
+outstanding subgates; they do not replace H2 failure injection, clock boundary/
+lease/restart repair, dense streaming, the Python sweep, retained receiver timing
+distributions/artifacts, photographed H3 evidence, or the other H4 soak.
 
 ### Gate H0: wiring and streamed baseline
 
-- Repair and verify the documented SPI1 MISO/MOSI fault before any all-wall
-  native release.
-- Read fresh identity/capability/status from all four receivers with no TX echo.
+- Verify the operator-completed SPI1 MISO/MOSI repair with fresh delta-based
+  evidence before any all-wall native release; the hardware layout is finalized
+  and software must not compensate by silently changing topology.
+- Read fresh identity/capability/status from all five receivers with no TX echo.
 - Preserve the last validated firmware binaries and partition table.
 - Run the existing one-receiver and full-wall streamed canaries before enabling
   any local-background feature.
@@ -3857,13 +4091,13 @@ host-counter plus visual demonstration evidence.
   failure, deliberate watchdog, quarantine, and reinstall.
 - Record native render/composite/encode/display p50/p95/p99/max and cadence misses.
 
-### Gate H2: four receivers
+### Gate H2: five receivers
 
 - Require fresh identity and exact desired capabilities, bundle/payload binding,
   vibe, plant-modifier revision, and profile digest on every board.
 - Inject a stage failure or unplugged receiver and prove no subset starts.
-- Start the analytic background with offsets 0, 8, 16, and 24; record start skew
-  and 30-minute drift.
+- Start the analytic background using installed logical widths `(8,8,8,8,1)` and
+  native offsets `(0,8,24,16,32)`; record start skew and 30-minute drift.
 - Move the clock across receiver boundaries and test old-pixel clears, alpha,
   scheduled presentation skew, lease expiry, Pi restart/new-session snapshot,
   and partial-generation recovery. First-to-last visible skew must remain below
@@ -3908,7 +4142,7 @@ be enabled by default or described as production-ready.
    foreground portably, then exercise a strict readable one-receiver canary;
    local playback remains off by default.
 6. Use the explicitly degraded hybrid showcase only for visual/product evidence.
-   After return-path repair, qualify all four and enable the compiled background,
+   After return-path repair, qualify all five and enable the compiled background,
    sparse foreground, and geometry as separate strict gates.
 7. Publish and install the native pilot without auto-start. Verify all hashes,
    identities, cache entries, and rollback artifacts.
@@ -3917,12 +4151,15 @@ be enabled by default or described as production-ready.
 Rollback layers remain independent:
 
 - **Deployment attempt:** retain logs and receipts for failure/interruption;
-  resume only idempotent provisioning phases.
+  resume only idempotent provisioning phases. On the first immutable cutover,
+  retain the content-addressed legacy bootstrap receipt/release as the explicit
+  compensation target rather than assuming a pre-existing `current`.
 - **Scene:** select a known Python background-only scene.
 - **Foreground:** clear the generation and continue the base.
 - **Native artifact:** reserve and stage the candidate while the prior
   bundle/payload binding remains pinned; restore that binding on any activation
-  failure.
+  failure. A quarantined payload requires an explicit exact-binding clear and a
+  separate reinstall; it is never retried automatically.
 - **Application:** preserve artifact/calibration libraries; refuse incompatible
   downgrade until an explicit recovery operation has taken host ownership, then
   perform app-only rollback without receiver mutation.
@@ -3940,7 +4177,7 @@ Rollback layers remain independent:
 - No general render graph, multiple receiver-native layers, blend-mode zoo, or
   receiver-rendered clock.
 - No strict cross-board v-sync, distributed simulation state, or atomic physical
-  LED latch across four independent receivers.
+  LED latch across five independent receivers.
 - No live receiver framebuffer readback; native previews are authoring-time
   representations.
 - No target compilation or target ELF execution in the dashboard/controller.
@@ -3985,7 +4222,7 @@ restricted to trusted repository builds.
 ## Assumptions
 
 - The installation remains one Mac development machine, one Raspberry Pi, and
-  four ESP32-S3 receivers; no hosted registry or telemetry service is required.
+  five ESP32-S3 receivers; no hosted registry or telemetry service is required.
 - `just deploy` ultimately performs full desired-state reconciliation from a
   clean tree; `just deploy-dirty` is the explicit development exception.
 - Successful deployment output is ephemeral, while receipts and failure logs
@@ -3993,8 +4230,8 @@ restricted to trusted repository builds.
 - Application health failure automatically restores the prior app release.
   Firmware failure remains in place with explicit recovery and no false
   whole-system rollback claim.
-- All four receivers run the same baseline firmware and expose stable logical
-  identity/global offset.
+- All five receivers run the same baseline firmware and expose stable logical
+  identity, local width, global offset, and physical-lane configuration.
 - Application releases, runtime state, native artifact library, calibration
   library, firmware images, and receiver cache remain separate deployment
   domains.

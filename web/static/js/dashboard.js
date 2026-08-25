@@ -1616,7 +1616,44 @@
             .join(' ');
     }
 
-    function syncSceneProviderControls() {
+    function renderReceiverParameterControls(descriptor, authoredParameters = null) {
+        const host = document.getElementById('sceneReceiverParameterControls');
+        if (!host) return;
+        host.replaceChildren();
+        const schema = descriptor?.parameter_schema || {};
+        const values = {...(descriptor?.defaults || {}), ...(authoredParameters || {})};
+        Object.entries(schema).forEach(([parameterId, contract]) => {
+            const column = document.createElement('div');
+            column.className = 'col-6';
+            const inputId = `sceneReceiverParameter-${parameterId}`;
+            const label = document.createElement('label');
+            label.className = 'form-label';
+            label.htmlFor = inputId;
+            label.textContent = parameterId.replaceAll('_', ' ');
+            const input = document.createElement('input');
+            input.id = inputId;
+            input.dataset.nativeParam = parameterId;
+            input.dataset.parameterType = contract.type;
+            input.className = contract.type === 'bool'
+                ? 'form-check-input d-block mt-2'
+                : 'form-control';
+            if (contract.type === 'bool') {
+                input.type = 'checkbox';
+                input.checked = Boolean(values[parameterId]);
+            } else {
+                input.type = 'number';
+                if (contract.min != null) input.min = contract.min;
+                if (contract.max != null) input.max = contract.max;
+                input.step = contract.type === 'int' ? '1' : 'any';
+                input.value = values[parameterId] ?? contract.default ?? 0;
+            }
+            if (contract.description) input.title = contract.description;
+            column.append(label, input);
+            host.appendChild(column);
+        });
+    }
+
+    function syncSceneProviderControls(authoredParameters = null) {
         const selected = document.getElementById('sceneBackgroundSelect')?.selectedOptions?.[0];
         const componentId = selected?.dataset.componentId || selected?.value;
         const descriptor = sceneComponentDescriptor(componentId, selected?.dataset.provider || null);
@@ -1625,6 +1662,10 @@
         const receiverParameters = document.getElementById('sceneReceiverParameters');
         if (fallbackField) fallbackField.hidden = !receiverNative;
         if (receiverParameters) receiverParameters.hidden = !receiverNative;
+        renderReceiverParameterControls(
+            receiverNative ? descriptor : null,
+            authoredParameters
+        );
 
         const providerBadge = document.getElementById('sceneBackgroundProvider');
         if (providerBadge) {
@@ -1656,12 +1697,16 @@
 
     function receiverBackgroundParameters(backgroundId, provider) {
         if (sceneComponentDescriptor(backgroundId, provider)?.provider !== 'receiver_native') return null;
-        return {
-            preferred_cadence_hz: Number(
-                document.getElementById('sceneReceiverCadence')?.value || 30
-            ),
-            common_seed: Number(document.getElementById('sceneReceiverSeed')?.value || 0)
-        };
+        const result = {};
+        document.querySelectorAll('[data-native-param]').forEach(input => {
+            const parameterId = input.dataset.nativeParam;
+            if (input.dataset.parameterType === 'bool') {
+                result[parameterId] = input.checked;
+            } else {
+                result[parameterId] = Number(input.value);
+            }
+        });
+        return result;
     }
 
     function clockOverlayParameters() {
@@ -1780,6 +1825,15 @@
         }
     }
 
+    async function recoverReceiverNative() {
+        try {
+            await sceneRequest('/api/v1/receiver-native/recover', {method: 'POST'});
+            showToast('Receiver-native recovery to the recorded Python fallback requested.', 'success');
+        } catch (error) {
+            showToast(error.message, 'error');
+        }
+    }
+
     function loadSceneIntoEditor(scene) {
         const background = document.getElementById('sceneBackgroundSelect');
         if (background) {
@@ -1798,16 +1852,11 @@
             ));
             fallback.selectedIndex = option ? option.index : -1;
         }
-        const receiverParameters = scene.background.parameter_overrides || {};
-        const cadence = document.getElementById('sceneReceiverCadence');
-        const seed = document.getElementById('sceneReceiverSeed');
-        if (cadence && receiverParameters.preferred_cadence_hz != null) {
-            cadence.value = receiverParameters.preferred_cadence_hz;
-        }
-        if (seed && receiverParameters.common_seed != null) {
-            seed.value = receiverParameters.common_seed;
-        }
-        syncSceneProviderControls();
+        const receiverParameters = {
+            ...(scene.background.resolved_parameters || {}),
+            ...(scene.background.parameter_overrides || {})
+        };
+        syncSceneProviderControls(receiverParameters);
         const overlay = Array.isArray(scene.overlays) ? scene.overlays[0] : null;
         document.getElementById('sceneOverlayEnabled').checked = Boolean(overlay?.enabled);
         if (!overlay) return;
@@ -1832,11 +1881,16 @@
         const scene = status?.scene || {};
         const receiver = scene.receiver || status?.receiver_hybrid || null;
         const publisher = receiver?.publisher || {};
+        const driver = receiver?.driver || {};
+        const receiverMode = ['receiver_hybrid', 'receiver_native'].includes(
+            scene.provider_mode
+        );
+        const managedNative = scene.provider_mode === 'receiver_native';
         const state = document.getElementById('receiverAgreementState');
 
         let stateLabel = 'Host Python scene';
         let stateKind = 'host';
-        if (scene.provider_mode === 'receiver_hybrid') {
+        if (receiverMode) {
             if (receiver?.fallback_active) {
                 stateLabel = 'Degraded · fallback active';
                 stateKind = 'degraded';
@@ -1885,6 +1939,29 @@
                     : '--'
         );
         safeSetText('receiverTransportPolicy', receiver?.transport_policy || '--');
+        safeSetText(
+            'receiverNativeOperation',
+            managedNative
+                ? `${driver.operation || 'unknown'} · ${driver.state || 'unknown'}`
+                : 'Static compiled background'
+        );
+        safeSetText(
+            'receiverNativeArtifact',
+            managedNative && driver.bundle_digest
+                ? `${String(driver.bundle_digest).slice(0, 12)}… / ${String(driver.payload_digest || '').slice(0, 12)}…`
+                : '--'
+        );
+        safeSetText(
+            'receiverNativeProgress',
+            managedNative && Number.isFinite(Number(driver.progress))
+                ? `${Math.round(Number(driver.progress) * 100)}%`
+                : '--'
+        );
+        const recovery = document.getElementById('receiverNativeRecovery');
+        if (recovery) {
+            recovery.hidden = !managedNative;
+            recovery.disabled = !managedNative || receiver?.fallback_active === true;
+        }
 
         safeSetText('receiverQuarantineState', 'Not supported in this phase');
 
@@ -1903,6 +1980,7 @@
         }
         if (publisher.last_operation) agreement.push(publisher.last_operation);
         if (receiver?.error) agreement.push(`error: ${receiver.error}`);
+        if (driver?.error) agreement.push(`native error: ${driver.error}`);
         if (publisher.last_error) agreement.push(`error: ${publisher.last_error}`);
         safeSetText('receiverHybridDetail', agreement.join(' · ') || '--');
     }

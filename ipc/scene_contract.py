@@ -46,15 +46,21 @@ class SceneProviderPolicy:
     Receiver-local playback and sparse foreground publication form one product
     slice.  Enabling only one half must not make a receiver-native component
     selectable or valid.  Version 1 deliberately allowlists the statically
-    linked compiled rainbow rather than opening the scene boundary to arbitrary
-    native packages.
+    linked compiled rainbow by default. Managed native packages are admitted
+    only when the independent module gate is also enabled; their exact bundle
+    and payload identities are still bound by the catalog.
     """
 
     receiver_local_background: bool = False
     receiver_sparse_overlay: bool = False
+    receiver_native_modules: bool = False
 
     def __post_init__(self) -> None:
-        for name in ("receiver_local_background", "receiver_sparse_overlay"):
+        for name in (
+            "receiver_local_background",
+            "receiver_sparse_overlay",
+            "receiver_native_modules",
+        ):
             if type(getattr(self, name)) is not bool:
                 raise TypeError(f"scene provider policy {name!r} must be boolean")
 
@@ -62,10 +68,14 @@ class SceneProviderPolicy:
     def compiled_rainbow_enabled(self) -> bool:
         return self.receiver_local_background and self.receiver_sparse_overlay
 
+    @property
+    def managed_native_enabled(self) -> bool:
+        return self.compiled_rainbow_enabled and self.receiver_native_modules
+
     def allows_receiver_background(self, plugin_id: str) -> bool:
-        return (
-            self.compiled_rainbow_enabled
-            and plugin_id == COMPILED_RAINBOW_PLUGIN_ID
+        return self.compiled_rainbow_enabled and (
+            plugin_id == COMPILED_RAINBOW_PLUGIN_ID
+            or self.receiver_native_modules
         )
 
 
@@ -181,7 +191,10 @@ def decorate_catalog(
             if not provider_policy.compiled_rainbow_enabled:
                 # Preserve the Phase 2C feature-off product response exactly.
                 diagnostic = "This provider is catalog-visible but not executable in host scenes."
-            elif component_id != COMPILED_RAINBOW_PLUGIN_ID:
+            elif (
+                component_id != COMPILED_RAINBOW_PLUGIN_ID
+                and not provider_policy.managed_native_enabled
+            ):
                 diagnostic = (
                     "Only the compiled_rainbow receiver-native background is "
                     "enabled by the version 1 scene policy."
@@ -287,9 +300,13 @@ def _component_ref(
                 raise SceneValidationError(
                     "scene.known_python_fallback must use the python provider"
                 )
+            if not provider_policy.managed_native_enabled:
+                raise SceneValidationError(
+                    "receiver_native scene backgrounds are limited to "
+                    f"{COMPILED_RAINBOW_PLUGIN_ID!r} by the version 1 policy"
+                )
             raise SceneValidationError(
-                "receiver_native scene backgrounds are limited to "
-                f"{COMPILED_RAINBOW_PLUGIN_ID!r} by the version 1 policy"
+                "receiver_native scene background is disabled by the active policy"
             )
         for field in ("bundle_digest", "expected_payload_digest"):
             digest = payload.get(field)
@@ -340,7 +357,10 @@ def _component_ref(
             )
         if provider == "receiver_native":
             build = descriptor.get("build")
-            if isinstance(build, Mapping):
+            if (
+                isinstance(build, Mapping)
+                and build.get("identity_authority") != "managed_library"
+            ):
                 expected_bindings = {
                     "bundle_digest": build.get("contract_digest"),
                     "expected_payload_digest": build.get(

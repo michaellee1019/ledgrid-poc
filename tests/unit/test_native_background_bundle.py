@@ -305,11 +305,14 @@ class NativeBackgroundBundleTests(unittest.TestCase):
         )
         views = self.verified.manifest["geometry"]["receiver_views"]
         self.assertEqual(
-            [view["logical_receiver_id"] for view in views], [0, 1, 3, 2]
+            [view["logical_receiver_id"] for view in views], [0, 1, 3, 2, 4]
+        )
+        self.assertEqual(
+            [view["local_strips"] for view in views], [8, 8, 8, 8, 1]
         )
         self.assertEqual(
             [view["reverse_local_strip_order"] for view in views],
-            [False, False, True, True],
+            [False, False, True, True, False],
         )
 
 

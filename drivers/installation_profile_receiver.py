@@ -19,7 +19,6 @@ from drivers.spi_controller import (
     CAPABILITY_INSTALLATION_PROFILE_V1,
     CAPABILITY_STATUS_V5,
     MAX_PROFILE_CHUNK_BYTES,
-    RECEIVER_STATUS_BYTES_V5,
     SPI_RESPONSE_QUEUE_DEPTH,
 )
 
@@ -76,7 +75,9 @@ class SpiInstallationProfileReceiver:
         self, receiver_id: int, device: object, *, enabled: bool = False
     ) -> None:
         if type(receiver_id) is not int or not 0 <= receiver_id < RECEIVER_COUNT:
-            raise ValueError("receiver_id must be an integer from 0 through 3")
+            raise ValueError(
+                f"receiver_id must be an integer from 0 through {RECEIVER_COUNT - 1}"
+            )
         if type(enabled) is not bool:
             raise TypeError("enabled must be a boolean")
         self.receiver_id = receiver_id
@@ -477,13 +478,15 @@ class SpiInstallationProfileReceiver:
 
 
 class SpiInstallationProfileWall:
-    """Four-reader wall facade with the same health contract as the fake."""
+    """Exact-roster wall facade with the same health contract as the fake."""
 
     def __init__(
         self, devices: Sequence[object], *, enabled: bool = False
     ) -> None:
         if isinstance(devices, (str, bytes)) or len(devices) != RECEIVER_COUNT:
-            raise ValueError("profile wall requires exactly four receiver devices")
+            raise ValueError(
+                f"profile wall requires exactly {RECEIVER_COUNT} receiver devices"
+            )
         if type(enabled) is not bool:
             raise TypeError("enabled must be a boolean")
         self.receivers = tuple(

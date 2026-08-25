@@ -254,7 +254,7 @@ class _CachedArtifact:
 
 
 SemanticTopologyKey = tuple[
-    tuple[int, int, int, int], tuple[bool, bool, bool, bool]
+    tuple[int, ...], tuple[bool, ...], tuple[int, ...]
 ]
 
 
@@ -320,6 +320,7 @@ class InstallationProfileLibrary:
         return (
             topology.physical_lane_order,
             topology.reverse_native_strips_by_logical_receiver,
+            topology.strip_counts_by_logical_receiver,
         )
 
     def _entry_directory(self, profile_id: str) -> Path:

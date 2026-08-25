@@ -1,5 +1,6 @@
 #include "ledgrid/sha256.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 namespace ledgrid {
@@ -57,36 +58,69 @@ void transform(const std::uint8_t block[64], std::uint32_t state[8]) {
 
 }  // namespace
 
+Sha256::Sha256() {
+  const std::uint32_t initial[8] = {
+      0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+      0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+  std::memcpy(state_, initial, sizeof(state_));
+}
+
+void Sha256::update(const std::uint8_t* data, std::size_t size) {
+  if (finished_ || (data == nullptr && size != 0)) return;
+  total_bytes_ += size;
+  if (buffered_ != 0) {
+    const std::size_t amount = std::min<std::size_t>(64U - buffered_, size);
+    std::memcpy(buffer_ + buffered_, data, amount);
+    buffered_ += amount;
+    data += amount;
+    size -= amount;
+    if (buffered_ == 64) {
+      transform(buffer_, state_);
+      buffered_ = 0;
+    }
+  }
+  while (size >= 64) {
+    transform(data, state_);
+    data += 64;
+    size -= 64;
+  }
+  if (size != 0) {
+    std::memcpy(buffer_, data, size);
+    buffered_ = size;
+  }
+}
+
+void Sha256::finish(std::uint8_t output[32]) {
+  if (output == nullptr || finished_) return;
+  std::uint8_t tail[128] = {};
+  if (buffered_ != 0) std::memcpy(tail, buffer_, buffered_);
+  tail[buffered_] = 0x80;
+  const std::size_t tail_bytes = buffered_ < 56 ? 64 : 128;
+  const std::uint64_t bits = total_bytes_ * 8U;
+  for (std::size_t index = 0; index < 8; ++index) {
+    tail[tail_bytes - 1U - index] =
+        static_cast<std::uint8_t>(bits >> (index * 8U));
+  }
+  transform(tail, state_);
+  if (tail_bytes == 128) transform(tail + 64, state_);
+  for (std::size_t index = 0; index < 8; ++index) {
+    output[index * 4U] = static_cast<std::uint8_t>(state_[index] >> 24U);
+    output[index * 4U + 1U] = static_cast<std::uint8_t>(state_[index] >> 16U);
+    output[index * 4U + 2U] = static_cast<std::uint8_t>(state_[index] >> 8U);
+    output[index * 4U + 3U] = static_cast<std::uint8_t>(state_[index]);
+  }
+  finished_ = true;
+}
+
 void sha256(const std::uint8_t* data, std::size_t size, std::uint8_t output[32]) {
   if (output == nullptr) return;
   if (data == nullptr && size != 0) {
     std::memset(output, 0, 32);
     return;
   }
-  std::uint32_t state[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-                            0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
-  std::size_t offset = 0;
-  while (size - offset >= 64) {
-    transform(data + offset, state);
-    offset += 64;
-  }
-  std::uint8_t tail[128] = {};
-  const std::size_t remaining = size - offset;
-  if (remaining != 0 && data != nullptr) std::memcpy(tail, data + offset, remaining);
-  tail[remaining] = 0x80;
-  const std::size_t tail_bytes = remaining < 56 ? 64 : 128;
-  const std::uint64_t bits = static_cast<std::uint64_t>(size) * 8U;
-  for (std::size_t index = 0; index < 8; ++index) {
-    tail[tail_bytes - 1 - index] = static_cast<std::uint8_t>(bits >> (index * 8U));
-  }
-  transform(tail, state);
-  if (tail_bytes == 128) transform(tail + 64, state);
-  for (std::size_t index = 0; index < 8; ++index) {
-    output[index * 4] = static_cast<std::uint8_t>(state[index] >> 24U);
-    output[index * 4 + 1] = static_cast<std::uint8_t>(state[index] >> 16U);
-    output[index * 4 + 2] = static_cast<std::uint8_t>(state[index] >> 8U);
-    output[index * 4 + 3] = static_cast<std::uint8_t>(state[index]);
-  }
+  Sha256 hasher;
+  hasher.update(data, size);
+  hasher.finish(output);
 }
 
 }  // namespace ledgrid

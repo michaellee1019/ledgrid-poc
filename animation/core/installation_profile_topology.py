@@ -17,9 +17,11 @@ import numpy as np
 from animation.core.installation_profile import InstallationProfile, SECTION_NAMES
 
 
-RECEIVER_COUNT = 4
+RECEIVER_COUNT = 5
+RECEIVER_IDS = tuple(range(RECEIVER_COUNT))
 STRIPS_PER_RECEIVER = 8
-CANONICAL_GLOBAL_STRIP_COUNT = RECEIVER_COUNT * STRIPS_PER_RECEIVER
+RECEIVER_STRIP_COUNTS = (8, 8, 8, 8, 1)
+CANONICAL_GLOBAL_STRIP_COUNT = sum(RECEIVER_STRIP_COUNTS)
 
 
 class InstallationProfileTopologyError(ValueError):
@@ -39,7 +41,7 @@ def _fixed_sequence(value: object, *, field: str) -> tuple[object, ...]:
 
 def _normalize_transport_routes(
     value: object,
-) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]]:
+) -> tuple[tuple[int, int], ...]:
     routes = _fixed_sequence(value, field="logical_to_transport_routes")
     normalized: list[tuple[int, int]] = []
     for route in routes:
@@ -62,29 +64,30 @@ def _normalize_transport_routes(
         normalized.append((bus, device))
     if len(set(normalized)) != RECEIVER_COUNT:
         raise InstallationProfileTopologyError(
-            "logical_to_transport_routes must contain four unique routes"
+            f"logical_to_transport_routes must contain {RECEIVER_COUNT} unique routes"
         )
-    return tuple(normalized)  # type: ignore[return-value]
+    return tuple(normalized)
 
 
 def _normalize_lane_order(
     value: object,
-) -> tuple[int, int, int, int]:
+) -> tuple[int, ...]:
     lane_order = _fixed_sequence(value, field="physical_lane_order")
     if any(type(logical_id) is not int for logical_id in lane_order):
         raise InstallationProfileTopologyError(
             "physical_lane_order values must be integer logical receiver IDs"
         )
-    if set(lane_order) != set(range(RECEIVER_COUNT)):
+    if set(lane_order) != set(RECEIVER_IDS):
         raise InstallationProfileTopologyError(
-            "physical_lane_order must be a permutation of logical receivers 0,1,2,3"
+            "physical_lane_order must be a permutation of logical receivers "
+            + ",".join(str(item) for item in RECEIVER_IDS)
         )
     return lane_order  # type: ignore[return-value]
 
 
 def _normalize_directions(
     value: object, *, field: str
-) -> tuple[bool, bool, bool, bool]:
+) -> tuple[bool, ...]:
     directions = _fixed_sequence(value, field=field)
     if any(type(reversed_order) is not bool for reversed_order in directions):
         raise InstallationProfileTopologyError(
@@ -93,9 +96,25 @@ def _normalize_directions(
     return directions  # type: ignore[return-value]
 
 
+def _normalize_strip_counts(value: object) -> tuple[int, ...]:
+    strip_counts = _fixed_sequence(
+        value, field="strip_counts_by_logical_receiver"
+    )
+    if any(type(width) is not int or width <= 0 for width in strip_counts):
+        raise InstallationProfileTopologyError(
+            "strip_counts_by_logical_receiver values must be positive integers"
+        )
+    if sum(strip_counts) != CANONICAL_GLOBAL_STRIP_COUNT:
+        raise InstallationProfileTopologyError(
+            "strip_counts_by_logical_receiver must partition the canonical "
+            f"{CANONICAL_GLOBAL_STRIP_COUNT}-strip wall"
+        )
+    return strip_counts  # type: ignore[return-value]
+
+
 @dataclass(frozen=True)
 class InstallationProfileTopology:
-    """Validated separation of the installation's four coordinate domains.
+    """Validated separation of the installation's coordinate domains.
 
     ``physical_lane_order`` is indexed by physical lane and contains logical
     receiver IDs.  The other three fields are indexed by logical receiver ID.
@@ -103,12 +122,11 @@ class InstallationProfileTopology:
     never influence installation-profile slices.
     """
 
-    logical_to_transport_routes: tuple[
-        tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]
-    ]
-    physical_lane_order: tuple[int, int, int, int]
-    reverse_host_strips_by_logical_receiver: tuple[bool, bool, bool, bool]
-    reverse_native_strips_by_logical_receiver: tuple[bool, bool, bool, bool]
+    logical_to_transport_routes: tuple[tuple[int, int], ...]
+    physical_lane_order: tuple[int, ...]
+    reverse_host_strips_by_logical_receiver: tuple[bool, ...]
+    reverse_native_strips_by_logical_receiver: tuple[bool, ...]
+    strip_counts_by_logical_receiver: tuple[int, ...] = RECEIVER_STRIP_COUNTS
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -137,29 +155,44 @@ class InstallationProfileTopology:
                 field="reverse_native_strips_by_logical_receiver",
             ),
         )
+        object.__setattr__(
+            self,
+            "strip_counts_by_logical_receiver",
+            _normalize_strip_counts(self.strip_counts_by_logical_receiver),
+        )
 
     def physical_lane_for_logical_receiver(self, logical_id: int) -> int:
         """Return the left-to-right physical lane for one logical receiver."""
 
-        if type(logical_id) is not int or logical_id not in range(RECEIVER_COUNT):
+        if type(logical_id) is not int or logical_id not in RECEIVER_IDS:
             raise InstallationProfileTopologyError(
-                "logical receiver ID must be an integer from 0 through 3"
+                f"logical receiver ID must be an integer from 0 through "
+                f"{RECEIVER_COUNT - 1}"
             )
         return self.physical_lane_order.index(logical_id)
 
+    def strip_origin_for_logical_receiver(self, logical_id: int) -> int:
+        """Return the canonical global origin of one physical receiver view."""
+
+        lane = self.physical_lane_for_logical_receiver(logical_id)
+        return sum(
+            self.strip_counts_by_logical_receiver[receiver_id]
+            for receiver_id in self.physical_lane_order[:lane]
+        )
+
 
 IDENTITY_INSTALLATION_PROFILE_TOPOLOGY = InstallationProfileTopology(
-    logical_to_transport_routes=((0, 0), (0, 1), (1, 0), (1, 1)),
-    physical_lane_order=(0, 1, 2, 3),
-    reverse_host_strips_by_logical_receiver=(False, False, False, False),
-    reverse_native_strips_by_logical_receiver=(False, False, False, False),
+    logical_to_transport_routes=((0, 0), (0, 1), (1, 0), (1, 1), (1, 2)),
+    physical_lane_order=(0, 1, 2, 3, 4),
+    reverse_host_strips_by_logical_receiver=(False,) * RECEIVER_COUNT,
+    reverse_native_strips_by_logical_receiver=(False,) * RECEIVER_COUNT,
 )
 
 INSTALLED_INSTALLATION_PROFILE_TOPOLOGY = InstallationProfileTopology(
-    logical_to_transport_routes=((0, 0), (0, 1), (1, 1), (1, 0)),
-    physical_lane_order=(0, 1, 3, 2),
-    reverse_host_strips_by_logical_receiver=(False, False, True, True),
-    reverse_native_strips_by_logical_receiver=(False, False, True, True),
+    logical_to_transport_routes=((0, 0), (0, 1), (1, 1), (1, 0), (1, 2)),
+    physical_lane_order=(0, 1, 3, 2, 4),
+    reverse_host_strips_by_logical_receiver=(False, False, True, True, False),
+    reverse_native_strips_by_logical_receiver=(False, False, True, True, False),
 )
 
 
@@ -179,9 +212,10 @@ def _receiver_profile(
     source: InstallationProfile,
     *,
     strip_origin: int,
+    strip_count: int,
     reversed_strip_order: bool,
 ) -> InstallationProfile:
-    stop = strip_origin + STRIPS_PER_RECEIVER
+    stop = strip_origin + strip_count
     sections: dict[str, np.ndarray] = {}
     for name in SECTION_NAMES:
         rows = getattr(source, name)[strip_origin:stop]
@@ -192,7 +226,7 @@ def _receiver_profile(
         global_strip_count=source.global_strip_count,
         leds_per_strip=source.leds_per_strip,
         strip_origin=strip_origin,
-        strip_count=STRIPS_PER_RECEIVER,
+        strip_count=strip_count,
         clearance_radius=source.clearance_radius,
         calibration_digest=source.calibration_digest,
         reversed_strip_order=reversed_strip_order,
@@ -221,14 +255,15 @@ def slice_installation_profile(
     ):
         raise InstallationProfileTopologyError(
             "profile slicing requires the canonical non-reversed global "
-            "32-strip source"
+            f"{CANONICAL_GLOBAL_STRIP_COUNT}-strip source"
         )
 
     receiver_profiles: dict[int, InstallationProfile] = {}
-    for physical_lane, logical_id in enumerate(topology.physical_lane_order):
+    for logical_id in topology.physical_lane_order:
         receiver_profiles[logical_id] = _receiver_profile(
             source,
-            strip_origin=physical_lane * STRIPS_PER_RECEIVER,
+            strip_origin=topology.strip_origin_for_logical_receiver(logical_id),
+            strip_count=topology.strip_counts_by_logical_receiver[logical_id],
             reversed_strip_order=(
                 topology.reverse_native_strips_by_logical_receiver[logical_id]
             ),
@@ -246,17 +281,19 @@ def _validated_receiver_slices(
     if (
         len(keys) != RECEIVER_COUNT
         or any(type(logical_id) is not int for logical_id in keys)
-        or set(keys) != set(range(RECEIVER_COUNT))
+        or set(keys) != set(RECEIVER_IDS)
     ):
         raise InstallationProfileTopologyError(
-            "slices must contain each logical receiver ID 0,1,2,3 exactly once"
+            "slices must contain each logical receiver ID "
+            + ",".join(str(item) for item in RECEIVER_IDS)
+            + " exactly once"
         )
 
     profiles = {
         logical_id: _require_profile(
             slices[logical_id], field=f"slices[{logical_id}]"
         )
-        for logical_id in range(RECEIVER_COUNT)
+        for logical_id in RECEIVER_IDS
     }
     origins = tuple(profile.strip_origin for profile in profiles.values())
     if len(set(origins)) != RECEIVER_COUNT:
@@ -269,7 +306,8 @@ def _validated_receiver_slices(
         if (
             profile.global_strip_count != CANONICAL_GLOBAL_STRIP_COUNT
             or profile.leds_per_strip != reference.leds_per_strip
-            or profile.strip_count != STRIPS_PER_RECEIVER
+            or profile.strip_count
+            != topology.strip_counts_by_logical_receiver[logical_id]
         ):
             raise InstallationProfileTopologyError(
                 f"receiver profile {logical_id} has mismatched geometry"
@@ -283,8 +321,7 @@ def _validated_receiver_slices(
                 f"receiver profile {logical_id} has a mismatched clearance radius"
             )
 
-        expected_lane = topology.physical_lane_for_logical_receiver(logical_id)
-        expected_origin = expected_lane * STRIPS_PER_RECEIVER
+        expected_origin = topology.strip_origin_for_logical_receiver(logical_id)
         if profile.strip_origin != expected_origin:
             raise InstallationProfileTopologyError(
                 f"receiver profile {logical_id} has strip origin "
@@ -319,7 +356,7 @@ def reassemble_installation_profile(
 
     for logical_id, profile in profiles.items():
         start = profile.strip_origin
-        stop = start + STRIPS_PER_RECEIVER
+        stop = start + profile.strip_count
         for name in SECTION_NAMES:
             rows = getattr(profile, name)
             if profile.reversed_strip_order:

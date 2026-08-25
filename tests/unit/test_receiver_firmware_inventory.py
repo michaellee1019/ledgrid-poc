@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -30,12 +29,13 @@ def platformio_payload(
         "02:10:20:30:40:02",
         "02:10:20:30:40:03",
         "02:10:20:30:40:04",
+        "02:10:20:30:40:05",
     ),
 ) -> list[dict[str, str]]:
     payload = [{"port": "/dev/ttyS0", "description": "n/a", "hwid": "n/a"}]
     # Deliberately reverse tty enumeration relative to physical USB location.
     for index, serial in enumerate(reversed(serials)):
-        location = 4 - index
+        location = len(serials) - index
         payload.append(
             {
                 "port": f"/dev/ttyACM{index}",
@@ -51,7 +51,7 @@ def platformio_payload(
 
 def devices() -> tuple[ReceiverUSBDevice, ...]:
     return parse_platformio_receiver_devices(
-        platformio_payload(), receiver_count=4
+        platformio_payload(), receiver_count=5
     )
 
 
@@ -74,12 +74,15 @@ def records_for(
 class ReceiverHardwareDiscoveryTests(unittest.TestCase):
     def test_parses_factory_serial_and_sorts_by_physical_usb_location(self) -> None:
         parsed = parse_platformio_receiver_devices(
-            json.dumps(platformio_payload()), receiver_count=4
+            json.dumps(platformio_payload()), receiver_count=5
         )
 
         self.assertEqual(
             [item.physical_location for item in parsed],
-            ["1-1.1:1.0", "1-1.2:1.0", "1-1.3:1.0", "1-1.4:1.0"],
+            [
+                "1-1.1:1.0", "1-1.2:1.0", "1-1.3:1.0",
+                "1-1.4:1.0", "1-1.5:1.0",
+            ],
         )
         self.assertEqual(
             [item.hardware_serial for item in parsed],
@@ -88,31 +91,32 @@ class ReceiverHardwareDiscoveryTests(unittest.TestCase):
                 "02:10:20:30:40:02",
                 "02:10:20:30:40:03",
                 "02:10:20:30:40:04",
+                "02:10:20:30:40:05",
             ],
         )
-        self.assertEqual(parsed[0].port, "/dev/ttyACM3")
+        self.assertEqual(parsed[0].port, "/dev/ttyACM4")
 
     def test_fails_closed_on_missing_or_duplicate_hardware_identity(self) -> None:
         cases = {}
         missing_serial = platformio_payload()
-        missing_serial[1]["hwid"] = "USB VID:PID=303A:1001 LOCATION=1-1.4:1.0"
+        missing_serial[1]["hwid"] = "USB VID:PID=303A:1001 LOCATION=1-1.5:1.0"
         cases["no unique USB serial"] = missing_serial
 
         missing_location = platformio_payload()
         missing_location[1]["hwid"] = (
-            "USB VID:PID=303A:1001 SER=02:10:20:30:40:04"
+            "USB VID:PID=303A:1001 SER=02:10:20:30:40:05"
         )
         cases["no safe physical USB location"] = missing_location
 
         duplicate_serial = platformio_payload()
         duplicate_serial[1]["hwid"] = duplicate_serial[2]["hwid"].replace(
-            "LOCATION=1-1.3:1.0", "LOCATION=1-1.4:1.0"
+            "LOCATION=1-1.4:1.0", "LOCATION=1-1.5:1.0"
         )
         cases["duplicate receiver hardware serials"] = duplicate_serial
 
         duplicate_location = platformio_payload()
         duplicate_location[1]["hwid"] = duplicate_location[1]["hwid"].replace(
-            "LOCATION=1-1.4:1.0", "LOCATION=1-1.3:1.0"
+            "LOCATION=1-1.5:1.0", "LOCATION=1-1.4:1.0"
         )
         cases["duplicate receiver physical USB locations"] = duplicate_location
 
@@ -120,19 +124,19 @@ class ReceiverHardwareDiscoveryTests(unittest.TestCase):
             with self.subTest(expected=expected), self.assertRaisesRegex(
                 RuntimeError, expected
             ):
-                parse_platformio_receiver_devices(payload, receiver_count=4)
+                parse_platformio_receiver_devices(payload, receiver_count=5)
 
     def test_requires_exact_receiver_count_and_mac_form_serial(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "expected exactly 4"):
+        with self.assertRaisesRegex(RuntimeError, "expected exactly 5"):
             parse_platformio_receiver_devices(
-                platformio_payload()[:-1], receiver_count=4
+                platformio_payload()[:-1], receiver_count=5
             )
         invalid = platformio_payload()
         invalid[1]["hwid"] = invalid[1]["hwid"].replace(
-            "02:10:20:30:40:04", "generic-usb-serial"
+            "02:10:20:30:40:05", "generic-usb-serial"
         )
         with self.assertRaisesRegex(RuntimeError, "factory MAC"):
-            parse_platformio_receiver_devices(invalid, receiver_count=4)
+            parse_platformio_receiver_devices(invalid, receiver_count=5)
 
 
 class ReceiverFlashPlanningTests(unittest.TestCase):
@@ -179,7 +183,7 @@ class ReceiverFlashPlanningTests(unittest.TestCase):
         for changes, expected_reason in cases:
             with self.subTest(expected_reason=expected_reason):
                 targets = self.plan(observed, installed, **changes)
-                self.assertEqual(len(targets), 4)
+                self.assertEqual(len(targets), 5)
                 self.assertEqual(
                     {item.reason for item in targets}, {expected_reason}
                 )

@@ -28,12 +28,25 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from animation.plugins.clock_overlay import ClockOverlayAnimation  # noqa: E402
+from animation.core.installation_profile_topology import (  # noqa: E402
+    RECEIVER_STRIP_COUNTS,
+)
+from drivers.led_layout import (  # noqa: E402
+    DEFAULT_LEDS_PER_STRIP,
+    DEFAULT_STRIP_COUNT,
+)
 
 
-WALL_STRIPS = 32
-RECEIVER_STRIPS = 8
-LEDS_PER_STRIP = 138
-RECEIVER_COUNT = WALL_STRIPS // RECEIVER_STRIPS
+WALL_STRIPS = DEFAULT_STRIP_COUNT
+RECEIVER_STRIPS = max(RECEIVER_STRIP_COUNTS)
+LEDS_PER_STRIP = DEFAULT_LEDS_PER_STRIP
+RECEIVER_COUNT = len(RECEIVER_STRIP_COUNTS)
+RECEIVER_PIXELS = tuple(
+    width * LEDS_PER_STRIP for width in RECEIVER_STRIP_COUNTS
+)
+RECEIVER_PIXEL_OFFSETS = tuple(
+    sum(RECEIVER_PIXELS[:index]) for index in range(RECEIVER_COUNT)
+)
 LOCAL_PIXELS = RECEIVER_STRIPS * LEDS_PER_STRIP
 WALL_PIXELS = WALL_STRIPS * LEDS_PER_STRIP
 # Frozen docs/ANIMATION_PIPELINE_CONTRACT_V1.md and status-v4 wire constants.
@@ -59,7 +72,10 @@ MAX_RGBA_PIXELS_PER_BATCH_SPAN = (
     - CRC_BYTES
 ) // 4
 LOCAL_RGB_PACKET_BYTES = 1 + LOCAL_PIXELS * 3 + CRC_BYTES
-FULL_WALL_RGB_PACKET_BYTES = RECEIVER_COUNT * LOCAL_RGB_PACKET_BYTES
+RECEIVER_RGB_PACKET_BYTES = tuple(
+    1 + pixels * 3 + CRC_BYTES for pixels in RECEIVER_PIXELS
+)
+FULL_WALL_RGB_PACKET_BYTES = sum(RECEIVER_RGB_PACKET_BYTES)
 # Sparse commands enter a mixed v3/v4 two-deep response queue: two pre-drain
 # queries establish the prior sequence, then three post-command queries clock
 # past the queued prior-v4 and v3 snapshots to observe the command's v4 result.
@@ -144,8 +160,8 @@ def _local_patch_ranges(
     dirty_ranges: Iterable[Sequence[int]], receiver_index: int
 ) -> tuple[tuple[int, int], ...]:
     """Mirror the current publisher's sorted/clipped delta patch policy."""
-    local_start = receiver_index * LOCAL_PIXELS
-    local_end = local_start + LOCAL_PIXELS
+    local_start = RECEIVER_PIXEL_OFFSETS[receiver_index]
+    local_end = local_start + RECEIVER_PIXELS[receiver_index]
     ranges: list[tuple[int, int]] = []
     for start, end in sorted(dirty_ranges):
         clipped_start = max(local_start, int(start))
@@ -168,10 +184,12 @@ def _local_patch_ranges(
     return tuple(patches)
 
 
-def _full_snapshot_ranges() -> tuple[tuple[int, int], ...]:
+def _full_snapshot_ranges(
+    local_pixels: int = LOCAL_PIXELS,
+) -> tuple[tuple[int, int], ...]:
     return tuple(
-        (start, min(LOCAL_PIXELS, start + MAX_RGBA_PIXELS_PER_BATCH_SPAN))
-        for start in range(0, LOCAL_PIXELS, MAX_RGBA_PIXELS_PER_BATCH_SPAN)
+        (start, min(local_pixels, start + MAX_RGBA_PIXELS_PER_BATCH_SPAN))
+        for start in range(0, local_pixels, MAX_RGBA_PIXELS_PER_BATCH_SPAN)
     )
 
 
@@ -355,7 +373,10 @@ def build_report(
         for receiver, patches in enumerate(frames[retry_second]["local_patches"])
         if patches
     ]
-    full_patches = tuple(_full_snapshot_ranges() for _ in range(RECEIVER_COUNT))
+    full_patches = tuple(
+        _full_snapshot_ranges(local_pixels)
+        for local_pixels in RECEIVER_PIXELS
+    )
     for frame in frames:
         second = frame["second"]
         is_repair = second in repair_seconds
@@ -412,10 +433,12 @@ def build_report(
         "dimensions": {
             "wall_strips": WALL_STRIPS,
             "receiver_strips": RECEIVER_STRIPS,
+            "receiver_strip_counts": list(RECEIVER_STRIP_COUNTS),
             "leds_per_strip": LEDS_PER_STRIP,
             "receiver_count": RECEIVER_COUNT,
             "wall_pixels": WALL_PIXELS,
             "local_pixels": LOCAL_PIXELS,
+            "receiver_pixels": list(RECEIVER_PIXELS),
         },
         "wire_contract": {
             "crc_bytes": CRC_BYTES,
@@ -429,10 +452,12 @@ def build_report(
             "status_v3_query_transfer_bytes": STATUS_V3_QUERY_TRANSFER_BYTES,
             "status_v4_query_transfer_bytes": STATUS_V4_QUERY_TRANSFER_BYTES,
             "local_rgb_packet_bytes": LOCAL_RGB_PACKET_BYTES,
+            "receiver_rgb_packet_bytes": list(RECEIVER_RGB_PACKET_BYTES),
             "full_wall_rgb_packet_bytes": FULL_WALL_RGB_PACKET_BYTES,
             "full_wall_rgb_packets": RECEIVER_COUNT,
             "full_snapshot_local_patch_pixels": [
-                end - start for start, end in _full_snapshot_ranges()
+                [end - start for start, end in _full_snapshot_ranges(local_pixels)]
+                for local_pixels in RECEIVER_PIXELS
             ],
             "spi_full_duplex_note": (
                 "response bytes share the same SPI clocks; bidirectional endpoint "
@@ -528,9 +553,15 @@ def validate_report(report: dict) -> None:
     contract = report["wire_contract"]
     if contract["local_rgb_packet_bytes"] != 3315:
         raise RuntimeError("receiver-local RGB accounting drifted")
-    if contract["full_wall_rgb_packet_bytes"] != 13260:
+    if contract["receiver_rgb_packet_bytes"] != list(RECEIVER_RGB_PACKET_BYTES):
+        raise RuntimeError("heterogeneous receiver RGB accounting drifted")
+    if contract["full_wall_rgb_packet_bytes"] != sum(RECEIVER_RGB_PACKET_BYTES):
         raise RuntimeError("full-wall RGB accounting drifted")
-    if contract["full_snapshot_local_patch_pixels"] != [1015, 89]:
+    expected_chunks = [
+        [end - start for start, end in _full_snapshot_ranges(local_pixels)]
+        for local_pixels in RECEIVER_PIXELS
+    ]
+    if contract["full_snapshot_local_patch_pixels"] != expected_chunks:
         raise RuntimeError("full-snapshot chunking drifted")
     sparse = report["trace"]["sparse"]
     orchestration_queries = sum(

@@ -46,7 +46,7 @@ _IMPLEMENTATION_OWNED_FIELDS = frozenset(
 _NATIVE_MANIFEST_FIELDS = frozenset({
     "manifest_version", "plugin_id", "name", "description", "icon", "gallery",
     "provider", "role", "entrypoint", "cadence", "parameter_schema", "vibe",
-    "installation_profile_requirements", "preview", "build",
+    "installation_profile_requirements", "preview", "build", "geometry",
 })
 _NATIVE_BUILD_FIELDS = frozenset({
     "artifact_kind", "bundle_schema", "bundle_version", "abi_schema",
@@ -54,6 +54,13 @@ _NATIVE_BUILD_FIELDS = frozenset({
 })
 _NATIVE_PREVIEW_FIELDS = frozenset({
     "kind", "capture_seconds", "simulation_fps", "framebuffer_readback",
+})
+_NATIVE_GEOMETRY_FIELDS = frozenset({
+    "global_strips", "leds_per_strip", "receiver_views",
+})
+_NATIVE_RECEIVER_VIEW_FIELDS = frozenset({
+    "logical_receiver_id", "global_strip_offset", "local_strips",
+    "reverse_local_strip_order",
 })
 _NATIVE_VIBE_REQUIRED_FIELDS = frozenset(
     {"color_policy", "timing_adapter", "capabilities"}
@@ -273,6 +280,7 @@ def _validate_and_normalize_native_manifest(
     vibe = _normalize_native_vibe(payload["vibe"], manifest_path)
     preview = _normalize_native_preview(payload["preview"], manifest_path)
     build = _normalize_native_build(payload["build"], manifest_path)
+    geometry = _normalize_native_geometry(payload["geometry"], manifest_path)
 
     normalized = _json_copy(payload, f"manifest {manifest_path}")
     normalized["cadence"] = cadence
@@ -281,8 +289,92 @@ def _validate_and_normalize_native_manifest(
     normalized["vibe"] = vibe
     normalized["preview"] = preview
     normalized["build"] = build
+    normalized["geometry"] = geometry
     normalized["_legacy_component_manifest"] = False
     return normalized
+
+
+def _normalize_native_geometry(value: Any, manifest_path: Path) -> Dict[str, Any]:
+    """Require the exact finalized heterogeneous receiver topology.
+
+    The package owns an explicit geometry binding so a previously built 32-strip
+    artifact cannot become selectable after the physical wall changes.  The ABI
+    remains width-generic; this is the product/package compatibility gate.
+    """
+    from animation.native.constants import (
+        GLOBAL_STRIPS,
+        LEDS_PER_STRIP,
+        RECEIVER_VIEWS,
+    )
+
+    if not isinstance(value, Mapping) or set(value) != _NATIVE_GEOMETRY_FIELDS:
+        actual = set(value) if isinstance(value, Mapping) else set()
+        raise ValueError(
+            "receiver-native geometry fields "
+            f"missing={sorted(_NATIVE_GEOMETRY_FIELDS - actual)} "
+            f"unknown={sorted(actual - _NATIVE_GEOMETRY_FIELDS)}: {manifest_path}"
+        )
+    views = value.get("receiver_views")
+    if not isinstance(views, list):
+        raise ValueError(
+            f"receiver-native geometry.receiver_views must be an array: {manifest_path}"
+        )
+    normalized_views: list[Dict[str, Any]] = []
+    for index, raw in enumerate(views):
+        if not isinstance(raw, Mapping) or set(raw) != _NATIVE_RECEIVER_VIEW_FIELDS:
+            raise ValueError(
+                "receiver-native geometry receiver view fields are invalid at "
+                f"index {index}: {manifest_path}"
+            )
+        logical_id = raw["logical_receiver_id"]
+        offset = raw["global_strip_offset"]
+        local_strips = raw["local_strips"]
+        reverse = raw["reverse_local_strip_order"]
+        if (
+            type(logical_id) is not int
+            or type(offset) is not int
+            or type(local_strips) is not int
+            or type(reverse) is not bool
+            or logical_id < 0
+            or offset < 0
+            or local_strips < 1
+            or offset + local_strips > GLOBAL_STRIPS
+        ):
+            raise ValueError(
+                f"receiver-native geometry receiver view is invalid at index {index}: "
+                f"{manifest_path}"
+            )
+        normalized_views.append({
+            "logical_receiver_id": logical_id,
+            "global_strip_offset": offset,
+            "local_strips": local_strips,
+            "reverse_local_strip_order": reverse,
+        })
+    expected_views = [
+        {
+            "logical_receiver_id": logical_id,
+            "global_strip_offset": offset,
+            "local_strips": local_strips,
+            "reverse_local_strip_order": reverse,
+        }
+        for logical_id, offset, local_strips, reverse in RECEIVER_VIEWS
+    ]
+    normalized = {
+        "global_strips": value.get("global_strips"),
+        "leds_per_strip": value.get("leds_per_strip"),
+        "receiver_views": normalized_views,
+    }
+    expected = {
+        "global_strips": GLOBAL_STRIPS,
+        "leds_per_strip": LEDS_PER_STRIP,
+        "receiver_views": expected_views,
+    }
+    if normalized != expected:
+        raise ValueError(
+            "receiver-native geometry must match the finalized installed topology: "
+            f"{manifest_path}"
+        )
+    return _json_copy(normalized, "receiver-native geometry")
 
 
 def _normalize_native_vibe(value: Any, manifest_path: Path) -> Dict[str, Any]:
@@ -680,6 +772,10 @@ def scanned_descriptor(
         ),
         build=payload.get("build", {}),
     )
+    if provider == ComponentProvider.RECEIVER_NATIVE.value:
+        descriptor["geometry"] = _json_copy(
+            payload.get("geometry", {}), f"native geometry {plugin_id}"
+        )
     descriptor["compatibility"] = {
         "legacy_manifest": legacy,
         "classification": classification,

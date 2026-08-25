@@ -118,7 +118,11 @@ class SceneProviderPolicyTests(unittest.TestCase):
         self.assertFalse(DEFAULT_SCENE_PROVIDER_POLICY.compiled_rainbow_enabled)
         with self.assertRaises(FrozenInstanceError):
             DEFAULT_SCENE_PROVIDER_POLICY.receiver_local_background = True
-        for field in ("receiver_local_background", "receiver_sparse_overlay"):
+        for field in (
+            "receiver_local_background",
+            "receiver_sparse_overlay",
+            "receiver_native_modules",
+        ):
             with self.subTest(field=field):
                 with self.assertRaisesRegex(TypeError, field):
                     SceneProviderPolicy(**{field: 1})
@@ -248,6 +252,20 @@ class ReceiverNativeSceneValidationTests(unittest.TestCase):
             SceneValidationError, "limited to 'compiled_rainbow'"
         ):
             normalize_scene_payload(scene, provider_policy=enabled_policy())
+
+    def test_managed_native_gate_admits_digest_bound_catalog_components(self):
+        scene = native_scene()
+        scene["background"] = native_ref("aurora_curtains_native")
+        policy = SceneProviderPolicy(
+            receiver_local_background=True,
+            receiver_sparse_overlay=True,
+            receiver_native_modules=True,
+        )
+        normalized = normalize_scene_payload(scene, provider_policy=policy)
+        self.assertEqual(
+            normalized["background"]["plugin_id"], "aurora_curtains_native"
+        )
+        self.assertEqual(normalized["background"]["bundle_digest"], BUNDLE_DIGEST)
 
     def test_native_ref_requires_both_lowercase_sha256_digests(self):
         invalid = (
@@ -529,7 +547,7 @@ class HybridSceneWebProductSurfaceTests(unittest.TestCase):
         html = self.client.get("/").get_data(as_text=True)
         self.assertIn('data-provider="receiver_native"', html)
         self.assertIn('id="scenePythonFallbackSelect"', html)
-        self.assertIn('id="sceneReceiverCadence"', html)
+        self.assertIn('id="sceneReceiverParameterControls"', html)
         self.assertIn('id="sceneClockShowSeconds"', html)
         self.assertIn("not receiver framebuffer readback", html)
         for element_id in (

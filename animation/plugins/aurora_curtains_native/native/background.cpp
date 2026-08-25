@@ -22,15 +22,15 @@ static_assert(LEDGRID_NATIVE_GLOBE_REGION_LOWER_RIGHT == 7);
 static_assert(LEDGRID_NATIVE_BACKGROUND_MAX_STATE_BYTES == 64U * 1024U);
 static_assert(LEDGRID_NATIVE_BACKGROUND_MAX_STATE_ALIGNMENT == 64U);
 
-constexpr uint16_t kGlobalStrips = 32;
-constexpr uint16_t kLocalStrips = 8;
+constexpr uint16_t kGlobalStrips = 33;
+constexpr uint16_t kMaxLocalStrips = 8;
 constexpr uint16_t kLedsPerStrip = 138;
-constexpr uint32_t kOutputBytes = kLocalStrips * kLedsPerStrip * 3U;
 constexpr uint64_t kFramePeriodUs = 16667U;
 
 struct alignas(8) AuroraState {
   const ledgrid_native_helpers_v2* helpers;
   uint16_t global_strip_offset;
+  uint16_t local_strips;
   uint16_t brightness_q8;
   uint16_t motion_q8;
   uint8_t curtain_width;
@@ -98,11 +98,12 @@ int initialize(void* opaque, const ledgrid_native_init_v2* init) {
   if (opaque == nullptr || init == nullptr ||
       init->abi_version != LEDGRID_NATIVE_BACKGROUND_ABI_VERSION ||
       init->struct_size != sizeof(ledgrid_native_init_v2) ||
-      init->global_strips != kGlobalStrips || init->local_strips != kLocalStrips ||
+      init->global_strips != kGlobalStrips || init->local_strips == 0U ||
+      init->local_strips > kMaxLocalStrips ||
       init->leds_per_strip != kLedsPerStrip ||
-      init->pixel_count != kLocalStrips * kLedsPerStrip ||
-      init->global_strip_offset > kGlobalStrips - kLocalStrips ||
-      (init->global_strip_offset % kLocalStrips) != 0U || init->helpers == nullptr ||
+      init->pixel_count != init->local_strips * kLedsPerStrip ||
+      init->global_strip_offset > kGlobalStrips - init->local_strips ||
+      init->helpers == nullptr ||
       init->reverse_local_strip_order > 1U ||
       !reserved_is_zero(init->reserved_zero, 7U) ||
       init->helpers->abi_version != LEDGRID_NATIVE_BACKGROUND_ABI_VERSION ||
@@ -113,6 +114,7 @@ int initialize(void* opaque, const ledgrid_native_init_v2* init) {
   auto* state = static_cast<AuroraState*>(opaque);
   state->helpers = init->helpers;
   state->global_strip_offset = init->global_strip_offset;
+  state->local_strips = init->local_strips;
   state->brightness_q8 = 108U;
   state->motion_q8 = 87U;
   state->curtain_width = 7U;
@@ -142,7 +144,7 @@ int update_context(void* opaque, const ledgrid_native_context_v2* context) {
   auto* state = static_cast<AuroraState*>(opaque);
   if (state->initialized != 1U ||
       context->profile->global_strips != kGlobalStrips ||
-      context->profile->local_strips != kLocalStrips ||
+      context->profile->local_strips != state->local_strips ||
       context->profile->leds_per_strip != kLedsPerStrip ||
       context->profile->global_strip_offset != state->global_strip_offset ||
       context->profile->reverse_local_strip_order != state->reverse_local_strip_order ||
@@ -190,24 +192,27 @@ int update_context(void* opaque, const ledgrid_native_context_v2* context) {
 
 int render(void* opaque, const ledgrid_native_render_request_v2* request,
            ledgrid_native_render_result_v2* result) {
-  if (opaque == nullptr || request == nullptr || result == nullptr ||
-      request->abi_version != LEDGRID_NATIVE_BACKGROUND_ABI_VERSION ||
-      request->struct_size != sizeof(ledgrid_native_render_request_v2) ||
-      request->rgb_output == nullptr || request->rgb_output_size != kOutputBytes ||
-      request->reserved_zero != 0U ||
-      result->struct_size != sizeof(ledgrid_native_render_result_v2)) {
+  if (opaque == nullptr || request == nullptr || result == nullptr) {
     return LEDGRID_NATIVE_BACKGROUND_ERROR;
   }
   auto* state = static_cast<AuroraState*>(opaque);
   if (state->initialized != 1U) {
     return LEDGRID_NATIVE_BACKGROUND_ERROR;
   }
+  if (request->abi_version != LEDGRID_NATIVE_BACKGROUND_ABI_VERSION ||
+      request->struct_size != sizeof(ledgrid_native_render_request_v2) ||
+      request->rgb_output == nullptr ||
+      request->rgb_output_size != state->local_strips * kLedsPerStrip * 3U ||
+      request->reserved_zero != 0U ||
+      result->struct_size != sizeof(ledgrid_native_render_result_v2)) {
+    return LEDGRID_NATIVE_BACKGROUND_ERROR;
+  }
   const uint32_t motion_time =
       modulo_u64(request->scaled_scene_time_us, 8000000U) * state->motion_q8;
-  for (uint16_t local_strip = 0; local_strip < kLocalStrips; ++local_strip) {
+  for (uint16_t local_strip = 0; local_strip < state->local_strips; ++local_strip) {
     const uint16_t global_strip = state->global_strip_offset +
         (state->reverse_local_strip_order != 0U
-             ? kLocalStrips - 1U - local_strip
+             ? state->local_strips - 1U - local_strip
              : local_strip);
     for (uint16_t led = 0; led < kLedsPerStrip; ++led) {
       uint16_t glow = 0U;

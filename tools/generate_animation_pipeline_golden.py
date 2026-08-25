@@ -14,7 +14,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from animation.core.compositing import (  # noqa: E402
-    board_flat_slices,
     canvas_to_logical_flat_index,
     logical_flat_index,
     receiver_local_index,
@@ -22,6 +21,14 @@ from animation.core.compositing import (  # noqa: E402
     source_over_rgb,
     source_over_rgba,
     union_dirty_ranges,
+)
+from animation.core.installation_profile import (  # noqa: E402
+    GLOBAL_STRIP_COUNT,
+    LEDS_PER_STRIP,
+)
+from animation.core.installation_profile_topology import (  # noqa: E402
+    INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
+    RECEIVER_STRIP_COUNTS,
 )
 
 
@@ -152,25 +159,28 @@ def build_fixture() -> Dict[str, Any]:
         ("round_each_fold", [1, 1, 1, 1], [1, 0, 0, 128]),
     ]
 
-    global_strips = 32
-    leds_per_strip = 138
-    local_strips = 8
+    global_strips = GLOBAL_STRIP_COUNT
+    leds_per_strip = LEDS_PER_STRIP
+    receiver_widths = RECEIVER_STRIP_COUNTS
     coordinate_inputs = [
-        ("wall_origin", 0, 0, 0, True),
-        ("board_0_last", 7, 137, 0, True),
-        ("board_1_first", 8, 0, 8, True),
-        ("board_1_last", 15, 137, 8, True),
-        ("board_2_first", 16, 0, 16, True),
-        ("board_2_last", 23, 137, 16, True),
-        ("board_3_first", 24, 0, 24, True),
-        ("wall_last", 31, 137, 24, True),
-        ("before_local_offset", 7, 137, 8, False),
-        ("after_local_range", 16, 0, 8, False),
-        ("led_out_of_range", 24, 138, 24, False),
-        ("strip_out_of_range", 32, 0, 24, False),
+        ("wall_origin", 0, 0, 0, 8, True),
+        ("receiver_0_last", 7, 137, 0, 8, True),
+        ("receiver_1_first", 8, 0, 8, 8, True),
+        ("receiver_1_last", 15, 137, 8, 8, True),
+        ("receiver_2_first", 16, 0, 16, 8, True),
+        ("receiver_2_last", 23, 137, 16, 8, True),
+        ("receiver_3_first", 24, 0, 24, 8, True),
+        ("receiver_3_last", 31, 137, 24, 8, True),
+        ("tail_first", 32, 0, 32, 1, True),
+        ("wall_last", 32, 137, 32, 1, True),
+        ("before_local_offset", 7, 137, 8, 8, False),
+        ("after_local_range", 16, 0, 8, 8, False),
+        ("after_tail_range", 33, 0, 32, 1, False),
+        ("led_out_of_range", 24, 138, 24, 8, False),
+        ("strip_out_of_range", 33, 0, 24, 8, False),
     ]
     coordinate_vectors = []
-    for vector_id, strip, led, offset, valid in coordinate_inputs:
+    for vector_id, strip, led, offset, width, valid in coordinate_inputs:
         global_valid = 0 <= strip < global_strips and 0 <= led < leds_per_strip
         expected_global = (
             logical_flat_index(
@@ -184,7 +194,7 @@ def build_fixture() -> Dict[str, Any]:
                 strip,
                 led,
                 global_strip_offset=offset,
-                local_strip_count=local_strips,
+                local_strip_count=width,
                 leds_per_strip=leds_per_strip,
             )
             if valid
@@ -197,7 +207,7 @@ def build_fixture() -> Dict[str, Any]:
                 "led": led,
                 "global_strip_offset": offset,
                 "global_strips": global_strips,
-                "local_strips": local_strips,
+                "local_strips": width,
                 "leds_per_strip": leds_per_strip,
                 "global_valid": global_valid,
                 "valid": valid,
@@ -206,11 +216,12 @@ def build_fixture() -> Dict[str, Any]:
             }
         )
 
-    slices = board_flat_slices(
-        global_strip_count=global_strips,
-        leds_per_strip=leds_per_strip,
-        strips_per_board=local_strips,
-    )
+    slices = []
+    strip_offset = 0
+    for width in receiver_widths:
+        start = strip_offset * leds_per_strip
+        strip_offset += width
+        slices.append((start, strip_offset * leds_per_strip))
     command_ids = {
         "controller_session_begin": 0x20,
         "overlay_begin": 0x30,
@@ -505,10 +516,12 @@ def build_fixture() -> Dict[str, Any]:
         ("receiver_1_full", 1104, 2208),
         ("receiver_2_full", 2208, 3312),
         ("receiver_3_full", 3312, 4416),
+        ("receiver_4_tail_full", 4416, 4554),
         ("boundary_0_to_1", 1103, 1105),
         ("boundary_1_to_2", 2207, 2209),
         ("boundary_2_to_3", 3311, 3313),
-        ("whole_wall", 0, 4416),
+        ("boundary_3_to_tail", 4415, 4417),
+        ("whole_wall", 0, 4554),
     )
     receiver_slice_vectors = [
         {
@@ -818,20 +831,28 @@ def build_fixture() -> Dict[str, Any]:
             }
             for vector_id, row, column in (
                 ("canvas_top_left", 0, 0),
-                ("canvas_first_row_last_strip", 0, 31),
+                ("canvas_first_row_last_strip", 0, 32),
                 ("canvas_last_row_first_strip", 137, 0),
-                ("canvas_bottom_right", 137, 31),
+                ("canvas_bottom_right", 137, 32),
                 ("canvas_interior", 73, 18),
             )
         ],
         "board_slices": {
             "global_strips": global_strips,
             "leds_per_strip": leds_per_strip,
-            "strips_per_board": local_strips,
+            "receiver_strip_counts": list(receiver_widths),
+            "physical_receiver_order": list(
+                INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.physical_lane_order
+            ),
             "boards": [
                 {
                     "board_index": board_index,
-                    "global_strip_offset": board_index * local_strips,
+                    "logical_receiver_id": (
+                        INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
+                        .physical_lane_order[board_index]
+                    ),
+                    "global_strip_offset": start // leds_per_strip,
+                    "local_strip_count": (end - start) // leds_per_strip,
                     "start_flat_index": start,
                     "end_flat_index": end,
                     "pixel_count": end - start,

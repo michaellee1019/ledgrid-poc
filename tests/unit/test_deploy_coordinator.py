@@ -241,16 +241,21 @@ class DeployCoordinatorTests(unittest.TestCase):
     def test_mode_order_is_stable_and_firmware_build_precedes_first_downtime(self):
         full_ids = [item[0] for item in FULL_STEP_ORDER]
         self.assertEqual(
-            full_ids[:7],
+            full_ids[:8],
             [
                 "source.validate",
                 "tests.run",
                 "target.connect",
                 "app.stage",
+                "app.bootstrap_legacy",
                 "receiver.firmware_build",
                 "state.capture",
                 "host.provision",
             ],
+        )
+        self.assertGreater(
+            full_ids.index("receiver.topology_migrate"),
+            full_ids.index("health.readiness"),
         )
         self.assertLess(full_ids.index("receiver.firmware_build"), full_ids.index("host.provision"))
         self.assertLess(full_ids.index("receiver.firmware_build"), full_ids.index("receiver.firmware_flash"))

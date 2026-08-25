@@ -2,7 +2,9 @@
 
 import os
 
-DEFAULT_STRIP_COUNT = 32  # 4 boards x 8 strips each
+# Finalized visible geometry: four full 8-strip receivers plus one independent
+# 1-strip tail receiver. Receiver transport capacity is deliberately separate.
+DEFAULT_STRIP_COUNT = 33
 # Alternate HAT compatibility mode: 2 receivers x 8 strips. The carrier's
 # schematic/PCB/BOM are not present in this repository.
 HAT_STRIP_COUNT = 16

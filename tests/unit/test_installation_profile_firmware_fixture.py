@@ -39,21 +39,27 @@ class InstallationProfileFirmwareFixtureTests(unittest.TestCase):
             text=True,
         )
 
-    def test_all_four_payloads_have_exact_installed_receiver_identity(self) -> None:
+    def test_all_five_payloads_have_exact_installed_receiver_identity(self) -> None:
         fixtures = build_receiver_fixtures()
-        self.assertEqual(tuple(map(len, fixtures)), (10264,) * 4)
-        self.assertEqual(len({hashlib.sha256(payload).digest() for payload in fixtures}), 4)
-        expected = ((0, False), (8, False), (24, True), (16, True))
+        self.assertEqual(tuple(map(len, fixtures)), (10264,) * 4 + (1570,))
+        self.assertEqual(len({hashlib.sha256(payload).digest() for payload in fixtures}), 5)
+        expected = (
+            (0, 8, False), (8, 8, False), (24, 8, True),
+            (16, 8, True), (32, 1, False),
+        )
         calibration_digests = set()
-        for logical_id, (payload, identity) in enumerate(zip(fixtures, expected)):
+        for logical_id, (payload, (origin, width, reversed_order)) in enumerate(
+            zip(fixtures, expected)
+        ):
             with self.subTest(logical_id=logical_id):
                 profile = decode_installation_profile(payload)
                 self.assertEqual(
-                    (profile.strip_origin, profile.reversed_strip_order), identity
+                    (profile.strip_origin, profile.reversed_strip_order),
+                    (origin, reversed_order),
                 )
                 self.assertEqual(
                     (profile.global_strip_count, profile.strip_count, profile.leds_per_strip),
-                    (32, 8, 138),
+                    (33, width, 138),
                 )
                 calibration_digests.add(profile.calibration_digest)
         self.assertEqual(len(calibration_digests), 1)

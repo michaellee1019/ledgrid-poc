@@ -34,11 +34,45 @@ class JustAcceptanceRecipeTests(unittest.TestCase):
             "min_fps=150",
             "target_fps=160",
         )
-        self.assertEqual(argv[-18:], [
+        self.assertEqual(argv[-20:], [
             "python", "tools/benchmarks/receiver_acceptance.py",
             "--device", "0", "--device", "1", "--device", "2", "--device", "3",
+            "--device", "4",
             "--duration", "60", "--min-displayed-fps", "150",
             "--target-fps", "160", "--animation", "rainbow",
+        ])
+
+    def test_native_h2_and_h4_recipes_keep_explicit_real_soak_defaults(self):
+        for recipe, gate in (
+            ("receiver-native-h2-evidence", "H2"),
+            ("receiver-native-h4-default-soak", "H4-default"),
+            ("receiver-native-h4-maximum-soak", "H4-maximum"),
+        ):
+            with self.subTest(recipe=recipe):
+                argv = self.run_with_fake_uv(recipe)
+                self.assertEqual(argv[-11:], [
+                    "python",
+                    "tools/benchmarks/receiver_native_physical_acceptance.py",
+                    "aurora_curtains_native",
+                    "--gate", gate,
+                    "--target", "ledgridwall.local",
+                    "--duration", "1800",
+                    "--sample-interval", "5",
+                ])
+
+    def test_native_physical_recipe_accepts_short_named_diagnostic_duration(self):
+        argv = self.run_with_fake_uv(
+            "receiver-native-h2-evidence",
+            "selector=aurora_curtains_native",
+            "duration=0.2",
+            "sample_interval=0.05",
+            "target=wall.test",
+        )
+        self.assertEqual(argv[-11:], [
+            "python", "tools/benchmarks/receiver_native_physical_acceptance.py",
+            "aurora_curtains_native", "--gate", "H2",
+            "--target", "wall.test", "--duration", "0.2",
+            "--sample-interval", "0.05",
         ])
 
     def test_degraded_spi1_recipe_is_separate_explicit_and_full_wall(self):

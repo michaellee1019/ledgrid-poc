@@ -18,9 +18,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from animation.core.installation_profile import compile_installation_profile  # noqa: E402
+from animation.core.installation_profile import (  # noqa: E402
+    GLOBAL_STRIP_COUNT,
+    LEDS_PER_STRIP,
+    compile_installation_profile,
+)
 from animation.core.installation_profile_topology import (  # noqa: E402
     INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
+    RECEIVER_COUNT,
+    RECEIVER_IDS,
     slice_installation_profile,
 )
 from animation.core.receiver_optics import (  # noqa: E402
@@ -101,11 +107,11 @@ def _vector(vector_id: str, rgb: tuple[int, int, int], strength: int) -> dict[st
 
 
 def _analytic_rgb_field() -> np.ndarray:
-    """Return a deterministic 32x138 field keyed only by global coordinates."""
+    """Return a deterministic installed-wall field keyed by global coordinates."""
 
-    strip = np.arange(32, dtype=np.uint16)[:, None]
-    led = np.arange(138, dtype=np.uint16)[None, :]
-    field = np.empty((32, 138, 3), dtype=np.uint8)
+    strip = np.arange(GLOBAL_STRIP_COUNT, dtype=np.uint16)[:, None]
+    led = np.arange(LEDS_PER_STRIP, dtype=np.uint16)[None, :]
+    field = np.empty((GLOBAL_STRIP_COUNT, LEDS_PER_STRIP, 3), dtype=np.uint8)
     field[..., 0] = (strip * 37 + led * 11 + 17) & 0xFF
     field[..., 1] = (strip * 7 + led * 29 + 73) & 0xFF
     field[..., 2] = (strip * 53 + led * 3 + 151) & 0xFF
@@ -122,7 +128,7 @@ def _topology_vectors() -> list[dict[str, Any]]:
     for strength in TOPOLOGY_STRENGTHS:
         receiver_digests: list[str] = []
         stitched = np.empty_like(source)
-        for logical_id in range(4):
+        for logical_id in RECEIVER_IDS:
             view = views[logical_id]
             local = source[
                 view.strip_origin:view.strip_origin + view.strip_count
@@ -183,9 +189,23 @@ def build_fixture() -> dict[str, Any]:
             for vector_id, rgb in RGB_VECTORS
         ],
         "installed_topology": {
-            "logical_receiver_order": [0, 1, 2, 3],
-            "strip_origins": [0, 8, 24, 16],
-            "reverse_native_strips": [False, False, True, True],
+            "logical_receiver_order": list(RECEIVER_IDS),
+            "physical_receiver_order": list(
+                INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.physical_lane_order
+            ),
+            "strip_origins": [
+                INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
+                .strip_origin_for_logical_receiver(receiver_id)
+                for receiver_id in RECEIVER_IDS
+            ],
+            "strip_counts": list(
+                INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
+                .strip_counts_by_logical_receiver
+            ),
+            "reverse_native_strips": list(
+                INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
+                .reverse_native_strips_by_logical_receiver
+            ),
             "field_rgb": [
                 "(global_strip * 37 + led * 11 + 17) & 255",
                 "(global_strip * 7 + led * 29 + 73) & 255",
@@ -271,7 +291,7 @@ def render_cpp_header(fixture: dict[str, Any] | None = None) -> str:
         "",
         "struct InstalledTopologyVector {",
         "  std::uint16_t strength_q8_8;",
-        "  const char* receiver_sha256[4];",
+        f"  const char* receiver_sha256[{RECEIVER_COUNT}];",
         "  const char* stitched_global_sha256;",
         "};",
         "",

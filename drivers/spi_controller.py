@@ -9,6 +9,7 @@ import colorsys
 import argparse
 import binascii
 from dataclasses import replace
+import math
 import struct
 import spidev
 import sys
@@ -16,11 +17,13 @@ import threading
 
 import numpy as np
 
-from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP
 
 # LED Configuration defaults
 DEFAULT_LED_PER_STRIP = DEFAULT_LEDS_PER_STRIP
-DEFAULT_NUM_STRIPS = DEFAULT_STRIP_COUNT
+# One LEDController addresses one receiver, not the global wall. The finalized
+# roster has four 8-wide receivers and a separately configured 1-wide tail.
+DEFAULT_NUM_STRIPS = 8
 
 # SPI Configuration
 SPI_BUS = 0  # SPI bus number (0 = /dev/spidev0.X)
@@ -36,11 +39,13 @@ RECEIVER_STATUS_MAGIC_V2 = (ord('L'), ord('G'), ord('S'), ord('2'))
 RECEIVER_STATUS_MAGIC_V3 = (ord('L'), ord('G'), ord('S'), ord('3'))
 RECEIVER_STATUS_MAGIC_V4 = (ord('L'), ord('G'), ord('S'), ord('4'))
 RECEIVER_STATUS_MAGIC_V5 = (ord('L'), ord('G'), ord('S'), ord('5'))
+RECEIVER_STATUS_MAGIC_V6 = (ord('L'), ord('G'), ord('S'), ord('6'))
 RECEIVER_STATUS_BYTES = 29
 RECEIVER_STATUS_BYTES_V2 = 68
 RECEIVER_STATUS_BYTES_V3 = 320
 RECEIVER_STATUS_BYTES_V4 = 416
 RECEIVER_STATUS_BYTES_V5 = 768
+RECEIVER_STATUS_BYTES_V6 = 1216
 # The ESP32 slave keeps two response buffers queued. A command's result is
 # therefore observable after two complete status-query transfers.
 SPI_RESPONSE_QUEUE_DEPTH = 2
@@ -132,6 +137,19 @@ CMD_PROFILE_VERIFY = 0x44
 CMD_PROFILE_ACTIVATE = 0x45
 CMD_PROFILE_RESTORE = 0x46
 CMD_PROFILE_ABORT = 0x47
+CMD_NATIVE_PROBE = 0x50
+CMD_NATIVE_PREFLIGHT = 0x51
+CMD_NATIVE_BEGIN = 0x52
+CMD_NATIVE_CHUNK = 0x53
+CMD_NATIVE_FINALIZE = 0x54
+CMD_NATIVE_VERIFY = 0x55
+CMD_NATIVE_ACTIVATE = 0x56
+CMD_NATIVE_STOP = 0x57
+CMD_NATIVE_PARAMETERS = 0x58
+CMD_NATIVE_REMOVE = 0x59
+CMD_NATIVE_ABORT = 0x5A
+CMD_NATIVE_RESTORE = 0x5B
+CMD_NATIVE_QUARANTINE_CLEAR = 0x5C
 CMD_PING = 0xFF
 
 LOCAL_BACKGROUND_RAINBOW = 1
@@ -201,6 +219,69 @@ PROFILE_TRANSFER_STATE_NAMES = {
     4: "staged",
     5: "failed",
 }
+NATIVE_BINDING_BYTES = 64
+NATIVE_DESCRIPTOR_BYTES = 85
+NATIVE_PROBE_BYTES = 33
+NATIVE_PREFLIGHT_BYTES = 86
+NATIVE_BEGIN_BYTES = 94
+NATIVE_CHUNK_HEADER_BYTES = 5
+MAX_NATIVE_CHUNK_BYTES = MAX_SPI_TRANSFER - NATIVE_CHUNK_HEADER_BYTES - CRC_BYTES
+NATIVE_BINDING_COMMAND_BYTES = 65
+NATIVE_ACTIVATE_HEADER_BYTES = 87
+NATIVE_PARAMETERS_HEADER_BYTES = 71
+NATIVE_RESTORE_BYTES = 204
+NATIVE_MAX_PARAMETER_BYTES = 1024
+NATIVE_TYPED_PARAMETER_VERSION = 1
+NATIVE_TARGET_ESP32_S3 = 1
+NATIVE_RESULT_NAMES = {
+    0: "none",
+    1: "ok",
+    2: "unsupported",
+    3: "invalid_size",
+    4: "invalid_command",
+    5: "invalid_state",
+    6: "digest_mismatch",
+    7: "wrong_abi",
+    8: "wrong_target",
+    9: "wrong_geometry",
+    10: "storage_error",
+    11: "no_space",
+    12: "not_found",
+    13: "conflict",
+    14: "invalid_token",
+    15: "pinned",
+    16: "integrity_error",
+    17: "invalid_parameters",
+    18: "quarantined",
+    19: "load_failed",
+    20: "entrypoint_failed",
+    21: "initialize_failed",
+    22: "context_failed",
+    23: "render_failed",
+    24: "cleanup_failed",
+    25: "unload_failed",
+    26: "watchdog",
+}
+NATIVE_TRANSFER_STATE_NAMES = {
+    0: "idle",
+    1: "preflight_ready",
+    2: "receiving",
+    3: "finalizing",
+    4: "staged",
+    5: "active",
+    6: "failed",
+    7: "quarantined",
+}
+NATIVE_PHASE_NAMES = {
+    0: "none",
+    1: "load",
+    2: "entrypoint",
+    3: "initialize",
+    4: "context_update",
+    5: "render",
+    6: "cleanup",
+    7: "unload",
+}
 OVERLAY_OPERATION_RESULT_NAMES = {
     0: "none",
     1: "ok",
@@ -235,6 +316,12 @@ CAPABILITY_SPARSE_OVERLAY_V1 = 1 << 4
 CAPABILITY_SPARSE_OVERLAY_BATCH_V1 = 1 << 5
 CAPABILITY_INSTALLATION_PROFILE_V1 = 1 << 6
 CAPABILITY_STATUS_V5 = 1 << 7
+CAPABILITY_STATUS_V6 = 1 << 8
+CAPABILITY_NATIVE_MODULE_V2 = 1 << 9
+CAPABILITY_NATIVE_CACHE_V1 = 1 << 10
+CAPABILITY_NATIVE_TYPED_PARAMETERS_V1 = 1 << 11
+CAPABILITY_NATIVE_QUARANTINE_V1 = 1 << 12
+CAPABILITY_NATIVE_GUARDED_LOADER_V1 = 1 << 13
 
 ALL_LANES_MASK = 0xFF
 STAGGER_OFF = 1
@@ -254,7 +341,8 @@ class LEDController:
     def __init__(self, bus=SPI_BUS, device=SPI_DEVICE, speed=SPI_SPEED, mode=SPI_MODE,
                  strips=DEFAULT_NUM_STRIPS, leds_per_strip=DEFAULT_LED_PER_STRIP,
                  debug=False, logical_device_id=None,
-                 reverse_native_strip_order=False):
+                 reverse_native_strip_order=False,
+                 global_strip_offset=None):
         if type(reverse_native_strip_order) is not bool:
             raise TypeError("reverse_native_strip_order must be a boolean")
         self.debug = debug
@@ -262,6 +350,9 @@ class LEDController:
         self.device = device
         self.logical_device_id = self._optional_logical_device_id(logical_device_id)
         self.reverse_native_strip_order = reverse_native_strip_order
+        self.global_strip_offset = self._optional_global_strip_offset(
+            global_strip_offset
+        )
         self.spi = spidev.SpiDev()
         self.spi.open(bus, device)
         self.spi.max_speed_hz = speed
@@ -398,6 +489,7 @@ class LEDController:
         self._receiver_profile_verifies = 0
         self._receiver_profile_activations = 0
         self._receiver_profile_restores = 0
+        self._clear_receiver_native_status()
         self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V3
         self._presentation_commit_context_cache = {}
         self._monotonic_ns = time.monotonic_ns
@@ -489,7 +581,13 @@ class LEDController:
     def _optional_logical_device_id(cls, value):
         if value is None:
             return None
-        return cls._bounded_uint("logical_device_id", value, 3)
+        return cls._bounded_uint("logical_device_id", value, 0xFE)
+
+    @classmethod
+    def _optional_global_strip_offset(cls, value):
+        if value is None:
+            return None
+        return cls._bounded_uint("global_strip_offset", value, 0xFFFF)
 
     @staticmethod
     def _fixed_bytes(name, value, size):
@@ -531,6 +629,62 @@ class LEDController:
             + cls._profile_digest(f"{field}.profile_id", profile_id)
             + cls._profile_digest(f"{field}.payload_digest", payload_digest)
         )
+
+    @classmethod
+    def _native_binding(cls, binding, *, field):
+        if binding is None:
+            return b"\0" + bytes(NATIVE_BINDING_BYTES)
+        if isinstance(binding, tuple) and len(binding) == 2:
+            bundle_digest, payload_digest = binding
+        else:
+            bundle_digest = getattr(binding, "bundle_digest", None)
+            payload_digest = getattr(binding, "payload_digest", None)
+        return (
+            b"\1"
+            + cls._profile_digest(f"{field}.bundle_digest", bundle_digest)
+            + cls._profile_digest(f"{field}.payload_digest", payload_digest)
+        )
+
+    @staticmethod
+    def _native_parameter_blob(value):
+        if not isinstance(value, bytes):
+            raise TypeError("native parameter blob must be immutable bytes")
+        if not 2 <= len(value) <= NATIVE_MAX_PARAMETER_BYTES:
+            raise ValueError(
+                f"native parameter blob must contain 2..{NATIVE_MAX_PARAMETER_BYTES} bytes"
+            )
+        if value[0] != NATIVE_TYPED_PARAMETER_VERSION:
+            raise ValueError(
+                f"native parameter blob version must be {NATIVE_TYPED_PARAMETER_VERSION}"
+            )
+        count = value[1]
+        if count > 31:
+            raise ValueError("native parameter blob may contain at most 31 entries")
+        cursor = 2
+        for expected_id in range(count):
+            if cursor + 4 > len(value):
+                raise ValueError("native parameter blob has a truncated entry header")
+            parameter_id, kind, reserved = struct.unpack_from(">HBB", value, cursor)
+            cursor += 4
+            if parameter_id != expected_id:
+                raise ValueError(
+                    "native parameter IDs must be canonical zero-based positions"
+                )
+            if reserved != 0:
+                raise ValueError("native parameter reserved bytes must be zero")
+            encoded_size = {1: 4, 2: 4, 3: 1, 4: 2}.get(kind)
+            if encoded_size is None:
+                raise ValueError("native parameter blob contains an unknown type")
+            if cursor + encoded_size > len(value):
+                raise ValueError("native parameter blob contains a truncated value")
+            if kind == 2 and not math.isfinite(struct.unpack_from(">f", value, cursor)[0]):
+                raise ValueError("native float parameters must be finite float32 values")
+            if kind == 3 and value[cursor] not in (0, 1):
+                raise ValueError("native boolean parameters must be canonical 0 or 1")
+            cursor += encoded_size
+        if cursor != len(value):
+            raise ValueError("native parameter blob contains trailing bytes")
+        return value
 
     @staticmethod
     def _premultiplied_rgba_bytes(value, *, maximum=MAX_RGBA_PIXELS_PER_PATCH):
@@ -598,6 +752,9 @@ class LEDController:
             return
 
         magic = tuple(int(response[index]) for index in range(4))
+        if magic == RECEIVER_STATUS_MAGIC_V6 and len(response) >= RECEIVER_STATUS_BYTES_V6:
+            self._update_receiver_status_v6(response)
+            return
         if magic == RECEIVER_STATUS_MAGIC_V5 and len(response) >= RECEIVER_STATUS_BYTES_V5:
             self._update_receiver_status_v5(response)
             return
@@ -737,7 +894,9 @@ class LEDController:
             self._receiver_stagger_phases == LEGACY_SNAPSHOT_SENTINEL
         )
         self._receiver_operation_sequence = self._response_u32(response, 316)
-        if (
+        if self._receiver_capabilities & CAPABILITY_STATUS_V6:
+            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V6
+        elif (
             self._receiver_capabilities & CAPABILITY_INSTALLATION_PROFILE_V1
             and self._receiver_capabilities & CAPABILITY_STATUS_V5
         ):
@@ -760,6 +919,7 @@ class LEDController:
         if response_magic == RECEIVER_STATUS_MAGIC_V3:
             self._clear_receiver_overlay_status()
             self._clear_receiver_profile_status()
+            self._clear_receiver_native_status()
 
     def _clear_receiver_overlay_status(self):
         """Drop v4-only telemetry after an actual status-v3 response."""
@@ -814,6 +974,7 @@ class LEDController:
         self._receiver_overlay_expirations = self._response_u32(response, 412)
         if tuple(int(response[index]) for index in range(4)) == RECEIVER_STATUS_MAGIC_V4:
             self._clear_receiver_profile_status()
+            self._clear_receiver_native_status()
 
     def _clear_receiver_profile_status(self):
         """Drop status-v5-only profile telemetry after a real downgrade."""
@@ -907,6 +1068,121 @@ class LEDController:
         self._receiver_profile_verifies = self._response_u16(response, 762)
         self._receiver_profile_activations = self._response_u16(response, 764)
         self._receiver_profile_restores = self._response_u16(response, 766)
+        if tuple(int(response[index]) for index in range(4)) == RECEIVER_STATUS_MAGIC_V5:
+            self._clear_receiver_native_status()
+
+    def _clear_receiver_native_status(self):
+        """Drop status-v6-only module telemetry after a real downgrade."""
+        self._receiver_native_result = 0
+        self._receiver_native_transfer_state = 0
+        self._receiver_native_watchdog_phase = 0
+        self._receiver_native_flags = 0
+        for name in (
+            "capacity_bytes", "used_bytes", "free_bytes", "reserve_bytes",
+            "reclaimable_bytes", "received_bytes", "total_bytes",
+            "state_generation", "preflight_token", "active_schema_revision",
+            "active_cadence_hz", "active_local_strips", "active_target",
+            "active_global_strips", "active_leds_per_strip",
+            "active_global_strip_offset", "active_parameter_size",
+            "last_load_us", "last_initialize_us", "last_context_us",
+            "last_render_us", "max_phase_us", "watchdog_events", "writes",
+            "evictions", "stages", "verifies", "activations", "restores",
+            "quarantines",
+        ):
+            setattr(self, f"_receiver_native_{name}", 0)
+        for name in (
+            "last_probe_payload_digest", "transfer_bundle_digest",
+            "transfer_payload_digest", "active_bundle_digest",
+            "active_payload_digest", "staged_bundle_digest",
+            "staged_payload_digest", "rollback_bundle_digest",
+            "rollback_payload_digest", "quarantine_payload_digest",
+            "active_parameter_digest",
+        ):
+            setattr(self, f"_receiver_native_{name}", None)
+
+    def _update_receiver_status_v6(self, response):
+        """Parse the exact status-v6 native-module extension."""
+        self._update_receiver_status_v5(response)
+        flags = int(response[771])
+        self._receiver_native_result = int(response[768])
+        self._receiver_native_transfer_state = int(response[769])
+        self._receiver_native_watchdog_phase = int(response[770])
+        self._receiver_native_flags = flags
+        u32_fields = (
+            ("capacity_bytes", 772),
+            ("used_bytes", 776),
+            ("free_bytes", 780),
+            ("reserve_bytes", 784),
+            ("reclaimable_bytes", 788),
+            ("received_bytes", 792),
+            ("total_bytes", 796),
+        )
+        for name, offset in u32_fields:
+            setattr(
+                self, f"_receiver_native_{name}", self._response_u32(response, offset)
+            )
+        self._receiver_native_state_generation = self._response_u64(response, 800)
+        self._receiver_native_preflight_token = self._response_u64(response, 808)
+        self._receiver_native_last_probe_payload_digest = (
+            self._optional_digest_from_response(
+                response,
+                816,
+                present=any(int(value) for value in response[816:848]),
+            )
+        )
+        digest_fields = (
+            ("transfer_bundle_digest", 848, None),
+            ("transfer_payload_digest", 880, None),
+            ("active_bundle_digest", 912, 0x08),
+            ("active_payload_digest", 944, 0x08),
+            ("staged_bundle_digest", 976, 0x10),
+            ("staged_payload_digest", 1008, 0x10),
+            ("rollback_bundle_digest", 1040, 0x20),
+            ("rollback_payload_digest", 1072, 0x20),
+            ("quarantine_payload_digest", 1104, 0x40),
+        )
+        transfer_present = self._receiver_native_transfer_state in (1, 2, 3)
+        for name, offset, bit in digest_fields:
+            present = transfer_present if bit is None else bool(flags & bit)
+            setattr(
+                self,
+                f"_receiver_native_{name}",
+                self._optional_digest_from_response(response, offset, present=present),
+            )
+        self._receiver_native_active_schema_revision = self._response_u32(response, 1136)
+        self._receiver_native_active_cadence_hz = self._response_u16(response, 1140)
+        self._receiver_native_active_local_strips = int(response[1142])
+        self._receiver_native_active_target = int(response[1143])
+        self._receiver_native_active_global_strips = self._response_u16(response, 1144)
+        self._receiver_native_active_leds_per_strip = self._response_u16(response, 1146)
+        self._receiver_native_active_global_strip_offset = self._response_u16(
+            response, 1148
+        )
+        self._receiver_native_active_parameter_size = self._response_u16(response, 1150)
+        self._receiver_native_active_parameter_digest = self._optional_digest_from_response(
+            response, 1152, present=bool(flags & 0x08)
+        )
+        u16_fields = (
+            ("last_load_us", 1184),
+            ("last_initialize_us", 1186),
+            ("last_context_us", 1188),
+            ("last_render_us", 1190),
+            ("max_phase_us", 1192),
+            ("watchdog_events", 1194),
+        )
+        for name, offset in u16_fields:
+            setattr(
+                self, f"_receiver_native_{name}", self._response_u16(response, offset)
+            )
+        self._receiver_native_writes = self._response_u32(response, 1196)
+        self._receiver_native_evictions = self._response_u32(response, 1200)
+        for name, offset in (
+            ("stages", 1204), ("verifies", 1206), ("activations", 1208),
+            ("restores", 1210), ("quarantines", 1212),
+        ):
+            setattr(
+                self, f"_receiver_native_{name}", self._response_u16(response, offset)
+            )
 
     def query_receiver_status(self):
         """Clock out the newest discovered status snapshot without changing ownership."""
@@ -950,8 +1226,8 @@ class LEDController:
             required_version = self._bounded_uint(
                 "required_status_version", required_status_version, 0xFF
             )
-            if required_version < 3 or required_version > 5:
-                raise ValueError("required_status_version must be 3, 4, or 5")
+            if required_version < 3 or required_version > 6:
+                raise ValueError("required_status_version must be 3, 4, 5, or 6")
             # The slave has to queue a response before it knows the length of
             # the master's next transfer. A sparse command therefore leaves
             # one legacy-safe v3 snapshot in the two-deep queue; clock one
@@ -1084,7 +1360,7 @@ class LEDController:
         size = cls._bounded_uint("payload_size", payload_size, 0xFFFFFFFF)
         if size == 0:
             raise ValueError("payload_size must be positive")
-        logical = cls._bounded_uint("logical_receiver_id", logical_receiver_id, 3)
+        logical = cls._bounded_uint("logical_receiver_id", logical_receiver_id, 0xFE)
         origin = cls._bounded_uint("strip_origin", strip_origin, 0xFFFF)
         if type(reversed_strip_order) is not bool:
             raise TypeError("reversed_strip_order must be a boolean")
@@ -1206,6 +1482,281 @@ class LEDController:
         return self._command_status(
             bytes((CMD_PROFILE_ABORT,)), required_status_version=5
         )
+
+    @classmethod
+    def _native_descriptor_bytes(
+        cls,
+        *,
+        bundle_digest,
+        payload_digest,
+        payload_size,
+        abi_version,
+        target,
+        global_strips,
+        local_strips,
+        leds_per_strip,
+        global_strip_offset,
+        cadence_hz,
+        parameter_schema_revision,
+        flags=0,
+    ):
+        size = cls._bounded_uint("payload_size", payload_size, 0xFFFFFFFF)
+        if size == 0:
+            raise ValueError("payload_size must be positive")
+        abi = cls._bounded_uint("abi_version", abi_version, 0xFFFF)
+        target_code = cls._bounded_uint("target", target, 0xFF)
+        global_width = cls._bounded_uint("global_strips", global_strips, 0xFFFF)
+        local_width = cls._bounded_uint("local_strips", local_strips, 0xFF)
+        height = cls._bounded_uint("leds_per_strip", leds_per_strip, 0xFFFF)
+        origin = cls._bounded_uint(
+            "global_strip_offset", global_strip_offset, 0xFFFF
+        )
+        cadence = cls._bounded_uint("cadence_hz", cadence_hz, 0xFFFF)
+        schema_revision = cls._bounded_uint(
+            "parameter_schema_revision", parameter_schema_revision, 0xFFFFFFFF
+        )
+        descriptor_flags = cls._bounded_uint("flags", flags, 0xFF)
+        if not abi:
+            raise ValueError("abi_version must be positive")
+        if target_code != NATIVE_TARGET_ESP32_S3:
+            raise ValueError(f"target must be {NATIVE_TARGET_ESP32_S3} (ESP32-S3)")
+        if not global_width or not local_width or not height:
+            raise ValueError("native geometry dimensions must be positive")
+        if local_width > 8:
+            raise ValueError("native local_strips must be between 1 and 8")
+        if origin + local_width > global_width:
+            raise ValueError("native receiver geometry exceeds the global wall")
+        if not cadence:
+            raise ValueError("cadence_hz must be positive")
+        if descriptor_flags:
+            raise ValueError("native descriptor flags must be zero for v1")
+        descriptor = struct.pack(
+            ">32s32sIHBHBHHHIB",
+            cls._profile_digest("bundle_digest", bundle_digest),
+            cls._profile_digest("payload_digest", payload_digest),
+            size,
+            abi,
+            target_code,
+            global_width,
+            local_width,
+            height,
+            origin,
+            cadence,
+            schema_revision,
+            descriptor_flags,
+        )
+        if len(descriptor) != NATIVE_DESCRIPTOR_BYTES:
+            raise AssertionError("native descriptor wire size drifted")
+        return descriptor
+
+    @classmethod
+    def serialize_native_probe(cls, *, payload_digest):
+        return bytes((CMD_NATIVE_PROBE,)) + cls._profile_digest(
+            "payload_digest", payload_digest
+        )
+
+    @classmethod
+    def serialize_native_preflight(cls, **descriptor):
+        payload = bytes((CMD_NATIVE_PREFLIGHT,)) + cls._native_descriptor_bytes(
+            **descriptor
+        )
+        if len(payload) != NATIVE_PREFLIGHT_BYTES:
+            raise AssertionError("native preflight wire size drifted")
+        return payload
+
+    @classmethod
+    def serialize_native_begin(cls, *, preflight_token, **descriptor):
+        token = cls._bounded_uint(
+            "preflight_token", preflight_token, 0xFFFFFFFFFFFFFFFF
+        )
+        if not token:
+            raise ValueError("preflight_token must be positive")
+        payload = (
+            bytes((CMD_NATIVE_BEGIN,))
+            + struct.pack(">Q", token)
+            + cls._native_descriptor_bytes(**descriptor)
+        )
+        if len(payload) != NATIVE_BEGIN_BYTES:
+            raise AssertionError("native begin wire size drifted")
+        return payload
+
+    @classmethod
+    def serialize_native_chunk(cls, *, offset, data):
+        normalized_offset = cls._bounded_uint("offset", offset, 0xFFFFFFFF)
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise TypeError("native chunk data must be bytes-like")
+        chunk = bytes(data)
+        if not 1 <= len(chunk) <= MAX_NATIVE_CHUNK_BYTES:
+            raise ValueError(
+                f"native chunk data must contain 1..{MAX_NATIVE_CHUNK_BYTES} bytes"
+            )
+        if normalized_offset + len(chunk) > 0x100000000:
+            raise ValueError("native chunk range exceeds uint32 address space")
+        return bytes((CMD_NATIVE_CHUNK,)) + struct.pack(">I", normalized_offset) + chunk
+
+    @classmethod
+    def _serialize_native_binding_command(
+        cls, command, *, bundle_digest, payload_digest
+    ):
+        payload = (
+            bytes((command,))
+            + cls._profile_digest("bundle_digest", bundle_digest)
+            + cls._profile_digest("payload_digest", payload_digest)
+        )
+        if len(payload) != NATIVE_BINDING_COMMAND_BYTES:
+            raise AssertionError("native binding command wire size drifted")
+        return payload
+
+    @classmethod
+    def serialize_native_finalize(cls, **binding):
+        return cls._serialize_native_binding_command(
+            CMD_NATIVE_FINALIZE, **binding
+        )
+
+    @classmethod
+    def serialize_native_verify(cls, **binding):
+        return cls._serialize_native_binding_command(CMD_NATIVE_VERIFY, **binding)
+
+    @classmethod
+    def serialize_native_remove(cls, **binding):
+        return cls._serialize_native_binding_command(CMD_NATIVE_REMOVE, **binding)
+
+    @classmethod
+    def serialize_native_activate(
+        cls,
+        *,
+        expected_generation,
+        bundle_digest,
+        payload_digest,
+        scene_epoch,
+        deterministic_seed,
+        parameter_blob,
+    ):
+        generation = cls._bounded_uint(
+            "expected_generation", expected_generation, 0xFFFFFFFFFFFFFFFF
+        )
+        epoch = cls._bounded_uint("scene_epoch", scene_epoch, 0xFFFFFFFFFFFFFFFF)
+        seed = cls._bounded_uint("deterministic_seed", deterministic_seed, 0xFFFFFFFF)
+        parameters = cls._native_parameter_blob(parameter_blob)
+        payload = (
+            bytes((CMD_NATIVE_ACTIVATE,))
+            + struct.pack(">Q", generation)
+            + cls._profile_digest("bundle_digest", bundle_digest)
+            + cls._profile_digest("payload_digest", payload_digest)
+            + struct.pack(">QIH", epoch, seed, len(parameters))
+            + parameters
+        )
+        if len(payload) != NATIVE_ACTIVATE_HEADER_BYTES + len(parameters):
+            raise AssertionError("native activation wire size drifted")
+        return payload
+
+    @classmethod
+    def serialize_native_parameters(
+        cls,
+        *,
+        bundle_digest,
+        payload_digest,
+        parameter_schema_revision,
+        parameter_blob,
+    ):
+        revision = cls._bounded_uint(
+            "parameter_schema_revision", parameter_schema_revision, 0xFFFFFFFF
+        )
+        parameters = cls._native_parameter_blob(parameter_blob)
+        payload = (
+            bytes((CMD_NATIVE_PARAMETERS,))
+            + cls._profile_digest("bundle_digest", bundle_digest)
+            + cls._profile_digest("payload_digest", payload_digest)
+            + struct.pack(">IH", revision, len(parameters))
+            + parameters
+        )
+        if len(payload) != NATIVE_PARAMETERS_HEADER_BYTES + len(parameters):
+            raise AssertionError("native parameter wire size drifted")
+        return payload
+
+    @classmethod
+    def serialize_native_restore(
+        cls,
+        *,
+        expected_generation,
+        active_binding,
+        staged_binding,
+        rollback_binding,
+    ):
+        generation = cls._bounded_uint(
+            "expected_generation", expected_generation, 0xFFFFFFFFFFFFFFFF
+        )
+        payload = (
+            bytes((CMD_NATIVE_RESTORE,))
+            + struct.pack(">Q", generation)
+            + cls._native_binding(active_binding, field="active_binding")
+            + cls._native_binding(staged_binding, field="staged_binding")
+            + cls._native_binding(rollback_binding, field="rollback_binding")
+        )
+        if len(payload) != NATIVE_RESTORE_BYTES:
+            raise AssertionError("native restore wire size drifted")
+        return payload
+
+    @classmethod
+    def serialize_native_quarantine_clear(cls, *, payload_digest):
+        return bytes((CMD_NATIVE_QUARANTINE_CLEAR,)) + cls._profile_digest(
+            "payload_digest", payload_digest
+        )
+
+    def native_probe(self, **kwargs):
+        return self._native_command_status(self.serialize_native_probe(**kwargs))
+
+    def native_preflight(self, **kwargs):
+        return self._native_command_status(self.serialize_native_preflight(**kwargs))
+
+    def native_begin(self, **kwargs):
+        return self._native_command_status(self.serialize_native_begin(**kwargs))
+
+    def native_chunk(self, **kwargs):
+        return self._native_command_status(self.serialize_native_chunk(**kwargs))
+
+    def native_finalize(self, **kwargs):
+        return self._native_command_status(self.serialize_native_finalize(**kwargs))
+
+    def native_verify(self, **kwargs):
+        return self._native_command_status(self.serialize_native_verify(**kwargs))
+
+    def native_activate(self, **kwargs):
+        return self._native_command_status(self.serialize_native_activate(**kwargs))
+
+    def native_stop(self):
+        return self._native_command_status(bytes((CMD_NATIVE_STOP,)))
+
+    def native_parameters(self, **kwargs):
+        return self._native_command_status(self.serialize_native_parameters(**kwargs))
+
+    def native_remove(self, **kwargs):
+        return self._native_command_status(self.serialize_native_remove(**kwargs))
+
+    def native_abort(self):
+        return self._native_command_status(bytes((CMD_NATIVE_ABORT,)))
+
+    def native_restore(self, **kwargs):
+        return self._native_command_status(self.serialize_native_restore(**kwargs))
+
+    def native_quarantine_clear(self, **kwargs):
+        return self._native_command_status(
+            self.serialize_native_quarantine_clear(**kwargs)
+        )
+
+    def _native_command_status(self, payload):
+        # Status-v6 is appended without changing the exact queued-operation
+        # acknowledgement contract. Keep this method fail-closed until that
+        # negotiated extension is available.
+        status = self._command_status(payload, required_status_version=6)
+        result = int(status.get("receiver_native_result", 0) or 0)
+        if result != 1:
+            result_name = NATIVE_RESULT_NAMES.get(result, f"unknown_{result}")
+            raise RuntimeError(
+                f"receiver rejected native command 0x{payload[0]:02x} "
+                f"with result {result_name} ({result})"
+            )
+        return status
 
     @classmethod
     def serialize_controller_session_begin(
@@ -1648,7 +2199,13 @@ class LEDController:
         now = time.time()
         
         # Only send config if it's actually different or forced
-        current_config = (self.strip_count, self.leds_per_strip)
+        current_config = (
+            self.strip_count,
+            self.leds_per_strip,
+            getattr(self, "logical_device_id", None),
+            getattr(self, "global_strip_offset", None),
+            getattr(self, "reverse_native_strip_order", False),
+        )
         config_changed = (self._last_sent_config != current_config)
         
         if force or config_changed or (now - self._last_config_refresh) > self._config_refresh_interval:
@@ -1673,6 +2230,13 @@ class LEDController:
                 if getattr(self, "reverse_native_strip_order", False):
                     cfg[4] |= 0x80
                 cfg.append(logical_device_id)
+                global_strip_offset = self._optional_global_strip_offset(
+                    getattr(self, "global_strip_offset", None)
+                )
+                if (
+                    global_strip_offset is not None
+                ):
+                    cfg.extend(struct.pack(">H", global_strip_offset))
             self._xfer(cfg)
             self._last_config_refresh = now
             self._last_sent_config = current_config
@@ -2119,6 +2683,58 @@ class LEDController:
             'receiver_profile_restores': getattr(
                 self, '_receiver_profile_restores', 0
             ),
+            'receiver_native_result': getattr(self, '_receiver_native_result', 0),
+            'receiver_native_result_name': NATIVE_RESULT_NAMES.get(
+                getattr(self, '_receiver_native_result', 0), 'unknown'
+            ),
+            'receiver_native_transfer_state': getattr(
+                self, '_receiver_native_transfer_state', 0
+            ),
+            'receiver_native_transfer_state_name': NATIVE_TRANSFER_STATE_NAMES.get(
+                getattr(self, '_receiver_native_transfer_state', 0), 'unknown'
+            ),
+            'receiver_native_watchdog_phase': getattr(
+                self, '_receiver_native_watchdog_phase', 0
+            ),
+            'receiver_native_watchdog_phase_name': NATIVE_PHASE_NAMES.get(
+                getattr(self, '_receiver_native_watchdog_phase', 0), 'unknown'
+            ),
+            'receiver_native_flags': getattr(self, '_receiver_native_flags', 0),
+            'receiver_native_ready': bool(
+                getattr(self, '_receiver_native_flags', 0) & 0x01
+            ),
+            'receiver_native_probe_found': bool(
+                getattr(self, '_receiver_native_flags', 0) & 0x02
+            ),
+            'receiver_native_cache_integrity_ok': bool(
+                getattr(self, '_receiver_native_flags', 0) & 0x04
+            ),
+            'receiver_native_executing': bool(
+                getattr(self, '_receiver_native_flags', 0) & 0x80
+            ),
+            **{
+                f'receiver_native_{name}': getattr(
+                    self, f'_receiver_native_{name}', None
+                )
+                for name in (
+                    'capacity_bytes', 'used_bytes', 'free_bytes', 'reserve_bytes',
+                    'reclaimable_bytes', 'received_bytes', 'total_bytes',
+                    'state_generation', 'preflight_token',
+                    'last_probe_payload_digest', 'transfer_bundle_digest',
+                    'transfer_payload_digest', 'active_bundle_digest',
+                    'active_payload_digest', 'staged_bundle_digest',
+                    'staged_payload_digest', 'rollback_bundle_digest',
+                    'rollback_payload_digest', 'quarantine_payload_digest',
+                    'active_schema_revision', 'active_cadence_hz',
+                    'active_local_strips', 'active_target',
+                    'active_global_strips', 'active_leds_per_strip',
+                    'active_global_strip_offset', 'active_parameter_size',
+                    'active_parameter_digest', 'last_load_us',
+                    'last_initialize_us', 'last_context_us', 'last_render_us',
+                    'max_phase_us', 'watchdog_events', 'writes', 'evictions',
+                    'stages', 'verifies', 'activations', 'restores', 'quarantines',
+                )
+            },
         }
 
 

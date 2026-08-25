@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Generate original, native-resolution pixel-art GIFs for the LED wall.
 
-The output is deliberately authored at 32x138.  That avoids interpolation in
-the GIF plugin and keeps every square pixel crisp on the physical installation.
+Scenes remain deliberately authored at 32x138.  The saved 33x138 installation
+asset appends one black physical strip without interpolation or resampling.
 """
 
 from __future__ import annotations
 
 import argparse
+from io import BytesIO
 import json
 import math
 import random
@@ -17,6 +18,7 @@ from PIL import Image, ImageDraw
 
 
 WIDTH = 32
+INSTALLED_WIDTH = 33
 HEIGHT = 138
 FRAME_COUNT = 8
 DURATION_MS = 140
@@ -281,14 +283,39 @@ def render(scene: Scene, frame: int) -> Image.Image:
 def save_gif(scene: Scene, output_path: Path):
     frames = [render(scene, frame) for frame in range(FRAME_COUNT)]
     palette_frames = [frame.convert("P", palette=Image.Palette.ADAPTIVE, colors=64) for frame in frames]
+    authored = BytesIO()
     palette_frames[0].save(
-        output_path,
+        authored,
+        format="GIF",
         save_all=True,
         append_images=palette_frames[1:],
         duration=DURATION_MS,
         loop=0,
         optimize=False,
         disposal=2,
+    )
+    authored.seek(0)
+    installed_frames: list[Image.Image] = []
+    with Image.open(authored) as image:
+        durations: list[int] = []
+        disposals: list[int] = []
+        for frame_index in range(image.n_frames):
+            image.seek(frame_index)
+            installed = Image.new("RGB", (INSTALLED_WIDTH, HEIGHT), (0, 0, 0))
+            installed.paste(image.convert("RGB"), (0, 0))
+            installed_frames.append(installed)
+            durations.append(int(image.info.get("duration", 0)))
+            disposals.append(int(getattr(image, "disposal_method", 0)))
+        loop = int(image.info.get("loop", 0))
+    installed_frames[0].save(
+        output_path,
+        format="GIF",
+        save_all=True,
+        append_images=installed_frames[1:],
+        duration=durations,
+        disposal=disposals,
+        loop=loop,
+        optimize=False,
     )
 
 
@@ -339,7 +366,10 @@ def main():
             save_gif(scene, gif_path)
             written += 1
         preset_path.write_text(json.dumps(preset_payload(scene), indent=2) + "\n", encoding="utf-8")
-    print(f"generated={written} skipped={skipped} presets={len(SCENES)} size={WIDTH}x{HEIGHT}")
+    print(
+        f"generated={written} skipped={skipped} presets={len(SCENES)} "
+        f"size={INSTALLED_WIDTH}x{HEIGHT} authored_width={WIDTH}"
+    )
 
 
 if __name__ == "__main__":

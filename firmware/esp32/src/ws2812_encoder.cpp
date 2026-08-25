@@ -160,7 +160,8 @@ EncodeResult encode_parallel_grb_pixels(
     std::uint16_t reset_us,
     std::uint32_t sample_rate_hz,
     std::uint8_t lane_mask,
-    std::uint8_t stagger_phases) {
+    std::uint8_t stagger_phases,
+    bool map_compact_strips_to_selected_lanes) {
   if (rgb == nullptr || output == nullptr || strip_count == 0 ||
       strip_count > kMaxParallelStrips || leds_per_strip == 0 ||
       sample_rate_hz == 0) {
@@ -195,11 +196,18 @@ EncodeResult encode_parallel_grb_pixels(
   // all eight bits of the channel at once.
   const std::uint64_t lane_bits = 0x0101010101010101ULL * lane_mask;
 
+  std::uint8_t selected_lane_count = 0;
+  for (std::uint8_t bits = lane_mask; bits != 0; bits >>= 1U) {
+    selected_lane_count += bits & 1U;
+  }
+  const bool compact_mapping = map_compact_strips_to_selected_lanes &&
+      strip_count < kMaxParallelStrips && selected_lane_count == strip_count;
+
   const std::uint8_t strip_mask =
       strip_count == 8 ? 0xFFU
                        : static_cast<std::uint8_t>((1U << strip_count) - 1U);
-  const std::uint8_t active_mask =
-      static_cast<std::uint8_t>(strip_mask & lane_mask);
+  const std::uint8_t active_mask = compact_mapping
+      ? lane_mask : static_cast<std::uint8_t>(strip_mask & lane_mask);
   const std::uint8_t phases =
       (stagger_phases == 0 || stagger_phases > kMaxStaggerPhases)
           ? kStaggerOff
@@ -219,8 +227,19 @@ EncodeResult encode_parallel_grb_pixels(
     for (std::uint8_t channel = 0; channel < 3; ++channel) {
       const std::size_t offset =
           static_cast<std::size_t>(pixel) * 3U + kGrbOffsets[channel];
-      std::uint64_t parallel_bits = frame_expand_table[rgb[offset]];
-      if (strip_count == 8) {
+      std::uint64_t parallel_bits = 0;
+      if (compact_mapping) {
+        std::uint8_t logical_lane = 0;
+        for (std::uint8_t physical_lane = 0; physical_lane < 8;
+             ++physical_lane) {
+          if ((lane_mask & (1U << physical_lane)) == 0) continue;
+          parallel_bits |=
+              frame_expand_table[rgb[offset + lane_stride * logical_lane]]
+              << physical_lane;
+          ++logical_lane;
+        }
+      } else if (strip_count == 8) {
+        parallel_bits = frame_expand_table[rgb[offset]];
         parallel_bits |= frame_expand_table[rgb[offset + lane_stride]] << 1U;
         parallel_bits |= frame_expand_table[rgb[offset + lane_stride * 2U]] << 2U;
         parallel_bits |= frame_expand_table[rgb[offset + lane_stride * 3U]] << 3U;
@@ -229,6 +248,7 @@ EncodeResult encode_parallel_grb_pixels(
         parallel_bits |= frame_expand_table[rgb[offset + lane_stride * 6U]] << 6U;
         parallel_bits |= frame_expand_table[rgb[offset + lane_stride * 7U]] << 7U;
       } else {
+        parallel_bits = frame_expand_table[rgb[offset]];
         for (std::uint8_t lane = 1; lane < strip_count; ++lane) {
           parallel_bits |=
               frame_expand_table[rgb[offset + lane_stride * lane]] << lane;

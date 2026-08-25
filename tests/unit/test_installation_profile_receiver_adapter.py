@@ -17,6 +17,11 @@ from animation.core.installation_profile_transaction import (
     InstallationProfileTransaction,
     InstallationProfileTransactionPhase,
 )
+from animation.core.installation_profile_topology import (
+    RECEIVER_COUNT,
+    RECEIVER_IDS,
+    INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
+)
 from drivers.installation_profile_receiver import SpiInstallationProfileWall
 from drivers.installation_profile_receiver import (
     SpiInstallationProfilePreflightPlan,
@@ -36,16 +41,21 @@ def profile_id(label):
 def payload(receiver_id, *, size=9000):
     value = bytearray((65 + receiver_id,) * size)
     value[:4] = b"LGIP"
-    value[8:12] = (1 if receiver_id >= 2 else 0).to_bytes(4, "big")
-    origins = (0, 8, 24, 16)
-    value[16:18] = origins[receiver_id].to_bytes(2, "big")
+    reversed_order = (
+        INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
+        .reverse_native_strips_by_logical_receiver[receiver_id]
+    )
+    value[8:12] = int(reversed_order).to_bytes(4, "big")
+    origin = INSTALLED_INSTALLATION_PROFILE_TOPOLOGY \
+        .strip_origin_for_logical_receiver(receiver_id)
+    value[16:18] = origin.to_bytes(2, "big")
     return bytes(value)
 
 
 def candidate(label="candidate", *, size=9000):
     return InstallationProfileCandidate(
         profile_id(label),
-        {receiver_id: payload(receiver_id, size=size) for receiver_id in range(4)},
+        {receiver_id: payload(receiver_id, size=size) for receiver_id in RECEIVER_IDS},
     )
 
 
@@ -294,7 +304,7 @@ class ProfileDevice:
 class SpiInstallationProfileAdapterTests(unittest.TestCase):
     @staticmethod
     def devices():
-        return [ProfileDevice(index) for index in range(4)]
+        return [ProfileDevice(index) for index in RECEIVER_IDS]
 
     def test_real_adapter_runs_existing_transaction_in_exact_phase_order(self):
         devices = self.devices()
@@ -314,8 +324,16 @@ class SpiInstallationProfileAdapterTests(unittest.TestCase):
             )
             begin = device.calls[1][1]
             self.assertEqual(begin["logical_receiver_id"], receiver_id)
-            self.assertEqual(begin["strip_origin"], (0, 8, 24, 16)[receiver_id])
-            self.assertEqual(begin["reversed_strip_order"], receiver_id >= 2)
+            self.assertEqual(
+                begin["strip_origin"],
+                INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
+                .strip_origin_for_logical_receiver(receiver_id),
+            )
+            self.assertEqual(
+                begin["reversed_strip_order"],
+                INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
+                .reverse_native_strips_by_logical_receiver[receiver_id],
+            )
             self.assertEqual(device.base_mode, 1)
 
     def test_partial_stage_failure_restores_every_board_exactly(self):
@@ -383,7 +401,7 @@ class SpiInstallationProfileAdapterTests(unittest.TestCase):
         devices = self.devices()
         item = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
         item.devices = devices
-        item.num_devices = 4
+        item.num_devices = RECEIVER_COUNT
         item._transport_lock = threading.RLock()
         item._installation_profile_wall = None
         item._receiver_geometry_profile_enabled = True
@@ -426,7 +444,7 @@ class SpiInstallationProfileAdapterTests(unittest.TestCase):
 
         item = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
         item.devices = devices
-        item.num_devices = 4
+        item.num_devices = RECEIVER_COUNT
         with self.assertRaisesRegex(RuntimeError, "rollout gate is disabled"):
             item.install_installation_profile(candidate())
         self.assertFalse(item._receiver_geometry_profile_enabled)
@@ -454,7 +472,7 @@ class SpiInstallationProfileAdapterTests(unittest.TestCase):
         device = ProfileDevice(0)
         receiver = SpiInstallationProfileReceiver(0, device, enabled=True)
         with self.assertRaises(ValueError):
-            SpiInstallationProfileReceiver(4, device)
+            SpiInstallationProfileReceiver(RECEIVER_COUNT, device)
         with self.assertRaises(ValueError):
             SpiInstallationProfileWall([device])
         with self.assertRaisesRegex(Exception, "no profile status"):

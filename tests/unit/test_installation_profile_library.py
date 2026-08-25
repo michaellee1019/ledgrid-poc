@@ -40,16 +40,16 @@ from animation.core.installation_profile_topology import (
 ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_PATH = ROOT / "tests" / "fixtures" / "installation_profile_v1.bin"
 EXPECTED_PROFILE_ID = (
-    "cc7a21b2e5a630af74424d2b1a1fd960"
-    "a6bf8f68463077025b7286938755acea"
+    "ce457a14efd131395507c449f35a7701"
+    "ca78ddca059620dc3757806ef553ca6a"
 )
 EXPECTED_CALIBRATION_DIGEST = (
     "580aca497078fe64a6b182e6ff0de9c"
     "92c58ab14a039062e95ece1961415ffe3"
 )
 EXPECTED_FILE_SHA256 = (
-    "3469bd38200b72b0c050d4cf01285c031"
-    "b84a4a3de318be9bbb1fc3a315e3e13"
+    "3e9fd83f990f9d7fcd3a7e958212fad5"
+    "fab82941d2e9973c3d0b0c19bdbcb918"
 )
 FIXED_PUBLISH_TIME = datetime(2026, 8, 14, 17, 0, tzinfo=timezone.utc)
 
@@ -80,19 +80,23 @@ class InstallationProfileLibraryTests(unittest.TestCase):
     @staticmethod
     def topology(**overrides: object) -> InstallationProfileTopology:
         values: dict[str, object] = {
-            "logical_to_transport_routes": ((0, 0), (0, 1), (1, 1), (1, 0)),
-            "physical_lane_order": (0, 1, 3, 2),
+            "logical_to_transport_routes": (
+                (0, 0), (0, 1), (1, 1), (1, 0), (1, 2)
+            ),
+            "physical_lane_order": (0, 1, 3, 2, 4),
             "reverse_host_strips_by_logical_receiver": (
                 False,
                 False,
                 True,
                 True,
+                False,
             ),
             "reverse_native_strips_by_logical_receiver": (
                 False,
                 False,
                 True,
                 True,
+                False,
             ),
         }
         values.update(overrides)
@@ -115,7 +119,7 @@ class InstallationProfileLibraryTests(unittest.TestCase):
         self.assertEqual(receipt.content_digest, EXPECTED_PROFILE_ID)
         self.assertEqual(receipt.calibration_digest, EXPECTED_CALIBRATION_DIGEST)
         self.assertEqual(receipt.file_sha256, EXPECTED_FILE_SHA256)
-        self.assertEqual(receipt.size, 40_072)
+        self.assertEqual(receipt.size, 41_314)
         self.assertEqual(receipt.published_at, "2026-08-14T17:00:00Z")
 
         entry = self.entry_path()
@@ -136,7 +140,7 @@ class InstallationProfileLibraryTests(unittest.TestCase):
             receipt.id, INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
         )
         self.assertEqual(resolved.encoded, self.golden)
-        self.assertEqual(resolved.global_profile.category.shape, (32, 138))
+        self.assertEqual(resolved.global_profile.category.shape, (33, 138))
         self.assertEqual(
             tuple(
                 (
@@ -146,7 +150,13 @@ class InstallationProfileLibraryTests(unittest.TestCase):
                 )
                 for logical_id, profile in resolved.receiver_profiles.items()
             ),
-            ((0, 0, False), (1, 8, False), (3, 16, True), (2, 24, True)),
+            (
+                (0, 0, False),
+                (1, 8, False),
+                (3, 16, True),
+                (2, 24, True),
+                (4, 32, False),
+            ),
         )
 
     def test_identical_republish_is_idempotent_and_retains_original_receipt(self) -> None:
@@ -334,16 +344,21 @@ class InstallationProfileLibraryTests(unittest.TestCase):
         first_receipt = self.publish_golden()
         baseline_topology = self.topology()
         inert_policy_change = self.topology(
-            logical_to_transport_routes=((9, 9), (9, 8), (8, 8), (8, 9)),
-            reverse_host_strips_by_logical_receiver=(True, True, False, False),
+            logical_to_transport_routes=(
+                (9, 9), (9, 8), (8, 8), (8, 9), (7, 7)
+            ),
+            reverse_host_strips_by_logical_receiver=(
+                True, True, False, False, True
+            ),
         )
-        lane_change = self.topology(physical_lane_order=(1, 0, 3, 2))
+        lane_change = self.topology(physical_lane_order=(1, 0, 3, 2, 4))
         native_change = self.topology(
             reverse_native_strips_by_logical_receiver=(
                 True,
                 False,
                 True,
                 True,
+                False,
             )
         )
 
@@ -360,7 +375,7 @@ class InstallationProfileLibraryTests(unittest.TestCase):
         )
         self.assertEqual(swapped.receiver_profiles[0].strip_origin, 8)
         self.assertTrue(reversed_native.receiver_profiles[0].reversed_strip_order)
-        for logical_id in range(4):
+        for logical_id in range(5):
             for section_name in (
                 "category",
                 "clearance",

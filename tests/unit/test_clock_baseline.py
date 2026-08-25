@@ -70,12 +70,12 @@ class ClockBaselineTests(unittest.TestCase):
 
     def test_full_frame_and_sparse_potential_are_reported_without_protocol_claims(self):
         facts = self.report["full_frame_facts"]
-        self.assertEqual(facts["rgb_bytes"], 32 * 138 * 3)
-        self.assertEqual(facts["rgb_bytes_per_second_at_manager_fps"], 32 * 138 * 3 * 200)
+        self.assertEqual(facts["rgb_bytes"], 33 * 138 * 3)
+        self.assertEqual(facts["rgb_bytes_per_second_at_manager_fps"], 33 * 138 * 3 * 200)
         self.assertIn("headers", facts["excludes"])
         self.assertEqual(
             self.scenarios["normal"]["current_full_rgb_payload_bytes_per_second"],
-            32 * 138 * 3,
+            33 * 138 * 3,
         )
         self.assertLess(
             self.scenarios["normal"]["derived_payload_ratio_on_changed_frames"],
@@ -98,7 +98,7 @@ class ClockBaselineTests(unittest.TestCase):
 
         self.assertIn("| normal | 10/2000 | 0.500% | 1.0 Hz |", committed)
         self.assertIn("| animated | 120/2000 | 6.000% | 12.0 Hz |", committed)
-        self.assertIn("One complete 32 x 138 RGB frame is **13,248 bytes**", committed)
+        self.assertIn("One complete 33 x 138 RGB frame is **13,662 bytes**", committed)
         self.assertIn("full-scene diff is only a proxy", committed)
         self.assertIn("not Raspberry Pi or ESP32 evidence", committed)
         self.assertIn("Clean deployment receipt", committed)

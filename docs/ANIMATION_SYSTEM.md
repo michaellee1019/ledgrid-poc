@@ -4,6 +4,22 @@ Animations are allowlisted, self-contained Python packages discovered by the
 animation manager. The web UI reads the same registry for names, descriptions,
 parameters, presets, previews, and reload operations.
 
+## Installed geometry and receiver topology
+
+The finalized wall is 33×138. Five logical receivers own widths
+`(8,8,8,8,1)`; their physical left-to-right order is `(0,1,3,2,4)` and native
+global offsets by logical ID are `(0,8,24,16,32)`. Runtime, preview, native
+build, profile, persistence, and acceptance code must consume explicit topology
+rather than infer `logical_id * 8` or assume every receiver owns eight semantic
+strips. Historical 32×138 fixtures and measurements remain useful only at the
+geometry they name.
+
+Transport route, physical order, host strip direction, native strip direction,
+logical width, and physical output-lane mask are independent configuration
+domains. The one-strip fifth receiver is therefore not represented as an
+eight-strip component merely because its ESP32 output driver has eight lane
+positions.
+
 ## Package contract
 
 Each built-in animation owns one directory:
@@ -146,13 +162,23 @@ curated presets, and generated host-preview metadata. Generated previews are
 authoring artifacts, explicitly not receiver framebuffer readback. Python
 animation APIs continue to return “not found” for the native ID.
 
-Phase 3D stops at deterministic planning, host/target build, validation,
+Phase 3D established deterministic planning, host/target build, validation,
 preview, and atomic publication. Use `just native-plan <plugin_id>`,
-`just native-build <plugin_id>`, and `just native-publish <plugin_id-or-bundle>`.
-These operations do not enable receiver execution, change display ownership,
-flash firmware, or make the component selectable in a scene. Scene validation,
-start, and live scene-preview requests remain rejected until the later dynamic
-loader phase explicitly expands provider policy.
+`just native-build <plugin_id>`, and `just native-publish <plugin_id-or-bundle>`;
+none of those operations changes display ownership or flashes firmware. Phase 4
+adds explicit `just native-install`, `just native-start`, and `just native-run`
+operations plus managed scene selection, persistence, and recovery. Those
+runtime operations are available only when the target-owned schema-v2 rollout
+selects the strict managed-native canary; feature-off production continues to
+reject them and stream complete Python frames. A native component may remain
+catalog-visible and previewable while runtime selection is gated.
+
+Install and activation operate on one exact managed bundle/payload binding across
+all five receivers. A callback/watchdog failure records the payload quarantine and
+falls back without automatic retry. An operator must clear that exact quarantine
+through the digest-bound API before reinstalling; the separate receiver-native
+recovery action proves complete host takeover and restores the scene's recorded
+Python fallback before manager state is cleared.
 
 ## Minimal plugin
 
@@ -349,8 +375,10 @@ a receiver-native source may be visible as **Catalog / build only** without
 becoming scene-selectable. Host-build previews are explicitly labeled as host
 simulation rather than current wall output or receiver framebuffer readback.
 ID-only preset/preview decoration fails closed when two providers declare the
-same plugin ID. The reproducible 32 x 138 comparison is checked in as
+same plugin ID. The historical 32 x 138 comparison is checked in as
 [`phase2d-semantic-vibe-contact-sheet.png`](phase2d-semantic-vibe-contact-sheet.png).
+It records the geometry on which that Phase 2D evidence ran and is not a current
+33 x 138 physical-wall acceptance artifact.
 
 Timing is explicit. `legacy_speed_param` receives unscaled elapsed time and an
 effective `speed`; `scaled_context` receives continuously scaled elapsed time
@@ -388,7 +416,7 @@ The manager may instead select a content-addressed installation profile from
 the target-owned `installation_profile_library/`. A nonzero saved digest is
 strictly resolved before controller construction or live selection; the
 64-character all-zero digest keeps the legacy JSON mask path and does not touch
-the library filesystem. The selected global 32x138 geometry is immutable and is
+the library filesystem. The selected global 33x138 geometry is immutable and is
 shared by reference through live, composed, receiver-foreground, and preview
 presentation contexts. Status exposes the selected digest, revision, compact
 view metadata, and the independently named topology fields. The ordinary
@@ -462,7 +490,7 @@ just test-rendering
 ```
 
 The rendering benchmark is the authoritative performance gate for the installed
-32 x 138 geometry. Its standard gate includes the three accepted background +
+33 x 138 geometry. Its standard gate includes the three accepted background +
 clock scenes and reports p50/p95/p99/max separately; desktop results are portable
 evidence, not Raspberry Pi or physical-wall timing evidence.
 
@@ -474,38 +502,41 @@ preview frames from the same channel. Hot reload is suitable for local plugin
 iteration, but production changes should go through the normal deploy and
 acceptance flow.
 
-## Receiver boundary and planned evolution
+## Receiver boundary and gated Phase 4 evolution
 
 This document describes the Python host-rendered plugin, catalog, scene, and
 receiver-hybrid product contracts. Phase 3A of the
 [unified roadmap](plan-revamped-animation-pipeline.md) provides explicit
 receiver ownership, status v3, a staged host-authoritative presentation context,
 and a statically linked rainbow. Phase 3B adds negotiated status v4, bounded
-premultiplied-RGBA foreground state, sparse four-board host orchestration,
+premultiplied-RGBA foreground state, sparse exact-roster host orchestration,
 leases, scheduled commit, fixed-point receiver composition, manager lifecycle,
 desired-scene persistence, and complete host RGB takeover.
 
-The default/absent rollout config still selects the feature-off production
-firmware and Python full-frame path. The installed wall currently opts into the
-named feature-on canary image through the explicit
-`degraded_spi1_01_readable` target-owned policy. Readable logical receivers 0/1
-require exact v4 acknowledgements; write-only 2/3 receive paced serialized
-commands and remain acknowledgement-, integrity-, and timing-unverified despite
-camera-visible output. Runtime status must therefore remain
-`operational=true`, `degraded=true`,
-`telemetry_complete=false`, `healthy=false`, and
-`release_acceptance=false`. This explicit product mode does not close the strict
-all-four hardware gates.
+The absent or disabled schema-v2 rollout config selects feature-off production
+firmware and the Python full-frame path. Explicit local and managed-native
+canaries both require the strict all-readable policy; native execution additionally
+requires `native_modules_enabled=true`. Ordinary `just deploy` reconciles the
+selected baseline firmware and target-owned libraries but never installs or
+activates a receiver-native package. Dynamic native playback remains default-off
+until the roadmap's H0-H4 physical gates are accepted.
 
-The installed hybrid topology has four independent coordinate facts: fixed SPI
-route/logical identity, physical lane permutation, host-frame/sparse strip
-direction, and receiver-native procedural direction. The target-owned config is
-authoritative. As camera-verified on 2026-08-14 it records physical order
-`(0,1,3,2)` plus host and native reversal maps
-`(false,false,true,true)`. Host transforms must not be reused as proof of native
-orientation: verify boundary-crossing foreground and a signed native phase field
-separately. See [Hardware](HARDWARE.md#installed-lane-and-strip-orientation) for
-the exact installed mapping and diagnostic sequence.
+The retired 2026-08-14 four-receiver installation used the named
+`degraded_spi1_01_readable` policy and `(0,1,3,2)` physical order. Its status,
+camera, and 32 x 138 payload measurements are historical evidence only. The
+schema-v2 migrator recognizes exactly that legacy payload as a safe feature-off
+migration input; it is not a selectable current operating mode or release gate.
+
+The finalized five-receiver topology keeps four independent coordinate facts:
+fixed SPI route/logical identity, physical lane permutation, host-frame/sparse
+strip direction, and receiver-native procedural direction. The target-owned
+config is authoritative and carries physical order `(0,1,3,2,4)`, widths
+`(8,8,8,8,1)`, offsets `(0,8,24,16,32)`, output masks
+`(255,255,255,255,1)`, and independent host/native reversal maps
+`(false,false,true,true,false)`. Host transforms must not be reused as proof of
+native orientation: verify boundary-crossing foreground and a direction-marked
+native phase field separately. See [Hardware](HARDWARE.md#installed-lane-and-strip-orientation)
+for the exact installed mapping and diagnostic sequence.
 
 The follow-on Phase 3B0 slice adds capability-gated sparse batch command `0x35`.
 Its 28-byte fixed header carries the session, generation, and logical span
@@ -516,7 +547,8 @@ cover all spans in a batch, while receivers without capability bit `1<<5`
 continue using the original `0x31` packets. The exact wire layout, 4,096-byte
 capacity rule, retry semantics, and malformed vectors are frozen in
 [ANIMATION_PIPELINE_CONTRACT_V1.md](ANIMATION_PIPELINE_CONTRACT_V1.md).
-On the frozen 32×138 clock trace this changes the representative patch payload
+On the historical frozen 32×138 clock trace this changes the representative patch
+payload
 from 1,812 to 952 bytes (7.1795% of a 13,260-byte wall frame) and the complete
 60-second SPI trace from 6,413,426 to 2,468,816 clocked bytes (94.8282% saved
 versus 47,736,000 dense bytes). The accounting also reports 4,937,632 aggregate
@@ -531,10 +563,12 @@ receive calibrated plant geometry; the separate default-off Phase 3C profile
 transaction stages a Pi-authoritative, content-addressed profile for
 receiver-safe optics.
 
-The `native-animations` branch remains an organ donor for the roadmap's later
-receiver phases. Reuse its ABI/build validation, host preview harness, ESP-IDF
-loader baseline, content-addressed cache, typed parameters, status, quarantine,
-and four-board failure tests. Do not carry forward its separate native catalog,
+The `native-animations` branch remains an organ donor for receiver work. Reuse
+its ABI/build validation, host preview harness, ESP-IDF loader baseline,
+content-addressed cache, typed parameters, status, and quarantine ideas, but port
+every historical four-board failure case into the finalized heterogeneous
+exact-five transaction contract. Do not carry forward its separate native
+catalog,
 signed package envelope, frame-track backend, separate gallery, or exclusive
 Python-versus-firmware lifecycle. The roadmap's donor table is authoritative for
 commit/path mapping and replacement contracts.

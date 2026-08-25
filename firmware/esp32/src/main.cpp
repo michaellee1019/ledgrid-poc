@@ -12,6 +12,7 @@
 #include "freertos/task.h"
 #include "ledgrid/frame_mailbox.hpp"
 #include "ledgrid/esp_installation_profile_store.hpp"
+#include "ledgrid/esp_native_module.hpp"
 #include "ledgrid/parallel_led_driver.hpp"
 #include "ledgrid/protocol.hpp"
 #include "ledgrid/receiver_task_policy.hpp"
@@ -45,6 +46,7 @@ constexpr std::size_t kMaxRgbBytes = kMaxTotalLeds * 3;
 constexpr std::uint8_t kDefaultStrips = 8;
 constexpr std::uint16_t kDefaultLedsPerStrip = 138;
 constexpr std::uint8_t kDefaultBrightness = 50;
+constexpr std::uint16_t kInstalledGlobalStrips = 33;
 constexpr int kLedPins[kMaxStrips] = {18, 17, 16, 15, 7, 6, 5, 4};
 
 constexpr std::size_t kCrcBytes = 2;
@@ -61,6 +63,8 @@ static_assert(ledgrid::kStatusBytesV3 + kCrcBytes <= kSpiBufferSize,
               "status query plus CRC exceeds transport buffer");
 static_assert(ledgrid::kStatusBytesV5 + kCrcBytes <= kSpiBufferSize,
               "status-v5 query plus CRC exceeds transport buffer");
+static_assert(ledgrid::kStatusBytesV6 + kCrcBytes <= kSpiBufferSize,
+              "status-v6 query plus CRC exceeds transport buffer");
 
 DMA_ATTR std::uint8_t spi_rx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
 DMA_ATTR std::uint8_t spi_tx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
@@ -78,6 +82,7 @@ ledgrid::LatestFrameMailbox frame_mailbox;
 portMUX_TYPE mailbox_mux = portMUX_INITIALIZER_UNLOCKED;
 SemaphoreHandle_t runtime_mutex = nullptr;
 SemaphoreHandle_t profile_mutex = nullptr;
+SemaphoreHandle_t native_mutex = nullptr;
 TaskHandle_t display_task_handle = nullptr;
 ledgrid::ParallelLedDriver led_driver;
 ledgrid::ReceiverRuntime receiver_runtime(LEDGRID_ENABLE_LOCAL_BACKGROUND != 0);
@@ -94,9 +99,25 @@ ledgrid::InstallationProfileManager installation_profile_manager(
     installation_profile_scratch, sizeof(installation_profile_scratch), true);
 std::atomic<bool> installation_profile_ready{false};
 #endif
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+ledgrid::EspNativeModuleStore native_module_store;
+ledgrid::NvsNativeModulePersistence native_module_persistence;
+ledgrid::EspNativeModuleBackend native_module_backend;
+ledgrid::EspNativeModuleClock native_module_clock;
+ledgrid::EspNativeModuleWatchdog native_module_watchdog;
+std::uint8_t native_module_scratch[4096] = {};
+ledgrid::NativeModuleManager native_module_manager(
+    &native_module_store, &native_module_persistence, &native_module_backend,
+    &native_module_clock, native_module_scratch, sizeof(native_module_scratch),
+    true);
+ledgrid::NativeModuleOperationResultLatch native_operation_result_latch;
+std::atomic<bool> native_module_ready{false};
+#endif
 
 std::atomic<std::uint32_t> next_sequence{1};
 std::atomic<std::uint8_t> logical_receiver_id{0xFF};
+std::atomic<std::uint16_t> configured_global_strip_offset{0};
+std::atomic<bool> explicit_receiver_topology{false};
 
 std::atomic<std::uint32_t> packets_received{0};
 std::atomic<std::uint32_t> crc_errors{0};
@@ -117,6 +138,28 @@ std::uint16_t duration_u16(std::uint32_t value) {
   return value > UINT16_MAX ? UINT16_MAX : static_cast<std::uint16_t>(value);
 }
 
+bool is_native_module_command(std::uint8_t command) {
+  return command >= static_cast<std::uint8_t>(
+                        ledgrid::ReceiverCommand::NativeModuleProbe) &&
+         command <= static_cast<std::uint8_t>(
+                        ledgrid::ReceiverCommand::NativeModuleQuarantineClear);
+}
+
+ledgrid::NativeModuleResult native_dispatch_rejection(
+    ledgrid::ReceiverOperationResult result) {
+  switch (result) {
+    case ledgrid::ReceiverOperationResult::Unsupported:
+      return ledgrid::NativeModuleResult::Unsupported;
+    case ledgrid::ReceiverOperationResult::InvalidSize:
+      return ledgrid::NativeModuleResult::InvalidSize;
+    case ledgrid::ReceiverOperationResult::InvalidState:
+      return ledgrid::NativeModuleResult::InvalidState;
+    case ledgrid::ReceiverOperationResult::InvalidCommand:
+    default:
+      return ledgrid::NativeModuleResult::InvalidCommand;
+  }
+}
+
 void lock_runtime() {
   if (runtime_mutex != nullptr) xSemaphoreTake(runtime_mutex, portMAX_DELAY);
 }
@@ -133,6 +176,22 @@ void unlock_profile() {
   if (profile_mutex != nullptr) xSemaphoreGive(profile_mutex);
 }
 
+void lock_native() {
+  if (native_mutex != nullptr) xSemaphoreTake(native_mutex, portMAX_DELAY);
+}
+
+void unlock_native() {
+  if (native_mutex != nullptr) xSemaphoreGive(native_mutex);
+}
+
+bool receiver_native_modules_available() {
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+  return native_module_ready.load(std::memory_order_acquire);
+#else
+  return false;
+#endif
+}
+
 bool installation_profiles_available() {
 #if LEDGRID_ENABLE_INSTALLATION_PROFILES
   return installation_profile_ready.load(std::memory_order_acquire);
@@ -146,10 +205,86 @@ bool profile_view_matches_output(
     const ledgrid::InstallationProfileViewV1& profile,
     const ledgrid::ReceiverOutputConfiguration& output) {
   return profile.encoded != nullptr && profile.category != nullptr &&
-         profile.encoded_size == ledgrid::kInstallationProfileReceiverBytesV1 &&
+         profile.encoded_size == ledgrid::installation_profile_receiver_bytes_v1(
+                                     output.strip_count,
+                                     output.leds_per_strip) &&
          profile.strip_count == output.strip_count &&
          profile.leds_per_strip == output.leds_per_strip &&
          profile.pixel_count == output.total_leds();
+}
+#endif
+
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+ledgrid::NativeModulePresentation native_presentation_snapshot() {
+  ledgrid::NativeModulePresentation presentation{};
+  presentation.vibe.struct_size = sizeof(ledgrid_native_vibe_v2);
+  presentation.modifier_view.struct_size =
+      sizeof(ledgrid_native_modifier_view_v2);
+  presentation.modifier_view.entries = presentation.modifiers;
+  presentation.profile_view.struct_size =
+      sizeof(ledgrid_native_profile_view_v2);
+  presentation.profile_view.sections = presentation.profile_sections;
+  lock_runtime();
+  const auto context = receiver_runtime.active_context();
+  const auto output = receiver_output.configuration();
+  const bool reverse_local_strip_order =
+      receiver_runtime.local_parameters().reverse_local_strip_order;
+  unlock_runtime();
+  presentation.vibe.profile_version = context.vibe_profile_version;
+  presentation.vibe.revision = context.vibe_revision;
+  std::memcpy(presentation.vibe.palette, context.vibe_palette,
+              sizeof(presentation.vibe.palette));
+  presentation.vibe.tempo_q8_8 = context.tempo_q8_8;
+  presentation.vibe.luminance_q8_8 = context.luminance_q8_8;
+  presentation.vibe.chroma_q8_8 = context.chroma_q8_8;
+  presentation.vibe.energy_q8_8 = context.energy_q8_8;
+  for (std::uint8_t id = 1; id <= ledgrid::kPresentationModifierCount; ++id) {
+    const std::uint16_t strength = context.modifier_strength_q8_8(id);
+    if (strength == 0) continue;
+    auto& entry = presentation.modifiers[presentation.modifier_view.count++];
+    entry.id = id;
+    entry.strength_q8_8 = strength;
+  }
+  presentation.profile_view.global_strips = kInstalledGlobalStrips;
+  presentation.profile_view.local_strips = output.strip_count;
+  presentation.profile_view.leds_per_strip = output.leds_per_strip;
+  presentation.profile_view.global_strip_offset =
+      configured_global_strip_offset.load(std::memory_order_relaxed);
+  presentation.profile_view.reverse_local_strip_order =
+      reverse_local_strip_order ? 1 : 0;
+#if LEDGRID_ENABLE_INSTALLATION_PROFILES
+  lock_profile();
+  const auto profile = installation_profile_manager.active_view();
+  if (profile.encoded != nullptr) {
+    presentation.profile_view.global_strips = profile.global_strip_count;
+    presentation.profile_view.local_strips = profile.strip_count;
+    presentation.profile_view.leds_per_strip = profile.leds_per_strip;
+    presentation.profile_view.global_strip_offset = profile.strip_origin;
+    presentation.profile_view.clearance_radius = profile.clearance_radius;
+    presentation.profile_view.reverse_local_strip_order =
+        profile.reversed_strip_order ? 1 : 0;
+    const std::uint8_t* data[] = {
+        profile.category, profile.clearance, profile.foliage_edge,
+        profile.globe_edge, profile.obstacle_edge, profile.globe_region,
+        profile.distance,
+        reinterpret_cast<const std::uint8_t*>(profile.normal_x),
+        reinterpret_cast<const std::uint8_t*>(profile.normal_y)};
+    const std::uint8_t encodings[] = {1, 2, 2, 2, 2, 1, 3, 4, 4};
+    for (std::uint8_t index = 0;
+         index < LEDGRID_NATIVE_BACKGROUND_MAX_PROFILE_SECTIONS; ++index) {
+      auto& section = presentation.profile_sections[index];
+      section.id = static_cast<std::uint16_t>(index + 1U);
+      section.encoding = encodings[index];
+      section.element_width = 1;
+      section.element_count = profile.pixel_count;
+      section.data = data[index];
+    }
+    presentation.profile_view.section_count =
+        LEDGRID_NATIVE_BACKGROUND_MAX_PROFILE_SECTIONS;
+  }
+  unlock_profile();
+#endif
+  return presentation;
 }
 #endif
 
@@ -213,6 +348,18 @@ void display_task(void*) {
   const std::uint64_t animation_started_us = esp_timer_get_time();
   while (true) {
     const std::uint64_t now_us = esp_timer_get_time();
+    const std::uint8_t wanted_lane_mask =
+        requested_lane_mask.load(std::memory_order_relaxed);
+    if (wanted_lane_mask != led_driver.lane_mask() &&
+        led_driver.set_lane_mask(wanted_lane_mask)) {
+      applied_lane_mask = wanted_lane_mask;
+    }
+    const std::uint8_t wanted_stagger =
+        requested_stagger_phases.load(std::memory_order_relaxed);
+    if (wanted_stagger != led_driver.stagger_phases() &&
+        led_driver.set_stagger_phases(wanted_stagger)) {
+      applied_stagger_phases = wanted_stagger;
+    }
     ledgrid::ReceiverRenderTicket ticket{};
     ledgrid::LocalBackgroundParameters parameters{};
     std::uint16_t luminance = ledgrid::kQ8_8One;
@@ -221,6 +368,8 @@ void display_task(void*) {
     bool base_due = false;
     bool foreground_due = false;
     bool has_rendered_base = false;
+    bool native_base = false;
+    std::uint64_t native_frame_index = 0;
     lock_runtime();
     receiver_runtime.service_foreground(now_us);
     ticket = ledgrid::capture_render_ticket(receiver_runtime, receiver_output);
@@ -233,6 +382,8 @@ void display_task(void*) {
           ledgrid::kHueShiftModifierId);
       scene_time = receiver_runtime.scene_time_us(now_us);
       has_rendered_base = receiver_runtime.render_stats().rendered_frames != 0;
+      native_base = parameters.component_id == UINT16_MAX;
+      native_frame_index = receiver_runtime.render_stats().rendered_frames;
     }
     unlock_runtime();
 
@@ -283,11 +434,28 @@ void display_task(void*) {
         continue;
       }
       std::uint32_t render_us = 0;
+      bool base_changed = false;
       if (base_due) {
         const std::uint64_t render_started = esp_timer_get_time();
-        const bool rendered = ledgrid::render_compiled_rainbow(
-            scene_time, parameters, luminance, ticket.output.strip_count,
-            ticket.output.leds_per_strip, startup_frame, sizeof(startup_frame));
+        bool rendered = false;
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+        if (native_base) {
+          ledgrid::NativeModuleRenderResult native_result{};
+          lock_native();
+          rendered = native_module_manager.render(
+              scene_time, scene_time,
+              native_frame_index,
+              startup_frame, ticket.output.rgb_bytes(), &native_result);
+          base_changed = rendered && native_result.changed;
+          unlock_native();
+        } else
+#endif
+        {
+          rendered = ledgrid::render_compiled_rainbow(
+              scene_time, parameters, luminance, ticket.output.strip_count,
+              ticket.output.leds_per_strip, startup_frame, sizeof(startup_frame));
+          base_changed = rendered;
+        }
         render_us = static_cast<std::uint32_t>(
             esp_timer_get_time() - render_started);
         if (!rendered) {
@@ -300,6 +468,13 @@ void display_task(void*) {
           if (failure_applied) ++display_errors;
           continue;
         }
+      }
+      if (base_due && !base_changed && !foreground_due) {
+        lock_runtime();
+        receiver_runtime.local_frame_rendered_if_current(
+            ticket.ownership_generation, now_us, scene_time, render_us);
+        unlock_runtime();
+        continue;
       }
       if (!base_due && !has_rendered_base) {
         lock_runtime();
@@ -393,19 +568,6 @@ void display_task(void*) {
       portEXIT_CRITICAL(&mailbox_mux);
       if (slot < 0) break;
 
-      const std::uint8_t wanted =
-          requested_lane_mask.load(std::memory_order_relaxed);
-      if (wanted != led_driver.lane_mask() && led_driver.set_lane_mask(wanted)) {
-        applied_lane_mask = wanted;
-      }
-
-      const std::uint8_t wanted_stagger =
-          requested_stagger_phases.load(std::memory_order_relaxed);
-      if (wanted_stagger != led_driver.stagger_phases() &&
-          led_driver.set_stagger_phases(wanted_stagger)) {
-        applied_stagger_phases = wanted_stagger;
-      }
-
       lock_runtime();
       const auto current_output = receiver_output.configuration();
       const bool current =
@@ -453,9 +615,9 @@ void display_task(void*) {
   }
 }
 
-ledgrid::ReceiverStatusV5 status_snapshot() {
+ledgrid::ReceiverStatusV6 status_snapshot() {
   const auto counters = mailbox_counters();
-  ledgrid::ReceiverStatusV5 status{};
+  ledgrid::ReceiverStatusV6 status{};
   status.flags = 0x01U | (led_driver.in_flight() ? 0x02U : 0U);
   status.queued_transactions = queued_transactions.load(std::memory_order_relaxed);
   status.packets = packets_received.load(std::memory_order_relaxed);
@@ -494,6 +656,16 @@ ledgrid::ReceiverStatusV5 status_snapshot() {
                            ledgrid::kCapabilityStatusV5;
   }
 #endif
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+  if (receiver_native_modules_available()) {
+    status.capabilities |= ledgrid::kCapabilityStatusV6 |
+        ledgrid::kCapabilityNativeModuleV2 |
+        ledgrid::kCapabilityNativeModuleCacheV1 |
+        ledgrid::kCapabilityNativeTypedParametersV1 |
+        ledgrid::kCapabilityNativeQuarantineV1 |
+        ledgrid::kCapabilityNativeGuardedLoaderV1;
+  }
+#endif
   status.base_mode = static_cast<std::uint8_t>(receiver_runtime.base_mode());
   status.foreground_state =
       static_cast<std::uint8_t>(receiver_runtime.foreground_state());
@@ -505,7 +677,11 @@ ledgrid::ReceiverStatusV5 status_snapshot() {
   const auto& local = receiver_runtime.local_parameters();
   status.component_id = local.component_id;
   status.preferred_cadence_hz = local.preferred_cadence_hz;
-  status.global_strip_offset = local.global_strip_offset;
+  // CONFIG topology is independent of local/native execution.  Expose the
+  // installed origin even in production host-takeover mode so status-v3 can
+  // prove the exact heterogeneous receiver roster after a flash.
+  status.global_strip_offset =
+      configured_global_strip_offset.load(std::memory_order_relaxed);
   status.common_seed = local.common_seed;
   status.scene_epoch = local.scene_epoch;
   const auto& context = receiver_runtime.active_context();
@@ -562,6 +738,14 @@ ledgrid::ReceiverStatusV5 status_snapshot() {
   status.installation_profile = installation_profile_manager.status();
   unlock_profile();
 #endif
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+  lock_native();
+  status.native_module = native_module_manager.status();
+  native_operation_result_latch.apply(
+      status.operation_sequence, status.last_processed_command,
+      &status.native_module);
+  unlock_native();
+#endif
   status.logical_receiver_id = logical_receiver_id.load(std::memory_order_relaxed);
   status.stagger_phases =
       applied_stagger_phases.load(std::memory_order_relaxed);
@@ -569,9 +753,13 @@ ledgrid::ReceiverStatusV5 status_snapshot() {
 }
 
 bool queue_spi_transaction(
-    std::size_t index, bool status_v4 = false, bool status_v5 = false) {
+    std::size_t index, bool status_v4 = false, bool status_v5 = false,
+    bool status_v6 = false) {
   const auto status = status_snapshot();
-  if (status_v5 && LEDGRID_ENABLE_INSTALLATION_PROFILES != 0) {
+  if (status_v6 && LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES != 0) {
+    ledgrid::encode_receiver_status_v6(
+        status, spi_tx_buffers[index], kSpiBufferSize);
+  } else if (status_v5 && LEDGRID_ENABLE_INSTALLATION_PROFILES != 0) {
     ledgrid::encode_receiver_status_v5(
         status, spi_tx_buffers[index], kSpiBufferSize);
   } else if (status_v4 && receiver_runtime.local_background_enabled()) {
@@ -597,8 +785,13 @@ bool queue_spi_transaction(
   return true;
 }
 
-bool process_command(const std::uint8_t* data, std::size_t length) {
+bool process_command(
+    const std::uint8_t* data, std::size_t length,
+    ledgrid::NativeModuleResult* native_result = nullptr) {
   if (data == nullptr || length == 0) return false;
+  if (native_result != nullptr) {
+    *native_result = ledgrid::NativeModuleResult::None;
+  }
   const auto command = static_cast<ledgrid::ReceiverCommand>(data[0]);
   ledgrid::ReceiverOutputConfiguration output{};
   ledgrid::BaseMode current_mode = ledgrid::BaseMode::StartupFallback;
@@ -610,9 +803,13 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
       ledgrid::classify_receiver_dispatch(
           data, length, output.rgb_bytes(), current_mode,
           LEDGRID_ENABLE_LOCAL_BACKGROUND != 0,
-          installation_profiles_available());
+          installation_profiles_available(),
+          receiver_native_modules_available());
 
   if (decision.route == ledgrid::ReceiverDispatchRoute::Reject) {
+    if (native_result != nullptr && is_native_module_command(data[0])) {
+      *native_result = native_dispatch_rejection(decision.result);
+    }
     if (command != ledgrid::ReceiverCommand::StatusQuery) {
       lock_runtime();
       receiver_runtime.set_last_result(decision.result);
@@ -624,7 +821,8 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
   if (decision.route == ledgrid::ReceiverDispatchRoute::StatusQuery)
     return ledgrid::valid_status_query(
         data, length, LEDGRID_ENABLE_LOCAL_BACKGROUND != 0,
-        installation_profiles_available());
+        installation_profiles_available(),
+        receiver_native_modules_available());
   if (decision.route == ledgrid::ReceiverDispatchRoute::InstallationProfile) {
 #if LEDGRID_ENABLE_INSTALLATION_PROFILES
     ledgrid::InstallationProfileBinding prior_active{};
@@ -656,11 +854,81 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
     return false;
 #endif
   }
+  if (decision.route == ledgrid::ReceiverDispatchRoute::NativeModule) {
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+    const auto presentation = native_presentation_snapshot();
+    lock_runtime();
+    const auto context_state = receiver_runtime.context_state();
+    const auto scene_epoch = receiver_runtime.active_context().scene_epoch;
+    unlock_runtime();
+    lock_native();
+    native_module_manager.configure_presentation(presentation);
+    native_module_manager.configure_scene(
+        context_state == ledgrid::PresentationContextState::Active,
+        scene_epoch);
+    const auto result = native_module_manager.process(data, length);
+    if (native_result != nullptr) *native_result = result;
+    const bool executing = native_module_manager.active();
+    const auto ledger = native_module_manager.ledger();
+    unlock_native();
+    if (result == ledgrid::NativeModuleResult::Ok &&
+        command == ledgrid::ReceiverCommand::NativeModuleActivate &&
+        ledger.active.present) {
+      const std::uint64_t activation_epoch =
+          (static_cast<std::uint64_t>(data[73]) << 56U) |
+          (static_cast<std::uint64_t>(data[74]) << 48U) |
+          (static_cast<std::uint64_t>(data[75]) << 40U) |
+          (static_cast<std::uint64_t>(data[76]) << 32U) |
+          (static_cast<std::uint64_t>(data[77]) << 24U) |
+          (static_cast<std::uint64_t>(data[78]) << 16U) |
+          (static_cast<std::uint64_t>(data[79]) << 8U) | data[80];
+      const std::uint32_t seed =
+          (static_cast<std::uint32_t>(data[81]) << 24U) |
+          (static_cast<std::uint32_t>(data[82]) << 16U) |
+          (static_cast<std::uint32_t>(data[83]) << 8U) | data[84];
+      lock_runtime();
+      const bool started = receiver_runtime.native_background_started(
+          ledger.active.descriptor.cadence_hz,
+          ledger.active.descriptor.global_strip_offset, seed,
+          activation_epoch);
+      unlock_runtime();
+      if (!started) {
+        const std::uint8_t stop[] = {
+            static_cast<std::uint8_t>(ledgrid::ReceiverCommand::NativeModuleStop)};
+        lock_native();
+        native_module_manager.process(stop, sizeof(stop));
+        unlock_native();
+        if (native_result != nullptr) {
+          *native_result = ledgrid::NativeModuleResult::InvalidState;
+        }
+        return false;
+      }
+    } else if (command == ledgrid::ReceiverCommand::NativeModuleStop ||
+               !executing) {
+      lock_runtime();
+      receiver_runtime.native_background_stopped(
+          result != ledgrid::NativeModuleResult::Ok);
+      unlock_runtime();
+    }
+    if (display_task_handle != nullptr) xTaskNotifyGive(display_task_handle);
+    return result == ledgrid::NativeModuleResult::Ok;
+#else
+    return false;
+#endif
+  }
   if (decision.route == ledgrid::ReceiverDispatchRoute::Runtime) {
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+    if (command == ledgrid::ReceiverCommand::LocalBackgroundStart ||
+        command == ledgrid::ReceiverCommand::LocalBackgroundStop) {
+      lock_native();
+      native_module_manager.host_takeover();
+      unlock_native();
+    }
+#endif
     ledgrid::ReceiverOperationResult result =
         ledgrid::ReceiverOperationResult::Unsupported;
     lock_runtime();
-    if (logical_receiver_id.load(std::memory_order_relaxed) <= 3) {
+    if (logical_receiver_id.load(std::memory_order_relaxed) != 0xFF) {
       result = receiver_runtime.process_command(
           data, length, static_cast<std::uint64_t>(esp_timer_get_time()));
     } else {
@@ -743,6 +1011,11 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
     case ledgrid::ReceiverCommand::SetAll: {
       const std::size_t expected = 1U + output.rgb_bytes();
       if (length != expected) return false;
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+      lock_native();
+      native_module_manager.host_takeover();
+      unlock_native();
+#endif
       lock_runtime();
       const auto current_output = receiver_output.configuration();
       if (current_output.rgb_bytes() != output.rgb_bytes()) {
@@ -775,21 +1048,27 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
 
     case ledgrid::ReceiverCommand::Config: {
       std::uint8_t new_logical_id = 0xFF;
-      if (!ledgrid::parse_logical_receiver_id(
+      std::uint16_t new_global_offset = 0;
+      if (!ledgrid::parse_receiver_topology(
               data, length,
               logical_receiver_id.load(std::memory_order_relaxed),
-              &new_logical_id)) return false;
+              configured_global_strip_offset.load(std::memory_order_relaxed),
+              &new_logical_id, &new_global_offset)) return false;
       const std::uint8_t new_strips = data[1];
       const std::uint16_t new_leds =
           (static_cast<std::uint16_t>(data[2]) << 8) | data[3];
-      // Six-byte CONFIG is the explicit installed-topology form. Bit 7 of
-      // its flags byte declares that this receiver's local strip order is
-      // physically reversed. Legacy four/five-byte CONFIG preserves the
-      // previously provisioned direction.
-      const bool has_installed_direction = length == 6;
+      // Six- and eight-byte CONFIG carry installed direction. Only the
+      // eight-byte form carries an authoritative global strip offset.
+      // Legacy four/five-byte CONFIG preserves the provisioned direction.
+      const bool has_installed_direction = length == 6 || length == 8;
+      const bool has_explicit_topology = length == 8;
       const bool reverse_local_strip_order =
           has_installed_direction && (data[4] & 0x80U) != 0;
-      if (new_strips != kMaxStrips || new_leds == 0 || new_leds > kMaxLedsPerStrip) {
+      if (new_strips == 0 || new_strips > kMaxStrips || new_leds == 0 ||
+          new_leds > kMaxLedsPerStrip ||
+          (has_explicit_topology &&
+           (new_global_offset > kInstalledGlobalStrips ||
+            new_strips > kInstalledGlobalStrips - new_global_offset))) {
         return false;
       }
       lock_runtime();
@@ -806,14 +1085,46 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
       } else {
         receiver_runtime.request_local_refresh();
       }
+      const bool effective_reverse_local_strip_order =
+          receiver_runtime.local_parameters().reverse_local_strip_order;
       unlock_runtime();
       if (!configured) return false;
       logical_receiver_id.store(new_logical_id, std::memory_order_release);
+      if (has_explicit_topology) {
+        configured_global_strip_offset.store(
+            new_global_offset, std::memory_order_release);
+        explicit_receiver_topology.store(true, std::memory_order_release);
+      }
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+      const bool topology_is_configured =
+          has_explicit_topology ||
+          explicit_receiver_topology.load(std::memory_order_acquire);
+      ledgrid::NativeModuleTopology native_topology{};
+      native_topology.configured = topology_is_configured;
+      native_topology.logical_receiver_id = new_logical_id;
+      native_topology.global_strips = kInstalledGlobalStrips;
+      native_topology.local_strips = new_strips;
+      native_topology.leds_per_strip = new_leds;
+      native_topology.global_strip_offset = new_global_offset;
+      native_topology.reverse_local_strip_order =
+          effective_reverse_local_strip_order;
+      lock_native();
+      native_module_manager.configure_topology(native_topology);
+      unlock_native();
+#endif
 #if LEDGRID_ENABLE_INSTALLATION_PROFILES
       if (has_installed_direction) {
+        const bool topology_is_configured =
+            has_explicit_topology ||
+            explicit_receiver_topology.load(std::memory_order_acquire);
         lock_profile();
         installation_profile_manager.configure_identity(
-            new_logical_id, reverse_local_strip_order);
+            new_logical_id, effective_reverse_local_strip_order,
+            topology_is_configured
+                ? kInstalledGlobalStrips
+                : ledgrid::kInstallationProfileGlobalStripsV1,
+            new_strips, new_leds,
+            topology_is_configured ? new_global_offset : UINT16_MAX);
         unlock_profile();
       }
 #endif
@@ -879,9 +1190,15 @@ extern "C" void app_main() {
 #if LEDGRID_ENABLE_INSTALLATION_PROFILES
   profile_mutex = xSemaphoreCreateMutex();
 #endif
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+  native_mutex = xSemaphoreCreateMutex();
+#endif
   if (runtime_mutex == nullptr
 #if LEDGRID_ENABLE_INSTALLATION_PROFILES
       || profile_mutex == nullptr
+#endif
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+      || native_mutex == nullptr
 #endif
   ) {
     ESP_LOGE(kLogTag, "receiver runtime mutex allocation failed");
@@ -896,6 +1213,19 @@ extern "C" void app_main() {
   installation_profile_ready.store(profiles_ready, std::memory_order_release);
   if (!profiles_ready) {
     ESP_LOGE(kLogTag, "installation-profile cache initialization failed");
+  }
+#endif
+
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+  const bool native_store_ready = native_module_store.begin();
+  const bool native_persistence_ready = native_module_persistence.begin();
+  native_module_manager.set_watchdog(&native_module_watchdog);
+  const bool native_manager_ready = native_module_manager.begin();
+  const bool modules_ready = native_store_ready && native_persistence_ready &&
+                             native_manager_ready;
+  native_module_ready.store(modules_ready, std::memory_order_release);
+  if (!modules_ready) {
+    ESP_LOGE(kLogTag, "native-module cache/loader initialization failed");
   }
 #endif
 
@@ -945,6 +1275,7 @@ extern "C" void app_main() {
     const std::uint8_t* packet = spi_rx_buffers[index];
     bool request_v4 = false;
     bool request_v5 = false;
+    bool request_v6 = false;
 
     if (bytes < 1U + kCrcBytes) {
       ++crc_errors;
@@ -964,17 +1295,34 @@ extern "C" void app_main() {
             packet[0] == static_cast<std::uint8_t>(
                              ledgrid::ReceiverCommand::StatusQuery);
         bool dispatch_allowed = true;
+        std::uint32_t operation_sequence = 0;
         if (!status_query) {
           lock_runtime();
           dispatch_allowed = operation_tracker.begin(packet[0]);
+          operation_sequence = operation_tracker.sequence();
           unlock_runtime();
         }
+        ledgrid::NativeModuleResult native_result =
+            ledgrid::NativeModuleResult::None;
         const bool accepted = dispatch_allowed &&
-            process_command(packet, payload_bytes);
+            process_command(packet, payload_bytes, &native_result);
+#if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
+        if (dispatch_allowed && is_native_module_command(packet[0])) {
+          // Rendering runs on the display task and may update live failure
+          // telemetry while the SPI queue drains. Preserve the exact result of
+          // this operation alongside the sequence/command acknowledgement.
+          lock_native();
+          native_operation_result_latch.record(
+              operation_sequence, packet[0], native_result);
+          unlock_native();
+        }
+#endif
         request_v4 = status_query && accepted &&
             payload_bytes == ledgrid::kStatusBytesV4;
         request_v5 = status_query && accepted &&
             payload_bytes == ledgrid::kStatusBytesV5;
+        request_v6 = status_query && accepted &&
+            payload_bytes == ledgrid::kStatusBytesV6;
         if (!status_query && dispatch_allowed) {
           lock_runtime();
           if (packet[0] < 0x10 || packet[0] == 0xFF) {
@@ -986,6 +1334,6 @@ extern "C" void app_main() {
         }
       }
     }
-    queue_spi_transaction(index, request_v4, request_v5);
+    queue_spi_transaction(index, request_v4, request_v5, request_v6);
   }
 }

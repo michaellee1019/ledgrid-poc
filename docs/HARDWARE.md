@@ -8,9 +8,11 @@ record.
 ## Documentation status and sources of truth
 
 The supported installed-wall configuration (`LEDGRID_HAT=0`) uses one Raspberry
-Pi host and four ESP32-S3 receivers. Each receiver drives eight WS2812-compatible
-lanes of 138 LEDs, for a camera-verified logical geometry of 32 x 138 (4,416
-pixels). Receiver buffers retain capacity for 140 LEDs per lane.
+Pi host and five ESP32-S3 receivers. Four receivers drive eight logical
+WS2812-compatible lanes and the fifth drives one logical lane, all 138 LEDs
+long, for a finalized geometry of 33 x 138 (4,554 pixels). Receiver buffers
+retain capacity for eight lanes of 140 LEDs; the fifth receiver's logical width
+and physical lane mask remain explicit rather than mirroring wall content.
 
 Use the runtime sources below when a copied value in prose disagrees:
 
@@ -31,7 +33,7 @@ entry for the physical receiver.
 
 ## Receiver pins
 
-All four receivers run the same firmware and GPIO map.
+All five receivers run the same firmware and GPIO map.
 
 | Function | ESP32-S3 GPIO |
 | --- | ---: |
@@ -52,8 +54,9 @@ protocol details.
 
 Boards on the same bus share clock, MOSI, and MISO; each board has its own chip
 select. MOSI, clock, chip select, and common ground are required for display
-traffic. MISO is required for `LGS3` status, receiver identity, and the full
-acceptance gates; only explicitly degraded write-only operation can omit it.
+traffic. MISO is required for negotiated `LGS3` through `LGS6` status, receiver
+identity, and the full acceptance gates; only historical explicitly degraded
+write-only diagnostics can omit it.
 
 | Bus signal | Pi GPIO | Physical pin |
 | --- | ---: | ---: |
@@ -67,40 +70,43 @@ acceptance gates; only explicitly degraded write-only operation can omit it.
 | SPI1 SCLK | 21 | 40 |
 | SPI1 CE0 | 18 | 12 |
 | SPI1 CE1 | 17 | 11 |
+| SPI1 CE2 | 24 | 18 |
 
-The four-device layout expects these device nodes:
+The five-device layout expects these device nodes:
 
 ```text
 /dev/spidev0.0
 /dev/spidev0.1
 /dev/spidev1.0
 /dev/spidev1.1
+/dev/spidev1.2
 ```
 
 For the expected topology, when `/dev/spidev0.2` is absent, SPI1 is present, and
-`LEDGRID_DEVICE_MAP` is unset, the host maps logical receivers 0-3 to
-`spidev0.0`, `spidev0.1`, `spidev1.1`, and `spidev1.0`, respectively. A custom
+`LEDGRID_DEVICE_MAP` is unset, the host maps logical receivers 0-4 to
+`spidev0.0`, `spidev0.1`, `spidev1.1`, `spidev1.0`, and `spidev1.2`, respectively. A custom
 device-node topology can select a different fallback. No software default is
 proof of physical board labels or cable order; use the live `device_map` metric
 and a lane-order test for the running installation. The full deployment
-configures `dtparam=spi=on` and `dtoverlay=spi1-2cs` idempotently. A boot-config
-change requires a Pi reboot before all four device nodes appear.
+configures `dtparam=spi=on` and `dtoverlay=spi1-3cs,cs2_pin=24` idempotently. A boot-config
+change requires a Pi reboot before all five device nodes appear.
 
 ### Installed lane and strip orientation
 
 Transport identity, wall position, and pixel direction are separate hardware
-facts. The camera-verified installed contract on 2026-08-14 is:
+facts. The finalized installed contract as of 2026-08-25 is:
 
-| Logical receiver | SPI route | Physical lane from left | Host strip order | Native coordinate order | Native global offset |
-| ---: | --- | ---: | --- | --- | ---: |
-| 0 | `spidev0.0` | 0 | forward | forward | 0 |
-| 1 | `spidev0.1` | 1 | forward | forward | 8 |
-| 2 | `spidev1.1` | 3 | reversed | reversed | 24 |
-| 3 | `spidev1.0` | 2 | reversed | reversed | 16 |
+| Logical receiver | SPI route | Logical width | Physical lane from left | Host strip order | Native coordinate order | Native global offset | Output mask |
+| ---: | --- | ---: | ---: | --- | --- | ---: | ---: |
+| 0 | `spidev0.0` | 8 | 0 | forward | forward | 0 | `0xff` |
+| 1 | `spidev0.1` | 8 | 1 | forward | forward | 8 | `0xff` |
+| 2 | `spidev1.1` | 8 | 3 | reversed | reversed | 24 | `0xff` |
+| 3 | `spidev1.0` | 8 | 2 | reversed | reversed | 16 | `0xff` |
+| 4 | `spidev1.2` | 1 | 4 | forward | forward | 32 | `0x01` |
 
-In config form, physical left-to-right logical order is `(0,1,3,2)`, while
+In config form, physical left-to-right logical order is `(0,1,3,2,4)`, while
 both the host-frame and receiver-native reversal maps are
-`(false,false,true,true)`. The durable runtime authority is
+`(false,false,true,true,false)`. The durable runtime authority is
 `run_state/receiver_hybrid.json`; software defaults and this copied table are
 not substitutes for reading that file after a cable change.
 
@@ -119,23 +125,22 @@ After changing cables, establish the domains in this order:
    four lane colors are insufficient for this step.
 4. Use boundary-crossing host content to verify sparse slicing and old-pixel
    clears.
-5. Independently run a receiver-native signed diagonal/phase pattern and inspect
-   every 8-strip boundary for a reversal or phase fold.
+5. Independently run a receiver-native direction-marked diagonal/phase pattern
+   and inspect every 8-strip boundary for a reversal or phase fold.
 6. Photograph the final state after service restart and again after ordinary
    deployment. Retain rejected frames as rejected evidence rather than
    overwriting or reinterpreting them.
 
-Logical receivers 2 and 3 currently have no usable MISO return. A photograph can
-prove that their lanes displayed a visible pattern, but outbound counters and
-camera evidence cannot prove receiver acknowledgement, identity, integrity, or
-timing. Full receiver-native release acceptance remains blocked on the SPI1
-return-path repair.
+All five receiver return paths are now wired and readable. Release acceptance
+still requires fresh delta-based integrity and timing evidence; nonzero lifetime
+counters or an outbound host counter are not substitutes for a clean measured
+window and photographed geometry.
 
 ## Alternate HAT compatibility mode
 
 The repository also retains an alternate `LEDGRID_HAT=1` software mode. It
 configures two receivers on SPI0 CE0/CE1 and exposes 16 lanes. It is not the
-32-lane installed-wall configuration described above. No HAT schematic, PCB
+33-lane installed-wall configuration described above. No HAT schematic, PCB
 layout, connector pinout, BOM, or fabrication output is checked in, so the code
 and diagnostic utility establish only the host-side software mapping. Do not use
 them as manufacturing documentation for a carrier board.
@@ -181,7 +186,7 @@ Git history contains commit messages referring to a "PCB v4" and a "latest
 PCB," but no EDA or fabrication artifacts for those boards are present in the
 current tree or other reachable Git objects. An older `WIRING.md` in history
 describes a seven-lane Seeed XIAO ESP32-S3 prototype and is not applicable to the
-current four-receiver pin map.
+current five-receiver pin map.
 
 Do not infer any of the missing electrical or mechanical details from firmware
 GPIO assignments. Capture them from the physical installation before repairing,
@@ -250,12 +255,18 @@ The full timing and rollback criteria are in
 
 The [unified roadmap](plan-revamped-animation-pipeline.md) uses the
 `native-animations` branch as an implementation organ donor, but the branch's
-handoff recorded unresolved SPI1 MISO/MOSI coupling. That branch is not evidence
-that the installed wall can safely stage, verify, or reconcile four receiver
-artifacts.
+handoff recorded the now-repaired SPI1 MISO/MOSI coupling. That historical
+branch is not evidence that the finalized wall can safely stage, verify, or
+reconcile five receiver artifacts.
 
-Before any all-wall receiver-native release, power down and verify SPI1 MISO and
-MOSI are isolated and correctly routed, then obtain fresh identity/status from
-all four receivers with no TX echo and rerun the existing streamed one-receiver
-and full-wall canaries. Only after that H0 baseline may ported loader/cache or
-sparse-overlay code proceed to the roadmap's physical gates.
+The current repository builds a separate managed-native canary with the dynamic
+loader, cache, status v6, typed parameters, watchdog, and quarantine support.
+Production remains feature-off, and portable/build success does not prove that
+the canary is installed or accepted on the wall. A quarantined payload is never
+retried automatically; an explicit exact-bundle clear and separate reinstall must
+still pass unanimous five-receiver status before execution resumes.
+
+Before any all-wall receiver-native release, obtain fresh identity/status from
+all five receivers with no TX echo and rerun the streamed and full-wall
+canaries. Only a clean H0 baseline may advance loader/cache or sparse-overlay
+code to the roadmap's physical gates.

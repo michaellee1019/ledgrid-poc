@@ -14,6 +14,7 @@ from animation.core.installation_profile_library import InstallationProfileLibra
 from animation.core.installation_profile_topology import (
     IDENTITY_INSTALLATION_PROFILE_TOPOLOGY,
     INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
+    RECEIVER_COUNT,
 )
 from animation.core.installation_profile_transaction import (
     FakeInstallationProfileFault,
@@ -40,7 +41,7 @@ def _candidate(label: str, *, payload_bytes: int = 24) -> InstallationProfileCan
             f"{label}:receiver:{receiver_id}:".encode()
             + bytes((65 + receiver_id,)) * payload_bytes
         )
-        for receiver_id in range(4)
+        for receiver_id in range(RECEIVER_COUNT)
     }
     return InstallationProfileCandidate(_profile_id(label), payloads)
 
@@ -195,13 +196,13 @@ class _AdversarialWallAdapter(_StructuralWallAdapter):
 
 
 class InstallationProfileCandidateTests(unittest.TestCase):
-    def test_one_global_content_id_binds_four_receiver_specific_content_ids(self):
+    def test_one_global_content_id_binds_five_receiver_specific_content_ids(self):
         candidate = _candidate("geometry-v1")
 
         self.assertEqual(candidate.profile_id, _profile_id("geometry-v1"))
-        self.assertEqual(len(set(candidate.receiver_payloads)), 4)
-        self.assertEqual(len(set(candidate.receiver_payload_digests)), 4)
-        for receiver_id in range(4):
+        self.assertEqual(len(set(candidate.receiver_payloads)), RECEIVER_COUNT)
+        self.assertEqual(len(set(candidate.receiver_payload_digests)), RECEIVER_COUNT)
+        for receiver_id in range(RECEIVER_COUNT):
             payload = candidate.payload_for(receiver_id)
             binding = candidate.binding_for(receiver_id)
             self.assertIs(type(payload), bytes)
@@ -211,23 +212,23 @@ class InstallationProfileCandidateTests(unittest.TestCase):
             )
 
     def test_candidate_requires_exact_ids_and_immutable_nonempty_bytes(self):
-        valid = {receiver_id: b"payload" for receiver_id in range(4)}
+        valid = {receiver_id: b"payload" for receiver_id in range(RECEIVER_COUNT)}
         invalid_cases = (
             ("x" * 64, valid, ValueError),
             (_profile_id("x"), {0: b"x"}, ValueError),
             (
                 _profile_id("x"),
-                {0: b"x", 1: b"x", 2: b"x", True: b"x"},
+                {True: b"x", 0: b"x", 2: b"x", 3: b"x", 4: b"x"},
                 ValueError,
             ),
             (
                 _profile_id("x"),
-                {0: b"x", 1: bytearray(b"x"), 2: b"x", 3: b"x"},
+                {0: b"x", 1: bytearray(b"x"), 2: b"x", 3: b"x", 4: b"x"},
                 TypeError,
             ),
             (
                 _profile_id("x"),
-                {0: b"x", 1: b"x", 2: b"", 3: b"x"},
+                {0: b"x", 1: b"x", 2: b"", 3: b"x", 4: b"x"},
                 ValueError,
             ),
         )
@@ -256,7 +257,7 @@ class CandidateFromResolvedTests(unittest.TestCase):
             candidate.receiver_payloads,
             tuple(
                 encode_installation_profile(resolved.receiver_profiles[receiver_id])
-                for receiver_id in range(4)
+                for receiver_id in range(RECEIVER_COUNT)
             ),
         )
         self.assertTrue(
@@ -265,16 +266,16 @@ class CandidateFromResolvedTests(unittest.TestCase):
         self.assertEqual(
             tuple(
                 resolved.receiver_profiles[receiver_id].strip_origin
-                for receiver_id in range(4)
+                for receiver_id in range(RECEIVER_COUNT)
             ),
-            (0, 8, 24, 16),
+            (0, 8, 24, 16, 32),
         )
         self.assertEqual(
             tuple(
                 resolved.receiver_profiles[receiver_id].reversed_strip_order
-                for receiver_id in range(4)
+                for receiver_id in range(RECEIVER_COUNT)
             ),
-            (False, False, True, True),
+            (False, False, True, True, False),
         )
 
     def test_topology_changes_receiver_payload_identity_not_global_identity(self):
@@ -334,7 +335,7 @@ class CandidateFromResolvedTests(unittest.TestCase):
                     installed,
                     receiver_profiles={
                         receiver_id: identity.receiver_profiles[receiver_id]
-                        for receiver_id in range(4)
+                        for receiver_id in range(RECEIVER_COUNT)
                     },
                 ),
                 ValueError,
@@ -345,7 +346,7 @@ class CandidateFromResolvedTests(unittest.TestCase):
                     installed,
                     receiver_profiles={
                         receiver_id: installed.receiver_profiles[receiver_id]
-                        for receiver_id in range(3)
+                        for receiver_id in range(RECEIVER_COUNT - 1)
                     },
                 ),
                 ValueError,
@@ -361,7 +362,7 @@ class CandidateFromResolvedTests(unittest.TestCase):
 class InstallationProfileTransactionTests(unittest.TestCase):
     @staticmethod
     def wall(
-        *, capacity_bytes: int | tuple[int, int, int, int] = 512, reserve_bytes: int = 32
+        *, capacity_bytes: int | tuple[int, ...] = 512, reserve_bytes: int = 32
     ) -> FakeInstallationProfileWall:
         return FakeInstallationProfileWall(
             capacity_bytes=capacity_bytes, reserve_bytes=reserve_bytes
@@ -387,7 +388,7 @@ class InstallationProfileTransactionTests(unittest.TestCase):
                     InstallationProfileTransactionPhase.VERIFY,
                     InstallationProfileTransactionPhase.COMMIT,
                 )
-                for receiver_id in range(4)
+                for receiver_id in range(RECEIVER_COUNT)
             ],
         )
         for receiver_id, status in enumerate(result.wall_status.receiver_statuses):
@@ -428,7 +429,7 @@ class InstallationProfileTransactionTests(unittest.TestCase):
             fake,
             {
                 receiver_id: {"commit_noop": True}
-                for receiver_id in range(4)
+                for receiver_id in range(RECEIVER_COUNT)
             },
             dishonest_profile_id=candidate.profile_id,
         )
@@ -483,7 +484,7 @@ class InstallationProfileTransactionTests(unittest.TestCase):
         self.assertEqual(_binding_state(fake), before)
         self.assertEqual(
             [receiver.compensation_calls for receiver in wall.receivers],
-            [1, 1, 1, 1],
+            [1] * RECEIVER_COUNT,
         )
 
     def test_noop_compensation_is_detected_and_fail_closed_despite_healthy_claim(self):
@@ -496,7 +497,7 @@ class InstallationProfileTransactionTests(unittest.TestCase):
             {
                 **{
                     receiver_id: {"compensation": "noop"}
-                    for receiver_id in range(4)
+                    for receiver_id in range(RECEIVER_COUNT)
                 },
                 2: {"fail_commit": True, "compensation": "noop"},
             },
@@ -512,7 +513,7 @@ class InstallationProfileTransactionTests(unittest.TestCase):
         self.assertTrue(result.changed)
         self.assertEqual(
             [receiver.compensation_calls for receiver in wall.receivers],
-            [1, 1, 1, 1],
+            [1] * RECEIVER_COUNT,
         )
         self.assertNotEqual(_binding_state(fake), before)
         self.assertIn("receiver 0 binding snapshot differs", result.error)
@@ -544,7 +545,7 @@ class InstallationProfileTransactionTests(unittest.TestCase):
         self.assertTrue(result.changed)
         self.assertEqual(
             [receiver.compensation_calls for receiver in wall.receivers],
-            [1, 1, 1, 1],
+            [1] * RECEIVER_COUNT,
         )
         self.assertNotEqual(_binding_state(fake)[0], before[0])
         self.assertEqual(_binding_state(fake)[1:], before[1:])
@@ -652,7 +653,7 @@ class InstallationProfileTransactionTests(unittest.TestCase):
 
     def test_capacity_preflight_fails_before_any_receiver_mutation(self):
         wall = self.wall(
-            capacity_bytes=(180, 180, 120, 180), reserve_bytes=20
+            capacity_bytes=(180, 180, 120, 180, 180), reserve_bytes=20
         )
         prior = _candidate("prior", payload_bytes=20)
         rollback = _candidate("rollback", payload_bytes=20)
@@ -745,7 +746,7 @@ class InstallationProfileTransactionTests(unittest.TestCase):
             InstallationProfileTransactionPhase.COMMIT,
         )
         for phase in phases:
-            for receiver_id in range(4):
+            for receiver_id in range(RECEIVER_COUNT):
                 with self.subTest(phase=phase, receiver_id=receiver_id):
                     wall = self.wall()
                     prior = _candidate("prior")
@@ -927,8 +928,8 @@ class InstallationProfileFakeValidationTests(unittest.TestCase):
         for kwargs in (
             {"capacity_bytes": 0},
             {"capacity_bytes": 10, "reserve_bytes": 11},
-            {"capacity_bytes": (10, 10, 10)},
-            {"capacity_bytes": (10, 10, 10, True)},
+            {"capacity_bytes": (10, 10, 10, 10)},
+            {"capacity_bytes": (10, 10, 10, 10, True)},
         ):
             with self.subTest(kwargs=kwargs), self.assertRaises((TypeError, ValueError)):
                 FakeInstallationProfileWall(**kwargs)  # type: ignore[arg-type]
@@ -958,7 +959,7 @@ class InstallationProfileFakeValidationTests(unittest.TestCase):
                 ),
             )
 
-    def test_transaction_requires_exactly_four_structural_receivers_in_id_order(self):
+    def test_transaction_requires_exactly_five_structural_receivers_in_id_order(self):
         with self.assertRaisesRegex(TypeError, "wall interface"):
             InstallationProfileTransaction(object())  # type: ignore[arg-type]
 

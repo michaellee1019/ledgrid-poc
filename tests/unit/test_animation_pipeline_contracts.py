@@ -172,7 +172,7 @@ class DirtyAndCoordinateGoldenTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             alpha_coverage_ranges(np.zeros((2, 3), np.uint8))
 
-    def test_all_four_board_offsets_and_boundaries_are_canonical(self):
+    def test_all_five_receiver_offsets_and_boundaries_are_canonical(self):
         for vector in self.fixture["coordinate_vectors"]:
             with self.subTest(vector=vector["id"]):
                 if vector["global_valid"]:
@@ -218,17 +218,28 @@ class DirtyAndCoordinateGoldenTest(unittest.TestCase):
                 vector["expected_global_index"],
             )
         geometry = self.fixture["board_slices"]
-        actual = board_flat_slices(
-            global_strip_count=geometry["global_strips"],
-            leds_per_strip=geometry["leds_per_strip"],
-            strips_per_board=geometry["strips_per_board"],
-        )
         expected = tuple(
             (board["start_flat_index"], board["end_flat_index"])
             for board in geometry["boards"]
         )
-        self.assertEqual(actual, expected)
-        self.assertEqual(expected, ((0, 1104), (1104, 2208), (2208, 3312), (3312, 4416)))
+        self.assertEqual(
+            geometry["receiver_strip_counts"], [8, 8, 8, 8, 1]
+        )
+        self.assertEqual(geometry["physical_receiver_order"], [0, 1, 3, 2, 4])
+        self.assertEqual(expected, (
+            (0, 1104), (1104, 2208), (2208, 3312),
+            (3312, 4416), (4416, 4554),
+        ))
+        # Equal-slice support remains a deliberate legacy utility; installed
+        # heterogeneous routing is represented explicitly above.
+        self.assertEqual(
+            board_flat_slices(
+                global_strip_count=32,
+                leds_per_strip=geometry["leds_per_strip"],
+                strips_per_board=8,
+            ),
+            expected[:4],
+        )
         with self.assertRaises(ValueError):
             board_flat_slices(global_strip_count=32, leds_per_strip=138, strips_per_board=7)
 

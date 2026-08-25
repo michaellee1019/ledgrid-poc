@@ -23,7 +23,6 @@ from tools.deployment.preserve_deploy_settings import (
     save_status,
 )
 from tools.deployment.receiver_hybrid_config import (
-    DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY,
     resolve_receiver_hybrid_config,
     write_receiver_hybrid_config,
 )
@@ -65,6 +64,93 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             "known_python_fallback": fallback,
         }
 
+    @classmethod
+    def _managed_native_scene(cls):
+        scene = cls._native_scene()
+        scene["background"].update({
+            "plugin_id": "aurora_curtains_native",
+            "bundle_digest": "a" * 64,
+            "expected_payload_digest": "b" * 64,
+            "parameter_overrides": {},
+            "resolved_parameters": {"brightness": 0.42},
+        })
+        return scene
+
+    @classmethod
+    def _managed_native_status(cls, scene=None):
+        scene = scene or cls._managed_native_scene()
+        required = 0x1FF
+        parameter_digest = "c" * 64
+        context_digest = "d" * 64
+        profile_digest = "e" * 64
+        topology = ((8, 0, False), (8, 8, False), (8, 24, True),
+                    (8, 16, True), (1, 32, False))
+        capability_devices = [
+            {
+                "logical_device": receiver_id,
+                "capabilities": required,
+                "local_strip_count": width,
+                "global_strip_offset": offset,
+                "reverse_native_strip_order": reverse,
+            }
+            for receiver_id, (width, offset, reverse) in enumerate(topology)
+        ]
+        receiver_devices = [
+            {
+                "receiver_status_seen": True,
+                "receiver_status_version": 6,
+                "receiver_logical_device": receiver_id,
+                "receiver_capabilities": required,
+                "receiver_native_executing": True,
+                "receiver_native_cache_integrity_ok": True,
+                "receiver_native_active_bundle_digest": "a" * 64,
+                "receiver_native_active_payload_digest": "b" * 64,
+                "receiver_native_active_parameter_digest": parameter_digest,
+                "receiver_active_context_digest": context_digest,
+                "receiver_profile_active_global_digest": profile_digest,
+                "receiver_vibe_revision": 4,
+                "receiver_vibe_digest": "f" * 64,
+                "receiver_plant_modifier_revision": 5,
+                "receiver_plant_modifier_digest": "1" * 64,
+            }
+            for receiver_id in range(5)
+        ]
+        return {
+            "is_running": True,
+            "current_animation": "aurora_curtains_native",
+            "installation_profile_digest": profile_digest,
+            "scene_state": scene,
+            "scene": {"provider_mode": "receiver_native"},
+            "receiver_hybrid": {
+                "healthy": True,
+                "operational": True,
+                "fallback_active": False,
+                "error": None,
+                "driver": {
+                    "state": "active",
+                    "bundle_digest": "a" * 64,
+                    "payload_digest": "b" * 64,
+                    "parameter_digest": parameter_digest,
+                    "context_digest": context_digest,
+                    "installation_profile_digest": profile_digest,
+                    "agreement": {
+                        "exact_roster": True,
+                        "verified_receiver_ids": [0, 1, 2, 3, 4],
+                    },
+                    "capability_report": {
+                        "required_capabilities": required,
+                        "devices": capability_devices,
+                    },
+                },
+            },
+            "driver_stats": {"devices": receiver_devices},
+            "vibe": {"state": cls._vibe("cozy")},
+            "feature_flags": {
+                "receiver_local_background": True,
+                "receiver_sparse_overlay": True,
+                "receiver_native_modules": True,
+            },
+        }
     @staticmethod
     def _enabled_policy():
         return SceneProviderPolicy(
@@ -609,15 +695,14 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                         "scene_state": scene,
                         "scene": {"provider_mode": "receiver_hybrid"},
                         "receiver_hybrid": {
+                            "healthy": True,
                             "operational": True,
                             "fallback_active": False,
                             "error": None,
-                            "transport_policy": (
-                                DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY
-                            ),
-                            "telemetry_complete": False,
-                            "readable_devices": [0, 1],
-                            "unverified_devices": [2, 3],
+                            "transport_policy": "strict_all_readable_v1",
+                            "telemetry_complete": True,
+                            "readable_devices": [0, 1, 2, 3, 4],
+                            "unverified_devices": [],
                         },
                         "vibe": {"state": vibe},
                     }))
@@ -644,6 +729,106 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             )
             self.assertEqual(
                 restored["installation_profile_digest"], "0" * 64
+            )
+
+    def test_managed_native_restore_uses_durable_native_gate_and_exact_proof(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            write_receiver_hybrid_config(
+                root, enabled=True, native_modules_enabled=True
+            )
+            status_path = root / "status.json"
+            control_path = root / "control.json"
+            state_path = root / "state.json"
+            native_status = self._managed_native_status()
+            save_status(native_status, root / "presets", state_path)
+            persisted = json.loads(state_path.read_text())
+            self.assertEqual(
+                persisted["native_expectation"]["parameter_digest"], "c" * 64
+            )
+            status_path.write_text(json.dumps({"updated_at": 1}))
+            observed = []
+
+            def simulate_controller():
+                time.sleep(0.03)
+                status_path.write_text(json.dumps({"updated_at": time.time()}))
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
+                    if not control_path.exists():
+                        time.sleep(0.01)
+                        continue
+                    command = json.loads(control_path.read_text())
+                    observed.append(command)
+                    restored_status = json.loads(json.dumps(native_status))
+                    restored_status.update({
+                        "updated_at": time.time(),
+                        "last_command_id": command["command_id"],
+                        "scene_state": command["data"]["state"]["scene"],
+                    })
+                    status_path.write_text(json.dumps(restored_status))
+                    return
+
+            controller = threading.Thread(target=simulate_controller)
+            controller.start()
+            restored = restore(
+                status_path, control_path, state_path, 1, root=root
+            )
+            controller.join()
+
+            self.assertEqual(restored["animation"], "aurora_curtains_native")
+            self.assertEqual(observed[0]["action"], "restore_display_state")
+            self.assertEqual(
+                observed[0]["data"]["state"]["scene"]["background"]["provider"],
+                "receiver_native",
+            )
+
+    def test_feature_off_restore_deterministically_uses_recorded_python_fallback(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            write_receiver_hybrid_config(root, enabled=False)
+            status_path = root / "status.json"
+            control_path = root / "control.json"
+            state_path = root / "state.json"
+            save_status(
+                self._managed_native_status(), root / "presets", state_path
+            )
+            status_path.write_text(json.dumps({"updated_at": 1}))
+            observed = []
+
+            def simulate_controller():
+                time.sleep(0.03)
+                status_path.write_text(json.dumps({"updated_at": time.time()}))
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
+                    if not control_path.exists():
+                        time.sleep(0.01)
+                        continue
+                    command = json.loads(control_path.read_text())
+                    observed.append(command)
+                    desired = command["data"]["state"]
+                    status_path.write_text(json.dumps({
+                        "updated_at": time.time(),
+                        "last_command_id": command["command_id"],
+                        "current_animation": "rainbow",
+                        "is_running": True,
+                        "installation_profile_digest": "e" * 64,
+                        "scene_state": desired["scene"],
+                        "vibe": {"state": desired["vibe"]},
+                    }))
+                    return
+
+            controller = threading.Thread(target=simulate_controller)
+            controller.start()
+            restored = restore(
+                status_path, control_path, state_path, 1, root=root
+            )
+            controller.join()
+
+            self.assertEqual(restored["animation"], "rainbow")
+            self.assertIn("unsupported saved scene", restored["scene_fallback"])
+            self.assertEqual(
+                observed[0]["data"]["state"]["scene"]["background"]["provider"],
+                "python",
             )
 
     def test_desired_restore_rejects_matching_status_with_wrong_profile_digest(self):
@@ -691,7 +876,7 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                 restore(status_path, control_path, state_path, 0.2, root=root)
             controller.join()
 
-    def test_native_restore_proof_requires_exact_scene_and_degraded_readable_evidence(self):
+    def test_native_restore_proof_requires_exact_finalized_roster_evidence(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
             write_receiver_hybrid_config(root, enabled=True)
@@ -701,13 +886,14 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                 "scene_state": scene,
                 "scene": {"provider_mode": "receiver_hybrid"},
                 "receiver_hybrid": {
+                    "healthy": True,
                     "operational": True,
                     "fallback_active": False,
                     "error": None,
-                    "transport_policy": DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY,
-                    "telemetry_complete": False,
-                    "readable_devices": [0, 1],
-                    "unverified_devices": [2, 3],
+                    "transport_policy": "strict_all_readable_v1",
+                    "telemetry_complete": True,
+                    "readable_devices": [0, 1, 2, 3, 4],
+                    "unverified_devices": [],
                 },
             }
             self.assertTrue(_restored_scene_proof(status, scene, config))
@@ -718,10 +904,10 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                 ("operational", False),
                 ("fallback_active", True),
                 ("error", "receiver failed"),
-                ("transport_policy", "strict"),
-                ("telemetry_complete", True),
+                ("transport_policy", "degraded_spi1_01_readable"),
+                ("telemetry_complete", False),
                 ("readable_devices", [0]),
-                ("unverified_devices", [2]),
+                ("unverified_devices", [4]),
             )
             for field, value in cases:
                 with self.subTest(field=field):
@@ -735,6 +921,75 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                     self.assertFalse(
                         _restored_scene_proof(candidate, scene, config)
                     )
+
+    def test_managed_native_restore_requires_exact_bundle_payload_and_topology(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            write_receiver_hybrid_config(
+                root, enabled=True, native_modules_enabled=True
+            )
+            config = resolve_receiver_hybrid_config(root)
+            scene = self._managed_native_scene()
+            status = self._managed_native_status(scene)
+            expectation = {
+                "bundle_digest": "a" * 64,
+                "payload_digest": "b" * 64,
+                "parameter_digest": "c" * 64,
+            }
+            self.assertTrue(_restored_scene_proof(
+                status, scene, config, native_expectation=expectation
+            ))
+            for field, value in (
+                ("bundle_digest", "c" * 64),
+                ("payload_digest", "d" * 64),
+            ):
+                candidate = json.loads(json.dumps(status))
+                candidate["receiver_hybrid"]["driver"][field] = value
+                self.assertFalse(_restored_scene_proof(
+                    candidate, scene, config, native_expectation=expectation
+                ))
+            candidate = json.loads(json.dumps(status))
+            candidate["receiver_hybrid"]["driver"]["capability_report"][
+                "devices"
+            ][4]["local_strip_count"] = 8
+            self.assertFalse(_restored_scene_proof(
+                candidate, scene, config, native_expectation=expectation
+            ))
+
+            mutations = (
+                lambda value: value["receiver_hybrid"]["driver"].pop("agreement"),
+                lambda value: value["receiver_hybrid"]["driver"]["agreement"].update(
+                    verified_receiver_ids=[0, 1, 2, 3]
+                ),
+                lambda value: value["receiver_hybrid"]["driver"][
+                    "capability_report"
+                ].update(required_capabilities=0),
+                lambda value: value["driver_stats"]["devices"][4].update(
+                    receiver_active_context_digest="0" * 64
+                ),
+                lambda value: value["driver_stats"]["devices"][3].update(
+                    receiver_profile_active_global_digest="0" * 64
+                ),
+                lambda value: value["driver_stats"]["devices"][2].update(
+                    receiver_vibe_digest="0" * 64
+                ),
+                lambda value: value["driver_stats"]["devices"][1].update(
+                    receiver_plant_modifier_digest="0" * 64
+                ),
+                lambda value: value["driver_stats"]["devices"][0].update(
+                    receiver_native_active_parameter_digest="0" * 64
+                ),
+            )
+            for mutate in mutations:
+                candidate = json.loads(json.dumps(status))
+                mutate(candidate)
+                with self.subTest(candidate=candidate):
+                    self.assertFalse(_restored_scene_proof(
+                        candidate,
+                        scene,
+                        config,
+                        native_expectation=expectation,
+                    ))
 
     def test_restore_acknowledges_vibe_before_start_and_rechecks_final_state(self):
         with tempfile.TemporaryDirectory() as temporary_dir:

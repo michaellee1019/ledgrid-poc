@@ -155,7 +155,9 @@ def restore_display_state(manager: Any, state: dict) -> bool:
         if (
             not isinstance(native_background, dict)
             or native_background.get("provider") != "receiver_native"
-            or provider_policy.compiled_rainbow_enabled
+            or provider_policy.allows_receiver_background(
+                str(native_background.get("plugin_id", ""))
+            )
         ):
             raise
         scene = normalize_scene_payload(
@@ -234,10 +236,21 @@ def restore_display_state(manager: Any, state: dict) -> bool:
     if callable(profile_selector):
         profile_selector(installation_profile_digest)
     try:
-        if power and not start_scene(manager, scene):
-            if callable(profile_selector):
-                profile_selector(prior_profile_digest)
-            return False
+        if power:
+            background = scene.get("background", {})
+            adopter = getattr(manager, "adopt_scene", None)
+            if (
+                background.get("provider") == "receiver_native"
+                and background.get("plugin_id") != "compiled_rainbow"
+                and callable(adopter)
+            ):
+                started = bool(adopter(scene))
+            else:
+                started = start_scene(manager, scene)
+            if not started:
+                if callable(profile_selector):
+                    profile_selector(prior_profile_digest)
+                return False
     except Exception:
         if callable(profile_selector):
             profile_selector(prior_profile_digest)

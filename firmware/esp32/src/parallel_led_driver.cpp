@@ -172,7 +172,8 @@ bool ParallelLedDriver::submit(
       kWs2812ResetUs,
       kWs2812SampleRateHz,
       lane_mask_,
-      stagger_phases_);
+      stagger_phases_,
+      true);
   last_encode_us_ = duration_u16(
       static_cast<std::uint32_t>(esp_timer_get_time()) - encode_started);
   if (!encoded.ok) return false;

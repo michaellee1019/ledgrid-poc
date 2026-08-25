@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 
 #include "ledgrid/sha256.hpp"
 
@@ -89,18 +90,36 @@ bool InstallationProfileManager::begin() {
       : InstallationProfileTransferState::Idle;
   // Installed direction is provisioned later by CONFIG. Persisted bindings are
   // deliberately not decoded against a guessed identity during early boot.
-  if (logical_receiver_id_ <= 3) configure_identity(logical_receiver_id_, reversed_);
+  if (logical_receiver_id_ != 0xFF) {
+    configure_identity(logical_receiver_id_, reversed_, expected_global_strips_,
+                       expected_local_strips_, expected_leds_per_strip_,
+                       explicit_topology_ ? expected_origin_ : UINT16_MAX);
+  }
   return true;
 }
 
 void InstallationProfileManager::configure_identity(
-    std::uint8_t logical_receiver_id, bool reversed) {
+    std::uint8_t logical_receiver_id, bool reversed,
+    std::uint16_t global_strip_count, std::uint8_t local_strip_count,
+    std::uint16_t leds_per_strip, std::uint16_t global_strip_offset) {
   logical_receiver_id_ = logical_receiver_id;
   reversed_ = reversed;
-  static constexpr std::uint16_t kInstalledOrigins[4] = {0, 8, 24, 16};
-  expected_origin_ = logical_receiver_id_ <= 3
-      ? kInstalledOrigins[logical_receiver_id_] : 0;
-  if (!initialized_ || logical_receiver_id_ > 3) {
+  static constexpr std::uint16_t kInstalledOrigins[5] = {0, 8, 24, 16, 32};
+  explicit_topology_ = global_strip_offset != UINT16_MAX;
+  expected_origin_ = explicit_topology_
+      ? global_strip_offset
+      : logical_receiver_id_ < std::size(kInstalledOrigins)
+          ? kInstalledOrigins[logical_receiver_id_] : 0;
+  expected_global_strips_ = global_strip_count;
+  expected_local_strips_ = local_strip_count;
+  expected_leds_per_strip_ = leds_per_strip;
+  const bool topology_valid = logical_receiver_id_ != 0xFF &&
+      expected_global_strips_ != 0 && expected_local_strips_ != 0 &&
+      expected_local_strips_ <= kInstallationProfileReceiverStripsV1 &&
+      expected_leds_per_strip_ != 0 &&
+      expected_origin_ <= expected_global_strips_ &&
+      expected_local_strips_ <= expected_global_strips_ - expected_origin_;
+  if (!initialized_ || !topology_valid) {
     active_view_ = {};
     return;
   }
@@ -156,7 +175,9 @@ std::uint64_t InstallationProfileManager::calculate_preflight_token() const {
   mix(preflight_payload_digest_, 32);
   const std::uint64_t values[] = {
       ledger_.generation, store_ == nullptr ? 0 : store_->mutation_generation(),
-      transfer_total_, logical_receiver_id_, reversed_ ? 1U : 0U};
+      transfer_total_, logical_receiver_id_, reversed_ ? 1U : 0U,
+      expected_global_strips_, expected_local_strips_, expected_leds_per_strip_,
+      expected_origin_};
   mix(reinterpret_cast<const std::uint8_t*>(values), sizeof(values));
   return hash == 0 ? 1 : hash;
 }
@@ -164,11 +185,12 @@ std::uint64_t InstallationProfileManager::calculate_preflight_token() const {
 InstallationProfileResult InstallationProfileManager::preflight(
     const std::uint8_t* command, std::size_t size) {
   if (size != 69) return finish(InstallationProfileResult::InvalidSize);
-  if (!initialized_ || logical_receiver_id_ > 3) {
+  if (!initialized_ || logical_receiver_id_ == 0xFF) {
     return finish(InstallationProfileResult::InvalidState);
   }
   const std::uint32_t total = read_u32(command + 65);
-  if (total != kInstallationProfileReceiverBytesV1 ||
+  if (total != installation_profile_receiver_bytes_v1(
+                   expected_local_strips_, expected_leds_per_strip_) ||
       all_zero(command + 1, 32) || all_zero(command + 33, 32)) {
     return finish(InstallationProfileResult::InvalidSize);
   }
@@ -336,7 +358,8 @@ InstallationProfileResult InstallationProfileManager::finalize(
   }
   InstallationProfileViewV1 view{};
   InstallationProfileReceiverExpectationV1 expectation{
-      transfer_origin_, reversed_};
+      transfer_origin_, reversed_, expected_global_strips_,
+      expected_local_strips_, expected_leds_per_strip_};
   if (!decode_installation_profile_receiver_v1(
           work, transfer_total_, expectation, &view, &decoder_error_)) {
     store_->abort_part();
@@ -371,7 +394,8 @@ bool InstallationProfileManager::binding_valid(
   }
   std::uint32_t size = 0;
   if (store_ == nullptr || !store_->probe(binding.payload_digest, &size) ||
-      size != kInstallationProfileReceiverBytesV1 ||
+      size != installation_profile_receiver_bytes_v1(
+                  expected_local_strips_, expected_leds_per_strip_) ||
       scratch_size_ < 2U * size) return false;
   std::uint8_t* work = scratch_ + kInstallationProfileReceiverBytesV1;
   if (!store_->read_committed(binding.payload_digest, 0, work, size)) return false;
@@ -379,7 +403,8 @@ bool InstallationProfileManager::binding_valid(
   sha256(work, size, digest);
   if (!equal_digest(digest, binding.payload_digest)) return false;
   InstallationProfileReceiverExpectationV1 expectation{
-      expected_origin_, reversed_};
+      expected_origin_, reversed_, expected_global_strips_,
+      expected_local_strips_, expected_leds_per_strip_};
   InstallationProfileViewV1 view{};
   if (!decode_installation_profile_receiver_v1(
           work, size, expectation, &view, error)) return false;
@@ -419,7 +444,8 @@ bool InstallationProfileManager::refresh_active_view(
   if (!candidate.active.present) return true;
   std::uint32_t size = 0;
   if (!store_->probe(candidate.active.payload_digest, &size) ||
-      size != kInstallationProfileReceiverBytesV1 ||
+      size != installation_profile_receiver_bytes_v1(
+                  expected_local_strips_, expected_leds_per_strip_) ||
       !store_->read_committed(candidate.active.payload_digest, 0, scratch_, size)) {
     return false;
   }
@@ -427,7 +453,8 @@ bool InstallationProfileManager::refresh_active_view(
   sha256(scratch_, size, digest);
   if (!equal_digest(digest, candidate.active.payload_digest)) return false;
   InstallationProfileReceiverExpectationV1 expectation{
-      expected_origin_, reversed_};
+      expected_origin_, reversed_, expected_global_strips_,
+      expected_local_strips_, expected_leds_per_strip_};
   if (!decode_installation_profile_receiver_v1(
           scratch_, size, expectation, &active_view_, &decoder_error_)) {
     return false;

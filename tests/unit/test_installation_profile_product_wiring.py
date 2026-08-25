@@ -217,12 +217,12 @@ class StartupProfileContextTests(unittest.TestCase):
                 root,
                 {
                     "enabled": True,
-                    "physical_lane_order": (0, 1, 3, 2),
+                    "physical_lane_order": (0, 1, 3, 2, 4),
                     "reverse_strips_by_logical_receiver": (
-                        True, False, True, False,
+                        True, False, True, False, False,
                     ),
                     "reverse_native_strips_by_logical_receiver": (
-                        False, True, False, True,
+                        False, True, False, True, False,
                     ),
                 },
                 {"installation_profile_digest": PROFILE_B},
@@ -235,32 +235,12 @@ class StartupProfileContextTests(unittest.TestCase):
     def test_topology_domains_remain_independently_sourced(self):
         topology = installation_profile_topology_for_runtime({
             "enabled": True,
-            "physical_lane_order": (2, 0, 3, 1),
-            "reverse_strips_by_logical_receiver": (True, False, True, False),
-            "reverse_native_strips_by_logical_receiver": (False, True, False, True),
-        })
-
-        self.assertEqual(
-            topology.logical_to_transport_routes,
-            INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.logical_to_transport_routes,
-        )
-        self.assertEqual(topology.physical_lane_order, (2, 0, 3, 1))
-        self.assertEqual(
-            topology.reverse_host_strips_by_logical_receiver,
-            (True, False, True, False),
-        )
-        self.assertEqual(
-            topology.reverse_native_strips_by_logical_receiver,
-            (False, True, False, True),
-        )
-
-    def test_disabled_rollout_retains_persisted_topology_domains(self):
-        topology = installation_profile_topology_for_runtime({
-            "enabled": False,
-            "physical_lane_order": (0, 1, 3, 2),
-            "reverse_strips_by_logical_receiver": (True, True, False, False),
+            "physical_lane_order": (2, 0, 3, 1, 4),
+            "reverse_strips_by_logical_receiver": (
+                True, False, True, False, False,
+            ),
             "reverse_native_strips_by_logical_receiver": (
-                False, False, True, True,
+                False, True, False, True, False,
             ),
         })
 
@@ -268,14 +248,40 @@ class StartupProfileContextTests(unittest.TestCase):
             topology.logical_to_transport_routes,
             INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.logical_to_transport_routes,
         )
-        self.assertEqual(topology.physical_lane_order, (0, 1, 3, 2))
+        self.assertEqual(topology.physical_lane_order, (2, 0, 3, 1, 4))
         self.assertEqual(
             topology.reverse_host_strips_by_logical_receiver,
-            (True, True, False, False),
+            (True, False, True, False, False),
         )
         self.assertEqual(
             topology.reverse_native_strips_by_logical_receiver,
-            (False, False, True, True),
+            (False, True, False, True, False),
+        )
+
+    def test_disabled_rollout_retains_persisted_topology_domains(self):
+        topology = installation_profile_topology_for_runtime({
+            "enabled": False,
+            "physical_lane_order": (0, 1, 3, 2, 4),
+            "reverse_strips_by_logical_receiver": (
+                True, True, False, False, False,
+            ),
+            "reverse_native_strips_by_logical_receiver": (
+                False, False, True, True, False,
+            ),
+        })
+
+        self.assertEqual(
+            topology.logical_to_transport_routes,
+            INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.logical_to_transport_routes,
+        )
+        self.assertEqual(topology.physical_lane_order, (0, 1, 3, 2, 4))
+        self.assertEqual(
+            topology.reverse_host_strips_by_logical_receiver,
+            (True, True, False, False, False),
+        )
+        self.assertEqual(
+            topology.reverse_native_strips_by_logical_receiver,
+            (False, False, True, True, False),
         )
 
     @staticmethod
@@ -284,7 +290,7 @@ class StartupProfileContextTests(unittest.TestCase):
             receiver_hybrid_config=config,
             receiver_hybrid_canary=None,
             saved_state_file="unused.json",
-            strips=32,
+            strips=33,
             leds_per_strip=138,
             bus=0,
             device=0,
@@ -300,9 +306,13 @@ class StartupProfileContextTests(unittest.TestCase):
         events = []
         config = {
             "enabled": True,
-            "physical_lane_order": (0, 1, 3, 2),
-            "reverse_strips_by_logical_receiver": (False, True, False, True),
-            "reverse_native_strips_by_logical_receiver": (True, False, True, False),
+            "physical_lane_order": (0, 1, 3, 2, 4),
+            "reverse_strips_by_logical_receiver": (
+                False, True, False, True, False,
+            ),
+            "reverse_native_strips_by_logical_receiver": (
+                True, False, True, False, False,
+            ),
         }
         state = {
             "animation": "solid",
@@ -347,10 +357,16 @@ class StartupProfileContextTests(unittest.TestCase):
         controller_kwargs = next(
             event[1] for event in events if event[0] == "controller"
         )
-        self.assertFalse(controller_kwargs["receiver_geometry_profile"])
+        self.assertTrue(controller_kwargs["receiver_geometry_profile"])
         self.assertEqual(
             controller_kwargs["reverse_native_strips_by_logical_receiver"],
-            (True, False, True, False),
+            (True, False, True, False, False),
+        )
+        self.assertEqual(controller_kwargs["num_devices"], 5)
+        self.assertEqual(controller_kwargs["receiver_strip_counts"], (8, 8, 8, 8, 1))
+        self.assertEqual(
+            controller_kwargs["receiver_global_strip_offsets"],
+            (0, 8, 24, 16, 32),
         )
         manager_kwargs = next(event[2] for event in events if event[0] == "manager")
         self.assertEqual(manager_kwargs["installation_profile_digest"], PROFILE_A)

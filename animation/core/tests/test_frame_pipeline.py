@@ -450,7 +450,7 @@ class ReceiverAcceptanceTests(unittest.TestCase):
                 ),
                 "receiver_logical_device": index,
             }
-            for index in range(4)
+            for index in range(5)
         ]
         self.assertTrue(evaluate_phase3a_status(devices)["passed"])
 
@@ -477,7 +477,7 @@ class ReceiverAcceptanceTests(unittest.TestCase):
                 ),
                 "receiver_logical_device": index,
             }
-            for index in range(4)
+            for index in range(5)
         ]
         canary_bits = (
             CAPABILITY_STATIC_LOCAL_BACKGROUND
@@ -501,7 +501,7 @@ class ReceiverAcceptanceTests(unittest.TestCase):
                 ),
                 "receiver_logical_device": index,
             }
-            for index in range(4)
+            for index in range(5)
         ]
         fresh = {
             "request_id": "fresh-2", "completed_at": 123.5,
@@ -547,6 +547,9 @@ class ReceiverAcceptanceTests(unittest.TestCase):
     def test_installed_full_frame_timing_facts_are_locked(self):
         self.assertEqual(installed_streamed_timing_facts(), {
             'strips_per_receiver': 8,
+            'receiver_strip_counts': [8, 8, 8, 8, 1],
+            'receiver_full_frame_bytes': [3315, 3315, 3315, 3315, 417],
+            'full_wall_frame_bytes': 13677,
             'leds_per_strip': 138,
             'full_frame_bytes': 3315,
             'spi_speed_hz': 20_000_000,

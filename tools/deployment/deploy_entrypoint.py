@@ -52,6 +52,11 @@ try:
         source_identity,
         working_tree_dirty,
     )
+    from tools.deployment.receiver_hybrid_config import (
+        DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+        NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+        PRODUCTION_FIRMWARE_ENVIRONMENT,
+    )
 except ModuleNotFoundError:  # Direct ``python tools/deployment/deploy_entrypoint.py``.
     from deploy_coordinator import (  # type: ignore[no-redef]
         Artifact,
@@ -73,6 +78,11 @@ except ModuleNotFoundError:  # Direct ``python tools/deployment/deploy_entrypoin
         manifest_plan,
         source_identity,
         working_tree_dirty,
+    )
+    from receiver_hybrid_config import (  # type: ignore[no-redef]
+        DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+        NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+        PRODUCTION_FIRMWARE_ENVIRONMENT,
     )
 
 
@@ -100,6 +110,21 @@ DEFAULT_SSH_OPTIONS = (
     "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
     "-o", "StrictHostKeyChecking=accept-new",
 )
+
+RECEIVER_FIRMWARE_HEALTH_CAPABILITIES = {
+    # Production remains complete-host-takeover/status-v3 only.
+    PRODUCTION_FIRMWARE_ENVIRONMENT: (3, 0x000C),
+    # Local/profile canary negotiates the status-v5 extension.
+    DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (5, 0x00FF),
+    # Managed native requires every capability through guarded loading.
+    NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (6, 0x3FFF),
+}
+FINALIZED_RECEIVER_ROUTES = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
+FINALIZED_RECEIVER_WIDTHS = (8, 8, 8, 8, 1)
+FINALIZED_RECEIVER_OFFSETS = (0, 8, 24, 16, 32)
+FINALIZED_RECEIVER_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0x01)
+FINALIZED_RECEIVER_REVERSALS = (False, False, True, True, False)
+FINALIZED_RECEIVER_SPI_MODE = 0
 
 
 _REMOTE_RELEASE_INSPECTOR = r"""
@@ -149,6 +174,64 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_safe(item) for item in value]
     return str(value)
+
+
+def receiver_firmware_health_contract(
+    environment: str,
+    rollout: Mapping[str, Any],
+    *,
+    leds_per_strip: int,
+    receiver_count: int,
+) -> Mapping[str, Any]:
+    capability_contract = RECEIVER_FIRMWARE_HEALTH_CAPABILITIES.get(environment)
+    if capability_contract is None:
+        raise RuntimeError(
+            "firmware build selected an environment with no health contract"
+        )
+    widths = tuple(rollout.get("receiver_strip_counts", ()))
+    offsets = tuple(rollout.get("receiver_global_strip_offsets", ()))
+    lane_masks = tuple(rollout.get("physical_output_lane_masks", ()))
+    host_reversals = tuple(
+        rollout.get("reverse_strips_by_logical_receiver", ())
+    )
+    native_reversals = tuple(
+        rollout.get("reverse_native_strips_by_logical_receiver", ())
+    )
+    if (
+        receiver_count != 5
+        or widths != FINALIZED_RECEIVER_WIDTHS
+        or offsets != FINALIZED_RECEIVER_OFFSETS
+        or lane_masks != FINALIZED_RECEIVER_LANE_MASKS
+        or host_reversals != FINALIZED_RECEIVER_REVERSALS
+        or native_reversals != FINALIZED_RECEIVER_REVERSALS
+    ):
+        raise RuntimeError(
+            "firmware build did not select finalized receiver health topology"
+        )
+    minimum_version, required_capabilities = capability_contract
+    return {
+        "schema_version": 1,
+        "firmware_environment": environment,
+        "minimum_status_version": minimum_version,
+        "required_capabilities": required_capabilities,
+        "devices": [
+            {
+                "logical_device": logical_id,
+                "bus": FINALIZED_RECEIVER_ROUTES[logical_id][0],
+                "chip_select": FINALIZED_RECEIVER_ROUTES[logical_id][1],
+                "active_strips": widths[logical_id],
+                "local_strip_count": widths[logical_id],
+                "global_strip_offset": offsets[logical_id],
+                "lane_mask": lane_masks[logical_id],
+                "physical_output_lane_mask": lane_masks[logical_id],
+                "reverse_host_strip_order": host_reversals[logical_id],
+                "reverse_native_strip_order": native_reversals[logical_id],
+                "spi_mode": FINALIZED_RECEIVER_SPI_MODE,
+                "leds_per_strip": leds_per_strip,
+            }
+            for logical_id in range(receiver_count)
+        ],
+    }
 
 
 def _safe_deploy_dir(value: str) -> PurePosixPath:
@@ -469,9 +552,9 @@ class DeploymentConfig:
     run_tests: bool = True
     verbose: bool = False
     generate_previews: bool = True
-    strips: int = 32
+    strips: int = 33
     leds_per_strip: int = 138
-    receiver_count: int = 4
+    receiver_count: int = 5
     force_firmware: bool = False
     release_retention: int = DEFAULT_RELEASE_RETENTION
     health_timeout: float = 30.0
@@ -716,6 +799,14 @@ class CoordinatorDeployment:
             or re.fullmatch(r"[0-9a-f]{64}", config_digest) is None
         ):
             raise RuntimeError("firmware build returned no rollout config digest")
+        migrated_digest = self.context.state.get("receiver_topology_digest")
+        if (
+            isinstance(migrated_digest, str)
+            and config_digest != migrated_digest
+        ):
+            raise RuntimeError(
+                "receiver rollout selection changed after topology migration"
+            )
         if firmware_sha256 is not None and (
             not isinstance(firmware_sha256, str)
             or re.fullmatch(r"[0-9a-f]{64}", firmware_sha256) is None
@@ -734,11 +825,29 @@ class CoordinatorDeployment:
             raise RuntimeError(
                 "firmware build returned no complete installation digest"
             )
+        rollout = result.get("receiver_hybrid_config")
+        if (
+            not isinstance(rollout, dict)
+            or tuple(rollout.get("receiver_strip_counts", ()))
+            != (8, 8, 8, 8, 1)
+            or tuple(rollout.get("receiver_global_strip_offsets", ()))
+            != (0, 8, 24, 16, 32)
+        ):
+            raise RuntimeError(
+                "firmware build did not select the finalized receiver topology"
+            )
+        receiver_health_contract = receiver_firmware_health_contract(
+            environment,
+            rollout,
+            leds_per_strip=self.config.leds_per_strip,
+            receiver_count=self.config.receiver_count,
+        )
         self.context.state["firmware_selection"] = {
             "firmware_environment": environment,
             "receiver_hybrid_config_digest": config_digest,
             "firmware_sha256": firmware_sha256,
             "firmware_installation_digest": installation_digest,
+            "receiver_health_contract": receiver_health_contract,
         }
         artifacts = ()
         if isinstance(firmware_sha256, str):
@@ -757,10 +866,79 @@ class CoordinatorDeployment:
             artifacts=artifacts,
         )
 
+    def _bootstrap_legacy(self, context: DeployContext) -> OperationResult:
+        candidate = str(context.state["release_id"])
+        result = self.target.run("bootstrap-legacy-app", candidate)
+        bootstrap_id = result.get("bootstrap_release_id")
+        bootstrap_digest = result.get("bootstrap_digest")
+        recovery = result.get("recovery_release")
+        if bootstrap_id is not None and (
+            not isinstance(bootstrap_id, str)
+            or re.fullmatch(r"[0-9a-f]{64}", bootstrap_id) is None
+        ):
+            raise RuntimeError("legacy bootstrap returned an invalid release identity")
+        if bootstrap_digest is not None and bootstrap_digest != bootstrap_id:
+            raise RuntimeError("legacy bootstrap release/digest evidence disagrees")
+        if recovery is not None and recovery != bootstrap_id:
+            raise RuntimeError("legacy bootstrap returned an invalid recovery release")
+        context.state["bootstrap_release_id"] = bootstrap_id
+        context.state["bootstrap_recovery_release"] = recovery
+        artifacts = ()
+        if isinstance(bootstrap_id, str) and isinstance(bootstrap_digest, str):
+            artifacts = (
+                Artifact(
+                    "legacy_app_bootstrap",
+                    bootstrap_id,
+                    bootstrap_digest,
+                    "1",
+                ),
+            )
+        return OperationResult(
+            outcome=str(result.get("outcome", "executed")),
+            details=result,
+            artifacts=artifacts,
+        )
+
+    def _topology_migrate(self, _context: DeployContext) -> OperationResult:
+        result = self.target.run("migrate-receiver-topology")
+        if (
+            result.get("strips") != self.config.strips
+            or result.get("receivers") != self.config.receiver_count
+        ):
+            raise RuntimeError(
+                "target receiver topology disagrees with deployment geometry"
+            )
+        digest = result.get("receiver_hybrid_config_digest")
+        if (
+            not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        ):
+            raise RuntimeError("receiver topology migration returned no digest")
+        selection = self.context.state.get("firmware_selection")
+        if (
+            isinstance(selection, dict)
+            and digest != selection.get("receiver_hybrid_config_digest")
+        ):
+            raise RuntimeError(
+                "post-health topology migration changed rollout semantics"
+            )
+        self.context.state["receiver_topology_digest"] = digest
+        return OperationResult(
+            outcome=str(result.get("outcome", "executed")), details=result
+        )
+
     def _provision(self, context: DeployContext) -> OperationResult:
         release_id = str(context.state["release_id"])
         target_user = self.config.target.split("@", 1)[0] if "@" in self.config.target else os.environ.get("USER", "pi")
-        args = [release_id, "--user", target_user]
+        args = [
+            release_id,
+            "--user",
+            target_user,
+            "--strips",
+            str(self.config.strips),
+            "--receivers",
+            str(self.config.receiver_count),
+        ]
         if os.environ.get("LEDGRID_HAT", "0").lower() in {"1", "true", "yes"}:
             args.append("--hat")
         first = self.target.run("provision", *args)
@@ -881,7 +1059,14 @@ class CoordinatorDeployment:
     def _activate(self, context: DeployContext) -> OperationResult:
         candidate = str(context.state["release_id"])
         before = self.target.run("current-release").get("current_release")
-        context.state["previous_release"] = before
+        recovery = context.state.get("bootstrap_recovery_release")
+        recovery_guarded = bool(
+            before == candidate
+            and isinstance(recovery, str)
+            and recovery
+            and recovery != candidate
+        )
+        context.state["previous_release"] = recovery if recovery_guarded else before
         try:
             result = self.target.run("activate", candidate)
         except Exception as exc:
@@ -896,7 +1081,7 @@ class CoordinatorDeployment:
                 context.state["activated"] = True
                 raise RemoteActivationFailed(self._compensate(exc)) from exc
             raise
-        context.state["activated"] = bool(result.get("changed"))
+        context.state["activated"] = bool(result.get("changed")) or recovery_guarded
         selected_at = result.get("selected_at")
         if isinstance(selected_at, (int, float)) and not isinstance(selected_at, bool):
             context.state["selection_boundary"] = float(selected_at)
@@ -910,7 +1095,11 @@ class CoordinatorDeployment:
             raise mismatch
         return OperationResult(
             outcome="executed" if result.get("changed") else "skipped",
-            details=result,
+            details={
+                **result,
+                "recovery_guarded": recovery_guarded,
+                "effective_previous_release": context.state["previous_release"],
+            },
         )
 
     def _compensate(self, original_error: Exception) -> ActivationFailureEvidence:
@@ -966,6 +1155,19 @@ class CoordinatorDeployment:
         self.context.state["compensated"] = True
         self.context.state["compensation"] = failure
         return failure
+
+    def _receiver_health_args(self) -> tuple[str, ...]:
+        selection = self.context.state.get("firmware_selection")
+        contract = (
+            selection.get("receiver_health_contract")
+            if isinstance(selection, dict) else None
+        )
+        if not isinstance(contract, dict):
+            return ()
+        return (
+            "--receiver-contract-json",
+            json.dumps(contract, sort_keys=True, separators=(",", ":")),
+        )
 
     def _post_activation(self, operation: Callable[[], OperationResult]) -> OperationResult:
         try:
@@ -1048,9 +1250,17 @@ class CoordinatorDeployment:
                 str(self.config.receiver_count),
                 "--timeout",
                 str(self.config.health_timeout),
+                *self._receiver_health_args(),
+            )
+            bootstrap = self.target.run(
+                "complete-legacy-bootstrap", str(context.state["release_id"])
             )
             recorded = self.target.run("record-deploy")
-            return OperationResult(details={**result, "deployment_status": recorded})
+            return OperationResult(details={
+                **result,
+                "legacy_bootstrap": bootstrap,
+                "deployment_status": recorded,
+            })
 
         return self._post_activation(execute)
 
@@ -1077,6 +1287,7 @@ class CoordinatorDeployment:
             "tests.run": self._tests,
             "target.connect": self._target_connect,
             "app.stage": self._stage,
+            "app.bootstrap_legacy": self._bootstrap_legacy,
             "app.validate": self._validate_app,
             "state.capture": self._capture,
             "app.activate": self._activate,
@@ -1088,6 +1299,7 @@ class CoordinatorDeployment:
         if self.config.mode == "full":
             operations.update(
                 {
+                    "receiver.topology_migrate": self._topology_migrate,
                     "receiver.firmware_build": self._firmware_build,
                     "host.provision": self._provision,
                     "receiver.firmware_flash": self._firmware_flash,
@@ -1422,6 +1634,9 @@ def deployment_plan(config: DeploymentConfig) -> Mapping[str, Any]:
                 ),
                 "current": f"{config.deploy_dir}/current",
                 "receipts": f"{config.deploy_dir}/run_state/deploy_receipts",
+                "legacy_app_bootstrap": (
+                    f"{config.deploy_dir}/run_state/legacy_app_bootstrap.json"
+                ),
             },
         }
     finally:
@@ -1445,9 +1660,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
         in {"1", "true", "yes"},
         help="flash every attached receiver even when per-device evidence matches",
     )
-    parser.add_argument("--strips", type=int, default=int(os.environ.get("STRIPS", "32")))
+    parser.add_argument("--strips", type=int, default=int(os.environ.get("STRIPS", "33")))
     parser.add_argument("--leds-per-strip", type=int, default=int(os.environ.get("LEDS_PER_STRIP", "138")))
-    parser.add_argument("--receivers", type=int, default=int(os.environ.get("EXPECTED_ESP32_DEVICES", "4")))
+    parser.add_argument("--receivers", type=int, default=int(os.environ.get("EXPECTED_ESP32_DEVICES", "5")))
     parser.add_argument(
         "--retain-releases",
         type=int,
@@ -1462,9 +1677,9 @@ def _add_rollback_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--ssh-key", default=os.environ.get("SSH_KEY"))
     parser.add_argument("--deploy-dir", default=os.environ.get("DEPLOY_DIR", DEFAULT_DEPLOY_DIR))
     parser.add_argument("--verbose", action="store_true")
-    parser.add_argument("--strips", type=int, default=int(os.environ.get("STRIPS", "32")))
+    parser.add_argument("--strips", type=int, default=int(os.environ.get("STRIPS", "33")))
     parser.add_argument("--leds-per-strip", type=int, default=int(os.environ.get("LEDS_PER_STRIP", "138")))
-    parser.add_argument("--receivers", type=int, default=int(os.environ.get("EXPECTED_ESP32_DEVICES", "4")))
+    parser.add_argument("--receivers", type=int, default=int(os.environ.get("EXPECTED_ESP32_DEVICES", "5")))
     parser.add_argument(
         "--retain-releases",
         type=int,
@@ -1490,9 +1705,9 @@ def _add_readonly_target_options(parser: argparse.ArgumentParser) -> None:
         skip_tests=True,
         skip_previews=True,
         verbose=False,
-        strips=32,
+        strips=33,
         leds_per_strip=138,
-        receivers=4,
+        receivers=5,
         retain_releases=DEFAULT_RELEASE_RETENTION,
         force_firmware=False,
     )

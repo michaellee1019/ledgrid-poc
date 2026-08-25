@@ -74,7 +74,8 @@ EncodeResult encode_parallel_grb_pixels(
     std::uint16_t reset_us = kWs2812ResetUs,
     std::uint32_t sample_rate_hz = kWs2812SampleRateHz,
     std::uint8_t lane_mask = kAllLanesMask,
-    std::uint8_t stagger_phases = kStaggerOff);
+    std::uint8_t stagger_phases = kStaggerOff,
+    bool map_compact_strips_to_selected_lanes = false);
 
 // Convenience full encoder for callers that do not retain an initialized
 // output buffer. The receiver's display path uses the split functions above.

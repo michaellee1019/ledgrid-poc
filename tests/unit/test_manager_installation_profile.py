@@ -32,7 +32,7 @@ class _Controller:
     debug = False
     inline_show = True
 
-    def __init__(self, strips: int = 32, leds_per_strip: int = 138):
+    def __init__(self, strips: int = 33, leds_per_strip: int = 138):
         self.strip_count = strips
         self.leds_per_strip = leds_per_strip
         self.total_leds = strips * leds_per_strip
@@ -492,7 +492,7 @@ class ManagerInstallationProfileTests(unittest.TestCase):
             "strip_offset": 0,
             "led_offset": 0,
         })
-        manager._scene_compositor = HostSceneCompositor(32, 138)
+        manager._scene_compositor = HostSceneCompositor(33, 138)
         manager._presentation_refresh_pending = False
         manager._scene_background["force_changed"] = False
         manager._scene_overlay["force_changed"] = False
@@ -542,7 +542,7 @@ class ManagerInstallationProfileTests(unittest.TestCase):
             "strip_offset": 0,
             "led_offset": 0,
         })
-        manager._receiver_foreground_compositor = HostForegroundCompositor(32, 138)
+        manager._receiver_foreground_compositor = HostForegroundCompositor(33, 138)
 
         manager.select_installation_profile(self.digest)
 

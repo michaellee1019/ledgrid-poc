@@ -7,6 +7,7 @@ Handles animation switching, parameter updates, and frame generation.
 """
 
 import hashlib
+from io import BytesIO
 import json
 import math
 import time
@@ -17,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any, List
 
 import numpy as np
+from PIL import Image
 
 from animation.core import AnimationBase, RenderedFrame, StatefulAnimationBase, AnimationPluginLoader
 from animation.core.compositing import (
@@ -27,6 +29,11 @@ from animation.core.compositing import (
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.feature_flags import AnimationPipelineFeatureFlags
 from animation.core.installation_profile_library import InstallationProfileLibrary
+from animation.core.native_background_library import (
+    NativeBackgroundLibrary,
+    NativeBackgroundLibraryError,
+    ResolvedNativeBackground,
+)
 from animation.core.installation_profile_runtime import (
     EMPTY_INSTALLATION_PROFILE_DIGEST,
     InstallationProfileSelection,
@@ -169,6 +176,7 @@ class AnimationManager:
                  installation_profile_topology: InstallationProfileTopology = (
                      IDENTITY_INSTALLATION_PROFILE_TOPOLOGY
                  ),
+                 native_background_library: Optional[NativeBackgroundLibrary] = None,
                  auto_start: bool = True):
         """
         Initialize animation manager
@@ -248,6 +256,9 @@ class AnimationManager:
         self._receiver_last_status: Optional[Dict[str, Any]] = None
         self._receiver_hybrid_error: Optional[str] = None
         self._receiver_fallback_active = False
+        self._native_background_library = native_background_library
+        self._receiver_native_resolved: Optional[ResolvedNativeBackground] = None
+        self._receiver_native_preview_cache: Dict[str, tuple[np.ndarray, ...]] = {}
         self._installation_profile_selection_lock = threading.RLock()
         self._installation_profile_library = installation_profile_library
         self._installation_profile_topology = installation_profile_topology
@@ -1014,6 +1025,7 @@ class AnimationManager:
     ) -> List[Dict[str, Any]]:
         """Return the descriptor-only component catalog used by scene clients."""
         catalog = self.plugin_loader.component_catalog()
+        catalog = [self._bind_managed_native_descriptor(item) for item in catalog]
         catalog.extend(receiver_static_component_catalog(self.feature_flags))
         return [
             descriptor for descriptor in catalog
@@ -1026,7 +1038,70 @@ class AnimationManager:
         return SceneProviderPolicy(
             receiver_local_background=self.feature_flags.receiver_local_background,
             receiver_sparse_overlay=self.feature_flags.receiver_sparse_overlay,
+            receiver_native_modules=self.feature_flags.receiver_native_modules,
         )
+
+    def _bind_managed_native_descriptor(
+        self, descriptor: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Bind a source descriptor to the newest trusted managed artifact."""
+
+        item = dict(descriptor)
+        if item.get("provider") != ComponentProvider.RECEIVER_NATIVE.value:
+            return item
+        library = self._native_background_library
+        if not self.feature_flags.receiver_native_modules or library is None:
+            item["availability"] = {
+                "state": "gated",
+                "diagnostic": "Managed receiver-native modules are disabled.",
+            }
+            return item
+        try:
+            resolved = library.resolve_package(str(item.get("plugin_id")))
+        except NativeBackgroundLibraryError as exc:
+            item["availability"] = {
+                "state": "unavailable",
+                "diagnostic": str(exc),
+            }
+            compatibility = dict(item.get("compatibility") or {})
+            compatibility.update({"composable": False, "diagnostic": str(exc)})
+            item["compatibility"] = compatibility
+            return item
+        build = dict(item.get("build") or {})
+        build.update({
+            "identity_authority": "managed_library",
+            "bundle_digest": resolved.bundle_digest,
+            "contract_digest": resolved.bundle_digest,
+            "expected_payload_digest": resolved.payload_digest,
+        })
+        item["build"] = build
+        item["availability"] = {
+            "state": "ready",
+            "published_at": resolved.receipt.published_at,
+            "bundle_digest": resolved.bundle_digest,
+            "payload_digest": resolved.payload_digest,
+            "preview_kind": "build_time_bundle",
+            "framebuffer_readback": False,
+        }
+        return item
+
+    def _resolve_managed_native(
+        self, ref: ComponentRef
+    ) -> ResolvedNativeBackground:
+        if not self.feature_flags.receiver_native_modules:
+            raise ValueError("managed receiver-native modules are disabled")
+        if self._native_background_library is None:
+            raise ValueError("managed receiver-native library is unavailable")
+        if ref.bundle_digest is None:
+            raise ValueError("managed receiver-native scene requires a bundle digest")
+        resolved = self._native_background_library.resolve_package(
+            ref.plugin_id, bundle_digest=ref.bundle_digest
+        )
+        if ref.expected_payload_digest != resolved.payload_digest:
+            raise ValueError(
+                "receiver-native expected payload digest does not match the managed bundle"
+            )
+        return resolved
 
     @staticmethod
     def _scene_parameter_payload(payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1054,11 +1129,17 @@ class AnimationManager:
         allow_compatibility_component: bool = False,
     ) -> Dict[str, Any]:
         if ref.provider is ComponentProvider.RECEIVER_NATIVE:
-            descriptor = receiver_static_component_descriptor(self.feature_flags)
-            if descriptor is None or ref.plugin_id != COMPILED_RAINBOW_PLUGIN_ID:
+            if ref.plugin_id == COMPILED_RAINBOW_PLUGIN_ID:
+                descriptor = receiver_static_component_descriptor(self.feature_flags)
+            else:
+                descriptor = self.plugin_loader.get_component_descriptor(ref.plugin_id)
+                if not self.scene_provider_policy().allows_receiver_background(
+                    ref.plugin_id
+                ):
+                    descriptor = None
+            if descriptor is None:
                 raise ValueError(
-                    "receiver-native scene background is unavailable under the "
-                    "active feature policy"
+                    "receiver-native scene background is unavailable under the active policy"
                 )
             if expected_role != "background":
                 raise ValueError("receiver-native components may only be scene backgrounds")
@@ -1129,16 +1210,24 @@ class AnimationManager:
         resolved = snapshot if snapshot else defaults
         resolved.update(overrides)
         if ref.provider is ComponentProvider.RECEIVER_NATIVE:
-            resolved = validate_compiled_rainbow_parameters(resolved)
-            build = descriptor.get("build") or {}
-            if (
-                ref.bundle_digest != build.get("bundle_digest")
-                or ref.expected_payload_digest
-                != build.get("expected_payload_digest")
-            ):
-                raise ValueError(
-                    "receiver-native component identity does not match the compiled contract"
+            if ref.plugin_id == COMPILED_RAINBOW_PLUGIN_ID:
+                resolved = validate_compiled_rainbow_parameters(resolved)
+                build = descriptor.get("build") or {}
+                if (
+                    ref.bundle_digest != build.get("bundle_digest")
+                    or ref.expected_payload_digest
+                    != build.get("expected_payload_digest")
+                ):
+                    raise ValueError(
+                        "receiver-native component identity does not match the compiled contract"
+                    )
+            else:
+                managed = self._resolve_managed_native(ref)
+                resolved = self.plugin_loader.validate_component_parameters(
+                    ref.plugin_id, resolved
                 )
+                if managed.verified.manifest.get("defaults") is None:
+                    raise ValueError("managed native bundle has no parameter defaults")
         else:
             try:
                 resolved = self.plugin_loader.validate_component_parameters(
@@ -1400,16 +1489,28 @@ class AnimationManager:
             return False
         return self.start_scene(scene, _allow_compatibility_components=True)
 
-    def _receiver_hybrid_capability_error(self) -> Optional[str]:
+    def _receiver_hybrid_capability_error(
+        self, *, managed_native: bool = False
+    ) -> Optional[str]:
         if not (
             self.feature_flags.receiver_local_background
             and self.feature_flags.receiver_sparse_overlay
         ):
             return "receiver hybrid rollout flags are disabled"
-        required = (
-            "start_local_background",
-            "update_local_background_params",
-            "update_presentation_context",
+        background_required = (
+            (
+                "install_native_background",
+                "activate_native_background",
+                "update_native_background_parameters",
+            )
+            if managed_native
+            else (
+                "start_local_background",
+                "update_local_background_params",
+                "update_presentation_context",
+            )
+        )
+        required = background_required + (
             "publish_sparse_overlay",
             "renew_sparse_overlay",
             "clear_sparse_overlay",
@@ -1569,19 +1670,66 @@ class AnimationManager:
         resolved_vibe: Optional[ResolvedVibe] = None,
     ) -> np.ndarray:
         resolved = self._resolved_vibe if resolved_vibe is None else resolved_vibe
-        luminance = quantize_q8_8(
-            resolved.profile.luminance_scale,
-            name="luminance_scale",
-            maximum=Q8_8_ONE,
-        )
-        base = render_compiled_rainbow_preview(
-            scene_time_us,
-            scene.background.resolved_parameters,
-            strip_count=self.controller.strip_count,
-            leds_per_strip=self.controller.leds_per_strip,
-            luminance_q8_8=luminance,
-        )
+        if scene.background.plugin_id == COMPILED_RAINBOW_PLUGIN_ID:
+            luminance = quantize_q8_8(
+                resolved.profile.luminance_scale,
+                name="luminance_scale",
+                maximum=Q8_8_ONE,
+            )
+            base = render_compiled_rainbow_preview(
+                scene_time_us,
+                scene.background.resolved_parameters,
+                strip_count=self.controller.strip_count,
+                leds_per_strip=self.controller.leds_per_strip,
+                luminance_q8_8=luminance,
+            )
+        else:
+            managed = self._receiver_native_resolved or self._resolve_managed_native(
+                scene.background
+            )
+            frames = self._managed_native_preview_frames(managed)
+            preview = managed.verified.manifest["preview"]
+            duration_us = max(1, int(preview["duration_ms"])) * 1_000
+            frame_index = int(scene_time_us // duration_us) % len(frames)
+            base = frames[frame_index]
         return self._source_over_receiver_preview(base, foreground.pixels)
+
+    def _managed_native_preview_frames(
+        self, resolved: ResolvedNativeBackground
+    ) -> tuple[np.ndarray, ...]:
+        """Decode the signed build-time preview without executing target code."""
+
+        cached = self._receiver_native_preview_cache.get(resolved.bundle_digest)
+        if cached is not None:
+            return cached
+        frames = []
+        with Image.open(BytesIO(resolved.verified.preview)) as image:
+            count = int(getattr(image, "n_frames", 1))
+            for index in range(count):
+                image.seek(index)
+                row_major = np.asarray(image.convert("RGB"), dtype=np.uint8)
+                if row_major.shape != (
+                    self.controller.leds_per_strip,
+                    self.controller.strip_count,
+                    3,
+                ):
+                    raise ValueError(
+                        "managed native preview geometry does not match the wall"
+                    )
+                frames.append(
+                    np.ascontiguousarray(row_major.transpose(1, 0, 2)).reshape(
+                        self.controller.total_leds, 3
+                    )
+                )
+        if not frames:
+            raise ValueError("managed native bundle preview contains no frames")
+        result = tuple(frames)
+        if len(self._receiver_native_preview_cache) >= 8:
+            self._receiver_native_preview_cache.pop(
+                next(iter(self._receiver_native_preview_cache))
+            )
+        self._receiver_native_preview_cache[resolved.bundle_digest] = result
+        return result
 
     def _publish_receiver_foreground(
         self,
@@ -1626,7 +1774,17 @@ class AnimationManager:
                     present_at_scene_time_us=scene_time_us,
                 )
                 with self._presentation_io_guard():
-                    accepted = self.controller.update_presentation_context(context)
+                    if self._receiver_native_resolved is not None:
+                        accepted = self.controller.activate_native_background(
+                            self._receiver_native_resolved,
+                            context=context,
+                            parameters=scene.background.resolved_parameters,
+                            installation_profile_digest=(
+                                self._installation_profile_selection.selected_digest
+                            ),
+                        )
+                    else:
+                        accepted = self.controller.update_presentation_context(context)
                 if accepted is False:
                     raise RuntimeError(
                         f"receiver context update for {reason} was not acknowledged"
@@ -1678,6 +1836,10 @@ class AnimationManager:
         self, scene: SceneState, error: Any
     ) -> bool:
         diagnostic = str(error)
+        with self.frame_data_lock:
+            previous_preview = np.asarray(
+                self.current_frame_data, dtype=np.uint8
+            ).copy()
         try:
             snapshot = self._fallback_snapshot(scene)
         except Exception:
@@ -1691,16 +1853,30 @@ class AnimationManager:
             "source_scene_revision": scene.revision,
             "context_revision": self._receiver_context_revision,
         }
+        with self.frame_data_lock:
+            # A receiver-hybrid stop uses the current complete preview as its
+            # one authoritative takeover frame. Seed it with the fallback so
+            # recovery never flashes an intermediate native simulation.
+            self.current_frame_data = snapshot
+        was_receiver_hybrid = self._receiver_hybrid_mode
         self.stop_animation(clear_leds=False)
+        stopped_status = dict(self._receiver_last_status or {})
         self._receiver_last_status = fallback_status
-        try:
-            with self._presentation_io_guard():
-                accepted = self.controller.set_all_pixels(snapshot)
-            if accepted is False:
-                raise RuntimeError("controller rejected complete fallback takeover")
-        except Exception as exc:
-            fallback_status["takeover_error"] = str(exc)
-            return False
+        if was_receiver_hybrid:
+            if stopped_status.get("takeover_error"):
+                fallback_status["takeover_error"] = stopped_status["takeover_error"]
+                with self.frame_data_lock:
+                    self.current_frame_data = previous_preview
+                return False
+        else:
+            try:
+                with self._presentation_io_guard():
+                    accepted = self.controller.set_all_pixels(snapshot)
+                if accepted is False:
+                    raise RuntimeError("controller rejected complete fallback takeover")
+            except Exception as exc:
+                fallback_status["takeover_error"] = str(exc)
+                return False
         with self.frame_data_lock:
             self.current_frame_data = snapshot
         started = self.start_scene(self._known_python_fallback_scene(scene))
@@ -1711,8 +1887,16 @@ class AnimationManager:
         self._receiver_last_status = fallback_status
         return started
 
-    def _start_receiver_hybrid_scene(self, scene: SceneState) -> bool:
-        capability_error = self._receiver_hybrid_capability_error()
+    def _start_receiver_hybrid_scene(
+        self, scene: SceneState, *, adopt: bool = False
+    ) -> bool:
+        if adopt and (self.is_running or self._scene_mode or self.painter_active):
+            print("✗ Receiver-native adoption requires an unowned startup manager")
+            return False
+        managed_native = scene.background.plugin_id != COMPILED_RAINBOW_PLUGIN_ID
+        capability_error = self._receiver_hybrid_capability_error(
+            managed_native=managed_native
+        )
         if capability_error is not None:
             print(f"✗ Receiver hybrid scene rejected: {capability_error}")
             return False
@@ -1722,6 +1906,20 @@ class AnimationManager:
         overlay_component = None
         presentation_taken_over = False
         try:
+            native_resolved = (
+                self._resolve_managed_native(scene.background)
+                if managed_native else None
+            )
+            if native_resolved is not None and not adopt:
+                # Installation is transactional and does not disturb the live
+                # display. Complete it before the manager takes presentation
+                # ownership away from the prior scene.
+                with self._presentation_io_guard():
+                    installation = self.controller.install_native_background(
+                        native_resolved
+                    )
+                if isinstance(installation, dict) and installation.get("error"):
+                    raise RuntimeError(str(installation["error"]))
             if overlay_ref is not None:
                 overlay_class = self.plugin_loader.get_plugin(
                     overlay_ref.component.plugin_id
@@ -1792,6 +1990,7 @@ class AnimationManager:
                 self._receiver_context_revision = context_revision
                 self._receiver_hybrid_error = "starting"
                 self._receiver_fallback_active = False
+                self._receiver_native_resolved = native_resolved
                 self.current_animation = None
                 self.current_animation_name = scene.background.plugin_id
                 self.current_animation_hash = scene.background.bundle_digest
@@ -1800,18 +1999,31 @@ class AnimationManager:
             context = self._receiver_presentation_context(
                 publisher, revision=context_revision, present_at_scene_time_us=0
             )
-            parameters = validate_compiled_rainbow_parameters(
-                scene.background.resolved_parameters
-            )
+            parameters = dict(scene.background.resolved_parameters)
             with self._presentation_io_guard():
-                started = self.controller.start_local_background(
-                    context,
-                    component_id=COMPILED_RAINBOW_COMPONENT_ID,
-                    preferred_cadence_hz=parameters["preferred_cadence_hz"],
-                    common_seed=parameters["common_seed"],
-                )
+                if native_resolved is not None:
+                    operation = (
+                        self.controller.adopt_native_background
+                        if adopt else self.controller.activate_native_background
+                    )
+                    started = operation(
+                        native_resolved,
+                        context=context,
+                        parameters=parameters,
+                        installation_profile_digest=(
+                            self._installation_profile_selection.selected_digest
+                        ),
+                    )
+                else:
+                    parameters = validate_compiled_rainbow_parameters(parameters)
+                    started = self.controller.start_local_background(
+                        context,
+                        component_id=COMPILED_RAINBOW_COMPONENT_ID,
+                        preferred_cadence_hz=parameters["preferred_cadence_hz"],
+                        common_seed=parameters["common_seed"],
+                    )
             if started is False:
-                raise RuntimeError("receiver local background start was not acknowledged")
+                raise RuntimeError("receiver-native background start was not acknowledged")
             self._receiver_context = context
             foreground = self._render_receiver_foreground(
                 now=self.start_time, force_refresh=True
@@ -2000,6 +2212,68 @@ class AnimationManager:
             traceback.print_exc()
             return False
 
+    def adopt_scene(self, scene_payload: Any) -> bool:
+        """Adopt unanimous retained native state without mutating receivers."""
+
+        try:
+            scene = self._resolve_scene_state(scene_payload)
+        except (TypeError, ValueError) as exc:
+            print(f"✗ Invalid retained scene: {exc}")
+            return False
+        if scene.background.provider is not ComponentProvider.RECEIVER_NATIVE:
+            return self.start_scene(scene)
+        if scene.background.plugin_id == COMPILED_RAINBOW_PLUGIN_ID:
+            # The static Phase 3 background has no durable adoption contract.
+            return self.start_scene(scene)
+        return self._start_receiver_hybrid_scene(scene, adopt=True)
+
+    def recover_receiver_native(self) -> bool:
+        """Replace an active native scene with its recorded Python fallback."""
+
+        with self._scene_state_guard():
+            scene = self._active_scene_state
+            managed = self._receiver_native_resolved is not None
+        if not managed or scene is None:
+            return False
+        return self._activate_known_python_fallback(
+            scene, "explicit receiver-native recovery"
+        )
+
+    def probe_native_background(self, bundle_digest: str) -> Dict[str, Any]:
+        if self._native_background_library is None:
+            raise ValueError("managed receiver-native library is unavailable")
+        resolved = self._native_background_library.resolve(bundle_digest)
+        prober = getattr(self.controller, "probe_native_background", None)
+        if not callable(prober):
+            raise RuntimeError("controller cannot probe receiver-native bundles")
+        return dict(prober(resolved))
+
+    def install_native_background(self, bundle_digest: str) -> Dict[str, Any]:
+        if self._native_background_library is None:
+            raise ValueError("managed receiver-native library is unavailable")
+        resolved = self._native_background_library.resolve(bundle_digest)
+        installer = getattr(self.controller, "install_native_background", None)
+        if not callable(installer):
+            raise RuntimeError("controller cannot install receiver-native bundles")
+        return dict(installer(resolved))
+
+    def clear_native_background_quarantine(
+        self, bundle_digest: str
+    ) -> Dict[str, Any]:
+        """Clear one exact managed payload quarantine across the full roster."""
+
+        if self._native_background_library is None:
+            raise ValueError("managed receiver-native library is unavailable")
+        resolved = self._native_background_library.resolve(bundle_digest)
+        clearer = getattr(
+            self.controller, "clear_native_background_quarantine", None
+        )
+        if not callable(clearer):
+            raise RuntimeError(
+                "controller cannot clear receiver-native quarantine"
+            )
+        return dict(clearer(resolved))
+
     def _clear_scene_state(self) -> None:
         self._scene_mode = False
         self._scene_background = None
@@ -2016,6 +2290,7 @@ class AnimationManager:
         self._receiver_foreground_presentation_state = self._empty_presentation_state()
         self._receiver_hybrid_error = None
         self._receiver_fallback_active = False
+        self._receiver_native_resolved = None
         self.current_animation = None
         self.current_animation_name = None
         self.current_animation_hash = None
@@ -2139,6 +2414,7 @@ class AnimationManager:
         """Stop current animation or painter mode output."""
         had_output = self.is_running or self.painter_active or self._scene_mode
         receiver_takeover = False
+        takeover_failed = False
 
         if self.is_running or self._scene_mode:
             with self._run_state_guard():
@@ -2161,6 +2437,7 @@ class AnimationManager:
                     background = self._scene_background
                     publisher = self._receiver_sparse_publisher
                     was_receiver_hybrid = self._receiver_hybrid_mode
+                    was_managed_native = self._receiver_native_resolved is not None
                     receiver_scene = self._active_scene_state
                     try:
                         self._cleanup_scene_component(overlay)
@@ -2195,14 +2472,36 @@ class AnimationManager:
                             )
                         try:
                             with self._presentation_io_guard():
-                                accepted = self.controller.set_all_pixels(takeover_frame)
+                                if (
+                                    was_managed_native
+                                    and callable(getattr(
+                                        self.controller,
+                                        "recover_native_background_to_host",
+                                        None,
+                                    ))
+                                ):
+                                    accepted = self.controller.recover_native_background_to_host(
+                                        takeover_frame
+                                    )
+                                else:
+                                    accepted = self.controller.set_all_pixels(takeover_frame)
                             receiver_takeover = accepted is not False
                             if not receiver_takeover:
                                 raise RuntimeError(
                                     "controller rejected complete host takeover"
                                 )
+                            status = dict(self._receiver_last_status or {})
+                            status.pop("takeover_error", None)
+                            status.update({
+                                "healthy": False,
+                                "fallback_active": False,
+                                "error": None,
+                                "operation": "host_takeover",
+                            })
+                            self._receiver_last_status = status
                         except Exception as exc:
-                            receiver_takeover = True
+                            receiver_takeover = False
+                            takeover_failed = True
                             status = dict(self._receiver_last_status or {})
                             status.update({
                                 "healthy": False,
@@ -2210,7 +2509,19 @@ class AnimationManager:
                                 "takeover_error": str(exc),
                             })
                             self._receiver_last_status = status
-                    self._clear_scene_state()
+                            self._receiver_hybrid_error = (
+                                f"complete host takeover failed: {exc}"
+                            )
+                    if takeover_failed:
+                        # Keep the authoritative native binding and scene until
+                        # a later verified complete-frame reclaim succeeds. The
+                        # sparse publisher/runtime overlay are already stopped,
+                        # so retained state is diagnostic and recovery authority,
+                        # not a claim that the foreground remains healthy.
+                        self._scene_overlay = None
+                        self._receiver_sparse_publisher = None
+                    else:
+                        self._clear_scene_state()
             else:
                 # Stateful compatibility animations handle their own threads.
                 if self.current_animation:
@@ -2221,10 +2532,14 @@ class AnimationManager:
                 self.current_animation_name = None
                 self.current_preset = None
             self.frame_timestamps.clear()
-            with self.frame_data_lock:
-                self.current_frame_data = []
+            if not takeover_failed:
+                with self.frame_data_lock:
+                    self.current_frame_data = []
 
-            print("✓ Animation stopped")
+            if takeover_failed:
+                print("✗ Animation stop retained degraded receiver-native ownership")
+            else:
+                print("✓ Animation stopped")
 
         if self.painter_active:
             self.painter_active = False
@@ -2235,11 +2550,13 @@ class AnimationManager:
                 self.current_frame_data = []
             print("✓ Painter mode stopped")
 
-        self.current_animation_hash = None
+        if not takeover_failed:
+            self.current_animation_hash = None
 
-        if clear_leds and had_output and not receiver_takeover:
+        if clear_leds and had_output and not receiver_takeover and not takeover_failed:
             with self._presentation_io_guard():
                 self.controller.clear()
+        return not takeover_failed
     
     def update_animation_parameters(self, params: Dict[str, Any]) -> bool:
         """Update current animation parameters in real-time"""
@@ -2326,8 +2643,7 @@ class AnimationManager:
     def stop_scene(self, clear_leds: bool = True) -> bool:
         if not self._scene_mode:
             return False
-        self.stop_animation(clear_leds=clear_leds)
-        return True
+        return bool(self.stop_animation(clear_leds=clear_leds))
 
     def _update_receiver_hybrid_component(
         self,
@@ -2351,7 +2667,12 @@ class AnimationManager:
                 if target == "background":
                     resolved = dict(scene.background.resolved_parameters)
                     resolved.update(requested)
-                    resolved = validate_compiled_rainbow_parameters(resolved)
+                    if self._receiver_native_resolved is None:
+                        resolved = validate_compiled_rainbow_parameters(resolved)
+                    else:
+                        resolved = self.plugin_loader.validate_component_parameters(
+                            scene.background.plugin_id, resolved
+                        )
                     overrides = dict(scene.background.parameter_overrides)
                     overrides.update(requested)
                     background = ComponentRef(
@@ -2371,10 +2692,15 @@ class AnimationManager:
                         scene.known_python_fallback,
                     ))
                     with self._presentation_io_guard():
-                        accepted = self.controller.update_local_background_params(
-                            preferred_cadence_hz=resolved["preferred_cadence_hz"],
-                            common_seed=resolved["common_seed"],
-                        )
+                        if self._receiver_native_resolved is None:
+                            accepted = self.controller.update_local_background_params(
+                                preferred_cadence_hz=resolved["preferred_cadence_hz"],
+                                common_seed=resolved["common_seed"],
+                            )
+                        else:
+                            accepted = self.controller.update_native_background_parameters(
+                                resolved
+                            )
                     if accepted is False:
                         raise RuntimeError(
                             "receiver local background parameter update was not acknowledged"
@@ -3058,7 +3384,14 @@ class AnimationManager:
         else:
             status['interaction_types'] = []
             if self._receiver_hybrid_mode and self._scene_background:
-                descriptor = receiver_static_component_descriptor(self.feature_flags)
+                if self._receiver_native_resolved is None:
+                    descriptor = receiver_static_component_descriptor(self.feature_flags)
+                else:
+                    descriptor = self._bind_managed_native_descriptor(
+                        self.plugin_loader.get_component_descriptor(
+                            self._scene_background['name']
+                        ) or {}
+                    )
                 if descriptor is not None:
                     status['animation_info'] = {
                         **descriptor,
@@ -3103,7 +3436,12 @@ class AnimationManager:
             try:
                 stats = getter()
                 aggregate = stats.get("aggregate", {}) if isinstance(stats, dict) else {}
-                candidate = aggregate.get("local_background", {})
+                candidate = aggregate.get(
+                    "native_background"
+                    if self._receiver_native_resolved is not None
+                    else "local_background",
+                    {},
+                )
                 if isinstance(candidate, dict):
                     driver_status = dict(candidate)
             except Exception as exc:
@@ -3114,12 +3452,41 @@ class AnimationManager:
             and self._receiver_hybrid_error is None
             and not self._receiver_fallback_active
         )
+        managed_native = self._receiver_native_resolved is not None
+        native_roster_complete = True
+        native_readable_devices: list[int] = []
+        if managed_native:
+            report = driver_status.get("capability_report")
+            devices = report.get("devices") if isinstance(report, dict) else None
+            expected = {
+                receiver_id: (
+                    self.controller.receiver_strip_counts[receiver_id],
+                    self.controller.receiver_global_strip_offsets[receiver_id],
+                )
+                for receiver_id in range(int(self.controller.num_devices))
+            } if all(hasattr(self.controller, name) for name in (
+                "receiver_strip_counts",
+                "receiver_global_strip_offsets",
+                "num_devices",
+            )) else {}
+            observed = {
+                item.get("logical_device"): (
+                    item.get("local_strip_count"), item.get("global_strip_offset")
+                )
+                for item in devices or () if isinstance(item, dict)
+            }
+            native_roster_complete = bool(expected and observed == expected)
+            native_readable_devices = sorted(
+                key for key in observed if isinstance(key, int)
+            )
         operational = bool(
             transport_operational
             and driver_status.get("operational", True)
+            and native_roster_complete
         )
         telemetry_complete = bool(
             driver_status.get("telemetry_complete", True)
+            and native_roster_complete
         )
         degraded = bool(
             driver_status.get("degraded", False) or not telemetry_complete
@@ -3139,10 +3506,17 @@ class AnimationManager:
                 "transport_policy", "strict_all_readable_v1"
             ),
             "readable_devices": list(
-                driver_status.get("readable_devices", ())
+                native_readable_devices
+                if managed_native
+                else driver_status.get("readable_devices", ())
             ),
             "unverified_devices": list(
-                driver_status.get("unverified_devices", ())
+                (
+                    sorted(set(range(int(getattr(self.controller, "num_devices", 0))))
+                           - set(native_readable_devices))
+                    if managed_native
+                    else driver_status.get("unverified_devices", ())
+                )
             ),
             "fallback_active": self._receiver_fallback_active,
             "error": self._receiver_hybrid_error,
@@ -3164,7 +3538,12 @@ class AnimationManager:
             overlay = self._scene_overlay
             snapshot: Dict[str, Any] = {
                 'provider_mode': (
-                    'receiver_hybrid' if self._receiver_hybrid_mode else 'python_host'
+                    (
+                        'receiver_native'
+                        if self._receiver_native_resolved is not None
+                        else 'receiver_hybrid'
+                    )
+                    if self._receiver_hybrid_mode else 'python_host'
                 ),
                 'background': {
                     'name': background['name'],

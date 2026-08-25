@@ -39,13 +39,13 @@ from tools.fixtures.generate_installation_profile_golden import (
 ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_PATH = ROOT / "tests" / "fixtures" / "installation_profile_v1.bin"
 PROFILE_DIGEST = (
-    "cc7a21b2e5a630af74424d2b1a1fd960"
-    "a6bf8f68463077025b7286938755acea"
+    "ce457a14efd131395507c449f35a7701"
+    "ca78ddca059620dc3757806ef553ca6a"
 )
 
 
 class _Controller:
-    strip_count = 32
+    strip_count = 33
     leds_per_strip = 138
     total_leds = strip_count * leds_per_strip
     debug = False
@@ -96,10 +96,10 @@ def _context(
         scaled_elapsed=2.0,
         frame_index=frame_index,
         scene_epoch=7,
-        global_width=32,
+        global_width=33,
         height=138,
         local_strip_offset=0,
-        local_width=32,
+        local_width=33,
         vibe_id=vibe_id,
         vibe_profile_version=1,
         palette_roles={},
@@ -207,14 +207,15 @@ class InstallationProfileRuntimeTests(unittest.TestCase):
         ):
             with self.subTest(legacy_field=field):
                 np.testing.assert_array_equal(
-                    getattr(geometry, field), getattr(legacy, field)
+                    getattr(geometry, field)[:32], getattr(legacy, field)
                 )
         self.assertEqual(geometry.foliage_count, legacy.foliage_count)
         self.assertEqual(geometry.globe_count, legacy.globe_count)
         self.assertEqual(geometry.globe_regions, legacy.globe_regions)
         for name in GLOBE_REGION_ORDER:
             np.testing.assert_array_equal(
-                geometry.globe_region_masks[name], legacy.globe_region_masks[name]
+                geometry.globe_region_masks[name][:32],
+                legacy.globe_region_masks[name],
             )
 
     def test_every_runtime_geometry_array_is_non_writeable(self) -> None:
@@ -287,7 +288,7 @@ class InstallationProfileRuntimeTests(unittest.TestCase):
             replace(view, topology=object())
         with self.assertRaises(TypeError):
             replace(view, plant_masks=object())
-        with self.assertRaisesRegex(InstallationProfileRuntimeError, "global 32x138"):
+        with self.assertRaisesRegex(InstallationProfileRuntimeError, "global 33x138"):
             replace(view, global_width=31)
         with self.assertRaises(TypeError):
             InstallationProfileSelection(library=object())
@@ -300,7 +301,6 @@ class InstallationProfileRuntimeTests(unittest.TestCase):
     def test_selection_is_idempotent_and_failure_is_atomic(self) -> None:
         selection = self.selection()
         self.assertTrue(selection.select(PROFILE_DIGEST))
-        first = selection.view
         self.assertEqual(selection.revision, 1)
         prior = (
             selection.selected_digest,
@@ -370,6 +370,7 @@ class InstallationProfileRuntimeTests(unittest.TestCase):
             (
                 INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.physical_lane_order,
                 INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.reverse_native_strips_by_logical_receiver,
+                INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.strip_counts_by_logical_receiver,
             ),
         )
         json.dumps(installed.status())
@@ -377,16 +378,20 @@ class InstallationProfileRuntimeTests(unittest.TestCase):
     def test_transport_and_host_direction_are_inert_but_semantic_topology_is_not(self) -> None:
         base = INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
         inert = InstallationProfileTopology(
-            logical_to_transport_routes=((4, 0), (4, 1), (5, 0), (5, 1)),
+            logical_to_transport_routes=(
+                (4, 0), (4, 1), (5, 0), (5, 1), (5, 2)
+            ),
             physical_lane_order=base.physical_lane_order,
-            reverse_host_strips_by_logical_receiver=(True, True, False, False),
+            reverse_host_strips_by_logical_receiver=(
+                True, True, False, False, True
+            ),
             reverse_native_strips_by_logical_receiver=(
                 base.reverse_native_strips_by_logical_receiver
             ),
         )
         changed_lane = InstallationProfileTopology(
             logical_to_transport_routes=base.logical_to_transport_routes,
-            physical_lane_order=(0, 1, 2, 3),
+            physical_lane_order=(0, 1, 2, 3, 4),
             reverse_host_strips_by_logical_receiver=(
                 base.reverse_host_strips_by_logical_receiver
             ),
@@ -400,7 +405,7 @@ class InstallationProfileRuntimeTests(unittest.TestCase):
             reverse_host_strips_by_logical_receiver=(
                 base.reverse_host_strips_by_logical_receiver
             ),
-            reverse_native_strips_by_logical_receiver=(False, False, False, False),
+            reverse_native_strips_by_logical_receiver=(False,) * 5,
         )
         views = []
         for topology in (base, inert, changed_lane, changed_native):
@@ -471,7 +476,7 @@ class InstallationProfileRuntimeTests(unittest.TestCase):
         view = self.selected_view()
         first = _context(view, frame_index=1)
         animation.set_presentation_context(first)
-        animation._framework_modifier_cached_frame = np.zeros((32 * 138, 3), np.uint8)
+        animation._framework_modifier_cached_frame = np.zeros((33 * 138, 3), np.uint8)
         cached_legacy = animation._plant_mask_cache.get()
         authored = animation.authored_params_snapshot()
         semantic = deepcopy(animation.semantic_state)
@@ -528,7 +533,7 @@ class InstallationProfileRuntimeTests(unittest.TestCase):
         )
         view = self.selected_view()
         animation.set_presentation_context(_context(view))
-        source = np.tile(np.asarray((240, 30, 10), dtype=np.uint8), (32 * 138, 1))
+        source = np.tile(np.asarray((240, 30, 10), dtype=np.uint8), (33 * 138, 1))
         shifted = animation.apply_framework_plant_modifiers(source)
         changed = np.any(shifted != source, axis=1)
         np.testing.assert_array_equal(changed, view.plant_masks.obstacle_flat)

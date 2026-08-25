@@ -128,6 +128,8 @@
         "board_index": 0,
         "end_flat_index": 1104,
         "global_strip_offset": 0,
+        "local_strip_count": 8,
+        "logical_receiver_id": 0,
         "pixel_count": 1104,
         "start_flat_index": 0
       },
@@ -135,6 +137,8 @@
         "board_index": 1,
         "end_flat_index": 2208,
         "global_strip_offset": 8,
+        "local_strip_count": 8,
+        "logical_receiver_id": 1,
         "pixel_count": 1104,
         "start_flat_index": 1104
       },
@@ -142,6 +146,8 @@
         "board_index": 2,
         "end_flat_index": 3312,
         "global_strip_offset": 16,
+        "local_strip_count": 8,
+        "logical_receiver_id": 3,
         "pixel_count": 1104,
         "start_flat_index": 2208
       },
@@ -149,28 +155,52 @@
         "board_index": 3,
         "end_flat_index": 4416,
         "global_strip_offset": 24,
+        "local_strip_count": 8,
+        "logical_receiver_id": 2,
         "pixel_count": 1104,
         "start_flat_index": 3312
+      },
+      {
+        "board_index": 4,
+        "end_flat_index": 4554,
+        "global_strip_offset": 32,
+        "local_strip_count": 1,
+        "logical_receiver_id": 4,
+        "pixel_count": 138,
+        "start_flat_index": 4416
       }
     ],
-    "global_strips": 32,
+    "global_strips": 33,
     "leds_per_strip": 138,
-    "strips_per_board": 8
+    "physical_receiver_order": [
+      0,
+      1,
+      3,
+      2,
+      4
+    ],
+    "receiver_strip_counts": [
+      8,
+      8,
+      8,
+      8,
+      1
+    ]
   },
   "canvas_to_logical_vectors": [
     {
       "canvas_column": 0,
       "canvas_row": 0,
       "expected_global_index": 0,
-      "global_strips": 32,
+      "global_strips": 33,
       "id": "canvas_top_left",
       "leds_per_strip": 138
     },
     {
-      "canvas_column": 31,
+      "canvas_column": 32,
       "canvas_row": 0,
-      "expected_global_index": 4278,
-      "global_strips": 32,
+      "expected_global_index": 4416,
+      "global_strips": 33,
       "id": "canvas_first_row_last_strip",
       "leds_per_strip": 138
     },
@@ -178,15 +208,15 @@
       "canvas_column": 0,
       "canvas_row": 137,
       "expected_global_index": 137,
-      "global_strips": 32,
+      "global_strips": 33,
       "id": "canvas_last_row_first_strip",
       "leds_per_strip": 138
     },
     {
-      "canvas_column": 31,
+      "canvas_column": 32,
       "canvas_row": 137,
-      "expected_global_index": 4415,
-      "global_strips": 32,
+      "expected_global_index": 4553,
+      "global_strips": 33,
       "id": "canvas_bottom_right",
       "leds_per_strip": 138
     },
@@ -194,7 +224,7 @@
       "canvas_column": 18,
       "canvas_row": 73,
       "expected_global_index": 2557,
-      "global_strips": 32,
+      "global_strips": 33,
       "id": "canvas_interior",
       "leds_per_strip": 138
     }
@@ -205,7 +235,7 @@
       "expected_local_index": 0,
       "global_strip": 0,
       "global_strip_offset": 0,
-      "global_strips": 32,
+      "global_strips": 33,
       "global_valid": true,
       "id": "wall_origin",
       "led": 0,
@@ -218,9 +248,9 @@
       "expected_local_index": 1103,
       "global_strip": 7,
       "global_strip_offset": 0,
-      "global_strips": 32,
+      "global_strips": 33,
       "global_valid": true,
-      "id": "board_0_last",
+      "id": "receiver_0_last",
       "led": 137,
       "leds_per_strip": 138,
       "local_strips": 8,
@@ -231,9 +261,9 @@
       "expected_local_index": 0,
       "global_strip": 8,
       "global_strip_offset": 8,
-      "global_strips": 32,
+      "global_strips": 33,
       "global_valid": true,
-      "id": "board_1_first",
+      "id": "receiver_1_first",
       "led": 0,
       "leds_per_strip": 138,
       "local_strips": 8,
@@ -244,9 +274,9 @@
       "expected_local_index": 1103,
       "global_strip": 15,
       "global_strip_offset": 8,
-      "global_strips": 32,
+      "global_strips": 33,
       "global_valid": true,
-      "id": "board_1_last",
+      "id": "receiver_1_last",
       "led": 137,
       "leds_per_strip": 138,
       "local_strips": 8,
@@ -257,9 +287,9 @@
       "expected_local_index": 0,
       "global_strip": 16,
       "global_strip_offset": 16,
-      "global_strips": 32,
+      "global_strips": 33,
       "global_valid": true,
-      "id": "board_2_first",
+      "id": "receiver_2_first",
       "led": 0,
       "leds_per_strip": 138,
       "local_strips": 8,
@@ -270,9 +300,9 @@
       "expected_local_index": 1103,
       "global_strip": 23,
       "global_strip_offset": 16,
-      "global_strips": 32,
+      "global_strips": 33,
       "global_valid": true,
-      "id": "board_2_last",
+      "id": "receiver_2_last",
       "led": 137,
       "leds_per_strip": 138,
       "local_strips": 8,
@@ -283,9 +313,9 @@
       "expected_local_index": 0,
       "global_strip": 24,
       "global_strip_offset": 24,
-      "global_strips": 32,
+      "global_strips": 33,
       "global_valid": true,
-      "id": "board_3_first",
+      "id": "receiver_3_first",
       "led": 0,
       "leds_per_strip": 138,
       "local_strips": 8,
@@ -296,12 +326,38 @@
       "expected_local_index": 1103,
       "global_strip": 31,
       "global_strip_offset": 24,
-      "global_strips": 32,
+      "global_strips": 33,
+      "global_valid": true,
+      "id": "receiver_3_last",
+      "led": 137,
+      "leds_per_strip": 138,
+      "local_strips": 8,
+      "valid": true
+    },
+    {
+      "expected_global_index": 4416,
+      "expected_local_index": 0,
+      "global_strip": 32,
+      "global_strip_offset": 32,
+      "global_strips": 33,
+      "global_valid": true,
+      "id": "tail_first",
+      "led": 0,
+      "leds_per_strip": 138,
+      "local_strips": 1,
+      "valid": true
+    },
+    {
+      "expected_global_index": 4553,
+      "expected_local_index": 137,
+      "global_strip": 32,
+      "global_strip_offset": 32,
+      "global_strips": 33,
       "global_valid": true,
       "id": "wall_last",
       "led": 137,
       "leds_per_strip": 138,
-      "local_strips": 8,
+      "local_strips": 1,
       "valid": true
     },
     {
@@ -309,7 +365,7 @@
       "expected_local_index": null,
       "global_strip": 7,
       "global_strip_offset": 8,
-      "global_strips": 32,
+      "global_strips": 33,
       "global_valid": true,
       "id": "before_local_offset",
       "led": 137,
@@ -322,7 +378,7 @@
       "expected_local_index": null,
       "global_strip": 16,
       "global_strip_offset": 8,
-      "global_strips": 32,
+      "global_strips": 33,
       "global_valid": true,
       "id": "after_local_range",
       "led": 0,
@@ -333,9 +389,22 @@
     {
       "expected_global_index": null,
       "expected_local_index": null,
+      "global_strip": 33,
+      "global_strip_offset": 32,
+      "global_strips": 33,
+      "global_valid": false,
+      "id": "after_tail_range",
+      "led": 0,
+      "leds_per_strip": 138,
+      "local_strips": 1,
+      "valid": false
+    },
+    {
+      "expected_global_index": null,
+      "expected_local_index": null,
       "global_strip": 24,
       "global_strip_offset": 24,
-      "global_strips": 32,
+      "global_strips": 33,
       "global_valid": false,
       "id": "led_out_of_range",
       "led": 138,
@@ -346,9 +415,9 @@
     {
       "expected_global_index": null,
       "expected_local_index": null,
-      "global_strip": 32,
+      "global_strip": 33,
       "global_strip_offset": 24,
-      "global_strips": 32,
+      "global_strips": 33,
       "global_valid": false,
       "id": "strip_out_of_range",
       "led": 0,
@@ -1429,6 +1498,21 @@
       {
         "expected_slices": [
           {
+            "board_index": 4,
+            "global_end": 4554,
+            "global_start": 4416,
+            "local_end": 138,
+            "local_start": 0,
+            "source_offset": 0
+          }
+        ],
+        "global_end": 4554,
+        "global_start": 4416,
+        "id": "receiver_4_tail_full"
+      },
+      {
+        "expected_slices": [
+          {
             "board_index": 0,
             "global_end": 1104,
             "global_start": 1103,
@@ -1498,6 +1582,29 @@
       {
         "expected_slices": [
           {
+            "board_index": 3,
+            "global_end": 4416,
+            "global_start": 4415,
+            "local_end": 1104,
+            "local_start": 1103,
+            "source_offset": 0
+          },
+          {
+            "board_index": 4,
+            "global_end": 4417,
+            "global_start": 4416,
+            "local_end": 1,
+            "local_start": 0,
+            "source_offset": 1
+          }
+        ],
+        "global_end": 4417,
+        "global_start": 4415,
+        "id": "boundary_3_to_tail"
+      },
+      {
+        "expected_slices": [
+          {
             "board_index": 0,
             "global_end": 1104,
             "global_start": 0,
@@ -1528,9 +1635,17 @@
             "local_end": 1104,
             "local_start": 0,
             "source_offset": 3312
+          },
+          {
+            "board_index": 4,
+            "global_end": 4554,
+            "global_start": 4416,
+            "local_end": 138,
+            "local_start": 0,
+            "source_offset": 4416
           }
         ],
-        "global_end": 4416,
+        "global_end": 4554,
         "global_start": 0,
         "id": "whole_wall"
       }

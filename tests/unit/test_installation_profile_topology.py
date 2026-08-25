@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from animation.core.installation_profile import (
+    GLOBAL_STRIP_COUNT,
     InstallationProfile,
     SECTION_NAMES,
     decode_installation_profile,
@@ -16,6 +17,8 @@ from animation.core.installation_profile_topology import (
     INSTALLED_INSTALLATION_PROFILE_TOPOLOGY,
     InstallationProfileTopology,
     InstallationProfileTopologyError,
+    RECEIVER_COUNT,
+    RECEIVER_STRIP_COUNTS,
     reassemble_installation_profile,
     slice_installation_profile,
 )
@@ -29,15 +32,19 @@ class InstallationProfileTopologyTests(unittest.TestCase):
     @staticmethod
     def topology(**overrides: object) -> InstallationProfileTopology:
         values: dict[str, object] = {
-            "logical_to_transport_routes": ((0, 0), (0, 1), (1, 0), (1, 1)),
-            "physical_lane_order": (0, 1, 2, 3),
+            "logical_to_transport_routes": (
+                (0, 0), (0, 1), (1, 0), (1, 1), (1, 2)
+            ),
+            "physical_lane_order": (0, 1, 2, 3, 4),
             "reverse_host_strips_by_logical_receiver": (
+                False,
                 False,
                 False,
                 False,
                 False,
             ),
             "reverse_native_strips_by_logical_receiver": (
+                False,
                 False,
                 False,
                 False,
@@ -49,10 +56,10 @@ class InstallationProfileTopologyTests(unittest.TestCase):
 
     @staticmethod
     def canonical_profile() -> InstallationProfile:
-        rows = np.arange(32, dtype=np.uint16)[:, None]
+        rows = np.arange(GLOBAL_STRIP_COUNT, dtype=np.uint16)[:, None]
         columns = np.arange(138, dtype=np.uint16)[None, :]
         category = ((rows + columns) % 3).astype(np.uint8)
-        globe_region = np.zeros((32, 138), dtype=np.uint8)
+        globe_region = np.zeros((GLOBAL_STRIP_COUNT, 138), dtype=np.uint8)
         globe_region[category == 2] = (
             ((rows + columns) % 7 + 1)[category == 2]
         ).astype(np.uint8)
@@ -64,10 +71,10 @@ class InstallationProfileTopologyTests(unittest.TestCase):
             (rows * 17 + columns * 3) % 255 + 1,
         ).astype(np.uint8)
         return InstallationProfile(
-            global_strip_count=32,
+            global_strip_count=GLOBAL_STRIP_COUNT,
             leds_per_strip=138,
             strip_origin=0,
-            strip_count=32,
+            strip_count=GLOBAL_STRIP_COUNT,
             clearance_radius=1,
             calibration_digest=bytes(range(32)),
             reversed_strip_order=False,
@@ -137,41 +144,47 @@ class InstallationProfileTopologyTests(unittest.TestCase):
     def test_identity_and_installed_topologies_match_frozen_coordinate_domains(self):
         self.assertEqual(
             IDENTITY_INSTALLATION_PROFILE_TOPOLOGY.physical_lane_order,
-            (0, 1, 2, 3),
+            (0, 1, 2, 3, 4),
         )
         self.assertEqual(
             INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.logical_to_transport_routes,
-            ((0, 0), (0, 1), (1, 1), (1, 0)),
+            ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2)),
         )
         self.assertEqual(
             INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.physical_lane_order,
-            (0, 1, 3, 2),
+            (0, 1, 3, 2, 4),
         )
         self.assertEqual(
             INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.reverse_host_strips_by_logical_receiver,
-            (False, False, True, True),
+            (False, False, True, True, False),
         )
         self.assertEqual(
             INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.reverse_native_strips_by_logical_receiver,
-            (False, False, True, True),
+            (False, False, True, True, False),
         )
 
     def test_topology_validation_fails_closed_and_normalizes_sequences(self):
         normalized = self.topology(
-            logical_to_transport_routes=[[0, 0], [0, 1], [1, 0], [1, 1]],
-            physical_lane_order=[3, 2, 1, 0],
-            reverse_host_strips_by_logical_receiver=[True, False, True, False],
-            reverse_native_strips_by_logical_receiver=[False, True, False, True],
+            logical_to_transport_routes=[
+                [0, 0], [0, 1], [1, 0], [1, 1], [1, 2]
+            ],
+            physical_lane_order=[4, 3, 2, 1, 0],
+            reverse_host_strips_by_logical_receiver=[
+                True, False, True, False, True
+            ],
+            reverse_native_strips_by_logical_receiver=[
+                False, True, False, True, False
+            ],
         )
-        self.assertEqual(normalized.physical_lane_order, (3, 2, 1, 0))
+        self.assertEqual(normalized.physical_lane_order, (4, 3, 2, 1, 0))
         self.assertEqual(
             normalized.logical_to_transport_routes,
-            ((0, 0), (0, 1), (1, 0), (1, 1)),
+            ((0, 0), (0, 1), (1, 0), (1, 1), (1, 2)),
         )
 
         invalid_cases = (
-            ({"logical_to_transport_routes": ((0, 0),) * 4}, "unique"),
-            ({"logical_to_transport_routes": ((0, 0), (0, 1), (1, 0))}, "4"),
+            ({"logical_to_transport_routes": ((0, 0),) * 5}, "unique"),
+            ({"logical_to_transport_routes": ((0, 0),) * 4}, "5"),
             (
                 {
                     "logical_to_transport_routes": (
@@ -179,6 +192,7 @@ class InstallationProfileTopologyTests(unittest.TestCase):
                         (0, 1),
                         (1, 0),
                         (-1, 1),
+                        (1, 2),
                     )
                 },
                 "non-negative",
@@ -190,16 +204,17 @@ class InstallationProfileTopologyTests(unittest.TestCase):
                         (0, 1),
                         (1, 0),
                         (True, 1),
+                        (1, 2),
                     )
                 },
                 "integer pair",
             ),
-            ({"physical_lane_order": (0, 1, 2)}, "4"),
-            ({"physical_lane_order": (0, 1, 2, 2)}, "permutation"),
-            ({"physical_lane_order": (0, 1, 2, True)}, "integer"),
+            ({"physical_lane_order": (0, 1, 2, 3)}, "5"),
+            ({"physical_lane_order": (0, 1, 2, 3, 3)}, "permutation"),
+            ({"physical_lane_order": (0, 1, 2, 3, True)}, "integer"),
             (
-                {"reverse_host_strips_by_logical_receiver": (False,) * 3},
-                "4",
+                {"reverse_host_strips_by_logical_receiver": (False,) * 4},
+                "5",
             ),
             (
                 {
@@ -208,6 +223,7 @@ class InstallationProfileTopologyTests(unittest.TestCase):
                         False,
                         False,
                         0,
+                        False,
                     )
                 },
                 "booleans",
@@ -225,16 +241,17 @@ class InstallationProfileTopologyTests(unittest.TestCase):
             source, IDENTITY_INSTALLATION_PROFILE_TOPOLOGY
         )
 
-        self.assertEqual(set(receiver_profiles), {0, 1, 2, 3})
+        self.assertEqual(set(receiver_profiles), set(range(RECEIVER_COUNT)))
         for logical_id, receiver_profile in receiver_profiles.items():
-            start = logical_id * 8
+            start = sum(RECEIVER_STRIP_COUNTS[:logical_id])
+            width = RECEIVER_STRIP_COUNTS[logical_id]
             self.assertEqual(receiver_profile.strip_origin, start)
-            self.assertEqual(receiver_profile.strip_count, 8)
+            self.assertEqual(receiver_profile.strip_count, width)
             self.assertFalse(receiver_profile.reversed_strip_order)
             for name in SECTION_NAMES:
                 np.testing.assert_array_equal(
                     getattr(receiver_profile, name),
-                    getattr(source, name)[start:start + 8],
+                    getattr(source, name)[start:start + width],
                     err_msg=f"logical={logical_id}, section={name}",
                 )
                 self.assertFalse(
@@ -249,7 +266,7 @@ class InstallationProfileTopologyTests(unittest.TestCase):
         source = self.canonical_profile()
         topology = INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
         receiver_profiles = slice_installation_profile(source, topology)
-        expected_origins = (0, 8, 24, 16)
+        expected_origins = (0, 8, 24, 16, 32)
 
         for logical_id, receiver_profile in receiver_profiles.items():
             start = expected_origins[logical_id]
@@ -257,7 +274,9 @@ class InstallationProfileTopologyTests(unittest.TestCase):
             self.assertEqual(receiver_profile.strip_origin, start)
             self.assertIs(receiver_profile.reversed_strip_order, reversed_order)
             for name in SECTION_NAMES:
-                expected = getattr(source, name)[start:start + 8]
+                expected = getattr(source, name)[
+                    start:start + RECEIVER_STRIP_COUNTS[logical_id]
+                ]
                 if reversed_order:
                     expected = expected[::-1]
                 np.testing.assert_array_equal(
@@ -287,19 +306,25 @@ class InstallationProfileTopologyTests(unittest.TestCase):
     def test_transport_routes_and_host_reversal_are_inert_profile_metadata(self):
         source = self.canonical_profile()
         baseline = self.topology(
-            physical_lane_order=(0, 1, 3, 2),
-            reverse_native_strips_by_logical_receiver=(False, False, True, True),
+            physical_lane_order=(0, 1, 3, 2, 4),
+            reverse_native_strips_by_logical_receiver=(
+                False, False, True, True, False
+            ),
         )
         unrelated_maps_changed = self.topology(
-            logical_to_transport_routes=((9, 9), (9, 8), (8, 8), (8, 9)),
-            physical_lane_order=(0, 1, 3, 2),
-            reverse_host_strips_by_logical_receiver=(True, True, True, True),
-            reverse_native_strips_by_logical_receiver=(False, False, True, True),
+            logical_to_transport_routes=(
+                (9, 9), (9, 8), (8, 8), (8, 9), (7, 7)
+            ),
+            physical_lane_order=(0, 1, 3, 2, 4),
+            reverse_host_strips_by_logical_receiver=(True,) * RECEIVER_COUNT,
+            reverse_native_strips_by_logical_receiver=(
+                False, False, True, True, False
+            ),
         )
         baseline_slices = slice_installation_profile(source, baseline)
         changed_slices = slice_installation_profile(source, unrelated_maps_changed)
 
-        for logical_id in range(4):
+        for logical_id in range(RECEIVER_COUNT):
             self.assertEqual(
                 encode_installation_profile(changed_slices[logical_id]),
                 encode_installation_profile(baseline_slices[logical_id]),
@@ -310,7 +335,7 @@ class InstallationProfileTopologyTests(unittest.TestCase):
         identity_slices = slice_installation_profile(
             source, IDENTITY_INSTALLATION_PROFILE_TOPOLOGY
         )
-        lane_swap = self.topology(physical_lane_order=(1, 0, 2, 3))
+        lane_swap = self.topology(physical_lane_order=(1, 0, 2, 3, 4))
         lane_slices = slice_installation_profile(source, lane_swap)
         self.assertEqual(lane_slices[0].strip_origin, 8)
         self.assertFalse(lane_slices[0].reversed_strip_order)
@@ -323,7 +348,9 @@ class InstallationProfileTopologyTests(unittest.TestCase):
         )
 
         native_reverse = self.topology(
-            reverse_native_strips_by_logical_receiver=(True, False, False, False)
+            reverse_native_strips_by_logical_receiver=(
+                True, False, False, False, False
+            )
         )
         native_slices = slice_installation_profile(source, native_reverse)
         self.assertEqual(native_slices[0].strip_origin, 0)

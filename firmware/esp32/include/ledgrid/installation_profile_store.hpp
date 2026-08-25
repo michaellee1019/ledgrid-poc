@@ -75,7 +75,12 @@ class InstallationProfileManager {
       bool enabled = LEDGRID_ENABLE_INSTALLATION_PROFILES != 0);
 
   bool begin();
-  void configure_identity(std::uint8_t logical_receiver_id, bool reversed);
+  void configure_identity(
+      std::uint8_t logical_receiver_id, bool reversed,
+      std::uint16_t global_strip_count = kInstallationProfileGlobalStripsV1,
+      std::uint8_t local_strip_count = kInstallationProfileReceiverStripsV1,
+      std::uint16_t leds_per_strip = kInstallationProfileLedsPerStripV1,
+      std::uint16_t global_strip_offset = UINT16_MAX);
   InstallationProfileResult process(
       const std::uint8_t* command, std::size_t size);
   InstallationProfileStatusV1 status() const;
@@ -111,6 +116,10 @@ class InstallationProfileManager {
   std::uint8_t logical_receiver_id_ = 0xFF;
   bool reversed_ = false;
   std::uint16_t expected_origin_ = 0;
+  std::uint16_t expected_global_strips_ = kInstallationProfileGlobalStripsV1;
+  std::uint8_t expected_local_strips_ = kInstallationProfileReceiverStripsV1;
+  std::uint16_t expected_leds_per_strip_ = kInstallationProfileLedsPerStripV1;
+  bool explicit_topology_ = false;
   std::uint16_t transfer_origin_ = 0;
   InstallationProfileLedger ledger_{};
   InstallationProfileViewV1 active_view_{};

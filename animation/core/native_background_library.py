@@ -33,6 +33,9 @@ RECEIPT_FILENAME = "receipt.json"
 LOCK_FILENAME = ".library.lock"
 
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+_UTC_TIMESTAMP_PATTERN = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z"
+)
 _RECEIPT_FIELDS = frozenset(
     {
         "schema_version",
@@ -68,8 +71,13 @@ def _require_non_negative_int(value: object, *, field: str) -> int:
     return value
 
 
-def _require_timestamp(value: object) -> str:
-    if not isinstance(value, str) or not value.endswith("Z"):
+def _parse_utc_timestamp(value: object) -> datetime:
+    """Parse one frozen receipt timestamp into a comparable UTC instant."""
+
+    if (
+        not isinstance(value, str)
+        or _UTC_TIMESTAMP_PATTERN.fullmatch(value) is None
+    ):
         raise NativeBackgroundLibraryError(
             "receipt published_at must be a UTC ISO-8601 timestamp"
         )
@@ -83,6 +91,12 @@ def _require_timestamp(value: object) -> str:
         raise NativeBackgroundLibraryError(
             "receipt published_at must be a UTC ISO-8601 timestamp"
         )
+    return parsed.astimezone(timezone.utc)
+
+
+def _require_timestamp(value: object) -> str:
+    _parse_utc_timestamp(value)
+    assert isinstance(value, str)  # Narrowed by the parser above.
     return value
 
 
@@ -511,6 +525,56 @@ class NativeBackgroundLibrary:
             )
         with self._locked():
             return self._resolve_unlocked(safe_digest)
+
+    def list(self) -> tuple[ResolvedNativeBackground, ...]:
+        """Return every revalidated managed bundle in deterministic order.
+
+        Catalog discovery never trusts directory names or receipts alone. A
+        corrupt entry therefore fails the complete listing instead of quietly
+        presenting a partial library whose apparent "latest" package could
+        differ between processes.
+        """
+
+        if not self.root.exists():
+            return ()
+        with self._locked():
+            entries = []
+            for path in sorted(self.bundles_directory.iterdir(), key=lambda item: item.name):
+                if path.name.startswith("."):
+                    continue
+                digest = _require_digest(path.name, field="managed bundle directory")
+                entries.append(self._resolve_unlocked(digest))
+            return tuple(entries)
+
+    def resolve_package(
+        self, package_id: str, *, bundle_digest: str | None = None
+    ) -> ResolvedNativeBackground:
+        """Resolve an exact package build, or its newest published build."""
+
+        if not isinstance(package_id, str) or not package_id:
+            raise NativeBackgroundLibraryError("native package_id must be non-empty")
+        if bundle_digest is not None:
+            resolved = self.resolve(bundle_digest)
+            if resolved.receipt.package_id != package_id:
+                raise NativeBackgroundNotFoundError(
+                    f"native bundle {bundle_digest} does not provide {package_id}"
+                )
+            return resolved
+        matches = [
+            resolved for resolved in self.list()
+            if resolved.receipt.package_id == package_id
+        ]
+        if not matches:
+            raise NativeBackgroundNotFoundError(
+                f"native background package is not published: {package_id}"
+            )
+        return max(
+            matches,
+            key=lambda resolved: (
+                _parse_utc_timestamp(resolved.receipt.published_at),
+                resolved.receipt.bundle_digest,
+            ),
+        )
 
 
 __all__ = [

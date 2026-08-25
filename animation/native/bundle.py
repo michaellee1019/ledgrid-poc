@@ -53,7 +53,10 @@ def validate_preview_webp(data: bytes, metadata: Mapping[str, Any]) -> None:
         from PIL import Image
         with Image.open(io.BytesIO(data)) as image:
             if image.format != "WEBP" or image.size != (GLOBAL_STRIPS, LEDS_PER_STRIP):
-                raise NativeBundleError("native preview must be an animated 32x138 WebP")
+                raise NativeBundleError(
+                    "native preview must be an animated "
+                    f"{GLOBAL_STRIPS}x{LEDS_PER_STRIP} WebP"
+                )
             if image.n_frames != metadata["frame_count"] or image.n_frames < 2:
                 raise NativeBundleError("native preview frame count does not match its manifest")
             durations: list[int] = []

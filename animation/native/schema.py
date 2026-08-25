@@ -31,6 +31,7 @@ from .constants import (
     PARAMETER_TYPES,
     PAYLOAD_PATH,
     PREVIEW_PATH,
+    RECEIVER_VIEWS,
     TARGET,
     TARGET_IDENTITY_FLAGS,
     HOST_IDENTITY_FLAGS,
@@ -305,12 +306,11 @@ def validate_bundle_manifest(value: Any) -> dict[str, Any]:
         "global_strips": GLOBAL_STRIPS,
         "local_strips": LOCAL_STRIPS,
         "leds_per_strip": LEDS_PER_STRIP,
-        "receiver_offsets": [0, 8, 16, 24],
+        "receiver_offsets": [0, 8, 16, 24, 32],
         "receiver_views": [
-            {"logical_receiver_id": 0, "global_strip_offset": 0, "reverse_local_strip_order": False},
-            {"logical_receiver_id": 1, "global_strip_offset": 8, "reverse_local_strip_order": False},
-            {"logical_receiver_id": 3, "global_strip_offset": 16, "reverse_local_strip_order": True},
-            {"logical_receiver_id": 2, "global_strip_offset": 24, "reverse_local_strip_order": True},
+            {"logical_receiver_id": logical_id, "global_strip_offset": offset,
+             "local_strips": local_strips, "reverse_local_strip_order": reverse}
+            for logical_id, offset, local_strips, reverse in RECEIVER_VIEWS
         ],
     }
     if canonical_json(geometry) != canonical_json(expected_geometry):

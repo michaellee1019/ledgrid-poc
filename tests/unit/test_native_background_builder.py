@@ -85,30 +85,37 @@ class NativeBackgroundBuilderTests(unittest.TestCase):
         self.assertTrue(any(first.frames[0]))
         self.assertEqual(
             RECEIVER_VIEWS,
-            ((0, 0, False), (1, 8, False), (3, 16, True), (2, 24, True)),
+            (
+                (0, 0, 8, False),
+                (1, 8, 8, False),
+                (3, 16, 8, True),
+                (2, 24, 8, True),
+                (4, 32, 1, False),
+            ),
         )
         # Canonical full-frame fingerprints make direction handling observable:
         # ignoring reverse_local_strip_order mirrors lanes 3/2 and changes these.
         self.assertEqual(
             [hashlib.sha256(frame).hexdigest() for frame in first.frames[:3]],
             [
-                "9895446fff5a69dd732355e8512babbb4c1f93f3ff706ade334cf8703f74d3fb",
-                "3365d30d97fb0ef4d797c7a1b6627783646f8c3e60841d05905cb708824dad03",
-                "9bd3096d48a23394752c889cf2dea786df4a37d08033f6689fcef1e136a7e0be",
+                "3b1018e7a5ebaea4b614c4f199da563b2a497c9c2d9cf363615222b0ed05e635",
+                "6d9882177918cd70a002cfab64e2dcb0ea7f158529d90c7c15543ab57ac1e07f",
+                "e3734ed441e2beb4e74381bb70fb8f4806430fafa03e4300404d3b60d27d78af",
             ],
         )
 
         strip_bytes = 138 * 3
         adjacent_mae = []
-        for strip in range(31):
+        for strip in range(32):
             left = first.frames[0][strip * strip_bytes : (strip + 1) * strip_bytes]
             right = first.frames[0][(strip + 1) * strip_bytes : (strip + 2) * strip_bytes]
             adjacent_mae.append(
                 sum(abs(a - b) for a, b in zip(left, right)) / strip_bytes
             )
-        # These indices are the three receiver boundaries after reversing the
-        # installed native strip order for physical lanes 3 and 2.
-        self.assertTrue(all(adjacent_mae[index] < 10.0 for index in (7, 15, 23)))
+        # These indices are the four receiver boundaries after reversing the
+        # installed native strip order for physical lanes 3 and 2. The final
+        # boundary covers the heterogeneous one-strip fifth receiver.
+        self.assertTrue(all(adjacent_mae[index] < 10.0 for index in (7, 15, 23, 31)))
 
     def test_plan_still_enforces_tracked_source_policy(self) -> None:
         root = create_repo()
@@ -150,7 +157,11 @@ class NativeBackgroundBuilderTests(unittest.TestCase):
         marker = "  result->status = LEDGRID_NATIVE_BACKGROUND_OK;"
         self.assertIn(marker, text)
         source.write_text(
-            text.replace(marker, "  request->rgb_output[kOutputBytes] = 0xffU;\n" + marker),
+            text.replace(
+                marker,
+                "  request->rgb_output[request->rgb_output_size] = 0xffU;\n"
+                + marker,
+            ),
             encoding="utf-8",
         )
         subprocess.run(("git", "-C", str(root), "add", str(source)), check=True)

@@ -15,7 +15,6 @@ from .constants import (
     ABI_VERSION,
     GLOBAL_STRIPS,
     LEDS_PER_STRIP,
-    LOCAL_STRIPS,
     MAX_STATE_ALIGNMENT,
     MAX_STATE_BYTES,
     NEUTRAL_PALETTE,
@@ -356,14 +355,14 @@ def run(request: Mapping[str, Any]) -> tuple[dict[str, Any], bytes]:
     missed_deadlines = 0
     _ = helper_keepalive  # Keep Python callback thunks alive through cleanup.
     try:
-        for _lane, offset, reverse in RECEIVER_VIEWS:
+        for _lane, offset, local_strips, reverse in RECEIVER_VIEWS:
             state = GuardedBuffer(api.state_size, alignment=api.state_alignment)
             profile = ProfileView(
                 ctypes.sizeof(ProfileView),
                 GLOBAL_STRIPS,
                 LEDS_PER_STRIP,
                 offset,
-                LOCAL_STRIPS,
+                local_strips,
                 None,
                 0,
                 0,
@@ -374,12 +373,12 @@ def run(request: Mapping[str, Any]) -> tuple[dict[str, Any], bytes]:
                 ABI_VERSION,
                 ctypes.sizeof(Init),
                 GLOBAL_STRIPS,
-                LOCAL_STRIPS,
+                local_strips,
                 LEDS_PER_STRIP,
                 offset,
                 1 if reverse else 0,
                 (ctypes.c_uint8 * 7)(),
-                LOCAL_STRIPS * LEDS_PER_STRIP,
+                local_strips * LEDS_PER_STRIP,
                 0xA17C0A5,
                 0x123456789ABCDEF0,
                 ctypes.pointer(helpers),
@@ -425,7 +424,8 @@ def run(request: Mapping[str, Any]) -> tuple[dict[str, Any], bytes]:
             wall_changed = False
             scene_time_us = scene_times_us[frame_index]
             for device, state in enumerate(states):
-                output = GuardedBuffer(LOCAL_STRIPS * LEDS_PER_STRIP * 3)
+                _lane, offset, local_strips, reverse = RECEIVER_VIEWS[device]
+                output = GuardedBuffer(local_strips * LEDS_PER_STRIP * 3)
                 request_value = RenderRequest(
                     ABI_VERSION,
                     ctypes.sizeof(RenderRequest),
@@ -495,11 +495,10 @@ def run(request: Mapping[str, Any]) -> tuple[dict[str, Any], bytes]:
                         raise RuntimeError(
                             "host render returned unchanged before a complete first frame"
                         )
-                _lane, offset, reverse = RECEIVER_VIEWS[device]
                 strip_bytes = LEDS_PER_STRIP * 3
-                for local_strip in range(LOCAL_STRIPS):
+                for local_strip in range(local_strips):
                     global_strip = offset + (
-                        LOCAL_STRIPS - 1 - local_strip if reverse else local_strip
+                        local_strips - 1 - local_strip if reverse else local_strip
                     )
                     source_start = local_strip * strip_bytes
                     destination_start = global_strip * strip_bytes

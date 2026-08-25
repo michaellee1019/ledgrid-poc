@@ -303,16 +303,7 @@
                             <div class="form-text">Runs automatically if receiver agreement or its foreground lease degrades.</div>
                         </div>
                         <div class="col-md-5" id="sceneReceiverParameters" hidden>
-                            <div class="row g-2">
-                                <div class="col-6">
-                                    <label class="form-label" for="sceneReceiverCadence">Receiver FPS</label>
-                                    <input class="form-control" id="sceneReceiverCadence" type="number" min="1" max="200" value="30">
-                                </div>
-                                <div class="col-6">
-                                    <label class="form-label" for="sceneReceiverSeed">Shared seed</label>
-                                    <input class="form-control" id="sceneReceiverSeed" type="number" min="0" max="4294967295" value="0">
-                                </div>
-                            </div>
+                            <div class="row g-2" id="sceneReceiverParameterControls"></div>
                         </div>
                         {% endif %}
                         <div class="col-12">
@@ -383,9 +374,15 @@
                         <div><dt>Telemetry</dt><dd id="receiverTelemetryState">--</dd></div>
                         <div><dt>Release acceptance</dt><dd id="receiverReleaseAcceptance">--</dd></div>
                         <div><dt>Transport policy</dt><dd id="receiverTransportPolicy">--</dd></div>
+                        <div><dt>Native operation</dt><dd id="receiverNativeOperation">--</dd></div>
+                        <div><dt>Native artifact</dt><dd id="receiverNativeArtifact">--</dd></div>
+                        <div><dt>Native progress</dt><dd id="receiverNativeProgress">--</dd></div>
                         <div><dt>Quarantine reporting</dt><dd id="receiverQuarantineState">Not supported in this phase</dd></div>
                         <div><dt>Agreement context</dt><dd id="receiverHybridDetail">--</dd></div>
                     </dl>
+                    <button class="btn btn-sm btn-outline-warning mt-2" id="receiverNativeRecovery" type="button" onclick="recoverReceiverNative()" hidden>
+                        Recover to recorded Python fallback
+                    </button>
                 </section>
                 {% else %}
                 <div class="small text-muted mt-2" id="sceneCompatibilityHelp" role="status">Only components declaring the matching Python role are selectable. Compatibility full scenes remain in the animation gallery.</div>

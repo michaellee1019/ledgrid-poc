@@ -124,6 +124,27 @@ void test_lane_mask_defaults_to_every_lane() {
   TEST_ASSERT_EQUAL_HEX8(0x01, output[1]);
 }
 
+void test_compact_strip_can_target_an_independent_physical_lane() {
+  const std::uint8_t rgb[] = {0, 0xFF, 0};
+  std::vector<std::uint8_t> output(ledgrid::ws2812_encoded_size(1), 0xA5);
+  constexpr std::uint8_t kPhysicalLane = 0x04;
+  // The real driver owns an eight-lane bus even when the configured logical
+  // receiver width is one strip.
+  TEST_ASSERT_TRUE(ledgrid::initialize_parallel_grb_waveform(
+      8, 1, output.data(), output.size(), ledgrid::kWs2812ResetUs,
+      ledgrid::kWs2812SampleRateHz, kPhysicalLane));
+  const auto result = ledgrid::encode_parallel_grb_pixels(
+      rgb, sizeof(rgb), 1, 1, 255, output.data(), output.size(),
+      ledgrid::kWs2812ResetUs, ledgrid::kWs2812SampleRateHz, kPhysicalLane,
+      ledgrid::kStaggerOff, true);
+  TEST_ASSERT_TRUE(result.ok);
+  for (std::size_t bit = 0; bit < 8; ++bit) {
+    TEST_ASSERT_EQUAL_HEX8(kPhysicalLane, output[bit * 3U]);
+    TEST_ASSERT_EQUAL_HEX8(kPhysicalLane, output[bit * 3U + 1U]);
+    TEST_ASSERT_EQUAL_HEX8(0, output[bit * 3U + 2U]);
+  }
+}
+
 // The waveform the encoder produced before staggering existed: every active
 // lane rises together on the first sample of each symbol, the data lands on
 // the second, and the third is always low. Rebuilt here rather than captured
@@ -518,6 +539,7 @@ int main(int, char**) {
   RUN_TEST(test_optimized_encoder_updates_all_eight_lanes);
   RUN_TEST(test_lane_mask_silences_unselected_lanes);
   RUN_TEST(test_lane_mask_defaults_to_every_lane);
+  RUN_TEST(test_compact_strip_can_target_an_independent_physical_lane);
   RUN_TEST(test_stagger_phase_lanes_partitions_every_lane);
   RUN_TEST(test_stagger_off_reproduces_the_original_waveform);
   RUN_TEST(test_stagger_caps_coincident_rising_edges_at_three);

@@ -6,7 +6,7 @@
 namespace ledgrid {
 
 constexpr std::uint16_t kInstallationProfileFormatV1 = 1;
-constexpr std::uint16_t kInstallationProfileGlobalStripsV1 = 32;
+constexpr std::uint16_t kInstallationProfileGlobalStripsV1 = 33;
 constexpr std::uint16_t kInstallationProfileLedsPerStripV1 = 138;
 constexpr std::uint16_t kInstallationProfileReceiverStripsV1 = 8;
 constexpr std::uint32_t kInstallationProfileReceiverPixelsV1 =
@@ -18,6 +18,12 @@ constexpr std::size_t kInstallationProfileReceiverBytesV1 =
     kInstallationProfileSectionCountV1 *
         kInstallationProfileReceiverPixelsV1;
 constexpr std::size_t kInstallationProfileMaximumBytesV1 = 65535U;
+constexpr std::size_t installation_profile_receiver_bytes_v1(
+    std::uint16_t strip_count, std::uint16_t leds_per_strip) {
+  return 112U + 24U * kInstallationProfileSectionCountV1 +
+         kInstallationProfileSectionCountV1 *
+             static_cast<std::size_t>(strip_count) * leds_per_strip;
+}
 
 enum class InstallationProfileError : std::uint8_t {
   None = 0,
@@ -51,6 +57,9 @@ enum class InstallationProfileError : std::uint8_t {
 struct InstallationProfileReceiverExpectationV1 {
   std::uint16_t strip_origin = 0;
   bool reversed_strip_order = false;
+  std::uint16_t global_strip_count = kInstallationProfileGlobalStripsV1;
+  std::uint16_t strip_count = kInstallationProfileReceiverStripsV1;
+  std::uint16_t leds_per_strip = kInstallationProfileLedsPerStripV1;
 };
 
 // Non-owning, read-only view of validated profile bytes. The caller must keep

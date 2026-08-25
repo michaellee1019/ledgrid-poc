@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -25,6 +25,7 @@ from animation.core.native_background_library import (
     NativeBackgroundLibrary,
     NativeBackgroundLibraryError,
     NativeBackgroundNotFoundError,
+    NativeBackgroundPublishReceipt,
 )
 
 
@@ -139,6 +140,115 @@ class NativeBackgroundLibraryTests(unittest.TestCase):
             [f"{first.payload_digest}.so"],
         )
 
+    def test_list_and_package_resolution_revalidate_complete_entries(self) -> None:
+        first = self.publish(self.first)
+        second = self.publish(self.second)
+        listed = self.library.list()
+        self.assertEqual(
+            {item.bundle_digest for item in listed},
+            {first.bundle_digest, second.bundle_digest},
+        )
+        self.assertEqual(
+            self.library.resolve_package("aurora_curtains_native").bundle_digest,
+            first.bundle_digest,
+        )
+        self.assertEqual(
+            self.library.resolve_package(
+                "aurora_curtains_variant", bundle_digest=second.bundle_digest
+            ).payload_digest,
+            second.payload_digest,
+        )
+        with self.assertRaises(NativeBackgroundNotFoundError):
+            self.library.resolve_package(
+                "aurora_curtains_native", bundle_digest=second.bundle_digest
+            )
+
+    def test_latest_package_orders_parsed_instants_not_iso_text(self) -> None:
+        later = _verified(
+            b"canonical-bundle-fractional",
+            b"fractional-module",
+            "aurora_curtains_native",
+        )
+        self.by_raw[later.raw] = (
+            later,
+            later.members[PAYLOAD_PATH],
+            "aurora_curtains_native",
+        )
+        instants = iter((FIXED_TIME, FIXED_TIME + timedelta(microseconds=1)))
+        self.library._clock = lambda: next(instants)
+
+        exact_second = self.publish(self.first)
+        fractional = self.publish(later)
+
+        self.assertGreater(exact_second.published_at, fractional.published_at)
+        self.assertEqual(
+            self.library.resolve_package("aurora_curtains_native").bundle_digest,
+            fractional.bundle_digest,
+        )
+
+    def test_receipt_timezone_offsets_remain_outside_frozen_utc_z_contract(self) -> None:
+        receipt = {
+            "schema_version": 1,
+            "package_id": "aurora_curtains_native",
+            "bundle_digest": self.first.bundle_digest,
+            "payload_digest": self.first.payload_digest,
+            "bundle_size": len(self.first.raw),
+            "payload_size": len(self.first.members[PAYLOAD_PATH]),
+            "published_at": "2026-08-21T18:00:00Z",
+        }
+        for timestamp in (
+            "2026-08-21T18:00:00+00:00",
+            "2026-08-21T14:00:00-04:00",
+        ):
+            with self.subTest(timestamp=timestamp), self.assertRaisesRegex(
+                NativeBackgroundLibraryError, "UTC ISO-8601"
+            ):
+                NativeBackgroundPublishReceipt.from_dict({
+                    **receipt, "published_at": timestamp,
+                })
+
+    def test_latest_package_fails_closed_on_malformed_receipt_timestamp(self) -> None:
+        receipt = self.publish()
+        path = (
+            self.root
+            / BUNDLES_DIRECTORY
+            / receipt.bundle_digest
+            / RECEIPT_FILENAME
+        )
+        payload = receipt.to_dict()
+        payload["published_at"] = "2026-08-21 18:00:00Z"
+        path.chmod(0o644)
+        path.write_text(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        path.chmod(0o444)
+
+        with self.assertRaisesRegex(
+            NativeBackgroundLibraryError, "UTC ISO-8601"
+        ):
+            self.library.resolve_package("aurora_curtains_native")
+
+    def test_latest_package_breaks_equal_instant_ties_by_bundle_digest(self) -> None:
+        same_package = _verified(
+            b"canonical-bundle-same-instant",
+            b"same-instant-module",
+            "aurora_curtains_native",
+        )
+        self.by_raw[same_package.raw] = (
+            same_package,
+            same_package.members[PAYLOAD_PATH],
+            "aurora_curtains_native",
+        )
+        first = self.publish(self.first)
+        second = self.publish(same_package)
+
+        selected = self.library.resolve_package("aurora_curtains_native")
+        self.assertEqual(
+            selected.bundle_digest,
+            max(first.bundle_digest, second.bundle_digest),
+        )
+
     def test_invalid_input_and_missing_resolution_do_not_create_library(self) -> None:
         self.inspect_patch.stop()
         with mock.patch(
@@ -236,6 +346,10 @@ class FakeNativeReceiverWallTests(unittest.TestCase):
 
     def test_install_and_activate_are_unanimous_and_idempotently_reuse_payload(self) -> None:
         wall = FakeNativeReceiverWall()
+        self.assertEqual(
+            tuple(receiver.logical_id for receiver in wall.receivers),
+            (0, 1, 2, 3, 4),
+        )
         resolved = self.resolved()
         installed = wall.install(resolved)
         self.assertEqual(installed.outcome, "installed")
@@ -252,7 +366,7 @@ class FakeNativeReceiverWallTests(unittest.TestCase):
 
     def test_capacity_preflight_fails_before_any_receiver_mutation(self) -> None:
         receivers = tuple(
-            FakeNativeReceiver(index, capacity=4, reserve=1) for index in range(4)
+            FakeNativeReceiver(index, capacity=4, reserve=1) for index in range(5)
         )
         wall = FakeNativeReceiverWall(receivers)
         with self.assertRaisesRegex(FakeNativeBackgroundError, "capacity"):
@@ -263,6 +377,17 @@ class FakeNativeReceiverWallTests(unittest.TestCase):
         def fail(phase: str, logical_id: int) -> None:
             if phase == "verify" and logical_id == 2:
                 raise RuntimeError("injected")
+
+        wall = FakeNativeReceiverWall(failure_injector=fail)
+        with self.assertRaisesRegex(FakeNativeBackgroundError, "recovered=true"):
+            wall.install(self.resolved())
+        self.assertTrue(all(not receiver.payloads for receiver in wall.receivers))
+        self.assertTrue(all(receiver.staged is None for receiver in wall.receivers))
+
+    def test_tail_receiver_failure_is_included_in_exact_roster_compensation(self) -> None:
+        def fail(phase: str, logical_id: int) -> None:
+            if phase == "verify" and logical_id == 4:
+                raise RuntimeError("injected tail failure")
 
         wall = FakeNativeReceiverWall(failure_injector=fail)
         with self.assertRaisesRegex(FakeNativeBackgroundError, "recovered=true"):

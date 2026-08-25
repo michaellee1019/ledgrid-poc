@@ -17,6 +17,9 @@ from animation.core.installation_profile import (
     DEFAULT_REGIONS_PATH,
     DEFAULT_WALL_PATH,
     FIXED_HEADER_BYTES,
+    CALIBRATION_STRIP_COUNT,
+    GLOBAL_PIXEL_COUNT,
+    GLOBAL_STRIP_COUNT,
     InstallationProfile,
     InstallationProfileError,
     PROFILE_HEADER_BYTES,
@@ -93,13 +96,19 @@ class InstallationProfileCompileTests(unittest.TestCase):
     def test_canonical_profile_has_expected_geometry_counts_and_regions(self):
         profile = compile_installation_profile()
 
-        self.assertEqual(profile.pixel_count, 4416)
-        self.assertEqual((profile.global_strip_count, profile.leds_per_strip), (32, 138))
-        self.assertEqual((profile.strip_origin, profile.strip_count), (0, 32))
+        self.assertEqual(profile.pixel_count, GLOBAL_PIXEL_COUNT)
+        self.assertEqual(
+            (profile.global_strip_count, profile.leds_per_strip),
+            (GLOBAL_STRIP_COUNT, 138),
+        )
+        self.assertEqual(
+            (profile.strip_origin, profile.strip_count),
+            (0, GLOBAL_STRIP_COUNT),
+        )
         self.assertFalse(profile.reversed_strip_order)
         self.assertEqual(
             np.bincount(profile.category.ravel(), minlength=3).tolist(),
-            [3681, 379, 356],
+            [3819, 379, 356],
         )
         self.assertEqual(int(profile.clearance.sum()), 1257)
         self.assertEqual(int(profile.foliage_edge.sum()), 284)
@@ -112,29 +121,36 @@ class InstallationProfileCompileTests(unittest.TestCase):
         self.assertEqual(tuple(profile.globe_region_masks), GLOBE_REGION_ORDER)
         self.assertTrue(np.array_equal(profile.obstacle, profile.category != 0))
         self.assertTrue(np.array_equal(profile.safe, profile.clearance == 0))
+        self.assertFalse(profile.obstacle[CALIBRATION_STRIP_COUNT:].any())
+        self.assertFalse(profile.clearance[CALIBRATION_STRIP_COUNT:].any())
+        self.assertFalse(profile.globe_region[CALIBRATION_STRIP_COUNT:].any())
 
     def test_derivation_matches_shared_plant_awareness_exactly(self):
         profile = compile_installation_profile(clearance_radius=2)
         geometry = PlantMaskCache(_PlantOwner(clearance=2)).get()
 
-        np.testing.assert_array_equal(profile.foliage, geometry.foliage)
-        np.testing.assert_array_equal(profile.globes, geometry.globes)
-        np.testing.assert_array_equal(profile.obstacle, geometry.obstacle)
-        np.testing.assert_array_equal(profile.clearance != 0, geometry.clearance)
-        np.testing.assert_array_equal(profile.foliage_edge != 0, geometry.foliage_edge)
-        np.testing.assert_array_equal(profile.globe_edge != 0, geometry.globe_edge)
-        np.testing.assert_array_equal(profile.obstacle_edge != 0, geometry.obstacle_edge)
-        np.testing.assert_array_equal(profile.distance, geometry.distance.astype(np.uint8))
-        expected_x = (
-            np.sign(geometry.normal_x)
-            * np.floor(np.abs(geometry.normal_x) * 127 + 0.5)
-        ).astype(np.int8)
-        expected_y = (
-            np.sign(geometry.normal_y)
-            * np.floor(np.abs(geometry.normal_y) * 127 + 0.5)
-        ).astype(np.int8)
-        np.testing.assert_array_equal(profile.normal_x, expected_x)
-        np.testing.assert_array_equal(profile.normal_y, expected_y)
+        observed = slice(0, CALIBRATION_STRIP_COUNT)
+        np.testing.assert_array_equal(profile.foliage[observed], geometry.foliage)
+        np.testing.assert_array_equal(profile.globes[observed], geometry.globes)
+        np.testing.assert_array_equal(profile.obstacle[observed], geometry.obstacle)
+        np.testing.assert_array_equal(
+            (profile.clearance != 0)[observed], geometry.clearance
+        )
+        np.testing.assert_array_equal(
+            (profile.foliage_edge != 0)[observed], geometry.foliage_edge
+        )
+        np.testing.assert_array_equal(
+            (profile.globe_edge != 0)[observed], geometry.globe_edge
+        )
+        np.testing.assert_array_equal(
+            (profile.obstacle_edge != 0)[observed], geometry.obstacle_edge
+        )
+        # Distance and normals are recomputed globally so the appended open
+        # column participates in the canonical coordinate field.
+        self.assertTrue(np.all(profile.distance[profile.obstacle] == 0))
+        self.assertTrue(np.all(profile.distance[~profile.obstacle] > 0))
+        self.assertFalse(profile.normal_x.flags.writeable)
+        self.assertFalse(profile.normal_y.flags.writeable)
 
     def test_globes_take_precedence_over_overlapping_foliage(self):
         globe_index = self.payloads[1]["globe_indices"][0]
@@ -266,12 +282,15 @@ class InstallationProfileCodecTests(unittest.TestCase):
         cls.encoded = encode_installation_profile(cls.profile)
 
     def test_header_table_crcs_and_content_digest_are_exact(self):
-        self.assertEqual(len(self.encoded), 40_072)
+        self.assertEqual(len(self.encoded), 41_314)
         self.assertEqual(self.encoded[:4], b"LGIP")
         self.assertEqual(struct.unpack_from(">H", self.encoded, 4)[0], 1)
         self.assertEqual(struct.unpack_from(">H", self.encoded, 6)[0], 112)
         self.assertEqual(struct.unpack_from(">I", self.encoded, 8)[0], 0)
-        self.assertEqual(struct.unpack_from(">HHHHI", self.encoded, 12), (32, 138, 0, 32, 4416))
+        self.assertEqual(
+            struct.unpack_from(">HHHHI", self.encoded, 12),
+            (GLOBAL_STRIP_COUNT, 138, 0, GLOBAL_STRIP_COUNT, GLOBAL_PIXEL_COUNT),
+        )
         self.assertEqual(self.encoded[24:26], bytes((1, 7)))
         self.assertEqual(struct.unpack_from(">HHH", self.encoded, 26), (9, 24, 0))
         self.assertEqual(struct.unpack_from(">I", self.encoded, 32)[0], len(self.encoded))
@@ -289,10 +308,13 @@ class InstallationProfileCodecTests(unittest.TestCase):
                 FIXED_HEADER_BYTES + position * SECTION_ENTRY_BYTES,
             )
             section_id, actual_encoding, width, count, offset, length, crc, reserved = entry
-            self.assertEqual(entry[:6], (position + 1, encoding, 1, 4416, expected_offset, 4416))
+            self.assertEqual(
+                entry[:6],
+                (position + 1, encoding, 1, GLOBAL_PIXEL_COUNT, expected_offset, GLOBAL_PIXEL_COUNT),
+            )
             self.assertEqual(actual_encoding, encoding)
             self.assertEqual(width, 1)
-            self.assertEqual(count, 4416)
+            self.assertEqual(count, GLOBAL_PIXEL_COUNT)
             self.assertEqual(reserved, 0)
             self.assertEqual(crc, zlib.crc32(self.encoded[offset:offset + length]) & 0xFFFFFFFF)
             expected_offset += length

@@ -748,6 +748,11 @@ FULL_STEP_ORDER: Tuple[Tuple[str, bool, str], ...] = (
     ("tests.run", False, "run the selected local regression gate"),
     ("target.connect", False, "verify SSH and deployment privileges"),
     ("app.stage", True, "stage the immutable application release"),
+    (
+        "app.bootstrap_legacy",
+        True,
+        "snapshot the running mutable app as the first rollback release",
+    ),
     ("receiver.firmware_build", False, "build or select receiver firmware"),
     ("state.capture", True, "preserve active operator settings before target mutation"),
     ("host.provision", True, "reconcile host prerequisites and service definition"),
@@ -757,6 +762,11 @@ FULL_STEP_ORDER: Tuple[Tuple[str, bool, str], ...] = (
     ("host.restart", True, "restart the app service"),
     ("state.restore", True, "restore preserved operator settings"),
     ("health.readiness", False, "require fresh desired-release readiness"),
+    (
+        "receiver.topology_migrate",
+        True,
+        "materialize finalized topology after candidate health",
+    ),
     ("release.prune", True, "retain a bounded rollback-safe app release set"),
 )
 
@@ -791,9 +801,11 @@ STEP_TIMING_EXPECTATIONS: Mapping[str, str] = {
     "tests.run": "normally 1-2m",
     "target.connect": "normally <5s",
     "app.stage": "normally 20-40s",
+    "app.bootstrap_legacy": "first cutover can take 5-20s; later runs <1s",
+    "receiver.topology_migrate": "normally <1s",
     "receiver.firmware_build": "cached ~1s; cold cache can take ~13m",
     "host.provision": "normally <5s unless a reboot is required",
-    "receiver.firmware_flash": "skipped ~2s; four receivers ~1.5m",
+    "receiver.firmware_flash": "skipped ~2s; five receivers ~2m",
     "app.validate": "normally 3-8s",
     "state.capture": "normally 1-3s",
     "app.activate": "normally <10s",

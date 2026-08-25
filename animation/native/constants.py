@@ -11,12 +11,23 @@ BUNDLE_SCHEMA = "ledgrid.native-background-bundle"
 BUNDLE_VERSION = 1
 TARGET = "esp32-s3"
 
-GLOBAL_STRIPS = 32
+# Final installed wall geometry.  ``LOCAL_STRIPS`` is the maximum receiver
+# lane width; the fifth receiver owns the one-strip tail explicitly recorded in
+# ``RECEIVER_VIEWS``.  Keep logical receiver identity separate from physical
+# left-to-right order and native strip direction.
+GLOBAL_STRIPS = 33
 LOCAL_STRIPS = 8
 LEDS_PER_STRIP = 138
-RECEIVER_OFFSETS = (0, 8, 16, 24)
-# Physical strip origins 0/8/16/24 map to logical receiver IDs 0/1/3/2.
-RECEIVER_VIEWS = ((0, 0, False), (1, 8, False), (3, 16, True), (2, 24, True))
+RECEIVER_OFFSETS = (0, 8, 16, 24, 32)
+# (logical receiver ID, global strip offset, local width, native reversal).
+# Physical strip origins 0/8/16/24/32 map to logical IDs 0/1/3/2/4.
+RECEIVER_VIEWS = (
+    (0, 0, 8, False),
+    (1, 8, 8, False),
+    (3, 16, 8, True),
+    (2, 24, 8, True),
+    (4, 32, 1, False),
+)
 
 MANIFEST_PATH = "manifest.json"
 PAYLOAD_PATH = "payload/module.so"

@@ -27,16 +27,11 @@ from .constants import (
     COMPONENT_ENTRYPOINT,
     EXPECTED_PLATFORMIO_VERSION,
     EXPECTED_TARGET_TOOLCHAIN_VERSION,
-    GLOBAL_STRIPS,
     HOST_IDENTITY_FLAGS,
     HOST_LINK_FLAGS,
-    LEDS_PER_STRIP,
-    LOCAL_STRIPS,
     PAYLOAD_PATH,
     PLUGIN_ROOT,
     PREVIEW_PATH,
-    RECEIVER_OFFSETS,
-    RECEIVER_VIEWS,
     TARGET,
     TARGET_COMPILER_NAME,
     TARGET_DYNCONFIG_NAME,
@@ -373,6 +368,8 @@ def _manifest(
     preview: bytes,
 ) -> dict[str, Any]:
     parameter_schema, defaults = validate_parameter_schema(component["parameter_schema"])
+    authored_geometry = component["geometry"]
+    receiver_views = authored_geometry["receiver_views"]
     authored_preview = component["preview"]
     simulation_fps = int(authored_preview["simulation_fps"])
     duration_ms = max(1, round(1000 / simulation_fps))
@@ -397,18 +394,13 @@ def _manifest(
             "type": "shared_object",
         },
         "geometry": {
-            "global_strips": GLOBAL_STRIPS,
-            "local_strips": LOCAL_STRIPS,
-            "leds_per_strip": LEDS_PER_STRIP,
-            "receiver_offsets": list(RECEIVER_OFFSETS),
-            "receiver_views": [
-                {
-                    "logical_receiver_id": logical_receiver_id,
-                    "global_strip_offset": offset,
-                    "reverse_local_strip_order": reverse,
-                }
-                for logical_receiver_id, offset, reverse in RECEIVER_VIEWS
+            "global_strips": authored_geometry["global_strips"],
+            "local_strips": max(view["local_strips"] for view in receiver_views),
+            "leds_per_strip": authored_geometry["leds_per_strip"],
+            "receiver_offsets": [
+                view["global_strip_offset"] for view in receiver_views
             ],
+            "receiver_views": [dict(view) for view in receiver_views],
         },
         "cadence": {
             **component["cadence"],
@@ -444,8 +436,8 @@ def _manifest(
             "path": PREVIEW_PATH,
             "size": len(preview),
             "sha256": sha256(preview),
-            "width": GLOBAL_STRIPS,
-            "height": LEDS_PER_STRIP,
+            "width": authored_geometry["global_strips"],
+            "height": authored_geometry["leds_per_strip"],
             "frame_count": len(captures),
             "duration_ms": duration_ms,
             "capture_seconds": captures,

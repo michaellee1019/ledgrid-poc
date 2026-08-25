@@ -209,7 +209,10 @@ struct Harness {
     payload.assign(fixture.bytes, fixture.bytes + fixture.size);
     ledgrid::sha256(payload.data(), payload.size(), payload_digest.data());
     global_id.fill(0xA5);
-    manager.configure_identity(0, false);
+    manager.configure_identity(
+        0, fixture.reversed_strip_order, fixture.global_strip_count,
+        static_cast<std::uint8_t>(fixture.strip_count), fixture.leds_per_strip,
+        fixture.strip_origin);
     started = manager.begin();
   }
 
@@ -540,7 +543,12 @@ void test_abort_discards_interrupted_upload_and_restart_can_retry() {
       &value.store, &value.persistence, restarted_scratch.data(),
       restarted_scratch.size(), true);
   TEST_ASSERT_TRUE(restarted.begin());
-  restarted.configure_identity(0, false);
+  const auto& fixture =
+      ledgrid::installation_profile_fixture::kInstalledReceivers[0];
+  restarted.configure_identity(
+      0, fixture.reversed_strip_order, fixture.global_strip_count,
+      static_cast<std::uint8_t>(fixture.strip_count), fixture.leds_per_strip,
+      fixture.strip_origin);
   pre = value.preflight();
   TEST_ASSERT_EQUAL_UINT8(1, static_cast<std::uint8_t>(
       restarted.process(pre.data(), pre.size())));
@@ -584,7 +592,10 @@ void test_corrupt_persisted_active_is_cleared_and_can_be_repaired() {
   ledgrid::InstallationProfileManager manager(
       &store, &persistence, scratch.data(), scratch.size(), true);
   TEST_ASSERT_TRUE(manager.begin());
-  manager.configure_identity(0, false);
+  manager.configure_identity(
+      0, fixture.reversed_strip_order, fixture.global_strip_count,
+      static_cast<std::uint8_t>(fixture.strip_count), fixture.leds_per_strip,
+      fixture.strip_origin);
   TEST_ASSERT_FALSE(manager.ledger().active.present);
   TEST_ASSERT_EQUAL_UINT8(16, static_cast<std::uint8_t>(manager.status().result));
   TEST_ASSERT_EQUAL_UINT8(1, manager.status().flags & 1U);
@@ -689,7 +700,10 @@ void test_disabled_manager_and_bad_boot_storage_fail_closed() {
 }
 
 void test_persisted_views_wait_for_explicit_installed_topology_config() {
-  for (std::size_t logical_id = 0; logical_id < 4; ++logical_id) {
+  for (std::size_t logical_id = 0;
+       logical_id < std::size(
+           ledgrid::installation_profile_fixture::kInstalledReceivers);
+       ++logical_id) {
     const auto& fixture =
         ledgrid::installation_profile_fixture::kInstalledReceivers[logical_id];
     std::vector<std::uint8_t> payload(fixture.bytes, fixture.bytes + fixture.size);
@@ -713,7 +727,10 @@ void test_persisted_views_wait_for_explicit_installed_topology_config() {
     TEST_ASSERT_EQUAL_UINT8(4, static_cast<std::uint8_t>(
         manager.process(preflight.data(), preflight.size())));
     manager.configure_identity(
-        static_cast<std::uint8_t>(logical_id), fixture.reversed_strip_order);
+        static_cast<std::uint8_t>(logical_id), fixture.reversed_strip_order,
+        fixture.global_strip_count,
+        static_cast<std::uint8_t>(fixture.strip_count), fixture.leds_per_strip,
+        fixture.strip_origin);
     TEST_ASSERT_NOT_NULL(manager.active_view().encoded);
     TEST_ASSERT_EQUAL_UINT16(fixture.strip_origin,
                              manager.active_view().strip_origin);

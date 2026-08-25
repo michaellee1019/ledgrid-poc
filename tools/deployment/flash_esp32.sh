@@ -48,7 +48,7 @@ fi
 
 firmware_environment="${FIRMWARE_ENVIRONMENT:-esp32-s3-devkitc-1}"
 case "$firmware_environment" in
-  esp32-s3-devkitc-1|esp32-s3-devkitc-1-local-canary) ;;
+  esp32-s3-devkitc-1|esp32-s3-devkitc-1-local-canary|esp32-s3-devkitc-1-native-canary) ;;
   *)
     log_warning "Unsupported firmware environment: $firmware_environment"
     exit 1

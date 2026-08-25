@@ -14,17 +14,21 @@ constexpr std::size_t kRgbChannels = 3;
 bool valid_receiver_geometry(const InstallationProfileViewV1& profile) {
   return profile.global_strip_count == kInstallationProfileGlobalStripsV1 &&
          profile.leds_per_strip == kInstallationProfileLedsPerStripV1 &&
-         profile.strip_count == kInstallationProfileReceiverStripsV1 &&
-         profile.pixel_count == kInstallationProfileReceiverPixelsV1 &&
-         profile.strip_origin % kInstallationProfileReceiverStripsV1 == 0 &&
-         profile.strip_origin + profile.strip_count <=
-             profile.global_strip_count;
+         profile.strip_count != 0 &&
+         profile.strip_count <= kInstallationProfileReceiverStripsV1 &&
+         profile.pixel_count ==
+             static_cast<std::uint32_t>(profile.strip_count) *
+                 profile.leds_per_strip &&
+         profile.strip_origin <= profile.global_strip_count &&
+         profile.strip_count <=
+             profile.global_strip_count - profile.strip_origin;
 }
 
 bool valid_output(const InstallationProfileViewV1& profile,
                   const std::uint8_t* rgb, std::size_t rgb_bytes) {
-  // Exact receiver geometry fixes pixel_count at 1,104 before multiplication,
-  // so the RGB byte count is representable on every supported target.
+  // Receiver width is topology data (currently one or eight). The upper bound
+  // fixes pixel_count at no more than 1,104 before multiplication, so the RGB
+  // byte count is representable on every supported target.
   if (rgb == nullptr || !valid_receiver_geometry(profile)) {
     return false;
   }

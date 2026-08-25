@@ -24,6 +24,11 @@ void write_u64(std::uint8_t* output, std::uint64_t value) {
   }
 }
 
+std::uint16_t read_u16(const std::uint8_t* input) {
+  return static_cast<std::uint16_t>(
+      (static_cast<std::uint16_t>(input[0]) << 8U) | input[1]);
+}
+
 void encode_v2_fields(
     const ReceiverStatusV2& status, std::uint8_t* output) {
   output[5] = status.flags;
@@ -188,6 +193,63 @@ bool encode_receiver_status_v5(
   return true;
 }
 
+bool encode_receiver_status_v6(
+    const ReceiverStatusV6& status,
+    std::uint8_t* output,
+    std::size_t output_size) {
+  if (output == nullptr || output_size < kStatusBytesV6) return false;
+  if (!encode_receiver_status_v5(status, output, output_size)) return false;
+  std::memcpy(output, "LGS6", 4);
+  output[4] = kStatusProtocolVersionV6;
+  const auto& native = status.native_module;
+  output[768] = static_cast<std::uint8_t>(native.result);
+  output[769] = static_cast<std::uint8_t>(native.transfer_state);
+  output[770] = static_cast<std::uint8_t>(native.watchdog_phase);
+  output[771] = native.flags;
+  write_u32(output + 772, native.capacity_bytes);
+  write_u32(output + 776, native.used_bytes);
+  write_u32(output + 780, native.free_bytes);
+  write_u32(output + 784, native.reserve_bytes);
+  write_u32(output + 788, native.reclaimable_bytes);
+  write_u32(output + 792, native.received_bytes);
+  write_u32(output + 796, native.total_bytes);
+  write_u64(output + 800, native.state_generation);
+  write_u64(output + 808, native.preflight_token);
+  std::memcpy(output + 816, native.last_probe_payload_digest, 32);
+  std::memcpy(output + 848, native.transfer_bundle_digest, 32);
+  std::memcpy(output + 880, native.transfer_payload_digest, 32);
+  std::memcpy(output + 912, native.active_bundle_digest, 32);
+  std::memcpy(output + 944, native.active_payload_digest, 32);
+  std::memcpy(output + 976, native.staged_bundle_digest, 32);
+  std::memcpy(output + 1008, native.staged_payload_digest, 32);
+  std::memcpy(output + 1040, native.rollback_bundle_digest, 32);
+  std::memcpy(output + 1072, native.rollback_payload_digest, 32);
+  std::memcpy(output + 1104, native.quarantine_payload_digest, 32);
+  write_u32(output + 1136, native.active_parameter_schema_revision);
+  write_u16(output + 1140, native.active_cadence_hz);
+  output[1142] = native.active_local_strips;
+  output[1143] = native.active_target;
+  write_u16(output + 1144, native.active_global_strips);
+  write_u16(output + 1146, native.active_leds_per_strip);
+  write_u16(output + 1148, native.active_global_strip_offset);
+  write_u16(output + 1150, native.active_parameter_size);
+  std::memcpy(output + 1152, native.active_parameter_digest, 32);
+  write_u16(output + 1184, native.last_load_us);
+  write_u16(output + 1186, native.last_initialize_us);
+  write_u16(output + 1188, native.last_context_us);
+  write_u16(output + 1190, native.last_render_us);
+  write_u16(output + 1192, native.max_phase_us);
+  write_u16(output + 1194, native.watchdog_events);
+  write_u32(output + 1196, native.writes);
+  write_u32(output + 1200, native.evictions);
+  write_u16(output + 1204, native.stages);
+  write_u16(output + 1206, native.verifies);
+  write_u16(output + 1208, native.activations);
+  write_u16(output + 1210, native.restores);
+  write_u16(output + 1212, native.quarantines);
+  return true;
+}
+
 bool command_may_claim_base(ReceiverCommand command) {
   return command == ReceiverCommand::SetAll ||
          command == ReceiverCommand::LocalBackgroundStart;
@@ -199,7 +261,8 @@ ReceiverDispatchDecision classify_receiver_dispatch(
     std::size_t active_rgb_bytes,
     BaseMode base_mode,
     bool local_background_enabled,
-    bool installation_profiles_enabled) {
+    bool installation_profiles_enabled,
+    bool receiver_native_modules_enabled) {
   const auto reject = [](ReceiverOperationResult result) {
     return ReceiverDispatchDecision{
         ReceiverDispatchRoute::Reject, result, false, false};
@@ -248,7 +311,7 @@ ReceiverDispatchDecision classify_receiver_dispatch(
       return exact(1U + active_rgb_bytes,
                    ReceiverDispatchRoute::HostFullFrame, true, true);
     case ReceiverCommand::Config:
-      if (size != 4 && size != 5 && size != 6) {
+      if (size != 4 && size != 5 && size != 6 && size != 8) {
         return reject(ReceiverOperationResult::InvalidSize);
       }
       return ReceiverDispatchDecision{ReceiverDispatchRoute::Operational,
@@ -257,7 +320,8 @@ ReceiverDispatchDecision classify_receiver_dispatch(
     case ReceiverCommand::StatusQuery:
       if (size == kStatusBytesV3 ||
           (local_background_enabled && size == kStatusBytesV4) ||
-          (installation_profiles_enabled && size == kStatusBytesV5)) {
+          (installation_profiles_enabled && size == kStatusBytesV5) ||
+          (receiver_native_modules_enabled && size == kStatusBytesV6)) {
         return ReceiverDispatchDecision{ReceiverDispatchRoute::StatusQuery,
                                         ReceiverOperationResult::None, false,
                                         false};
@@ -275,6 +339,23 @@ ReceiverDispatchDecision classify_receiver_dispatch(
     case ReceiverCommand::InstallationProfileRestore:
     case ReceiverCommand::InstallationProfileAbort:
       if (!installation_profiles_enabled) {
+        return reject(ReceiverOperationResult::Unsupported);
+      }
+      break;
+    case ReceiverCommand::NativeModuleProbe:
+    case ReceiverCommand::NativeModulePreflight:
+    case ReceiverCommand::NativeModuleBegin:
+    case ReceiverCommand::NativeModuleChunk:
+    case ReceiverCommand::NativeModuleFinalize:
+    case ReceiverCommand::NativeModuleVerify:
+    case ReceiverCommand::NativeModuleActivate:
+    case ReceiverCommand::NativeModuleStop:
+    case ReceiverCommand::NativeModuleParameters:
+    case ReceiverCommand::NativeModuleRemove:
+    case ReceiverCommand::NativeModuleAbort:
+    case ReceiverCommand::NativeModuleRestore:
+    case ReceiverCommand::NativeModuleQuarantineClear:
+      if (!receiver_native_modules_enabled) {
         return reject(ReceiverOperationResult::Unsupported);
       }
       break;
@@ -326,6 +407,60 @@ ReceiverDispatchDecision classify_receiver_dispatch(
     }
     return exact(expected, ReceiverDispatchRoute::InstallationProfile,
                  false, false);
+  }
+
+  if (id >= ReceiverCommand::NativeModuleProbe &&
+      id <= ReceiverCommand::NativeModuleQuarantineClear) {
+    std::size_t expected = 0;
+    switch (id) {
+      case ReceiverCommand::NativeModuleProbe:
+        expected = kNativeModuleProbeBytes; break;
+      case ReceiverCommand::NativeModulePreflight:
+        expected = kNativeModulePreflightBytes; break;
+      case ReceiverCommand::NativeModuleBegin:
+        expected = kNativeModuleBeginBytes; break;
+      case ReceiverCommand::NativeModuleChunk:
+        if (size < 6 || size > kAnimationPipelineMaxTransactionBytes -
+                                   kAnimationPipelineCrcBytes) {
+          return reject(ReceiverOperationResult::InvalidSize);
+        }
+        expected = size;
+        break;
+      case ReceiverCommand::NativeModuleFinalize:
+        expected = kNativeModuleFinalizeBytes; break;
+      case ReceiverCommand::NativeModuleVerify:
+        expected = kNativeModuleVerifyBytes; break;
+      case ReceiverCommand::NativeModuleActivate:
+        if (size < kNativeModuleActivateHeaderBytes ||
+            size > kNativeModuleActivateHeaderBytes +
+                       kNativeModuleMaxParameterBytes) {
+          return reject(ReceiverOperationResult::InvalidSize);
+        }
+        expected = kNativeModuleActivateHeaderBytes +
+            static_cast<std::size_t>(read_u16(command + 85));
+        break;
+      case ReceiverCommand::NativeModuleStop:
+        expected = kNativeModuleStopBytes; break;
+      case ReceiverCommand::NativeModuleParameters:
+        if (size < kNativeModuleParametersHeaderBytes ||
+            size > kNativeModuleParametersHeaderBytes +
+                       kNativeModuleMaxParameterBytes) {
+          return reject(ReceiverOperationResult::InvalidSize);
+        }
+        expected = kNativeModuleParametersHeaderBytes +
+            static_cast<std::size_t>(read_u16(command + 69));
+        break;
+      case ReceiverCommand::NativeModuleRemove:
+        expected = kNativeModuleRemoveBytes; break;
+      case ReceiverCommand::NativeModuleAbort:
+        expected = kNativeModuleAbortBytes; break;
+      case ReceiverCommand::NativeModuleRestore:
+        expected = kNativeModuleRestoreBytes; break;
+      case ReceiverCommand::NativeModuleQuarantineClear:
+        expected = kNativeModuleQuarantineClearBytes; break;
+      default: break;
+    }
+    return exact(expected, ReceiverDispatchRoute::NativeModule, false, false);
   }
 
   if (!local_background_enabled) {
@@ -406,7 +541,7 @@ bool receiver_packet_crc_valid(
 }
 
 bool valid_status_query(const std::uint8_t* command, std::size_t size) {
-  return valid_status_query(command, size, false, false);
+  return valid_status_query(command, size, false, false, false);
 }
 
 bool valid_status_query(
@@ -414,7 +549,7 @@ bool valid_status_query(
     std::size_t size,
     bool sparse_overlay_enabled) {
   return valid_status_query(
-      command, size, sparse_overlay_enabled, false);
+      command, size, sparse_overlay_enabled, false, false);
 }
 
 bool valid_status_query(
@@ -422,10 +557,21 @@ bool valid_status_query(
     std::size_t size,
     bool sparse_overlay_enabled,
     bool installation_profiles_enabled) {
+  return valid_status_query(command, size, sparse_overlay_enabled,
+                            installation_profiles_enabled, false);
+}
+
+bool valid_status_query(
+    const std::uint8_t* command,
+    std::size_t size,
+    bool sparse_overlay_enabled,
+    bool installation_profiles_enabled,
+    bool receiver_native_modules_enabled) {
   if (command == nullptr ||
       (size != kStatusBytesV3 &&
        !(sparse_overlay_enabled && size == kStatusBytesV4) &&
-       !(installation_profiles_enabled && size == kStatusBytesV5)) ||
+       !(installation_profiles_enabled && size == kStatusBytesV5) &&
+       !(receiver_native_modules_enabled && size == kStatusBytesV6)) ||
       command[0] != static_cast<std::uint8_t>(ReceiverCommand::StatusQuery)) {
     return false;
   }
@@ -440,13 +586,29 @@ bool parse_logical_receiver_id(
     std::size_t size,
     std::uint8_t current_id,
     std::uint8_t* logical_receiver_id) {
+  std::uint16_t ignored_offset = 0;
+  return parse_receiver_topology(command, size, current_id, 0,
+                                 logical_receiver_id, &ignored_offset);
+}
+
+bool parse_receiver_topology(
+    const std::uint8_t* command,
+    std::size_t size,
+    std::uint8_t current_id,
+    std::uint16_t current_global_offset,
+    std::uint8_t* logical_receiver_id,
+    std::uint16_t* global_strip_offset) {
   if (command == nullptr || logical_receiver_id == nullptr ||
-      (size != 4 && size != 5 && size != 6) ||
+      global_strip_offset == nullptr ||
+      (size != 4 && size != 5 && size != 6 && size != 8) ||
       command[0] != static_cast<std::uint8_t>(ReceiverCommand::Config)) {
     return false;
   }
   if (size == 6 && command[5] > 3) return false;
-  *logical_receiver_id = size == 6 ? command[5] : current_id;
+  if (size == 8 && command[5] == 0xFF) return false;
+  *logical_receiver_id = size >= 6 ? command[5] : current_id;
+  *global_strip_offset = size == 8 ? read_u16(command + 6)
+                                    : current_global_offset;
   return true;
 }
 

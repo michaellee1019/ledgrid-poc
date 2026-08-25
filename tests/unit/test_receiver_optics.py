@@ -244,16 +244,18 @@ class ReceiverOpticsTests(unittest.TestCase):
 
     def test_installed_topology_vectors_cover_all_receivers_and_stitched_field(self) -> None:
         topology = self.fixture["installed_topology"]
-        self.assertEqual(topology["strip_origins"], [0, 8, 24, 16])
+        self.assertEqual(topology["strip_origins"], [0, 8, 24, 16, 32])
+        self.assertEqual(topology["strip_counts"], [8, 8, 8, 8, 1])
+        self.assertEqual(topology["physical_receiver_order"], [0, 1, 3, 2, 4])
         self.assertEqual(
-            topology["reverse_native_strips"], [False, False, True, True]
+            topology["reverse_native_strips"], [False, False, True, True, False]
         )
         self.assertEqual(
             {vector["strength_q8_8"] for vector in topology["vectors"]},
             {64, 256},
         )
         for vector in topology["vectors"]:
-            self.assertEqual(len(vector["receiver_sha256"]), 4)
+            self.assertEqual(len(vector["receiver_sha256"]), 5)
             self.assertTrue(all(len(digest) == 64 for digest in vector["receiver_sha256"]))
             self.assertEqual(len(vector["stitched_global_sha256"]), 64)
 

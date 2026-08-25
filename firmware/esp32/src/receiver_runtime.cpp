@@ -172,6 +172,9 @@ ReceiverOperationResult ReceiverRuntime::update_local(
   if (base_mode_ != BaseMode::LocalBackground) {
     return finish(ReceiverOperationResult::InvalidState);
   }
+  if (local_.component_id == UINT16_MAX) {
+    return finish(ReceiverOperationResult::InvalidState);
+  }
   const std::uint16_t cadence = read_u16(command + 1);
   if (!valid_cadence(cadence)) return finish(ReceiverOperationResult::InvalidCommand);
   local_.preferred_cadence_hz = cadence;
@@ -298,7 +301,12 @@ ReceiverOperationResult ReceiverRuntime::context_set(
   staged_context_.vibe_profile_version = read_u32(command + 27);
   staged_context_.vibe_revision = read_u64(command + 31);
   std::memcpy(staged_context_.vibe_digest, command + 39, 32);
+  std::memcpy(staged_context_.vibe_palette, command + 71,
+              sizeof(staged_context_.vibe_palette));
+  staged_context_.tempo_q8_8 = read_u16(command + 95);
   staged_context_.luminance_q8_8 = luminance;
+  staged_context_.chroma_q8_8 = read_u16(command + 99);
+  staged_context_.energy_q8_8 = read_u16(command + 101);
   staged_context_.modifier_revision = read_u64(command + 104);
   std::memcpy(staged_context_.modifier_digest, command + 112, 32);
   std::memset(staged_context_.modifier_strengths_q8_8, 0,
@@ -1000,6 +1008,49 @@ void ReceiverRuntime::complete_host_frame() {
   foreground_state_ = ForegroundState::Cleared;
   transition_reason_ = BaseTransitionReason::HostTakeover;
   last_result_ = ReceiverOperationResult::Ok;
+}
+
+bool ReceiverRuntime::native_background_started(
+    std::uint16_t cadence_hz, std::uint32_t global_strip_offset,
+    std::uint32_t common_seed, std::uint64_t scene_epoch) {
+  if (!local_background_enabled_ || !valid_cadence(cadence_hz) ||
+      context_state_ != PresentationContextState::Active ||
+      active_context_.scene_epoch != scene_epoch) {
+    return false;
+  }
+  local_.component_id = UINT16_MAX;
+  local_.preferred_cadence_hz = cadence_hz;
+  local_.global_strip_offset = global_strip_offset;
+  local_.common_seed = common_seed;
+  local_.scene_epoch = scene_epoch;
+  clear_foreground_visibility(true);
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  session_requires_snapshot_ = true;
+#endif
+  base_mode_ = BaseMode::LocalBackground;
+  foreground_state_ = ForegroundState::Cleared;
+  transition_reason_ = BaseTransitionReason::LocalStart;
+  ++render_generation_;
+  cadence_initialized_ = false;
+  force_local_refresh_ = true;
+  return true;
+}
+
+void ReceiverRuntime::native_background_stopped(bool failed) {
+  if (base_mode_ != BaseMode::LocalBackground ||
+      local_.component_id != UINT16_MAX) return;
+  clear_foreground_visibility(true);
+#if LEDGRID_ENABLE_LOCAL_BACKGROUND
+  session_requires_snapshot_ = true;
+#endif
+  base_mode_ = BaseMode::StartupFallback;
+  foreground_state_ = ForegroundState::Cleared;
+  transition_reason_ = failed ? BaseTransitionReason::LocalRenderFailure
+                              : BaseTransitionReason::LocalStop;
+  last_result_ = failed ? ReceiverOperationResult::RenderFailed
+                        : ReceiverOperationResult::Ok;
+  ++render_generation_;
+  cadence_initialized_ = false;
 }
 
 void ReceiverRuntime::receiver_restart() {
