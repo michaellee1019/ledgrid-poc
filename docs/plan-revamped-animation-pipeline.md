@@ -3757,6 +3757,12 @@ reachability does not satisfy the exact-five USB flash inventory. Deployment
 must remain fail-closed, and ordinary deploy plus every physical gate remain
 blocked until the other four programming links are attached.
 
+The exact USB query was repeated after clean software checkpoint `8ff9d75` and
+again found only factory identity `44:B1:76:C5:15:7C` on `ttyACM0`. Ordinary
+`just deploy` was therefore intentionally not launched: allowing it to proceed
+without five immutable factory identities would weaken the finalized-hardware
+contract and make firmware reconciliation or rollback ambiguous.
+
 The preserved target-owned `receiver_hybrid.json` is also a migration input: it
 still contains the old enabled four-entry `(0,1,3,2)` mapping and
 `degraded_spi1_01_readable` policy. Phase 4 must atomically migrate that exact
