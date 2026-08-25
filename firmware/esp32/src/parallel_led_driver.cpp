@@ -40,6 +40,8 @@ bool ParallelLedDriver::begin(
   }
 
   buffer_capacity_ = ws2812_encoded_size(max_leds_per_strip);
+  configured_strips_ = strip_count;
+  configured_max_leds_ = max_leds_per_strip;
   for (auto*& buffer : buffers_) {
     buffer = static_cast<std::uint8_t*>(heap_caps_aligned_alloc(
         kDmaAlignment,
@@ -50,7 +52,11 @@ bool ParallelLedDriver::begin(
             strip_count,
             max_leds_per_strip,
             buffer,
-            buffer_capacity_)) {
+            buffer_capacity_,
+            kWs2812ResetUs,
+            kWs2812SampleRateHz,
+            lane_mask_,
+            stagger_phases_)) {
       return false;
     }
   }
@@ -96,6 +102,53 @@ bool ParallelLedDriver::begin(
   return esp_lcd_new_panel_io_i80(bus_, &io_config, &io_) == ESP_OK;
 }
 
+bool ParallelLedDriver::set_lane_mask(std::uint8_t lane_mask) {
+  if (io_ == nullptr || in_flight_) return false;
+  if (lane_mask == lane_mask_) return true;
+
+  for (auto* buffer : buffers_) {
+    if (buffer == nullptr) return false;
+    if (!initialize_parallel_grb_waveform(
+            configured_strips_,
+            configured_max_leds_,
+            buffer,
+            buffer_capacity_,
+            kWs2812ResetUs,
+            kWs2812SampleRateHz,
+            lane_mask,
+            stagger_phases_)) {
+      return false;
+    }
+  }
+  lane_mask_ = lane_mask;
+  return true;
+}
+
+bool ParallelLedDriver::set_stagger_phases(std::uint8_t stagger_phases) {
+  if (io_ == nullptr || in_flight_) return false;
+  if (stagger_phases == stagger_phases_) return true;
+  if (stagger_phases < kStaggerOff || stagger_phases > kMaxStaggerPhases) {
+    return false;
+  }
+
+  for (auto* buffer : buffers_) {
+    if (buffer == nullptr) return false;
+    if (!initialize_parallel_grb_waveform(
+            configured_strips_,
+            configured_max_leds_,
+            buffer,
+            buffer_capacity_,
+            kWs2812ResetUs,
+            kWs2812SampleRateHz,
+            lane_mask_,
+            stagger_phases)) {
+      return false;
+    }
+  }
+  stagger_phases_ = stagger_phases;
+  return true;
+}
+
 bool ParallelLedDriver::submit(
     const std::uint8_t* rgb,
     std::size_t rgb_bytes,
@@ -115,7 +168,11 @@ bool ParallelLedDriver::submit(
       leds_per_strip,
       brightness,
       output,
-      buffer_capacity_);
+      buffer_capacity_,
+      kWs2812ResetUs,
+      kWs2812SampleRateHz,
+      lane_mask_,
+      stagger_phases_);
   last_encode_us_ = duration_u16(
       static_cast<std::uint32_t>(esp_timer_get_time()) - encode_started);
   if (!encoded.ok) return false;

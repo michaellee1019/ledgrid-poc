@@ -28,6 +28,7 @@ void encode_v2_fields(
     const ReceiverStatusV2& status, std::uint8_t* output) {
   output[5] = status.flags;
   output[6] = status.active_strips;
+  output[7] = status.lane_mask;
   write_u16(output + 8, status.leds_per_strip);
   write_u16(output + 10, status.queued_transactions);
   write_u32(output + 12, status.packets);
@@ -68,6 +69,7 @@ bool encode_receiver_status_v2(
   output[3] = '2';
   output[4] = kStatusProtocolVersion;
   encode_v2_fields(status, output);
+  output[64] = status.stagger_phases;
   return true;
 }
 
@@ -111,6 +113,7 @@ bool encode_receiver_status_v3(
   std::memcpy(output + 296, status.staged_controller_session, 16);
   output[312] = status.logical_receiver_id;
   output[313] = status.last_processed_command;
+  output[314] = status.stagger_phases;
   write_u32(output + 316, status.operation_sequence);
   return true;
 }
@@ -260,6 +263,9 @@ ReceiverDispatchDecision classify_receiver_dispatch(
                                         false};
       }
       return reject(ReceiverOperationResult::InvalidSize);
+    case ReceiverCommand::SetLaneMask:
+    case ReceiverCommand::SetStagger:
+      return exact(2, ReceiverDispatchRoute::Operational, false, false);
     case ReceiverCommand::InstallationProfilePreflight:
     case ReceiverCommand::InstallationProfileBegin:
     case ReceiverCommand::InstallationProfileChunk:

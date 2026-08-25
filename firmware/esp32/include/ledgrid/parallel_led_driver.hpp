@@ -7,6 +7,7 @@
 #include "esp_lcd_io_i80.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "ledgrid/ws2812_encoder.hpp"
 
 namespace ledgrid {
 
@@ -27,6 +28,17 @@ class ParallelLedDriver {
       std::uint16_t leds_per_strip,
       std::uint8_t brightness,
       std::uint32_t sequence);
+
+  // Rebuilds both DMA waveforms so that only the selected lanes emit edges.
+  // Must be called between transfers; returns false while one is in flight.
+  bool set_lane_mask(std::uint8_t lane_mask);
+  std::uint8_t lane_mask() const { return lane_mask_; }
+
+  // Spreads lane rising edges over the given number of samples to cut the
+  // simultaneous switching current through the level shifter's supply pins.
+  // Must be called between transfers; returns false while one is in flight.
+  bool set_stagger_phases(std::uint8_t stagger_phases);
+  std::uint8_t stagger_phases() const { return stagger_phases_; }
 
   bool wait_for_done(TickType_t timeout_ticks);
   bool in_flight() const { return in_flight_; }
@@ -52,6 +64,10 @@ class ParallelLedDriver {
   std::uint8_t* buffers_[2] = {};
   std::size_t buffer_capacity_ = 0;
   std::uint8_t next_buffer_ = 0;
+  std::uint8_t configured_strips_ = 0;
+  std::uint16_t configured_max_leds_ = 0;
+  std::uint8_t lane_mask_ = kAllLanesMask;
+  std::uint8_t stagger_phases_ = kStaggerOff;
   volatile bool in_flight_ = false;
   volatile std::uint32_t show_started_us_ = 0;
   volatile std::uint16_t last_encode_us_ = 0;

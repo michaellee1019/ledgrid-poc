@@ -589,6 +589,7 @@ void test_status_v3_preserves_v2_prefix_and_extended_offsets() {
   status.staged_controller_session[15] = 0xDD;
   status.logical_receiver_id = 3;
   status.last_processed_command = 0x10;
+  status.stagger_phases = 3;
   status.operation_sequence = 0x01020304;
   std::array<std::uint8_t, ledgrid::kStatusBytesV3> encoded{};
   TEST_ASSERT_TRUE(ledgrid::encode_receiver_status_v3(
@@ -606,7 +607,7 @@ void test_status_v3_preserves_v2_prefix_and_extended_offsets() {
   TEST_ASSERT_EQUAL_HEX8(0xDD, encoded[311]);
   TEST_ASSERT_EQUAL_UINT8(3, encoded[312]);
   TEST_ASSERT_EQUAL_HEX8(0x10, encoded[313]);
-  TEST_ASSERT_EQUAL_HEX8(0, encoded[314]);
+  TEST_ASSERT_EQUAL_HEX8(3, encoded[314]);
   TEST_ASSERT_EQUAL_HEX8(0, encoded[315]);
   TEST_ASSERT_EQUAL_HEX8(1, encoded[316]);
   TEST_ASSERT_EQUAL_HEX8(4, encoded[319]);

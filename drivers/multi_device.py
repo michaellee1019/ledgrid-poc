@@ -619,6 +619,16 @@ class MultiDeviceLEDController:
             for device in self.devices:
                 device.set_brightness(brightness)
     
+    def set_lane_mask(self, lane_mask: int):
+        """Apply the same diagnostic lane mask to every device."""
+        for device in self.devices:
+            device.set_lane_mask(lane_mask)
+
+    def set_stagger_phases(self, phases: int):
+        """Apply the same WS2812 edge-stagger phase count to every device."""
+        for device in self.devices:
+            device.set_stagger_phases(phases)
+
     def show(self):
         """Update LED display on all devices"""
         with self._controller_lock():
@@ -1669,6 +1679,7 @@ class MultiDeviceLEDController:
         crc_bytes_sent = 0
         errors = 0
         receiver_status_devices = 0
+        receiver_legacy_status_devices = 0
         receiver_crc_errors = 0
         receiver_packets = 0
         receiver_crc_ok_packets = 0
@@ -1689,6 +1700,8 @@ class MultiDeviceLEDController:
         receiver_local_missed_deadlines = 0
         receiver_max_local_render_us = 0
         receiver_transition_reasons = []
+        receiver_lane_masks = []
+        receiver_stagger_phases = []
         last_frame_ms = 0.0
         weighted_avg_total = 0.0
         weighted_avg_frames = 0
@@ -1709,6 +1722,10 @@ class MultiDeviceLEDController:
             errors += int(stats.get('errors', 0) or 0)
             if stats.get('receiver_status_seen'):
                 receiver_status_devices += 1
+                receiver_lane_masks.append(int(stats.get('receiver_lane_mask', 0xFF)))
+                receiver_stagger_phases.append(int(stats.get('receiver_stagger_phases', 0)))
+                if stats.get('receiver_status_legacy'):
+                    receiver_legacy_status_devices += 1
             receiver_crc_errors += int(stats.get('receiver_crc_errors', 0) or 0)
             receiver_packets += int(stats.get('receiver_packets', 0) or 0)
             receiver_crc_ok_packets += int(stats.get('receiver_crc_ok_packets', 0) or 0)
@@ -1780,6 +1797,9 @@ class MultiDeviceLEDController:
                 'crc_bytes_sent': crc_bytes_sent,
                 'errors': errors,
                 'receiver_status_devices': receiver_status_devices,
+                'receiver_legacy_status_devices': receiver_legacy_status_devices,
+                'receiver_lane_masks': receiver_lane_masks,
+                'receiver_stagger_phases': receiver_stagger_phases,
                 'receiver_crc_errors': receiver_crc_errors,
                 'receiver_packets': receiver_packets,
                 'receiver_crc_ok_packets': receiver_crc_ok_packets,

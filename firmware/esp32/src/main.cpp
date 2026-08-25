@@ -108,6 +108,10 @@ std::atomic<std::uint16_t> last_crc_us{0};
 std::atomic<std::uint16_t> last_copy_us{0};
 std::atomic<std::uint32_t> last_accepted_sequence{0};
 std::atomic<std::uint32_t> last_displayed_sequence{0};
+std::atomic<std::uint8_t> requested_lane_mask{ledgrid::kAllLanesMask};
+std::atomic<std::uint8_t> applied_lane_mask{ledgrid::kAllLanesMask};
+std::atomic<std::uint8_t> requested_stagger_phases{ledgrid::kStaggerOff};
+std::atomic<std::uint8_t> applied_stagger_phases{ledgrid::kStaggerOff};
 
 std::uint16_t duration_u16(std::uint32_t value) {
   return value > UINT16_MAX ? UINT16_MAX : static_cast<std::uint16_t>(value);
@@ -389,6 +393,19 @@ void display_task(void*) {
       portEXIT_CRITICAL(&mailbox_mux);
       if (slot < 0) break;
 
+      const std::uint8_t wanted =
+          requested_lane_mask.load(std::memory_order_relaxed);
+      if (wanted != led_driver.lane_mask() && led_driver.set_lane_mask(wanted)) {
+        applied_lane_mask = wanted;
+      }
+
+      const std::uint8_t wanted_stagger =
+          requested_stagger_phases.load(std::memory_order_relaxed);
+      if (wanted_stagger != led_driver.stagger_phases() &&
+          led_driver.set_stagger_phases(wanted_stagger)) {
+        applied_stagger_phases = wanted_stagger;
+      }
+
       lock_runtime();
       const auto current_output = receiver_output.configuration();
       const bool current =
@@ -461,6 +478,7 @@ ledgrid::ReceiverStatusV5 status_snapshot() {
   lock_runtime();
   const auto output = receiver_output.configuration();
   status.active_strips = output.strip_count;
+  status.lane_mask = applied_lane_mask.load(std::memory_order_relaxed);
   status.leds_per_strip = output.leds_per_strip;
   status.capabilities = ledgrid::kCapabilityStatusV3 |
                         ledgrid::kCapabilityExplicitBaseOwnership;
@@ -545,6 +563,8 @@ ledgrid::ReceiverStatusV5 status_snapshot() {
   unlock_profile();
 #endif
   status.logical_receiver_id = logical_receiver_id.load(std::memory_order_relaxed);
+  status.stagger_phases =
+      applied_stagger_phases.load(std::memory_order_relaxed);
   return status;
 }
 
@@ -739,6 +759,19 @@ bool process_command(const std::uint8_t* data, std::size_t length) {
       if (display_task_handle != nullptr) xTaskNotifyGive(display_task_handle);
       return true;
     }
+
+    case ledgrid::ReceiverCommand::SetLaneMask:
+      if (length != 2) return false;
+      requested_lane_mask = data[1];
+      return true;
+
+    case ledgrid::ReceiverCommand::SetStagger:
+      if (length != 2 || data[1] < ledgrid::kStaggerOff ||
+          data[1] > ledgrid::kMaxStaggerPhases) {
+        return false;
+      }
+      requested_stagger_phases = data[1];
+      return true;
 
     case ledgrid::ReceiverCommand::Config: {
       std::uint8_t new_logical_id = 0xFF;
