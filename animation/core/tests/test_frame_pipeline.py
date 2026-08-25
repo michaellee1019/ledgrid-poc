@@ -291,6 +291,7 @@ class DriverBufferTests(unittest.TestCase):
         response[52:56] = (901).to_bytes(4, "big")
         response[56:60] = (891).to_bytes(4, "big")
         response[60:64] = (0).to_bytes(4, "big")
+        response[64] = 3
 
         driver._update_receiver_status(response)
 
@@ -302,6 +303,7 @@ class DriverBufferTests(unittest.TestCase):
         self.assertEqual(driver._receiver_last_encode_us, 450)
         self.assertEqual(driver._receiver_last_show_us, 4500)
         self.assertEqual(driver._receiver_last_displayed_sequence, 891)
+        self.assertEqual(driver._receiver_stagger_phases, 3)
 
         driver._update_receiver_status([0] * RECEIVER_STATUS_BYTES_V2)
         self.assertEqual(driver._receiver_status_misses, 1)

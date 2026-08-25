@@ -32,6 +32,7 @@ bool encode_receiver_status_v2(
   output[4] = kStatusProtocolVersion;
   output[5] = status.flags;
   output[6] = status.active_strips;
+  output[7] = status.lane_mask;
   write_u16(output + 8, status.leds_per_strip);
   write_u16(output + 10, status.queued_transactions);
   write_u32(output + 12, status.packets);
@@ -49,6 +50,7 @@ bool encode_receiver_status_v2(
   write_u32(output + 52, status.last_accepted_sequence);
   write_u32(output + 56, status.last_displayed_sequence);
   write_u32(output + 60, status.display_errors);
+  output[64] = status.stagger_phases;
   return true;
 }
 

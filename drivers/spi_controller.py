@@ -31,7 +31,7 @@ CRC_BYTES = 2
 RECEIVER_STATUS_MAGIC = (ord('L'), ord('G'), ord('S'), ord('1'))
 RECEIVER_STATUS_MAGIC_V2 = (ord('L'), ord('G'), ord('S'), ord('2'))
 RECEIVER_STATUS_BYTES = 29
-RECEIVER_STATUS_BYTES_V2 = 64
+RECEIVER_STATUS_BYTES_V2 = 68
 MAX_PIXELS_SET_ALL = (MAX_SPI_TRANSFER - 1 - CRC_BYTES) // 3
 MAX_PIXELS_PER_RANGE = min(255, (MAX_SPI_TRANSFER - 4 - CRC_BYTES) // 3)
 
@@ -94,7 +94,20 @@ CMD_CLEAR = 0x04
 CMD_SET_RANGE = 0x05
 CMD_SET_ALL = 0x06
 CMD_CONFIG = 0x07
+CMD_SET_LANE_MASK = 0x08
+CMD_SET_STAGGER = 0x09
 CMD_PING = 0xFF
+
+ALL_LANES_MASK = 0xFF
+STAGGER_OFF = 1
+MAX_STAGGER_PHASES = 3
+
+# The receiver's MISO buffer is zero-initialized and firmware only writes the
+# snapshot bytes it knows about, so a field added past a previously complete
+# layout reads back as zero on a board that was flashed before the field
+# existed. Zero is outside every legal phase count, which makes it a usable
+# sentinel for "flashed firmware predates stagger_phases".
+LEGACY_SNAPSHOT_SENTINEL = 0
 
 
 class LEDController:
@@ -137,6 +150,8 @@ class LEDController:
         self._total_frame_duration = 0.0
         self._receiver_status_seen = False
         self._receiver_status_version = 0
+        self._receiver_status_legacy = False
+        self._legacy_snapshot_warned = False
         self._receiver_status_responses = 0
         self._receiver_status_misses = 0
         self._receiver_packets = 0
@@ -147,6 +162,8 @@ class LEDController:
         self._receiver_last_copy_us = 0
         self._receiver_last_show_us = 0
         self._receiver_active_strips = 0
+        self._receiver_lane_mask = ALL_LANES_MASK
+        self._receiver_stagger_phases = STAGGER_OFF
         self._receiver_leds_per_strip = 0
         self._receiver_queued_transactions = 0
         self._receiver_frames_accepted = 0
@@ -237,6 +254,7 @@ class LEDController:
             self._receiver_status_version = int(response[4])
             self._receiver_status_responses = getattr(self, '_receiver_status_responses', 0) + 1
             self._receiver_active_strips = int(response[6])
+            self._receiver_lane_mask = int(response[7])
             self._receiver_leds_per_strip = self._response_u16(response, 8)
             self._receiver_queued_transactions = self._response_u16(response, 10)
             self._receiver_packets = self._response_u32(response, 12)
@@ -255,6 +273,12 @@ class LEDController:
             self._receiver_last_accepted_sequence = self._response_u32(response, 52)
             self._receiver_last_displayed_sequence = self._response_u32(response, 56)
             self._receiver_display_errors = self._response_u32(response, 60)
+            # Zero means the receiver predates the field; leave it as read so
+            # callers can tell that apart from a legal phase count.
+            self._receiver_stagger_phases = int(response[64])
+            self._note_legacy_snapshot(
+                self._receiver_stagger_phases == LEGACY_SNAPSHOT_SENTINEL
+            )
             return
 
         if magic != RECEIVER_STATUS_MAGIC:
@@ -274,6 +298,28 @@ class LEDController:
         self._receiver_last_show_us = self._response_u16(response, 24)
         self._receiver_active_strips = int(response[26])
         self._receiver_leds_per_strip = self._response_u16(response, 27)
+
+    def _note_legacy_snapshot(self, is_legacy):
+        """Record, and announce once, a snapshot missing its newest field.
+
+        Nothing about this combination fails: the older bytes still parse, the
+        counters stay correct, and the receiver keeps reporting. That silence
+        is the hazard, because a phase count of zero otherwise looks like a
+        stuck receiver rather than a host that is newer than the flash.
+        """
+        self._receiver_status_legacy = is_legacy
+        if not is_legacy or self._legacy_snapshot_warned:
+            return
+
+        self._legacy_snapshot_warned = True
+        print(
+            f"Warning: /dev/spidev{self.bus}.{self.device} returned a status "
+            f"snapshot with no stagger_phases field, so its flashed firmware "
+            f"predates the {RECEIVER_STATUS_BYTES_V2}-byte layout this host "
+            "expects. Every other counter is still valid. Reflash with "
+            "'just deploy' before trusting the reported phase count.",
+            file=sys.stderr,
+        )
 
     def _refresh_configuration(self, force=False):
         now = time.time()
@@ -331,6 +377,32 @@ class LEDController:
         if self.debug:
             print(f"✓ Brightness set ({level})")
     
+    def set_lane_mask(self, lane_mask):
+        """Restrict which WS2812 lanes emit edges.
+
+        Diagnostic aid for isolating per-lane signal integrity faults from
+        faults caused by all eight lanes switching simultaneously. Masked lanes
+        receive no edges at all, so their pixels hold the last latched frame.
+        """
+        self._refresh_configuration()
+        self._xfer([CMD_SET_LANE_MASK, int(lane_mask) & 0xFF])
+
+    def set_stagger_phases(self, phases):
+        """Spread the lanes' WS2812 rising edges over this many samples.
+
+        One phase is the original waveform with all lanes rising together.
+        Higher values delay lane L by (L % phases) samples, which cuts the
+        simultaneous switching current through the level shifter's supply pins
+        without altering T0H, T1H, or the bit period.
+        """
+        value = int(phases)
+        if not STAGGER_OFF <= value <= MAX_STAGGER_PHASES:
+            raise ValueError(
+                f"stagger phases must be {STAGGER_OFF}-{MAX_STAGGER_PHASES}"
+            )
+        self._refresh_configuration()
+        self._xfer([CMD_SET_STAGGER, value])
+
     def show(self):
         """Update the LED display"""
         self._refresh_configuration()
@@ -498,6 +570,7 @@ class LEDController:
             'errors': self._errors,
             'receiver_status_seen': self._receiver_status_seen,
             'receiver_status_version': self._receiver_status_version,
+            'receiver_status_legacy': self._receiver_status_legacy,
             'receiver_status_responses': self._receiver_status_responses,
             'receiver_status_misses': self._receiver_status_misses,
             'receiver_packets': self._receiver_packets,
@@ -518,6 +591,8 @@ class LEDController:
             'receiver_last_accepted_sequence': self._receiver_last_accepted_sequence,
             'receiver_last_displayed_sequence': self._receiver_last_displayed_sequence,
             'receiver_active_strips': self._receiver_active_strips,
+            'receiver_lane_mask': self._receiver_lane_mask,
+            'receiver_stagger_phases': self._receiver_stagger_phases,
             'receiver_leds_per_strip': self._receiver_leds_per_strip,
         }
 
