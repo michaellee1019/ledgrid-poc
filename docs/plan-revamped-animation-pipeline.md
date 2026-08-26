@@ -3763,6 +3763,13 @@ again found only factory identity `44:B1:76:C5:15:7C` on `ttyACM0`. Ordinary
 without five immutable factory identities would weaken the finalized-hardware
 contract and make firmware reconciliation or rollback ambiguous.
 
+The 2026-08-26 retry after the operator reported the receivers connected reached
+the same fail-closed result after `udevadm settle`: `lsusb -t` showed one
+four-port VIA `2109:3431` hub with only downstream port 1 occupied by one
+Espressif `303a:1001` device. No other downstream USB device or attach event was
+present. Five SPI routes remain visible, but four additional USB data/programming
+links must enumerate before the ordinary deployment can begin.
+
 The preserved target-owned `receiver_hybrid.json` is also a migration input: it
 still contains the old enabled four-entry `(0,1,3,2)` mapping and
 `degraded_spi1_01_readable` policy. Phase 4 must atomically migrate that exact
