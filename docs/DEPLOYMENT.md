@@ -460,6 +460,13 @@ just native-start aurora_curtains_native
 just native-run aurora_curtains_native
 ```
 
+`native-publish` executes the Pi-side library transaction through the selected
+immutable `current` application release. On a legacy first-cutover target with
+no `current` symlink, `native-build` remains available but publication must wait
+for the ordinary full deployment to create the rollback anchor, provision the
+pinned runtime, and activate the first immutable release. Shadow staging alone
+does not cross that boundary and must not be treated as activation.
+
 Build writes an append-only coordinator receipt under the local native-receipt
 directory. Publish writes the corresponding local receipt and a target receipt;
 the managed-library publication receipt separately binds bundle digest, payload

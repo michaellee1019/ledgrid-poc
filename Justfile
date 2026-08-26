@@ -76,6 +76,7 @@ native-build plugin_id:
 		build "{{plugin_id}}"
 
 # Publish a managed local bundle (or first build a plugin ID) to shared Pi state.
+# Requires an immutable current app release for the version-matched Pi helper.
 # This never installs on receivers, changes display ownership, or restarts services.
 native-publish bundle_or_plugin:
 	{{captured}} --phase receiver_background.publish -- \

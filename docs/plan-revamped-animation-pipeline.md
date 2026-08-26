@@ -3729,7 +3729,7 @@ Do not expose arbitrary upload or execute dynamic modules on installed receivers
 Activate trusted unsigned modules only after the earlier contracts and hardware
 prerequisites are proven.
 
-Execution status (2026-08-25): **in progress**. The work is split into three
+Execution status (2026-08-26): **in progress**. The work is split into three
 parallel, non-overlapping lanes: receiver loader/cache/watchdog/quarantine;
 host protocol and exact-roster transactions; and scene/API/dashboard/persistence/
 deployment product integration. The master plan and shared contracts remain
@@ -3769,6 +3769,36 @@ four-port VIA `2109:3431` hub with only downstream port 1 occupied by one
 Espressif `303a:1001` device. No other downstream USB device or attach event was
 present. Five SPI routes remain visible, but four additional USB data/programming
 links must enumerate before the ordinary deployment can begin.
+
+Non-flashing target progress (2026-08-26): clean commit `7a52112` passed full
+shadow staging without selecting `current`, restarting a service, changing
+settings, or touching receivers. The Pi now retains immutable app release
+`5282701028f1762ed11df4bef58b5ca5aba133ccd0b5da7c6e86d0ef4d29f2c9`
+(1,519 files) and support release
+`bf9adc1506e2845614d4f1c6e1ffa7dc2824b5755c37d3cf3f79e2c3487047d7`
+(55 files). A direct candidate import smoke through the legacy venv stopped on
+missing `pyelftools`; that package is pinned in the new Pi runtime lock, so this
+is the expected pre-provision dependency boundary rather than candidate
+acceptance. The local native build passed, while `native-publish` stopped before
+library preparation because its version-matched helper requires a selected
+immutable `current`. No receiver package was prepared, published, installed, or
+activated.
+
+Fresh legacy streamed evidence (supporting only, not H0) found five responding
+status-v2 receivers and confirmed that the integrity blocker is route-specific.
+On the existing Sparkle scene over 59.5 seconds, logical receivers 0–2 were clean
+at 155.6 displayed FPS; logical 3 (`SPI1.0`) added 121 CRC errors and one status
+miss at 153.6 FPS; logical 4 (`SPI1.2`) added one CRC error. A reversible
+120/140/160 FPS sweep produced 36/37/32 CRC errors on logical 3, and a separate
+20/60 FPS sweep produced 8/19. The roughly one-percent-of-frames behavior across
+cadences points to SPI1.0 signal/chip-select integrity rather than render load or
+a fixed periodic query. Controlled Rainbow repeated the result: logical 3 added
+27 CRC errors in 59.5 seconds while the other four were clean and all exceeded
+150 displayed FPS. The legacy restore initially reapplied the global 3x speed
+scale; the corrective restore then verified Sparkle at its original resolved
+speed 1.65, target 160 FPS, and the original neutral plant-modifier state. H0
+therefore remains failed, and the calibration workflow correctly blocks H3 while
+fresh CRC errors exist.
 
 The preserved target-owned `receiver_hybrid.json` is also a migration input: it
 still contains the old enabled four-entry `(0,1,3,2)` mapping and
