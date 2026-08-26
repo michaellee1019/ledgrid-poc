@@ -3800,6 +3800,27 @@ speed 1.65, target 160 FPS, and the original neutral plant-modifier state. H0
 therefore remains failed, and the calibration workflow correctly blocks H3 while
 fresh CRC errors exist.
 
+A reversible, non-flashing WS2812 edge-stagger experiment on 2026-08-26 proved
+that receiver output switching materially affects the marginal logical-3 input
+path. The live service was stopped for exclusive SPI ownership, every receiver
+reported the requested phase before measurement, and an ABBA sequence exercised
+three/one/one/three phases with exactly 5,016 frame transfers per condition at a
+nominal 160 FPS. Logical receiver 3 added 514 CRC errors with staggering disabled
+(102.5 per 1,000 transfers) versus 27 with production three-phase staggering
+(5.38 per 1,000), a 19.0x rate ratio and 94.7% reduction. Each CRC delta matched
+one missing accepted/displayed frame. Logical receivers 0-2 stayed clean;
+logical 4 added one isolated error in the pooled three-phase arms; no receiver
+added SPI-queue, display, or status-miss errors. The reverse-order three-phase
+arm returned to 13 errors after the one-phase arms, so ordinary time drift does
+not explain the result. This demonstrates electrical coupling from concurrent
+WS2812 output activity into the receiver-3 SPI path and confirms that staggering
+is an effective mitigation, but it does not waive H0: the production setting
+still leaves fresh CRC faults and the exact susceptible component remains
+unisolated. Cleanup verified all five receivers back at phase 3, then systemd
+restored Sparkle at target 160 FPS, brightness 50, global speed scale 3.0,
+neutral plant modifiers, the five-route map, and 20 MHz SPI. No firmware was
+flashed and no deployment or release selection occurred.
+
 The preserved target-owned `receiver_hybrid.json` is also a migration input: it
 still contains the old enabled four-entry `(0,1,3,2)` mapping and
 `degraded_spi1_01_readable` policy. Phase 4 must atomically migrate that exact
