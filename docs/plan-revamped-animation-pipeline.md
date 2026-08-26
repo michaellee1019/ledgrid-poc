@@ -50,9 +50,7 @@ risk domain.
 The operator reports that the former SPI1 MISO fault has now been repaired and
 that the hardware layout is finalized. Treat the installed mapping and direction
 domains as fixed inputs, but do not convert that report into release evidence:
-TX echo and rerun the streamed baseline. Until that succeeds, the historical
 Gate H0 must still capture fresh identity/status from all five receivers with no
-TX echo and rerun the streamed baseline. Until that succeeds, the historical
 TX echo and rerun the streamed baseline. Until that succeeds, the historical
 degraded evidence remains useful but strict acknowledgement-based all-board
 acceptance, transactional activation claims, and production enablement of
@@ -3812,14 +3810,119 @@ one missing accepted/displayed frame. Logical receivers 0-2 stayed clean;
 logical 4 added one isolated error in the pooled three-phase arms; no receiver
 added SPI-queue, display, or status-miss errors. The reverse-order three-phase
 arm returned to 13 errors after the one-phase arms, so ordinary time drift does
-not explain the result. This demonstrates electrical coupling from concurrent
-WS2812 output activity into the receiver-3 SPI path and confirms that staggering
-is an effective mitigation, but it does not waive H0: the production setting
-still leaves fresh CRC faults and the exact susceptible component remains
-unisolated. Cleanup verified all five receivers back at phase 3, then systemd
-restored Sparkle at target 160 FPS, brightness 50, global speed scale 3.0,
-neutral plant modifiers, the five-route map, and 20 MHz SPI. No firmware was
-flashed and no deployment or release selection occurred.
+not explain the result. This demonstrates that installed LED-output switching
+materially couples into the receiver-3 SPI input path and confirms that
+staggering is an effective mitigation. Because all five receivers changed phase
+together, it does **not** identify receiver 3's own outputs as the aggressor;
+another receiver or shared power/ground can still be responsible. It also does
+not waive H0: the production setting still leaves fresh CRC faults. Cleanup
+verified all five receivers back at phase 3, then systemd restored Sparkle at
+target 160 FPS, brightness 50, global speed scale 3.0, neutral plant modifiers,
+the five-route map, and 20 MHz SPI. No firmware was flashed and no deployment or
+release selection occurred.
+
+#### Next hardware-review work package (planned 2026-08-26)
+
+The next review treats logical receiver 3 as the proven **victim** and identifies
+the **aggressor** before changing components. The goal is a measured electrical
+repair with software-enforced margin, not a lower error-rate waiver. These steps
+are reversible and non-flashing unless a later item explicitly reaches the
+exact-five USB deployment gate.
+
+1. **Capture the as-built installation before prescribing parts.** Record the
+   exact ESP32 and carrier revisions, LED-output buffers and enable wiring,
+   local bypass/bulk capacitors, any series resistors, connector pinouts, cable
+   types and lengths, power injection, fuse branches, and Pi/receiver/LED ground
+   topology. Retain labelled photographs and an as-built schematic or traced
+   interconnect diagram. The repository currently lacks this evidence.
+2. **Isolate the switching aggressor without soldering.** Start from all five
+   receivers verified at phase 3. Change one receiver at a time to phase 1 while
+   the other four stay at phase 3, using equal transfer counts and interleaved
+   baseline/reversal arms. On logical receiver 3, compare output mask zero, one
+   lane at a time, each three-phase lane group, and all eight lanes. Compare an
+   all-black stream with a bounded-brightness, high-transition scene: black
+   retains data-edge activity while sharply reducing LED load, helping separate
+   edge coupling from supply/ground movement. Record per-receiver attempted,
+   accepted, displayed, CRC, queue, display, status-miss, and reset deltas.
+3. **Test scheduling as diagnostic evidence, not as an assumed repair.** Without
+   changing logical IDs, routes, or wall mapping, compare SPI1 dispatch order
+   `(2,3,4)` with susceptible-route-first `(3,2,4)` in an A/B/A run. Exercise a
+   quiet diagnostic cadence around 115-120 FPS and production 160 FPS; ordering
+   alone does not guarantee a quiet interval at 160 because output from the
+   preceding frame can overlap the next period. Apply the same ordering contract
+   to complete and partial presentation paths if retained. Separately sweep only
+   logical receiver 3 through 20, 18, 16, and 12 MHz, extending lower only for
+   diagnosis. A lower production speed is a documented derating, not an
+   electrical root repair, and is acceptable only after the full cadence gate.
+4. **Use swaps to separate board from branch when needed.** With power removed,
+   labels and photographs captured, swap logical receiver 3's board with a
+   known-clean receiver and then, if needed, isolate the SPI harness/CS branch
+   separately. If errors follow the board, investigate or replace that receiver,
+   connector, power section, or output stage. If they remain on `SPI1.0`, focus
+   on the branch wiring, CS path, bus topology, and local reference. Restore the
+   finalized mapping after the test and re-run the orientation diagnostic.
+5. **Measure the analog failure at the receiver.** Compare logical receivers 2
+   and 3 at the ESP32 pins using a short ground spring or differential probe.
+   Capture SCLK, MOSI, CS, 3.3 V, output-buffer supply, and Pi-to-local ground
+   movement with phase/lane state and CE timing visible. Look for threshold
+   recrossing, ringing, undershoot/overshoot, CS glitches, rail droop, and ground
+   bounce. A logic analyzer alone is not sufficient to accept signal integrity.
+6. **Make only the repair indicated by isolation and scope evidence.** Route or
+   return-path faults call for shorter signal/ground pairs, removed stubs,
+   separation from LED outputs, a continuous low-impedance logic ground, and LED
+   return currents kept out of the SPI reference path. Ringing may call for
+   source damping at the Pi/branch driver and at each LED-output buffer; component
+   values must be selected from the installed device data and measured waveform.
+   Supply movement calls for the device-recommended close bypassing and local
+   bulk capacitance with short returns. A marginal shared bus may require a
+   3.3 V fanout/buffer with independently damped branches; sufficiently long
+   links may require differential transport or relocating receivers.
+7. **Keep software and firmware as containment and enforcement.** Make phase 3
+   the receiver boot default, retain phase 1 only as an explicit maintenance
+   diagnostic, and fail normal startup/deployment unless all five receivers
+   report applied phase 3. Use absolute presentation deadlines that skip missed
+   slots rather than launching an immediate catch-up transfer. If hardware
+   qualification requires derating, add topology-owned per-route SPI speeds
+   rather than slowing all of SPI1. Publish and receipt per-receiver rolling CRC,
+   accepted/displayed gaps, applied phase, route speed, and dispatch order, and
+   latch unhealthy on any new CRC. Do not retry stale streamed frames, suppress
+   CRC counters, weaken H0, or infer readiness from the response queued before
+   the current command. Exact quiet-window gating would require a real READY/
+   shared-quiet GPIO or a staged/deferred-present protocol and is secondary to
+   repairing the electrical path.
+8. **Close the low-probability firmware-memory hypothesis with portable tests.**
+   Retain maximum-geometry encoder bounds and lane round-trip coverage and add a
+   guard/sanitizer case around the largest phase-3 waveform if absent. SPI RX,
+   mailbox, and LED DMA buffers are distinct and the more write-intensive phase
+   3 improves errors by 19x, so this is a closure test rather than the leading
+   root-cause lane.
+
+Hardware-review acceptance is deliberately stricter than the exploratory ABBA
+run:
+
+- The short H0 screen runs a dense/high-transition 33 x 138 scene at target
+  160 FPS for 60 seconds with all five applied at phase 3, expected routes/
+  widths/masks, at least 150 displayed FPS, and zero new CRC, queue, display,
+  status, reset, or unexplained accounting errors on every receiver.
+- A passing candidate then runs for at least 10 minutes (approximately 96,000
+  target frames per receiver) and a separate 30-minute changing-pattern soak at
+  the highest supported operating brightness, both with the same zero-new-error
+  requirement. Retain
+  exact attempted/accepted/displayed deltas and wall-visible lane inspection;
+  inbound CRC cannot prove downstream LED output integrity.
+- Repeat after cold boot and service restart. Once all five immutable USB
+  identities enumerate, ordinary `just deploy` must also pass without weakening
+  its exact-five inventory, rollback, or post-boot health gates. Until then, no
+  all-board flash, release selection, or native activation is part of this work
+  package.
+- A phase-1 100,000-transfer run at 20 MHz is the preferred engineering-margin
+  characterization after repair. Production may still contractually require
+  phase 3, but any retained route-speed or scheduling workaround must be labelled
+  as derating rather than proof that the electrical root cause was removed.
+- Archive the as-built record, scope captures, test program/configuration,
+  raw per-arm counters, selected component values, final route/order/speed, and
+  photographs. Update this plan and `HARDWARE.md` with the accepted result before
+  H0 or Phase 4 is marked complete.
 
 The preserved target-owned `receiver_hybrid.json` is also a migration input: it
 still contains the old enabled four-entry `(0,1,3,2)` mapping and

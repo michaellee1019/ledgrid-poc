@@ -165,6 +165,54 @@ even when SPI CRC and receiver counters are clean.
 Never use maximum-white current as an ordinary operating condition. Apply both
 hardware current protection and conservative software brightness limits.
 
+### Current receiver-3 integrity finding
+
+A reversible non-flashing ABBA test on 2026-08-26 changed all five receivers
+between one-phase and three-phase WS2812 output staggering. Across exactly 5,016
+transfers per condition, logical receiver 3 (`spidev1.0`) recorded 514 CRC errors
+at phase 1 and 27 at phase 3: a 94.7% reduction. Every CRC corresponded to one
+fewer accepted/displayed frame, while receivers 0-2 remained clean and receiver
+4 recorded one isolated phase-3 error. This establishes a relationship between
+installed LED-output switching and the receiver-3 SPI input path. It does not
+identify receiver 3's own LED outputs as the aggressor because every receiver
+changed phase together; another board or shared power/ground remains possible.
+Phase 3 is required mitigation but is not acceptance while it still produces
+fresh CRC errors.
+
+For the next hardware review, follow the complete work package and acceptance
+criteria in the [Phase 4 plan](plan-revamped-animation-pipeline.md#next-hardware-review-work-package-planned-2026-08-26).
+In summary:
+
+1. Document the actual carrier, output buffers, enable wiring, capacitors,
+   resistors, connectors, cable lengths, and power/ground topology before adding
+   parts.
+2. Hold four receivers at phase 3 while changing one at a time to phase 1; then
+   isolate receiver 3 by output mask, individual lane, and stagger group. Compare
+   black and bounded-brightness/high-transition content.
+3. Compare receiver 3 against clean receiver 2 with SCLK, MOSI, CS, 3.3 V,
+   output-buffer supply, and local-ground measurements taken at the ESP32 pins.
+   Use a short ground spring or differential probe; do not accept a logic-analyzer
+   trace as analog signal-integrity evidence.
+4. If necessary, use labelled powered-down board and branch swaps to determine
+   whether the fault follows the receiver or remains on `spidev1.0`.
+5. Apply measurement-led repair: improve signal/ground pairing and return paths,
+   separate SPI from LED-output/current wiring, repair connectors, restore local
+   bypassing, or add source damping/fanout only where the waveform supports it.
+
+When ringing is confirmed, a trial range such as 22-47 ohms at the Pi-side SPI
+driver or branch fanout and roughly 33-100 ohms at each LED-buffer output can be
+useful, but these are starting ranges rather than installed-wall prescriptions.
+Source termination belongs next to the driver and must be selected against the
+actual trace/cable impedance and waveform. Likewise, add device-recommended
+close bypassing and local bulk capacitance only after tracing what is already
+installed. See the official [TI transmission-line guidance](https://www.ti.com/lit/pdf/spraak6),
+[TI simultaneous-switching analysis](https://www.ti.com/lit/pdf/szza038), and
+[Espressif schematic](https://docs.espressif.com/projects/esp-hardware-design-guidelines/en/latest/esp32s3/schematic-checklist.html)
+and [PCB-layout guidance](https://docs.espressif.com/projects/esp-hardware-design-guidelines/en/latest/esp32s3/pcb-layout-design.html).
+
+Do not place a 5 V AHCT output on Pi-to-ESP SPI. AHCT-compatible translation is
+for ESP-to-5 V LED data; the Pi and ESP32 SPI interface is 3.3 V.
+
 ## Missing physical design information
 
 The repository does not contain:
@@ -234,6 +282,9 @@ and rerun the deployment. Do not add competing SPI overlays by hand.
 - Check CS isolation and ground reference.
 - Reduce the configured SPI rate only as a diagnostic; retain a lower production
   value only after rerunning acceptance at that rate.
+- For the known receiver-3 fault, use the isolation and scope sequence under
+  [Current receiver-3 integrity finding](#current-receiver-3-integrity-finding)
+  before changing parts or accepting a software derating.
 
 ### Clean metrics but visible flashes
 
