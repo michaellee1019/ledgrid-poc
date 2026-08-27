@@ -67,17 +67,11 @@ PAINTER_MASK_TYPES = (
     },
 )
 
-# Browser execution is deliberately capability-gated. Python components run
-# through the checked-in Pyodide source bundle; receiver-native execution uses
-# a separately built Wasm peer of the repository-owned ABI-v2 source. Keeping
-# the allowlist here makes the API honest when a component is catalog-visible
-# but its browser runtime has not been proven yet.
-BROWSER_PYTHON_COMPONENTS = frozenset({
-    'gradient',
-    'rainbow',
-    'sparkle',
-    'wave',
-})
+# Browser execution is deliberately capability-gated. The generated Pyodide
+# asset contains the authoritative Python plugin package, so every catalog
+# component with a valid Python module:Class entrypoint can use the universal
+# worker. Receiver-native execution remains explicitly capability-bound to the
+# separately built Wasm peer of the repository-owned ABI-v2 source.
 BROWSER_NATIVE_COMPONENTS = frozenset({'aurora_curtains_native'})
 
 class AnimationWebInterface:
@@ -250,6 +244,56 @@ class AnimationWebInterface:
         def api_browser_composer_bootstrap():
             """Read-only schemas, presets, and explicit browser capabilities."""
             return jsonify(self._browser_composer_bootstrap())
+
+        @self.app.route('/api/v1/composer/connectivity')
+        def api_browser_composer_connectivity():
+            """Small uncached reachability probe for explicit server actions."""
+            response = jsonify({
+                'schema': 'ledgrid.browser-composer-connectivity',
+                'schema_version': 1,
+                'online': True,
+                'actions': {
+                    'validate_import': True,
+                    'save_component_preset': True,
+                    'save_scene_preset': True,
+                    'activate_scene': True,
+                },
+            })
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+
+        @self.app.route('/api/v1/composer/presets/validate', methods=['POST'])
+        def api_browser_composer_validate_preset():
+            """Validate an imported component or scene preset without mutation."""
+            try:
+                validated = self._validated_browser_composer_import(
+                    request.get_json(silent=True)
+                )
+            except (SceneValidationError, ValueError, TypeError) as exc:
+                return jsonify({'valid': False, 'error': str(exc)}), 400
+            return jsonify({'valid': True, **validated})
+
+        @self.app.route('/api/v1/composer/presets', methods=['POST'])
+        def api_browser_composer_save_preset():
+            """Persist one component preset without changing live playback."""
+            try:
+                result, created = self._save_browser_composer_preset(
+                    request.get_json(silent=True)
+                )
+            except FileExistsError as exc:
+                preset_id = str(exc)
+                return jsonify({
+                    'error': f'Preset {preset_id} already exists',
+                    'code': 'preset_exists',
+                    'preset_id': preset_id,
+                }), 409
+            except (SceneValidationError, ValueError, TypeError) as exc:
+                return jsonify({'error': str(exc)}), 400
+            return jsonify({
+                'success': True,
+                'created': created,
+                **result,
+            }), 201 if created else 200
 
         @self.app.route('/api/v1/studio-next/bootstrap')
         def api_studio_next_bootstrap():
@@ -1746,7 +1790,12 @@ class AnimationWebInterface:
                 else None
             )
 
-            if provider == 'python' and plugin_id in BROWSER_PYTHON_COMPONENTS:
+            python_entrypoint_ready = bool(re.fullmatch(
+                r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*',
+                entrypoint,
+            ))
+
+            if provider == 'python' and python_entrypoint_ready:
                 runtime = {
                     'kind': 'python',
                     'supported': True,
@@ -1775,8 +1824,8 @@ class AnimationWebInterface:
                     'kind': 'python' if provider == 'python' else 'native',
                     'supported': False,
                     'reason': (
-                        'This component does not yet have a verified browser-Wasm '
-                        'adapter. Its generated preview remains available as a fallback.'
+                        'This component does not expose a verified browser-Wasm '
+                        'entrypoint. Its generated preview remains available as a fallback.'
                     ),
                 }
 
@@ -1796,6 +1845,7 @@ class AnimationWebInterface:
                         'provider': provider,
                         'plugin_id': plugin_id,
                         'params': json.loads(json.dumps(payload['params'])),
+                        'preset_fingerprint': self._component_preset_fingerprint(payload),
                     })
                     preset_records.append(preset)
 
@@ -1813,6 +1863,16 @@ class AnimationWebInterface:
                 'presets': preset_records,
                 'browser_runtime': runtime,
                 'provider_collision': plugin_id in collisions,
+                'scene_compatibility': json.loads(json.dumps(
+                    raw.get('scene_compatibility') or {}
+                )),
+                'compatibility': json.loads(json.dumps(
+                    raw.get('compatibility') or {}
+                )),
+                'availability': json.loads(json.dumps(
+                    raw.get('availability') or {}
+                )),
+                'build': json.loads(json.dumps(raw.get('build') or {})),
                 'preview': self._studio_next_preview(
                     provider,
                     raw.get('preview'),
@@ -1839,6 +1899,15 @@ class AnimationWebInterface:
                 'checker': 'browser_worker',
                 'live_wall_mutated': False,
                 'framebuffer_readback': False,
+                'server_actions': {
+                    'connectivity_url': '/api/v1/composer/connectivity',
+                    'validate_import_url': '/api/v1/composer/presets/validate',
+                    'save_component_preset_url': '/api/v1/composer/presets',
+                    'save_scene_preset_url': '/api/v1/scene-presets',
+                    'validate_scene_url': '/api/v1/scene/validate',
+                    'activate_scene_url': '/api/v1/scene',
+                    'online_required': True,
+                },
             },
             'diagnostics': [
                 {
@@ -1853,6 +1922,168 @@ class AnimationWebInterface:
                 for plugin_id, providers in sorted(collisions.items())
             ],
         }
+
+    def _browser_composer_component(
+        self,
+        *,
+        component_key: Optional[str] = None,
+        plugin_id: Optional[str] = None,
+        provider: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Resolve one exact component identity, rejecting provider ambiguity."""
+        if component_key is not None:
+            if not isinstance(component_key, str) or ':' not in component_key:
+                raise ValueError('component_key must be provider:plugin_id')
+            key_provider, key_plugin_id = component_key.split(':', 1)
+            if provider is not None and provider != key_provider:
+                raise ValueError('component provider does not match component_key')
+            if plugin_id is not None and plugin_id != key_plugin_id:
+                raise ValueError('component plugin_id does not match component_key')
+            provider, plugin_id = key_provider, key_plugin_id
+        if not isinstance(plugin_id, str) or not plugin_id:
+            raise ValueError('component plugin_id is required')
+
+        matches = [
+            item for item in self._component_catalog()
+            if item.get('plugin_id') == plugin_id
+            and (provider is None or item.get('provider') == provider)
+        ]
+        if provider is None and len(matches) > 1:
+            raise ValueError(
+                f'Component {plugin_id} exists under multiple providers; '
+                'use a provider-qualified identity'
+            )
+        if len(matches) != 1:
+            identity = f'{provider}:{plugin_id}' if provider else plugin_id
+            raise ValueError(f'Unknown component: {identity}')
+        return matches[0]
+
+    def _validated_browser_composer_import(
+        self, payload: Any
+    ) -> Dict[str, Any]:
+        """Normalize an uploaded preset into a composer draft without writes."""
+        if not isinstance(payload, dict):
+            raise ValueError('uploaded preset must be a JSON object')
+
+        if payload.get('schema') == SCENE_PRESET_SCHEMA:
+            if payload.get('schema_version') != SCENE_PRESET_VERSION:
+                raise ValueError('unsupported scene preset schema version')
+            scene = self._validated_scene_request(payload.get('scene'))
+            background = scene['background']
+            descriptor = self._browser_composer_component(
+                plugin_id=background['plugin_id'],
+                provider=background['provider'],
+            )
+            params = dict(descriptor.get('defaults') or {})
+            params.update(background.get('resolved_parameters') or {})
+            params.update(background.get('parameter_overrides') or {})
+            return {
+                'kind': 'scene_preset',
+                'draft': {
+                    'component_key': (
+                        f"{background['provider']}:{background['plugin_id']}"
+                    ),
+                    'name': str(payload.get('name') or 'Imported scene'),
+                    'description': str(payload.get('description') or ''),
+                    'params': params,
+                    'scene': scene,
+                },
+            }
+
+        if payload.get('schema') == 'ledgrid.scene-state' or 'scene' in payload:
+            raise ValueError(
+                'upload a ledgrid.scene-preset document, not a raw scene envelope'
+            )
+        params = payload.get('params')
+        if not isinstance(params, dict):
+            raise ValueError('component preset params must be an object')
+        descriptor = self._browser_composer_component(
+            component_key=payload.get('component_key'),
+            plugin_id=payload.get('plugin_id') or payload.get('animation'),
+            provider=payload.get('provider'),
+        )
+        plugin_id = descriptor['plugin_id']
+        provider = descriptor['provider']
+        error = self._validate_animation_params(plugin_id, params)
+        if error:
+            raise ValueError(error)
+        return {
+            'kind': 'component_preset',
+            'draft': {
+                'component_key': f'{provider}:{plugin_id}',
+                'name': str(payload.get('name') or 'Imported preset'),
+                'description': str(payload.get('description') or ''),
+                'params': json.loads(json.dumps(params)),
+            },
+        }
+
+    def _save_browser_composer_preset(
+        self, payload: Any
+    ) -> tuple[Dict[str, Any], bool]:
+        """Persist an exact component preset without issuing a live command."""
+        if not isinstance(payload, dict):
+            raise ValueError('request body must be a JSON object')
+        if (
+            payload.get('schema') != 'ledgrid.browser-composer-save'
+            or payload.get('schema_version') != 1
+        ):
+            raise ValueError('unsupported browser composer save schema')
+        descriptor = self._browser_composer_component(
+            component_key=payload.get('component_key')
+        )
+        plugin_id = descriptor['plugin_id']
+        provider = descriptor['provider']
+        provider_count = sum(
+            item.get('plugin_id') == plugin_id
+            for item in self._component_catalog()
+        )
+        if provider_count > 1:
+            raise ValueError(
+                'This plugin ID exists under multiple providers; legacy preset '
+                'storage cannot save it safely'
+            )
+
+        name = str(payload.get('name') or '').strip()
+        if not name:
+            raise ValueError('preset name is required')
+        if len(name) > 120:
+            raise ValueError('preset name must be 120 characters or fewer')
+        preset_id = self._sanitize_preset_id(name)
+        if not preset_id:
+            raise ValueError('preset name must contain letters or numbers')
+        if not preset_id[0].isalpha():
+            preset_id = f'preset_{preset_id}'[:64]
+        params = payload.get('params')
+        if not isinstance(params, dict):
+            raise ValueError('preset params must be an object')
+        error = self._validate_animation_params(plugin_id, params)
+        if error:
+            raise ValueError(error)
+        overwrite = payload.get('overwrite', False)
+        if not isinstance(overwrite, bool):
+            raise ValueError('overwrite must be a boolean')
+
+        existing = self._load_animation_preset(plugin_id, preset_id)
+        if existing is not None and not overwrite:
+            raise FileExistsError(preset_id)
+        now = time.time()
+        preset = {
+            'version': 2,
+            'preset_id': preset_id,
+            'name': name,
+            'animation': plugin_id,
+            'provider': provider,
+            'description': str(payload.get('description') or ''),
+            'params': json.loads(json.dumps(params)),
+            'created_at': existing.get('created_at', now) if existing else now,
+            'updated_at': now,
+        }
+        self._write_animation_preset(plugin_id, preset_id, preset)
+        preset['component_key'] = f'{provider}:{plugin_id}'
+        return ({
+            'preset': preset,
+            'preset_fingerprint': self._component_preset_fingerprint(preset),
+        }, existing is None)
 
     def _scene_provider_policy(self) -> SceneProviderPolicy:
         """Resolve the manager's explicit rollout policy, failing safely off."""

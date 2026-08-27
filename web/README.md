@@ -11,13 +11,21 @@ Notes:
 - Keep UI-specific logic here; avoid embedding animation logic in routes.
 - Rebuild the checked-in browser runtime assets with
   `just browser-composer-assets`. The first Python preview on a device downloads
-  the pinned Pyodide runtime; rendering and checking then stay inside Web Workers.
+  the pinned Pyodide runtime; rendering, Clock compositing, and checking then stay
+  inside Web Workers. The browser bundle contains the complete valid Python
+  animation catalog and its curated assets. Receiver-native C++ previews use the
+  compact checked-in Wasm module.
 
 API endpoints:
 - `GET /composer` — installable browser-Wasm preset composer; opening it is
   private and non-mutating
 - `GET /api/v1/composer/bootstrap` — provider-qualified schemas, full authored
   preset parameters, geometry, and explicit browser runtime capabilities
+- `GET /api/v1/composer/connectivity` — uncached server reachability probe
+- `POST /api/v1/composer/presets/validate` — read-only component or composed-scene
+  JSON validation
+- `POST /api/v1/composer/presets` — save a provider-qualified component preset
+  without changing live playback
 - `GET /composer-service-worker.js` — root-scoped offline shell worker
 - GET /api/animations
 - `GET /api/v1/components` — unified descriptor catalog, filterable by provider

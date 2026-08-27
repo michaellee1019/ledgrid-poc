@@ -5,6 +5,11 @@
     const $ = (id) => document.getElementById(id);
     const STORAGE_PREFIX = 'ledgrid.browser-composer.v1';
     const SAMPLE_FRAMES = 48;
+    const CLOCK_STARTING_POINTS = Object.freeze([
+        {key: 'composer:clock:amber-digital', name: 'Amber digital', params: {face: 'digital', palette: 'amber', format_24h: false, show_seconds: true, position_y: .5, scale: 1, glow: .45, brightness: 1, opacity: 1, backdrop_opacity: 0}},
+        {key: 'composer:clock:quiet-analog', name: 'Quiet analog', params: {face: 'analog', palette: 'mono', format_24h: false, show_seconds: false, position_y: .32, scale: 1, glow: .18, brightness: .72, opacity: .88, backdrop_opacity: 0}},
+        {key: 'composer:clock:high-contrast', name: 'High contrast 24h', params: {face: 'digital', palette: 'ice', format_24h: true, show_seconds: false, position_y: .5, scale: 2, glow: .28, brightness: 1, opacity: 1, backdrop_opacity: .58, backdrop_padding: 2}},
+    ]);
     const state = {
         bootstrap: null,
         component: null,
@@ -20,10 +25,12 @@
         lastRenderTime: 0,
         renderInFlight: false,
         needsRender: true,
-        runtimes: {draft: null, original: null},
+        runtimes: {draft: null, original: null, overlay: null},
         originalRuntimePromise: null,
+        overlayRuntimePromise: null,
+        overlayMode: null,
         compareGeneration: 0,
-        frames: {draft: null, original: null},
+        frames: {draft: null, original: null, overlay: null, composed: null},
         runtimeGeneration: 0,
         history: [],
         historyIndex: -1,
@@ -31,6 +38,17 @@
         query: '',
         checkerGeneration: 0,
         autosaveTimer: null,
+        connectivityTimer: null,
+        serverOnline: false,
+        serverChecking: true,
+        busyAction: null,
+        lastSavedPreset: null,
+        layers: {
+            clockEnabled: false,
+            clockOpacity: 220,
+            clockParams: {},
+            fallbackKey: null,
+        },
     };
 
     function clone(value) {
@@ -61,6 +79,77 @@
         window.setTimeout(() => item.remove(), 3600);
     }
 
+    async function requestJson(url, options = {}) {
+        let response;
+        try {
+            response = await fetch(url, {
+                ...options,
+                headers: {
+                    'Accept': 'application/json',
+                    ...(options.body ? {'Content-Type': 'application/json'} : {}),
+                    ...(options.headers || {}),
+                },
+                cache: 'no-store',
+            });
+        } catch (_error) {
+            const error = new Error('The wall server is unreachable. Your local draft is still safe.');
+            error.code = 'offline';
+            throw error;
+        }
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const error = new Error(payload.error || `Server request failed (${response.status}).`);
+            error.status = response.status;
+            error.code = payload.code;
+            error.payload = payload;
+            throw error;
+        }
+        return payload;
+    }
+
+    function setServerOnline(online, {checking = false, quiet = false} = {}) {
+        state.serverOnline = Boolean(online);
+        state.serverChecking = checking;
+        const pill = $('serverState');
+        pill.dataset.state = checking ? 'checking' : online ? 'online' : 'offline';
+        pill.querySelector('span').textContent = checking ? 'Checking server' : online ? 'Server online' : 'Local only';
+        $('serverActionBadge').textContent = online ? 'Server online' : 'Local only';
+        if (!quiet && !state.busyAction) {
+            $('serverActionStatus').textContent = online
+                ? 'Server actions are available. Local preview remains separate from the physical wall.'
+                : 'Offline: local drafts, checks, uploads, and downloads still work. Save and Activate are unavailable.';
+        }
+        updateServerActionButtons();
+    }
+
+    function updateServerActionButtons() {
+        const enabled = Boolean(state.component && state.serverOnline && !state.serverChecking && !state.busyAction);
+        ['saveLibraryButton', 'saveLibraryPanelButton', 'activateButton', 'activatePanelButton'].forEach((id) => {
+            $(id).disabled = !enabled;
+        });
+    }
+
+    function setActionBusy(action, busy) {
+        state.busyAction = busy ? action : null;
+        const ids = action === 'activate'
+            ? ['activateButton', 'activatePanelButton']
+            : ['saveLibraryButton', 'saveLibraryPanelButton'];
+        ids.forEach((id) => $(id).dataset.busy = String(busy));
+        $('layersPanel').setAttribute('aria-busy', String(busy));
+        updateServerActionButtons();
+    }
+
+    async function checkConnectivity({quiet = false} = {}) {
+        if (!state.bootstrap) return;
+        try {
+            const url = state.bootstrap.capabilities?.server_actions?.connectivity_url || '/api/v1/composer/connectivity';
+            const payload = await requestJson(url);
+            setServerOnline(payload.online === true, {quiet});
+        } catch (_error) {
+            setServerOnline(false, {quiet});
+        }
+    }
+
     function assertBootstrap(payload) {
         if (!payload || payload.schema !== 'ledgrid.browser-composer-bootstrap' || payload.schema_version !== 1) {
             throw new Error('The composer catalog uses an unsupported schema.');
@@ -83,10 +172,11 @@
         configureCanvas();
         renderCatalog();
         const lastKey = localStorage.getItem(`${STORAGE_PREFIX}.last-component`);
-        const preferred = state.bootstrap.components.find((item) => item.key === lastKey && item.browser_runtime?.supported)
-            || state.bootstrap.components.find((item) => item.browser_runtime?.supported);
+        const preferred = state.bootstrap.components.find((item) => item.key === lastKey && item.role === 'background' && item.browser_runtime?.supported)
+            || state.bootstrap.components.find((item) => item.role === 'background' && item.browser_runtime?.supported);
         if (preferred) await selectComponent(preferred);
         else showCatalogUnavailable('No components currently declare a supported browser runtime.');
+        await checkConnectivity();
     }
 
     function configureCanvas() {
@@ -105,7 +195,7 @@
         const filterMatches = state.catalogFilter === 'all' || runtimeKind(component) === state.catalogFilter;
         const haystack = [component.name, component.description, component.plugin_id, component.provider, component.role]
             .filter(Boolean).join(' ').toLowerCase();
-        return filterMatches && haystack.includes(state.query.toLowerCase());
+        return component.role === 'background' && filterMatches && haystack.includes(state.query.toLowerCase());
     }
 
     function renderCatalog() {
@@ -158,7 +248,7 @@
     }
 
     function presetIdentity(preset, index = 0) {
-        return preset?.preset_id || preset?.id || `preset-${index}`;
+        return preset?.key || preset?.preset_id || preset?.id || `preset-${index}`;
     }
 
     function renderPresets() {
@@ -207,6 +297,119 @@
         }
     }
 
+    function clockComponent() {
+        return state.bootstrap?.components.find((item) => item.provider === 'python' && item.plugin_id === 'clock_overlay' && item.role === 'overlay') || null;
+    }
+
+    function pythonFallbacks() {
+        return (state.bootstrap?.components || []).filter((item) => (
+            item.provider === 'python'
+            && item.role === 'background'
+            && item.compatibility?.implementation_loaded !== false
+            && item.scene_compatibility?.selectable !== false
+        ));
+    }
+
+    function normalizedLayers(component, savedLayers = null) {
+        const existing = savedLayers && typeof savedLayers === 'object' ? savedLayers : {};
+        const fallbackCandidates = pythonFallbacks();
+        const selfFallback = component.provider === 'python' ? component.key : null;
+        const requestedFallback = fallbackCandidates.find((item) => item.key === existing.fallbackKey)?.key;
+        const fallbackKey = selfFallback || requestedFallback || fallbackCandidates[0]?.key || null;
+        return {
+            clockEnabled: Boolean(existing.clockEnabled && clockComponent()),
+            clockOpacity: Math.max(0, Math.min(255, Math.round(safeNumber(existing.clockOpacity, 220)))),
+            clockParams: {
+                ...defaultParams(clockComponent() || {}),
+                ...(existing.clockParams && typeof existing.clockParams === 'object' ? clone(existing.clockParams) : {}),
+            },
+            fallbackKey,
+        };
+    }
+
+    function renderLayers() {
+        const component = state.component;
+        if (!component) return;
+        $('backgroundLayerIcon').textContent = component.icon || '✦';
+        $('backgroundLayerName').textContent = component.name || humanize(component.plugin_id);
+        $('backgroundLayerMeta').textContent = `${component.provider === 'receiver_native' ? 'Receiver C++' : 'Host Python'} · fixed background`;
+        const clock = clockComponent();
+        $('clockEnabled').disabled = !clock;
+        $('clockEnabled').checked = Boolean(state.layers.clockEnabled && clock);
+        $('clockOptions').hidden = !state.layers.clockEnabled;
+        $('clockLayerCard').classList.toggle('is-enabled', state.layers.clockEnabled);
+        $('clockOpacity').value = String(state.layers.clockOpacity);
+        $('clockOpacityValue').textContent = `${Math.round(state.layers.clockOpacity / 255 * 100)}%`;
+        renderClockControls();
+
+        const select = $('fallbackSelect');
+        select.replaceChildren();
+        pythonFallbacks().forEach((item) => {
+            const option = document.createElement('option');
+            option.value = item.key;
+            option.textContent = item.name || humanize(item.plugin_id);
+            option.selected = item.key === state.layers.fallbackKey;
+            select.appendChild(option);
+        });
+        select.disabled = component.provider === 'python';
+        $('fallbackHelp').textContent = component.provider === 'python'
+            ? 'This Python background is also its required safety fallback.'
+            : 'Receiver C++ backgrounds require a real Host Python fallback before activation.';
+        updateServerActionButtons();
+    }
+
+    function renderClockControls() {
+        const clock = clockComponent();
+        const presetSelect = $('clockPresetSelect');
+        const host = $('clockParameterList');
+        presetSelect.replaceChildren();
+        const custom = document.createElement('option');
+        custom.value = '';
+        custom.textContent = 'Custom';
+        presetSelect.appendChild(custom);
+        [...(clock?.presets || []), ...CLOCK_STARTING_POINTS].forEach((preset, index) => {
+            const option = document.createElement('option');
+            option.value = presetIdentity(preset, index);
+            option.textContent = preset.name || humanize(option.value);
+            presetSelect.appendChild(option);
+        });
+        host.replaceChildren();
+        Object.entries(clock?.parameter_schema || {}).forEach(([key, contract]) => {
+            host.appendChild(parameterControl(key, contract || {}, {
+                params: state.layers.clockParams,
+                prefix: 'clock-parameter',
+                onUpdate: updateClockParam,
+                onCommit: commitHistory,
+            }));
+        });
+    }
+
+    function updateClockParam(key, value) {
+        state.layers.clockParams[key] = value;
+        state.lastSavedPreset = null;
+        $('clockPresetSelect').value = '';
+        resetChecker();
+        scheduleAutosave();
+        requestRender();
+    }
+
+    function applyClockPreset(presetId) {
+        if (!presetId) return;
+        const clock = clockComponent();
+        const presets = [...(clock?.presets || []), ...CLOCK_STARTING_POINTS];
+        const preset = presets.find((item, index) => presetIdentity(item, index) === presetId);
+        if (!preset) return;
+        state.layers.clockParams = {...defaultParams(clock), ...presetParams(preset)};
+        renderClockControls();
+        $('clockPresetSelect').value = presetId;
+        state.lastSavedPreset = null;
+        commitHistory();
+        resetChecker();
+        scheduleAutosave();
+        requestRender();
+        toast(`Clock starting point: ${preset.name || humanize(presetId)}.`);
+    }
+
     async function selectComponent(component, options = {}) {
         if (!component?.browser_runtime?.supported) return;
         if (state.component?.key === component.key && !options.force) return;
@@ -218,16 +421,19 @@
         const defaults = defaultParams(component);
         state.params = clone(saved?.params || defaults);
         state.originalParams = clone(saved?.original_params || defaults);
+        state.layers = normalizedLayers(component, saved?.layers);
+        state.lastSavedPreset = null;
         $('presetName').value = saved?.name || `${component.name || humanize(component.plugin_id)} draft`;
         state.elapsed = 0;
         state.frameIndex = 0;
-        state.frames = {draft: null, original: null};
+        state.frames = {draft: null, original: null, overlay: null, composed: null};
         resetHistory();
         resetChecker();
         updateComponentCopy();
         renderCatalog();
         renderPresets();
         renderParameterControls();
+        renderLayers();
         setComposerEnabled(true);
         if (!options.deferRuntime) await startRuntimes();
         scheduleAutosave();
@@ -236,13 +442,14 @@
 
     function applyPreset(preset, index) {
         state.selectedPreset = presetIdentity(preset, index);
+        state.lastSavedPreset = null;
         const params = {...defaultParams(state.component), ...presetParams(preset)};
         state.params = clone(params);
         state.originalParams = clone(params);
         $('presetName').value = preset.name || humanize(state.selectedPreset);
         state.elapsed = 0;
         state.frameIndex = 0;
-        state.frames = {draft: null, original: null};
+        state.frames = {draft: null, original: null, overlay: null, composed: null};
         resetHistory();
         renderPresets();
         renderParameterControls();
@@ -274,6 +481,7 @@
         ['playButton', 'timeline', 'resetButton', 'runCheckerButton', 'copyButton', 'exportButton'].forEach((id) => {
             $(id).disabled = !enabled;
         });
+        updateServerActionButtons();
     }
 
     function setEngineState(status, title, detail) {
@@ -290,7 +498,7 @@
         try {
             const geometry = state.bootstrap.geometry;
             const draft = new ComposerRuntime(state.component, geometry);
-            state.runtimes = {draft, original: null};
+            state.runtimes = {draft, original: null, overlay: null};
             await draft.init(state.params);
             if (state.compare !== 'draft') await ensureOriginalRuntime();
             if (generation !== state.runtimeGeneration) return;
@@ -300,6 +508,12 @@
             $('timeline').disabled = false;
             $('runCheckerButton').disabled = false;
             state.needsRender = true;
+            if (state.layers.clockEnabled) {
+                ensureOverlayRuntime().then(requestRender).catch((error) => {
+                    $('clockPreviewNote').textContent = `Clock is configured for activation; local layer preview is unavailable: ${error.message}`;
+                    toast('Background preview is ready; the Clock layer could not start locally.', 'error');
+                });
+            }
         } catch (error) {
             if (generation !== state.runtimeGeneration) return;
             setEngineState('error', 'Renderer error', 'Preview stopped');
@@ -314,10 +528,80 @@
     }
 
     function disposeRuntimes() {
+        if (state.overlayMode === 'shared' && typeof state.runtimes.draft?.disposeInstance === 'function') {
+            state.runtimes.draft.disposeInstance('clock_overlay');
+        }
+        state.runtimes.overlay?.dispose();
         state.runtimes.draft?.dispose();
         state.runtimes.original?.dispose();
-        state.runtimes = {draft: null, original: null};
+        state.runtimes = {draft: null, original: null, overlay: null};
         state.originalRuntimePromise = null;
+        state.overlayRuntimePromise = null;
+        state.overlayMode = null;
+    }
+
+    function disposeOverlayRuntime() {
+        if (state.overlayMode === 'shared' && typeof state.runtimes.draft?.disposeInstance === 'function') {
+            state.runtimes.draft.disposeInstance('clock_overlay');
+        }
+        state.runtimes.overlay?.dispose();
+        state.runtimes.overlay = null;
+        state.overlayRuntimePromise = null;
+        state.overlayMode = null;
+        state.frames.overlay = null;
+        state.frames.composed = null;
+    }
+
+    function ensureOverlayRuntime() {
+        if (!state.layers.clockEnabled) return Promise.resolve(null);
+        if (state.overlayMode === 'shared') return Promise.resolve(state.runtimes.draft);
+        if (state.runtimes.overlay?.ready) return Promise.resolve(state.runtimes.overlay);
+        if (state.overlayRuntimePromise) return state.overlayRuntimePromise;
+        const clock = clockComponent();
+        if (!clock) return Promise.reject(new Error('Clock overlay is not in the component catalog.'));
+        const generation = state.runtimeGeneration;
+        $('clockPreviewNote').textContent = 'Preparing the Clock layer locally…';
+
+        if (runtimeKind(state.component) === 'python' && typeof state.runtimes.draft?.initInstance === 'function') {
+            state.overlayRuntimePromise = state.runtimes.draft
+                .initInstance(clock, clone(state.layers.clockParams), 'clock_overlay')
+                .then(() => {
+                    if (generation !== state.runtimeGeneration || !state.layers.clockEnabled) throw new Error('Clock layer was replaced.');
+                    state.overlayMode = 'shared';
+                    $('clockPreviewNote').textContent = 'Clock composed locally in the same Python worker to conserve memory.';
+                    return state.runtimes.draft;
+                });
+        } else if (runtimeKind(state.component) === 'native') {
+            const runtime = new ComposerRuntime(clock, state.bootstrap.geometry, {initTimeoutMs: 90000});
+            state.runtimes.overlay = runtime;
+            state.overlayRuntimePromise = runtime.init(clone(state.layers.clockParams)).then(() => {
+                if (generation !== state.runtimeGeneration || !state.layers.clockEnabled) {
+                    runtime.dispose();
+                    throw new Error('Clock layer was replaced.');
+                }
+                state.overlayMode = 'separate';
+                $('clockPreviewNote').textContent = 'Clock composed in a separate Python worker because the background is native C++.';
+                return runtime;
+            });
+        } else {
+            $('clockPreviewNote').textContent = 'Clock is configured for activation. This runtime does not yet expose local layer instances.';
+            return Promise.reject(new Error('Same-worker layer rendering is not available yet.'));
+        }
+        state.overlayRuntimePromise = state.overlayRuntimePromise.finally(() => {
+            state.overlayRuntimePromise = null;
+        });
+        return state.overlayRuntimePromise;
+    }
+
+    async function renderOverlayFrame(elapsed, frameIndex) {
+        if (!state.layers.clockEnabled) return null;
+        const runtime = await ensureOverlayRuntime();
+        if (!runtime) return null;
+        const wallTime = Date.now() / 1000;
+        const frame = state.overlayMode === 'shared'
+            ? await runtime.renderInstance('clock_overlay', elapsed, frameIndex, clone(state.layers.clockParams), wallTime)
+            : await runtime.render(elapsed, frameIndex, clone(state.layers.clockParams));
+        return validatedFrame(frame);
     }
 
     function ensureOriginalRuntime() {
@@ -355,18 +639,22 @@
         entries.forEach(([key, contract]) => host.appendChild(parameterControl(key, contract || {})));
     }
 
-    function parameterControl(key, contract) {
-        const type = String(contract.type || typeof state.params[key]).toLowerCase();
+    function parameterControl(key, contract, context = {}) {
+        const params = context.params || state.params;
+        const prefix = context.prefix || 'parameter';
+        const applyValue = context.onUpdate || updateParam;
+        const commit = context.onCommit || commitHistory;
+        const type = String(contract.type || typeof params[key]).toLowerCase();
         const wrapper = document.createElement('div');
         wrapper.className = 'parameter-control';
         const labelRow = document.createElement('div');
         labelRow.className = 'parameter-label-row';
         const label = document.createElement('label');
-        label.htmlFor = `parameter-${key}`;
+        label.htmlFor = `${prefix}-${key}`;
         label.textContent = humanize(key);
         const readout = document.createElement('output');
         readout.className = 'parameter-value';
-        readout.htmlFor = `parameter-${key}`;
+        readout.htmlFor = `${prefix}-${key}`;
         labelRow.append(label, readout);
         wrapper.appendChild(labelRow);
 
@@ -375,13 +663,13 @@
             wrapper.classList.add('switch-control');
             input = document.createElement('input');
             input.type = 'checkbox';
-            input.checked = Boolean(state.params[key]);
+            input.checked = Boolean(params[key]);
             input.setAttribute('role', 'switch');
             readout.textContent = input.checked ? 'On' : 'Off';
             input.addEventListener('change', () => {
-                updateParam(key, input.checked);
+                applyValue(key, input.checked);
                 readout.textContent = input.checked ? 'On' : 'Off';
-                commitHistory();
+                commit();
             });
         } else if ((contract.options || contract.enum) && Array.isArray(contract.options || contract.enum)) {
             input = document.createElement('select');
@@ -390,15 +678,15 @@
                 const option = document.createElement('option');
                 option.value = String(value);
                 option.textContent = humanize(value);
-                option.selected = String(state.params[key]) === String(value);
+                option.selected = String(params[key]) === String(value);
                 input.appendChild(option);
             });
-            readout.textContent = humanize(state.params[key]);
+            readout.textContent = humanize(params[key]);
             input.addEventListener('change', () => {
                 const option = options.find((candidate) => String(candidate) === input.value);
-                updateParam(key, option ?? input.value);
+                applyValue(key, option ?? input.value);
                 readout.textContent = humanize(input.value);
-                commitHistory();
+                commit();
             });
         } else if (['float', 'number', 'int', 'integer'].includes(type) && contract.min != null && contract.max != null) {
             const range = document.createElement('div');
@@ -408,7 +696,7 @@
             input.min = String(contract.min);
             input.max = String(contract.max);
             input.step = String(contract.step ?? (type === 'int' || type === 'integer' ? 1 : sensibleStep(contract.min, contract.max)));
-            input.value = String(state.params[key] ?? contract.default ?? contract.min);
+            input.value = String(params[key] ?? contract.default ?? contract.min);
             const number = document.createElement('input');
             number.type = 'number';
             number.min = input.min;
@@ -420,24 +708,24 @@
                 input.value = String(value);
                 number.value = String(value);
                 readout.textContent = formatParameterValue(value, input.step);
-                updateParam(key, value);
+                applyValue(key, value);
             };
             input.addEventListener('input', () => applyNumeric(input.value));
-            input.addEventListener('change', commitHistory);
-            number.addEventListener('change', () => { applyNumeric(number.value); commitHistory(); });
+            input.addEventListener('change', commit);
+            number.addEventListener('change', () => { applyNumeric(number.value); commit(); });
             readout.textContent = formatParameterValue(input.value, input.step);
             range.append(input, number);
             wrapper.appendChild(range);
-        } else if (type === 'object' || typeof state.params[key] === 'object') {
+        } else if (type === 'object' || typeof params[key] === 'object') {
             input = document.createElement('textarea');
-            input.value = JSON.stringify(state.params[key] ?? contract.default ?? {}, null, 2);
+            input.value = JSON.stringify(params[key] ?? contract.default ?? {}, null, 2);
             readout.textContent = 'JSON';
             input.addEventListener('change', () => {
                 try {
                     const parsed = JSON.parse(input.value);
                     input.removeAttribute('aria-invalid');
-                    updateParam(key, parsed);
-                    commitHistory();
+                    applyValue(key, parsed);
+                    commit();
                 } catch (_error) {
                     input.setAttribute('aria-invalid', 'true');
                     toast(`${humanize(key)} must be valid JSON.`, 'error');
@@ -446,19 +734,19 @@
         } else {
             input = document.createElement('input');
             input.type = ['float', 'number', 'int', 'integer'].includes(type) ? 'number' : 'text';
-            input.value = state.params[key] ?? contract.default ?? '';
+            input.value = params[key] ?? contract.default ?? '';
             if (contract.min != null) input.min = contract.min;
             if (contract.max != null) input.max = contract.max;
             input.step = type === 'int' || type === 'integer' ? '1' : 'any';
             readout.textContent = String(input.value || '—');
             input.addEventListener('change', () => {
                 const value = input.type === 'number' ? numericValue(input.value, type, contract) : input.value;
-                updateParam(key, value);
+                applyValue(key, value);
                 readout.textContent = String(value || '—');
-                commitHistory();
+                commit();
             });
         }
-        input.id = `parameter-${key}`;
+        input.id = `${prefix}-${key}`;
         input.name = key;
         if (!wrapper.contains(input)) wrapper.appendChild(input);
         if (contract.description) {
@@ -495,6 +783,7 @@
     function updateParam(key, value) {
         state.params[key] = value;
         state.selectedPreset = null;
+        state.lastSavedPreset = null;
         renderPresets();
         resetChecker();
         scheduleAutosave();
@@ -502,7 +791,7 @@
     }
 
     function snapshot() {
-        return {params: clone(state.params), name: $('presetName').value};
+        return {params: clone(state.params), name: $('presetName').value, layers: clone(state.layers)};
     }
 
     function resetHistory() {
@@ -526,13 +815,19 @@
         if (!entry) return;
         state.historyIndex = index;
         state.params = clone(entry.params);
+        const clockWasEnabled = state.layers.clockEnabled;
+        state.layers = normalizedLayers(state.component, entry.layers);
         $('presetName').value = entry.name;
         state.selectedPreset = null;
+        state.lastSavedPreset = null;
         renderParameterControls();
         renderPresets();
+        renderLayers();
         resetChecker();
         updateHistoryButtons();
         scheduleAutosave();
+        if (clockWasEnabled && !state.layers.clockEnabled) disposeOverlayRuntime();
+        if (!clockWasEnabled && state.layers.clockEnabled) ensureOverlayRuntime().then(requestRender).catch(() => {});
         requestRender();
     }
 
@@ -555,6 +850,7 @@
                 name: $('presetName').value,
                 params: state.params,
                 original_params: state.originalParams,
+                layers: state.layers,
                 saved_at: new Date().toISOString(),
             };
             try {
@@ -606,6 +902,16 @@
             const results = await Promise.all(requests);
             if (generation !== state.runtimeGeneration) return;
             results.forEach(([kind, frame]) => { state.frames[kind] = validatedFrame(frame); });
+            state.frames.composed = null;
+            if (state.frames.draft && state.layers.clockEnabled && state.compare !== 'original') {
+                try {
+                    state.frames.overlay = await renderOverlayFrame(elapsed, frameIndex);
+                    state.frames.composed = composeDraftFrame(state.frames.draft, state.frames.overlay);
+                } catch (overlayError) {
+                    state.frames.overlay = null;
+                    $('clockPreviewNote').textContent = `Clock remains configured for activation; local layer preview is unavailable: ${overlayError.message}`;
+                }
+            }
             drawPreview();
         } catch (error) {
             if (generation === state.runtimeGeneration) {
@@ -621,11 +927,41 @@
     function validatedFrame(frame) {
         const width = Number(frame.width);
         const height = Number(frame.height);
-        const pixels = frame.pixels instanceof ArrayBuffer ? new Uint8Array(frame.pixels) : null;
-        if (!pixels || !Number.isInteger(width) || !Number.isInteger(height) || pixels.length !== width * height * 3) {
-            throw new Error('Renderer returned an invalid RGB frame.');
+        const pixels = frame.pixels instanceof ArrayBuffer
+            ? new Uint8Array(frame.pixels)
+            : ArrayBuffer.isView(frame.pixels) ? new Uint8Array(frame.pixels.buffer, frame.pixels.byteOffset, frame.pixels.byteLength) : null;
+        const frameFormat = frame.frameFormat || frame.format || 'rgb';
+        const channels = frameFormat === 'premultiplied-rgba' ? 4 : frameFormat === 'rgb' ? 3 : 0;
+        if (!pixels || !channels || !Number.isInteger(width) || !Number.isInteger(height) || pixels.length !== width * height * channels) {
+            throw new Error(`Renderer returned an invalid ${frameFormat} frame.`);
         }
-        return {...frame, width, height, pixels};
+        return {...frame, width, height, pixels, frameFormat};
+    }
+
+    function composeDraftFrame(background, overlay) {
+        const compositor = window.LEDGridComposerCompositor;
+        if (!overlay || typeof compositor?.composeLayers !== 'function') return null;
+        if (overlay.width !== background.width || overlay.height !== background.height) {
+            throw new Error('Clock layer geometry does not match the background.');
+        }
+        const pixels = compositor.composeLayers({
+            width: background.width,
+            height: background.height,
+            layers: [
+                {pixels: background.pixels, format: 'rgb', blend: 'replace', enabled: true, opacity: 255},
+                {
+                    pixels: overlay.pixels,
+                    format: overlay.frameFormat,
+                    blend: 'source-over',
+                    enabled: true,
+                    opacity: state.layers.clockOpacity,
+                },
+            ],
+        });
+        if (!(pixels instanceof Uint8Array) || pixels.length !== background.width * background.height * 3) {
+            throw new Error('Local compositor returned an invalid RGB frame.');
+        }
+        return {...background, pixels, frameFormat: 'rgb', engine: `${background.engine || 'browser'} + local compositor`};
     }
 
     function canonicalImageData(frame) {
@@ -657,13 +993,14 @@
         context.imageSmoothingEnabled = false;
         context.fillStyle = '#020202';
         context.fillRect(0, 0, canvas.width, canvas.height);
-        if (state.compare === 'draft' && state.frames.draft) {
-            context.putImageData(canonicalImageData(state.frames.draft), 0, 0);
+        const draftFrame = state.frames.composed || state.frames.draft;
+        if (state.compare === 'draft' && draftFrame) {
+            context.putImageData(canonicalImageData(draftFrame), 0, 0);
         } else if (state.compare === 'original' && state.frames.original) {
             context.putImageData(canonicalImageData(state.frames.original), 0, 0);
-        } else if (state.compare === 'split' && state.frames.original && state.frames.draft) {
+        } else if (state.compare === 'split' && state.frames.original && draftFrame) {
             const left = frameCanvas(state.frames.original);
-            const right = frameCanvas(state.frames.draft);
+            const right = frameCanvas(draftFrame);
             const split = Math.floor(canvas.width / 2);
             context.drawImage(left, 0, 0, split, canvas.height, 0, 0, split, canvas.height);
             context.drawImage(right, split, 0, canvas.width - split, canvas.height, split, 0, canvas.width - split, canvas.height);
@@ -755,8 +1092,15 @@
         $('checkerProgressBar').value = 0;
         $('checkerProgressValue').textContent = '0%';
         $('checkerProgressLabel').textContent = 'Preparing isolated renderer…';
-        const schemaProblems = schemaCheck(state.component, state.params);
+        const backgroundSchemaProblems = schemaCheck(state.component, state.params).map((problem) => `Background: ${problem}`);
+        const clock = state.layers.clockEnabled ? clockComponent() : null;
+        const clockSchemaProblems = clock
+            ? schemaCheck(clock, state.layers.clockParams).map((problem) => `Clock: ${problem}`)
+            : state.layers.clockEnabled ? ['Clock: component is unavailable'] : [];
+        const schemaProblems = [...backgroundSchemaProblems, ...clockSchemaProblems];
         const runtime = new ComposerRuntime(state.component, state.bootstrap.geometry, {timeoutMs: 30000});
+        let overlayRuntime = null;
+        let overlayMode = null;
         const renderTimes = [];
         let previous = null;
         let deltaTotal = 0;
@@ -768,12 +1112,63 @@
         let channelCount = 0;
         let peakCurrent = 0;
         try {
-            await runtime.init(clone(state.params));
+            try {
+                await runtime.init(clone(state.params));
+            } catch (error) {
+                throw new Error(`Background renderer failed to initialize: ${error.message}`);
+            }
+            if (state.layers.clockEnabled) {
+                if (!clock) throw new Error('Clock renderer failed to initialize: component is unavailable.');
+                $('checkerProgressLabel').textContent = 'Preparing Clock layer…';
+                if (runtimeKind(state.component) === 'python') {
+                    if (typeof runtime.initInstance !== 'function') {
+                        throw new Error('Clock renderer failed to initialize: same-worker layer rendering is unavailable.');
+                    }
+                    try {
+                        await runtime.initInstance(clock, clone(state.layers.clockParams), 'clock_overlay');
+                        overlayMode = 'shared';
+                    } catch (error) {
+                        throw new Error(`Clock renderer failed to initialize: ${error.message}`);
+                    }
+                } else {
+                    overlayRuntime = new ComposerRuntime(clock, state.bootstrap.geometry, {timeoutMs: 30000, initTimeoutMs: 90000});
+                    try {
+                        await overlayRuntime.init(clone(state.layers.clockParams));
+                        overlayMode = 'separate';
+                    } catch (error) {
+                        throw new Error(`Clock renderer failed to initialize: ${error.message}`);
+                    }
+                }
+            }
             for (let index = 0; index < SAMPLE_FRAMES; index += 1) {
                 if (generation !== state.checkerGeneration) throw new Error('Check replaced.');
-                const frame = validatedFrame(await runtime.render(index / 12, index, clone(state.params)));
+                const sampleStarted = performance.now();
+                let backgroundFrame;
+                try {
+                    backgroundFrame = validatedFrame(await runtime.render(index / 12, index, clone(state.params)));
+                } catch (error) {
+                    throw new Error(`Background renderer failed at frame ${index + 1}: ${error.message}`);
+                }
+                let frame = backgroundFrame;
+                if (state.layers.clockEnabled) {
+                    let overlayFrame;
+                    try {
+                        const response = overlayMode === 'shared'
+                            ? await runtime.renderInstance('clock_overlay', index / 12, index, clone(state.layers.clockParams), Date.now() / 1000)
+                            : await overlayRuntime.render(index / 12, index, clone(state.layers.clockParams));
+                        overlayFrame = validatedFrame(response);
+                    } catch (error) {
+                        throw new Error(`Clock renderer failed at frame ${index + 1}: ${error.message}`);
+                    }
+                    try {
+                        frame = composeDraftFrame(backgroundFrame, overlayFrame);
+                        if (!frame) throw new Error('local compositor is unavailable');
+                    } catch (error) {
+                        throw new Error(`Layer compositor failed at frame ${index + 1}: ${error.message}`);
+                    }
+                }
                 const pixels = frame.pixels;
-                renderTimes.push(safeNumber(frame.renderMs));
+                renderTimes.push(performance.now() - sampleStarted);
                 let frameLuminance = 0;
                 let frameCurrent = 0;
                 for (let offset = 0; offset < pixels.length; offset += 3) {
@@ -805,7 +1200,7 @@
                 const completed = index + 1;
                 $('checkerProgressBar').value = completed;
                 $('checkerProgressValue').textContent = `${Math.round(completed / SAMPLE_FRAMES * 100)}%`;
-                $('checkerProgressLabel').textContent = `Sampling frame ${completed} of ${SAMPLE_FRAMES}`;
+                $('checkerProgressLabel').textContent = `${state.layers.clockEnabled ? 'Sampling composed' : 'Sampling'} frame ${completed} of ${SAMPLE_FRAMES}`;
             }
             const deltas = SAMPLE_FRAMES - 1;
             const motion = deltaTotal / deltas;
@@ -840,7 +1235,7 @@
             if (currentStatus === 'fail') failures.push('estimated current'); else if (currentStatus === 'warn') warnings.push('estimated current');
 
             const renderStatus = p95 > 33 ? 'fail' : p95 > 16.7 ? 'warn' : 'pass';
-            updateMetric('render', `${p95.toFixed(2)} ms`, renderStatus, `${runtime.engine}; measured on this browser, not receiver hardware.`);
+            updateMetric('render', `${p95.toFixed(2)} ms`, renderStatus, `${state.layers.clockEnabled ? 'Background + Clock + compositor' : runtime.engine}; measured end-to-end on this browser, not receiver hardware.`);
             if (renderStatus === 'fail') failures.push('render time'); else if (renderStatus === 'warn') warnings.push('render time');
 
             const grade = failures.length ? 'fail' : warnings.length ? 'warn' : 'pass';
@@ -851,7 +1246,7 @@
             $('checkHeadline').textContent = grade === 'pass' ? 'Local sample looks healthy' : grade === 'warn' ? 'Review a few cautions' : 'Resolve local check failures';
             $('checkSummaryCopy').textContent = failures.length
                 ? `Failed: ${failures.join(', ')}.`
-                : warnings.length ? `Review: ${warnings.join(', ')}.` : `${SAMPLE_FRAMES} frames passed the local heuristics.`;
+                : warnings.length ? `Review: ${warnings.join(', ')}.` : `${SAMPLE_FRAMES} ${state.layers.clockEnabled ? 'composed ' : ''}frames passed the local heuristics.`;
             $('saveState').textContent = 'Saved on this device';
         } catch (error) {
             if (generation === state.checkerGeneration && error.message !== 'Check replaced.') {
@@ -862,6 +1257,8 @@
                 $('checkerDot').dataset.state = 'fail';
             }
         } finally {
+            if (overlayMode === 'shared' && typeof runtime.disposeInstance === 'function') runtime.disposeInstance('clock_overlay');
+            overlayRuntime?.dispose();
             runtime.dispose();
             if (generation === state.checkerGeneration) {
                 $('checkerProgress').hidden = true;
@@ -870,15 +1267,93 @@
         }
     }
 
+    function presetIdForName(name) {
+        let presetId = String(name || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'browser_draft';
+        if (!/^[a-z]/.test(presetId)) presetId = `preset_${presetId}`;
+        return presetId.slice(0, 64);
+    }
+
+    function currentPresetRecord() {
+        if (state.lastSavedPreset) return state.lastSavedPreset;
+        return (state.component?.presets || []).find((preset, index) => presetIdentity(preset, index) === state.selectedPreset) || null;
+    }
+
+    function componentReference(component, params, preset = null) {
+        const reference = {
+            plugin_id: component.plugin_id,
+            provider: component.provider,
+            parameter_overrides: {},
+            resolved_parameters: clone(params),
+        };
+        const presetId = preset?.preset_id;
+        const fingerprint = preset?.preset_fingerprint;
+        if (presetId && fingerprint) {
+            reference.preset_id = presetId;
+            reference.preset_fingerprint = fingerprint;
+        }
+        if (component.provider === 'receiver_native') {
+            reference.bundle_digest = component.build?.bundle_digest || component.build?.contract_digest;
+            reference.expected_payload_digest = component.build?.expected_payload_digest;
+            if (!reference.bundle_digest || !reference.expected_payload_digest) {
+                throw new Error('This native background has no ready managed bundle identity, so it cannot be activated safely.');
+            }
+        }
+        return reference;
+    }
+
+    function buildScene(backgroundPreset = currentPresetRecord()) {
+        if (!state.component) throw new Error('Choose a background first.');
+        const background = componentReference(state.component, state.params, backgroundPreset);
+        const fallback = pythonFallbacks().find((item) => item.key === state.layers.fallbackKey);
+        if (!fallback) throw new Error('Choose an available Host Python fallback.');
+        const knownFallback = state.component.provider === 'python'
+            ? clone(background)
+            : componentReference(fallback, defaultParams(fallback));
+        const overlays = [];
+        if (state.layers.clockEnabled) {
+            const clock = clockComponent();
+            if (!clock) throw new Error('Clock overlay is not available in the component catalog.');
+            overlays.push({
+                slot_id: 'clock_overlay',
+                component: componentReference(clock, state.layers.clockParams),
+                enabled: true,
+                opacity: state.layers.clockOpacity,
+                placement: {strip_translation: 0, led_translation: 0, clip_policy: 'clip_to_wall'},
+                stale_policy: {policy: 'hold'},
+            });
+        }
+        return {
+            schema: 'ledgrid.scene-state',
+            schema_version: 1,
+            revision: Date.now(),
+            background,
+            overlays,
+            known_python_fallback: knownFallback,
+        };
+    }
+
+    function scenePresetDocument() {
+        const name = $('presetName').value.trim() || `${state.component.name} scene`;
+        return {
+            schema: 'ledgrid.scene-preset',
+            schema_version: 1,
+            preset_id: presetIdForName(name),
+            name,
+            description: 'Authored in the browser composer; local preview is not physical-wall observation.',
+            scene: buildScene(),
+        };
+    }
+
     function exportedPreset() {
         const cleanName = $('presetName').value.trim() || `${state.component.name} draft`;
-        const presetId = cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'browser_draft';
+        const presetId = presetIdForName(cleanName);
         return {
             version: 2,
             preset_id: presetId,
             name: cleanName,
             animation: state.component.plugin_id,
             provider: state.component.provider,
+            component_key: state.component.key,
             params: clone(state.params),
             provenance: {
                 authored_with: 'ledgrid-browser-preset-composer',
@@ -888,8 +1363,174 @@
         };
     }
 
+    function exportedDocument() {
+        return state.layers.clockEnabled ? scenePresetDocument() : exportedPreset();
+    }
+
+    async function saveToLibrary({overwrite = false} = {}) {
+        if (!state.component || state.busyAction) return;
+        if (!state.serverOnline) {
+            toast('Offline: the draft is saved on this device, but the library is unavailable.', 'error');
+            return;
+        }
+        setActionBusy('save', true);
+        $('serverActionStatus').textContent = 'Validating and saving the component preset…';
+        try {
+            const url = state.bootstrap.capabilities?.server_actions?.save_component_preset_url || '/api/v1/composer/presets';
+            const result = await requestJson(url, {
+                method: 'POST',
+                body: JSON.stringify({
+                    schema: 'ledgrid.browser-composer-save',
+                    schema_version: 1,
+                    component_key: state.component.key,
+                    name: $('presetName').value.trim(),
+                    description: 'Authored and locally previewed in the browser composer.',
+                    params: clone(state.params),
+                    overwrite,
+                }),
+            });
+            state.lastSavedPreset = {...clone(result.preset), preset_fingerprint: result.preset_fingerprint};
+            const existingIndex = state.component.presets.findIndex((item) => item.preset_id === result.preset.preset_id);
+            const record = {
+                ...clone(result.preset),
+                preset_fingerprint: result.preset_fingerprint,
+                key: `${state.component.key}:${result.preset.preset_id}`,
+                component_key: state.component.key,
+            };
+            if (existingIndex >= 0) state.component.presets.splice(existingIndex, 1, record);
+            else state.component.presets.push(record);
+            state.selectedPreset = record.key;
+            renderPresets();
+
+            if (state.layers.clockEnabled) {
+                $('serverActionStatus').textContent = 'Component saved. Saving the composed scene preset…';
+                try {
+                    const sceneUrl = state.bootstrap.capabilities?.server_actions?.save_scene_preset_url || '/api/v1/scene-presets';
+                    const scene = buildScene(state.lastSavedPreset);
+                    await requestJson(sceneUrl, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            name: $('presetName').value.trim(),
+                            description: 'Background plus the fixed Clock overlay, authored in the browser composer.',
+                            scene,
+                        }),
+                    });
+                    $('serverActionStatus').textContent = 'Saved the component preset and composed scene preset to the server library.';
+                    toast('Component and scene saved to the library.', 'success');
+                } catch (sceneError) {
+                    $('serverActionStatus').textContent = `Component preset saved; scene preset was not saved: ${sceneError.message}`;
+                    toast('Component saved, but the scene preset needs attention.', 'error');
+                }
+            } else {
+                $('serverActionStatus').textContent = `Saved “${result.preset.name}” to the server library. The physical wall was not changed.`;
+                toast('Preset saved to the library.', 'success');
+            }
+        } catch (error) {
+            if (error.status === 409 && error.code === 'preset_exists' && !overwrite) {
+                $('overwriteCopy').textContent = `“${$('presetName').value.trim()}” already exists in the server library. Replacing it will not change the physical wall.`;
+                $('overwriteDialog').showModal();
+                $('serverActionStatus').textContent = 'A preset with this name already exists. Choose whether to replace it.';
+            } else {
+                if (error.code === 'offline') setServerOnline(false);
+                $('serverActionStatus').textContent = `Library save failed: ${error.message}`;
+                toast(error.message, 'error');
+            }
+        } finally {
+            setActionBusy('save', false);
+        }
+    }
+
+    function reviewActivation() {
+        if (!state.serverOnline) {
+            toast('Offline: activation requires the wall server.', 'error');
+            return;
+        }
+        try {
+            buildScene();
+        } catch (error) {
+            toast(error.message, 'error');
+            $('serverActionStatus').textContent = `Activation is not ready: ${error.message}`;
+            return;
+        }
+        const fallback = pythonFallbacks().find((item) => item.key === state.layers.fallbackKey);
+        $('activateBackground').textContent = state.component.name || humanize(state.component.plugin_id);
+        $('activateOverlay').textContent = state.layers.clockEnabled ? `Clock · ${Math.round(state.layers.clockOpacity / 255 * 100)}%` : 'Off';
+        $('activateFallback').textContent = fallback?.name || 'Unavailable';
+        $('activateDialog').showModal();
+    }
+
+    function stableJson(value) {
+        if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+        if (value && typeof value === 'object') {
+            return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+        }
+        return JSON.stringify(value);
+    }
+
+    function observedSceneIdentity(scene) {
+        if (!scene) return null;
+        return {
+            revision: scene.revision,
+            background: scene.background,
+            overlays: scene.overlays,
+            known_python_fallback: scene.known_python_fallback,
+        };
+    }
+
+    function sameObservedScene(observed, requested) {
+        if (!observed || observed.revision !== requested.revision) return false;
+        return stableJson(observedSceneIdentity(observed)) === stableJson(observedSceneIdentity(requested));
+    }
+
+    async function observeActivation(scene) {
+        const deadline = Date.now() + 8000;
+        let exactObservationUnavailable = false;
+        while (Date.now() < deadline) {
+            await new Promise((resolve) => window.setTimeout(resolve, 700));
+            try {
+                const payload = await requestJson('/api/v1/scene');
+                if (payload.active && payload.scene && !Number.isInteger(payload.scene.revision)) {
+                    exactObservationUnavailable = true;
+                }
+                if (payload.active && sameObservedScene(payload.scene, scene)) {
+                    $('serverActionStatus').textContent = 'Command accepted · observed live on the wall.';
+                    toast('Scene observed live on the wall.', 'success');
+                    return;
+                }
+            } catch (_error) {
+                break;
+            }
+        }
+        $('serverActionStatus').textContent = exactObservationUnavailable
+            ? 'Command accepted · exact wall observation unavailable because live status did not preserve the scene revision.'
+            : 'Command accepted · exact wall observation not yet confirmed.';
+    }
+
+    async function activateScene() {
+        if (state.busyAction) return;
+        setActionBusy('activate', true);
+        $('serverActionStatus').textContent = 'Validating the exact background, Clock slot, and Python fallback…';
+        try {
+            const scene = buildScene();
+            const validateUrl = state.bootstrap.capabilities?.server_actions?.validate_scene_url || '/api/v1/scene/validate';
+            const validated = await requestJson(validateUrl, {method: 'POST', body: JSON.stringify(scene)});
+            const activateUrl = state.bootstrap.capabilities?.server_actions?.activate_scene_url || '/api/v1/scene';
+            await requestJson(activateUrl, {method: 'PUT', body: JSON.stringify(validated.scene)});
+            $('serverActionStatus').textContent = 'Command accepted · awaiting wall observation.';
+            toast('Activation command accepted; checking wall state.');
+            setActionBusy('activate', false);
+            await observeActivation(validated.scene);
+        } catch (error) {
+            if (error.code === 'offline') setServerOnline(false);
+            $('serverActionStatus').textContent = `Activation was not accepted: ${error.message}`;
+            toast(error.message, 'error');
+        } finally {
+            setActionBusy('activate', false);
+        }
+    }
+
     async function copyJson() {
-        const text = JSON.stringify(exportedPreset(), null, 2);
+        const text = JSON.stringify(exportedDocument(), null, 2);
         try {
             await navigator.clipboard.writeText(text);
             toast('Preset JSON copied.');
@@ -905,7 +1546,7 @@
     }
 
     function exportJson() {
-        const preset = exportedPreset();
+        const preset = exportedDocument();
         const blob = new Blob([`${JSON.stringify(preset, null, 2)}\n`], {type: 'application/json'});
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
@@ -914,31 +1555,102 @@
         link.click();
         link.remove();
         URL.revokeObjectURL(link.href);
-        toast('Preset exported.');
+        toast(state.layers.clockEnabled ? 'Scene preset downloaded.' : 'Component preset downloaded.');
+    }
+
+    function locallyValidatedImport(payload) {
+        if (payload?.schema === 'ledgrid.scene-preset' && payload.schema_version === 1 && payload.scene?.schema === 'ledgrid.scene-state') {
+            const background = payload.scene.background;
+            const componentKey = `${background?.provider}:${background?.plugin_id}`;
+            return {
+                kind: 'scene_preset',
+                draft: {
+                    component_key: componentKey,
+                    name: payload.name || 'Imported scene',
+                    description: payload.description || '',
+                    params: {...(background?.resolved_parameters || {}), ...(background?.parameter_overrides || {})},
+                    scene: payload.scene,
+                },
+            };
+        }
+        if (!payload || typeof payload !== 'object' || !payload.params || typeof payload.params !== 'object') {
+            throw new Error('Upload a component preset or ledgrid.scene-preset JSON document.');
+        }
+        const pluginId = payload.animation || payload.plugin_id;
+        const provider = payload.provider;
+        const matches = state.bootstrap.components.filter((item) => item.plugin_id === pluginId && (!provider || item.provider === provider));
+        if (matches.length !== 1) throw new Error('The uploaded preset does not identify one provider-qualified component.');
+        return {
+            kind: 'component_preset',
+            draft: {
+                component_key: matches[0].key,
+                name: payload.name || humanize(payload.preset_id || pluginId),
+                description: payload.description || '',
+                params: clone(payload.params),
+            },
+        };
+    }
+
+    async function applyImportedDraft(validated) {
+        const draft = validated.draft || {};
+        const component = state.bootstrap.components.find((item) => item.key === draft.component_key);
+        if (!component) throw new Error('The uploaded background is not in this composer catalog.');
+        if (component.role !== 'background') throw new Error('A scene background must use a background component.');
+        if (!component.browser_runtime?.supported) throw new Error(component.browser_runtime?.reason || 'That background cannot render in this browser.');
+        await selectComponent(component, {force: true, ignoreAutosave: true, deferRuntime: true});
+        state.params = {...defaultParams(component), ...clone(draft.params || {})};
+        state.originalParams = clone(state.params);
+        $('presetName').value = draft.name || `${component.name} draft`;
+
+        if (validated.kind === 'scene_preset') {
+            const scene = draft.scene;
+            const clock = (scene.overlays || []).find((item) => item.slot_id === 'clock_overlay' && item.enabled);
+            const fallback = scene.known_python_fallback;
+            state.layers = normalizedLayers(component, {
+                clockEnabled: Boolean(clock),
+                clockOpacity: clock?.opacity ?? 220,
+                clockParams: clock ? {
+                    ...(clock.component?.resolved_parameters || {}),
+                    ...(clock.component?.parameter_overrides || {}),
+                } : {},
+                fallbackKey: fallback ? `${fallback.provider}:${fallback.plugin_id}` : null,
+            });
+        }
+        const problems = schemaCheck(component, state.params);
+        if (problems.length) throw new Error(`Uploaded preset is invalid: ${problems[0]}.`);
+        resetHistory();
+        renderParameterControls();
+        renderLayers();
+        resetChecker();
+        await startRuntimes();
+        scheduleAutosave();
     }
 
     async function importJson(file) {
         try {
             const payload = JSON.parse(await file.text());
-            const pluginId = payload.animation || payload.plugin_id;
-            const provider = payload.provider;
-            const matches = state.bootstrap.components.filter((item) => item.plugin_id === pluginId && (!provider || item.provider === provider));
-            if (matches.length !== 1) throw new Error('The imported preset does not identify one browser-ready component.');
-            const component = matches[0];
-            if (!component.browser_runtime?.supported) throw new Error(component.browser_runtime?.reason || 'That renderer is not available in the browser.');
-            await selectComponent(component, {force: true, ignoreAutosave: true, deferRuntime: true});
-            state.params = {...defaultParams(component), ...presetParams(payload)};
-            state.originalParams = clone(state.params);
-            $('presetName').value = payload.name || humanize(payload.preset_id || pluginId);
-            const problems = schemaCheck(component, state.params);
-            if (problems.length) throw new Error(`Imported preset is invalid: ${problems[0]}.`);
-            resetHistory();
-            renderParameterControls();
-            resetChecker();
-            await startRuntimes();
-            scheduleAutosave();
-            toast('Preset imported and rendered locally.');
+            let validated;
+            let serverValidated = false;
+            if (state.serverOnline) {
+                const url = state.bootstrap.capabilities?.server_actions?.validate_import_url || '/api/v1/composer/presets/validate';
+                try {
+                    validated = await requestJson(url, {method: 'POST', body: JSON.stringify(payload)});
+                    serverValidated = true;
+                } catch (error) {
+                    if (error.code !== 'offline') throw error;
+                    setServerOnline(false);
+                    validated = locallyValidatedImport(payload);
+                }
+            } else {
+                validated = locallyValidatedImport(payload);
+            }
+            await applyImportedDraft(validated);
+            $('serverActionStatus').textContent = serverValidated
+                ? 'Upload validated by the server and opened as a local draft. The physical wall was not changed.'
+                : 'Upload checked locally and opened as a draft. Server validation is pending until you reconnect.';
+            toast(serverValidated ? 'Preset validated and opened locally.' : 'Preset opened locally; server validation is pending.');
         } catch (error) {
+            if (error.code === 'offline') setServerOnline(false);
             toast(error.message, 'error');
         } finally {
             $('importFile').value = '';
@@ -946,21 +1658,22 @@
     }
 
     function selectInspectorTab(name) {
-        const checking = name === 'checker';
-        $('controlsTab').setAttribute('aria-selected', String(!checking));
-        $('checkerTab').setAttribute('aria-selected', String(checking));
-        $('controlsPanel').hidden = checking;
-        $('checkerPanel').hidden = !checking;
+        const panels = {controls: 'controlsPanel', layers: 'layersPanel', checker: 'checkerPanel'};
+        Object.entries(panels).forEach(([tabName, panelId]) => {
+            $(`${tabName}Tab`).setAttribute('aria-selected', String(name === tabName));
+            $(panelId).hidden = name !== tabName;
+        });
     }
 
     function selectMobileView(name) {
-        const target = name === 'check' ? 'tune' : name;
+        const target = name === 'check' || name === 'layers' ? 'tune' : name;
         document.querySelectorAll('.mobile-view').forEach((view) => view.classList.toggle('is-active', view.dataset.mobileView === target));
         document.querySelectorAll('[data-mobile-target]').forEach((button) => {
             if (button.dataset.mobileTarget === name) button.setAttribute('aria-current', 'page');
             else button.removeAttribute('aria-current');
         });
         if (name === 'check') selectInspectorTab('checker');
+        else if (name === 'layers') selectInspectorTab('layers');
         else if (name === 'tune') selectInspectorTab('controls');
     }
 
@@ -994,11 +1707,54 @@
         $('presetName').addEventListener('input', scheduleAutosave);
         $('presetName').addEventListener('change', commitHistory);
         $('importButton').addEventListener('click', () => $('importFile').click());
+        $('importPanelButton').addEventListener('click', () => $('importFile').click());
         $('importFile').addEventListener('change', (event) => event.target.files[0] && importJson(event.target.files[0]));
         $('copyButton').addEventListener('click', copyJson);
         $('exportButton').addEventListener('click', exportJson);
+        $('exportPanelButton').addEventListener('click', exportJson);
+        ['saveLibraryButton', 'saveLibraryPanelButton'].forEach((id) => $(id).addEventListener('click', () => saveToLibrary()));
+        ['activateButton', 'activatePanelButton'].forEach((id) => $(id).addEventListener('click', reviewActivation));
         $('controlsTab').addEventListener('click', () => selectInspectorTab('controls'));
+        $('layersTab').addEventListener('click', () => selectInspectorTab('layers'));
         $('checkerTab').addEventListener('click', () => selectInspectorTab('checker'));
+        $('clockEnabled').addEventListener('change', (event) => {
+            state.layers.clockEnabled = event.target.checked;
+            state.lastSavedPreset = null;
+            if (!state.layers.clockEnabled) disposeOverlayRuntime();
+            renderLayers();
+            commitHistory();
+            resetChecker();
+            scheduleAutosave();
+            if (state.layers.clockEnabled) ensureOverlayRuntime().then(requestRender).catch((error) => {
+                $('clockPreviewNote').textContent = `Clock remains configured for activation; local layer preview is unavailable: ${error.message}`;
+            });
+            requestRender();
+        });
+        $('clockOpacity').addEventListener('input', (event) => {
+            state.layers.clockOpacity = Math.max(0, Math.min(255, Math.round(safeNumber(event.target.value, 220))));
+            $('clockOpacityValue').textContent = `${Math.round(state.layers.clockOpacity / 255 * 100)}%`;
+            state.lastSavedPreset = null;
+            resetChecker();
+            scheduleAutosave();
+            requestRender();
+        });
+        $('clockOpacity').addEventListener('change', commitHistory);
+        $('clockPresetSelect').addEventListener('change', (event) => applyClockPreset(event.target.value));
+        $('fallbackSelect').addEventListener('change', (event) => {
+            state.layers.fallbackKey = event.target.value;
+            commitHistory();
+            scheduleAutosave();
+        });
+        $('confirmOverwriteButton').addEventListener('click', (event) => {
+            event.preventDefault();
+            $('overwriteDialog').close();
+            saveToLibrary({overwrite: true});
+        });
+        $('confirmActivateButton').addEventListener('click', (event) => {
+            event.preventDefault();
+            $('activateDialog').close();
+            activateScene();
+        });
         $('runCheckerButton').addEventListener('click', runChecker);
         document.querySelectorAll('[data-mobile-target]').forEach((button) => button.addEventListener('click', () => selectMobileView(button.dataset.mobileTarget)));
         document.addEventListener('keydown', (event) => {
@@ -1009,10 +1765,19 @@
                 restoreHistory(state.historyIndex + (event.shiftKey ? 1 : -1));
             } else if (event.key.toLowerCase() === 's') {
                 event.preventDefault();
-                if (state.component) exportJson();
+                if (state.component && state.serverOnline) saveToLibrary();
+                else toast('Draft saved on this device. Reconnect to save to the server library.');
+            } else if (event.key.toLowerCase() === 'o') {
+                event.preventDefault();
+                $('importFile').click();
             }
         });
-        window.addEventListener('beforeunload', disposeRuntimes);
+        window.addEventListener('online', () => checkConnectivity());
+        window.addEventListener('offline', () => setServerOnline(false));
+        window.addEventListener('beforeunload', () => {
+            window.clearInterval(state.connectivityTimer);
+            disposeRuntimes();
+        });
     }
 
     async function registerServiceWorker() {
@@ -1027,11 +1792,13 @@
     async function initialize() {
         bindEvents();
         syncPlayButton();
+        setServerOnline(false, {checking: true, quiet: true});
         window.requestAnimationFrame(animationLoop);
         registerServiceWorker();
         try {
             if (!ComposerRuntime) throw new Error('The browser runtime adapter did not load.');
             await loadBootstrap();
+            state.connectivityTimer = window.setInterval(() => checkConnectivity({quiet: true}), 15000);
         } catch (error) {
             showCatalogUnavailable(error.message);
             setEngineState('error', 'Catalog error', 'Refresh to retry');

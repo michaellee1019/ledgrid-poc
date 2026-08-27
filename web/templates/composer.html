@@ -20,6 +20,7 @@
     <div class="brand-lockup">
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
       <span><strong>Living Wall</strong><small>Preset Composer</small></span>
+      <span class="server-pill" id="serverState" data-state="checking" role="status"><i aria-hidden="true"></i><span>Checking server</span></span>
     </div>
     <div class="document-identity">
       <label class="sr-only" for="presetName">Preset name</label>
@@ -29,9 +30,11 @@
     <div class="header-actions" aria-label="Document actions">
       <button class="icon-button" id="undoButton" type="button" title="Undo" aria-label="Undo" disabled>↶</button>
       <button class="icon-button" id="redoButton" type="button" title="Redo" aria-label="Redo" disabled>↷</button>
-      <button class="quiet-button" id="importButton" type="button">Import</button>
+      <button class="quiet-button" id="importButton" type="button">Upload JSON</button>
       <button class="quiet-button" id="copyButton" type="button">Copy JSON</button>
-      <button class="primary-button" id="exportButton" type="button">Export</button>
+      <button class="quiet-button" id="exportButton" type="button">Download</button>
+      <button class="quiet-button server-action" id="saveLibraryButton" type="button" disabled>Save</button>
+      <button class="primary-button server-action" id="activateButton" type="button" disabled>Activate</button>
       <input id="importFile" type="file" accept="application/json,.json" hidden>
     </div>
   </header>
@@ -110,6 +113,7 @@
     <aside class="pane inspector-pane mobile-view" data-mobile-view="tune" aria-labelledby="inspectorHeading">
       <div class="inspector-tabs" role="tablist" aria-label="Inspector">
         <button id="controlsTab" type="button" role="tab" aria-selected="true" aria-controls="controlsPanel">Tune</button>
+        <button id="layersTab" type="button" role="tab" aria-selected="false" aria-controls="layersPanel">Layers</button>
         <button id="checkerTab" type="button" role="tab" aria-selected="false" aria-controls="checkerPanel">Check <span id="checkerDot" aria-hidden="true"></span></button>
       </div>
 
@@ -120,6 +124,57 @@
         </div>
         <p class="empty-message" id="parameterEmpty">Controls are generated from the selected renderer’s declared schema.</p>
         <form class="parameter-list" id="parameterList" autocomplete="off"></form>
+      </section>
+
+      <section id="layersPanel" role="tabpanel" aria-labelledby="layersTab" hidden>
+        <div class="layers-intro">
+          <p class="eyebrow">Scene stack</p>
+          <h1>Build what goes live</h1>
+          <p>The wall contract has one background and one fixed Clock slot. Preview compositing stays on this device.</p>
+        </div>
+
+        <ol class="layer-stack" aria-label="Scene layers, bottom to top">
+          <li class="layer-card is-required">
+            <span class="layer-order">1</span>
+            <span class="layer-icon" id="backgroundLayerIcon" aria-hidden="true">✦</span>
+            <p><strong id="backgroundLayerName">Background</strong><span id="backgroundLayerMeta">Choose a renderer</span></p>
+            <span class="fixed-chip">Required</span>
+          </li>
+          <li class="layer-card" id="clockLayerCard">
+            <span class="layer-order">2</span>
+            <span class="layer-icon" aria-hidden="true">◷</span>
+            <p><strong>Clock overlay</strong><span>Python · fixed top layer</span></p>
+            <label class="compact-switch"><span class="sr-only">Enable Clock overlay</span><input id="clockEnabled" type="checkbox" role="switch"></label>
+          </li>
+        </ol>
+
+        <div class="clock-options" id="clockOptions" hidden>
+          <label for="clockOpacity"><span>Clock opacity</span><output id="clockOpacityValue" for="clockOpacity">86%</output></label>
+          <input id="clockOpacity" type="range" min="0" max="255" value="220" step="1">
+          <label class="clock-preset-field" for="clockPresetSelect"><span>Clock starting point</span></label>
+          <select id="clockPresetSelect"><option value="">Custom</option></select>
+          <form class="parameter-list clock-parameter-list" id="clockParameterList" autocomplete="off"></form>
+          <p id="clockPreviewNote">The Clock is composed locally when the browser runtime exposes its layer frame.</p>
+        </div>
+
+        <label class="fallback-field" for="fallbackSelect">
+          <span>Python safety fallback</span>
+          <select id="fallbackSelect"></select>
+          <small id="fallbackHelp">Python backgrounds use themselves. Native backgrounds require a real Host Python fallback.</small>
+        </label>
+
+        <section class="server-surface" aria-labelledby="serverActionsHeading">
+          <div class="server-surface-heading"><h2 id="serverActionsHeading">Wall actions</h2><span id="serverActionBadge">Online required</span></div>
+          <p id="serverActionStatus" role="status" aria-live="polite">Drafts, checks, uploads, and downloads work locally. Saving and activation require the wall server.</p>
+          <div class="local-action-buttons" aria-label="Local file actions">
+            <button class="quiet-button" id="importPanelButton" type="button">Upload JSON</button>
+            <button class="quiet-button" id="exportPanelButton" type="button">Download JSON</button>
+          </div>
+          <div class="server-action-buttons">
+            <button class="quiet-button server-action" id="saveLibraryPanelButton" type="button" disabled>Save to library</button>
+            <button class="primary-button server-action" id="activatePanelButton" type="button" disabled>Review &amp; activate</button>
+          </div>
+        </section>
       </section>
 
       <section id="checkerPanel" role="tabpanel" aria-labelledby="checkerTab" hidden>
@@ -155,10 +210,42 @@
     <button type="button" data-mobile-target="library" aria-current="page"><span aria-hidden="true">▦</span>Looks</button>
     <button type="button" data-mobile-target="stage"><span aria-hidden="true">◉</span>Preview</button>
     <button type="button" data-mobile-target="tune"><span aria-hidden="true">⌁</span>Tune</button>
+    <button type="button" data-mobile-target="layers"><span aria-hidden="true">≋</span>Layers</button>
     <button type="button" data-mobile-target="check"><span aria-hidden="true">✓</span>Check</button>
   </nav>
 
+  <dialog class="action-dialog" id="overwriteDialog" aria-labelledby="overwriteHeading">
+    <form method="dialog">
+      <span class="dialog-icon" aria-hidden="true">↻</span>
+      <h2 id="overwriteHeading">Replace the saved preset?</h2>
+      <p id="overwriteCopy">A library preset already uses this name. Your local draft is still safe.</p>
+      <div class="dialog-actions">
+        <button class="quiet-button" value="cancel">Keep both separate</button>
+        <button class="primary-button" id="confirmOverwriteButton" value="confirm">Replace preset</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="action-dialog" id="activateDialog" aria-labelledby="activateHeading">
+    <form method="dialog">
+      <span class="dialog-icon live" aria-hidden="true">◉</span>
+      <p class="eyebrow">Physical wall</p>
+      <h2 id="activateHeading">Activate this scene?</h2>
+      <p>This sends a live playback command. The composer will report command acceptance separately from observed wall state.</p>
+      <dl class="activation-summary">
+        <div><dt>Background</dt><dd id="activateBackground">—</dd></div>
+        <div><dt>Overlay</dt><dd id="activateOverlay">Off</dd></div>
+        <div><dt>Fallback</dt><dd id="activateFallback">—</dd></div>
+      </dl>
+      <div class="dialog-actions">
+        <button class="quiet-button" value="cancel">Cancel</button>
+        <button class="primary-button" id="confirmActivateButton" value="confirm">Activate on wall</button>
+      </div>
+    </form>
+  </dialog>
+
   <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
+  <script src="{{ url_for('static', filename='js/composer_compositor.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/composer_runtime.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/composer.js') }}" defer></script>
 </body>

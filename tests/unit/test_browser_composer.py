@@ -105,6 +105,7 @@ class BrowserComposerTests(unittest.TestCase):
             ),
             _component("aurora_curtains_native", provider="receiver_native"),
             _component("not_ported"),
+            _component("malformed", entrypoint="missing-colon"),
         ]
         self.channel = _Channel()
         self.interface = AnimationWebInterface(
@@ -113,7 +114,9 @@ class BrowserComposerTests(unittest.TestCase):
         self.interface.animation_presets_dir = self.root / "presets"
         self.interface.generated_preview_dir = self.root / "previews"
         self.interface.runtime_preview_dir = self.root / "runtime-previews"
-        for plugin_id in ("rainbow", "aurora_curtains_native", "not_ported"):
+        for plugin_id in (
+            "rainbow", "aurora_curtains_native", "not_ported", "malformed",
+        ):
             directory = self.interface.animation_presets_dir / plugin_id
             directory.mkdir(parents=True, exist_ok=True)
             (directory / "draft.json").write_text(json.dumps({
@@ -160,9 +163,11 @@ class BrowserComposerTests(unittest.TestCase):
         )
         self.assertFalse(native["preview"]["framebuffer_readback"])
 
-        unsupported = by_key["python:not_ported"]
+        self.assertTrue(by_key["python:not_ported"]["browser_runtime"]["supported"])
+
+        unsupported = by_key["python:malformed"]
         self.assertFalse(unsupported["browser_runtime"]["supported"])
-        self.assertIn("verified browser-Wasm adapter", unsupported["browser_runtime"]["reason"])
+        self.assertIn("verified browser-Wasm entrypoint", unsupported["browser_runtime"]["reason"])
         self.assertEqual(self.channel.read_count, 0)
         self.assertEqual(self.channel.commands, [])
 
