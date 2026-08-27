@@ -208,6 +208,52 @@ std::uint8_t popcount8(std::uint8_t value) {
   return count;
 }
 
+void test_compact_single_strip_round_trips_on_every_staggered_lane() {
+  constexpr std::uint16_t kLeds = 138;
+  constexpr std::uint8_t kPhases = 3;
+  constexpr std::uint8_t kGrbOffsets[3] = {1, 0, 2};
+  std::array<std::uint8_t, kLeds * 3U> rgb{};
+  for (std::size_t index = 0; index < rgb.size(); ++index) {
+    rgb[index] = static_cast<std::uint8_t>(index * 29U + 7U);
+  }
+  // Exercise the stream's final data bit, including lanes whose phase places
+  // it in the first byte of the reset region.
+  rgb.back() = 0xFF;
+
+  for (std::uint8_t physical_lane = 0; physical_lane < 8; ++physical_lane) {
+    const std::uint8_t lane_mask =
+        static_cast<std::uint8_t>(1U << physical_lane);
+    std::vector<std::uint8_t> output(
+        ledgrid::ws2812_encoded_size(kLeds), 0xA5);
+    TEST_ASSERT_TRUE(ledgrid::initialize_parallel_grb_waveform(
+        8, kLeds, output.data(), output.size(), ledgrid::kWs2812ResetUs,
+        ledgrid::kWs2812SampleRateHz, lane_mask, kPhases));
+    TEST_ASSERT_TRUE(ledgrid::encode_parallel_grb_pixels(
+        rgb.data(), rgb.size(), 1, kLeds, 255, output.data(), output.size(),
+        ledgrid::kWs2812ResetUs, ledgrid::kWs2812SampleRateHz, lane_mask,
+        kPhases, true).ok);
+
+    std::size_t bit_index = 0;
+    for (std::uint16_t pixel = 0; pixel < kLeds; ++pixel) {
+      for (std::uint8_t channel = 0; channel < 3; ++channel) {
+        const std::size_t offset =
+            static_cast<std::size_t>(pixel) * 3U + kGrbOffsets[channel];
+        std::uint8_t decoded = 0;
+        for (std::uint8_t bit = 0; bit < 8; ++bit) {
+          decoded = static_cast<std::uint8_t>(
+              (decoded << 1U) |
+              staggered_bit(output, bit_index, physical_lane, kPhases));
+          ++bit_index;
+        }
+        TEST_ASSERT_EQUAL_HEX8(rgb[offset], decoded);
+      }
+    }
+    for (const auto sample : output) {
+      TEST_ASSERT_EQUAL_HEX8(0, sample & ~lane_mask);
+    }
+  }
+}
+
 void test_stagger_phase_lanes_partitions_every_lane() {
   // One phase keeps every lane together, which is the pre-stagger waveform.
   TEST_ASSERT_EQUAL_HEX8(0xFF, ledgrid::stagger_phase_lanes(0, 1, 0xFF));
@@ -332,18 +378,20 @@ void test_stagger_round_trips_every_lane() {
 }
 
 void test_stagger_writes_stay_inside_the_encoded_buffer() {
-  constexpr std::uint16_t kLeds = 4;
+  constexpr std::uint16_t kLeds = 138;
+  constexpr std::uint8_t kPhases = 3;
   constexpr std::size_t kGuard = 32;
+  constexpr std::uint8_t kGuardValue = 0x5A;
   const std::size_t required = ledgrid::ws2812_encoded_size(kLeds);
   const std::size_t data_samples = static_cast<std::size_t>(kLeds) * 72U;
   std::array<std::uint8_t, 8U * kLeds * 3U> rgb{};
   rgb.fill(0xFF);
 
-  std::vector<std::uint8_t> output(required + kGuard, 0x5A);
+  std::vector<std::uint8_t> output(required + kGuard, kGuardValue);
   TEST_ASSERT_TRUE(ledgrid::encode_parallel_grb(
       rgb.data(), rgb.size(), 8, kLeds, 255, output.data(), output.size(),
       ledgrid::kWs2812ResetUs, ledgrid::kWs2812SampleRateHz,
-      ledgrid::kAllLanesMask, 3).ok);
+      ledgrid::kAllLanesMask, kPhases).ok);
 
   // The trailing phase writes as far as data_samples and no further, and that
   // byte is inside the reset region rather than past the encoded frame. It
@@ -351,12 +399,38 @@ void test_stagger_writes_stay_inside_the_encoded_buffer() {
   // else: a leading high edge here would start a symbol that never completes.
   TEST_ASSERT_TRUE(data_samples < required);
   TEST_ASSERT_EQUAL_HEX8(
-      ledgrid::stagger_phase_lanes(2, 3, 0xFF), output[data_samples]);
+      ledgrid::stagger_phase_lanes(2, kPhases, 0xFF), output[data_samples]);
   for (std::size_t sample = data_samples + 1U; sample < required; ++sample) {
     TEST_ASSERT_EQUAL_HEX8(0, output[sample]);
   }
   for (std::size_t sample = required; sample < output.size(); ++sample) {
-    TEST_ASSERT_EQUAL_HEX8(0x5A, output[sample]);
+    TEST_ASSERT_EQUAL_HEX8(kGuardValue, output[sample]);
+  }
+
+  // The fifth installed receiver maps one compact logical strip to a selected
+  // physical output. Lane 7 belongs to phase 1, so its final bit lands one
+  // sample before the reset region and the entire reset tail must stay low.
+  constexpr std::uint8_t kLane7 = 0x80;
+  std::array<std::uint8_t, kLeds * 3U> compact_rgb{};
+  compact_rgb.fill(0xFF);
+  std::vector<std::uint8_t> compact_output(
+      required + kGuard, kGuardValue);
+  TEST_ASSERT_TRUE(ledgrid::initialize_parallel_grb_waveform(
+      8, kLeds, compact_output.data(), compact_output.size(),
+      ledgrid::kWs2812ResetUs, ledgrid::kWs2812SampleRateHz, kLane7,
+      kPhases));
+  TEST_ASSERT_TRUE(ledgrid::encode_parallel_grb_pixels(
+      compact_rgb.data(), compact_rgb.size(), 1, kLeds, 255,
+      compact_output.data(), compact_output.size(), ledgrid::kWs2812ResetUs,
+      ledgrid::kWs2812SampleRateHz, kLane7, kPhases, true).ok);
+
+  TEST_ASSERT_EQUAL_HEX8(kLane7, compact_output[data_samples - 1U]);
+  for (std::size_t sample = data_samples; sample < required; ++sample) {
+    TEST_ASSERT_EQUAL_HEX8(0, compact_output[sample]);
+  }
+  for (std::size_t sample = required; sample < compact_output.size();
+       ++sample) {
+    TEST_ASSERT_EQUAL_HEX8(kGuardValue, compact_output[sample]);
   }
 }
 
@@ -541,6 +615,7 @@ int main(int, char**) {
   RUN_TEST(test_lane_mask_defaults_to_every_lane);
   RUN_TEST(test_compact_strip_can_target_an_independent_physical_lane);
   RUN_TEST(test_stagger_phase_lanes_partitions_every_lane);
+  RUN_TEST(test_compact_single_strip_round_trips_on_every_staggered_lane);
   RUN_TEST(test_stagger_off_reproduces_the_original_waveform);
   RUN_TEST(test_stagger_caps_coincident_rising_edges_at_three);
   RUN_TEST(test_stagger_round_trips_every_lane);

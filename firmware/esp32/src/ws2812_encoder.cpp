@@ -202,6 +202,12 @@ EncodeResult encode_parallel_grb_pixels(
   }
   const bool compact_mapping = map_compact_strips_to_selected_lanes &&
       strip_count < kMaxParallelStrips && selected_lane_count == strip_count;
+  std::uint8_t compact_single_lane = 0;
+  if (compact_mapping && strip_count == 1) {
+    while ((lane_mask & (1U << compact_single_lane)) == 0) {
+      ++compact_single_lane;
+    }
+  }
 
   const std::uint8_t strip_mask =
       strip_count == 8 ? 0xFFU
@@ -228,7 +234,9 @@ EncodeResult encode_parallel_grb_pixels(
       const std::size_t offset =
           static_cast<std::size_t>(pixel) * 3U + kGrbOffsets[channel];
       std::uint64_t parallel_bits = 0;
-      if (compact_mapping) {
+      if (compact_mapping && strip_count == 1) {
+        parallel_bits = frame_expand_table[rgb[offset]] << compact_single_lane;
+      } else if (compact_mapping) {
         std::uint8_t logical_lane = 0;
         for (std::uint8_t physical_lane = 0; physical_lane < 8;
              ++physical_lane) {
@@ -257,34 +265,40 @@ EncodeResult encode_parallel_grb_pixels(
 
       parallel_bits &= lane_bits;
 
+      // Extract the eight encoded data bits once per color channel. With
+      // three-phase edge staggering, shifting inside the phase loop repeats
+      // every 64-bit extraction three times and dominates the receiver's
+      // frame-encode tail latency. These byte-sized values are reused for all
+      // phases while preserving the exact initialized waveform.
+      const std::uint8_t bit0 = static_cast<std::uint8_t>(parallel_bits);
+      const std::uint8_t bit1 = static_cast<std::uint8_t>(parallel_bits >> 8U);
+      const std::uint8_t bit2 = static_cast<std::uint8_t>(parallel_bits >> 16U);
+      const std::uint8_t bit3 = static_cast<std::uint8_t>(parallel_bits >> 24U);
+      const std::uint8_t bit4 = static_cast<std::uint8_t>(parallel_bits >> 32U);
+      const std::uint8_t bit5 = static_cast<std::uint8_t>(parallel_bits >> 40U);
+      const std::uint8_t bit6 = static_cast<std::uint8_t>(parallel_bits >> 48U);
+      const std::uint8_t bit7 = static_cast<std::uint8_t>(parallel_bits >> 56U);
+
       for (std::uint8_t phase = 0; phase < phases; ++phase) {
         const std::uint8_t data_lanes = phase_lanes[phase];
         const std::uint8_t high_lanes =
             phase_lanes[(phase + 1U) % kSamplesPerBit];
         std::uint8_t* symbol = dynamic_sample + phase;
-        symbol[0] = static_cast<std::uint8_t>(
-            high_lanes | (static_cast<std::uint8_t>(parallel_bits) & data_lanes));
+        symbol[0] = static_cast<std::uint8_t>(high_lanes | (bit0 & data_lanes));
         symbol[3] = static_cast<std::uint8_t>(
-            high_lanes |
-            (static_cast<std::uint8_t>(parallel_bits >> 8U) & data_lanes));
+            high_lanes | (bit1 & data_lanes));
         symbol[6] = static_cast<std::uint8_t>(
-            high_lanes |
-            (static_cast<std::uint8_t>(parallel_bits >> 16U) & data_lanes));
+            high_lanes | (bit2 & data_lanes));
         symbol[9] = static_cast<std::uint8_t>(
-            high_lanes |
-            (static_cast<std::uint8_t>(parallel_bits >> 24U) & data_lanes));
+            high_lanes | (bit3 & data_lanes));
         symbol[12] = static_cast<std::uint8_t>(
-            high_lanes |
-            (static_cast<std::uint8_t>(parallel_bits >> 32U) & data_lanes));
+            high_lanes | (bit4 & data_lanes));
         symbol[15] = static_cast<std::uint8_t>(
-            high_lanes |
-            (static_cast<std::uint8_t>(parallel_bits >> 40U) & data_lanes));
+            high_lanes | (bit5 & data_lanes));
         symbol[18] = static_cast<std::uint8_t>(
-            high_lanes |
-            (static_cast<std::uint8_t>(parallel_bits >> 48U) & data_lanes));
+            high_lanes | (bit6 & data_lanes));
         symbol[21] = static_cast<std::uint8_t>(
-            high_lanes |
-            (static_cast<std::uint8_t>(parallel_bits >> 56U) & data_lanes));
+            high_lanes | (bit7 & data_lanes));
       }
       dynamic_sample += 24U;
     }
