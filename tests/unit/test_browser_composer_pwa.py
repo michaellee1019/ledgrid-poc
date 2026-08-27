@@ -158,6 +158,8 @@ class BrowserComposerPWATests(unittest.TestCase):
             "/api/v1/composer/presets",
             "/api/v1/scene-presets",
             "/api/v1/scene/validate",
+            "/api/v1/scene/checks",
+            "/api/v1/scene/activations/example",
             "/api/v1/scene",
         }
         self.assertTrue(assets.isdisjoint(forbidden))

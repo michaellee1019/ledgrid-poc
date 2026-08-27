@@ -10,10 +10,39 @@
   browser-scene boundary, and the server/controller activation transaction
 
 The no-go is no longer a missing-UX problem. The branch has a complete,
-streamlined authoring surface. Production activation remains blocked because
-the browser is still the only place that binds Check results to exact state,
-while the server queues an activation without a controller-owned compare-and-
-swap, correlated observation, or exact rollback.
+streamlined authoring surface, and the first portable activation-transaction
+slice is now implemented. Production activation remains blocked on the managed
+profile/mask workflow, installation-aware qualification, retained cross-browser
+and recovery evidence, and explicitly authorized physical-wall canary/soak
+gates described below.
+
+### First implementation slice completed — 2026-08-27
+
+Execution-order steps 1–4 are implemented and green, with the minimum Composer
+changes needed to consume the new lifecycle. The server now owns a short-lived,
+single-use/idempotent Check authorization; web, durable IPC, and controller use
+one canonical activation basis; the controller performs compare-and-swap,
+preflight, serialized apply, fresh observation, restart-safe persistence, and
+exact compensation; and cancel/rollback requests have correlated terminal
+results. Unguarded execution aliases fail closed and their visible UI actions
+hand off to Composer. Activation remains disabled by default and the explicit
+`LEDGRID_GUARDED_ACTIVATION_CANARY=1` override is development/canary-only.
+
+Portable evidence for this checkpoint:
+
+- **Passed:** ACT-01 through ACT-06 and CHECK-01, including real file-channel
+  restart transitions, post-bind crash repair, failure injection at every apply
+  and receipt-publication boundary, exact retries after expiry/state/runtime
+  drift, stale rollback invalidation, and exact receiver-native evidence.
+- **Partially complete:** PROFILE-01 carries one digest through browser scene,
+  server basis, controller, and receiver transaction, but browser workers do not
+  yet load and verify the immutable profile artifact required by step 6.
+- **Not yet run/complete:** MASK-01, PERF-01, POWER-01, REL-01, WALL-01, and
+  WALL-02. Production activation therefore remains **NO-GO**.
+- **Local regression:** 1,718 Python tests plus 3,097 subtests, rendering stress
+  and scene benchmarks, 128 native firmware tests, three ESP32 build variants,
+  and 238 deployment tests plus 157 subtests passed. No deployment, receiver
+  write, camera workflow, or physical-wall command was performed.
 
 This file is the current handoff for closing that gap. Broader rendering,
 receiver, installation-profile, and physical-wall contracts remain authoritative
@@ -67,21 +96,25 @@ The remaining work must preserve these boundaries:
 
 ## Why production activation is still no-go
 
-### 1. Activation authority is client-side
+Items 1–3 below record the original first-slice blockers and are now closed by
+the implementation checkpoint above. Items 4–5, plus the retained P1 and
+physical acceptance gates, continue to block production activation.
+
+### 1. Activation authority is client-side — closed in first slice
 
 The composer correctly invalidates a Check when its draft, runtime, geometry,
 wall settings, or installation profile changes. The server does not own that
 binding. A crafted valid request can call `PUT /api/v1/scene` without a current
 server-issued Check token or expected wall-state revision.
 
-### 2. The activation payload loses installation-profile identity
+### 2. The activation payload loses installation-profile identity — closed in first slice
 
 The browser scene contains `installation_profile.digest`, but
 `browser_scene_to_host_scene()` does not carry it into the host scene. The web
 layer verifies that a profile can be resolved; it does not prove that the
 controller applies the same selected profile and globals that were checked.
 
-### 3. A queue receipt is not a live receipt
+### 3. A queue receipt is not a live receipt — closed in first slice
 
 The activation route queues `start_scene` and immediately returns
 `command_accepted: true`, `accepted_live_identity: null`,
@@ -324,5 +357,7 @@ outside the portable implementation loop and require explicit authorization.
 - Cross-browser, performance, electrical, controller, receiver, and physical-wall
   evidence are recorded separately and all release gates pass.
 
-The next context should begin with **P0 — Canonical activation basis and server
-Check token**, using failing API/IPC tests before changing the composer UI.
+The next implementation context should begin with **P0 — Immutable profile and
+mask workflow** (execution-order step 6), using failing artifact, worker-digest,
+optimistic-concurrency, and seven-region round-trip tests before removing the
+development/canary-only activation restriction.

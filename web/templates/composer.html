@@ -217,6 +217,10 @@
             <button class="quiet-button server-action" id="saveLibraryPanelButton" type="button" disabled>Save to library</button>
             <button class="primary-button server-action" id="activatePanelButton" type="button" disabled>Review &amp; activate</button>
           </div>
+          <div class="server-action-buttons" aria-label="Current activation actions">
+            <button class="quiet-button server-action" id="cancelActivationButton" type="button" hidden disabled>Cancel pending activation</button>
+            <button class="quiet-button server-action" id="rollbackActivationButton" type="button" hidden disabled>Restore previous wall state</button>
+          </div>
         </section>
       </section>
 
@@ -320,7 +324,7 @@
       <span class="dialog-icon live" aria-hidden="true">◉</span>
       <p class="eyebrow">Physical wall</p>
       <h2 id="activateHeading">Activate this scene?</h2>
-      <p>This sends a live playback command. The composer will report command acceptance separately from observed wall state.</p>
+      <p>This queues one server-authorized activation. Pending is not Active: the composer waits for a correlated controller observation of the exact scene, wall settings, runtime, and installation profile.</p>
       <dl class="activation-summary">
         <div><dt>Background</dt><dd id="activateBackground">—</dd></div>
         <div><dt>Provider</dt><dd id="activateProvider">—</dd></div>
@@ -333,7 +337,7 @@
       </dl>
       <div class="dialog-actions">
         <button class="quiet-button" value="cancel">Cancel</button>
-        <button class="primary-button" id="confirmActivateButton" value="confirm">Activate on wall</button>
+        <button class="primary-button" id="confirmActivateButton" value="confirm">Queue activation</button>
       </div>
     </form>
   </dialog>

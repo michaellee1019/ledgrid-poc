@@ -80,11 +80,11 @@
                                 <h2 class="h5 mb-0" id="selectedAnimationTitle">Animation settings</h2>
                                 <span class="badge rounded-pill draft-badge" id="editStateBadge">Draft</span>
                             </div>
-                            <p class="small text-muted mb-0" id="editStateHelp">Changes stay private until you take this animation live.</p>
+                            <p class="small text-muted mb-0" id="editStateHelp">Changes stay private. Live activation requires Composer Check.</p>
                         </div>
-                        <button class="btn btn-primary" type="button" id="takeLiveBtn" onclick="takeSelectedLive()">
-                            <i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take live
-                        </button>
+                        <a class="btn btn-primary" id="takeLiveBtn" href="/composer">
+                            <i class="fas fa-shield-alt me-1" aria-hidden="true"></i> Check &amp; activate in Composer
+                        </a>
                     </div>
                 </div>
                 <div class="card-body">
@@ -103,7 +103,7 @@
             <section class="card" id="tetrisControlsCard" hidden>
                 <div class="card-header bg-white py-3">
                     <h2 class="h5 mb-1">Tetris controls</h2>
-                    <p class="small text-muted mb-0" id="dpadHelp">Take Tetris live to enable gameplay controls.</p>
+                    <p class="small text-muted mb-0" id="dpadHelp">Activate Tetris through Composer to enable gameplay controls.</p>
                 </div>
                 <div class="card-body">
                     <div class="dpad" aria-label="Tetris directional controls">
@@ -335,20 +335,6 @@ function updateParameter(name, value) {
     }, 100);
 }
 
-async function takeSelectedLive() {
-    if (!selectedAnimation) return;
-    const result = await startAnimation(selectedAnimation, currentParameterValues);
-    if (!result.success) {
-        window.alert(result.error || 'Unable to take this animation live.');
-        return;
-    }
-    liveAnimation = selectedAnimation;
-    updateEditingState();
-    updateLiveButtonStates();
-    updateTetrisControls();
-    await refreshAdvancedStatus();
-}
-
 async function stopLiveOutput() {
     await stopAnimation();
     liveAnimation = null;
@@ -366,11 +352,10 @@ function updateEditingState() {
     const button = document.getElementById('takeLiveBtn');
     badge.textContent = isLive ? 'Live tuning' : 'Draft';
     badge.className = `badge rounded-pill ${isLive ? 'live-badge' : 'draft-badge'}`;
-    help.textContent = isLive ? 'Changes now update the live wall.' : 'Changes stay private until you take this animation live.';
+    help.textContent = isLive ? 'Changes now update the live wall.' : 'Changes stay private. Composer Check is required for activation.';
     button.innerHTML = isLive
         ? '<i class="fas fa-check me-1" aria-hidden="true"></i> Live now'
-        : '<i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take live';
-    button.disabled = isLive;
+        : '<i class="fas fa-shield-alt me-1" aria-hidden="true"></i> Check &amp; activate in Composer';
 }
 
 function updateLiveButtonStates() {
@@ -386,7 +371,7 @@ function updateTetrisControls() {
     document.querySelectorAll('.dpad-btn').forEach(button => { button.disabled = !isTetrisLive; });
     document.getElementById('dpadHelp').textContent = isTetrisLive
         ? 'Tetris is live. Use the controls below or your arrow keys.'
-        : 'Take Tetris live to enable gameplay controls.';
+        : 'Activate Tetris through Composer to enable gameplay controls.';
 }
 
 function sendDpad(direction) {

@@ -1334,6 +1334,7 @@ class MultiDeviceLEDController:
             self._native_background_status.update({
                 "state": "active", "progress": 1.0, "error": None,
                 "parameter_digest": parameter_set.digest,
+                "effective_parameters": dict(parameter_set.values),
                 "context_digest": context.context_digest.hex(),
                 "installation_profile_digest": profile_digest,
                 "capability_report": capability_report,
@@ -1392,6 +1393,7 @@ class MultiDeviceLEDController:
                 "bundle_digest": candidate.binding.bundle_digest,
                 "payload_digest": candidate.binding.payload_digest,
                 "parameter_digest": parameter_set.digest,
+                "effective_parameters": dict(parameter_set.values),
                 "context_digest": context.context_digest.hex(),
                 "installation_profile_digest": profile_digest,
                 "foreground_snapshot_required": True,
@@ -1484,6 +1486,7 @@ class MultiDeviceLEDController:
                 "operation": "parameter_update",
                 "error": None,
                 "parameter_digest": updated.digest,
+                "effective_parameters": dict(updated.values),
             })
             return True
 
@@ -2797,6 +2800,11 @@ class MultiDeviceLEDController:
                 return False
 
             self._local_background_context_digest = expected_digest
+            if getattr(self, "_native_background_active", False):
+                self._native_background_context = context
+                self._native_background_status.update({
+                    "context_digest": expected_digest,
+                })
             self._sparse_overlay_session_id = None
             self._sparse_overlay_generation = 0
             self._sparse_overlay_snapshot_digest = None

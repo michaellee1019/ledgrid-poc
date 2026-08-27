@@ -59,7 +59,7 @@ class DashboardRedesignTests(unittest.TestCase):
             re.DOTALL,
         )
         preview_block = re.search(
-            r"function previewAnimation\(.*?\n    }\n\n    // Handle animation",
+            r"function previewAnimation\(.*?\n    }\n\n    function requestRandomHole",
             SCRIPT,
             re.DOTALL,
         )
@@ -68,8 +68,9 @@ class DashboardRedesignTests(unittest.TestCase):
         self.assertNotIn("startAnimation(", select_block.group(0))
         self.assertNotIn("startAnimation(", preview_block.group(0))
         self.assertNotIn("/apply", TEMPLATE)
-        self.assertIn("Take live", TEMPLATE)
-        self.assertIn("Take scene live", TEMPLATE)
+        self.assertNotIn("Take live", TEMPLATE)
+        self.assertNotIn("Take scene live", TEMPLATE)
+        self.assertIn("Check &amp; activate in Composer", TEMPLATE)
 
     def test_preset_actions_accept_the_direct_get_api_contract(self):
         self.assertIn("function normalizeDashboardPresetPayload(payload)", SCRIPT)

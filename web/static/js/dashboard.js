@@ -972,10 +972,6 @@
         }
     }
 
-    async function playDashboardPreset(animationName, presetId, button) {
-        return takePresetLive(animationName, presetId, button);
-    }
-
     async function openPresetControls(animationName, presetId, button) {
         const preset = await selectDashboardPreset(animationName, presetId, button);
         if (!preset) return;
@@ -990,58 +986,6 @@
         recordLibraryRecent(libraryItemId('preset', animationName, presetId));
         previewAnimation(animationName, {recordRecent: false});
         showDashboardArea('now-playing', {focus: true});
-    }
-
-    async function takePresetLive(animationName, presetId, button) {
-        if (button) button.disabled = true;
-        try {
-            const preset = await fetchDashboardPreset(animationName, presetId);
-            controlSelectedAnimation = animationName;
-            controlParameterStore[animationName] = {...(preset.params || {})};
-            const result = await takeAnimationLive(animationName, button, {announce: false, recordRecent: false});
-            if (result?.success) {
-                recordLibraryRecent(libraryItemId('preset', animationName, presetId));
-                showToast(`${preset.name} is live`, 'success');
-            }
-            return result;
-        } catch (error) {
-            showToast(error.message, 'error');
-            return null;
-        } finally {
-            if (button) button.disabled = false;
-        }
-    }
-
-    async function takeAnimationLive(animationName, button, options = {}) {
-        if (button) button.disabled = true;
-        const params = controlParameterStore[animationName] || {};
-        try {
-            const result = await startAnimation(animationName, params, {silent: true});
-            if (!result.success) throw new Error(result.error || 'Unable to start animation');
-            liveAnimationName = animationName;
-            controlSelectedAnimation = animationName;
-            selectedControlIsDraft = false;
-            if (options.recordRecent !== false) {
-                recordLibraryRecent(libraryItemId('animation', animationName));
-            }
-            highlightControlSelection(animationName);
-            updateControlMode();
-            if (!Object.prototype.hasOwnProperty.call(controlParameterStore, animationName)) {
-                loadControlParameters(animationName, {showPlaceholder: false});
-            }
-            if (options.announce !== false) showToast(`${humanizeParamName(animationName)} is live`, 'success');
-            return result;
-        } catch (error) {
-            showToast(error.message, 'error');
-            return {success: false, error: error.message};
-        } finally {
-            if (button) button.disabled = false;
-        }
-    }
-
-    function takeSelectedLive() {
-        if (!controlSelectedAnimation) return;
-        takeAnimationLive(controlSelectedAnimation, document.getElementById('takeSelectedLiveButton'));
     }
 
     function openAnimationControls(animationName) {
@@ -1116,35 +1060,6 @@
             showDashboardArea('now-playing', {focus: true});
             showToast(`Previewing ${humanizeParamName(animationName)} without changing the wall`, 'success');
         }
-    }
-
-    // Handle animation card clicks with feedback
-    function startAnimation(name, config = {}, options = {}) {
-        // Show loading state
-        const cards = document.querySelectorAll('.animation-card');
-        cards.forEach(card => card.style.opacity = '0.6');
-
-        return fetch(`/api/start/${name}`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(config)
-        })
-        .then(r => r.json())
-        .then(result => {
-            if (result.success) {
-                if (!options.silent) showToast(`Started animation: ${name}`, 'success');
-            } else {
-                showToast(`Failed to start animation: ${name}`, 'error');
-            }
-            return result;
-        })
-        .catch(error => {
-            showToast(`Error: ${error.message}`, 'error');
-            return {success: false, error: error.message};
-        })
-        .finally(() => {
-            cards.forEach(card => card.style.opacity = '1');
-        });
     }
 
     function requestRandomHole() {
@@ -1391,10 +1306,9 @@
         }
         const button = document.getElementById('takeSelectedLiveButton');
         if (button) {
-            button.disabled = !controlSelectedAnimation || isLive;
             button.innerHTML = isLive
                 ? '<i class="fas fa-check me-1" aria-hidden="true"></i> Selected look is live'
-                : '<i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take live';
+                : '<i class="fas fa-shield-alt me-1" aria-hidden="true"></i> Check &amp; activate in Composer';
         }
     }
 
@@ -2093,19 +2007,6 @@
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || 'Scene request failed.');
         return payload;
-    }
-
-    async function startEditedScene() {
-        try {
-            const scene = editedScenePayload();
-            await sceneRequest('/api/v1/scene', {
-                method: 'PUT', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(scene)
-            });
-            showToast('Scene start requested.', 'success');
-        } catch (error) {
-            showToast(error.message, 'error');
-        }
     }
 
     async function previewEditedScene() {

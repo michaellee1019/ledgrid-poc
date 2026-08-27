@@ -247,17 +247,17 @@
             </div>
         </section>
 
-        <aside class="col-lg-5 preview-column" aria-label="Draft preview and live controls">
+        <aside class="col-lg-5 preview-column" aria-label="Draft preview and guarded activation controls">
             <div class="preview-sticky">
                 <div class="emoji-card">
                     <div class="emoji-card-header"><h2>Wall preview</h2><span class="badge bg-light text-dark">Isolated</span></div>
                     <div class="emoji-card-body">
                         <div class="live-actions">
                             <div class="live-action-grid" id="liveActionGrid">
-                                <button class="btn btn-primary take-live" id="takeLiveButton" type="button"><i class="fas fa-broadcast-tower" aria-hidden="true"></i> Take live</button>
+                                <a class="btn btn-primary take-live" id="activateInComposerLink" href="/composer"><i class="fas fa-shield-alt" aria-hidden="true"></i> Check &amp; activate in Composer</a>
                                 <button class="btn btn-outline-danger d-none" id="stopLiveButton" type="button"><i class="fas fa-stop" aria-hidden="true"></i> Stop / Return to draft</button>
                             </div>
-                            <p class="live-feedback" id="liveFeedback" role="status" aria-live="polite">Review the isolated preview, then take it live when ready.</p>
+                            <p class="live-feedback" id="liveFeedback" role="status" aria-live="polite">This editor is preview-only. Use Composer for the server Check and guarded activation.</p>
                         </div>
                         <div class="wall-preview-shell">
                             <canvas id="ledCanvas" width="330" height="1380" role="img" aria-label="Tall preview of the LED plant wall">A tall preview of the LED plant wall.</canvas>
@@ -297,7 +297,6 @@
         characterCount: document.getElementById('characterCount'),
         settings: document.getElementById('settingsContainer'),
         workspaceState: document.getElementById('workspaceState'),
-        takeLive: document.getElementById('takeLiveButton'),
         stopLive: document.getElementById('stopLiveButton'),
         liveActionGrid: document.getElementById('liveActionGrid'),
         liveFeedback: document.getElementById('liveFeedback'),
@@ -306,8 +305,6 @@
         layoutStatus: document.getElementById('layoutStatus')
     };
     let currentParams = {text: elements.text.value};
-    let publishedSignature = null;
-    let liveStartedHere = false;
     let previewRevision = 0;
 
     document.addEventListener('DOMContentLoaded', initialize);
@@ -338,7 +335,6 @@
         document.querySelectorAll('[data-preset]').forEach((button) => {
             button.addEventListener('click', () => loadPreset(button.dataset.preset || ''));
         });
-        elements.takeLive.addEventListener('click', takeLive);
         elements.stopLive.addEventListener('click', stopLiveAndReturnToDraft);
         window.addEventListener('ledgrid:live-status', (event) => reconcileSharedLiveStatus(event.detail));
     }
@@ -350,12 +346,9 @@
             showStopAction(true);
             return;
         }
-        if (!liveStartedHere && !publishedSignature && elements.stopLive.classList.contains('d-none')) return;
-        liveStartedHere = false;
-        publishedSignature = null;
+        if (elements.stopLive.classList.contains('d-none')) return;
         setWorkspaceState('draft');
         showStopAction(false);
-        elements.takeLive.innerHTML = '<i class="fas fa-broadcast-tower" aria-hidden="true"></i> Take live';
         setLiveFeedback('Live output stopped. Your composition remains here as a private draft.');
     }
 
@@ -388,8 +381,7 @@
             const status = await response.json();
             if (status.is_running && status.current_animation === ANIMATION_NAME) {
                 showStopAction(true);
-                setLiveFeedback('Emoji Arranger is already live. Draft edits remain isolated until you choose “Update live.”');
-                elements.takeLive.innerHTML = '<i class="fas fa-sync-alt" aria-hidden="true"></i> Update live';
+                setLiveFeedback('Emoji Arranger is already live. Draft edits remain isolated; use Composer to qualify and activate an update.');
             }
         } catch (error) {
             console.warn('Unable to read current wall status', error);
@@ -415,52 +407,11 @@
         markDraftChanged();
     }
     function markDraftChanged() {
-        if (publishedSignature && signatureFor(currentParams) !== publishedSignature) {
-            setWorkspaceState('changes');
-            elements.takeLive.innerHTML = '<i class="fas fa-sync-alt" aria-hidden="true"></i> Update live';
-            setLiveFeedback('The wall is still showing the last live version. These draft changes are preview-only.');
-        } else if (publishedSignature) {
-            setWorkspaceState('live');
-        } else {
-            setWorkspaceState('draft');
-        }
+        setWorkspaceState('draft');
     }
     function setWorkspaceState(mode) {
         elements.workspaceState.classList.remove('is-live', 'has-changes');
-        if (mode === 'live') {
-            elements.workspaceState.textContent = 'Live';
-            elements.workspaceState.classList.add('is-live');
-        } else if (mode === 'changes') {
-            elements.workspaceState.textContent = 'Draft changes';
-            elements.workspaceState.classList.add('has-changes');
-        } else {
-            elements.workspaceState.textContent = 'Draft';
-        }
-    }
-
-    async function takeLive() {
-        setLiveControlsBusy(true);
-        setLiveFeedback('Sending this draft to the wall…');
-        try {
-            const response = await fetch(`/api/start/${ANIMATION_NAME}`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(currentParams)
-            });
-            const result = await response.json();
-            if (!response.ok || !result.success) throw new Error(result.error || 'The wall did not accept the animation.');
-            liveStartedHere = true;
-            publishedSignature = signatureFor(currentParams);
-            setWorkspaceState('live');
-            showStopAction(true);
-            elements.takeLive.innerHTML = '<i class="fas fa-sync-alt" aria-hidden="true"></i> Update live';
-            setLiveFeedback('This version is live on the wall. Further edits stay in draft until updated.');
-        } catch (error) {
-            console.error(error);
-            setLiveFeedback(error.message || 'Could not take this draft live.', true);
-        } finally {
-            setLiveControlsBusy(false);
-        }
+        elements.workspaceState.textContent = 'Draft';
     }
 
     async function stopLiveAndReturnToDraft() {
@@ -470,11 +421,8 @@
             const response = await fetch('/api/stop', {method: 'POST'});
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.error || 'The wall did not stop.');
-            liveStartedHere = false;
-            publishedSignature = null;
             setWorkspaceState('draft');
             showStopAction(false);
-            elements.takeLive.innerHTML = '<i class="fas fa-broadcast-tower" aria-hidden="true"></i> Take live';
             setLiveFeedback('Live output stopped. Your composition remains here as a private draft.');
         } catch (error) {
             console.error(error);
@@ -484,9 +432,7 @@
         }
     }
     function setLiveControlsBusy(busy) {
-        elements.takeLive.disabled = busy;
         elements.stopLive.disabled = busy;
-        elements.takeLive.setAttribute('aria-busy', String(busy));
     }
     function showStopAction(show) {
         elements.stopLive.classList.toggle('d-none', !show);
@@ -496,8 +442,6 @@
         elements.liveFeedback.textContent = message;
         elements.liveFeedback.classList.toggle('is-error', isError);
     }
-    function signatureFor(params) { return JSON.stringify(params, Object.keys(params).sort()); }
-
     function renderSettingsControls(schema) {
         elements.settings.innerHTML = '';
         const renderedNames = new Set(['text', ...INTERNAL_PARAMETER_NAMES]);
@@ -796,7 +740,7 @@
 
     window.emojiArrangerDraft = {
         getParams: () => ({...currentParams}),
-        isLiveStartedHere: () => liveStartedHere
+        activationRequiresComposer: true
     };
 })();
 </script>

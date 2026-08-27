@@ -164,7 +164,7 @@ class BrowserComposerActionTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["Cache-Control"], "no-store")
-        self.assertTrue(response.get_json()["actions"]["activate_scene"])
+        self.assertFalse(response.get_json()["actions"]["activate_scene"])
         self.assert_no_live_effect()
 
     def test_bootstrap_exposes_full_independent_wall_control_contract(self) -> None:
@@ -295,9 +295,10 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertIn("state.selectedPreset = record.key", javascript)
         self.assertIn("renderClockControls()", javascript)
         self.assertIn("runtime.renderInstance('clock_overlay'", javascript)
-        self.assertIn("receipt.requested_revision", javascript)
-        self.assertIn("receipt.telemetry_complete", javascript)
-        self.assertIn("body: JSON.stringify(scene)", javascript)
+        self.assertIn("expected_controller_state_revision", javascript)
+        self.assertIn("status.telemetry?.complete", javascript)
+        self.assertIn("check_token: serverCheck.token", javascript)
+        self.assertIn("pollActivationStatus()", javascript)
 
     def test_wall_workspace_is_complete_and_presets_exclude_global_state(self) -> None:
         html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")

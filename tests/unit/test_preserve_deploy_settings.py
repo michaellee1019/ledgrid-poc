@@ -488,6 +488,7 @@ class PreserveDeploySettingsTests(unittest.TestCase):
                 "vibe": {"state": neutral},
             }
             save_status(running, root / "presets", root / "state.json")
+            prior = load_saved_state(root / "state.json")
 
             save_status({
                 "is_running": False,
@@ -500,6 +501,92 @@ class PreserveDeploySettingsTests(unittest.TestCase):
             self.assertEqual(saved["animation"], "rainbow")
             self.assertEqual(saved["params"], {"speed": 0.65})
             self.assertEqual(saved["vibe"], quiet)
+            self.assertEqual(saved["scene"], prior["scene"])
+            self.assertFalse(saved["power"])
+
+    def test_stopped_guarded_scene_persists_new_exact_selection_and_power_off(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            presets = root / "presets"
+            state_path = root / "state.json"
+            save_status({
+                "is_running": True,
+                "current_animation": "rainbow",
+                "animation_info": {"current_params": {"speed": 0.65}},
+                "vibe": {"state": self._vibe("neutral")},
+            }, presets, state_path)
+
+            component = {
+                "plugin_id": "sparkle",
+                "provider": "python",
+                "parameter_overrides": {"speed": 0.35},
+                "resolved_parameters": {"speed": 0.35},
+            }
+            selected_scene = {
+                "schema": "ledgrid.scene-state",
+                "schema_version": 1,
+                "revision": 29,
+                "background": component,
+                "overlays": [],
+                "known_python_fallback": component,
+            }
+            save_status({
+                "is_running": False,
+                "current_animation": None,
+                "scene_state": selected_scene,
+                "brightness": 77,
+                "animation_speed_scale": 0.8,
+                "target_fps": 60,
+                "vibe": {"state": self._vibe("quiet")},
+                "plant_modifiers": {
+                    "version": 1, "active": [], "strengths": {},
+                },
+                "installation_profile_digest": "a" * 64,
+            }, presets, state_path)
+
+            raw = json.loads(state_path.read_text())
+            loaded = load_saved_state(state_path)
+            self.assertEqual(raw["scene"], selected_scene)
+            self.assertFalse(raw["output"]["power"])
+            self.assertEqual(loaded["scene"], selected_scene)
+            self.assertEqual(loaded["animation"], "sparkle")
+            self.assertEqual(loaded["params"], {"speed": 0.35})
+            self.assertFalse(loaded["power"])
+            self.assertEqual(loaded["installation_profile_digest"], "a" * 64)
+
+    def test_stopped_managed_native_selection_needs_no_live_playback_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            state_path = root / "state.json"
+            scene = self._managed_native_scene()
+
+            save_status({
+                "is_running": False,
+                "current_animation": None,
+                "scene_state": scene,
+                "feature_flags": {
+                    "receiver_local_background": True,
+                    "receiver_sparse_overlay": True,
+                    "receiver_native_modules": True,
+                },
+                "installation_profile_digest": "e" * 64,
+                "vibe": {"state": self._vibe("quiet")},
+            }, root / "presets", state_path)
+
+            raw = json.loads(state_path.read_text())
+            loaded = load_saved_state(
+                state_path,
+                provider_policy=SceneProviderPolicy(
+                    receiver_local_background=True,
+                    receiver_sparse_overlay=True,
+                    receiver_native_modules=True,
+                ),
+            )
+            self.assertEqual(raw["scene"], scene)
+            self.assertFalse(raw["output"]["power"])
+            self.assertNotIn("native_expectation", raw)
+            self.assertEqual(loaded["scene"], scene)
+            self.assertFalse(loaded["power"])
 
     def test_save_status_ignores_non_finite_optional_runtime_values(self):
         with tempfile.TemporaryDirectory() as temporary_dir:

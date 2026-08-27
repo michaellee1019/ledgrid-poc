@@ -31,6 +31,9 @@ from animation.core.installation_profile_topology import (
 )
 from ipc.control_channel import FileControlChannel
 from ipc.runtime_control import (
+    ControllerActivationConflictError,
+    ControllerActivationError,
+    controller_activation_coordinator,
     restore_display_state as _restore_display_state,
     start_scene as _start_scene,
     update_scene_component as _update_scene_component,
@@ -340,7 +343,28 @@ def controller_status_payload(
     payload['release_id'] = release_id
     payload['last_command_id'] = last_command_id
     payload['updated_at'] = updated_at
+    payload.update(controller_activation_coordinator(manager).controller_status())
     return payload
+
+
+def persist_controller_restart_state(
+    manager: AnimationManager,
+    activation_coordinator,
+    *,
+    presets_dir: Path,
+    state_path: Path,
+):
+    """Persist the exact controller-selected state after a serialized mutation."""
+
+    status = manager.get_current_status()
+    status.update(activation_coordinator.controller_status())
+    flags = getattr(manager, "feature_flags", None)
+    status["feature_flags"] = (
+        flags.to_dict()
+        if isinstance(flags, AnimationPipelineFeatureFlags)
+        else AnimationPipelineFeatureFlags().to_dict()
+    )
+    return save_status(status, presets_dir, state_path)
 
 
 def receiver_hybrid_feature_flags(
@@ -695,6 +719,26 @@ def run_controller_mode(args):
             print(f"⚠️ Restored recorded Python fallback: {exc}")
 
     channel = FileControlChannel(control_path=args.control_file, status_path=args.status_file)
+    activation_coordinator = controller_activation_coordinator(
+        manager,
+        status_sink=channel.write_activation_status,
+        restored_selected_scene=(
+            saved_state.get("scene")
+            if isinstance(saved_state, dict) and saved_state.get("power") is False
+            else None
+        ),
+        cancel_probe=lambda activation_id: (
+            channel.read_activation_cancel(activation_id) is not None
+        ),
+    )
+    activation_coordinator.set_commit_callback(lambda: (
+        persist_controller_restart_state(
+            manager,
+            activation_coordinator,
+            presets_dir=Path(args.presets_dir),
+            state_path=Path(args.saved_state_file),
+        )
+    ))
 
     print("🎛️ Controller mode")
     print(f"  Control file: {args.control_file}")
@@ -710,6 +754,21 @@ def run_controller_mode(args):
 
     try:
         while True:
+            activation_mutations = process_activation_commands(
+                channel, activation_coordinator
+            )
+            if activation_mutations:
+                try:
+                    persist_controller_restart_state(
+                        manager,
+                        activation_coordinator,
+                        presets_dir=Path(args.presets_dir),
+                        state_path=Path(args.saved_state_file),
+                    )
+                    print("💾 Saved guarded activation restart state")
+                except Exception as exc:
+                    print(f"⚠️ Failed to save guarded activation state: {exc}")
+
             cmd = channel.read_control()
             if cmd and cmd.get('command_id') != last_command_id:
                 last_command_id = cmd.get('command_id')
@@ -717,14 +776,11 @@ def run_controller_mode(args):
                 data = cmd.get('data') or {}
                 if handle_command(manager, action, data):
                     try:
-                        persistence_status = manager.get_current_status()
-                        persistence_status['feature_flags'] = (
-                            manager.feature_flags.to_dict()
-                        )
-                        save_status(
-                            persistence_status,
-                            Path(args.presets_dir),
-                            Path(args.saved_state_file),
+                        persist_controller_restart_state(
+                            manager,
+                            activation_coordinator,
+                            presets_dir=Path(args.presets_dir),
+                            state_path=Path(args.saved_state_file),
                         )
                         print(f"💾 Saved restart state: {manager.current_animation_name}/before-deploy")
                     except Exception as exc:
@@ -753,7 +809,236 @@ def run_controller_mode(args):
                 pass
 
 
-def handle_command(manager: AnimationManager, action: str, data: dict):
+_TERMINAL_ACTIVATION_PHASES = frozenset({
+    "active", "rolled_back", "failed", "timed_out",
+})
+
+
+def _activation_request_result(channel, kind: str, activation_id: str):
+    reader = getattr(channel, f"read_activation_{kind}_result", None)
+    return reader(activation_id) if callable(reader) else None
+
+
+def _write_activation_request_result(
+    channel,
+    kind: str,
+    request: dict,
+    *,
+    outcome: str,
+    status: dict,
+    error: str | None = None,
+) -> None:
+    writer = getattr(channel, f"write_activation_{kind}_result", None)
+    if not callable(writer):
+        return
+    writer(
+        request["activation_id"],
+        request_id=request["request_id"],
+        outcome=outcome,
+        status_phase=status.get("phase", "unknown"),
+        error=error,
+    )
+
+
+def _settle_terminal_activation_requests(channel, activation_id: str, status: dict) -> None:
+    """Close orphaned request lifecycles from a prior controller process."""
+
+    cancel = channel.read_activation_cancel(activation_id)
+    if cancel is not None and _activation_request_result(
+        channel, "cancel", activation_id
+    ) is None:
+        cancelled = (
+            status.get("phase") == "failed"
+            and "cancelled before mutation" in str(status.get("error") or "")
+        )
+        _write_activation_request_result(
+            channel,
+            "cancel",
+            cancel,
+            outcome="succeeded" if cancelled else "rejected",
+            status=status,
+            error=None if cancelled else (
+                f"activation is already {status.get('phase', 'terminal')}"
+            ),
+        )
+
+    rollback = channel.read_activation_rollback(activation_id)
+    if rollback is not None and _activation_request_result(
+        channel, "rollback", activation_id
+    ) is None:
+        rollback_state = status.get("rollback")
+        rollback_state = rollback_state if isinstance(rollback_state, dict) else {}
+        succeeded = (
+            status.get("phase") == "rolled_back"
+            and rollback_state.get("result") == "succeeded"
+        )
+        failed = rollback_state.get("result") == "failed"
+        _write_activation_request_result(
+            channel,
+            "rollback",
+            rollback,
+            outcome="succeeded" if succeeded else "failed" if failed else "rejected",
+            status=status,
+            error=None if succeeded else (
+                rollback_state.get("error")
+                if failed
+                else f"activation is already {status.get('phase', 'terminal')}"
+            ),
+        )
+
+
+def process_activation_commands(channel, activation_coordinator) -> int:
+    """Process each durable activation once, including safe restart replay."""
+
+    mutations = 0
+    for activation_command in channel.list_activation_commands():
+        activation_id = activation_command.get("activation_id")
+        try:
+            activation_status = activation_coordinator.get(activation_id)
+            if activation_status is None:
+                durable_status = channel.read_activation_status(activation_id)
+                if (
+                    isinstance(durable_status, dict)
+                    and durable_status.get("phase") in _TERMINAL_ACTIVATION_PHASES
+                ):
+                    if (
+                        durable_status.get("phase") == "active"
+                        and durable_status.get("controller", {}).get("session_id")
+                        != activation_coordinator.session_id
+                        and not durable_status.get("rollback", {}).get("error")
+                    ):
+                        activation_coordinator.reconcile_durable_active(
+                            activation_command, durable_status
+                        )
+                        durable_status = activation_coordinator.get(activation_id)
+                    _settle_terminal_activation_requests(
+                        channel, activation_id, durable_status
+                    )
+                    continue
+                if isinstance(durable_status, dict):
+                    # Never replay a command left applying/observing by a dead
+                    # controller process. The in-memory compensation snapshot
+                    # died with that process, so close it as a correlated
+                    # historical failure under the original session.
+                    activation_status = (
+                        activation_coordinator.reconcile_durable_nonterminal(
+                            activation_command, durable_status
+                        )
+                    )
+                    _settle_terminal_activation_requests(
+                        channel, activation_id, activation_status
+                    )
+                    continue
+                activation_status = activation_coordinator.queue(
+                    activation_command
+                )
+            if activation_status.get("phase") in {
+                "rolled_back", "failed", "timed_out"
+            }:
+                _settle_terminal_activation_requests(
+                    channel, activation_id, activation_status
+                )
+                continue
+            cancel = channel.read_activation_cancel(activation_id)
+            if cancel is not None and _activation_request_result(
+                channel, "cancel", activation_id
+            ) is None:
+                if activation_status["phase"] not in {"queued", "preflighting"}:
+                    _write_activation_request_result(
+                        channel,
+                        "cancel",
+                        cancel,
+                        outcome="rejected",
+                        status=activation_status,
+                        error=(
+                            "activation can be cancelled only while queued or "
+                            "preflighting"
+                        ),
+                    )
+                else:
+                    activation_status = activation_coordinator.cancel(activation_id)
+            if activation_status["phase"] == "queued":
+                revision_before = activation_coordinator.state_revision
+                activation_status = activation_coordinator.execute(activation_id)
+                if activation_coordinator.state_revision > revision_before:
+                    mutations += 1
+            cancel = channel.read_activation_cancel(activation_id)
+            if cancel is not None and _activation_request_result(
+                channel, "cancel", activation_id
+            ) is None:
+                cancelled = (
+                    activation_status.get("phase") == "failed"
+                    and "cancelled before mutation"
+                    in str(activation_status.get("error") or "")
+                )
+                _write_activation_request_result(
+                    channel,
+                    "cancel",
+                    cancel,
+                    outcome="succeeded" if cancelled else "rejected",
+                    status=activation_status,
+                    error=None if cancelled else (
+                        "activation completed before cancellation was consumed"
+                    ),
+                )
+            rollback = channel.read_activation_rollback(activation_id)
+            if rollback is not None and _activation_request_result(
+                channel, "rollback", activation_id
+            ) is None:
+                if activation_status["phase"] != "active":
+                    _write_activation_request_result(
+                        channel,
+                        "rollback",
+                        rollback,
+                        outcome="rejected",
+                        status=activation_status,
+                        error="only an active activation can be rolled back",
+                    )
+                else:
+                    revision_before = activation_coordinator.state_revision
+                    try:
+                        activation_status = activation_coordinator.rollback(
+                            activation_id,
+                            snapshot_id=rollback["snapshot_id"],
+                            expected_session_id=rollback[
+                                "expected_controller_session_id"
+                            ],
+                            expected_state_revision=rollback[
+                                "expected_controller_state_revision"
+                            ],
+                        )
+                    except (ControllerActivationError, KeyError, TypeError, ValueError) as exc:
+                        _write_activation_request_result(
+                            channel,
+                            "rollback",
+                            rollback,
+                            outcome="rejected",
+                            status=activation_status,
+                            error=str(exc),
+                        )
+                    else:
+                        if activation_coordinator.state_revision > revision_before:
+                            mutations += 1
+                        succeeded = activation_status.get("phase") == "rolled_back"
+                        rollback_state = activation_status.get("rollback") or {}
+                        _write_activation_request_result(
+                            channel,
+                            "rollback",
+                            rollback,
+                            outcome="succeeded" if succeeded else "failed",
+                            status=activation_status,
+                            error=None if succeeded else (
+                                rollback_state.get("error")
+                                or activation_status.get("error")
+                                or "exact rollback failed"
+                            ),
+                        )
+        except (ControllerActivationError, KeyError, TypeError, ValueError) as exc:
+            print(f"⚠️ Activation {activation_id!r} rejected: {exc}")
+    return mutations
+
+
+def _dispatch_legacy_command(manager: AnimationManager, action: str, data: dict):
     """Dispatch a command and report whether restart state changed."""
     if action == 'start':
         animation = data.get('animation')
@@ -948,6 +1233,44 @@ def handle_command(manager: AnimationManager, action: str, data: dict):
     else:
         print(f"⚠️ Unknown action: {action}")
     return False
+
+
+_LEGACY_CONTROLLER_MUTATIONS = frozenset({
+    "start", "start_scene", "update_scene_component", "stop_scene",
+    "recover_receiver_native", "probe_native_background",
+    "install_native_background", "clear_native_background_quarantine",
+    "restore_display_state", "stop", "update_params",
+    "set_current_preset", "set_target_fps", "set_animation_speed_scale",
+    "set_output_brightness", "set_device_state", "set_plant_aware",
+    "set_plant_modifiers", "set_vibe", "refresh_plugins", "painter_set_frame",
+    "painter_apply_updates", "painter_clear", "puncture_hole",
+    "animation_interaction", "dpad",
+})
+
+
+def handle_command(manager: AnimationManager, action: str, data: dict):
+    """Dispatch one command and maintain the controller-owned CAS revision."""
+
+    coordinator = controller_activation_coordinator(manager)
+    if action == "activate_scene":
+        try:
+            command = data.get("activation", data)
+            status = coordinator.activate(command)
+            return status["phase"] == "active"
+        except (ControllerActivationError, TypeError, ValueError) as exc:
+            print(f"⚠️ Guarded scene activation rejected: {exc}")
+            return False
+    if action == "cancel_activation":
+        try:
+            coordinator.cancel(data.get("activation_id"))
+        except (ControllerActivationError, KeyError, TypeError, ValueError) as exc:
+            print(f"⚠️ Activation cancellation rejected: {exc}")
+        return False
+
+    if action not in _LEGACY_CONTROLLER_MUTATIONS:
+        return _dispatch_legacy_command(manager, action, data)
+    with coordinator.legacy_mutation_guard():
+        return _dispatch_legacy_command(manager, action, data)
 
 
 def run_web_mode(args):

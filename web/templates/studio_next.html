@@ -188,7 +188,7 @@
             <div class="sn-action-row">
               <button class="sn-button sn-button--quiet" id="playPreview" type="button" disabled>Play isolated preview</button>
               <button class="sn-button sn-button--quiet" id="pinCompare" type="button" disabled>Add to compare</button>
-              <button class="sn-button sn-button--primary" id="takeLook" type="button" disabled>Take look live</button>
+              <a class="sn-button sn-button--primary" id="activateLookInComposer" href="/composer">Check &amp; activate in Composer</a>
             </div>
             <div class="sn-compare-tray" id="compareTray">
               <div><strong>Compare set</strong><span>Starts empty; a fourth item is never substituted.</span></div>
@@ -266,12 +266,12 @@
             <div class="sn-action-row sn-action-row--wrap">
               <button class="sn-button sn-button--quiet" id="validateScene" type="button" disabled>Validate draft</button>
               <button class="sn-button sn-button--quiet" id="saveScene" type="button" disabled>Save layout only</button>
-              <button class="sn-button sn-button--primary" id="takeScene" type="button" disabled>Take scene live</button>
+              <a class="sn-button sn-button--primary" id="activateSceneInComposer" href="/composer">Check &amp; activate in Composer</a>
             </div>
             <p class="sn-scope-note"><strong>Save layout only excludes:</strong> Vibe, plant behavior, brightness, target FPS, operator speed, power, and current live output.</p>
             <details class="sn-todo-details">
               <summary>Scene limitations and TODOs</summary>
-              <p>Server compare-and-swap is not implemented. Studio Next performs a fresh client preflight but cannot claim a race-free command boundary.</p>
+              <p>Physical activation is owned by Composer, which performs the server Check and exact controller compare-and-swap.</p>
               <p>Arbitrary receiver-native live scenes remain disabled until policy and executable routing are authoritative.</p>
             </details>
           </form>

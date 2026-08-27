@@ -54,19 +54,20 @@ class CurrentUxContractTests(unittest.TestCase):
         )[0]
         self.assertNotIn("startAnimation", adjust)
         self.assertIn("showDashboardArea('now-playing'", adjust)
-        self.assertIn("function takeAnimationLive(", self.dashboard_js)
-        self.assertIn("function takePresetLive(", self.dashboard_js)
-        self.assertIn("Take live", self.dashboard)
+        self.assertIn("Check &amp; activate", self.dashboard)
+        self.assertNotIn('onclick="takeAnimationLive', self.dashboard)
+        self.assertNotIn('onclick="takePresetLive', self.dashboard)
+        self.assertIn('id="activateSceneInComposerLink" href="/composer"', self.dashboard)
+        self.assertNotIn('onclick="startEditedScene()', self.dashboard)
+        self.assertNotIn("function startEditedScene", self.dashboard_js)
 
     def test_advanced_selection_is_private_until_take_live(self):
         inspect = self.control.split("async function inspectAnimation(", 1)[1].split(
             "function renderParameterControls(", 1
         )[0]
-        publish = self.control.split("async function takeSelectedLive(", 1)[1].split(
-            "async function stopLiveOutput(", 1
-        )[0]
         self.assertNotIn("startAnimation", inspect)
-        self.assertIn("startAnimation(selectedAnimation", publish)
+        self.assertIn('id="takeLiveBtn" href="/composer"', self.control)
+        self.assertNotIn('onclick="takeSelectedLive()', self.control)
         self.assertIn("Selection is private and never changes the wall", self.control)
         self.assertIn("Preset management lives in Studio", self.control)
         self.assertIn("Manage presets in Studio", self.control)
@@ -85,8 +86,24 @@ class CurrentUxContractTests(unittest.TestCase):
         self.assertIn("Mirror to wall", self.painter)
         self.assertIn("Stop / Return to draft", self.painter)
         self.assertIn("Stop / Return to draft", self.emoji)
+        self.assertIn('id="activateInComposerLink" href="/composer"', self.emoji)
+        self.assertIn("activationRequiresComposer: true", self.emoji)
+        self.assertNotIn("/api/start/", self.emoji)
+        self.assertNotIn("async function takeLive", self.emoji)
         self.assertNotIn("Start live", self.dashboard)
         self.assertNotIn("Take selected look live", self.dashboard)
+        self.assertNotIn("function startAnimation", self.base)
+        self.assertNotIn("function startAnimation", self.dashboard_js)
+        self.assertNotIn("function takeSelectedLive", self.control)
+        self.assertNotIn("until Take live", self.dashboard)
+
+    def test_studio_next_routes_execution_through_composer(self):
+        studio = (ROOT / "web/templates/studio_next.html").read_text(encoding="utf-8")
+        studio_js = (ROOT / "web/static/js/studio_next.js").read_text(encoding="utf-8")
+        self.assertIn('id="activateLookInComposer" href="/composer"', studio)
+        self.assertIn('id="activateSceneInComposer" href="/composer"', studio)
+        self.assertNotIn("/api/v1/studio-next/take-look", studio_js)
+        self.assertNotIn("/api/v1/studio-next/take-scene", studio_js)
 
     def test_global_live_controls_use_one_clear_vocabulary(self):
         for label in ("Animation speed", "Speed multiplier", "Wall mood", "Plant behavior"):

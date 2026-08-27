@@ -38,9 +38,22 @@ COMPILED_RAINBOW_PLUGIN_ID = "compiled_rainbow"
 SUPPORTED_PROVIDERS = frozenset(("python",))
 KNOWN_PROVIDERS = frozenset(("python", "receiver_native"))
 SUPPORTED_ROLES = frozenset(("background", "overlay", "full_scene"))
+GLOBAL_SETTINGS_SCHEMA = "ledgrid.global-settings-state"
+GLOBAL_SETTINGS_VERSION = 1
+SCENE_ACTIVATION_BASIS_SCHEMA = "ledgrid.scene-activation-basis"
+SCENE_ACTIVATION_BASIS_VERSION = 1
+SCENE_ACTIVATION_COMMAND_SCHEMA = "ledgrid.scene-activation-command"
+SCENE_ACTIVATION_COMMAND_VERSION = 1
+SCENE_ACTIVATION_STATUS_SCHEMA = "ledgrid.scene-activation-status"
+SCENE_ACTIVATION_STATUS_VERSION = 1
+SCENE_ACTIVATION_PHASES = frozenset((
+    "queued", "preflighting", "applying", "observing", "active",
+    "rolling_back", "rolled_back", "failed", "timed_out",
+))
 
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_CONTROLLER_SESSION_ID = re.compile(r"^[0-9a-f]{32}$")
 _UNSAFE_JSON_KEYS = frozenset(("__proto__", "constructor", "prototype"))
 
 
@@ -148,6 +161,82 @@ def _sha256_digest(value: Any, label: str) -> str:
     if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
         raise SceneValidationError(f"{label} must be a lowercase SHA-256 digest")
     return value
+
+
+def _opaque_id(value: Any, label: str, *, max_bytes: int = 4096) -> str:
+    if not isinstance(value, str) or not value:
+        raise SceneValidationError(f"{label} must be a non-empty string")
+    if len(value.encode("utf-8")) > max_bytes:
+        raise SceneValidationError(f"{label} exceeds the {max_bytes}-byte limit")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise SceneValidationError(f"{label} must not contain control characters")
+    return value
+
+
+def _finite_number(
+    value: Any,
+    label: str,
+    *,
+    minimum: Optional[float] = None,
+    maximum: Optional[float] = None,
+) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SceneValidationError(f"{label} must be numeric")
+    result = float(value)
+    if not math.isfinite(result):
+        raise SceneValidationError(f"{label} must be finite")
+    if minimum is not None and result < minimum:
+        raise SceneValidationError(f"{label} must be at least {minimum}")
+    if maximum is not None and result > maximum:
+        raise SceneValidationError(f"{label} must be at most {maximum}")
+    return result
+
+
+def canonical_json_bytes(value: Any) -> bytes:
+    """Return the stable UTF-8 representation used by activation identities.
+
+    Unlike ``json.dumps(..., default=str)``, this helper is deliberately strict:
+    mappings require string keys, numbers must be finite, and non-JSON objects
+    are rejected rather than acquiring an environment-dependent identity.
+    """
+
+    stack = [value]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, Mapping):
+            for key, item in current.items():
+                if not isinstance(key, str):
+                    raise SceneValidationError(
+                        "canonical JSON object keys must be strings"
+                    )
+                stack.append(item)
+        elif isinstance(current, (list, tuple)):
+            stack.extend(current)
+        elif isinstance(current, float):
+            if not math.isfinite(current):
+                raise SceneValidationError("canonical JSON numbers must be finite")
+        elif current is not None and not isinstance(
+            current, (str, int, bool)
+        ):
+            raise SceneValidationError(
+                f"canonical JSON does not support {type(current).__name__}"
+            )
+    try:
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise SceneValidationError("value is not canonical JSON") from exc
+
+
+def canonical_json_sha256(value: Any) -> str:
+    """Return the lowercase SHA-256 identity of ``canonical_json_bytes``."""
+
+    return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
 
 def validate_bounded_browser_json(
@@ -1220,3 +1309,1082 @@ def scene_preview_identity(
     return hashlib.sha256(
         json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
     ).hexdigest()
+
+
+def normalize_global_settings_payload(value: Any) -> dict[str, Any]:
+    """Canonicalize the controller-native global settings checked for activation."""
+
+    payload = _object(value, "global settings")
+    _only(
+        payload,
+        {
+            "schema", "schema_version", "revision", "vibe",
+            "plant_modifiers", "output",
+        },
+        "global settings",
+    )
+    if payload.get("schema") != GLOBAL_SETTINGS_SCHEMA:
+        raise SceneValidationError(
+            f"global settings.schema must be {GLOBAL_SETTINGS_SCHEMA!r}"
+        )
+    if payload.get("schema_version") != GLOBAL_SETTINGS_VERSION:
+        raise SceneValidationError(
+            "global settings.schema_version must be "
+            f"{GLOBAL_SETTINGS_VERSION}"
+        )
+    revision = _uint64(payload.get("revision"), "global settings.revision")
+
+    vibe = _object(payload.get("vibe"), "global settings.vibe")
+    _only(
+        vibe,
+        {"vibe_id", "profile_version", "resolved_profile_digest"},
+        "global settings.vibe",
+    )
+    vibe_id = _identifier(vibe.get("vibe_id"), "global settings.vibe.vibe_id")
+    profile_version = vibe.get("profile_version")
+    if (
+        isinstance(profile_version, bool)
+        or not isinstance(profile_version, int)
+        or not 1 <= profile_version < 2**31
+    ):
+        raise SceneValidationError(
+            "global settings.vibe.profile_version must be a positive "
+            "signed 32-bit integer"
+        )
+    resolved_profile_digest = _sha256_digest(
+        vibe.get("resolved_profile_digest"),
+        "global settings.vibe.resolved_profile_digest",
+    )
+
+    raw_modifiers = _object(
+        payload.get("plant_modifiers"), "global settings.plant_modifiers"
+    )
+    _only(
+        raw_modifiers,
+        {"version", "active", "strengths"},
+        "global settings.plant_modifiers",
+    )
+    # Import lazily so the JSON contract remains cheap for catalog-only callers.
+    from animation.core.plant_awareness import PlantModifierState
+
+    try:
+        plant_modifiers = PlantModifierState.from_payload(raw_modifiers).to_dict()
+    except (TypeError, ValueError) as exc:
+        raise SceneValidationError(
+            f"invalid global settings.plant_modifiers: {exc}"
+        ) from exc
+
+    output = _object(payload.get("output"), "global settings.output")
+    _only(
+        output,
+        {"power", "brightness", "animation_speed_scale", "target_fps"},
+        "global settings.output",
+    )
+    power = output.get("power")
+    if not isinstance(power, bool):
+        raise SceneValidationError("global settings.output.power must be boolean")
+    brightness = _byte(
+        output.get("brightness"), "global settings.output.brightness"
+    )
+    animation_speed_scale = _finite_number(
+        output.get("animation_speed_scale"),
+        "global settings.output.animation_speed_scale",
+        minimum=0.01,
+        maximum=100.0,
+    )
+    target_fps = output.get("target_fps")
+    if (
+        isinstance(target_fps, bool)
+        or not isinstance(target_fps, int)
+        or not 1 <= target_fps <= 200
+    ):
+        raise SceneValidationError(
+            "global settings.output.target_fps must be an integer from 1 to 200"
+        )
+
+    return {
+        "schema": GLOBAL_SETTINGS_SCHEMA,
+        "schema_version": GLOBAL_SETTINGS_VERSION,
+        "revision": revision,
+        "vibe": {
+            "vibe_id": vibe_id,
+            "profile_version": profile_version,
+            "resolved_profile_digest": resolved_profile_digest,
+        },
+        "plant_modifiers": plant_modifiers,
+        "output": {
+            "power": power,
+            "brightness": brightness,
+            "animation_speed_scale": animation_speed_scale,
+            "target_fps": target_fps,
+        },
+    }
+
+
+def global_settings_digest(value: Any) -> str:
+    """Return the identity of one fully normalized global-settings state."""
+
+    return canonical_json_sha256(normalize_global_settings_payload(value))
+
+
+_ACTIVATION_COMPONENT_SLOTS = (
+    "background", FIXED_OVERLAY_SLOT, "known_python_fallback",
+)
+
+
+def normalize_activation_component_identity(value: Any) -> dict[str, Any]:
+    """Normalize one complete authoring/controller runtime component binding."""
+
+    payload = _object(value, "activation component identity")
+    _only(
+        payload,
+        {
+            "slot_id", "provider", "component_id", "component_digest",
+            "browser_runtime_digest", "controller_runtime_digest",
+            "parameter_schema_version", "bundle_digest",
+            "expected_payload_digest",
+        },
+        "activation component identity",
+    )
+    slot_id = payload.get("slot_id")
+    if slot_id not in _ACTIVATION_COMPONENT_SLOTS:
+        raise SceneValidationError(
+            "activation component identity.slot_id must be background, "
+            f"{FIXED_OVERLAY_SLOT}, or known_python_fallback"
+        )
+    provider = _identifier(
+        payload.get("provider"), "activation component identity.provider"
+    )
+    if provider not in KNOWN_PROVIDERS:
+        raise SceneValidationError(
+            "activation component identity.provider must be python or "
+            "receiver_native"
+        )
+    component_id = _identifier(
+        payload.get("component_id"),
+        "activation component identity.component_id",
+    )
+    component_digest = _sha256_digest(
+        payload.get("component_digest"),
+        "activation component identity.component_digest",
+    )
+    browser_runtime_digest = _sha256_digest(
+        payload.get("browser_runtime_digest"),
+        "activation component identity.browser_runtime_digest",
+    )
+    controller_runtime_digest = _sha256_digest(
+        payload.get("controller_runtime_digest"),
+        "activation component identity.controller_runtime_digest",
+    )
+    schema_version = payload.get("parameter_schema_version")
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or not 1 <= schema_version < 2**31
+    ):
+        raise SceneValidationError(
+            "activation component identity.parameter_schema_version must be "
+            "a positive signed 32-bit integer"
+        )
+    result = {
+        "slot_id": slot_id,
+        "provider": provider,
+        "component_id": component_id,
+        "component_digest": component_digest,
+        "browser_runtime_digest": browser_runtime_digest,
+        "controller_runtime_digest": controller_runtime_digest,
+        "parameter_schema_version": schema_version,
+    }
+    native_digests = (
+        payload.get("bundle_digest"), payload.get("expected_payload_digest")
+    )
+    if provider == "receiver_native":
+        result.update(
+            bundle_digest=_sha256_digest(
+                native_digests[0],
+                "activation component identity.bundle_digest",
+            ),
+            expected_payload_digest=_sha256_digest(
+                native_digests[1],
+                "activation component identity.expected_payload_digest",
+            ),
+        )
+    elif any(item is not None for item in native_digests):
+        raise SceneValidationError(
+            "python activation component identity must not declare native digests"
+        )
+    return result
+
+
+def _normalize_component_identities(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise SceneValidationError("activation components must be an array")
+    components = [normalize_activation_component_identity(item) for item in value]
+    slots = [item["slot_id"] for item in components]
+    if len(slots) != len(set(slots)):
+        raise SceneValidationError("activation components contain duplicate slots")
+    required = {"background", "known_python_fallback"}
+    if not required.issubset(slots):
+        raise SceneValidationError(
+            "activation components require background and known_python_fallback"
+        )
+    order = {slot: index for index, slot in enumerate(_ACTIVATION_COMPONENT_SLOTS)}
+    return sorted(components, key=lambda item: order[item["slot_id"]])
+
+
+def _normalize_digest_revision_identity(value: Any, label: str) -> dict[str, Any]:
+    payload = _object(value, label)
+    _only(payload, {"revision", "digest"}, label)
+    return {
+        "revision": _uint64(payload.get("revision"), f"{label}.revision"),
+        "digest": _sha256_digest(payload.get("digest"), f"{label}.digest"),
+    }
+
+
+def normalize_activation_controller_identity(value: Any) -> dict[str, Any]:
+    """Normalize the controller compare-and-swap identity bound by Check."""
+
+    controller = _object(value, "activation controller identity")
+    _only(
+        controller,
+        {"session_id", "state_revision", "current_identity_digest"},
+        "activation controller identity",
+    )
+    session_id = controller.get("session_id")
+    if (
+        not isinstance(session_id, str)
+        or _CONTROLLER_SESSION_ID.fullmatch(session_id) is None
+    ):
+        raise SceneValidationError(
+            "activation controller identity.session_id must be a lowercase "
+            "128-bit hexadecimal ID"
+        )
+    state_revision = _uint64(
+        controller.get("state_revision"),
+        "activation controller identity.state_revision",
+    )
+    current_identity_digest = controller.get("current_identity_digest")
+    if current_identity_digest is not None:
+        current_identity_digest = _sha256_digest(
+            current_identity_digest,
+            "activation controller identity.current_identity_digest",
+        )
+    return {
+        "session_id": session_id,
+        "state_revision": state_revision,
+        "current_identity_digest": current_identity_digest,
+    }
+
+
+def normalize_activation_qualification(value: Any) -> dict[str, Any]:
+    """Normalize the checker version and absolute Unix-millisecond expiry."""
+
+    qualification = _object(value, "activation qualification")
+    _only(
+        qualification,
+        {"version", "expires_at"},
+        "activation qualification",
+    )
+    version = _identifier(
+        qualification.get("version"), "activation qualification.version"
+    )
+    expires_at = _uint64(
+        qualification.get("expires_at"), "activation qualification.expires_at"
+    )
+    if expires_at == 0:
+        raise SceneValidationError(
+            "activation qualification.expires_at must be positive"
+        )
+    return {"version": version, "expires_at": expires_at}
+
+
+def normalize_scene_activation_basis(value: Any) -> dict[str, Any]:
+    """Normalize the exact state a short-lived server Check authorizes."""
+
+    payload = _object(value, "scene activation basis")
+    _only(
+        payload,
+        {
+            "schema", "schema_version", "browser_scene", "host_scene",
+            "components", "installation_profile_digest", "global_settings",
+            "controller", "qualification",
+        },
+        "scene activation basis",
+    )
+    if payload.get("schema") != SCENE_ACTIVATION_BASIS_SCHEMA:
+        raise SceneValidationError(
+            f"scene activation basis.schema must be "
+            f"{SCENE_ACTIVATION_BASIS_SCHEMA!r}"
+        )
+    if payload.get("schema_version") != SCENE_ACTIVATION_BASIS_VERSION:
+        raise SceneValidationError(
+            "scene activation basis.schema_version must be "
+            f"{SCENE_ACTIVATION_BASIS_VERSION}"
+        )
+    browser_scene = _normalize_digest_revision_identity(
+        payload.get("browser_scene"), "scene activation basis.browser_scene"
+    )
+    host_scene = _normalize_digest_revision_identity(
+        payload.get("host_scene"), "scene activation basis.host_scene"
+    )
+    if browser_scene["revision"] != host_scene["revision"]:
+        raise SceneValidationError(
+            "scene activation basis browser and host scene revisions must match"
+        )
+    components = _normalize_component_identities(payload.get("components"))
+    installation_profile_digest = _sha256_digest(
+        payload.get("installation_profile_digest"),
+        "scene activation basis.installation_profile_digest",
+    )
+    global_settings = _normalize_digest_revision_identity(
+        payload.get("global_settings"),
+        "scene activation basis.global_settings",
+    )
+
+    controller = normalize_activation_controller_identity(
+        payload.get("controller")
+    )
+    qualification = normalize_activation_qualification(
+        payload.get("qualification")
+    )
+
+    return {
+        "schema": SCENE_ACTIVATION_BASIS_SCHEMA,
+        "schema_version": SCENE_ACTIVATION_BASIS_VERSION,
+        "browser_scene": browser_scene,
+        "host_scene": host_scene,
+        "components": components,
+        "installation_profile_digest": installation_profile_digest,
+        "global_settings": global_settings,
+        "controller": controller,
+        "qualification": qualification,
+    }
+
+
+def scene_activation_basis_digest(value: Any) -> str:
+    """Return the stable identity bound into a server-owned Check token."""
+
+    return canonical_json_sha256(normalize_scene_activation_basis(value))
+
+
+def _controller_runtime_digest(
+    bindings: Mapping[str, Any], slot_id: str, component: Mapping[str, Any]
+) -> str:
+    qualified_id = f"{component['provider']}:{component['component_id']}"
+    value = bindings.get(slot_id, bindings.get(qualified_id))
+    return _sha256_digest(
+        value,
+        f"controller runtime digest for {slot_id}",
+    )
+
+
+def build_scene_activation_basis(
+    *,
+    browser_scene: Mapping[str, Any],
+    catalog: Iterable[Mapping[str, Any]],
+    global_settings: Mapping[str, Any],
+    controller_runtime_digests: Mapping[str, Any],
+    controller_session_id: str,
+    controller_state_revision: int,
+    current_identity_digest: Optional[str],
+    qualification_version: str,
+    expires_at: int,
+    host_scene: Optional[Mapping[str, Any]] = None,
+    provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
+) -> dict[str, Any]:
+    """Build a Check basis from the authoritative browser/catalog boundary.
+
+    The host scene and component list are derived, not trusted caller summaries.
+    Supplying ``host_scene`` asks the helper to verify it is byte-identical after
+    normalization to the browser-derived host payload.
+    """
+
+    catalog_items = list(catalog)
+    document = normalize_browser_scene_document(
+        browser_scene, catalog=catalog_items, purpose="activation"
+    )
+    derived_host = normalize_scene_payload(
+        browser_scene_to_host_scene(document, catalog=catalog_items),
+        catalog=catalog_items or None,
+        provider_policy=provider_policy,
+    )
+    if host_scene is not None:
+        supplied_host = normalize_scene_payload(
+            host_scene,
+            catalog=catalog_items or None,
+            provider_policy=provider_policy,
+        )
+        if supplied_host != derived_host:
+            raise SceneValidationError(
+                "supplied host scene does not match the normalized browser scene"
+            )
+    settings = normalize_global_settings_payload(global_settings)
+    if not isinstance(controller_runtime_digests, Mapping):
+        raise SceneValidationError("controller_runtime_digests must be an object")
+
+    component_sources: list[tuple[str, Mapping[str, Any], Mapping[str, Any]]] = [
+        ("background", document["background"], derived_host["background"]),
+    ]
+    if document["layers"]:
+        component_sources.append((
+            FIXED_OVERLAY_SLOT,
+            document["layers"][0]["component"],
+            derived_host["overlays"][0]["component"],
+        ))
+    component_sources.append((
+        "known_python_fallback",
+        document["fallback"],
+        derived_host["known_python_fallback"],
+    ))
+    components = []
+    for slot_id, browser_component, host_component in component_sources:
+        identity = {
+            "slot_id": slot_id,
+            "provider": browser_component["provider"],
+            "component_id": browser_component["component_id"],
+            "component_digest": browser_component["component_digest"],
+            "browser_runtime_digest": browser_component["runtime_digest"],
+            "controller_runtime_digest": _controller_runtime_digest(
+                controller_runtime_digests, slot_id, browser_component
+            ),
+            "parameter_schema_version": browser_component[
+                "parameter_schema_version"
+            ],
+        }
+        if browser_component["provider"] == "receiver_native":
+            identity.update(
+                bundle_digest=host_component["bundle_digest"],
+                expected_payload_digest=host_component[
+                    "expected_payload_digest"
+                ],
+            )
+        components.append(identity)
+
+    return normalize_scene_activation_basis({
+        "schema": SCENE_ACTIVATION_BASIS_SCHEMA,
+        "schema_version": SCENE_ACTIVATION_BASIS_VERSION,
+        "browser_scene": {
+            "revision": document["revision"],
+            "digest": canonical_json_sha256(document),
+        },
+        "host_scene": {
+            "revision": derived_host["revision"],
+            "digest": canonical_json_sha256(derived_host),
+        },
+        "components": components,
+        "installation_profile_digest": document[
+            "installation_profile"
+        ]["digest"],
+        "global_settings": {
+            "revision": settings["revision"],
+            "digest": canonical_json_sha256(settings),
+        },
+        "controller": {
+            "session_id": controller_session_id,
+            "state_revision": controller_state_revision,
+            "current_identity_digest": current_identity_digest,
+        },
+        "qualification": {
+            "version": qualification_version,
+            "expires_at": expires_at,
+        },
+    })
+
+
+def normalize_activation_identity(value: Any) -> dict[str, Any]:
+    """Normalize one complete active or intentionally inactive wall identity.
+
+    An inactive controller still has exact globals and profile identities.  It
+    is represented by a null scene and an empty component list so rollback can
+    prove restoration without inventing a placeholder scene or losing state.
+    """
+
+    payload = _object(value, "activation identity")
+    _only(
+        payload,
+        {
+            "scene_identity", "component_identities",
+            "global_settings_identity", "installation_profile_digest",
+        },
+        "activation identity",
+    )
+    raw_scene = payload.get("scene_identity")
+    raw_components = payload.get("component_identities")
+    if raw_scene is None:
+        if raw_components != []:
+            raise SceneValidationError(
+                "inactive activation identity requires an empty component list"
+            )
+        scene_identity = None
+        component_identities: list[dict[str, Any]] = []
+    else:
+        scene_identity = _normalize_digest_revision_identity(
+            raw_scene, "activation identity.scene_identity"
+        )
+        component_identities = _normalize_component_identities(raw_components)
+    return {
+        "scene_identity": scene_identity,
+        "component_identities": component_identities,
+        "global_settings_identity": _normalize_digest_revision_identity(
+            payload.get("global_settings_identity"),
+            "activation identity.global_settings_identity",
+        ),
+        "installation_profile_digest": _sha256_digest(
+            payload.get("installation_profile_digest"),
+            "activation identity.installation_profile_digest",
+        ),
+    }
+
+
+def activation_identity_from_basis(value: Any) -> dict[str, Any]:
+    """Project the exact desired/observed identity from a normalized basis."""
+
+    basis = normalize_scene_activation_basis(value)
+    return normalize_activation_identity({
+        "scene_identity": basis["host_scene"],
+        "component_identities": basis["components"],
+        "global_settings_identity": basis["global_settings"],
+        "installation_profile_digest": basis["installation_profile_digest"],
+    })
+
+
+def _host_scene_component_map(scene: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    result: dict[str, Mapping[str, Any]] = {
+        "background": scene["background"],
+        "known_python_fallback": scene["known_python_fallback"],
+    }
+    if scene["overlays"]:
+        result[FIXED_OVERLAY_SLOT] = scene["overlays"][0]["component"]
+    return result
+
+
+def normalize_scene_activation_command(
+    value: Any,
+    *,
+    catalog: Optional[Iterable[Mapping[str, Any]]] = None,
+    provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
+    now: Optional[int] = None,
+) -> dict[str, Any]:
+    """Validate the one guarded command allowed to mutate complete wall state."""
+
+    payload = _object(value, "scene activation command")
+    _only(
+        payload,
+        {
+            "schema", "schema_version", "activation_id", "check_token_digest",
+            "basis", "basis_digest", "desired",
+        },
+        "scene activation command",
+    )
+    if payload.get("schema") != SCENE_ACTIVATION_COMMAND_SCHEMA:
+        raise SceneValidationError(
+            f"scene activation command.schema must be "
+            f"{SCENE_ACTIVATION_COMMAND_SCHEMA!r}"
+        )
+    if payload.get("schema_version") != SCENE_ACTIVATION_COMMAND_VERSION:
+        raise SceneValidationError(
+            "scene activation command.schema_version must be "
+            f"{SCENE_ACTIVATION_COMMAND_VERSION}"
+        )
+    activation_id = _opaque_id(
+        payload.get("activation_id"), "scene activation command.activation_id",
+        max_bytes=256,
+    )
+    check_token_digest = _sha256_digest(
+        payload.get("check_token_digest"),
+        "scene activation command.check_token_digest",
+    )
+    basis = normalize_scene_activation_basis(payload.get("basis"))
+    basis_digest = _sha256_digest(
+        payload.get("basis_digest"), "scene activation command.basis_digest"
+    )
+    if scene_activation_basis_digest(basis) != basis_digest:
+        raise SceneValidationError(
+            "scene activation command.basis_digest does not match basis"
+        )
+    if now is not None:
+        now_value = _uint64(now, "scene activation command current time")
+        if basis["qualification"]["expires_at"] <= now_value:
+            raise SceneValidationError("scene activation command Check has expired")
+
+    desired = _object(payload.get("desired"), "scene activation command.desired")
+    _only(
+        desired,
+        {"scene", "global_settings", "installation_profile_digest"},
+        "scene activation command.desired",
+    )
+    catalog_items = list(catalog) if catalog is not None else None
+    scene = normalize_scene_payload(
+        desired.get("scene"),
+        catalog=catalog_items,
+        provider_policy=provider_policy,
+    )
+    settings = normalize_global_settings_payload(desired.get("global_settings"))
+    profile_digest = _sha256_digest(
+        desired.get("installation_profile_digest"),
+        "scene activation command.desired.installation_profile_digest",
+    )
+    if canonical_json_sha256(scene) != basis["host_scene"]["digest"]:
+        raise SceneValidationError(
+            "scene activation command desired scene does not match checked basis"
+        )
+    if scene["revision"] != basis["host_scene"]["revision"]:
+        raise SceneValidationError(
+            "scene activation command desired scene revision does not match checked basis"
+        )
+    if canonical_json_sha256(settings) != basis["global_settings"]["digest"]:
+        raise SceneValidationError(
+            "scene activation command desired global settings do not match checked basis"
+        )
+    if settings["revision"] != basis["global_settings"]["revision"]:
+        raise SceneValidationError(
+            "scene activation command desired global settings revision does not "
+            "match checked basis"
+        )
+    if profile_digest != basis["installation_profile_digest"]:
+        raise SceneValidationError(
+            "scene activation command desired installation profile does not "
+            "match checked basis"
+        )
+
+    scene_components = _host_scene_component_map(scene)
+    if set(scene_components) != {
+        component["slot_id"] for component in basis["components"]
+    }:
+        raise SceneValidationError(
+            "scene activation command desired component slots do not match checked basis"
+        )
+    for identity in basis["components"]:
+        component = scene_components[identity["slot_id"]]
+        if (
+            component["provider"] != identity["provider"]
+            or component["plugin_id"] != identity["component_id"]
+        ):
+            raise SceneValidationError(
+                f"scene activation command desired {identity['slot_id']} identity "
+                "does not match checked basis"
+            )
+        if identity["provider"] == "receiver_native" and (
+            component.get("bundle_digest") != identity["bundle_digest"]
+            or component.get("expected_payload_digest")
+            != identity["expected_payload_digest"]
+        ):
+            raise SceneValidationError(
+                f"scene activation command desired {identity['slot_id']} native "
+                "identity does not match checked basis"
+            )
+
+    return {
+        "schema": SCENE_ACTIVATION_COMMAND_SCHEMA,
+        "schema_version": SCENE_ACTIVATION_COMMAND_VERSION,
+        "activation_id": activation_id,
+        "check_token_digest": check_token_digest,
+        "basis": basis,
+        "basis_digest": basis_digest,
+        "desired": {
+            "scene": scene,
+            "global_settings": settings,
+            "installation_profile_digest": profile_digest,
+        },
+    }
+
+
+def _optional_text(value: Any, label: str, *, max_bytes: int = 4096) -> Optional[str]:
+    if value is None:
+        return None
+    return _opaque_id(value, label, max_bytes=max_bytes)
+
+
+def _normalize_camera_observation(value: Any) -> Optional[dict[str, Any]]:
+    if value is None:
+        return None
+    payload = _object(value, "scene activation status.camera_observation")
+    _only(
+        payload,
+        {"observed_at", "evidence_digest", "source"},
+        "scene activation status.camera_observation",
+    )
+    return {
+        "observed_at": _uint64(
+            payload.get("observed_at"),
+            "scene activation status.camera_observation.observed_at",
+        ),
+        "evidence_digest": _sha256_digest(
+            payload.get("evidence_digest"),
+            "scene activation status.camera_observation.evidence_digest",
+        ),
+        "source": _identifier(
+            payload.get("source"),
+            "scene activation status.camera_observation.source",
+        ),
+    }
+
+
+def normalize_scene_activation_status(value: Any) -> dict[str, Any]:
+    """Normalize one correlated activation status and enforce phase invariants."""
+
+    payload = _object(value, "scene activation status")
+    _only(
+        payload,
+        {
+            "schema", "schema_version", "activation_id", "basis_digest",
+            "command_id", "phase", "requested_identity", "normalized_identity",
+            "observed_identity", "controller", "telemetry", "rollback",
+            "camera_observation", "error",
+        },
+        "scene activation status",
+    )
+    if payload.get("schema") != SCENE_ACTIVATION_STATUS_SCHEMA:
+        raise SceneValidationError(
+            f"scene activation status.schema must be "
+            f"{SCENE_ACTIVATION_STATUS_SCHEMA!r}"
+        )
+    if payload.get("schema_version") != SCENE_ACTIVATION_STATUS_VERSION:
+        raise SceneValidationError(
+            "scene activation status.schema_version must be "
+            f"{SCENE_ACTIVATION_STATUS_VERSION}"
+        )
+    activation_id = _opaque_id(
+        payload.get("activation_id"), "scene activation status.activation_id",
+        max_bytes=256,
+    )
+    basis_digest = _sha256_digest(
+        payload.get("basis_digest"), "scene activation status.basis_digest"
+    )
+    command_id = _optional_text(
+        payload.get("command_id"), "scene activation status.command_id",
+        max_bytes=256,
+    )
+    phase = payload.get("phase")
+    if phase not in SCENE_ACTIVATION_PHASES:
+        raise SceneValidationError(
+            "scene activation status.phase is not a legal activation phase"
+        )
+    error = _optional_text(
+        payload.get("error"), "scene activation status.error"
+    )
+    requested_identity = normalize_activation_identity(
+        payload.get("requested_identity")
+    )
+    normalized_identity = normalize_activation_identity(
+        payload.get("normalized_identity")
+    )
+    if (
+        requested_identity["scene_identity"] is None
+        or normalized_identity["scene_identity"] is None
+    ):
+        raise SceneValidationError(
+            "scene activation requested and normalized identities must be active"
+        )
+    observed_raw = payload.get("observed_identity")
+    observed_identity = (
+        None if observed_raw is None else normalize_activation_identity(observed_raw)
+    )
+
+    controller = _object(
+        payload.get("controller"), "scene activation status.controller"
+    )
+    _only(
+        controller,
+        {"session_id", "state_revision_before", "state_revision_after"},
+        "scene activation status.controller",
+    )
+    session_id = controller.get("session_id")
+    if (
+        not isinstance(session_id, str)
+        or _CONTROLLER_SESSION_ID.fullmatch(session_id) is None
+    ):
+        raise SceneValidationError(
+            "scene activation status.controller.session_id must be a lowercase "
+            "128-bit hexadecimal ID"
+        )
+    state_revision_before = _uint64(
+        controller.get("state_revision_before"),
+        "scene activation status.controller.state_revision_before",
+    )
+    state_revision_after = controller.get("state_revision_after")
+    if state_revision_after is not None:
+        state_revision_after = _uint64(
+            state_revision_after,
+            "scene activation status.controller.state_revision_after",
+        )
+
+    telemetry = _object(
+        payload.get("telemetry"), "scene activation status.telemetry"
+    )
+    _only(
+        telemetry,
+        {"complete", "fresh", "observed_at"},
+        "scene activation status.telemetry",
+    )
+    complete = telemetry.get("complete")
+    fresh = telemetry.get("fresh")
+    if not isinstance(complete, bool) or not isinstance(fresh, bool):
+        raise SceneValidationError(
+            "scene activation status telemetry complete and fresh must be boolean"
+        )
+    observed_at = telemetry.get("observed_at")
+    if observed_at is not None:
+        observed_at = _uint64(
+            observed_at, "scene activation status.telemetry.observed_at"
+        )
+    if fresh and observed_at is None:
+        raise SceneValidationError(
+            "fresh scene activation telemetry requires observed_at"
+        )
+
+    rollback = _object(
+        payload.get("rollback"), "scene activation status.rollback"
+    )
+    _only(
+        rollback,
+        {"available", "snapshot_id", "result", "error"},
+        "scene activation status.rollback",
+    )
+    rollback_available = rollback.get("available")
+    if not isinstance(rollback_available, bool):
+        raise SceneValidationError(
+            "scene activation status.rollback.available must be boolean"
+        )
+    snapshot_id = _optional_text(
+        rollback.get("snapshot_id"),
+        "scene activation status.rollback.snapshot_id",
+        max_bytes=256,
+    )
+    if rollback_available and snapshot_id is None:
+        raise SceneValidationError(
+            "available scene activation rollback requires snapshot_id"
+        )
+    rollback_result = rollback.get("result")
+    if rollback_result not in {None, "succeeded", "failed"}:
+        raise SceneValidationError(
+            "scene activation status.rollback.result must be succeeded, failed, or null"
+        )
+    rollback_error = _optional_text(
+        rollback.get("error"), "scene activation status.rollback.error"
+    )
+    if rollback_result == "succeeded" and rollback_error is not None:
+        raise SceneValidationError(
+            "successful scene activation rollback must not include an error"
+        )
+    if rollback_result == "failed" and rollback_error is None:
+        raise SceneValidationError(
+            "failed scene activation rollback requires an error"
+        )
+
+    if phase == "active":
+        if observed_identity != normalized_identity:
+            raise SceneValidationError(
+                "active scene activation status requires exact observed identity"
+            )
+        if not complete or not fresh:
+            raise SceneValidationError(
+                "active scene activation status requires complete fresh telemetry"
+            )
+        if (
+            state_revision_after is None
+            or state_revision_after <= state_revision_before
+        ):
+            raise SceneValidationError(
+                "active scene activation status requires an advanced controller "
+                "state revision"
+            )
+    if phase == "rolled_back" and rollback_result != "succeeded":
+        raise SceneValidationError(
+            "rolled_back scene activation status requires successful rollback"
+        )
+    if phase in {"failed", "timed_out"} and error is None:
+        raise SceneValidationError(
+            f"{phase} scene activation status requires an error"
+        )
+    exact_restoration_required = (
+        phase in {"rolled_back", "failed", "timed_out"}
+        and rollback_available
+        and rollback_result == "succeeded"
+    )
+    if exact_restoration_required:
+        if observed_identity is None or not complete or not fresh:
+            raise SceneValidationError(
+                "successful scene activation rollback requires an exact fresh "
+                "observed identity"
+            )
+        if (
+            state_revision_after is None
+            or state_revision_after <= state_revision_before
+        ):
+            raise SceneValidationError(
+                "successful scene activation rollback requires an advanced "
+                "controller state revision"
+            )
+
+    return {
+        "schema": SCENE_ACTIVATION_STATUS_SCHEMA,
+        "schema_version": SCENE_ACTIVATION_STATUS_VERSION,
+        "activation_id": activation_id,
+        "basis_digest": basis_digest,
+        "command_id": command_id,
+        "phase": phase,
+        "error": error,
+        "requested_identity": requested_identity,
+        "normalized_identity": normalized_identity,
+        "observed_identity": observed_identity,
+        "controller": {
+            "session_id": session_id,
+            "state_revision_before": state_revision_before,
+            "state_revision_after": state_revision_after,
+        },
+        "telemetry": {
+            "complete": complete,
+            "fresh": fresh,
+            "observed_at": observed_at,
+        },
+        "rollback": {
+            "available": rollback_available,
+            "snapshot_id": snapshot_id,
+            "result": rollback_result,
+            "error": rollback_error,
+        },
+        "camera_observation": _normalize_camera_observation(
+            payload.get("camera_observation")
+        ),
+    }
+
+
+_ACTIVATION_PHASE_TRANSITIONS = {
+    "queued": frozenset(("queued", "preflighting", "failed", "timed_out")),
+    "preflighting": frozenset((
+        "preflighting", "applying", "failed", "timed_out",
+    )),
+    "applying": frozenset((
+        "applying", "observing", "rolling_back", "failed", "timed_out",
+    )),
+    "observing": frozenset((
+        "observing", "active", "rolling_back", "failed", "timed_out",
+    )),
+    "active": frozenset(("active", "rolling_back")),
+    "rolling_back": frozenset((
+        "rolling_back", "rolled_back", "failed", "timed_out",
+    )),
+    "rolled_back": frozenset(("rolled_back",)),
+    "failed": frozenset(("failed",)),
+    "timed_out": frozenset(("timed_out",)),
+}
+
+
+def validate_scene_activation_status_transition(
+    previous: Any, current: Any
+) -> dict[str, Any]:
+    """Reject illegal or identity-changing updates to one activation receipt."""
+
+    before = normalize_scene_activation_status(previous)
+    after = normalize_scene_activation_status(current)
+    restart_reconciliation = (
+        before["phase"] == "active"
+        and before["controller"]["session_id"]
+        != after["controller"]["session_id"]
+        and after["phase"] in {"active", "failed"}
+        and after["rollback"]["available"] is False
+        and after["rollback"]["snapshot_id"] is None
+        and after["rollback"]["result"] is None
+    )
+    if (
+        after["phase"] not in _ACTIVATION_PHASE_TRANSITIONS[before["phase"]]
+        and not restart_reconciliation
+    ):
+        raise SceneValidationError(
+            f"illegal scene activation phase transition "
+            f"{before['phase']} -> {after['phase']}"
+        )
+    completed_rollback = (
+        before["phase"] == "rolling_back"
+        and after["phase"] == "rolled_back"
+        and after["rollback"]["result"] == "succeeded"
+    )
+    for field in (
+        "activation_id", "basis_digest", "requested_identity",
+        "normalized_identity",
+    ):
+        if before[field] != after[field]:
+            raise SceneValidationError(
+                f"scene activation status {field} must not change"
+            )
+    if (
+        before["controller"]["session_id"] != after["controller"]["session_id"]
+        and not restart_reconciliation
+    ):
+        raise SceneValidationError(
+            "scene activation status controller session must not change"
+        )
+    if (
+        before["controller"]["state_revision_before"]
+        != after["controller"]["state_revision_before"]
+        and not restart_reconciliation
+    ):
+        raise SceneValidationError(
+            "scene activation status initial controller revision must not change"
+        )
+    if before["command_id"] is not None and before["command_id"] != after["command_id"]:
+        raise SceneValidationError(
+            "scene activation status command_id must not change once assigned"
+        )
+    if (
+        before["observed_identity"] is not None
+        and before["observed_identity"] != after["observed_identity"]
+        and not (completed_rollback or restart_reconciliation)
+    ):
+        raise SceneValidationError(
+            "scene activation status observed identity must not change outside "
+            "a completed rollback"
+        )
+    prior_after = before["controller"]["state_revision_after"]
+    next_after = after["controller"]["state_revision_after"]
+    if (
+        prior_after is not None
+        and prior_after != next_after
+        and not (
+            completed_rollback
+            and next_after is not None
+            and next_after > prior_after
+        )
+        and not restart_reconciliation
+    ):
+        raise SceneValidationError(
+            "scene activation status resulting controller revision must not "
+            "change outside a completed rollback"
+        )
+    for field in ("complete", "fresh"):
+        if (
+            before["telemetry"][field]
+            and not after["telemetry"][field]
+            and not restart_reconciliation
+        ):
+            raise SceneValidationError(
+                f"scene activation status telemetry {field} must not regress"
+            )
+    if (
+        before["telemetry"]["observed_at"] is not None
+        and before["telemetry"]["observed_at"]
+        != after["telemetry"]["observed_at"]
+        and not (completed_rollback or restart_reconciliation)
+    ):
+        raise SceneValidationError(
+            "scene activation status telemetry observed_at must not change "
+            "outside a completed rollback"
+        )
+    if (
+        before["rollback"]["snapshot_id"] is not None
+        and before["rollback"]["snapshot_id"]
+        != after["rollback"]["snapshot_id"]
+        and not restart_reconciliation
+    ):
+        raise SceneValidationError(
+            "scene activation status rollback snapshot must not change"
+        )
+    if (
+        before["rollback"]["result"] is not None
+        and before["rollback"]["result"] != after["rollback"]["result"]
+    ):
+        raise SceneValidationError(
+            "scene activation status rollback result must not change"
+        )
+    return after

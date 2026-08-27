@@ -319,15 +319,7 @@
             setTextIfPresent('metricCrcBytes', formatBytes(aggregate.crc_bytes_sent));
         }
 
-        // Global functions for API calls
-        function startAnimation(name, config = {}) {
-            return fetch(`/api/start/${name}`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(config)
-            }).then(r => r.json());
-        }
-        
+        // Global operational controls; activation is owned by Composer.
         function stopAnimation() {
             return fetch('/api/stop', {method: 'POST'}).then(r => r.json());
         }

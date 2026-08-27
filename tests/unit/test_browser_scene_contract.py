@@ -334,7 +334,7 @@ class BrowserSceneWebBoundaryTests(unittest.TestCase):
         unified = self.client.get("/api/v1/components").get_json()["components"]
         self.assertTrue(all("browser_capabilities" in item for item in unified))
 
-    def test_same_document_validates_for_import_save_and_activation(self) -> None:
+    def test_same_document_validates_for_import_save_but_activation_is_guarded(self) -> None:
         imported = self.client.post(
             "/api/v1/composer/presets/validate", json=self.document
         )
@@ -362,23 +362,14 @@ class BrowserSceneWebBoundaryTests(unittest.TestCase):
         self.assertEqual(self.channel.commands, [])
 
         activated = self.client.put("/api/v1/scene", json=self.document)
-        self.assertEqual(activated.status_code, 200, activated.get_json())
-        self.assertEqual(len(self.channel.commands), 1)
-        command = self.channel.commands[0]
-        self.assertEqual(command["action"], "start_scene")
-        self.assertEqual(command["data"]["scene"]["background"]["plugin_id"], "gradient")
-        receipt = activated.get_json()["receipt"]
-        self.assertEqual(receipt["requested_revision"], 17)
-        self.assertTrue(receipt["command_accepted"])
-        self.assertIsNone(receipt["accepted_live_identity"])
-        self.assertEqual(receipt["observed_status"], "not_observed")
-        self.assertFalse(receipt["telemetry_complete"])
-        self.assertIsNone(receipt["camera_observation"])
+        self.assertEqual(activated.status_code, 503, activated.get_json())
+        self.assertEqual(activated.get_json()["code"], "activation_unavailable")
+        self.assertEqual(self.channel.commands, [])
 
     def test_digest_mismatch_and_oversized_import_fail_before_mutation(self) -> None:
         candidate = deepcopy(self.document)
         candidate["background"]["runtime_digest"] = "f" * 64
-        invalid = self.client.put("/api/v1/scene", json=candidate)
+        invalid = self.client.post("/api/v1/scene/validate", json=candidate)
         self.assertEqual(invalid.status_code, 400)
         self.assertIn("background.runtime_digest", invalid.get_json()["error"])
         self.assertEqual(self.channel.commands, [])

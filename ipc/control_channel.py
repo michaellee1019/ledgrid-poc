@@ -9,11 +9,20 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+import uuid
 
 
 CONTROL_COMMAND_SCHEMA = "ledgrid.control-command"
 CONTROL_STATUS_SCHEMA = "ledgrid.controller-status"
 CONTROL_CHANNEL_VERSION = 1
+ACTIVATION_COMMAND_SCHEMA = "ledgrid.scene-activation-command"
+ACTIVATION_STATUS_SCHEMA = "ledgrid.scene-activation-status"
+ACTIVATION_CANCEL_SCHEMA = "ledgrid.scene-activation-cancel"
+ACTIVATION_ROLLBACK_SCHEMA = "ledgrid.scene-activation-rollback-request"
+ACTIVATION_CANCEL_RESULT_SCHEMA = "ledgrid.scene-activation-cancel-result"
+ACTIVATION_ROLLBACK_RESULT_SCHEMA = "ledgrid.scene-activation-rollback-result"
+ACTIVATION_CHANNEL_VERSION = 1
+ACTIVATION_REQUEST_OUTCOMES = frozenset({"succeeded", "rejected", "failed"})
 
 
 class FileControlChannel:
@@ -24,13 +33,26 @@ class FileControlChannel:
     """
 
     def __init__(self, control_path: str = "run_state/control.json",
-                 status_path: str = "run_state/status.json"):
+                 status_path: str = "run_state/status.json",
+                 activation_root: str | None = None):
         self.control_path = Path(control_path)
         self.status_path = Path(status_path)
+        self.activation_root = (
+            Path(activation_root)
+            if activation_root is not None
+            else self.control_path.parent / "activations"
+        )
+        self.activation_queue_path = self.activation_root / "queue"
+        self.activation_status_path = self.activation_root / "status"
+        self.activation_cancel_path = self.activation_root / "cancel"
+        self.activation_rollback_path = self.activation_root / "rollback"
+        self.activation_cancel_result_path = self.activation_root / "cancel-result"
+        self.activation_rollback_result_path = self.activation_root / "rollback-result"
         self.control_path.parent.mkdir(parents=True, exist_ok=True)
         self.status_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _atomic_write(self, path: Path, payload: Dict[str, Any]):
+        path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(
             prefix=f".{path.name}.",
             suffix=".tmp",
@@ -43,12 +65,46 @@ class FileControlChannel:
                 fh.flush()
                 os.fsync(fh.fileno())
             tmp_path.replace(path)
+            self._fsync_directory(path.parent)
         finally:
             if tmp_path.exists():
                 try:
                     tmp_path.unlink()
                 except OSError:
                     pass
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        descriptor = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def _atomic_create(self, path: Path, payload: Dict[str, Any]) -> bool:
+        """Create one fully-written immutable queue record without overwrite."""
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+        )
+        tmp_path = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                os.link(tmp_path, path)
+            except FileExistsError:
+                return False
+            self._fsync_directory(path.parent)
+            return True
+        finally:
+            try:
+                tmp_path.unlink()
+            except FileNotFoundError:
+                pass
 
     @staticmethod
     def _recover_last_json_object(raw_payload: str) -> Optional[Dict[str, Any]]:
@@ -131,3 +187,304 @@ class FileControlChannel:
         payload.setdefault("schema_version", CONTROL_CHANNEL_VERSION)
         payload.setdefault("written_at", time.time())
         self._atomic_write(self.status_path, payload)
+
+    @staticmethod
+    def _activation_id(value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("activation_id must be a lowercase UUID")
+        try:
+            parsed = uuid.UUID(value)
+        except (AttributeError, ValueError) as exc:
+            raise ValueError("activation_id must be a lowercase UUID") from exc
+        canonical = str(parsed)
+        if value != canonical:
+            raise ValueError("activation_id must be a lowercase UUID")
+        return canonical
+
+    @staticmethod
+    def _strict_json(path: Path, label: str) -> Optional[Dict[str, Any]]:
+        """Read activation state fail-closed; never recover trailing objects."""
+
+        if not path.is_file():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"{label} is malformed: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"{label} must be a JSON object")
+        return payload
+
+    def activation_command_path(self, activation_id: str) -> Path:
+        return self.activation_queue_path / f"{self._activation_id(activation_id)}.json"
+
+    def activation_status_file(self, activation_id: str) -> Path:
+        return self.activation_status_path / f"{self._activation_id(activation_id)}.json"
+
+    def activation_cancel_file(self, activation_id: str) -> Path:
+        return self.activation_cancel_path / f"{self._activation_id(activation_id)}.json"
+
+    def activation_rollback_file(self, activation_id: str) -> Path:
+        return self.activation_rollback_path / f"{self._activation_id(activation_id)}.json"
+
+    def activation_cancel_result_file(self, activation_id: str) -> Path:
+        return self.activation_cancel_result_path / f"{self._activation_id(activation_id)}.json"
+
+    def activation_rollback_result_file(self, activation_id: str) -> Path:
+        return self.activation_rollback_result_path / f"{self._activation_id(activation_id)}.json"
+
+    def enqueue_activation(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Durably enqueue one activation; exact retries never duplicate it."""
+
+        if not isinstance(command, dict):
+            raise TypeError("activation command must be an object")
+        if command.get("schema") != ACTIVATION_COMMAND_SCHEMA:
+            raise ValueError("activation command schema is invalid")
+        if command.get("schema_version") != ACTIVATION_CHANNEL_VERSION:
+            raise ValueError("activation command schema_version is invalid")
+        activation_id = self._activation_id(command.get("activation_id"))
+        payload = dict(command)
+        path = self.activation_command_path(activation_id)
+        if self._atomic_create(path, payload):
+            return payload
+        existing = self._strict_json(path, "activation command")
+        if existing != payload:
+            raise FileExistsError(
+                "activation ID already names a different durable command"
+            )
+        return existing
+
+    def read_activation_command(
+        self, activation_id: str
+    ) -> Optional[Dict[str, Any]]:
+        return self._strict_json(
+            self.activation_command_path(activation_id), "activation command"
+        )
+
+    def list_activation_commands(self) -> list[Dict[str, Any]]:
+        if not self.activation_queue_path.is_dir():
+            return []
+        commands = []
+        for path in sorted(self.activation_queue_path.glob("*.json")):
+            payload = self._strict_json(path, "activation command")
+            if payload is not None:
+                commands.append(payload)
+        return commands
+
+    def write_activation_status(self, status: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(status, dict):
+            raise TypeError("activation status must be an object")
+        if status.get("schema") != ACTIVATION_STATUS_SCHEMA:
+            raise ValueError("activation status schema is invalid")
+        if status.get("schema_version") != ACTIVATION_CHANNEL_VERSION:
+            raise ValueError("activation status schema_version is invalid")
+        activation_id = self._activation_id(status.get("activation_id"))
+        from ipc.scene_contract import (
+            normalize_scene_activation_status,
+            validate_scene_activation_status_transition,
+        )
+
+        payload = normalize_scene_activation_status(status)
+        existing = self.read_activation_status(activation_id)
+        if existing is not None:
+            payload = validate_scene_activation_status_transition(existing, payload)
+        self._atomic_write(self.activation_status_file(activation_id), payload)
+        return payload
+
+    def read_activation_status(
+        self, activation_id: str
+    ) -> Optional[Dict[str, Any]]:
+        return self._strict_json(
+            self.activation_status_file(activation_id), "activation status"
+        )
+
+    def request_activation_cancel(self, activation_id: str) -> Dict[str, Any]:
+        activation_id = self._activation_id(activation_id)
+        payload = {
+            "schema": ACTIVATION_CANCEL_SCHEMA,
+            "schema_version": ACTIVATION_CHANNEL_VERSION,
+            "request_id": str(uuid.uuid4()),
+            "activation_id": activation_id,
+            "requested_at": time.time(),
+        }
+        path = self.activation_cancel_file(activation_id)
+        if self._atomic_create(path, payload):
+            return payload
+        existing = self._strict_json(path, "activation cancellation")
+        if existing is None:
+            raise RuntimeError("activation cancellation disappeared")
+        return existing
+
+    def read_activation_cancel(
+        self, activation_id: str
+    ) -> Optional[Dict[str, Any]]:
+        return self._strict_json(
+            self.activation_cancel_file(activation_id), "activation cancellation"
+        )
+
+    @staticmethod
+    def _request_id(value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("request_id must be a lowercase UUID")
+        try:
+            canonical = str(uuid.UUID(value))
+        except (AttributeError, ValueError) as exc:
+            raise ValueError("request_id must be a lowercase UUID") from exc
+        if value != canonical:
+            raise ValueError("request_id must be a lowercase UUID")
+        return canonical
+
+    def _write_activation_request_result(
+        self,
+        *,
+        schema: str,
+        path: Path,
+        activation_id: str,
+        request_id: str,
+        outcome: str,
+        status_phase: str,
+        error: str | None,
+    ) -> Dict[str, Any]:
+        activation_id = self._activation_id(activation_id)
+        request_id = self._request_id(request_id)
+        if outcome not in ACTIVATION_REQUEST_OUTCOMES:
+            raise ValueError("activation request outcome is invalid")
+        if not isinstance(status_phase, str) or not status_phase:
+            raise ValueError("activation request status phase is required")
+        if error is not None and (not isinstance(error, str) or not error):
+            raise ValueError("activation request error must be null or non-empty")
+        if outcome != "succeeded" and error is None:
+            raise ValueError("rejected or failed activation requests require an error")
+        payload = {
+            "schema": schema,
+            "schema_version": ACTIVATION_CHANNEL_VERSION,
+            "request_id": request_id,
+            "activation_id": activation_id,
+            "outcome": outcome,
+            "status_phase": status_phase,
+            "error": error,
+            "completed_at": time.time(),
+        }
+        if self._atomic_create(path, payload):
+            return payload
+        existing = self._strict_json(path, "activation request result")
+        if existing is None:
+            raise RuntimeError("activation request result disappeared")
+        comparable = dict(existing)
+        comparable.pop("completed_at", None)
+        requested = dict(payload)
+        requested.pop("completed_at", None)
+        if comparable != requested:
+            raise FileExistsError(
+                "activation request already has a different terminal result"
+            )
+        return existing
+
+    def write_activation_cancel_result(
+        self,
+        activation_id: str,
+        *,
+        request_id: str,
+        outcome: str,
+        status_phase: str,
+        error: str | None = None,
+    ) -> Dict[str, Any]:
+        return self._write_activation_request_result(
+            schema=ACTIVATION_CANCEL_RESULT_SCHEMA,
+            path=self.activation_cancel_result_file(activation_id),
+            activation_id=activation_id,
+            request_id=request_id,
+            outcome=outcome,
+            status_phase=status_phase,
+            error=error,
+        )
+
+    def read_activation_cancel_result(
+        self, activation_id: str
+    ) -> Optional[Dict[str, Any]]:
+        return self._strict_json(
+            self.activation_cancel_result_file(activation_id),
+            "activation cancellation result",
+        )
+
+    def request_activation_rollback(
+        self,
+        activation_id: str,
+        *,
+        snapshot_id: str,
+        expected_controller_session_id: str,
+        expected_controller_state_revision: int,
+    ) -> Dict[str, Any]:
+        activation_id = self._activation_id(activation_id)
+        if not all(isinstance(value, str) and value for value in (
+            snapshot_id, expected_controller_session_id
+        )):
+            raise ValueError("rollback snapshot and controller session are required")
+        if (
+            isinstance(expected_controller_state_revision, bool)
+            or not isinstance(expected_controller_state_revision, int)
+            or expected_controller_state_revision < 0
+        ):
+            raise ValueError("rollback controller revision must be non-negative")
+        payload = {
+            "schema": ACTIVATION_ROLLBACK_SCHEMA,
+            "schema_version": ACTIVATION_CHANNEL_VERSION,
+            "request_id": str(uuid.uuid4()),
+            "activation_id": activation_id,
+            "snapshot_id": snapshot_id,
+            "expected_controller_session_id": expected_controller_session_id,
+            "expected_controller_state_revision": expected_controller_state_revision,
+            "requested_at": time.time(),
+        }
+        path = self.activation_rollback_file(activation_id)
+        if self._atomic_create(path, payload):
+            return payload
+        existing = self._strict_json(path, "activation rollback request")
+        if existing is None:
+            raise RuntimeError("activation rollback request disappeared")
+        comparable = dict(existing)
+        comparable.pop("requested_at", None)
+        comparable.pop("request_id", None)
+        requested = dict(payload)
+        requested.pop("requested_at", None)
+        requested.pop("request_id", None)
+        if comparable != requested:
+            raise FileExistsError(
+                "activation already has a different rollback request"
+            )
+        return existing
+
+    def read_activation_rollback(
+        self, activation_id: str
+    ) -> Optional[Dict[str, Any]]:
+        return self._strict_json(
+            self.activation_rollback_file(activation_id),
+            "activation rollback request",
+        )
+
+    def write_activation_rollback_result(
+        self,
+        activation_id: str,
+        *,
+        request_id: str,
+        outcome: str,
+        status_phase: str,
+        error: str | None = None,
+    ) -> Dict[str, Any]:
+        return self._write_activation_request_result(
+            schema=ACTIVATION_ROLLBACK_RESULT_SCHEMA,
+            path=self.activation_rollback_result_file(activation_id),
+            activation_id=activation_id,
+            request_id=request_id,
+            outcome=outcome,
+            status_phase=status_phase,
+            error=error,
+        )
+
+    def read_activation_rollback_result(
+        self, activation_id: str
+    ) -> Optional[Dict[str, Any]]:
+        return self._strict_json(
+            self.activation_rollback_result_file(activation_id),
+            "activation rollback result",
+        )

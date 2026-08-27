@@ -17,11 +17,11 @@ class EmojiArrangerUxContractTests(unittest.TestCase):
         self.assertNotIn("'/api/parameters'", self.source)
         self.assertIn("setWorkspaceState('draft')", self.source)
 
-    def test_only_explicit_live_action_starts_the_animation(self):
+    def test_live_activation_hands_off_to_the_guarded_composer(self):
         starts = re.findall(r"/api/start/\$\{ANIMATION_NAME\}", self.source)
-        self.assertEqual(starts, ["/api/start/${ANIMATION_NAME}"])
-        self.assertIn("elements.takeLive.addEventListener('click', takeLive)", self.source)
-        self.assertIn("body: JSON.stringify(currentParams)", self.source)
+        self.assertEqual(starts, [])
+        self.assertIn('id="activateInComposerLink" href="/composer"', self.source)
+        self.assertIn("Use Composer for the server Check", self.source)
         self.assertIn("fetch('/api/stop', {method: 'POST'})", self.source)
         self.assertIn("Stop / Return to draft", self.source)
 

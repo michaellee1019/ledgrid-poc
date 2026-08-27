@@ -573,7 +573,8 @@ class HybridSceneWebProductSurfaceTests(unittest.TestCase):
         self.assertFalse(compiled["scene_compatibility"]["selectable"])
         before = len(self.channel.commands)
         response = client.put("/api/v1/scene", json=web_native_scene())
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["code"], "activation_unavailable")
         self.assertEqual(len(self.channel.commands), before)
         html = client.get("/").get_data(as_text=True)
         self.assertNotIn('id="receiverHybridStatus"', html)
@@ -591,26 +592,18 @@ class HybridSceneWebProductSurfaceTests(unittest.TestCase):
         client = interface.app.test_client()
 
         response = client.put("/api/v1/scene", json=web_native_scene())
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["code"], "activation_unavailable")
         self.assertEqual(self.channel.commands, [])
         self.assertNotIn(
             'id="receiverHybridStatus"', client.get("/").get_data(as_text=True)
         )
 
-    def test_native_start_updates_toggle_preset_and_cleanup_emit_scoped_commands(self):
+    def test_direct_scene_mutations_require_guarded_activation_without_commands(self):
         scene = web_native_scene()
+        before = list(self.channel.commands)
         started = self.client.put("/api/v1/scene", json=scene)
-        self.assertEqual(started.status_code, 200)
-        start_command = self.channel.commands[-1]
-        self.assertEqual(start_command["action"], "start_scene")
-        self.assertEqual(
-            start_command["data"]["scene"]["known_python_fallback"]["provider"],
-            "python",
-        )
-        self.assertEqual(
-            start_command["data"]["scene"]["background"]["bundle_digest"],
-            BUNDLE_DIGEST,
-        )
+        self.assertEqual(started.status_code, 503)
 
         self.channel.status.update({
             "is_running": True,
@@ -621,18 +614,12 @@ class HybridSceneWebProductSurfaceTests(unittest.TestCase):
             "/api/v1/scene/components/background",
             json={"params": {"preferred_cadence_hz": 60, "common_seed": 99}},
         )
-        self.assertEqual(updated.status_code, 200)
-        self.assertEqual(self.channel.commands[-1]["action"], "update_scene_component")
-        self.assertEqual(
-            self.channel.commands[-1]["data"]["update"]["params"]["common_seed"],
-            99,
-        )
+        self.assertEqual(updated.status_code, 428)
 
         toggled = self.client.patch(
             "/api/v1/scene/components/clock_overlay", json={"enabled": False}
         )
-        self.assertEqual(toggled.status_code, 200)
-        self.assertFalse(self.channel.commands[-1]["data"]["update"]["enabled"])
+        self.assertEqual(toggled.status_code, 428)
 
         saved = self.client.post(
             "/api/v1/scene-presets", json={"name": "Hybrid Clock", "scene": scene}
@@ -643,12 +630,11 @@ class HybridSceneWebProductSurfaceTests(unittest.TestCase):
         applied = self.client.post(
             f'/api/v1/scene-presets/{preset["preset_id"]}/apply'
         )
-        self.assertEqual(applied.status_code, 200)
-        self.assertEqual(self.channel.commands[-1]["action"], "start_scene")
+        self.assertEqual(applied.status_code, 428)
 
         stopped = self.client.delete("/api/v1/scene")
-        self.assertEqual(stopped.status_code, 200)
-        self.assertEqual(self.channel.commands[-1]["action"], "stop_scene")
+        self.assertEqual(stopped.status_code, 428)
+        self.assertEqual(self.channel.commands, before)
 
     def test_native_preview_is_host_simulation_and_never_sends_hardware_command(self):
         before = deepcopy(self.channel.commands)

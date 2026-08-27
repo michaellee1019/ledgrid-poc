@@ -182,24 +182,23 @@ class SceneProductSurfaceTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/v1/components?role=bogus").status_code, 400)
         self.assertEqual(self.client.get("/api/v1/components?provider=javascript").status_code, 400)
 
-    def test_scene_start_validates_before_one_versioned_command(self):
+    def test_scene_start_requires_guarded_activation_before_any_command(self):
         response = self.client.put("/api/v1/scene", json=_scene())
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.channel.commands[0]["action"], "start_scene")
-        self.assertEqual(
-            self.channel.commands[0]["data"]["scene"]["overlays"][0]["opacity"], 192
-        )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["code"], "activation_unavailable")
+        self.assertEqual(self.channel.commands, [])
 
         before = len(self.channel.commands)
         unsupported = self.client.put("/api/v1/scene", json=_scene(provider="receiver_native"))
-        self.assertEqual(unsupported.status_code, 400)
+        self.assertEqual(unsupported.status_code, 503)
+        self.assertEqual(unsupported.get_json()["code"], "activation_unavailable")
         self.assertEqual(len(self.channel.commands), before)
         bad_role = _scene()
         bad_role["background"]["plugin_id"] = "clock_overlay"
         self.assertEqual(self.client.post("/api/v1/scene/validate", json=bad_role).status_code, 400)
         self.assertEqual(len(self.channel.commands), before)
 
-    def test_targeted_overlay_update_uses_normalized_scene_state(self):
+    def test_targeted_overlay_update_requires_complete_guarded_activation(self):
         self.channel.status.update({
             "is_running": True,
             "current_animation": "gradient",
@@ -209,12 +208,9 @@ class SceneProductSurfaceTests(unittest.TestCase):
             "/api/v1/scene/components/clock_overlay",
             json={"enabled": False, "opacity": 64},
         )
-        self.assertEqual(response.status_code, 200)
-        command = self.channel.commands[-1]
-        self.assertEqual(command["action"], "update_scene_component")
-        self.assertEqual(command["data"]["target"], "clock_overlay")
-        self.assertEqual(command["data"]["update"]["opacity"], 64)
-        self.assertFalse(command["data"]["update"]["enabled"])
+        self.assertEqual(response.status_code, 428)
+        self.assertEqual(response.get_json()["code"], "guarded_activation_required")
+        self.assertEqual(self.channel.commands, [])
 
     def test_scene_preview_identity_covers_layout_vibe_and_plants_without_live_command(self):
         request = {
@@ -251,8 +247,8 @@ class SceneProductSurfaceTests(unittest.TestCase):
             "/api/v1/scene/components/background",
             json={"component": _scene()["background"]},
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("complete scene", response.get_json()["error"])
+        self.assertEqual(response.status_code, 428)
+        self.assertIn("complete guarded activation", response.get_json()["error"])
         self.assertEqual(len(self.channel.commands), before)
 
     def test_scene_presets_round_trip_layout_and_never_capture_vibe(self):
@@ -273,8 +269,9 @@ class SceneProductSurfaceTests(unittest.TestCase):
         loaded = self.client.get(f"/api/v1/scene-presets/{preset_id}").get_json()
         self.assertEqual(loaded, preset)
         applied = self.client.post(f"/api/v1/scene-presets/{preset_id}/apply")
-        self.assertEqual(applied.status_code, 200)
-        self.assertEqual(self.channel.commands[-1]["action"], "start_scene")
+        self.assertEqual(applied.status_code, 428)
+        self.assertEqual(applied.get_json()["code"], "guarded_activation_required")
+        self.assertEqual(self.channel.commands, [])
 
     def test_stale_component_preset_keeps_snapshot_and_reports_dirty(self):
         animation_dir = self.interface.animation_presets_dir / "gradient"

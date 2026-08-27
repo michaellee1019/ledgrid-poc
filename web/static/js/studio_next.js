@@ -902,7 +902,7 @@
       setDefinition('#lookMetadata', [['Provider', '—'], ['Role', '—'], ['Readiness', '—'], ['Identity', '—']]);
       $('#lookDisabledReason').hidden = true;
       text('#lookPreviewSummary', 'Preview summary unavailable until a look is selected.');
-      ['#playPreview', '#pinCompare', '#takeLook'].forEach((id) => { $(id).disabled = true; });
+      ['#playPreview', '#pinCompare'].forEach((id) => { $(id).disabled = true; });
       return;
     }
     text('#lookComponentName', look.componentName);
@@ -942,8 +942,6 @@
     const pinned = state.compareKeys.includes(look.key);
     $('#pinCompare').disabled = !pinned && state.compareKeys.length >= 3;
     text('#pinCompare', pinned ? 'Remove from compare' : (state.compareKeys.length >= 3 ? 'Compare set is full' : 'Add to compare'));
-    $('#takeLook').disabled = !liveClaimIsKnown() || !look.action.allowed;
-    $('#takeLook').setAttribute('aria-label', `Take ${look.name} live`);
   }
 
   function togglePreview() {
@@ -1015,7 +1013,6 @@
   function updateLiveActionAvailability() {
     renderLookDetail();
     const sceneReady = state.scene.validatedRevision === state.scene.draftRevision && state.scene.validatedScene;
-    $('#takeScene').disabled = !liveClaimIsKnown() || !sceneReady || state.scene.drift;
     $('#refreshEvidence').disabled = !state.live;
   }
 
@@ -1031,112 +1028,6 @@
       `Brightness: ${snapshot.brightness == null ? 'Unknown' : `${snapshot.brightness}/255`}`,
       `Vibe: ${snapshot.vibeId ? displayName(snapshot.vibeId) : 'Unknown'}`
     ].join('\n');
-  }
-
-  async function openLookReview(look = selectedLook()) {
-    if (!look || !look.action.allowed) return;
-    const dialog = $('#reviewDialog');
-    text('#reviewCurrent', 'Fetching a fresh server observation…');
-    text('#reviewProposed', `${look.name}\n${providerLabel(look.provider)} · ${displayName(look.role)}\nComponent: ${look.pluginId}\nPreset: ${look.presetId}`);
-    text('#reviewUnchanged', 'Vibe, plant behavior, brightness, target FPS, operator speed, scene layouts, and power.');
-    text('#reviewSafety', `${look.action.reason}\n${previewProvenance(look)}\nThe server revalidates provider-qualified identity before writing a command.`);
-    text('#reviewWarning', '');
-    $('#reviewWarning').hidden = true;
-    const confirm = $('#confirmReview');
-    confirm.disabled = true;
-    text(confirm, `Take ${look.name} live`);
-    openDialog(dialog, $('#takeLook'));
-    try {
-      const snapshot = await fetchFreshStatus();
-      if (!liveClaimIsKnown()) throw new Error('The wall observation is stale or lacks a controller source time.');
-      state.review = {kind: 'look', target: look, openedFingerprint: snapshot.fingerprint, snapshot};
-      text('#reviewCurrent', reviewCurrentText(snapshot));
-      confirm.disabled = false;
-    } catch (error) {
-      state.review = null;
-      text('#reviewCurrent', `State unavailable: ${errorMessage(error)}`);
-      text('#reviewWarning', 'Take live is blocked until a fresh server observation is available.');
-      $('#reviewWarning').hidden = false;
-    }
-  }
-
-  async function confirmLookReview(review) {
-    const look = review.target;
-    const confirm = $('#confirmReview');
-    confirm.disabled = true;
-    text(confirm, 'Checking current wall…');
-    let preflight;
-    try {
-      preflight = await fetchFreshStatus();
-      if (!liveClaimIsKnown()) throw new Error('The wall observation is stale or lacks a controller source time.');
-      if (preflight.fingerprint !== review.openedFingerprint) {
-        review.openedFingerprint = preflight.fingerprint;
-        review.snapshot = preflight;
-        text('#reviewCurrent', reviewCurrentText(preflight));
-        text('#reviewWarning', 'Wall changed since review opened. No command was sent. Review the new Current state, then confirm again. The server does not yet provide compare-and-swap, so the next check is still not race-free.');
-        $('#reviewWarning').hidden = false;
-        text(confirm, `Confirm ${look.name} against current wall`);
-        confirm.disabled = false;
-        announce('Wall changed since review opened. No live command was sent.', true);
-        return;
-      }
-    } catch (error) {
-      text('#reviewWarning', `Fresh status check failed. No command was sent: ${errorMessage(error)}`);
-      $('#reviewWarning').hidden = false;
-      confirm.disabled = false;
-      text(confirm, `Retry taking ${look.name} live`);
-      announce('Take live blocked because status could not be checked.', true);
-      return;
-    }
-
-    text(confirm, 'Sending request…');
-    const receipt = addReceipt({kind: 'look', label: `Take ${look.name} live`, status: 'sending'});
-    setReviewSending(true);
-    try {
-      const payload = await requestJSON('/api/v1/studio-next/take-look', {
-        method: 'POST',
-        body: JSON.stringify({provider: look.provider, plugin_id: look.pluginId, preset_id: look.presetId})
-      });
-      updateReceipt(receipt.id, {
-        status: 'accepted', acceptedAt: Date.now(), commandId: payload.command_id || null,
-        detail: 'Server accepted the provider-qualified request. Waiting for a newer matching observation.'
-      });
-      setReviewSending(false);
-      closeDialog($('#reviewDialog'));
-      openReceipts();
-      announce(`${look.name} request accepted; awaiting observation.`);
-      const outcome = await observeAfter(preflight, (snapshot) => {
-        const identity = snapshot.identity;
-        if (snapshot.isRunning && identity.provider === look.provider
-          && identity.pluginId === look.pluginId && identity.presetId === look.presetId) return true;
-        if (snapshot.isRunning && (identity.pluginId !== look.pluginId || identity.presetId !== look.presetId)) return 'conflict';
-        return false;
-      });
-      if (outcome.status === 'observed') {
-        const correlated = payload.command_id && String(outcome.snapshot.lastCommandId) === String(payload.command_id);
-        updateReceipt(receipt.id, {
-          status: 'observed',
-          detail: correlated
-            ? `Command-correlated observation at ${formatClock(outcome.snapshot.sourceObservedAt)}.`
-            : `Matching state observed after request at ${formatClock(outcome.snapshot.sourceObservedAt)}; command correlation unavailable.`
-        });
-        announce(`${look.name} observed on the live wall.`);
-      } else if (outcome.status === 'conflict') {
-        updateReceipt(receipt.id, {status: 'conflict', detail: `A newer observation reports ${liveIdentityLine(outcome.snapshot)} instead.`});
-        announce('A different live output was observed after the request.', true);
-      } else {
-        updateReceipt(receipt.id, {status: 'timeout', detail: 'The request was accepted, but a matching provider-qualified look was not observed within 15 seconds.'});
-        announce('Look request accepted; outcome not observed.', true);
-      }
-    } catch (error) {
-      setReviewSending(false);
-      updateReceipt(receipt.id, {status: 'rejected', detail: errorMessage(error)});
-      text('#reviewWarning', `Server rejected the live request: ${errorMessage(error)}`);
-      $('#reviewWarning').hidden = false;
-      confirm.disabled = false;
-      text(confirm, `Retry taking ${look.name} live`);
-      announce(`Take live rejected: ${errorMessage(error)}`, true);
-    }
   }
 
   function eligibleSceneBackgrounds() {
@@ -1354,7 +1245,7 @@
       text('#sceneValidation', state.scene.lastError);
       $('#sceneValidation').className = 'sn-validation is-invalid';
     } else if (valid) {
-      text('#sceneValidation', `Validated revision ${state.scene.draftRevision}. Take live remains subject to a fresh wall-state preflight and server validation.`);
+      text('#sceneValidation', `Validated revision ${state.scene.draftRevision}. Physical activation requires Composer's server Check and controller preconditions.`);
       $('#sceneValidation').className = 'sn-validation is-valid';
     } else {
       text('#sceneValidation', `Validation has not run for draft revision ${state.scene.draftRevision}. Editing clears prior validation.`);
@@ -1363,7 +1254,6 @@
     $('#validateScene').disabled = !hasBackground;
     $('#previewScene').disabled = !hasBackground;
     $('#saveScene').disabled = !valid;
-    $('#takeScene').disabled = !valid || !liveClaimIsKnown() || state.scene.drift;
     drawScenePreview();
   }
 
@@ -1477,106 +1367,6 @@
       announce(`Layout was not saved: ${errorMessage(error)}`, true);
       button.disabled = false;
       text(button, 'Save layout; wall unchanged');
-    }
-  }
-
-  async function openSceneReview() {
-    if (state.scene.validatedRevision !== state.scene.draftRevision || !state.scene.validatedScene) return;
-    const scene = state.scene.validatedScene;
-    const background = scene.background;
-    const clock = scene.overlays?.length ? 'Clock overlay enabled' : 'No clock overlay';
-    const dialog = $('#reviewDialog');
-    text('#reviewCurrent', 'Fetching a fresh server observation…');
-    text('#reviewProposed', `Scene revision ${scene.revision}\n${providerLabel(background.provider)} background: ${background.plugin_id}\n${clock}`);
-    text('#reviewUnchanged', 'Vibe, plant behavior, brightness, target FPS, operator speed, saved layouts, and power.');
-    text('#reviewSafety', `Validated draft revision ${state.scene.validatedRevision}. Exactly one background and ${scene.overlays.length ? 'one clock overlay' : 'no overlay'}. clip_to_wall and supported stale policy only. Client preflight is not server compare-and-swap.`);
-    $('#reviewWarning').hidden = true;
-    const confirm = $('#confirmReview');
-    confirm.disabled = true;
-    text(confirm, 'Take validated scene live');
-    openDialog(dialog, $('#takeScene'));
-    try {
-      const snapshot = await fetchFreshStatus();
-      if (!liveClaimIsKnown()) throw new Error('The wall observation is stale or lacks a source time.');
-      state.review = {kind: 'scene', target: scene, openedFingerprint: snapshot.fingerprint, snapshot};
-      text('#reviewCurrent', reviewCurrentText(snapshot));
-      confirm.disabled = false;
-    } catch (error) {
-      state.review = null;
-      text('#reviewCurrent', `State unavailable: ${errorMessage(error)}`);
-      text('#reviewWarning', 'Take scene live is blocked until a fresh server observation is available.');
-      $('#reviewWarning').hidden = false;
-    }
-  }
-
-  async function confirmSceneReview(review) {
-    const confirm = $('#confirmReview');
-    confirm.disabled = true;
-    text(confirm, 'Checking current wall…');
-    let preflight;
-    try {
-      preflight = await fetchFreshStatus();
-      if (!liveClaimIsKnown()) throw new Error('The wall observation is stale or lacks a controller source time.');
-      if (preflight.fingerprint !== review.openedFingerprint) {
-        review.openedFingerprint = preflight.fingerprint;
-        review.snapshot = preflight;
-        state.scene.drift = true;
-        text('#reviewCurrent', reviewCurrentText(preflight));
-        text('#reviewWarning', 'Wall changed since review opened. No command was sent. Review the new current state. Rebase is a deliberate TODO; this draft is preserved and marked drifted.');
-        $('#reviewWarning').hidden = false;
-        text(confirm, 'Take scene live unavailable while drifted');
-        announce('Wall changed since scene review opened. No command was sent.', true);
-        renderScene();
-        return;
-      }
-    } catch (error) {
-      text('#reviewWarning', `Fresh status check failed. No command was sent: ${errorMessage(error)}`);
-      $('#reviewWarning').hidden = false;
-      confirm.disabled = false;
-      text(confirm, 'Retry taking validated scene live');
-      return;
-    }
-    const receipt = addReceipt({kind: 'scene', label: 'Take scene live', status: 'sending'});
-    text(confirm, 'Sending scene…');
-    setReviewSending(true);
-    try {
-      const payload = await requestJSON('/api/v1/studio-next/take-scene', {method: 'POST', body: JSON.stringify({scene: review.target})});
-      updateReceipt(receipt.id, {
-        status: 'accepted', acceptedAt: Date.now(), commandId: payload.command_id || null,
-        detail: 'Scene request accepted. Waiting for a newer matching scene observation.'
-      });
-      setReviewSending(false);
-      closeDialog($('#reviewDialog'));
-      openReceipts();
-      announce('Scene request accepted; awaiting observation.');
-      const expected = payload.scene || review.target;
-      const outcome = await observeAfter(preflight, (snapshot) => {
-        if (snapshot.isRunning && snapshot.mode === 'scene' && snapshot.scene) {
-          if (stableString(sceneConsequence(snapshot.scene)) === stableString(sceneConsequence(expected))) return true;
-          return 'conflict';
-        }
-        return false;
-      });
-      if (outcome.status === 'observed') {
-        updateReceipt(receipt.id, {status: 'observed', detail: `Matching scene revision observed at ${formatClock(outcome.snapshot.sourceObservedAt)}${payload.command_id && String(outcome.snapshot.lastCommandId) === String(payload.command_id) ? ' with command correlation.' : '; command correlation unavailable.'}`});
-        state.scene.baseLiveFingerprint = outcome.snapshot.fingerprint;
-        state.scene.drift = false;
-        announce('Matching scene observed on the live wall.');
-      } else if (outcome.status === 'conflict') {
-        updateReceipt(receipt.id, {status: 'conflict', detail: `A different newer scene was observed: ${liveIdentityLine(outcome.snapshot)}.`});
-        announce('A different scene was observed after the request.', true);
-      } else {
-        updateReceipt(receipt.id, {status: 'timeout', detail: 'Scene request accepted; matching revision was not observed within 15 seconds.'});
-        announce('Scene request accepted; outcome not observed.', true);
-      }
-    } catch (error) {
-      setReviewSending(false);
-      updateReceipt(receipt.id, {status: 'rejected', detail: errorMessage(error)});
-      text('#reviewWarning', `Server rejected the scene: ${errorMessage(error)}`);
-      $('#reviewWarning').hidden = false;
-      confirm.disabled = false;
-      text(confirm, 'Retry taking validated scene live');
-      announce(`Scene request rejected: ${errorMessage(error)}`, true);
     }
   }
 
@@ -2100,9 +1890,7 @@
   async function confirmReview() {
     const review = state.review;
     if (!review) return;
-    if (review.kind === 'look') await confirmLookReview(review);
-    else if (review.kind === 'scene') await confirmSceneReview(review);
-    else if (review.kind === 'room') await confirmRoomReview(review);
+    if (review.kind === 'room') await confirmRoomReview(review);
   }
 
   function bindEvents() {
@@ -2126,7 +1914,6 @@
     });
     $('#playPreview').addEventListener('click', togglePreview);
     $('#pinCompare').addEventListener('click', () => { const look = selectedLook(); if (look) toggleCompare(look.key); });
-    $('#takeLook').addEventListener('click', () => openLookReview());
     $('#openCompare').addEventListener('click', openCompareDialog);
     $('#compareTrayList').addEventListener('click', (event) => {
       const button = event.target.closest('[data-remove-compare]');
@@ -2144,7 +1931,6 @@
     $('#previewScene').addEventListener('click', previewScene);
     $('#saveScene').addEventListener('click', openSaveSceneDialog);
     $('#saveSceneForm').addEventListener('submit', saveSceneLayout);
-    $('#takeScene').addEventListener('click', openSceneReview);
 
     $('#roomForm').addEventListener('input', roomChanged);
     $('#resetRoomDraft').addEventListener('click', resetRoomDraft);

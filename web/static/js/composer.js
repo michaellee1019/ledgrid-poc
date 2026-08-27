@@ -47,6 +47,22 @@
         draftGeneration: 0,
         documentRevision: 1,
         checkResult: null,
+        serverCheck: null,
+        controllerObservation: null,
+        activation: {
+            activationId: null,
+            idempotencyKey: null,
+            statusUrl: null,
+            pollTimer: null,
+            pollStartedAt: 0,
+            phase: null,
+            lastStatus: null,
+            resourceRequestUrl: null,
+            resourceRequestId: null,
+            resourceKind: null,
+            resourcePollTimer: null,
+            resourcePollStartedAt: 0,
+        },
         autosaveTimer: null,
         connectivityTimer: null,
         serverOnline: false,
@@ -192,6 +208,37 @@
             plantModifiers: canonicalPlantModifiers(
                 status.plant_modifiers || state.bootstrap?.installation_profile?.plant_modifiers,
             ),
+        };
+    }
+
+    function activationGlobalSettings() {
+        const draft = state.globalSettings.draft;
+        if (!draft) throw new Error('Wall settings have not been observed yet.');
+        const profile = vibeProfile(draft.vibeId);
+        const controller = state.controllerObservation || {};
+        const revision = Number(controller.globalSettingsRevision ?? controller.stateRevision);
+        if (!Number.isSafeInteger(revision) || revision < 0) {
+            throw new Error('The controller did not publish a global-settings revision.');
+        }
+        return {
+            schema: 'ledgrid.global-settings-state',
+            schema_version: 1,
+            revision,
+            vibe: {
+                vibe_id: profile.vibe_id,
+                profile_version: profile.profile_version,
+                resolved_profile_digest: profile.resolved_profile_digest,
+            },
+            plant_modifiers: canonicalPlantModifiers(draft.plantModifiers),
+            output: {
+                power: true,
+                brightness: draft.brightness,
+                animation_speed_scale: safeNumber(
+                    state.bootstrap?.global_control_contract?.operator_speed_baseline,
+                    .3,
+                ) * draft.speedMultiplier,
+                target_fps: draft.targetFps,
+            },
         };
     }
 
@@ -369,6 +416,25 @@
         try {
             const payload = await requestJson(globalActions().status_url || '/api/status');
             const observed = normalizedGlobalSettings(payload);
+            const priorObserved = clone(state.globalSettings.observed);
+            const priorProfileDigest = state.bootstrap?.installation_profile?.digest || null;
+            const nextControllerObservation = {
+                sessionId: payload.controller_session_id || null,
+                stateRevision: payload.controller_state_revision,
+                globalSettingsRevision: payload.global_settings?.revision
+                    ?? payload.global_settings_revision
+                    ?? payload.active_identity?.global_settings_identity?.revision
+                    ?? payload.controller_state_revision,
+                activeIdentity: clone(payload.active_identity || null),
+                installationProfileDigest: payload.installation_profile_digest || null,
+            };
+            if (
+                state.serverCheck
+                && JSON.stringify(state.controllerObservation) !== JSON.stringify(nextControllerObservation)
+            ) {
+                state.serverCheck = null;
+            }
+            state.controllerObservation = nextControllerObservation;
             const hadDirtyDraft = state.globalSettings.dirty;
             state.globalSettings.observed = observed;
             if (state.globalSettings.pendingObservation) {
@@ -380,7 +446,21 @@
                     state.globalSettings.pendingSince = 0;
                 }
             } else if (!preserveDraft || !hadDirtyDraft) state.globalSettings.draft = clone(observed);
+            const observedProfileDigest = payload.installation_profile_digest;
+            if (
+                /^[0-9a-f]{64}$/.test(observedProfileDigest || '')
+                && state.bootstrap?.installation_profile
+            ) {
+                state.bootstrap.installation_profile.digest = observedProfileDigest;
+            }
             state.globalSettings.dirty = !globalSettingsEqual(state.globalSettings.draft, observed);
+            if (
+                state.checkResult
+                && (
+                    !globalSettingsEqual(priorObserved, observed)
+                    || priorProfileDigest !== state.bootstrap?.installation_profile?.digest
+                )
+            ) resetChecker({preserveDocumentRevision: true});
             persistGlobalDraft();
             if (!quiet) toast('Observed wall settings refreshed.');
         } catch (error) {
@@ -462,6 +542,9 @@
     function setServerOnline(online, {checking = false, quiet = false} = {}) {
         state.serverOnline = Boolean(online);
         state.serverChecking = checking;
+        const activationAvailable = state.bootstrap?.capabilities?.server_actions?.activation_available === true;
+        const activationMode = state.bootstrap?.capabilities?.server_actions?.activation_mode;
+        const activationIsCanary = activationAvailable && activationMode === 'development_canary';
         const pill = $('serverState');
         pill.dataset.state = checking ? 'checking' : online ? 'online' : 'offline';
         pill.querySelector('span').textContent = checking ? 'Checking server' : online ? 'Server online' : 'Local only';
@@ -469,12 +552,22 @@
         if ($('networkStatus')) {
             $('networkStatus').textContent = checking
                 ? 'Checking the wall server…'
-                : online ? 'Wall server online; library save and checked activation are available.' : 'Local only; server save and wall activation are disabled.';
+                : online
+                    ? activationAvailable
+                        ? activationIsCanary
+                            ? 'Wall server online; guarded activation is available only as a development/canary capability, not a production GO.'
+                            : 'Wall server online; activation capability labeling is invalid, so physical activation is unavailable.'
+                        : 'Wall server online; library save is available, but physical activation is disabled.'
+                    : 'Local only; server save and wall activation are disabled.';
             $('networkStatus').dataset.state = checking ? 'checking' : online ? 'online' : 'offline';
         }
         if (!quiet && !state.busyAction) {
             $('serverActionStatus').textContent = online
-                ? 'Server actions are available. Local preview remains separate from the physical wall.'
+                ? activationAvailable
+                    ? activationIsCanary
+                        ? 'Development/canary activation is available; this server is not production-qualified.'
+                        : 'Activation is fail-closed because this server is not labeled as a development/canary target.'
+                    : 'Library save is available. Physical activation remains disabled for this release.'
                 : 'Offline: local drafts, checks, uploads, and downloads still work. Save and Activate are unavailable.';
         }
         updateServerActionButtons();
@@ -525,6 +618,12 @@
 
     function activationBlockReason() {
         if (!state.component) return 'Choose a look before activation.';
+        if (state.bootstrap?.capabilities?.server_actions?.activation_available !== true) {
+            return 'Physical-wall activation is disabled on this server.';
+        }
+        if (state.bootstrap?.capabilities?.server_actions?.activation_mode !== 'development_canary') {
+            return 'Physical-wall activation is not labeled as an explicit development/canary capability.';
+        }
         const capability = componentCapability();
         if (!capability.activationReady) return capability.reason || 'This look is not activation-ready.';
         if (state.serverChecking) return 'Waiting for the wall server.';
@@ -558,6 +657,7 @@
                 : 'Activation-ready: this exact draft passed Check.');
             reason.dataset.state = blockReason ? 'blocked' : 'ready';
         }
+        updateActivationResourceButtons();
     }
 
     function setActionBusy(action, busy) {
@@ -1737,6 +1837,7 @@
         if (!preserveDocumentRevision) state.documentRevision += 1;
         state.checkerGeneration += 1;
         state.checkResult = null;
+        state.serverCheck = null;
         $('checkerDot').removeAttribute('data-state');
         $('checkSummary').dataset.grade = 'idle';
         $('checkGauge').textContent = '—';
@@ -2110,7 +2211,39 @@
         }
     }
 
-    function reviewActivation() {
+    function newIdempotencyKey() {
+        if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
+        const bytes = new Uint8Array(16);
+        crypto.getRandomValues(bytes);
+        return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function createServerCheck() {
+        const scene = buildScene();
+        const checkUrl = state.bootstrap.capabilities?.server_actions?.check_scene_url
+            || '/api/v1/scene/checks';
+        const result = await requestJson(checkUrl, {
+            method: 'POST',
+            body: JSON.stringify({
+                scene,
+                global_settings: activationGlobalSettings(),
+                browser_evidence: clone(state.checkResult),
+            }),
+        });
+        if (!result.check_token || !result.basis_digest || !result.basis?.controller) {
+            throw new Error('The wall server returned an incomplete Check authorization.');
+        }
+        state.serverCheck = {
+            token: result.check_token,
+            basis: clone(result.basis),
+            basisDigest: result.basis_digest,
+            expiresAt: result.expires_at,
+            idempotencyKey: newIdempotencyKey(),
+        };
+        return state.serverCheck;
+    }
+
+    async function reviewActivation() {
         const blockReason = activationBlockReason();
         if (blockReason) {
             toast(blockReason, 'error');
@@ -2124,6 +2257,19 @@
             $('serverActionStatus').textContent = `Activation is not ready: ${error.message}`;
             return;
         }
+        setActionBusy('activate', true);
+        $('serverActionStatus').textContent = 'Requesting a short-lived server Check for this exact scene and wall state…';
+        try {
+            await createServerCheck();
+        } catch (error) {
+            if (error.code === 'offline') setServerOnline(false);
+            state.serverCheck = null;
+            $('serverActionStatus').textContent = `Server Check failed: ${error.message}`;
+            toast(error.message, 'error');
+            return;
+        } finally {
+            setActionBusy('activate', false);
+        }
         const fallback = pythonFallbacks().find((item) => item.key === state.layers.fallbackKey);
         $('activateBackground').textContent = state.component.name || humanize(state.component.plugin_id);
         $('activateOverlay').textContent = state.layers.clockEnabled ? `Clock · ${Math.round(state.layers.clockOpacity / 255 * 100)}%` : 'Off';
@@ -2136,10 +2282,208 @@
             const cautions = state.checkResult?.warnings?.length
                 ? ` · review ${state.checkResult.warnings.join(', ')}`
                 : '';
-            $('activateCheck').textContent = `${outcome}${cautions} · draft generation ${state.draftGeneration}`;
+            const expires = state.serverCheck?.expiresAt
+                ? new Date(state.serverCheck.expiresAt * 1000).toLocaleTimeString()
+                : 'soon';
+            $('activateCheck').textContent = `${outcome}${cautions} · server-authorized until ${expires}`;
         }
         if ($('activateDestination')) $('activateDestination').textContent = 'Physical living wall';
         $('activateDialog').showModal();
+    }
+
+    function clearActivationPolling() {
+        if (state.activation.pollTimer) window.clearTimeout(state.activation.pollTimer);
+        state.activation.pollTimer = null;
+    }
+
+    function clearActivationResourcePolling() {
+        if (state.activation.resourcePollTimer) {
+            window.clearTimeout(state.activation.resourcePollTimer);
+        }
+        state.activation.resourcePollTimer = null;
+    }
+
+    function updateActivationResourceButtons() {
+        const status = state.activation.lastStatus;
+        const cancel = $('cancelActivationButton');
+        const rollback = $('rollbackActivationButton');
+        const cancelAvailable = ['queued', 'preflighting'].includes(status?.phase);
+        const rollbackAvailable = status?.phase === 'active'
+            && status?.rollback?.available === true
+            && Boolean(status?.rollback?.snapshot_id)
+            && Number.isInteger(status?.controller?.state_revision_after);
+        if (cancel) {
+            cancel.hidden = !cancelAvailable;
+            cancel.disabled = !cancelAvailable || !state.serverOnline
+                || Boolean(state.busyAction) || Boolean(state.activation.resourceRequestUrl);
+        }
+        if (rollback) {
+            rollback.hidden = !rollbackAvailable;
+            rollback.disabled = !rollbackAvailable || !state.serverOnline
+                || Boolean(state.busyAction) || Boolean(state.activation.resourceRequestUrl);
+        }
+    }
+
+    function activationIdentitiesMatch(status) {
+        if (!status?.requested_identity || !status?.observed_identity) return false;
+        const stable = ComposerState.stableJson || JSON.stringify;
+        return stable(status.requested_identity) === stable(status.observed_identity);
+    }
+
+    function renderActivationStatus(status) {
+        const phase = status?.phase || 'queued';
+        state.activation.phase = phase;
+        state.activation.lastStatus = clone(status);
+        updateActivationResourceButtons();
+        const readable = humanize(phase);
+        if (phase === 'active') {
+            if (status.rollback?.available === false && status.rollback?.error) {
+                $('serverActionStatus').textContent = `Previously active · no longer current · ${status.rollback.error}.`;
+                return true;
+            }
+            if (!activationIdentitiesMatch(status)) {
+                $('serverActionStatus').textContent = 'Activation observation is incomplete; the wall is not reported Active.';
+                return false;
+            }
+            const telemetry = status.telemetry?.complete && status.telemetry?.fresh
+                ? 'telemetry complete and fresh' : 'telemetry incomplete';
+            $('serverActionStatus').textContent = `Active · exact scene, globals, runtime, and profile observed · ${telemetry}.`;
+            toast('The controller observed the exact checked activation.', 'success');
+            return true;
+        }
+        if (['rolled_back', 'failed', 'timed_out'].includes(phase)) {
+            const rollback = status.rollback?.result || (status.rollback?.available ? 'rollback available' : 'rollback unavailable');
+            $('serverActionStatus').textContent = `${readable} · ${status.error || status.rollback?.error || rollback}.`;
+            toast(`Activation ${readable.toLowerCase()}.`, 'error');
+            return true;
+        }
+        $('serverActionStatus').textContent = `${readable} · waiting for correlated controller observation; the wall is not yet reported Active.`;
+        return false;
+    }
+
+    async function pollActivationStatus() {
+        clearActivationPolling();
+        if (!state.activation.statusUrl) return;
+        try {
+            const status = await requestJson(state.activation.statusUrl);
+            if (status.activation_id !== state.activation.activationId) {
+                throw new Error('The activation status correlation ID changed.');
+            }
+            if (renderActivationStatus(status)) return;
+        } catch (error) {
+            if (error.code === 'offline') setServerOnline(false);
+            $('serverActionStatus').textContent = `Pending activation status could not be refreshed: ${error.message}`;
+        }
+        if (Date.now() - state.activation.pollStartedAt >= 120000) {
+            $('serverActionStatus').textContent = 'Activation is still unconfirmed after two minutes; refresh status before treating the wall as Active.';
+            return;
+        }
+        state.activation.pollTimer = window.setTimeout(pollActivationStatus, 1000);
+    }
+
+    async function cancelPendingActivation() {
+        const status = state.activation.lastStatus;
+        if (!state.activation.statusUrl || !['queued', 'preflighting'].includes(status?.phase)) return;
+        setActionBusy('activate', true);
+        try {
+            clearActivationPolling();
+            const accepted = await requestJson(state.activation.statusUrl, {method: 'DELETE'});
+            state.activation.resourceRequestUrl = accepted.request_status_url;
+            state.activation.resourceRequestId = accepted.request_id;
+            state.activation.resourceKind = 'cancel';
+            state.activation.resourcePollStartedAt = Date.now();
+            $('serverActionStatus').textContent = 'Cancellation requested · waiting for the correlated controller status.';
+            pollActivationResourceResult();
+        } catch (error) {
+            if (error.code === 'offline') setServerOnline(false);
+            $('serverActionStatus').textContent = `Cancellation was not accepted: ${error.message}`;
+            toast(error.message, 'error');
+        } finally {
+            setActionBusy('activate', false);
+            updateActivationResourceButtons();
+        }
+    }
+
+    async function rollbackActivation() {
+        const status = state.activation.lastStatus;
+        if (
+            !state.activation.statusUrl
+            || status?.phase !== 'active'
+            || status?.rollback?.available !== true
+            || !status?.rollback?.snapshot_id
+            || !Number.isInteger(status?.controller?.state_revision_after)
+        ) return;
+        setActionBusy('activate', true);
+        try {
+            clearActivationPolling();
+            const accepted = await requestJson(`${state.activation.statusUrl}/rollback`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    expected_controller_session_id: status.controller.session_id,
+                    expected_controller_state_revision: status.controller.state_revision_after,
+                }),
+            });
+            state.activation.resourceRequestUrl = accepted.request_status_url;
+            state.activation.resourceRequestId = accepted.request_id;
+            state.activation.resourceKind = 'rollback';
+            state.activation.resourcePollStartedAt = Date.now();
+            $('serverActionStatus').textContent = 'Rollback requested · waiting for exact restoration to be observed.';
+            pollActivationResourceResult();
+        } catch (error) {
+            if (error.code === 'offline') setServerOnline(false);
+            $('serverActionStatus').textContent = `Rollback was not accepted: ${error.message}`;
+            toast(error.message, 'error');
+        } finally {
+            setActionBusy('activate', false);
+            updateActivationResourceButtons();
+        }
+    }
+
+    async function pollActivationResourceResult() {
+        clearActivationResourcePolling();
+        const url = state.activation.resourceRequestUrl;
+        const requestId = state.activation.resourceRequestId;
+        const kind = state.activation.resourceKind;
+        if (!url || !requestId || !kind) return;
+        try {
+            const result = await requestJson(url);
+            if (
+                result.activation_id !== state.activation.activationId
+                || result.request_id !== requestId
+            ) {
+                throw new Error('The activation request result correlation changed.');
+            }
+            if (result.outcome === 'pending') {
+                $('serverActionStatus').textContent = `${humanize(kind)} pending · the controller has not completed the correlated request.`;
+            } else {
+                state.activation.resourceRequestUrl = null;
+                state.activation.resourceRequestId = null;
+                state.activation.resourceKind = null;
+                updateActivationResourceButtons();
+                if (result.outcome !== 'succeeded') {
+                    const message = `${humanize(kind)} ${result.outcome}: ${result.error || 'controller rejected the request'}`;
+                    $('serverActionStatus').textContent = message;
+                    toast(message, 'error');
+                    return;
+                }
+                const status = await requestJson(state.activation.statusUrl);
+                if (status.activation_id !== state.activation.activationId) {
+                    throw new Error('The activation status correlation ID changed.');
+                }
+                renderActivationStatus(status);
+                return;
+            }
+        } catch (error) {
+            if (error.code === 'offline') setServerOnline(false);
+            $('serverActionStatus').textContent = `${humanize(kind)} result could not be refreshed: ${error.message}`;
+        }
+        if (Date.now() - state.activation.resourcePollStartedAt >= 120000) {
+            $('serverActionStatus').textContent = `${humanize(kind)} remains unconfirmed after two minutes; do not infer success from the activation's prior state.`;
+            return;
+        }
+        state.activation.resourcePollTimer = window.setTimeout(
+            pollActivationResourceResult, 1000
+        );
     }
 
     async function activateScene() {
@@ -2150,21 +2494,34 @@
             const blockReason = activationBlockReason();
             if (blockReason) throw new Error(blockReason);
             const scene = buildScene();
-            const validateUrl = state.bootstrap.capabilities?.server_actions?.validate_scene_url || '/api/v1/scene/validate';
-            await requestJson(validateUrl, {method: 'POST', body: JSON.stringify(scene)});
+            const serverCheck = state.serverCheck;
+            if (!serverCheck?.token) throw new Error('Request a fresh server Check before activation.');
+            if (serverCheck.expiresAt && Date.now() >= serverCheck.expiresAt * 1000) {
+                state.serverCheck = null;
+                throw new Error('The server Check expired. Review activation again.');
+            }
             const activateUrl = state.bootstrap.capabilities?.server_actions?.activate_scene_url || '/api/v1/scene';
-            const result = await requestJson(activateUrl, {method: 'PUT', body: JSON.stringify(scene)});
-            const receipt = result.receipt || {};
-            const acceptance = receipt.command_accepted ? 'Queued by server' : 'Command not queued';
-            const observation = receipt.observed_status === 'observed'
-                ? 'server reports observed live state'
-                : 'live state not observed';
-            const telemetry = receipt.telemetry_complete ? 'telemetry complete' : 'telemetry incomplete';
-            const camera = receipt.camera_observation ? 'camera evidence attached' : 'no camera observation';
-            $('serverActionStatus').textContent = `${acceptance} · revision ${receipt.requested_revision ?? scene.revision} · ${observation} · ${telemetry} · ${camera}.`;
-            toast(receipt.command_accepted
-                ? 'Activation command queued; controller and physical observation remain separate.'
-                : 'The wall server did not queue the activation command.', receipt.command_accepted ? 'success' : 'error');
+            const result = await requestJson(activateUrl, {
+                method: 'PUT',
+                headers: {'Idempotency-Key': serverCheck.idempotencyKey},
+                body: JSON.stringify({
+                    check_token: serverCheck.token,
+                    expected_controller_session_id: serverCheck.basis.controller.session_id,
+                    expected_controller_state_revision: serverCheck.basis.controller.state_revision,
+                    scene,
+                    global_settings: activationGlobalSettings(),
+                }),
+            });
+            state.activation.activationId = result.activation_id;
+            state.activation.idempotencyKey = serverCheck.idempotencyKey;
+            state.activation.statusUrl = result.status_url
+                || `/api/v1/scene/activations/${encodeURIComponent(result.activation_id)}`;
+            state.activation.pollStartedAt = Date.now();
+            state.activation.lastStatus = null;
+            state.serverCheck = null;
+            $('serverActionStatus').textContent = `Pending · activation ${result.activation_id} is queued; the wall is not yet reported Active.`;
+            toast('Activation queued; waiting for correlated controller observation.');
+            pollActivationStatus();
         } catch (error) {
             if (error.code === 'offline') setServerOnline(false);
             $('serverActionStatus').textContent = `Activation was not accepted: ${error.message}`;
@@ -2750,6 +3107,8 @@
         $('exportPanelButton').addEventListener('click', exportJson);
         ['saveLibraryButton', 'saveLibraryPanelButton'].forEach((id) => $(id).addEventListener('click', () => saveToLibrary()));
         ['activateButton', 'activatePanelButton'].forEach((id) => $(id).addEventListener('click', reviewActivation));
+        $('cancelActivationButton')?.addEventListener('click', cancelPendingActivation);
+        $('rollbackActivationButton')?.addEventListener('click', rollbackActivation);
         $('controlsTab').addEventListener('click', () => selectInspectorTab('controls'));
         $('layersTab').addEventListener('click', () => selectInspectorTab('layers'));
         $('wallTab').addEventListener('click', () => selectInspectorTab('wall'));
@@ -2906,6 +3265,7 @@
         window.addEventListener('offline', () => setServerOnline(false));
         window.addEventListener('beforeunload', () => {
             window.clearInterval(state.connectivityTimer);
+            clearActivationPolling();
             disposeRuntimes();
         });
         window.addEventListener('beforeunload', (event) => {

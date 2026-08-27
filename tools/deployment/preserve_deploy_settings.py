@@ -331,36 +331,42 @@ def _desired_display_state(
         },
     }
     background = scene.get("background") if isinstance(scene, dict) else None
-    if (
+    managed_native = bool(
         isinstance(background, dict)
         and background.get("provider") == "receiver_native"
         and background.get("plugin_id") != "compiled_rainbow"
-    ):
-        receiver_status = status.get("receiver_hybrid")
-        driver = (
-            receiver_status.get("driver")
-            if isinstance(receiver_status, dict) else None
-        )
-        if not isinstance(driver, dict):
-            raise RuntimeError(
-                "Controller status has no managed-native restoration authority"
+    )
+    if managed_native:
+        # A powered-off guarded activation selects an exact scene without
+        # starting receiver playback.  Persist that selection and power state,
+        # but do not invent or reuse playback evidence for a bundle that is not
+        # active.  The next powered activation must establish fresh authority.
+        if status.get("is_running"):
+            receiver_status = status.get("receiver_hybrid")
+            driver = (
+                receiver_status.get("driver")
+                if isinstance(receiver_status, dict) else None
             )
-        parameter_digest = driver.get("parameter_digest")
-        if (
-            driver.get("bundle_digest") != background.get("bundle_digest")
-            or driver.get("payload_digest")
-            != background.get("expected_payload_digest")
-            or not isinstance(parameter_digest, str)
-            or re.fullmatch(r"[0-9a-f]{64}", parameter_digest) is None
-        ):
-            raise RuntimeError(
-                "Controller status has no exact managed-native parameter binding"
-            )
-        result["native_expectation"] = {
-            "bundle_digest": background["bundle_digest"],
-            "payload_digest": background["expected_payload_digest"],
-            "parameter_digest": parameter_digest,
-        }
+            if not isinstance(driver, dict):
+                raise RuntimeError(
+                    "Controller status has no managed-native restoration authority"
+                )
+            parameter_digest = driver.get("parameter_digest")
+            if (
+                driver.get("bundle_digest") != background.get("bundle_digest")
+                or driver.get("payload_digest")
+                != background.get("expected_payload_digest")
+                or not isinstance(parameter_digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", parameter_digest) is None
+            ):
+                raise RuntimeError(
+                    "Controller status has no exact managed-native parameter binding"
+                )
+            result["native_expectation"] = {
+                "bundle_digest": background["bundle_digest"],
+                "payload_digest": background["expected_payload_digest"],
+                "parameter_digest": parameter_digest,
+            }
     elif isinstance(prior.get("native_expectation"), dict):
         # Retain the exact authority across idle global-control updates. It is
         # ignored when provider policy deliberately restores the Python fallback.
@@ -404,7 +410,16 @@ def save_status(
     """Persist a controller status snapshot as the restart default."""
     provider_policy = _status_provider_policy(status)
     animation = _safe_animation_name(status.get("current_animation"))
-    if not status.get("is_running") or not animation:
+    raw_scene = status.get("scene_state")
+    if not isinstance(raw_scene, dict):
+        raw_scene = status.get("scene")
+    scene = None
+    if isinstance(raw_scene, dict) and raw_scene.get("schema"):
+        scene = _scene_from_status(
+            status, animation, {}, provider_policy=provider_policy
+        )
+
+    if (not status.get("is_running") or not animation) and scene is None:
         # Global presentation controls remain independently writable while the
         # wall is stopped. Retain the last valid playable snapshot and update
         # only those controls so the next restart does not discard the choice.
@@ -437,19 +452,24 @@ def save_status(
         _atomic_write(state_path, state)
         return preset
 
-    raw_scene = status.get("scene_state")
-    if not isinstance(raw_scene, dict):
-        raw_scene = status.get("scene")
-    scene = None
-    if isinstance(raw_scene, dict) and raw_scene.get("schema"):
-        scene = _scene_from_status(
-            status, animation, {}, provider_policy=provider_policy
-        )
+    stopped_selected_scene = not bool(status.get("is_running"))
+    if not animation and scene is not None:
+        animation = _safe_animation_name(scene["background"].get("plugin_id"))
+        if not animation:
+            raise RuntimeError(
+                "Controller selected scene has an invalid background animation"
+            )
     native_background = bool(
         scene is not None
         and scene["background"].get("provider") == "receiver_native"
     )
     if native_background:
+        background = scene["background"]
+        params = dict(background.get("resolved_parameters") or {})
+        params.update(background.get("parameter_overrides") or {})
+    elif stopped_selected_scene and scene is not None:
+        # Guarded power-off keeps an exact selected scene even though no plugin
+        # is currently running and animation_info is therefore absent.
         background = scene["background"]
         params = dict(background.get("resolved_parameters") or {})
         params.update(background.get("parameter_overrides") or {})

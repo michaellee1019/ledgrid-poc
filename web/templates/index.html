@@ -118,7 +118,7 @@
                 <div class="library-card-actions">
                     <button class="btn btn-outline-secondary btn-sm" type="button" onclick="previewAnimation('{{ animation.plugin_name }}')"><i class="fas fa-eye me-1" aria-hidden="true"></i> Preview</button>
                     <button class="btn btn-outline-primary btn-sm" type="button" onclick="openAnimationControls('{{ animation.plugin_name }}')"><i class="fas fa-sliders-h me-1" aria-hidden="true"></i> Adjust</button>
-                    <button class="btn btn-primary btn-sm" type="button" onclick="takeAnimationLive('{{ animation.plugin_name }}', this)"><i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take live</button>
+                    <a class="btn btn-primary btn-sm" href="/composer"><i class="fas fa-shield-alt me-1" aria-hidden="true"></i> Check &amp; activate</a>
                 </div>
             </article>
             {% for preset in animation.presets %}
@@ -140,7 +140,7 @@
                 <div class="library-card-actions">
                     <button class="btn btn-outline-secondary btn-sm" type="button" onclick="previewDashboardPreset('{{ animation.plugin_name }}', '{{ preset.preset_id }}', this)"><i class="fas fa-eye me-1" aria-hidden="true"></i> Preview</button>
                     <button class="btn btn-outline-primary btn-sm" type="button" onclick="openPresetControls('{{ animation.plugin_name }}', '{{ preset.preset_id }}', this)"><i class="fas fa-sliders-h me-1" aria-hidden="true"></i> Adjust</button>
-                    <button class="btn btn-primary btn-sm" type="button" onclick="takePresetLive('{{ animation.plugin_name }}', '{{ preset.preset_id }}', this)"><i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take live</button>
+                    <a class="btn btn-primary btn-sm" href="/composer"><i class="fas fa-shield-alt me-1" aria-hidden="true"></i> Check &amp; activate</a>
                 </div>
             </article>
             {% endfor %}
@@ -399,7 +399,7 @@
                 <div class="small text-muted mt-2" id="sceneCompatibilityHelp" role="status">Only components declaring the matching Python role are selectable. Compatibility full scenes remain in the animation gallery.</div>
                 {% endif %}
                 <div class="d-flex flex-wrap gap-2 mt-3">
-                    <button class="btn btn-primary" type="button" onclick="startEditedScene()"><i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take scene live</button>
+                    <a class="btn btn-primary" id="activateSceneInComposerLink" href="/composer"><i class="fas fa-shield-alt me-1" aria-hidden="true"></i> Check &amp; activate in Composer</a>
                     <button class="btn btn-outline-primary" type="button" onclick="previewEditedScene()"><i class="fas fa-eye me-1"></i> Preview scene</button>
                 </div>
             </div>
@@ -423,7 +423,7 @@
                 </h2>
                 <div id="testAnimationCollapse" class="accordion-collapse collapse" data-bs-parent="#testAnimationAccordion">
                     <div class="accordion-body bg-light">
-                        <p class="small text-muted mb-2">Preview checks safely, or explicitly start one on the live wall.</p>
+                        <p class="small text-muted mb-2">Preview checks safely. Live activation requires Composer Check.</p>
                         <div class="test-animation-grid">
                             {% for animation in test_animations %}
                             <div class="test-animation-item">
@@ -431,7 +431,7 @@
                                 <span class="test-animation-actions">
                                     <button class="btn btn-sm btn-outline-secondary" type="button" onclick="previewAnimation('{{ animation.plugin_name }}')">Preview</button>
                                     <button class="btn btn-sm btn-outline-primary" type="button" onclick="openAnimationControls('{{ animation.plugin_name }}')">Adjust</button>
-                                    <button class="btn btn-sm btn-primary" type="button" onclick="takeAnimationLive('{{ animation.plugin_name }}', this)">Take live</button>
+                                    <a class="btn btn-sm btn-primary" href="/composer">Check &amp; activate</a>
                                 </span>
                             </div>
                             {% endfor %}
@@ -453,9 +453,9 @@
             <div>
                 <div class="section-kicker">Now Playing</div>
                 <h2 class="h4 mb-1">Preview and adjust</h2>
-                <p class="text-muted mb-0">Draft controls stay isolated until you choose Take live.</p>
+                <p class="text-muted mb-0">Draft controls stay isolated. Composer Check is required for live activation.</p>
             </div>
-            <button class="btn btn-primary" id="takeSelectedLiveButton" type="button" onclick="takeSelectedLive()" disabled><i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take live</button>
+            <a class="btn btn-primary" id="takeSelectedLiveButton" href="/composer"><i class="fas fa-shield-alt me-1" aria-hidden="true"></i> Check &amp; activate in Composer</a>
         </div>
         <div class="row g-4">
             <div class="col-xl-8">
@@ -525,7 +525,7 @@
 
             <div class="mb-2">
                 <div class="section-kicker">Live wall controls</div>
-                <p class="small text-muted mb-2">Changes in this group apply immediately; animation and scene editing stays private until Take live.</p>
+                <p class="small text-muted mb-2">Changes in this group apply immediately; animation and scene editing stays private until guarded activation in Composer.</p>
             </div>
             {{ speed_control() }}
 

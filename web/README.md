@@ -34,21 +34,29 @@ API endpoints:
 - `GET /api/v1/components` — unified descriptor catalog, filterable by provider
   and role
 
-- `GET|POST|PUT|DELETE /api/v1/scene` — read, start, or stop the fixed scene
+- `GET /api/v1/scene` — read the fixed scene draft/state contract
+- `POST /api/v1/scene/checks` — issue one short-lived, exact development/canary
+  activation Check; disabled by default
+- `POST|PUT /api/v1/scene` — submit the exact checked activation and receive a
+  pending resource; raw tokens never enter IPC
+- `GET|DELETE /api/v1/scene/activations/<activation_id>` — read correlated
+  status or request cancellation
+- `POST /api/v1/scene/activations/<activation_id>/rollback` — request a
+  correlated exact-snapshot rollback when advertised
 - `POST /api/v1/scene/validate` — validate without changing live output
-- `PATCH /api/v1/scene/components/<target>` — targeted background or
-  `clock_overlay` update
+- `PATCH /api/v1/scene/components/<target>` — rejected with 428; compose and
+  Check a complete scene instead
 - `POST /api/v1/scene/preview` — isolated scene preview using the selected vibe
   and plant state
 - `GET|POST /api/v1/scene-presets` — list or save scene-only presets
 - `GET|DELETE /api/v1/scene-presets/<preset_id>` — inspect or delete a scene preset
-- `POST /api/v1/scene-presets/<preset_id>/apply` — start a saved scene without
-  changing the independent vibe
+- `POST /api/v1/scene-presets/<preset_id>/apply` — rejected with 428; load the
+  draft and use Composer Check
 - GET /api/animations/<animation_name>
-- POST /api/start/<animation_name>
+- `POST /api/start/<animation_name>` — rejected with 428; use Composer Check
 - POST /api/stop
-- `POST /api/device/state` — atomically apply `power`, hardware `brightness`,
-  `animation`, and optional `preset`
+- `POST /api/device/state` — apply operational `power` and hardware
+  `brightness`; animation/preset takeover fields are rejected with 428
 - GET /api/status
 - GET /api/stats
 - GET /api/metrics

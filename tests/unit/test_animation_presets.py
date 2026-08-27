@@ -80,6 +80,7 @@ class AnimationPresetTests(unittest.TestCase):
             self.client.get('/api/animations/rainbow/presets').get_json()['presets'],
             [],
         )
+        self.assertEqual(self.channel.commands, [])
         preset_path = Path(self.temp_dir.name) / 'sparkle' / 'calm.json'
         self.assertNotIn('plant_aware', json.loads(preset_path.read_text())['params'])
 
@@ -97,7 +98,7 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertEqual(payload['params'], {'speed': 0.5})
         self.assertNotIn('preset', payload)
 
-    def test_apply_rereads_modified_json_from_disk(self):
+    def test_apply_alias_is_guarded_even_when_preset_changes_on_disk(self):
         response = self.client.post(
             '/api/animations/sparkle/presets',
             json={'name': 'Evening', 'params': {'brightness': 0.4}},
@@ -111,20 +112,11 @@ class AnimationPresetTests(unittest.TestCase):
         payload['params']['brightness'] = 0.9
         path.write_text(json.dumps(payload), encoding='utf-8')
 
+        before = list(self.channel.commands)
         response = self.client.post('/api/animations/sparkle/presets/evening/apply')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.channel.commands[-1], {
-            'action': 'start',
-            'data': {
-                'animation': 'sparkle',
-                'config': {'brightness': 0.9},
-                'preset': {
-                    'preset_id': 'evening',
-                    'name': 'Evening',
-                    'animation': 'sparkle',
-                },
-            },
-        })
+        self.assertEqual(response.status_code, 428)
+        self.assertEqual(response.get_json()['code'], 'guarded_activation_required')
+        self.assertEqual(self.channel.commands, before)
 
     def test_output_brightness_endpoint_validates_hardware_range(self):
         response = self.client.post(
@@ -146,7 +138,7 @@ class AnimationPresetTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 400)
                 self.assertEqual(len(self.channel.commands), command_count)
 
-    def test_device_state_resolves_preset_into_one_atomic_command(self):
+    def test_device_state_preserves_operations_but_guards_execution(self):
         preset_dir = Path(self.temp_dir.name) / 'sparkle'
         preset_dir.mkdir()
         (preset_dir / 'evening.json').write_text(json.dumps({
@@ -156,28 +148,24 @@ class AnimationPresetTests(unittest.TestCase):
             'params': {'brightness': 0.4, 'speed': 0.6},
         }), encoding='utf-8')
 
-        response = self.client.post('/api/device/state', json={
+        guarded = self.client.post('/api/device/state', json={
             'power': True,
             'brightness': 72,
             'animation': 'sparkle',
             'preset': 'evening',
         })
+        self.assertEqual(guarded.status_code, 428)
+        self.assertEqual(guarded.get_json()['code'], 'guarded_activation_required')
+        self.assertEqual(self.channel.commands, [])
 
+        response = self.client.post('/api/device/state', json={
+            'power': True, 'brightness': 72,
+        })
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(self.channel.commands), 1)
         self.assertEqual(self.channel.commands[0], {
             'action': 'set_device_state',
-            'data': {
-                'power': True,
-                'brightness': 72,
-                'animation': 'sparkle',
-                'config': {'brightness': 0.4, 'speed': 0.6},
-                'preset': {
-                    'preset_id': 'evening',
-                    'name': 'Evening',
-                    'animation': 'sparkle',
-                },
-            },
+            'data': {'power': True, 'brightness': 72},
         })
 
     def test_device_state_rejects_conflicts_before_writing_command(self):
@@ -192,7 +180,8 @@ class AnimationPresetTests(unittest.TestCase):
         for payload in invalid_payloads:
             with self.subTest(payload=payload):
                 response = self.client.post('/api/device/state', json=payload)
-                self.assertEqual(response.status_code, 400)
+                expected = 428 if {'animation', 'preset'} & set(payload) else 400
+                self.assertEqual(response.status_code, expected)
         self.assertEqual(self.channel.commands, [])
 
     def test_scene_only_overlay_is_rejected_by_legacy_start_and_device_routes(self):
@@ -201,8 +190,8 @@ class AnimationPresetTests(unittest.TestCase):
             'power': True, 'animation': 'clock_overlay',
         })
 
-        self.assertEqual(started.status_code, 404)
-        self.assertEqual(device.status_code, 404)
+        self.assertEqual(started.status_code, 428)
+        self.assertEqual(device.status_code, 428)
         self.assertEqual(self.channel.commands, [])
 
     def test_list_alphabetizes_presets_with_mixed_timestamp_formats(self):
@@ -423,7 +412,8 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertIn('id="dashboard-now-playing"', html)
         self.assertIn('id="dashboard-compose"', html)
         self.assertIn('id="dashboard-system"', html)
-        self.assertIn('Take live', html)
+        self.assertIn('Check &amp; activate', html)
+        self.assertNotIn("onclick=\"takeAnimationLive", html)
         self.assertNotIn('id="showAnimationAccordion"', html)
         self.assertIn('Test & calibration animations', html)
         self.assertIn('id="testAnimationCollapse" class="accordion-collapse collapse"', html)
@@ -441,6 +431,8 @@ class AnimationPresetTests(unittest.TestCase):
             self.assertIn('applyParameterPreset', javascript)
             self.assertNotIn('function savePreviewPreset()', javascript)
             self.assertIn('function saveControlPreset()', javascript)
+            self.assertNotIn('/api/start/', javascript)
+            self.assertIn('Check &amp; activate in Composer', html)
         finally:
             css_response.close()
             js_response.close()

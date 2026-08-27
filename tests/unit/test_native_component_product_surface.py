@@ -234,7 +234,7 @@ class NativePilotWebProductTests(unittest.TestCase):
         )
         self.assertEqual(
             [response.status_code for response in requests],
-            [404, 404, 404, 400, 400, 400, 400, 400],
+            [404, 428, 428, 400, 400, 400, 503, 400],
         )
         self.assertEqual(self.channel.commands, [])
         self.assertIsNone(self.manager._preview_session)

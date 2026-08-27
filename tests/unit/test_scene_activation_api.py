@@ -1,0 +1,567 @@
+"""Guarded browser scene Check, activation, and receipt API contracts."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+import json
+from pathlib import Path
+import sqlite3
+import tempfile
+import unittest
+
+from animation.core.presentation_contracts import resolve_vibe
+from ipc.control_channel import FileControlChannel
+from tests.unit.test_browser_scene_contract import _Manager, _document
+from web.activation_token_store import ActivationTokenStore
+from web.app import AnimationWebInterface
+
+
+SESSION_ID = "a" * 32
+CURRENT_IDENTITY = "b" * 64
+
+
+class _Clock:
+    def __init__(self, value: float = 1000.0) -> None:
+        self.value = value
+
+    def __call__(self) -> float:
+        return self.value
+
+
+def _global_settings(revision: int = 3) -> dict:
+    vibe = resolve_vibe("neutral").state.to_dict()
+    return {
+        "schema": "ledgrid.global-settings-state",
+        "schema_version": 1,
+        "revision": revision,
+        "vibe": {
+            "vibe_id": vibe["vibe_id"],
+            "profile_version": vibe["profile_version"],
+            "resolved_profile_digest": vibe["resolved_profile_digest"],
+        },
+        "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
+        "output": {
+            "power": True,
+            "brightness": 128,
+            "animation_speed_scale": 0.3,
+            "target_fps": 30,
+        },
+    }
+
+
+class SceneActivationApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        root = Path(self.temporary.name)
+        self.channel = FileControlChannel(
+            str(root / "control.json"),
+            str(root / "status.json"),
+            str(root / "activations"),
+        )
+        self.channel.write_status({
+            "controller_session_id": SESSION_ID,
+            "controller_state_revision": 7,
+            "active_identity": {"current_identity": CURRENT_IDENTITY},
+            "installation_profile_digest": "0" * 64,
+            "brightness": 128,
+            "target_fps": 30,
+            "animation_speed_scale": 0.3,
+            "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
+            "vibe": {"state": resolve_vibe("neutral").state.to_dict()},
+        })
+        self.interface = AnimationWebInterface(
+            self.channel,
+            _Manager(),
+            local_mode=True,
+            activation_token_store_path=root / "tokens.sqlite3",
+            activation_enabled=True,
+        )
+        self.client = self.interface.app.test_client()
+        bootstrap = self.client.get("/api/v1/composer/bootstrap").get_json()
+        self.scene = _document(bootstrap["components"])
+        self.globals = _global_settings()
+
+    def _check(self):
+        return self.client.post("/api/v1/scene/checks", json={
+            "scene": self.scene,
+            "global_settings": self.globals,
+            "browser_evidence": {"status": "pass", "checkerVersion": "browser-v2"},
+        })
+
+    def _activation_body(self, checked: dict, *, scene=None, globals_=None) -> dict:
+        return {
+            "check_token": checked["check_token"],
+            "expected_controller_session_id": checked["basis"]["controller"]["session_id"],
+            "expected_controller_state_revision": checked["basis"]["controller"]["state_revision"],
+            "scene": self.scene if scene is None else scene,
+            "global_settings": self.globals if globals_ is None else globals_,
+        }
+
+    def test_activation_is_default_off_and_advertised_honestly(self) -> None:
+        root = Path(self.temporary.name) / "disabled"
+        disabled = AnimationWebInterface(
+            FileControlChannel(
+                str(root / "control.json"),
+                str(root / "status.json"),
+                str(root / "activations"),
+            ),
+            _Manager(),
+            local_mode=True,
+            activation_token_store_path=root / "tokens.sqlite3",
+        )
+        client = disabled.app.test_client()
+        connectivity = client.get("/api/v1/composer/connectivity").get_json()
+        bootstrap = client.get("/api/v1/composer/bootstrap").get_json()
+        self.assertFalse(connectivity["actions"]["check_scene"])
+        self.assertFalse(connectivity["actions"]["activate_scene"])
+        self.assertFalse(
+            bootstrap["capabilities"]["server_actions"]["activation_available"]
+        )
+        self.assertEqual(connectivity["activation_mode"], "disabled")
+        self.assertEqual(
+            bootstrap["capabilities"]["server_actions"]["activation_mode"],
+            "disabled",
+        )
+        response = client.post("/api/v1/scene/checks", json={})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["code"], "activation_unavailable")
+        self.assertFalse((root / "tokens.sqlite3").exists())
+
+    def test_explicit_activation_override_is_labeled_non_production_canary(self) -> None:
+        connectivity = self.client.get(
+            "/api/v1/composer/connectivity"
+        ).get_json()
+        bootstrap = self.client.get("/api/v1/composer/bootstrap").get_json()
+        self.assertEqual(connectivity["activation_mode"], "development_canary")
+        self.assertEqual(
+            bootstrap["capabilities"]["server_actions"]["activation_mode"],
+            "development_canary",
+        )
+
+    def test_check_is_read_only_and_returns_short_lived_opaque_authorization(self) -> None:
+        response = self._check()
+
+        self.assertEqual(response.status_code, 201, response.get_json())
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        payload = response.get_json()
+        self.assertGreaterEqual(len(payload["check_token"]), 43)
+        self.assertRegex(payload["basis_digest"], r"^[0-9a-f]{64}$")
+        self.assertEqual(payload["basis"]["controller"]["state_revision"], 7)
+        self.assertEqual(self.channel.list_activation_commands(), [])
+
+    def test_check_rejects_unrestorable_live_legacy_and_painter_before_token(self) -> None:
+        token_path = Path(self.temporary.name) / "tokens.sqlite3"
+        for label, live_fields in (
+            ("legacy animation", {
+                "is_running": True,
+                "painter_active": False,
+                "current_animation": "gradient",
+            }),
+            ("Painter", {
+                "is_running": False,
+                "painter_active": True,
+                "current_animation": None,
+            }),
+        ):
+            with self.subTest(label=label):
+                status = self.channel.read_status()
+                status.pop("scene_state", None)
+                status.update(live_fields)
+                self.channel.write_status(status)
+
+                response = self._check()
+
+                self.assertEqual(response.status_code, 409, response.get_json())
+                self.assertEqual(
+                    response.get_json()["code"],
+                    "activation_snapshot_unavailable",
+                )
+                self.assertIn("cannot be restored exactly", response.get_json()["error"])
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+                with sqlite3.connect(token_path) as connection:
+                    token_count = connection.execute(
+                        "SELECT COUNT(*) FROM activation_tokens"
+                    ).fetchone()[0]
+                self.assertEqual(token_count, 0)
+                self.assertEqual(self.channel.list_activation_commands(), [])
+
+    def test_library_preset_save_is_read_only_and_does_not_invalidate_check(self) -> None:
+        checked = self._check().get_json()
+        self.interface.animation_presets_dir = (
+            Path(self.temporary.name) / "animation-presets"
+        )
+        response = self.client.post(
+            "/api/animations/gradient/presets",
+            json={
+                "name": "Checked draft",
+                "params": {
+                    "speed": 0.7,
+                    "map_path": "config/managed-map.json",
+                },
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertIsNone(self.channel.read_control())
+        self.assertEqual(self.channel.list_activation_commands(), [])
+
+        activated = self.client.put(
+            "/api/v1/scene",
+            json=self._activation_body(checked),
+            headers={"Idempotency-Key": "check-survives-preset-save"},
+        )
+        self.assertEqual(activated.status_code, 202, activated.get_json())
+
+    def test_activation_requires_every_precondition_without_queue_mutation(self) -> None:
+        response = self.client.put("/api/v1/scene", json={"scene": self.scene})
+
+        self.assertEqual(response.status_code, 428)
+        self.assertEqual(response.get_json()["code"], "activation_precondition_required")
+        self.assertEqual(self.channel.list_activation_commands(), [])
+
+    def test_guarded_activation_is_pending_durable_and_exactly_idempotent(self) -> None:
+        checked = self._check().get_json()
+        body = self._activation_body(checked)
+        headers = {"Idempotency-Key": "composer-attempt-1"}
+
+        first = self.client.put("/api/v1/scene", json=body, headers=headers)
+        second = self.client.put("/api/v1/scene", json=body, headers=headers)
+
+        self.assertEqual(first.status_code, 202, first.get_json())
+        self.assertEqual(second.status_code, 202, second.get_json())
+        self.assertEqual(first.get_json()["activation_id"], second.get_json()["activation_id"])
+        self.assertFalse(first.get_json()["exact_retry"])
+        self.assertTrue(second.get_json()["exact_retry"])
+        self.assertEqual(len(self.channel.list_activation_commands()), 1)
+        command = self.channel.list_activation_commands()[0]
+        self.assertNotIn("check_token", command)
+        self.assertRegex(command["check_token_digest"], r"^[0-9a-f]{64}$")
+        self.assertNotIn(
+            checked["check_token"],
+            json.dumps(command, sort_keys=True),
+        )
+        self.assertEqual(first.headers["Location"], first.get_json()["status_url"])
+        status = self.client.get(first.headers["Location"])
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.get_json()["phase"], "queued")
+        self.assertIsNone(status.get_json()["observed_identity"])
+
+    def test_exact_retry_survives_expiry_and_changed_controller_state(self) -> None:
+        clock = _Clock()
+        self.interface._activation_token_store = ActivationTokenStore(
+            Path(self.temporary.name) / "retry.sqlite3", clock=clock
+        )
+        checked = self._check().get_json()
+        body = self._activation_body(checked)
+        headers = {"Idempotency-Key": "lost-response"}
+        first = self.client.put("/api/v1/scene", json=body, headers=headers)
+        activation_id = first.get_json()["activation_id"]
+
+        active = self.channel.read_activation_status(activation_id)
+        active["phase"] = "active"
+        active["observed_identity"] = deepcopy(active["requested_identity"])
+        active["controller"]["state_revision_after"] = 8
+        active["telemetry"] = {
+            "complete": True, "fresh": True, "observed_at": 1_000_001,
+        }
+        self.channel.activation_status_file(activation_id).write_text(
+            json.dumps(active), encoding="utf-8"
+        )
+        controller = self.channel.read_status()
+        controller["controller_state_revision"] = 8
+        self.channel.write_status(controller)
+        clock.value += 120
+
+        retry = self.client.put("/api/v1/scene", json=body, headers=headers)
+        self.assertEqual(retry.status_code, 202, retry.get_json())
+        self.assertEqual(retry.get_json()["activation_id"], activation_id)
+        self.assertTrue(retry.get_json()["exact_retry"])
+        self.assertEqual(retry.get_json()["phase"], "active")
+        self.assertFalse(retry.get_json()["pending"])
+        self.assertEqual(len(self.channel.list_activation_commands()), 1)
+
+    def test_exact_retry_ignores_catalog_drift_but_changed_request_conflicts(self) -> None:
+        checked = self._check().get_json()
+        body = self._activation_body(checked)
+        headers = {"Idempotency-Key": "catalog-drift-retry"}
+        first = self.client.put("/api/v1/scene", json=body, headers=headers)
+        activation_id = first.get_json()["activation_id"]
+
+        self.interface.preview_manager.components.clear()
+        retry = self.client.put("/api/v1/scene", json=body, headers=headers)
+        self.assertEqual(retry.status_code, 202, retry.get_json())
+        self.assertEqual(retry.get_json()["activation_id"], activation_id)
+        self.assertTrue(retry.get_json()["exact_retry"])
+
+        changed = deepcopy(body)
+        changed["scene"]["background"]["parameters"]["speed"] = 0.8
+        conflict = self.client.put(
+            "/api/v1/scene", json=changed, headers=headers
+        )
+        self.assertEqual(conflict.status_code, 409, conflict.get_json())
+        self.assertEqual(conflict.get_json()["code"], "activation_conflict")
+        self.assertEqual(len(self.channel.list_activation_commands()), 1)
+
+    def test_durable_outbox_repairs_each_post_bind_failure(self) -> None:
+        failure_points = ("status", "queue", "delivered")
+        for index, failure_point in enumerate(failure_points):
+            with self.subTest(failure_point=failure_point):
+                checked = self._check().get_json()
+                body = self._activation_body(checked)
+                headers = {"Idempotency-Key": f"outbox-{failure_point}"}
+                store = self.interface._activation_tokens()
+                if failure_point == "status":
+                    original = self.channel.write_activation_status
+                    self.channel.write_activation_status = lambda _status: (_ for _ in ()).throw(OSError("injected status failure"))
+                elif failure_point == "queue":
+                    original = self.channel.enqueue_activation
+                    self.channel.enqueue_activation = lambda _command: (_ for _ in ()).throw(OSError("injected queue failure"))
+                else:
+                    original = store.mark_outbox_delivered
+                    store.mark_outbox_delivered = lambda _activation_id: (_ for _ in ()).throw(OSError("injected delivery failure"))
+                try:
+                    failed = self.client.put("/api/v1/scene", json=body, headers=headers)
+                finally:
+                    if failure_point == "status":
+                        self.channel.write_activation_status = original
+                    elif failure_point == "queue":
+                        self.channel.enqueue_activation = original
+                    else:
+                        store.mark_outbox_delivered = original
+                self.assertEqual(failed.status_code, 500, failed.get_json())
+                pending = store.pending_outbox()
+                self.assertTrue(pending)
+                activation_id = next(
+                    item.activation_id for item in pending
+                    if item.idempotency_key == f"outbox-{failure_point}"
+                )
+
+                repaired = self.client.put("/api/v1/scene", json=body, headers=headers)
+                self.assertEqual(repaired.status_code, 202, repaired.get_json())
+                self.assertEqual(repaired.get_json()["activation_id"], activation_id)
+                self.assertTrue(repaired.get_json()["exact_retry"])
+                self.assertIsNotNone(self.channel.read_activation_status(activation_id))
+                self.assertIsNotNone(self.channel.read_activation_command(activation_id))
+                self.assertFalse(any(
+                    item.activation_id == activation_id
+                    for item in store.pending_outbox()
+                ))
+
+    def test_server_restart_recovers_a_bound_but_unprojected_outbox(self) -> None:
+        checked = self._check().get_json()
+        body = self._activation_body(checked)
+        original = self.channel.write_activation_status
+        self.channel.write_activation_status = lambda _status: (_ for _ in ()).throw(
+            OSError("injected crash window")
+        )
+        try:
+            failed = self.client.put(
+                "/api/v1/scene", json=body,
+                headers={"Idempotency-Key": "restart-recovery"},
+            )
+        finally:
+            self.channel.write_activation_status = original
+        self.assertEqual(failed.status_code, 500)
+        pending = self.interface._activation_tokens().pending_outbox()
+        activation_id = next(
+            item.activation_id for item in pending
+            if item.idempotency_key == "restart-recovery"
+        )
+
+        AnimationWebInterface(
+            self.channel,
+            _Manager(),
+            local_mode=True,
+            activation_token_store_path=Path(self.temporary.name) / "tokens.sqlite3",
+            activation_enabled=True,
+        )
+        self.assertIsNotNone(self.channel.read_activation_status(activation_id))
+        self.assertIsNotNone(self.channel.read_activation_command(activation_id))
+
+    def test_scene_global_and_controller_changes_conflict_before_queue(self) -> None:
+        mutations = []
+        changed_scene = deepcopy(self.scene)
+        changed_scene["background"]["parameters"]["speed"] = 0.8
+        changed_scene["fallback"]["parameters"]["speed"] = 0.8
+        mutations.append(("scene", changed_scene, self.globals))
+        changed_globals = deepcopy(self.globals)
+        changed_globals["output"]["brightness"] = 64
+        mutations.append(("globals", self.scene, changed_globals))
+
+        for label, scene, settings in mutations:
+            with self.subTest(label=label):
+                checked = self._check().get_json()
+                response = self.client.put(
+                    "/api/v1/scene",
+                    json=self._activation_body(
+                        checked, scene=scene, globals_=settings
+                    ),
+                    headers={"Idempotency-Key": f"changed-{label}"},
+                )
+                self.assertEqual(response.status_code, 409, response.get_json())
+                self.assertEqual(self.channel.list_activation_commands(), [])
+
+        checked = self._check().get_json()
+        status = self.channel.read_status()
+        status["controller_state_revision"] = 8
+        self.channel.write_status(status)
+        response = self.client.put(
+            "/api/v1/scene",
+            json=self._activation_body(checked),
+            headers={"Idempotency-Key": "changed-controller"},
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.channel.list_activation_commands(), [])
+
+    def test_expired_token_is_410_and_never_queues(self) -> None:
+        clock = _Clock()
+        self.interface._activation_token_store = ActivationTokenStore(
+            Path(self.temporary.name) / "expiring.sqlite3", clock=clock
+        )
+        checked = self._check().get_json()
+        clock.value += 120
+
+        response = self.client.put(
+            "/api/v1/scene",
+            json=self._activation_body(checked),
+            headers={"Idempotency-Key": "expired"},
+        )
+        self.assertEqual(response.status_code, 410)
+        self.assertEqual(self.channel.list_activation_commands(), [])
+
+    def test_status_cancel_rollback_and_direct_alias_contracts(self) -> None:
+        checked = self._check().get_json()
+        accepted = self.client.put(
+            "/api/v1/scene",
+            json=self._activation_body(checked),
+            headers={"Idempotency-Key": "resource-contract"},
+        ).get_json()
+        activation_url = accepted["status_url"]
+
+        canceled = self.client.delete(activation_url)
+        self.assertEqual(canceled.status_code, 202)
+        canceled_payload = canceled.get_json()
+        self.assertTrue(canceled_payload["cancel_requested"])
+        self.assertEqual(
+            canceled.headers["Location"], canceled_payload["request_status_url"]
+        )
+        pending_cancel = self.client.get(
+            canceled_payload["request_status_url"]
+        ).get_json()
+        self.assertEqual(pending_cancel["outcome"], "pending")
+        self.channel.write_activation_cancel_result(
+            accepted["activation_id"],
+            request_id=canceled_payload["request_id"],
+            outcome="succeeded",
+            status_phase="failed",
+        )
+        self.assertEqual(
+            self.client.get(canceled_payload["request_status_url"]).get_json()[
+                "outcome"
+            ],
+            "succeeded",
+        )
+        rollback = self.client.post(f"{activation_url}/rollback", json={})
+        self.assertEqual(rollback.status_code, 428)
+        self.assertEqual(
+            rollback.get_json()["code"], "activation_precondition_required"
+        )
+
+        active = self.channel.read_activation_status(accepted["activation_id"])
+        active["phase"] = "active"
+        active["observed_identity"] = deepcopy(active["requested_identity"])
+        active["controller"]["state_revision_after"] = 8
+        active["telemetry"] = {
+            "complete": True, "fresh": True, "observed_at": 1_000_001,
+        }
+        active["rollback"] = {
+            "available": True,
+            "snapshot_id": "snapshot-1",
+            "result": None,
+            "error": None,
+        }
+        self.channel.activation_status_file(
+            accepted["activation_id"]
+        ).write_text(json.dumps(active), encoding="utf-8")
+        controller = self.channel.read_status()
+        controller["controller_state_revision"] = 9
+        self.channel.write_status(controller)
+        rollback = self.client.post(f"{activation_url}/rollback", json={
+            "expected_controller_session_id": SESSION_ID,
+            "expected_controller_state_revision": 8,
+        })
+        self.assertEqual(rollback.status_code, 409)
+        self.assertIsNone(
+            self.channel.read_activation_rollback(accepted["activation_id"])
+        )
+        controller["controller_state_revision"] = 8
+        self.channel.write_status(controller)
+        rollback = self.client.post(f"{activation_url}/rollback", json={
+            "expected_controller_session_id": SESSION_ID,
+            "expected_controller_state_revision": 8,
+        })
+        self.assertEqual(rollback.status_code, 202)
+        rollback_payload = rollback.get_json()
+        self.assertEqual(
+            rollback.headers["Location"], rollback_payload["request_status_url"]
+        )
+        self.assertEqual(rollback_payload["snapshot_id"], "snapshot-1")
+        self.assertEqual(
+            self.client.get(rollback_payload["request_status_url"]).get_json()[
+                "outcome"
+            ],
+            "pending",
+        )
+        retried = self.client.post(f"{activation_url}/rollback", json={
+            "expected_controller_session_id": SESSION_ID,
+            "expected_controller_state_revision": 8,
+        })
+        self.assertEqual(retried.status_code, 202)
+        self.assertTrue(retried.get_json()["exact_retry"])
+        self.assertEqual(
+            retried.get_json()["request_id"], rollback_payload["request_id"]
+        )
+
+        aliases = (
+            ("post", "/api/v1/studio-next/take-scene"),
+            ("post", "/api/v1/scene-presets/example/apply"),
+            ("patch", "/api/v1/scene/components/clock_overlay"),
+            ("delete", "/api/v1/scene"),
+        )
+        for method, path in aliases:
+            with self.subTest(path=path):
+                response = getattr(self.client, method)(path, json={})
+                self.assertEqual(response.status_code, 428)
+                self.assertEqual(response.get_json()["code"], "guarded_activation_required")
+
+    def test_every_execution_alias_is_fail_closed_without_any_command(self) -> None:
+        aliases = (
+            ("post", "/api/v1/studio-next/take-look", {
+                "provider": "python", "plugin_id": "gradient", "preset_id": "default",
+            }),
+            ("post", "/api/v1/studio-next/take-scene", {"scene": self.scene}),
+            ("post", "/api/animations/gradient/presets/default/apply", {}),
+            ("post", "/api/start/gradient", {"speed": 0.5}),
+            ("post", "/api/device/state", {
+                "power": True, "animation": "gradient", "preset": "default",
+            }),
+            ("put", "/api/v1/scene", {"scene": self.scene}),
+            ("post", "/api/v1/scene", {"scene": self.scene}),
+            ("patch", "/api/v1/scene/components/background", {"params": {}}),
+            ("post", "/api/v1/scene-presets/default/apply", {}),
+            ("delete", "/api/v1/scene", {}),
+        )
+        for method, path, body in aliases:
+            with self.subTest(method=method, path=path):
+                response = getattr(self.client, method)(path, json=body)
+                self.assertEqual(response.status_code, 428, response.get_json())
+                self.assertIn(
+                    response.get_json()["code"],
+                    {"guarded_activation_required", "activation_precondition_required"},
+                )
+                self.assertEqual(self.channel.list_activation_commands(), [])
+                self.assertIsNone(self.channel.read_control())
+
+
+if __name__ == "__main__":
+    unittest.main()

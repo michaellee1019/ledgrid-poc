@@ -261,7 +261,9 @@ class StudioNextBackendTests(unittest.TestCase):
             item for item in catalog["components"]
             if item["key"] == "receiver_native:native_glow"
         )
-        self.assertTrue(meadow["action"]["take_look_enabled"])
+        self.assertFalse(meadow["action"]["take_look_enabled"])
+        self.assertEqual(meadow["action"]["code"], "guarded_activation_required")
+        self.assertIn("Composer Check", meadow["action"]["reason"])
         self.assertFalse(native["action"]["take_look_enabled"])
         self.assertFalse(meadow["preview"]["live_state_mutated"])
         self.assertEqual(native["preview"]["provenance"], "receiver_host_simulation")
@@ -300,38 +302,19 @@ class StudioNextBackendTests(unittest.TestCase):
         response = client.post("/api/v1/studio-next/take-look", json={
             "provider": "python", "plugin_id": "meadow", "preset_id": "evening",
         })
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.get_json()["code"], "provider_collision")
+        self.assertEqual(response.status_code, 428)
+        self.assertEqual(response.get_json()["code"], "guarded_activation_required")
         self.assertEqual(channel.commands, [])
 
-    def test_take_look_starts_exact_ready_host_preset_with_command_id(self) -> None:
+    def test_take_look_requires_guarded_activation_without_legacy_command(self) -> None:
         response = self.client.post("/api/v1/studio-next/take-look", json={
             "provider": "python", "plugin_id": "meadow", "preset_id": "evening",
         })
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 428)
         payload = response.get_json()
-        self.assertEqual(payload["command_id"], "cmd-1")
-        self.assertEqual(payload["identity"], {
-            "key": "python:meadow:evening",
-            "component_key": "python:meadow",
-            "provider": "python",
-            "plugin_id": "meadow",
-            "preset_id": "evening",
-        })
-        self.assertEqual(self.channel.commands, [{
-            "command_id": "cmd-1",
-            "action": "start",
-            "data": {
-                "animation": "meadow",
-                "config": {"speed": 0.7},
-                "preset": {
-                    "preset_id": "evening",
-                    "name": "Meadow Evening",
-                    "animation": "meadow",
-                },
-            },
-        }])
+        self.assertEqual(payload["code"], "guarded_activation_required")
+        self.assertEqual(self.channel.commands, [])
 
     def test_scene_rejects_unloaded_python_component_before_command_write(self) -> None:
         def scene_for(plugin_id: str) -> dict:
@@ -355,7 +338,7 @@ class StudioNextBackendTests(unittest.TestCase):
             }
 
         response = self.client.post(
-            "/api/v1/scene", json={"scene": scene_for("build_only")}
+            "/api/v1/scene/validate", json=scene_for("build_only")
         )
 
         self.assertEqual(response.status_code, 400)
@@ -366,17 +349,17 @@ class StudioNextBackendTests(unittest.TestCase):
             "/api/v1/studio-next/take-scene",
             json={"scene": scene_for("plant_calibration")},
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("unavailable", response.get_json()["error"])
+        self.assertEqual(response.status_code, 428)
+        self.assertEqual(response.get_json()["code"], "guarded_activation_required")
         self.assertEqual(self.channel.commands, [])
 
         response = self.client.post(
             "/api/v1/studio-next/take-scene",
             json={"scene": scene_for("meadow")},
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["command_id"], "cmd-1")
-        self.assertEqual(self.channel.commands[0]["action"], "start_scene")
+        self.assertEqual(response.status_code, 428)
+        self.assertEqual(response.get_json()["code"], "guarded_activation_required")
+        self.assertEqual(self.channel.commands, [])
 
     def test_studio_scene_rejects_quarantined_clock_before_command_write(self) -> None:
         components = [
@@ -416,8 +399,8 @@ class StudioNextBackendTests(unittest.TestCase):
             "/api/v1/studio-next/take-scene", json={"scene": scene}
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("ready Host Python clock_overlay", response.get_json()["error"])
+        self.assertEqual(response.status_code, 428)
+        self.assertEqual(response.get_json()["code"], "guarded_activation_required")
         self.assertEqual(channel.commands, [])
 
     def test_take_look_rejects_every_forbidden_case_before_command_write(self) -> None:
@@ -438,14 +421,16 @@ class StudioNextBackendTests(unittest.TestCase):
                 response = self.client.post(
                     "/api/v1/studio-next/take-look", json=body
                 )
-                self.assertIn(response.status_code, {400, 404, 409})
+                self.assertEqual(response.status_code, 428)
+                self.assertEqual(
+                    response.get_json()["code"], "guarded_activation_required"
+                )
         self.assertEqual(self.channel.commands, [])
 
     def test_existing_control_routes_return_supplied_command_ids(self) -> None:
         calls = (
             ("/api/stop", {}),
             ("/api/device/state", {"power": True}),
-            ("/api/animations/meadow/presets/evening/apply", {}),
             ("/api/v1/vibe", {"id": "quiet"}),
             (
                 "/api/config/plant-modifiers",
@@ -461,6 +446,14 @@ class StudioNextBackendTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.get_json()["command_id"], f"cmd-{index}")
         self.assertEqual(len(self.channel.commands), len(calls))
+
+        before = list(self.channel.commands)
+        guarded = self.client.post(
+            "/api/animations/meadow/presets/evening/apply", json={}
+        )
+        self.assertEqual(guarded.status_code, 428)
+        self.assertEqual(guarded.get_json()["code"], "guarded_activation_required")
+        self.assertEqual(self.channel.commands, before)
 
 
 if __name__ == "__main__":
