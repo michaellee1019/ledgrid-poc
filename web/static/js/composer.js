@@ -249,9 +249,38 @@
 
     function matchesCatalog(component) {
         const filterMatches = state.catalogFilter === 'all' || runtimeKind(component) === state.catalogFilter;
-        const haystack = [component.name, component.description, component.plugin_id, component.provider, component.role]
+        const presetMetadata = (component.presets || []).flatMap((preset) => [
+            preset.name,
+            preset.description,
+            preset.category,
+            preset.preset_id,
+            ...(Array.isArray(preset.tags) ? preset.tags : []),
+        ]);
+        const haystack = [component.name, component.description, component.plugin_id, component.provider, component.role, ...presetMetadata]
             .filter(Boolean).join(' ').toLowerCase();
         return component.role === 'background' && filterMatches && haystack.includes(state.query.toLowerCase());
+    }
+
+    function enableRovingFocus(host, selector, {vertical = true} = {}) {
+        const items = [...host.querySelectorAll(selector)].filter((item) => !item.disabled);
+        if (!items.length) return;
+        let active = Math.max(0, items.findIndex((item) => item.getAttribute('aria-selected') === 'true' || item.getAttribute('aria-current') === 'true'));
+        items.forEach((item, index) => { item.tabIndex = index === active ? 0 : -1; });
+        host.onkeydown = (event) => {
+            const previousKeys = vertical ? ['ArrowUp', 'ArrowLeft'] : ['ArrowLeft', 'ArrowUp'];
+            const nextKeys = vertical ? ['ArrowDown', 'ArrowRight'] : ['ArrowRight', 'ArrowDown'];
+            const current = Math.max(0, items.indexOf(document.activeElement));
+            let next = null;
+            if (previousKeys.includes(event.key)) next = (current - 1 + items.length) % items.length;
+            else if (nextKeys.includes(event.key)) next = (current + 1) % items.length;
+            else if (event.key === 'Home') next = 0;
+            else if (event.key === 'End') next = items.length - 1;
+            if (next == null) return;
+            event.preventDefault();
+            items.forEach((item, index) => { item.tabIndex = index === next ? 0 : -1; });
+            items[next].focus();
+            if (items[next].getAttribute('role') === 'tab') items[next].click();
+        };
     }
 
     function renderCatalog() {
@@ -263,8 +292,22 @@
         if (!visible.length) {
             const empty = document.createElement('p');
             empty.className = 'catalog-empty';
-            empty.textContent = 'No renderers match that search.';
+            empty.textContent = state.component && !matchesCatalog(state.component)
+                ? `Editing ${state.component.name || humanize(state.component.plugin_id)}, hidden by filters.`
+                : 'No animations or starting points match that search.';
             host.appendChild(empty);
+            const clear = document.createElement('button');
+            clear.type = 'button';
+            clear.className = 'text-button';
+            clear.textContent = 'Clear filters';
+            clear.addEventListener('click', () => {
+                state.catalogFilter = 'all';
+                state.query = '';
+                $('componentSearch').value = '';
+                document.querySelectorAll('[data-filter]').forEach((item) => item.setAttribute('aria-pressed', String(item.dataset.filter === 'all')));
+                renderCatalog();
+            });
+            host.appendChild(clear);
             return;
         }
         visible.forEach((component) => {
@@ -300,6 +343,7 @@
             button.addEventListener('click', () => selectComponent(component));
             host.appendChild(button);
         });
+        enableRovingFocus(host, '.component-card');
     }
 
     function presetParams(preset) {
@@ -319,7 +363,8 @@
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'preset-button';
-            button.setAttribute('aria-current', String(state.selectedPreset === presetIdentity(preset, index)));
+            button.setAttribute('role', 'option');
+            button.setAttribute('aria-selected', String(state.selectedPreset === presetIdentity(preset, index)));
             const name = document.createElement('strong');
             name.textContent = preset.name || humanize(presetIdentity(preset, index));
             const description = document.createElement('small');
@@ -328,6 +373,9 @@
             button.addEventListener('click', () => applyPreset(preset, index));
             host.appendChild(button);
         });
+        host.setAttribute('role', 'listbox');
+        host.setAttribute('aria-label', 'Starting points for the current animation');
+        enableRovingFocus(host, '.preset-button');
         if (!presets.length) {
             const empty = document.createElement('p');
             empty.className = 'catalog-empty';
@@ -1150,7 +1198,11 @@
 
     function schemaCheck(component, params) {
         const problems = [];
-        Object.entries(component.parameter_schema || {}).forEach(([key, contract]) => {
+        const schema = component.parameter_schema || {};
+        Object.keys(params || {}).filter((key) => !Object.prototype.hasOwnProperty.call(schema, key)).forEach((key) => {
+            problems.push(`${humanize(key)} is not a declared parameter`);
+        });
+        Object.entries(schema).forEach(([key, contract]) => {
             const value = params[key];
             if (value === undefined) {
                 problems.push(`${humanize(key)} is missing`);
@@ -1446,6 +1498,7 @@
                 component: componentReference(clock, state.layers.clockParams),
                 enabled: true,
                 opacity: state.layers.clockOpacity,
+                blend_mode: 'source-over',
                 placement: {strip_translation: 0, led_translation: 0, clip_policy: 'clip_to_wall'},
                 stale_policy: {policy: 'hold'},
             });
@@ -1696,9 +1749,29 @@
     }
 
     function locallyValidatedImport(payload) {
+        assertSafeImport(payload);
         if (payload?.schema === 'ledgrid.scene-preset' && payload.schema_version === 1 && payload.scene?.schema === 'ledgrid.scene-state') {
+            if (payload.scene.schema_version !== 1) throw new Error('The uploaded scene uses an unsupported version.');
+            if (!Array.isArray(payload.scene.overlays) || payload.scene.overlays.length > 1) {
+                throw new Error('Version 1 scenes allow only the fixed Clock overlay slot.');
+            }
+            if (payload.scene.overlays.some((layer) => layer?.slot_id !== 'clock_overlay')) {
+                throw new Error('The uploaded scene contains an unsupported layer role.');
+            }
             const background = payload.scene.background;
             const componentKey = `${background?.provider}:${background?.plugin_id}`;
+            const component = state.bootstrap.components.find((item) => item.key === componentKey && item.role === 'background');
+            if (!component) throw new Error('The uploaded scene background is not in this catalog.');
+            const overlay = payload.scene.overlays[0];
+            if (overlay && (
+                overlay.component?.provider !== 'python'
+                || overlay.component?.plugin_id !== 'clock_overlay'
+                || !['source-over', undefined].includes(overlay.blend_mode)
+            )) throw new Error('Version 1 scenes support only the fixed Python Clock source-over overlay.');
+            const fallback = payload.scene.known_python_fallback;
+            if (!fallback || fallback.provider !== 'python' || !state.bootstrap.components.some((item) => (
+                item.provider === fallback.provider && item.plugin_id === fallback.plugin_id && item.role === 'background'
+            ))) throw new Error('The uploaded scene requires a catalogued Host Python fallback.');
             return {
                 kind: 'scene_preset',
                 draft: {
@@ -1713,6 +1786,7 @@
         if (!payload || typeof payload !== 'object' || !payload.params || typeof payload.params !== 'object') {
             throw new Error('Upload a component preset or ledgrid.scene-preset JSON document.');
         }
+        if (payload.version !== 2) throw new Error('The uploaded component preset uses an unsupported version.');
         const pluginId = payload.animation || payload.plugin_id;
         const provider = payload.provider;
         const matches = state.bootstrap.components.filter((item) => item.plugin_id === pluginId && (!provider || item.provider === provider));
@@ -1726,6 +1800,26 @@
                 params: clone(payload.params),
             },
         };
+    }
+
+    function assertSafeImport(value, depth = 0, budget = {nodes: 0}) {
+        budget.nodes += 1;
+        if (budget.nodes > 10000) throw new Error('The uploaded document contains too many values.');
+        if (depth > 12) throw new Error('The uploaded document is nested too deeply.');
+        if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('The uploaded document contains a non-finite number.');
+        if (typeof value === 'string' && value.length > 16384) throw new Error('The uploaded document contains an oversized text value.');
+        if (Array.isArray(value)) {
+            if (value.length > 1024) throw new Error('The uploaded document contains an oversized list.');
+            value.forEach((item) => assertSafeImport(item, depth + 1, budget));
+            return;
+        }
+        if (!value || typeof value !== 'object') return;
+        Object.entries(value).forEach(([key, item]) => {
+            if (['__proto__', 'prototype', 'constructor'].includes(key)) {
+                throw new Error(`The uploaded document contains a forbidden key: ${key}.`);
+            }
+            assertSafeImport(item, depth + 1, budget);
+        });
     }
 
     async function applyImportedDraft(validated) {
@@ -1770,7 +1864,11 @@
 
     async function importJson(file) {
         try {
-            const payload = JSON.parse(await file.text());
+            if (file.size > 512 * 1024) throw new Error('Upload a JSON document no larger than 512 KB.');
+            const source = await file.text();
+            if (source.length > 512 * 1024) throw new Error('Upload a JSON document no larger than 512 KB.');
+            const payload = JSON.parse(source);
+            assertSafeImport(payload);
             let validated;
             let serverValidated = false;
             if (state.serverOnline) {
@@ -1803,6 +1901,7 @@
         const panels = {controls: 'controlsPanel', layers: 'layersPanel', checker: 'checkerPanel'};
         Object.entries(panels).forEach(([tabName, panelId]) => {
             $(`${tabName}Tab`).setAttribute('aria-selected', String(name === tabName));
+            $(`${tabName}Tab`).tabIndex = name === tabName ? 0 : -1;
             $(panelId).hidden = name !== tabName;
         });
     }
@@ -1863,6 +1962,7 @@
         $('controlsTab').addEventListener('click', () => selectInspectorTab('controls'));
         $('layersTab').addEventListener('click', () => selectInspectorTab('layers'));
         $('checkerTab').addEventListener('click', () => selectInspectorTab('checker'));
+        enableRovingFocus(document.querySelector('.inspector-tabs'), '[role="tab"]', {vertical: false});
         $('clockEnabled').addEventListener('change', (event) => {
             state.layers.clockEnabled = event.target.checked;
             state.lastSavedPreset = null;
