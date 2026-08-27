@@ -340,6 +340,11 @@ class SnakeAnimation(AnimationBase):
     def _terrain_blocked(self, cell: Cell, planning: bool = False) -> bool:
         if cell in self.walls:
             return True
+        # Most Snake presets do not use plant geometry.  Avoid repeatedly
+        # resolving modifier state in the steering hot path when there is no
+        # calibrated terrain that could block this cell.
+        if not self._plant_clearance and not self._plant_obstacles:
+            return False
         if self._legacy_plant_mode():
             return cell in self._plant_clearance
         if not self.plant_modifier_enabled("obstacle"):
@@ -353,7 +358,7 @@ class SnakeAnimation(AnimationBase):
         return None
 
     def _portal_destination(self, cell: Cell, snake: Optional[SnakeAgent] = None) -> Tuple[Cell, Optional[str]]:
-        if not self.plant_modifier_enabled("portal") or len(self._plant_regions) < 2:
+        if len(self._plant_regions) < 2 or not self.plant_modifier_enabled("portal"):
             return cell, None
         source = self._region_for_cell(cell)
         if source is None or (snake is not None and snake.portal_exit_region is not None):
@@ -541,19 +546,18 @@ class SnakeAnimation(AnimationBase):
             if candidate is None or self._terrain_blocked(candidate, planning=True):
                 continue
             eating = candidate in self.food
-            blocked = occupied
+            released_tail = None
             if not eating and len(snake.body) >= snake.target_length and snake.body:
-                blocked = occupied - {snake.body[-1]}
-            if candidate in blocked:
+                released_tail = snake.body[-1]
+            if candidate in occupied and candidate != released_tail:
                 continue
-            if self.food:
-                distance = min(self._food_distance(candidate, food) for food in self.food)
-            else:
-                distance = 0
+            distance = self._nearest_food_distance(candidate)
             exits = 0
             for next_direction in DIRECTIONS:
                 neighbor = self._advance_cell(candidate, next_direction, snake)
-                if neighbor is not None and neighbor not in blocked and not self._terrain_blocked(neighbor, planning=True):
+                if (neighbor is not None
+                        and (neighbor not in occupied or neighbor == released_tail)
+                        and not self._terrain_blocked(neighbor, planning=True)):
                     exits += 1
             straight_bonus = 0.2 if direction == snake.direction else 0.0
             jitter = self.random.random() * 0.12
@@ -571,6 +575,28 @@ class SnakeAnimation(AnimationBase):
             dx = min(dx, self.width - dx)
             dy = min(dy, self.height - dy)
         return dx + dy
+
+    def _nearest_food_distance(self, cell: Cell) -> int:
+        """Return the nearest-food metric without per-food method calls."""
+        if not self.food:
+            return 0
+        cell_x, cell_y = cell
+        wraps = str(self.params.get("ruleset", "wrap")) in ("wrap", "battle")
+        nearest = self.width + self.height
+        for food_x, food_y in self.food:
+            dx = abs(cell_x - food_x)
+            dy = abs(cell_y - food_y)
+            if wraps:
+                wrapped_dx = self.width - dx
+                wrapped_dy = self.height - dy
+                if wrapped_dx < dx:
+                    dx = wrapped_dx
+                if wrapped_dy < dy:
+                    dy = wrapped_dy
+            distance = dx + dy
+            if distance < nearest:
+                nearest = distance
+        return nearest
 
     def _step_game(self):
         for snake in self.snakes:
