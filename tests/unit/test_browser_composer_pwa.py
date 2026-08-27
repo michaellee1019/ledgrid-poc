@@ -121,9 +121,10 @@ class BrowserComposerPWATests(unittest.TestCase):
                 (STATIC / asset.removeprefix("/static/")).is_file(),
                 f"precache asset does not exist: {asset}",
             )
-        self.assertRegex(
+        self.assertRegex(self.worker, r"CACHE_VERSION\s*=\s*['\"]v\d+['\"]")
+        self.assertIn(
+            "CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`",
             self.worker,
-            r"CACHE_NAME\s*=\s*`\$\{CACHE_PREFIX\}v\d+`",
         )
         self.assertIn("installVersionedShell", self.worker)
         self.assertIn("Offline asset digest mismatch", self.worker)
