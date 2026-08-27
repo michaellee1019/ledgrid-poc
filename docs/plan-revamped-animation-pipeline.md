@@ -117,6 +117,29 @@ full camera homography, host within-receiver strip direction, or receiver-native
 direction. Both direction maps remain `(false,false,true,true,false)` pending
 their independent visual gates.
 
+The corrected mapping was then deployed from clean topology commit `4c97d4e`
+plus benchmark-stability commit `8ea7ac3`. Ordinary deployment succeeded in
+16 minutes 18 seconds and activated release
+`1e2a50f04aa2ffe1d7711e2b865c04b3b0919a2925f6fa80dfbe557336b04dbb`.
+All five boards already matched the recorded required production image, so the
+fail-safe reconciler correctly skipped unnecessary firmware flashes. Readiness
+passed, the saved Lava Lamp scene was restored exactly, and the live hybrid
+configuration migrated to schema v4 with order `(0,1,2,3,4)`, offsets
+`(0,8,16,24,32)`, widths `(8,8,8,8,1)`, masks all `0xff`, and direction maps
+`(false,false,true,true,false)`.
+
+A fresh five-color camera frame after deployment showed mirrored Photo Booth
+order magenta, yellow, blue, green, red, which de-mirrors to the intended
+physical left-to-right order red, green, blue, yellow, magenta. This directly
+proves that the middle receiver swap is fixed. The saved full-frame evidence is
+`run_state/physical-acceptance/20260827-receiver-order-post-deploy-photo-booth.jpeg`
+(SHA-256 `9d0072004717354ac5f34022a63e410e2a82fc8039f2b5b0c85953bc04fafd2d`),
+and the wall crop is
+`run_state/physical-acceptance/20260827-receiver-order-post-deploy-wall-crop.png`
+(SHA-256 `ae6bafcc6820d88dac3d5f0d9c40c15183f46db6a27ee5278961262d0883081f`).
+This remains receiver-order evidence only because the camera sees a partial
+wall.
+
 The first read-only integrity delta on this topology did not pass H0. Across a
 10.03-second window, logical receivers 0, 1, 2, and 4 added zero CRC, SPI-queue,
 or display errors, while logical receiver 3 added 13 CRC errors and accepted 13
@@ -125,6 +148,34 @@ but not that transport integrity is clean. Re-run after the reconciled firmware
 deployment and diagnose a repeatable software/timing cause before any Phase 4
 release claim; do not waive the zero-new-error gate merely because wiring is now
 final.
+
+After the mapping deployment, the strict all-five status gate passed with
+readable status v3, verified capabilities and logical identities, and no
+warnings. The following 60-second strict streamed-wall run did not pass H0:
+all five receivers sustained only about 101.4 FPS against the 150 FPS minimum,
+the four broad receivers reported encode p95 near 1.081--1.085 ms against the
+1.000 ms ceiling, and logical receiver 3 added two CRC errors. The runner
+successfully restored the exact scene, target FPS, and modifiers after failure.
+
+The Pi kernel recorded an undervoltage event from 16:01:43 through 16:02:45,
+exactly spanning that acceptance window, plus a second event from 16:06:25
+through 16:06:31. `vcgencmd get_throttled` returned `0x50000`,
+showing historical undervoltage and throttling with current-state bits clear.
+Powering the USB hub therefore solved USB enumeration but not the Pi's own input
+power. H0 must be rerun with a stable dedicated Pi supply/cable, retaining the
+150/160 FPS and zero-new-error gates.
+
+Portable encoder optimization commit `ccf3464` caches the brightness expansion
+until brightness changes and specializes the exact three-phase production
+symbol writer while preserving the generic one- and two-phase paths. Exact
+native waveform tests, including brightness-cache invalidation, pass; the
+8x138 three-phase workstation proxy improved from 2.583 us to 1.458 us p95 and
+the Xtensa hot function shrank from `0x642` to `0x52c` bytes. The complete gate
+passes 1,559 Python tests plus 2,839 subtests, 24 rendering tests plus three
+subtests, all 128 portable firmware tests, all three ESP32 builds, and 235
+deployment tests plus 157 subtests. This optimization is committed but must not
+be flashed or used to claim receiver timing until the Pi power is stable and the
+strict physical gate is rerun.
 
 - This is the sole forward-looking `docs/plan*` document. It consolidates the
   former build/deploy, uploadable-native-animation, and revamped-animation plans;
@@ -4101,6 +4152,17 @@ portable software gate only; the Pi remains powered off, the current merge has
 not been deployed, and the ordinary-deploy and H0 through H4 checkboxes remain
 open.
 
+Camera-order deployment evidence later on 2026-08-27 supersedes the ordinary-
+deploy portion of that historical state. Commits `4c97d4e` and `8ea7ac3`
+activated release
+`1e2a50f04aa2ffe1d7711e2b865c04b3b0919a2925f6fa80dfbe557336b04dbb`,
+migrated the installed topology to schema v4, preserved the one-strip receiver,
+restored the exact operator scene, and passed five-receiver readiness. The
+post-deploy Mac-camera diagnostic directly confirmed physical block order
+`(0,1,2,3,4)`. This closes the clean ordinary-deploy checkpoint. It does not
+close H0: the subsequent strict run coincided with Pi undervoltage, reached only
+about 101.4 FPS, and added two CRC errors on logical receiver 3.
+
 Final local convergence evidence (2026-08-25): `just test` passed from the
 complete implementation tree. The main Python collection contains 1,502 tests;
 rendering acceptance passed 23 tests plus 3 subtests with every stress-scene p95
@@ -4132,7 +4194,7 @@ or physical acceptance result.
 - [x] Pass focused coverage, full Python/rendering/deployment gates, portable
   firmware tests, all three firmware builds, deterministic artifact regeneration,
   dry-run/plan, whitespace, and source-policy checks.
-- [ ] Commit a clean software checkpoint and pass ordinary `just deploy` without
+- [x] Commit a clean software checkpoint and pass ordinary `just deploy` without
   losing the 33rd strip, fifth receiver, operator state, fallback, or target-owned
   libraries.
 - [ ] Pass H0, H1, H2, H3, and both H4 soaks with fresh machine-readable and
