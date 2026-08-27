@@ -305,7 +305,7 @@ class SceneProductSurfaceTests(unittest.TestCase):
         self.assertEqual(html.count('id="sceneEditorHeading"'), 1)
         self.assertIn('id="sceneBackgroundSelect"', html)
         self.assertIn('id="sceneOverlayEnabled"', html)
-        self.assertIn('Global vibe and plant controls remain independent', html)
+        self.assertIn('Wall mood and plant behavior remain independent', html)
 
 
 class SceneIpcEnvelopeTests(unittest.TestCase):

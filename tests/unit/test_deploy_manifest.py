@@ -77,6 +77,7 @@ class DeployManifestTests(unittest.TestCase):
             "web/static/css/dashboard.css",
             "web/static/js/dashboard.js",
             "config/plant_globe_map_32x138.json",
+            "scripts/start_systemd.sh",
         )
         for path in tracked:
             self._write(path)

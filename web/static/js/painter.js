@@ -32,6 +32,12 @@
             this.previewInFlight = false;
             this.previewPending = false;
             this.lastPreviewSignature = '';
+            this.initialized = false;
+            this.mirrorActive = false;
+            this.liveSessionEntered = false;
+            this.modeChanging = false;
+            this.leaveCleanupSent = false;
+            this.presetCatalog = [];
             this.bindEvents();
         }
 
@@ -47,6 +53,24 @@
             });
             document.getElementById('undoBtn').addEventListener('click', () => this.undo());
             document.getElementById('saveMasksBtn').addEventListener('click', () => this.save());
+            document.getElementById('mirrorWallBtn').addEventListener(
+                'click', () => this.startMirroring(),
+            );
+            document.getElementById('returnToDraftBtn').addEventListener(
+                'click', () => this.returnToDraft(),
+            );
+            document.getElementById('painterPresetSelect').addEventListener(
+                'change', () => this.updateControls(),
+            );
+            document.getElementById('painterPresetName').addEventListener(
+                'input', () => this.updateControls(),
+            );
+            document.getElementById('loadPainterPresetBtn').addEventListener(
+                'click', () => this.loadSelectedPreset(),
+            );
+            document.getElementById('savePainterPresetBtn').addEventListener(
+                'click', () => this.savePreset(),
+            );
 
             const zoom = document.getElementById('zoomRange');
             zoom.addEventListener('input', () => {
@@ -73,6 +97,28 @@
                     this.selectTool('erase');
                 }
             });
+
+            window.addEventListener('beforeunload', (event) => {
+                if (this.dirty) {
+                    event.preventDefault();
+                    event.returnValue = '';
+                }
+            });
+            window.addEventListener('pagehide', () => this.cleanupLiveOutputOnLeave());
+            window.addEventListener('ledgrid:live-status', (event) => {
+                this.reconcileLiveStatus(event.detail);
+            });
+        }
+
+        reconcileLiveStatus(status) {
+            if (!this.mirrorActive || this.modeChanging || !status) return;
+            const painterIsLive = status.mode === 'painter' || status.painter_active;
+            if (painterIsLive) return;
+            this.mirrorActive = false;
+            this.liveSessionEntered = false;
+            this.cancelPendingPreview();
+            this.updateOutputState();
+            this.setStatus('Painter output stopped. Your canvas remains a private draft.', 'success');
         }
 
         async initialize() {
@@ -80,8 +126,11 @@
                 const response = await fetch('/api/painter/masks', {cache: 'no-store'});
                 const payload = await this.responseJson(response);
                 this.loadPayload(payload);
-                this.setStatus('Masks loaded. Wall preview is synchronized.', 'success');
-                await this.pushPreview(true);
+                this.initialized = true;
+                this.updateControls();
+                this.updateOutputState();
+                await this.loadPresetCatalog();
+                this.setStatus('Draft loaded. The wall output was not changed.', 'success');
             } catch (error) {
                 console.error('Failed to initialize mask painter', error);
                 this.setStatus(error.message || 'Failed to load masks', 'error');
@@ -157,6 +206,18 @@
             this.canvas.height = this.layout.ledsPerStrip * (this.cellHeight + this.cellGap);
             document.getElementById('layoutBadge').textContent =
                 `${this.layout.stripCount} × ${this.layout.ledsPerStrip}`;
+            const surfaceExplanation = document.getElementById('surfaceExplanation');
+            if (this.layout.stripCount === 32 && this.layout.ledsPerStrip === 138) {
+                surfaceExplanation.textContent =
+                    'This editor covers the 32 × 138 plant-mask surface. The installation has '
+                    + '33 output columns; its extra column is outside plant-mask calibration '
+                    + 'and is not edited here.';
+            } else {
+                surfaceExplanation.textContent =
+                    `The mask files define this ${this.layout.stripCount} × `
+                    + `${this.layout.ledsPerStrip} editable surface. The installation has 33 × 138 `
+                    + 'output pixels; only pixels represented by the mask geometry are edited here.';
+            }
         }
 
         indexToCoord(index) {
@@ -338,6 +399,35 @@
         updateControls() {
             document.getElementById('undoBtn').disabled = this.history.length === 0;
             document.getElementById('saveMasksBtn').disabled = !this.dirty;
+            document.getElementById('mirrorWallBtn').disabled =
+                !this.initialized || this.mirrorActive || this.modeChanging;
+            document.getElementById('returnToDraftBtn').disabled = this.modeChanging;
+            const presetSelect = document.getElementById('painterPresetSelect');
+            const presetName = document.getElementById('painterPresetName');
+            document.getElementById('loadPainterPresetBtn').disabled =
+                !this.initialized || this.mirrorActive || this.modeChanging || !presetSelect.value;
+            document.getElementById('savePainterPresetBtn').disabled =
+                !this.initialized || this.modeChanging || !presetName.value.trim();
+        }
+
+        updateOutputState() {
+            const state = document.getElementById('outputState');
+            const badge = document.getElementById('outputStateBadge');
+            const title = document.getElementById('outputStateTitle');
+            const description = document.getElementById('outputStateDescription');
+            const mirrorButton = document.getElementById('mirrorWallBtn');
+            const draftButton = document.getElementById('returnToDraftBtn');
+
+            state.classList.toggle('is-live', this.mirrorActive);
+            state.setAttribute('aria-busy', this.modeChanging ? 'true' : 'false');
+            badge.textContent = this.mirrorActive ? 'Live' : 'Draft';
+            title.textContent = this.mirrorActive ? 'Mirroring on the wall' : 'Editing privately';
+            description.textContent = this.mirrorActive
+                ? 'Every completed stroke is sent to the installation until you return to draft.'
+                : 'Changes stay in this browser until you save or choose Mirror to wall.';
+            mirrorButton.classList.toggle('d-none', this.mirrorActive);
+            draftButton.classList.toggle('d-none', !this.mirrorActive);
+            this.updateControls();
         }
 
         updateDirtyState() {
@@ -352,7 +442,11 @@
             this.updateDirtyState();
             this.render();
             this.updateControls();
-            this.setStatus('Undid the last stroke. Wall preview updated.');
+            this.setStatus(
+                this.mirrorActive
+                    ? 'Undid the last stroke. Updating the wall mirror…'
+                    : 'Undid the last stroke. The change remains in this draft.',
+            );
             this.schedulePreview(0);
         }
 
@@ -379,6 +473,10 @@
         }
 
         schedulePreview(delay = 70) {
+            if (!this.mirrorActive) {
+                this.previewPending = false;
+                return;
+            }
             this.previewPending = true;
             if (this.previewTimer) {
                 return;
@@ -389,15 +487,18 @@
             }, delay);
         }
 
-        async pushPreview(force = false) {
+        async pushPreview(force = false, allowDraftStart = false) {
+            if (!this.mirrorActive && !allowDraftStart) {
+                return false;
+            }
             if (this.previewInFlight) {
                 this.previewPending = true;
-                return;
+                return false;
             }
             const signature = this.previewSignature();
             if (!force && signature === this.lastPreviewSignature) {
                 this.previewPending = false;
-                return;
+                return true;
             }
 
             this.previewInFlight = true;
@@ -416,15 +517,102 @@
                 });
                 await this.responseJson(response);
                 this.lastPreviewSignature = signature;
+                return true;
             } catch (error) {
                 console.error('Failed to synchronize wall preview', error);
                 this.setStatus(`Wall sync failed: ${error.message}`, 'error');
+                return false;
             } finally {
                 this.previewInFlight = false;
-                if (this.previewPending || this.previewSignature() !== this.lastPreviewSignature) {
+                if (this.mirrorActive
+                        && (this.previewPending
+                            || this.previewSignature() !== this.lastPreviewSignature)) {
                     this.schedulePreview(0);
                 }
             }
+        }
+
+        async startMirroring() {
+            if (!this.initialized || this.mirrorActive || this.modeChanging) {
+                return;
+            }
+            this.modeChanging = true;
+            this.liveSessionEntered = true;
+            this.updateOutputState();
+            this.setStatus('Starting the wall mirror…');
+            const started = await this.pushPreview(true, true);
+            this.modeChanging = false;
+            if (!started) {
+                this.liveSessionEntered = false;
+                this.updateOutputState();
+                this.setStatus('Could not start mirroring. This draft is still private.', 'error');
+                return;
+            }
+
+            this.mirrorActive = true;
+            this.leaveCleanupSent = false;
+            this.updateOutputState();
+            if (this.previewSignature() !== this.lastPreviewSignature) {
+                this.schedulePreview(0);
+            }
+            this.setStatus(
+                'Wall mirror is live. Completed strokes now update the installation.',
+                'success',
+            );
+        }
+
+        async returnToDraft() {
+            if (!this.mirrorActive || this.modeChanging) {
+                return;
+            }
+            this.modeChanging = true;
+            this.mirrorActive = false;
+            this.cancelPendingPreview();
+            this.updateOutputState();
+            this.setStatus('Stopping painter output…');
+            try {
+                const response = await fetch('/api/stop', {method: 'POST'});
+                await this.responseJson(response);
+                this.modeChanging = false;
+                this.liveSessionEntered = false;
+                this.updateOutputState();
+                this.setStatus(
+                    'Returned to draft. Painter output on the wall has stopped.',
+                    'success',
+                );
+            } catch (error) {
+                console.error('Failed to stop painter output', error);
+                this.modeChanging = false;
+                this.mirrorActive = true;
+                this.updateOutputState();
+                this.setStatus(
+                    `Could not confirm that wall output stopped: ${error.message}`,
+                    'error',
+                );
+            }
+        }
+
+        cancelPendingPreview() {
+            if (this.previewTimer) {
+                window.clearTimeout(this.previewTimer);
+                this.previewTimer = null;
+            }
+            this.previewPending = false;
+        }
+
+        cleanupLiveOutputOnLeave() {
+            if (!this.liveSessionEntered || this.leaveCleanupSent) {
+                return;
+            }
+            this.leaveCleanupSent = true;
+            this.mirrorActive = false;
+            this.liveSessionEntered = false;
+            this.cancelPendingPreview();
+            if (navigator.sendBeacon) {
+                navigator.sendBeacon('/api/stop');
+                return;
+            }
+            fetch('/api/stop', {method: 'POST', keepalive: true}).catch(() => {});
         }
 
         maskIndices(value) {
@@ -437,6 +625,98 @@
             return indices;
         }
 
+        async loadPresetCatalog(selectedId = '') {
+            try {
+                const response = await fetch('/api/painter/presets', {cache: 'no-store'});
+                const payload = await this.responseJson(response);
+                this.presetCatalog = Array.isArray(payload.presets) ? payload.presets : [];
+                const select = document.getElementById('painterPresetSelect');
+                select.replaceChildren(new Option(
+                    this.presetCatalog.length ? 'Choose a mask preset…' : 'No saved presets',
+                    '',
+                ));
+                this.presetCatalog.forEach((preset) => {
+                    select.add(new Option(preset.name || preset.preset_id, preset.preset_id));
+                });
+                if (selectedId && this.presetCatalog.some((preset) => preset.preset_id === selectedId)) {
+                    select.value = selectedId;
+                }
+                this.updateControls();
+            } catch (error) {
+                console.error('Failed to load painter presets', error);
+                this.setStatus('Mask presets are temporarily unavailable. Your draft is unaffected.', 'error');
+            }
+        }
+
+        pixelMaskValue(pixel) {
+            if (!Array.isArray(pixel)) return EMPTY;
+            const matches = (color) => color.every((value, index) => Number(pixel[index]) === value);
+            if (matches(this.colors.foliage)) return FOLIAGE;
+            if (matches(this.colors.planter_bowls)) return PLANTER;
+            return EMPTY;
+        }
+
+        async loadSelectedPreset() {
+            const select = document.getElementById('painterPresetSelect');
+            if (!select.value || this.mirrorActive || this.modeChanging) return;
+            const button = document.getElementById('loadPainterPresetBtn');
+            button.disabled = true;
+            this.setStatus('Loading preset into this private draft…');
+            try {
+                const response = await fetch(`/api/painter/presets/${encodeURIComponent(select.value)}`, {cache: 'no-store'});
+                const payload = await this.responseJson(response);
+                const info = payload.led_info || {};
+                const sameGeometry = Number(info.strip_count) === this.layout.stripCount
+                    && Number(info.leds_per_strip) === this.layout.ledsPerStrip
+                    && Array.isArray(payload.frame_data)
+                    && payload.frame_data.length === this.layout.totalLeds;
+                if (!sameGeometry) throw new Error('This preset uses different mask geometry.');
+                this.history.push(this.maskState.slice());
+                if (this.history.length > this.maxHistory) this.history.shift();
+                this.maskState = Uint8Array.from(payload.frame_data, (pixel) => this.pixelMaskValue(pixel));
+                this.updateDirtyState();
+                this.render();
+                this.updateControls();
+                this.setStatus(`${payload.name || 'Preset'} loaded as a private draft.`, 'success');
+            } catch (error) {
+                console.error('Failed to load painter preset', error);
+                this.setStatus(error.message || 'Failed to load preset', 'error');
+                this.updateControls();
+            }
+        }
+
+        async savePreset() {
+            const input = document.getElementById('painterPresetName');
+            const name = input.value.trim();
+            if (!name || !this.initialized || this.modeChanging) return;
+            const button = document.getElementById('savePainterPresetBtn');
+            button.disabled = true;
+            this.setStatus('Saving this mask draft as a preset…');
+            try {
+                const response = await fetch('/api/painter/presets', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name,
+                        led_info: {
+                            strip_count: this.layout.stripCount,
+                            leds_per_strip: this.layout.ledsPerStrip,
+                            total_leds: this.layout.totalLeds,
+                        },
+                        frame_data: this.frameAsList(),
+                    }),
+                });
+                const payload = await this.responseJson(response);
+                input.value = '';
+                await this.loadPresetCatalog(payload.preset?.preset_id || '');
+                this.setStatus(`${payload.preset?.name || name} saved. The wall was not changed.`, 'success');
+            } catch (error) {
+                console.error('Failed to save painter preset', error);
+                this.setStatus(error.message || 'Failed to save preset', 'error');
+                this.updateControls();
+            }
+        }
+
         async save() {
             if (!this.dirty) {
                 return;
@@ -445,7 +725,6 @@
             button.disabled = true;
             this.setStatus('Saving both mask files…');
             try {
-                await this.pushPreview();
                 const response = await fetch('/api/painter/masks', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},

@@ -21,6 +21,12 @@ FAST_CONFIG_FILES = {
     PurePosixPath("config/plant_pixel_map_32x138.json"),
     PurePosixPath("config/webcam_pixel_map.json"),
 }
+FAST_RUNTIME_FILES = {
+    # Every immutable app release is a valid systemd target.  Omitting the
+    # launcher from a fast release makes activation point the service at a
+    # release it cannot start.
+    PurePosixPath("scripts/start_systemd.sh"),
+}
 UNTRACKED_DEPLOY_ROOTS = {
     "animation", "drivers", "firmware", "ipc", "scripts", "tools", "web",
 }
@@ -117,6 +123,8 @@ def _include_fast(path: PurePosixPath) -> bool:
     if _is_beneath(path, PurePosixPath("animation/plugins")):
         return True
     if path in FAST_CONFIG_FILES:
+        return True
+    if path in FAST_RUNTIME_FILES:
         return True
     return path.suffix in FAST_CODE_SUFFIXES
 

@@ -3,27 +3,27 @@
 {% block title %}LED Grid Dashboard{% endblock %}
 
 {% block content %}
-{% macro speed_control(id_suffix='', mobile=false) %}
-<div class="card speed-card{{ ' mobile-speed-card' if mobile else '' }}">
+{% macro speed_control() %}
+<div class="card speed-card" aria-labelledby="animationSpeedHeading">
     <div class="card-body p-3">
-        <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+        <div class="d-flex flex-wrap align-items-end justify-content-between gap-2 mb-2">
             <div>
-                <div class="text-uppercase fw-bold small opacity-75">{{ 'Animation speed' if mobile else 'Global tempo' }}</div>
-                {% if mobile %}<div class="speed-helper">Changes every animation instantly</div>{% endif %}
+                <div class="text-uppercase fw-bold small opacity-75" id="animationSpeedHeading">Animation speed</div>
+                <div class="small opacity-75">Updates the live wall immediately.</div>
             </div>
-            <label class="tempo-readout" title="Enter any positive tempo multiplier">
-                <span class="visually-hidden">Exact global tempo</span>
-                <input class="speed-value-input global-speed-number" id="globalSpeedNumber{{ id_suffix }}" type="number" step="any" value="1" inputmode="decimal" aria-label="Exact global tempo multiplier" oninput="previewGlobalSpeed(this.value)" onchange="setGlobalSpeed(this.value)">
+            <label class="tempo-readout" for="globalSpeedNumber" title="Enter a speed multiplier from 0.1 to 10">
+                <span class="tempo-readout-label">Speed multiplier</span>
+                <input class="speed-value-input global-speed-number" id="globalSpeedNumber" type="number" min="0.1" max="10" step="0.05" value="1" inputmode="decimal" aria-label="Animation speed multiplier" oninput="previewGlobalSpeed(this.value)" onchange="setGlobalSpeed(this.value)">
                 <span class="tempo-times">×</span>
             </label>
         </div>
-        <input class="form-range global-speed-range" id="globalSpeedRange{{ id_suffix }}" type="range" min="0" max="100" step="1" value="50" aria-label="Global animation speed, logarithmic scale" oninput="previewGlobalSpeedFromPosition(this.value)" onchange="setGlobalSpeedFromPosition(this.value)">
-        <div class="tempo-scale"><span>0.1×</span><span>1×</span><span>10×</span></div>
-        <div class="speed-presets mt-2" aria-label="{{ 'Mobile speed presets' if mobile else 'Speed presets' }}">
-            <button class="btn btn-sm speed-preset" type="button" onclick="setGlobalSpeedPreset(0.65)">Slow</button>
-            <button class="btn btn-sm speed-preset active" type="button" onclick="setGlobalSpeedPreset(1)">Groove</button>
-            <button class="btn btn-sm speed-preset" type="button" onclick="setGlobalSpeedPreset(1.5)">Lively</button>
-            <button class="btn btn-sm speed-preset" type="button" onclick="setGlobalSpeedPreset(2.25)">Turbo</button>
+        <input class="form-range global-speed-range" id="globalSpeedRange" type="range" min="0" max="100" step="1" value="50" aria-label="Animation speed from 0.1 to 10 times normal" oninput="previewGlobalSpeedFromPosition(this.value)" onchange="setGlobalSpeedFromPosition(this.value)">
+        <div class="tempo-scale"><span>0.1×</span><span>1× normal</span><span>10×</span></div>
+        <div class="speed-presets mt-2" aria-label="Speed presets">
+            <button class="btn btn-sm speed-preset" type="button" onclick="setGlobalSpeedPreset(0.65)">Slow 0.65×</button>
+            <button class="btn btn-sm speed-preset active" type="button" onclick="setGlobalSpeedPreset(1)">Normal 1×</button>
+            <button class="btn btn-sm speed-preset" type="button" onclick="setGlobalSpeedPreset(1.5)">Fast 1.5×</button>
+            <button class="btn btn-sm speed-preset" type="button" onclick="setGlobalSpeedPreset(2.25)">Very fast 2.25×</button>
         </div>
     </div>
 </div>
@@ -40,124 +40,132 @@
 {% endmacro %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
 
-<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+<header class="dashboard-intro d-flex flex-wrap justify-content-between align-items-end gap-3 mb-3">
     <div>
         <div class="section-kicker">LED Grid Studio</div>
-        <h1 class="dashboard-heading mb-1">Choose the mood. Set the pace.</h1>
-        <p class="text-muted mb-0">Start with an animation or jump straight into a curated preset.</p>
+        <h1 class="dashboard-heading mb-1">Create the wall's next moment.</h1>
+        <p class="text-muted mb-0">Explore safely, adjust in context, then choose exactly when to take it live.</p>
     </div>
-</div>
+</header>
 
-<div class="card now-playing-bar mb-3">
-    <div class="card-body d-flex flex-wrap align-items-center justify-content-between gap-3 py-3">
-        <div class="d-flex align-items-center gap-3">
-            <span class="status-indicator {{ 'status-running' if status.is_running else 'status-stopped' }} mb-0"></span>
+<nav class="dashboard-task-nav mb-4" aria-label="Dashboard areas">
+    <button class="dashboard-task-tab is-active" id="dashboard-tab-library" type="button" role="tab" aria-selected="true" aria-controls="dashboard-library" onclick="showDashboardArea('library', {focus: true})">
+        <i class="fas fa-shapes" aria-hidden="true"></i><span><strong>Library</strong><small>Animations & presets</small></span>
+    </button>
+    <button class="dashboard-task-tab" id="dashboard-tab-now-playing" type="button" role="tab" aria-selected="false" aria-controls="dashboard-now-playing" onclick="showDashboardArea('now-playing', {focus: true})">
+        <i class="fas fa-sliders-h" aria-hidden="true"></i><span><strong>Now Playing</strong><small>Preview & adjust</small></span>
+    </button>
+    <button class="dashboard-task-tab" id="dashboard-tab-compose" type="button" role="tab" aria-selected="false" aria-controls="dashboard-compose" onclick="showDashboardArea('compose', {focus: true})">
+        <i class="fas fa-layer-group" aria-hidden="true"></i><span><strong>Compose</strong><small>Build a scene</small></span>
+    </button>
+    <button class="dashboard-task-tab" id="dashboard-tab-system" type="button" role="tab" aria-selected="false" aria-controls="dashboard-system" onclick="showDashboardArea('system', {focus: true})">
+        <i class="fas fa-stethoscope" aria-hidden="true"></i><span><strong>System</strong><small>Test & diagnose</small></span>
+    </button>
+</nav>
+
+<main class="dashboard-workspace mb-4">
+    <section class="dashboard-area" id="dashboard-library" role="tabpanel" aria-labelledby="dashboard-tab-library" tabindex="-1">
+        <div class="dashboard-area-heading d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
             <div>
-                <div class="now-playing-label">Now playing</div>
-                <strong class="status-text fs-5">{{ status.current_animation|replace('_', ' ')|title if status.is_running else 'Nothing yet' }}</strong>
+                <div class="section-kicker">Library</div>
+                <h2 class="h4 mb-1">Find a look</h2>
+                <p class="text-muted mb-0">Choosing or adjusting a look never changes the live wall.</p>
+            </div>
+            <span class="library-result-count" id="libraryResultCount" role="status" aria-live="polite">{{ animations|length }} animations</span>
+        </div>
+
+        <div class="library-tools mb-3" role="search">
+            <div class="library-search-wrap">
+                <i class="fas fa-search" aria-hidden="true"></i>
+                <label class="visually-hidden" for="librarySearch">Search animations and presets</label>
+                <input class="form-control" id="librarySearch" type="search" placeholder="Search animations and presets" autocomplete="off">
+            </div>
+            <div class="library-kind-filter" aria-label="Content type">
+                <button class="library-filter-chip is-active" type="button" data-library-kind="all" aria-pressed="true">All</button>
+                <button class="library-filter-chip" type="button" data-library-kind="animation" aria-pressed="false">Animations</button>
+                <button class="library-filter-chip" type="button" data-library-kind="preset" aria-pressed="false">Presets</button>
+            </div>
+            <div class="library-kind-filter" aria-label="Saved views">
+                <button class="library-filter-chip is-active" type="button" data-library-saved="all" aria-pressed="true">All looks</button>
+                <button class="library-filter-chip" type="button" data-library-saved="favorites" aria-pressed="false"><i class="far fa-star me-1" aria-hidden="true"></i>Favorites</button>
+                <button class="library-filter-chip" type="button" data-library-saved="recent" aria-pressed="false"><i class="fas fa-clock-rotate-left me-1" aria-hidden="true"></i>Recent</button>
+            </div>
+            <div class="library-category-actions">
+                <label class="visually-hidden" for="libraryCategory">Filter by category</label>
+                <select class="form-select" id="libraryCategory"><option value="all">All categories</option></select>
+                <button class="btn btn-outline-secondary" id="libraryClearFilters" type="button" onclick="clearLibraryFilters()">Clear filters</button>
             </div>
         </div>
-        <button class="btn btn-outline-light btn-sm px-3" onclick="stopAnimation()"><i class="fas fa-stop me-1"></i> Stop</button>
-    </div>
-</div>
 
-<div class="row g-4 mb-4">
-    <div class="col-xl-8">
-        <div class="d-flex justify-content-between align-items-end mb-3">
-            <div>
-                <div class="section-kicker">Show-ready</div>
-                <h2 class="h4 mb-0">Animations & presets</h2>
-            </div>
-            <small class="text-muted">Tap a preset to play it instantly</small>
-        </div>
-        <div class="d-xl-none mb-3" aria-label="Mobile animation speed control">
-            {{ speed_control('Mobile', true) }}
-        </div>
-        <div class="accordion animation-grid animation-accordion" id="showAnimationAccordion">
+        <div class="library-grid" id="libraryGrid" aria-label="Animation and preset library">
             {% for animation in animations %}
             {% set gallery_component = component_index.get('python:' ~ animation.plugin_name) %}
-            <article class="accordion-item animation-card" data-animation-card="{{ animation.plugin_name }}">
-                <h3 class="accordion-header" id="animationHeading-{{ animation.plugin_name }}">
-                    <button class="accordion-button collapsed animation-summary" type="button" data-bs-toggle="collapse" data-bs-target="#animationCollapse-{{ animation.plugin_name }}" aria-expanded="false" aria-controls="animationCollapse-{{ animation.plugin_name }}">
-                        {% if animation.preview and animation.preview.poster_url and animation.preview.loop_url %}
-                        <img class="generated-preview animation-preview animation-summary-preview"
-                             src="{{ animation.preview.poster_url }}"
-                             data-poster-src="{{ animation.preview.poster_url }}"
-                             data-loop-src="{{ animation.preview.loop_url }}"
-                             loading="lazy" decoding="async" width="32" height="138"
-                             alt="Pre-rendered preview of {{ animation.name }}"
-                             onerror="this.hidden=true">
-                        {% endif %}
-                        <div class="animation-icon" aria-hidden="true">{{ animation.emoji }}</div>
-                        <div class="animation-summary-copy">
-                            <span class="animation-name">{{ animation.name }}</span>
-                            <span class="animation-description">{{ animation.description }}</span>
-                            {% if gallery_component %}
-                            <span class="component-badge-row mt-1">
-                                {{ provider_badge(gallery_component) }}
-                                {{ role_badge(gallery_component) }}
-                            </span>
-                            {% endif %}
-                        </div>
-                        {% if animation.presets %}<span class="badge rounded-pill animation-preset-count">{{ animation.presets|length }} preset{{ '' if animation.presets|length == 1 else 's' }}</span>{% endif %}
-                    </button>
-                </h3>
-                <div id="animationCollapse-{{ animation.plugin_name }}" class="accordion-collapse collapse" aria-labelledby="animationHeading-{{ animation.plugin_name }}" data-bs-parent="#showAnimationAccordion">
-                    <div class="accordion-body animation-details">
-                        <p class="animation-details-description mb-3">{{ animation.description }}</p>
-                        {% if animation.presets %}
-                        <div class="accordion preset-accordion" id="presetAccordion-{{ animation.plugin_name }}">
-                            <div class="accordion-item">
-                                <h4 class="accordion-header" id="presetHeading-{{ animation.plugin_name }}">
-                                    <button class="accordion-button collapsed preset-accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#presetCollapse-{{ animation.plugin_name }}" aria-expanded="false" aria-controls="presetCollapse-{{ animation.plugin_name }}">
-                                        Curated presets <span class="badge rounded-pill ms-2">{{ animation.presets|length }}</span>
-                                    </button>
-                                </h4>
-                                <div id="presetCollapse-{{ animation.plugin_name }}" class="accordion-collapse collapse" aria-labelledby="presetHeading-{{ animation.plugin_name }}">
-                                    <div class="accordion-body p-2">
-                                        <div class="preset-strip" aria-label="{{ animation.name }} presets">
-                                            {% for preset in animation.presets %}
-                                            <button class="preset-chip" type="button" title="{{ preset.description or preset.name }}" onclick="playDashboardPreset('{{ animation.plugin_name }}', '{{ preset.preset_id }}', this)">
-                                                {% if preset.preview and preset.preview.poster_url and preset.preview.loop_url %}
-                                                <img class="generated-preview preset-preview"
-                                                     src="{{ preset.preview.poster_url }}"
-                                                     data-poster-src="{{ preset.preview.poster_url }}"
-                                                     data-loop-src="{{ preset.preview.loop_url }}"
-                                                     data-preview-status="{{ preset.preview.status }}"
-                                                     data-animation="{{ animation.plugin_name }}"
-                                                     data-preset-id="{{ preset.preset_id }}"
-                                                     loading="lazy" decoding="async" width="32" height="138"
-                                                     alt="" aria-hidden="true" onerror="this.hidden=true">
-                                                {% endif %}
-                                                <span class="preset-emoji" aria-hidden="true">{{ preset.emoji }}</span>
-                                                <span class="preset-copy">
-                                                    <span class="preset-name">{{ preset.name }}</span>
-                                                    <span class="preset-category">{{ preset.category or 'Preset' }}</span>
-                                                </span>
-                                                {% if preset.swatches %}<span class="preset-swatches" aria-hidden="true">{% for color in preset.swatches %}<span class="preset-swatch" style="background: {{ color }}"></span>{% endfor %}</span>{% endif %}
-                                            </button>
-                                            {% endfor %}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        {% else %}
-                        <small class="text-muted d-block mb-2">No saved presets yet</small>
-                        {% endif %}
-                        <div class="d-flex gap-2 pt-3">
-                            <button class="btn btn-primary btn-sm flex-grow-1" type="button" onclick="selectControlAnimation('{{ animation.plugin_name }}')"><i class="fas fa-play me-1"></i> Play</button>
-                            <button class="btn btn-outline-secondary btn-sm" type="button" onclick="openAnimationControls('{{ animation.plugin_name }}')" title="Fine tune {{ animation.name }}" aria-label="Fine tune {{ animation.name }}"><i class="fas fa-sliders-h"></i></button>
-                            <button class="btn btn-outline-secondary btn-sm" type="button" onclick="previewAnimation('{{ animation.plugin_name }}')" title="Preview {{ animation.name }}" aria-label="Preview {{ animation.name }}"><i class="fas fa-eye"></i></button>
-                        </div>
-                    </div>
+            <article class="library-card animation-card" data-library-item data-library-id="animation:{{ animation.plugin_name }}" data-library-kind="animation" data-library-category="animation" data-search-text="{{ animation.name }} {{ animation.description }} animation" data-animation-card="{{ animation.plugin_name }}">
+                <button class="library-favorite" type="button" data-library-favorite data-library-id="animation:{{ animation.plugin_name }}" aria-pressed="false" aria-label="Add {{ animation.name }} to favorites" title="Add to favorites" onclick="toggleLibraryFavorite(event, this)"><i class="far fa-star" aria-hidden="true"></i></button>
+                <div class="library-card-visual">
+                    {% if animation.preview and animation.preview.poster_url and animation.preview.loop_url %}
+                    <img class="generated-preview library-preview" src="{{ animation.preview.poster_url }}" data-poster-src="{{ animation.preview.poster_url }}" data-loop-src="{{ animation.preview.loop_url }}" loading="lazy" decoding="async" width="32" height="138" alt="Pre-rendered preview of {{ animation.name }}" onerror="this.hidden=true">
+                    {% else %}
+                    <span class="animation-icon" aria-hidden="true">{{ animation.emoji }}</span>
+                    {% endif %}
+                </div>
+                <div class="library-card-copy">
+                    <div class="library-card-eyebrow">Animation{% if animation.presets %} · {{ animation.presets|length }} presets{% endif %}</div>
+                    <h3>{{ animation.name }}</h3>
+                    <p>{{ animation.description }}</p>
+                    {% if gallery_component %}<div class="component-badge-row">{{ provider_badge(gallery_component) }} {{ role_badge(gallery_component) }}</div>{% endif %}
+                </div>
+                <div class="library-card-actions">
+                    <button class="btn btn-outline-secondary btn-sm" type="button" onclick="previewAnimation('{{ animation.plugin_name }}')"><i class="fas fa-eye me-1" aria-hidden="true"></i> Preview</button>
+                    <button class="btn btn-outline-primary btn-sm" type="button" onclick="openAnimationControls('{{ animation.plugin_name }}')"><i class="fas fa-sliders-h me-1" aria-hidden="true"></i> Adjust</button>
+                    <button class="btn btn-primary btn-sm" type="button" onclick="takeAnimationLive('{{ animation.plugin_name }}', this)"><i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take live</button>
+                </div>
+            </article>
+            {% for preset in animation.presets %}
+            <article class="library-card preset-library-card" data-library-item data-library-id="preset:{{ animation.plugin_name }}:{{ preset.preset_id }}" data-library-kind="preset" data-library-category="{{ (preset.category or 'Preset')|lower }}" data-search-text="{{ preset.name }} {{ preset.description or '' }} {{ preset.category or 'Preset' }} {{ animation.name }} preset" data-animation-parent="{{ animation.plugin_name }}">
+                <button class="library-favorite" type="button" data-library-favorite data-library-id="preset:{{ animation.plugin_name }}:{{ preset.preset_id }}" aria-pressed="false" aria-label="Add {{ preset.name }} to favorites" title="Add to favorites" onclick="toggleLibraryFavorite(event, this)"><i class="far fa-star" aria-hidden="true"></i></button>
+                <div class="library-card-visual">
+                    {% if preset.preview and preset.preview.poster_url and preset.preview.loop_url %}
+                    <img class="generated-preview library-preview" src="{{ preset.preview.poster_url }}" data-poster-src="{{ preset.preview.poster_url }}" data-loop-src="{{ preset.preview.loop_url }}" data-preview-status="{{ preset.preview.status }}" data-animation="{{ animation.plugin_name }}" data-preset-id="{{ preset.preset_id }}" loading="lazy" decoding="async" width="32" height="138" alt="Pre-rendered preview of {{ preset.name }}" onerror="this.hidden=true">
+                    {% else %}
+                    <span class="animation-icon" aria-hidden="true">{{ preset.emoji }}</span>
+                    {% endif %}
+                </div>
+                <div class="library-card-copy">
+                    <div class="library-card-eyebrow">{{ preset.category or 'Preset' }} · {{ animation.name }}</div>
+                    <h3>{{ preset.name }}</h3>
+                    <p>{{ preset.description or 'A curated starting point for ' ~ animation.name ~ '.' }}</p>
+                    {% if preset.swatches %}<span class="preset-swatches" aria-label="Preset colors">{% for color in preset.swatches %}<span class="preset-swatch" style="background: {{ color }}"></span>{% endfor %}</span>{% endif %}
+                </div>
+                <div class="library-card-actions">
+                    <button class="btn btn-outline-secondary btn-sm" type="button" onclick="previewDashboardPreset('{{ animation.plugin_name }}', '{{ preset.preset_id }}', this)"><i class="fas fa-eye me-1" aria-hidden="true"></i> Preview</button>
+                    <button class="btn btn-outline-primary btn-sm" type="button" onclick="openPresetControls('{{ animation.plugin_name }}', '{{ preset.preset_id }}', this)"><i class="fas fa-sliders-h me-1" aria-hidden="true"></i> Adjust</button>
+                    <button class="btn btn-primary btn-sm" type="button" onclick="takePresetLive('{{ animation.plugin_name }}', '{{ preset.preset_id }}', this)"><i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take live</button>
                 </div>
             </article>
             {% endfor %}
+            {% endfor %}
+        </div>
+        <div class="library-empty" id="libraryEmpty" hidden>
+            <i class="fas fa-search" aria-hidden="true"></i>
+            <h3 class="h5">No matching looks</h3>
+            <p class="text-muted mb-2">Try a broader search or clear the current filters.</p>
+            <button class="btn btn-outline-primary btn-sm" type="button" onclick="clearLibraryFilters()">Clear filters</button>
+        </div>
+        <div class="library-more mt-3" id="libraryMore" hidden>
+            <button class="btn btn-outline-primary" id="libraryShowMore" type="button" onclick="showMoreLibraryItems()">Show more looks</button>
         </div>
         {% if not animations %}
         <div class="alert alert-warning mt-3">No show-ready animations were loaded.</div>
         {% endif %}
+    </section>
+
+    <section class="dashboard-area" id="dashboard-compose" role="tabpanel" aria-labelledby="dashboard-tab-compose" tabindex="-1" hidden>
+        <div class="dashboard-area-heading mb-3">
+            <div class="section-kicker">Compose</div>
+            <h2 class="h4 mb-1">Build a layered scene</h2>
+            <p class="text-muted mb-0">Arrange components and preview the result before taking the scene live.</p>
+        </div>
 
         <section class="card component-catalog-card mt-3" aria-labelledby="componentCatalogHeading">
             <div class="card-body p-3">
@@ -257,7 +265,7 @@
                     <div>
                         <div class="section-kicker">Composed scene</div>
                         <h2 class="h5 mb-1" id="sceneEditorHeading">Background + clock overlay</h2>
-                        <p class="small text-muted mb-0">Scene presets store components and layout only. Global vibe and plant controls remain independent.</p>
+                        <p class="small text-muted mb-0">Scene presets store components and layout only. Wall mood and plant behavior remain independent.</p>
                     </div>
                     {% if receiver_hybrid_enabled %}
                     <span class="badge bg-light text-dark border">Host + receiver providers · fixed slots</span>
@@ -289,7 +297,7 @@
                                     <option value="">Unsaved scene</option>
                                     {% for preset in scene_presets %}<option value="{{ preset.preset_id }}">{{ preset.name }}</option>{% endfor %}
                                 </select>
-                                <button class="btn btn-outline-primary" type="button" onclick="applyScenePreset()">Apply</button>
+                                <button class="btn btn-outline-primary" type="button" onclick="loadScenePresetDraft()">Load draft</button>
                             </div>
                         </div>
                         {% if receiver_hybrid_enabled %}
@@ -327,16 +335,19 @@
                         </div>
                         {% endif %}
                         <div class="col-md-4">
-                            <label class="form-label" for="sceneOverlayOpacity">Opacity</label>
-                            <input class="form-range" id="sceneOverlayOpacity" type="range" min="0" max="255" value="255">
+                            <div class="d-flex justify-content-between gap-2">
+                                <label class="form-label" for="sceneOverlayOpacity">Clock opacity</label>
+                                <output class="scene-value-output" id="sceneOverlayOpacityValue" for="sceneOverlayOpacity">100%</output>
+                            </div>
+                            <input class="form-range" id="sceneOverlayOpacity" type="range" min="0" max="255" value="255" aria-describedby="sceneOverlayOpacityValue" oninput="syncSceneOverlayOpacityReadout(this.value)">
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="sceneOverlayStripOffset">Horizontal placement</label>
-                            <input class="form-control" id="sceneOverlayStripOffset" type="number" step="1" value="0">
+                            <div class="input-group"><input class="form-control" id="sceneOverlayStripOffset" type="number" step="1" value="0"><span class="input-group-text">columns</span></div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="sceneOverlayLedOffset">Vertical placement</label>
-                            <input class="form-control" id="sceneOverlayLedOffset" type="number" step="1" value="0">
+                            <div class="input-group"><input class="form-control" id="sceneOverlayLedOffset" type="number" step="1" value="0"><span class="input-group-text">rows</span></div>
                         </div>
                         <div class="col-md-5">
                             <label class="form-label" for="sceneStalePolicy">Stale overlay policy</label>
@@ -388,12 +399,20 @@
                 <div class="small text-muted mt-2" id="sceneCompatibilityHelp" role="status">Only components declaring the matching Python role are selectable. Compatibility full scenes remain in the animation gallery.</div>
                 {% endif %}
                 <div class="d-flex flex-wrap gap-2 mt-3">
-                    <button class="btn btn-primary" type="button" onclick="startEditedScene()"><i class="fas fa-play me-1"></i> Start scene</button>
+                    <button class="btn btn-primary" type="button" onclick="startEditedScene()"><i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take scene live</button>
                     <button class="btn btn-outline-primary" type="button" onclick="previewEditedScene()"><i class="fas fa-eye me-1"></i> Preview scene</button>
-                    <button class="btn btn-outline-danger ms-md-auto" type="button" onclick="stopEditedScene()"><i class="fas fa-stop me-1"></i> Stop scene</button>
                 </div>
             </div>
         </section>
+
+    </section>
+
+    <section class="dashboard-area" id="dashboard-system" role="tabpanel" aria-labelledby="dashboard-tab-system" tabindex="-1" hidden>
+        <div class="dashboard-area-heading mb-3">
+            <div class="section-kicker">System</div>
+            <h2 class="h4 mb-1">Test and diagnose</h2>
+            <p class="text-muted mb-0">Run guided installation checks here. Advanced holds direct parameter inspection, performance, raw status, and specialty controls.</p>
+        </div>
 
         <div class="accordion utility-accordion mt-3" id="testAnimationAccordion">
             <div class="accordion-item rounded-3 overflow-hidden">
@@ -404,108 +423,116 @@
                 </h2>
                 <div id="testAnimationCollapse" class="accordion-collapse collapse" data-bs-parent="#testAnimationAccordion">
                     <div class="accordion-body bg-light">
-                        <p class="small text-muted mb-2">Hardware checks and installation tools, kept out of the everyday gallery.</p>
+                        <p class="small text-muted mb-2">Preview checks safely, or explicitly start one on the live wall.</p>
                         <div class="test-animation-grid">
                             {% for animation in test_animations %}
-                            <button class="test-animation-btn" onclick="selectControlAnimation('{{ animation.plugin_name }}')"><span class="me-1">{{ animation.emoji }}</span> <strong>{{ animation.name }}</strong></button>
+                            <div class="test-animation-item">
+                                <span class="test-animation-name"><span aria-hidden="true">{{ animation.emoji }}</span> <strong>{{ animation.name }}</strong></span>
+                                <span class="test-animation-actions">
+                                    <button class="btn btn-sm btn-outline-secondary" type="button" onclick="previewAnimation('{{ animation.plugin_name }}')">Preview</button>
+                                    <button class="btn btn-sm btn-outline-primary" type="button" onclick="openAnimationControls('{{ animation.plugin_name }}')">Adjust</button>
+                                    <button class="btn btn-sm btn-primary" type="button" onclick="takeAnimationLive('{{ animation.plugin_name }}', this)">Take live</button>
+                                </span>
+                            </div>
                             {% endfor %}
                         </div>
                     </div>
                 </div>
             </div>
         </div>
+        <div class="card mt-3 border-0">
+            <div class="card-body d-flex flex-wrap align-items-center justify-content-between gap-3">
+                <div><strong>Need lower-level control?</strong><div class="small text-muted">Inspect exact parameters, receiver and performance data, raw status, or Tetris controls in the expert workspace.</div></div>
+                <a class="btn btn-outline-primary" href="{{ url_for('control_page') }}">Open Advanced</a>
+            </div>
+        </div>
+    </section>
 
-        <div class="accordion utility-accordion mt-3" id="controlsAccordion">
-            <div class="accordion-item rounded-3 overflow-hidden">
-                <h2 class="accordion-header" id="controlsHeading">
-                    <button class="accordion-button collapsed" id="controlsAccordionButton" type="button" data-bs-toggle="collapse" data-bs-target="#controlsCollapse" aria-expanded="false">🎛️ Fine-tune the current animation</button>
-                </h2>
-                <div id="controlsCollapse" class="accordion-collapse collapse">
+    <section class="dashboard-area" id="dashboard-now-playing" role="tabpanel" aria-labelledby="dashboard-tab-now-playing" tabindex="-1" hidden>
+        <div class="dashboard-area-heading d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+            <div>
+                <div class="section-kicker">Now Playing</div>
+                <h2 class="h4 mb-1">Preview and adjust</h2>
+                <p class="text-muted mb-0">Draft controls stay isolated until you choose Take live.</p>
+            </div>
+            <button class="btn btn-primary" id="takeSelectedLiveButton" type="button" onclick="takeSelectedLive()" disabled><i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take live</button>
+        </div>
+        <div class="row g-4">
+            <div class="col-xl-8">
+
+        <section class="card control-panel-card" id="controlsAccordion" aria-labelledby="controlsHeading">
+            <div class="card-body p-2 p-md-3">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 px-2 pt-2">
+                    <div><div class="section-kicker">Selected look</div><h2 class="h5 mb-0" id="controlsHeading">Adjust without surprises</h2></div>
+                    <span class="control-mode-badge" id="controlModeBadge">Select a look</span>
+                </div>
+                <div id="controlsCollapse">
                     <div class="accordion-body p-2 p-md-3">
                         <div class="card border-0 control-studio p-2 p-md-3" id="controlParametersCard" style="display: none;">
                             <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
                                 <div>
-                                    <div class="section-kicker">Live studio</div>
+                                    <div class="section-kicker">Animation settings</div>
                                     <h3 class="h5 mb-0" id="controlStudioTitle">Fine-tune the scene</h3>
                                 </div>
-                                <span class="badge rounded-pill bg-success bg-opacity-10 text-success px-3 py-2"><i class="fas fa-bolt me-1"></i> Changes apply live</span>
                             </div>
                             <div class="preset-workbench mb-3">
                                 <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
-                                    <label class="form-label fw-bold mb-0" for="controlPresetSelect">🎛️ Preset workbench</label>
-                                    <small class="text-muted">Load, shape, then save your version</small>
+                                    <label class="form-label fw-bold mb-0" for="controlPresetSelect">Preset</label>
+                                    <small class="text-muted">Loading a preset does not take it live</small>
                                 </div>
                                 <div class="input-group mb-3">
                                     <select class="form-select" id="controlPresetSelect"><option value="">Choose a starting point…</option></select>
-                                    <button class="btn btn-primary px-3" type="button" onclick="applyControlPreset()"><i class="fas fa-wand-magic-sparkles me-1"></i> Load</button>
-                                    <button class="btn btn-outline-danger" type="button" onclick="deleteControlPreset()" title="Delete selected preset"><i class="fas fa-trash"></i></button>
+                                    <button class="btn btn-outline-primary px-3" type="button" onclick="applyControlPreset()"><i class="fas fa-wand-magic-sparkles me-1" aria-hidden="true"></i> Load draft</button>
+                                    <button class="btn btn-outline-danger" type="button" onclick="deleteControlPreset()" aria-label="Delete selected preset"><i class="fas fa-trash" aria-hidden="true"></i></button>
                                 </div>
                                 <div class="row g-2">
-                                    <div class="col-md-7"><input class="form-control" id="controlPresetName" maxlength="64" placeholder="Preset name, e.g. Sunday Aurora"></div>
-                                    <div class="col-md-5"><input class="form-control" id="controlPresetCategory" maxlength="40" placeholder="Category, e.g. Ambient"></div>
-                                    <div class="col-12"><textarea class="form-control" id="controlPresetDescription" rows="2" maxlength="180" placeholder="What makes this version special?"></textarea></div>
-                                    <div class="col-12 d-grid d-md-flex justify-content-md-end"><button class="btn btn-success save-preset-button px-4" type="button" onclick="saveControlPreset()"><i class="fas fa-sparkles me-1"></i> Save this look</button></div>
+                                    <div class="col-md-7"><label class="form-label small fw-semibold" for="controlPresetName">Preset name</label><input class="form-control" id="controlPresetName" maxlength="64" placeholder="For example, Sunday Aurora"></div>
+                                    <div class="col-md-5"><label class="form-label small fw-semibold" for="controlPresetCategory">Category</label><input class="form-control" id="controlPresetCategory" maxlength="40" placeholder="For example, Ambient"></div>
+                                    <div class="col-12"><label class="form-label small fw-semibold" for="controlPresetDescription">Description</label><textarea class="form-control" id="controlPresetDescription" rows="2" maxlength="180" placeholder="Describe what makes this version useful"></textarea></div>
+                                    <div class="col-12 d-grid d-md-flex justify-content-md-end"><button class="btn btn-success save-preset-button px-4" type="button" onclick="saveControlPreset()"><i class="fas fa-sparkles me-1"></i> Save as preset</button></div>
                                 </div>
                             </div>
                             <div id="controlParametersContainer" class="parameter-grid"></div>
                         </div>
-                        <div class="alert alert-light border mb-0" id="controlParametersPlaceholder">Play an animation to adjust its controls.</div>
+                        <div class="empty-adjust-state" id="controlParametersPlaceholder"><i class="fas fa-sliders-h" aria-hidden="true"></i><h3 class="h6">Choose something to adjust</h3><p class="text-muted mb-2">Select Adjust in the Library, or tune the current live animation here.</p><button class="btn btn-outline-primary btn-sm" type="button" onclick="showDashboardArea('library', {focus: true})">Browse Library</button></div>
                     </div>
                 </div>
             </div>
-        </div>
+        </section>
         <div class="d-none" aria-hidden="true">
             {% for animation in animations + test_animations %}<button class="control-animation-btn" data-animation="{{ animation.plugin_name }}"></button>{% endfor %}
         </div>
     </div>
 
-    <aside class="col-xl-4">
-        <div class="sticky-preview dashboard-sidebar-scroll">
+    <aside class="col-xl-4" aria-label="Preview and live wall controls">
+        <div>
             <div class="card compact-preview mb-3">
                 <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
-                    <div><span class="me-1">👀</span><strong class="small">Preview</strong> <span class="text-muted small">(optional)</span></div>
+                    <div><span class="me-1" aria-hidden="true">👀</span><strong class="small">Wall preview</strong></div>
                     <div class="btn-group btn-group-sm">
-                        <button type="button" class="btn btn-outline-secondary" id="toggleRenderer" onclick="toggleRenderer()"><i class="fas fa-eye"></i></button>
-                        <button type="button" class="btn btn-outline-primary" id="previewToggle" onclick="togglePreviewMode()"><span id="previewToggleText">Preview Mode</span></button>
+                        <button type="button" class="btn btn-outline-secondary" id="toggleRenderer" onclick="toggleRenderer()" aria-label="Hide wall preview"><i class="fas fa-eye" aria-hidden="true"></i></button>
+                        <button type="button" class="btn btn-outline-primary" id="previewToggle" onclick="togglePreviewMode()" aria-label="Preview the selected draft without changing the wall"><span id="previewToggleText">Preview selected draft</span></button>
                     </div>
                 </div>
                 <div class="card-body p-2" id="rendererContainer">
                     <div id="animationRenderer" class="text-center">
-                        <canvas id="ledCanvas" width="180" height="360" class="led-preview preview-canvas rounded"></canvas>
+                        <canvas id="ledCanvas" width="180" height="360" class="led-preview preview-canvas rounded" aria-label="LED wall simulation"></canvas>
                         <small class="text-muted d-block mt-2"><span id="rendererStatus">Waiting…</span> · <span id="rendererFPS">0 FPS</span> · <span id="rendererFrameCount">0 frames</span></small>
                         <small class="preview-interaction-hint text-primary d-block mt-1" id="previewInteractionHint" hidden>Click to interact</small>
                     </div>
                 </div>
-                <div class="card-footer bg-white border-0 px-2 pb-2 pt-0">
-                    <div class="preview-preset-action" id="previewPresetAction" aria-live="polite">
-                        <div class="preview-preset-current" id="previewPresetCurrent" hidden>
-                            <span class="preview-preset-label">Current preset</span>
-                            <strong id="previewPresetCurrentName"></strong>
-                        </div>
-                        <button class="btn btn-success save-preset-button w-100" id="previewSavePresetButton" type="button" onclick="openPreviewPresetComposer()" disabled>
-                            <i class="fas fa-bookmark me-1"></i> Save as preset
-                        </button>
-                        <small class="preview-preset-context text-muted" id="previewPresetContext">Play an animation to save its current look.</small>
-                        <div class="preview-preset-composer mt-2" id="previewPresetComposer" hidden>
-                            <label class="visually-hidden" for="previewPresetName">Preset name</label>
-                            <div class="input-group input-group-sm">
-                                <input class="form-control" id="previewPresetName" maxlength="64" placeholder="Name this look" autocomplete="off">
-                                <button class="btn btn-success" id="previewPresetConfirm" type="button" onclick="savePreviewPreset()">Save</button>
-                                <button class="btn btn-outline-secondary" type="button" onclick="closePreviewPresetComposer()" aria-label="Cancel saving preset"><i class="fas fa-times"></i></button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
             </div>
 
-            <div class="d-none d-xl-block mb-3">
-                {{ speed_control() }}
+            <div class="mb-2">
+                <div class="section-kicker">Live wall controls</div>
+                <p class="small text-muted mb-2">Changes in this group apply immediately; animation and scene editing stays private until Take live.</p>
             </div>
+            {{ speed_control() }}
 
-            <div class="card vibe-card mb-3" aria-labelledby="globalVibeLabel">
+            <div class="card vibe-card my-3" aria-labelledby="globalVibeLabel">
                 <div class="card-body p-3">
-                    <label class="text-uppercase fw-bold small opacity-75" id="globalVibeLabel" for="globalVibeSelect">Global vibe</label>
-                    <div class="small opacity-75 mb-2">Palette, energy, and luminance stay independent from the selected preset.</div>
+                    <label class="text-uppercase fw-bold small opacity-75" id="globalVibeLabel" for="globalVibeSelect">Wall mood</label>
+                    <div class="small opacity-75 mb-2">Changes the live wall's palette, energy, and brightness immediately.</div>
                     <select class="form-select vibe-select" id="globalVibeSelect" onchange="setGlobalVibe(this.value)">
                         {% for profile in vibe_profiles %}
                         {% set profile_id = profile.id or profile.vibe_id %}
@@ -518,38 +545,18 @@
 
             <div class="card plant-aware-card mb-3">
                 <div class="card-body p-3">
-                    <div class="text-uppercase fw-bold small opacity-75">Plant modifiers</div>
-                    <div class="small opacity-75 mb-2">Choose what foliage and globes mean in this scene. Field and surface roles are mutually exclusive.</div>
-                    <div id="plantModifierControls" class="d-grid gap-2" aria-label="Composable plant modifiers"></div>
+                    <div class="text-uppercase fw-bold small opacity-75">Plant behavior</div>
+                    <div class="small opacity-75 mb-2">Only behaviors supported by the current live animation are shown. One Field behavior and one Surface behavior can be active at a time; changes apply immediately.</div>
+                    <div id="plantModifierControls" class="d-grid gap-2" aria-label="Plant behavior controls"></div>
                     <div id="plantModifierUnsupported" class="small text-muted mt-2"></div>
                 </div>
             </div>
 
-            <div class="accordion utility-accordion" id="diagnosticsAccordion">
-                <div class="accordion-item rounded-3 overflow-hidden">
-                    <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#diagnosticsCollapse">🩺 Status & diagnostics</button></h2>
-                    <div id="diagnosticsCollapse" class="accordion-collapse collapse">
-                        <div class="accordion-body small">
-                            <div class="d-flex justify-content-between border-bottom pb-2 mb-2"><span>Actual FPS</span><strong id="metricActualFps">--</strong></div>
-                            <div class="d-flex justify-content-between border-bottom pb-2 mb-2"><span>Target FPS</span><strong id="metricTargetFps">--</strong></div>
-                            <div class="d-flex justify-content-between border-bottom pb-2 mb-2"><span>Pipeline FPS</span><strong id="metricDriverFps">--</strong></div>
-                            <div class="d-flex justify-content-between mb-3"><span>Devices</span><strong id="metricDeviceCount">--</strong></div>
-                            <details>
-                                <summary class="text-muted">Raw status JSON</summary>
-                                <pre id="statusJson" class="bg-dark text-white p-2 rounded mt-2" style="max-height:260px;overflow:auto">Loading…</pre>
-                                <button class="btn btn-sm btn-outline-secondary" onclick="copyStatusJson()">Copy JSON</button>
-                            </details>
-                            <div class="d-none">
-                                <span id="statFill"></span><span id="statExpected"></span><span id="statHole"></span><span id="statBubbles"></span><span id="statSpray"></span><span id="statSpawnAllowed"></span><code id="statHash"></code>
-                                <span id="metricTargetFrame"></span><span id="metricAvgGenerate"></span><span id="metricAvgSend"></span><span id="metricAvgFrame"></span><span id="metricLastFrame"></span><span id="metricInlineShow"></span><span id="metricPerfSamples"></span><span id="metricDriverFrames"></span><span id="metricDriverBytes"></span><span id="metricDriverErrors"></span><span id="metricDriverAvg"></span><span id="metricDriverLast"></span><span id="metricSpiSpeed"></span><span id="metricSpiTransfers"></span><span id="metricCrcBytes"></span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
     </aside>
 </div>
+    </section>
+</main>
 {% endblock %}
 
 {% block scripts %}

@@ -49,29 +49,153 @@
             max-width: 100%;
             height: auto;
         }
+
+        :root {
+            --studio-ink: #172033;
+            --studio-muted: #667085;
+            --studio-surface: #ffffff;
+            --studio-canvas: #f5f7fb;
+            --studio-border: #dfe5ee;
+            --studio-accent: #6d5dfc;
+        }
+
+        body {
+            background: var(--studio-canvas);
+            color: var(--studio-ink);
+        }
+
+        .studio-navbar {
+            background: #111827;
+            box-shadow: 0 1px 0 rgba(255, 255, 255, .08);
+        }
+
+        .studio-navbar .navbar-brand {
+            font-weight: 750;
+            letter-spacing: -.02em;
+        }
+
+        .studio-navbar .nav-link {
+            border-radius: .55rem;
+            color: rgba(255, 255, 255, .72);
+            font-weight: 600;
+            margin-left: .2rem;
+            padding-left: .8rem;
+            padding-right: .8rem;
+        }
+
+        .studio-navbar .nav-link:hover,
+        .studio-navbar .nav-link:focus-visible,
+        .studio-navbar .nav-link.active {
+            background: rgba(255, 255, 255, .1);
+            color: #fff;
+        }
+
+        .studio-navbar .nav-link.active {
+            box-shadow: inset 0 -2px 0 #a99fff;
+        }
+
+        .studio-page {
+            padding-bottom: 3rem;
+        }
+
+        .global-live-shell {
+            padding-top: 1rem;
+        }
+
+        .global-live-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: .75rem .9rem;
+            border: 1px solid #d7ddea;
+            border-radius: 14px;
+            background: #fff;
+            box-shadow: 0 8px 24px rgba(16, 24, 40, .07);
+        }
+
+        .global-live-copy {
+            display: flex;
+            align-items: center;
+            min-width: 0;
+            gap: .65rem;
+        }
+
+        .global-live-copy strong,
+        .global-live-copy small {
+            display: block;
+        }
+
+        .global-live-copy small {
+            color: var(--studio-muted);
+            font-size: .72rem;
+        }
+
+        @media (max-width: 575.98px) {
+            .global-live-bar { align-items: stretch; flex-direction: column; }
+            .global-live-bar .btn { width: 100%; }
+        }
+
+        .card {
+            border-color: var(--studio-border);
+            box-shadow: 0 1px 2px rgba(16, 24, 40, .035);
+        }
+
+        :focus-visible {
+            outline: 3px solid rgba(109, 93, 252, .35);
+            outline-offset: 2px;
+        }
     </style>
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <nav class="navbar navbar-expand-lg navbar-dark studio-navbar">
         <div class="container">
             <a class="navbar-brand" href="{{ url_for('index') }}">
-                <i class="fas fa-lightbulb"></i> LED Grid Control
+                <i class="fas fa-lightbulb" aria-hidden="true"></i> LED Grid Studio
             </a>
-            <div class="navbar-nav ms-auto">
-                <a class="nav-link" href="{{ url_for('index') }}">
-                    <i class="fas fa-home"></i> Dashboard
-                </a>
-                <a class="nav-link" href="{{ url_for('control_page') }}">
-                    <i class="fas fa-sliders-h"></i> Control
-                </a>
-                <a class="nav-link" href="{{ url_for('frame_painter_page') }}">
-                    <i class="fas fa-paintbrush"></i> Painter
-                </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#studioNavigation" aria-controls="studioNavigation" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="studioNavigation">
+                <div class="navbar-nav ms-auto">
+                    <a class="nav-link{{ ' active' if request.endpoint == 'index' else '' }}" href="{{ url_for('index') }}"{% if request.endpoint == 'index' %} aria-current="page"{% endif %}>
+                        <i class="fas fa-shapes me-1" aria-hidden="true"></i> Studio
+                    </a>
+                    <a class="nav-link{{ ' active' if request.endpoint == 'frame_painter_page' else '' }}" href="{{ url_for('frame_painter_page') }}"{% if request.endpoint == 'frame_painter_page' %} aria-current="page"{% endif %}>
+                        <i class="fas fa-paintbrush me-1" aria-hidden="true"></i> Painter
+                    </a>
+                    <a class="nav-link{{ ' active' if request.endpoint == 'emoji_arranger_page' else '' }}" href="{{ url_for('emoji_arranger_page') }}"{% if request.endpoint == 'emoji_arranger_page' %} aria-current="page"{% endif %}>
+                        <i class="fas fa-face-smile me-1" aria-hidden="true"></i> Emoji
+                    </a>
+                    <a class="nav-link{{ ' active' if request.endpoint == 'control_page' else '' }}" href="{{ url_for('control_page') }}"{% if request.endpoint == 'control_page' %} aria-current="page"{% endif %}>
+                        <i class="fas fa-gauge-high me-1" aria-hidden="true"></i> Advanced
+                    </a>
+                </div>
             </div>
         </div>
     </nav>
 
-    <div class="container mt-4">
+    {% if status is defined %}
+    {% set global_painter_active = status.mode == 'painter' or status.painter_active %}
+    {% set global_live_active = status.is_running or global_painter_active %}
+    <div class="container global-live-shell">
+        <section class="global-live-bar" aria-label="Live wall status">
+            <div class="global-live-copy" role="status" aria-live="polite" aria-atomic="true">
+                <span class="status-indicator {{ 'status-running' if status.is_running else ('status-painter' if global_painter_active else 'status-stopped') }}" id="globalLiveIndicator" aria-hidden="true"></span>
+                <span>
+                    <small>Live wall</small>
+                    <strong class="status-text" id="globalLiveLabel">{{ status.current_animation|replace('_', ' ')|title if status.is_running else ('Painter mirror' if global_painter_active else 'Stopped') }}</strong>
+                    <small id="globalLiveDetail">{{ 'Output active' if global_live_active else 'No content is being sent' }}</small>
+                </span>
+            </div>
+            <button class="btn btn-outline-danger btn-sm" id="globalStopLiveButton" type="button" onclick="stopGlobalLiveOutput()"{% if not global_live_active %} disabled{% endif %}>
+                <i class="fas fa-stop me-1" aria-hidden="true"></i> Stop live output
+            </button>
+        </section>
+    </div>
+    {% endif %}
+
+    <div class="container mt-4 studio-page">
         {% with messages = get_flashed_messages() %}
             {% if messages %}
                 {% for message in messages %}
@@ -204,6 +328,19 @@
         function stopAnimation() {
             return fetch('/api/stop', {method: 'POST'}).then(r => r.json());
         }
+
+        async function stopGlobalLiveOutput() {
+            const button = document.getElementById('globalStopLiveButton');
+            if (button) button.disabled = true;
+            try {
+                const result = await stopAnimation();
+                if (!result.success) throw new Error(result.error || 'The wall did not stop.');
+                await updateStatus();
+            } catch (error) {
+                console.error('Failed to stop live output', error);
+                if (button) button.disabled = false;
+            }
+        }
         
         function updateParameters(params) {
             return fetch('/api/parameters', {
@@ -222,13 +359,14 @@
         }
         
         // Auto-refresh status every 2 seconds
-        function updateStatus() {
-            getStatus().then(status => {
-                // Update status indicators
-                const indicator = document.querySelector('.status-indicator');
-                const statusText = document.querySelector('.status-text');
+        function applyGlobalLiveStatus(status) {
+                const indicator = document.getElementById('globalLiveIndicator');
+                const statusText = document.getElementById('globalLiveLabel');
+                const statusDetail = document.getElementById('globalLiveDetail');
+                const stopButton = document.getElementById('globalStopLiveButton');
                 const fpsDisplay = document.querySelector('.fps-display');
                 const isPainter = status.mode === 'painter' || status.painter_active;
+                const isLive = Boolean(status.is_running || isPainter);
                 
                 if (indicator) {
                     indicator.className = 'status-indicator ' + 
@@ -237,19 +375,38 @@
                 
                 if (statusText) {
                     if (status.is_running) {
-                        statusText.textContent = `Running: ${status.current_animation}`;
+                        statusText.textContent = String(status.current_animation || '')
+                            .replace(/_/g, ' ')
+                            .replace(/\b\w/g, character => character.toUpperCase());
                     } else if (isPainter) {
-                        statusText.textContent = 'Painter Mode';
+                        statusText.textContent = 'Painter mode';
                     } else {
                         statusText.textContent = 'Stopped';
                     }
                 }
+                if (statusDetail) {
+                    const preset = status.current_preset;
+                    const presetLabel = typeof preset === 'string' || typeof preset === 'number'
+                        ? String(preset)
+                        : (preset && typeof preset.name === 'string' ? preset.name : null);
+                    statusDetail.textContent = status.is_running
+                        ? (presetLabel ? `Preset: ${presetLabel}` : 'Output active')
+                        : (isPainter ? 'Painter is mirroring to the wall' : 'No content is being sent');
+                }
+                if (stopButton) stopButton.disabled = !isLive;
                 
                 if (fpsDisplay) {
                     fpsDisplay.textContent = `${status.actual_fps.toFixed(1)} FPS`;
                 }
 
                 updateMetricsPanel(status);
+                window.dispatchEvent(new CustomEvent('ledgrid:live-status', {detail: status}));
+        }
+
+        function updateStatus() {
+            return getStatus().then(status => {
+                applyGlobalLiveStatus(status);
+                return status;
             }).catch(console.error);
         }
         

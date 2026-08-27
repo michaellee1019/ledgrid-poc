@@ -83,6 +83,20 @@ class AnimationPresetTests(unittest.TestCase):
         preset_path = Path(self.temp_dir.name) / 'sparkle' / 'calm.json'
         self.assertNotIn('plant_aware', json.loads(preset_path.read_text())['params'])
 
+    def test_get_preset_returns_the_direct_preset_payload(self):
+        self.client.post(
+            '/api/animations/sparkle/presets',
+            json={'name': 'Calm', 'params': {'speed': 0.5}},
+        )
+
+        response = self.client.get('/api/animations/sparkle/presets/calm')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload['preset_id'], 'calm')
+        self.assertEqual(payload['params'], {'speed': 0.5})
+        self.assertNotIn('preset', payload)
+
     def test_apply_rereads_modified_json_from_disk(self):
         response = self.client.post(
             '/api/animations/sparkle/presets',
@@ -374,7 +388,7 @@ class AnimationPresetTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 400)
 
-    def test_dashboard_promotes_presets_and_collapses_test_animations(self):
+    def test_dashboard_promotes_presets_and_separates_task_areas(self):
         self.interface.preview_manager.list_animations = lambda: [
             {
                 'plugin_name': 'sparkle', 'name': 'Sparkle',
@@ -400,20 +414,23 @@ class AnimationPresetTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertIn('Calm Stars', html)
         self.assertIn('background: #010210', html)
-        self.assertIn('Global tempo', html)
         self.assertIn('Animation speed', html)
-        self.assertIn('id="globalSpeedRangeMobile"', html)
-        self.assertIn('id="showAnimationAccordion"', html)
-        self.assertIn('data-bs-target="#animationCollapse-sparkle"', html)
-        self.assertIn('id="animationCollapse-sparkle" class="accordion-collapse collapse"', html)
-        self.assertIn('data-bs-target="#presetCollapse-sparkle"', html)
-        self.assertIn('id="presetCollapse-sparkle" class="accordion-collapse collapse"', html)
+        self.assertIn('Speed multiplier', html)
+        self.assertIn('id="librarySearch"', html)
+        self.assertIn('id="libraryCategory"', html)
+        self.assertIn('id="libraryShowMore"', html)
+        self.assertIn('id="dashboard-library"', html)
+        self.assertIn('id="dashboard-now-playing"', html)
+        self.assertIn('id="dashboard-compose"', html)
+        self.assertIn('id="dashboard-system"', html)
+        self.assertIn('Take live', html)
+        self.assertNotIn('id="showAnimationAccordion"', html)
         self.assertIn('Test & calibration animations', html)
         self.assertIn('id="testAnimationCollapse" class="accordion-collapse collapse"', html)
         self.assertIn('/static/css/dashboard.css', html)
         self.assertIn('/static/js/dashboard.js', html)
-        self.assertIn('id="previewSavePresetButton"', html)
-        self.assertIn('Save as preset', html)
+        self.assertNotIn('id="previewSavePresetButton"', html)
+        self.assertEqual(html.count('Save as preset'), 1)
         css_response = self.client.get('/static/css/dashboard.css')
         js_response = self.client.get('/static/js/dashboard.js')
         try:
@@ -422,8 +439,8 @@ class AnimationPresetTests(unittest.TestCase):
             javascript = js_response.get_data(as_text=True)
             self.assertIn('function parameterPresets(info)', javascript)
             self.assertIn('applyParameterPreset', javascript)
-            self.assertIn('function savePreviewPreset()', javascript)
-            self.assertIn('function setCurrentPresetSelection(animationName, preset)', javascript)
+            self.assertNotIn('function savePreviewPreset()', javascript)
+            self.assertIn('function saveControlPreset()', javascript)
         finally:
             css_response.close()
             js_response.close()
@@ -447,7 +464,7 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertLess(html.index('id="globalSpeedRange"'), html.index('aria-label="Speed presets"'))
         self.assertLess(html.index('id="globalSpeedRange"'), html.index('id="plantModifierControls"'))
 
-    def test_dashboard_sidebar_scrolls_independently_on_desktop(self):
+    def test_dashboard_uses_task_areas_instead_of_an_independent_sidebar(self):
         html = self.client.get('/').get_data(as_text=True)
         css_response = self.client.get('/static/css/dashboard.css')
         try:
@@ -455,10 +472,10 @@ class AnimationPresetTests(unittest.TestCase):
         finally:
             css_response.close()
 
-        self.assertIn('class="sticky-preview dashboard-sidebar-scroll"', html)
-        self.assertIn('@media (min-width: 1200px)', css)
-        self.assertIn('max-height: calc(100vh - 2rem)', css)
-        self.assertIn('overflow-y: auto', css)
+        self.assertNotIn('dashboard-sidebar-scroll', html)
+        self.assertNotIn('max-height: calc(100vh - 2rem)', css)
+        self.assertIn('.dashboard-area[hidden]', css)
+        self.assertIn('aria-label="Dashboard areas"', html)
 
     def test_animation_presets_are_alphabetized_by_display_name(self):
         for name in ('zebra', 'Aurora', 'calm'):

@@ -385,7 +385,17 @@
     let controlParameterUpdateTimeout = null;
     let controlParameterStore = {};
     let controlParameterSchema = {};
-    let currentPresetSelection = null;
+    let liveAnimationName = INITIAL_STATUS?.is_running ? INITIAL_STATUS.current_animation : null;
+    let selectedControlIsDraft = false;
+    let libraryKind = 'all';
+    let librarySavedView = 'all';
+    const LIBRARY_BATCH_SIZE = 24;
+    const LIBRARY_RECENT_LIMIT = 12;
+    const LIBRARY_FAVORITES_KEY = 'ledgrid.library.favorites.v1';
+    const LIBRARY_RECENTS_KEY = 'ledgrid.library.recents.v1';
+    let libraryFavoriteIds = new Set(readLibraryStorage(LIBRARY_FAVORITES_KEY));
+    let libraryRecentIds = readLibraryStorage(LIBRARY_RECENTS_KEY).slice(0, LIBRARY_RECENT_LIMIT);
+    let libraryVisibleLimit = LIBRARY_BATCH_SIZE;
     function vibeIdFromStatus(status) {
         const vibe = status?.vibe?.state || status?.vibe || {};
         return vibe.id || vibe.vibe_id || 'neutral';
@@ -406,16 +416,9 @@
     // Initialize renderer when page loads
     document.addEventListener('DOMContentLoaded', function() {
         animationRenderer = new LEDAnimationRenderer('ledCanvas');
+        initializeDashboardShell();
+        initializeLibraryFilters();
         initializeGeneratedPreviews();
-        const previewPresetName = document.getElementById('previewPresetName');
-        previewPresetName?.addEventListener('keydown', event => {
-            if (event.key === 'Enter') {
-                event.preventDefault();
-                savePreviewPreset();
-            } else if (event.key === 'Escape') {
-                closePreviewPresetComposer();
-            }
-        });
         if (INITIAL_STATUS) {
             syncControlPanel(INITIAL_STATUS);
             syncGlobalSpeedFromStatus(INITIAL_STATUS);
@@ -426,8 +429,227 @@
         const sceneBackground = document.getElementById('sceneBackgroundSelect');
         sceneBackground?.addEventListener('change', syncSceneProviderControls);
         syncSceneProviderControls();
+        syncSceneOverlayOpacityReadout();
         startStatsPolling();
     });
+
+    const DASHBOARD_AREAS = ['library', 'now-playing', 'compose', 'system'];
+
+    function initializeDashboardShell() {
+        const requestedArea = window.location.hash.replace(/^#/, '');
+        showDashboardArea(DASHBOARD_AREAS.includes(requestedArea) ? requestedArea : 'library');
+        document.querySelectorAll('.dashboard-task-tab').forEach((tab, index) => {
+            tab.addEventListener('keydown', event => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                event.preventDefault();
+                let nextIndex = index;
+                if (event.key === 'ArrowRight') nextIndex = (index + 1) % DASHBOARD_AREAS.length;
+                if (event.key === 'ArrowLeft') nextIndex = (index - 1 + DASHBOARD_AREAS.length) % DASHBOARD_AREAS.length;
+                if (event.key === 'Home') nextIndex = 0;
+                if (event.key === 'End') nextIndex = DASHBOARD_AREAS.length - 1;
+                const area = DASHBOARD_AREAS[nextIndex];
+                showDashboardArea(area);
+                document.getElementById(`dashboard-tab-${area}`)?.focus();
+            });
+        });
+        updateControlMode();
+    }
+
+    function showDashboardArea(area, options = {}) {
+        if (!DASHBOARD_AREAS.includes(area)) return;
+        DASHBOARD_AREAS.forEach(name => {
+            const selected = name === area;
+            const panel = document.getElementById(`dashboard-${name}`);
+            const tab = document.getElementById(`dashboard-tab-${name}`);
+            if (panel) panel.hidden = !selected;
+            if (tab) {
+                tab.classList.toggle('is-active', selected);
+                tab.setAttribute('aria-selected', String(selected));
+                tab.tabIndex = selected ? 0 : -1;
+            }
+        });
+        if (window.history?.replaceState) {
+            window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${area}`);
+        }
+        if (area === 'now-playing') {
+            requestAnimationFrame(() => animationRenderer?.syncDisplayWidth());
+        }
+        if (options.focus) {
+            document.getElementById(`dashboard-${area}`)?.focus({preventScroll: true});
+            document.querySelector('.dashboard-task-nav')?.scrollIntoView({behavior: 'smooth', block: 'start'});
+        }
+    }
+
+    function initializeLibraryFilters() {
+        const search = document.getElementById('librarySearch');
+        const category = document.getElementById('libraryCategory');
+        const categories = [...new Set(Array.from(document.querySelectorAll('[data-library-item]'))
+            .map(item => item.dataset.libraryCategory).filter(value => value && value !== 'animation'))]
+            .sort((a, b) => a.localeCompare(b));
+        categories.forEach(value => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = humanizeParamName(value);
+            category?.appendChild(option);
+        });
+        search?.addEventListener('input', () => {
+            libraryVisibleLimit = LIBRARY_BATCH_SIZE;
+            applyLibraryFilters();
+        });
+        category?.addEventListener('change', () => {
+            libraryVisibleLimit = LIBRARY_BATCH_SIZE;
+            applyLibraryFilters();
+        });
+        document.querySelectorAll('.library-filter-chip[data-library-kind]').forEach(button => {
+            button.addEventListener('click', () => {
+                libraryKind = button.dataset.libraryKind;
+                libraryVisibleLimit = LIBRARY_BATCH_SIZE;
+                document.querySelectorAll('.library-filter-chip[data-library-kind]').forEach(candidate => {
+                    const selected = candidate === button;
+                    candidate.classList.toggle('is-active', selected);
+                    candidate.setAttribute('aria-pressed', String(selected));
+                });
+                applyLibraryFilters();
+            });
+        });
+        document.querySelectorAll('.library-filter-chip[data-library-saved]').forEach(button => {
+            button.addEventListener('click', () => {
+                librarySavedView = button.dataset.librarySaved;
+                libraryVisibleLimit = LIBRARY_BATCH_SIZE;
+                document.querySelectorAll('.library-filter-chip[data-library-saved]').forEach(candidate => {
+                    const selected = candidate === button;
+                    candidate.classList.toggle('is-active', selected);
+                    candidate.setAttribute('aria-pressed', String(selected));
+                });
+                applyLibraryFilters();
+            });
+        });
+        syncLibraryPersonalization();
+        applyLibraryFilters();
+    }
+
+    function readLibraryStorage(key) {
+        try {
+            const value = JSON.parse(window.localStorage.getItem(key) || '[]');
+            return Array.isArray(value) ? value.filter(item => typeof item === 'string') : [];
+        } catch (error) {
+            console.warn(`Ignoring unreadable library state for ${key}`, error);
+            return [];
+        }
+    }
+
+    function writeLibraryStorage(key, value) {
+        try {
+            window.localStorage.setItem(key, JSON.stringify(value));
+        } catch (error) {
+            console.warn(`Could not persist library state for ${key}`, error);
+        }
+    }
+
+    function libraryItemId(kind, animationName, presetId = null) {
+        return kind === 'preset'
+            ? `preset:${animationName}:${presetId}`
+            : `animation:${animationName}`;
+    }
+
+    function syncLibraryPersonalization() {
+        document.querySelectorAll('[data-library-favorite]').forEach(button => {
+            const favorite = libraryFavoriteIds.has(button.dataset.libraryId);
+            const cardName = button.closest('[data-library-item]')?.querySelector('h3')?.textContent?.trim() || 'this look';
+            button.setAttribute('aria-pressed', String(favorite));
+            button.setAttribute('aria-label', `${favorite ? 'Remove' : 'Add'} ${cardName} ${favorite ? 'from' : 'to'} favorites`);
+            button.title = favorite ? 'Remove from favorites' : 'Add to favorites';
+            button.innerHTML = `<i class="${favorite ? 'fas' : 'far'} fa-star" aria-hidden="true"></i>`;
+        });
+    }
+
+    function toggleLibraryFavorite(event, button) {
+        event.preventDefault();
+        event.stopPropagation();
+        const id = button.dataset.libraryId;
+        if (!id) return;
+        if (libraryFavoriteIds.has(id)) libraryFavoriteIds.delete(id);
+        else libraryFavoriteIds.add(id);
+        writeLibraryStorage(LIBRARY_FAVORITES_KEY, [...libraryFavoriteIds]);
+        syncLibraryPersonalization();
+        applyLibraryFilters();
+    }
+
+    function recordLibraryRecent(id) {
+        if (!id || !Array.from(document.querySelectorAll('[data-library-item]'))
+            .some(item => item.dataset.libraryId === id)) return;
+        libraryRecentIds = [id, ...libraryRecentIds.filter(candidate => candidate !== id)]
+            .slice(0, LIBRARY_RECENT_LIMIT);
+        writeLibraryStorage(LIBRARY_RECENTS_KEY, libraryRecentIds);
+        if (librarySavedView === 'recent') applyLibraryFilters();
+    }
+
+    function applyLibraryFilters() {
+        const query = (document.getElementById('librarySearch')?.value || '').trim().toLocaleLowerCase();
+        const category = document.getElementById('libraryCategory')?.value || 'all';
+        const matches = [];
+        document.querySelectorAll('[data-library-item]').forEach(item => {
+            item.style.order = '';
+            const matchesText = !query || (item.dataset.searchText || '').toLocaleLowerCase().includes(query);
+            const matchesKind = libraryKind === 'all' || item.dataset.libraryKind === libraryKind;
+            const matchesCategory = category === 'all' || item.dataset.libraryCategory === category;
+            const matchesSaved = librarySavedView === 'all'
+                || (librarySavedView === 'favorites' && libraryFavoriteIds.has(item.dataset.libraryId))
+                || (librarySavedView === 'recent' && libraryRecentIds.includes(item.dataset.libraryId));
+            if (matchesText && matchesKind && matchesCategory && matchesSaved) matches.push(item);
+            item.hidden = true;
+        });
+        if (librarySavedView === 'recent') {
+            matches.sort((a, b) => libraryRecentIds.indexOf(a.dataset.libraryId)
+                - libraryRecentIds.indexOf(b.dataset.libraryId));
+            matches.forEach((item, index) => { item.style.order = String(index); });
+        }
+        const visible = Math.min(matches.length, libraryVisibleLimit);
+        matches.slice(0, visible).forEach(item => { item.hidden = false; });
+        const count = document.getElementById('libraryResultCount');
+        if (count) count.textContent = matches.length > visible
+            ? `Showing ${visible} of ${matches.length} looks`
+            : `${matches.length} ${matches.length === 1 ? 'look' : 'looks'}`;
+        const empty = document.getElementById('libraryEmpty');
+        if (empty) empty.hidden = matches.length !== 0;
+        const more = document.getElementById('libraryMore');
+        const moreButton = document.getElementById('libraryShowMore');
+        const remaining = Math.max(0, matches.length - visible);
+        if (more) more.hidden = remaining === 0;
+        if (moreButton && remaining) {
+            const nextBatch = Math.min(LIBRARY_BATCH_SIZE, remaining);
+            moreButton.textContent = `Show ${nextBatch} more · ${remaining} remaining`;
+        }
+    }
+
+    function showMoreLibraryItems() {
+        libraryVisibleLimit += LIBRARY_BATCH_SIZE;
+        applyLibraryFilters();
+        const firstHidden = document.querySelector('[data-library-item][hidden]');
+        if (!firstHidden) document.getElementById('libraryShowMore')?.focus();
+    }
+
+    function clearLibraryFilters() {
+        const search = document.getElementById('librarySearch');
+        const category = document.getElementById('libraryCategory');
+        if (search) search.value = '';
+        if (category) category.value = 'all';
+        libraryKind = 'all';
+        librarySavedView = 'all';
+        libraryVisibleLimit = LIBRARY_BATCH_SIZE;
+        document.querySelectorAll('.library-filter-chip[data-library-kind]').forEach(button => {
+            const selected = button.dataset.libraryKind === 'all';
+            button.classList.toggle('is-active', selected);
+            button.setAttribute('aria-pressed', String(selected));
+        });
+        document.querySelectorAll('.library-filter-chip[data-library-saved]').forEach(button => {
+            const selected = button.dataset.librarySaved === 'all';
+            button.classList.toggle('is-active', selected);
+            button.setAttribute('aria-pressed', String(selected));
+        });
+        applyLibraryFilters();
+        search?.focus();
+    }
 
     function initializeGeneratedPreviews() {
         const previews = document.querySelectorAll('img.generated-preview[data-loop-src]');
@@ -554,8 +776,8 @@
 
     async function setGlobalSpeed(value) {
         const multiplier = Number(value);
-        if (!Number.isFinite(multiplier) || multiplier <= 0) {
-            showToast('Tempo must be a positive number.', 'info');
+        if (!Number.isFinite(multiplier) || multiplier < 0.1 || multiplier > 10) {
+            showToast('Animation speed must be between 0.1× and 10×.', 'info');
             return;
         }
         previewGlobalSpeed(multiplier);
@@ -567,7 +789,7 @@
             });
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.error || 'Unable to change speed');
-            showToast(`Global tempo set to ${formatSpeed(multiplier)}×`, 'success');
+            showToast(`Animation speed set to ${formatSpeed(multiplier)}×`, 'success');
         } catch (error) {
             showToast(error.message, 'error');
         }
@@ -603,13 +825,13 @@
                 body: JSON.stringify({vibe: vibeId})
             });
             const payload = await response.json();
-            if (!response.ok) throw new Error(payload.error || 'Unable to change vibe');
+            if (!response.ok) throw new Error(payload.error || 'Unable to change wall mood');
             const requested = payload.requested_vibe || {};
             globalVibeId = requested.id || requested.vibe_id || vibeId;
             if (animationRenderer?.previewMode && animationRenderer.previewAnimation) {
                 animationRenderer.lastFrameData = null;
             }
-            showToast(`${humanizeParamName(globalVibeId)} vibe selected`, 'success');
+            showToast(`Wall mood set to ${humanizeParamName(globalVibeId)}`, 'success');
         } catch (error) {
             globalVibeId = previous;
             const select = document.getElementById('globalVibeSelect');
@@ -629,30 +851,47 @@
         const host = document.getElementById('plantModifierControls');
         if (!host) return;
         host.innerHTML = '';
+        const supportedModifiers = PLANT_MODIFIERS.filter(([, id]) => plantModifierSupport.has(id));
+        const modifierLabels = new Map(PLANT_MODIFIERS.map(([, id, label]) => [id, label]));
+        if (!supportedModifiers.length) {
+            const empty = document.createElement('p');
+            empty.className = 'plant-behavior-empty small mb-0';
+            empty.textContent = 'This animation does not support plant behavior controls.';
+            host.appendChild(empty);
+        }
         let lastGroup = '';
-        PLANT_MODIFIERS.forEach(([group, id, label]) => {
+        supportedModifiers.forEach(([group, id, label]) => {
             if (group !== lastGroup) {
                 const heading = document.createElement('div');
-                heading.className = 'small fw-bold mt-1';
+                heading.className = 'small fw-bold mt-2';
                 heading.textContent = group;
                 host.appendChild(heading);
                 lastGroup = group;
             }
             const active = globalPlantModifiers.active.includes(id);
-            const supported = plantModifierSupport.has(id);
+            const strength = globalPlantModifiers.strengths[id] ?? (id === 'obstacle' ? 1 : .5);
             const row = document.createElement('div');
-            row.className = `d-flex align-items-center gap-2 ${supported ? '' : 'opacity-50'}`;
-            row.innerHTML = `<input type="checkbox" id="plantModifier-${id}" ${active ? 'checked' : ''} ${supported ? '' : 'disabled'} aria-label="${label}">`
-                + `<label class="small flex-grow-1" for="plantModifier-${id}">${label}</label>`
-                + `<input type="range" min="0" max="1" step="0.05" value="${globalPlantModifiers.strengths[id] ?? (id === 'obstacle' ? 1 : .5)}" ${active && supported ? '' : 'disabled'} aria-label="${label} strength">`;
+            row.className = 'plant-behavior-row';
+            row.innerHTML = `<div class="plant-behavior-toggle"><input type="checkbox" id="plantModifier-${id}" ${active ? 'checked' : ''}>`
+                + `<label class="small fw-semibold" for="plantModifier-${id}">${label}</label></div>`
+                + `<label class="plant-strength-label small" for="plantModifier-${id}-strength">Strength <output id="plantModifier-${id}-value" for="plantModifier-${id}-strength">${Math.round(Number(strength) * 100)}%</output></label>`
+                + `<input class="form-range plant-strength-range" id="plantModifier-${id}-strength" type="range" min="0" max="1" step="0.05" value="${strength}" ${active ? '' : 'disabled'} aria-label="${label} strength" aria-describedby="plantModifier-${id}-value">`;
             const [toggle, slider] = row.querySelectorAll('input');
             toggle.addEventListener('change', () => changePlantModifier(id, toggle.checked));
+            slider.addEventListener('input', () => {
+                const output = document.getElementById(`plantModifier-${id}-value`);
+                if (output) output.value = `${Math.round(Number(slider.value) * 100)}%`;
+            });
             slider.addEventListener('change', () => changePlantStrength(id, Number(slider.value)));
             host.appendChild(row);
         });
         const unsupported = globalPlantModifiers.active.filter(id => !plantModifierSupport.has(id));
         const message = document.getElementById('plantModifierUnsupported');
-        if (message) message.textContent = unsupported.length ? `Unsupported here: ${unsupported.join(', ')}` : '';
+        if (message) {
+            message.textContent = unsupported.length
+                ? `Unavailable for this animation and left unchanged: ${unsupported.map(id => modifierLabels.get(id) || humanizeParamName(id)).join(', ')}.`
+                : '';
+        }
     }
 
     function changePlantModifier(id, enabled) {
@@ -683,47 +922,132 @@
                 body: JSON.stringify({plant_modifiers: globalPlantModifiers})
             });
             const payload = await response.json();
-            if (!response.ok) throw new Error(payload.error || 'Unable to change plant modifiers');
+            if (!response.ok) throw new Error(payload.error || 'Unable to change plant behavior');
             globalPlantModifiers = payload.plant_modifiers;
             renderPlantModifierControls();
-            showToast('Plant modifiers updated', 'success');
+            showToast('Plant behavior updated', 'success');
         } catch (error) {
             showToast(error.message, 'error');
         }
     }
 
-    async function playDashboardPreset(animationName, presetId, button) {
+    function normalizeDashboardPresetPayload(payload) {
+        const preset = payload?.preset || payload;
+        if (!preset || typeof preset !== 'object' || Array.isArray(preset)
+            || !preset.params || typeof preset.params !== 'object' || Array.isArray(preset.params)) {
+            throw new Error('Preset settings are unavailable. Refresh the Library and try again.');
+        }
+        return preset;
+    }
+
+    async function fetchDashboardPreset(animationName, presetId) {
+        const response = await fetch(
+            `/api/animations/${encodeURIComponent(animationName)}/presets/${encodeURIComponent(presetId)}`
+        );
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Unable to load preset');
+        return normalizeDashboardPresetPayload(payload);
+    }
+
+    async function selectDashboardPreset(animationName, presetId, button) {
         if (button) button.disabled = true;
         try {
-            const response = await fetch(
-                `/api/animations/${encodeURIComponent(animationName)}/presets/${encodeURIComponent(presetId)}/apply`,
-                {method: 'POST'}
-            );
-            const payload = await response.json();
-            if (!response.ok) throw new Error(payload.error || 'Unable to load preset');
+            const preset = await fetchDashboardPreset(animationName, presetId);
             controlSelectedAnimation = animationName;
-            controlParameterStore[animationName] = {...(payload.preset.params || {})};
+            selectedControlIsDraft = true;
+            controlParameterStore[animationName] = {...(preset.params || {})};
             highlightControlSelection(animationName);
-            setCurrentPresetSelection(animationName, payload.preset);
             loadControlParameters(animationName, {
                 showPlaceholder: false,
-                currentParams: payload.preset.params || {}
+                currentParams: preset.params || {}
             });
-            showToast(`Playing ${payload.preset.name}`, 'success');
+            updateControlMode();
+            showToast(`${preset.name} selected as a draft`, 'success');
+            return preset;
         } catch (error) {
             showToast(error.message, 'error');
+            return null;
         } finally {
             if (button) button.disabled = false;
         }
     }
 
-    function openAnimationControls(animationName) {
-        selectControlAnimation(animationName);
-        const collapseElement = document.getElementById('controlsCollapse');
-        if (collapseElement) {
-            bootstrap.Collapse.getOrCreateInstance(collapseElement, {toggle: false}).show();
-            setTimeout(() => collapseElement.scrollIntoView({behavior: 'smooth', block: 'start'}), 150);
+    async function playDashboardPreset(animationName, presetId, button) {
+        return takePresetLive(animationName, presetId, button);
+    }
+
+    async function openPresetControls(animationName, presetId, button) {
+        const preset = await selectDashboardPreset(animationName, presetId, button);
+        if (!preset) return;
+        recordLibraryRecent(libraryItemId('preset', animationName, presetId));
+        showDashboardArea('now-playing', {focus: true});
+        previewAnimation(animationName, {recordRecent: false});
+    }
+
+    async function previewDashboardPreset(animationName, presetId, button) {
+        const preset = await selectDashboardPreset(animationName, presetId, button);
+        if (!preset) return;
+        recordLibraryRecent(libraryItemId('preset', animationName, presetId));
+        previewAnimation(animationName, {recordRecent: false});
+        showDashboardArea('now-playing', {focus: true});
+    }
+
+    async function takePresetLive(animationName, presetId, button) {
+        if (button) button.disabled = true;
+        try {
+            const preset = await fetchDashboardPreset(animationName, presetId);
+            controlSelectedAnimation = animationName;
+            controlParameterStore[animationName] = {...(preset.params || {})};
+            const result = await takeAnimationLive(animationName, button, {announce: false, recordRecent: false});
+            if (result?.success) {
+                recordLibraryRecent(libraryItemId('preset', animationName, presetId));
+                showToast(`${preset.name} is live`, 'success');
+            }
+            return result;
+        } catch (error) {
+            showToast(error.message, 'error');
+            return null;
+        } finally {
+            if (button) button.disabled = false;
         }
+    }
+
+    async function takeAnimationLive(animationName, button, options = {}) {
+        if (button) button.disabled = true;
+        const params = controlParameterStore[animationName] || {};
+        try {
+            const result = await startAnimation(animationName, params, {silent: true});
+            if (!result.success) throw new Error(result.error || 'Unable to start animation');
+            liveAnimationName = animationName;
+            controlSelectedAnimation = animationName;
+            selectedControlIsDraft = false;
+            if (options.recordRecent !== false) {
+                recordLibraryRecent(libraryItemId('animation', animationName));
+            }
+            highlightControlSelection(animationName);
+            updateControlMode();
+            if (!Object.prototype.hasOwnProperty.call(controlParameterStore, animationName)) {
+                loadControlParameters(animationName, {showPlaceholder: false});
+            }
+            if (options.announce !== false) showToast(`${humanizeParamName(animationName)} is live`, 'success');
+            return result;
+        } catch (error) {
+            showToast(error.message, 'error');
+            return {success: false, error: error.message};
+        } finally {
+            if (button) button.disabled = false;
+        }
+    }
+
+    function takeSelectedLive() {
+        if (!controlSelectedAnimation) return;
+        takeAnimationLive(controlSelectedAnimation, document.getElementById('takeSelectedLiveButton'));
+    }
+
+    function openAnimationControls(animationName) {
+        recordLibraryRecent(libraryItemId('animation', animationName));
+        selectControlAnimation(animationName);
+        showDashboardArea('now-playing', {focus: true});
     }
 
     // Renderer control functions
@@ -733,14 +1057,16 @@
 
         if (container.style.display === 'none') {
             container.style.display = 'block';
-            button.innerHTML = '<i class="fas fa-eye"></i> Hide';
+            button.innerHTML = '<i class="fas fa-eye" aria-hidden="true"></i>';
+            button.setAttribute('aria-label', 'Hide wall preview');
             if (animationRenderer) {
                 animationRenderer.syncDisplayWidth();
                 animationRenderer.startRendering();
             }
         } else {
             container.style.display = 'none';
-            button.innerHTML = '<i class="fas fa-eye-slash"></i> Show';
+            button.innerHTML = '<i class="fas fa-eye-slash" aria-hidden="true"></i>';
+            button.setAttribute('aria-label', 'Show wall preview');
             if (animationRenderer) {
                 animationRenderer.stopRendering();
             }
@@ -761,26 +1087,25 @@
 
             if (isPreviewMode) {
                 button.className = 'btn btn-primary btn-sm';
-                buttonText.textContent = 'Live Mode';
+                buttonText.textContent = 'Show live output';
+                button.setAttribute('aria-label', 'Show the current live wall output');
                 if (controlSelectedAnimation) {
                     syncPreviewParameters(controlSelectedAnimation);
                 }
             } else {
                 button.className = 'btn btn-outline-primary btn-sm';
-                buttonText.textContent = 'Preview Mode';
+                buttonText.textContent = 'Preview selected draft';
+                button.setAttribute('aria-label', 'Preview the selected draft without changing the wall');
             }
         }
     }
 
-    function previewAnimation(animationName) {
+    function previewAnimation(animationName, options = {}) {
         if (animationRenderer) {
-            if (IS_LOCAL_DASHBOARD) {
-                if (animationRenderer.previewMode) togglePreviewMode();
-                const params = controlParameterStore[animationName] || {};
-                startAnimation(animationName, params);
-                return;
+            if (options.recordRecent !== false) {
+                recordLibraryRecent(libraryItemId('animation', animationName));
             }
-            // Enable preview mode if not already enabled
+            if (controlSelectedAnimation !== animationName) selectControlAnimation(animationName);
             if (!animationRenderer.previewMode) {
                 togglePreviewMode();
             }
@@ -788,11 +1113,13 @@
             // Set the animation to preview
             const params = controlParameterStore[animationName] || null;
             animationRenderer.setPreviewAnimation(animationName, params);
+            showDashboardArea('now-playing', {focus: true});
+            showToast(`Previewing ${humanizeParamName(animationName)} without changing the wall`, 'success');
         }
     }
 
     // Handle animation card clicks with feedback
-    function startAnimation(name, config = {}) {
+    function startAnimation(name, config = {}, options = {}) {
         // Show loading state
         const cards = document.querySelectorAll('.animation-card');
         cards.forEach(card => card.style.opacity = '0.6');
@@ -805,7 +1132,7 @@
         .then(r => r.json())
         .then(result => {
             if (result.success) {
-                showToast(`Started animation: ${name}`, 'success');
+                if (!options.silent) showToast(`Started animation: ${name}`, 'success');
             } else {
                 showToast(`Failed to start animation: ${name}`, 'error');
             }
@@ -893,11 +1220,7 @@
         safeSetText('statSpray', stats.spray_particle_count != null ? stats.spray_particle_count : '--');
         safeSetText('statSpawnAllowed', stats.spawn_allowed === false ? 'Paused' : 'Yes');
         const hashValue = payload.animation_hash || '';
-        let shortHash = '--';
-        if (hashValue) {
-            shortHash = hashValue.length > 15 ? `${hashValue.slice(0, 15)}…` : hashValue;
-        }
-        safeSetText('statHash', shortHash);
+        safeSetText('statHash', hashValue || '--');
         const hashEl = document.getElementById('statHash');
         if (hashEl) {
             hashEl.title = hashValue || 'No hash available';
@@ -950,7 +1273,10 @@
     }
 
     function humanizeParamName(name) {
-        return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+            .replace(/\bFps\b/g, 'FPS')
+            .replace(/\bRgb\b/g, 'RGB')
+            .replace(/\bLed\b/g, 'LED');
     }
 
     function showControlPlaceholder(message, options = {}) {
@@ -985,25 +1311,35 @@
     function syncControlPanel(status) {
         if (!status) return;
         const runningAnimation = status.is_running ? status.current_animation : null;
+        const previousLiveAnimation = liveAnimationName;
+        liveAnimationName = runningAnimation;
         if (!runningAnimation) {
-            if (controlSelectedAnimation !== null) {
-                controlSelectedAnimation = null;
-                highlightControlSelection(null);
+            updateControlMode();
+            if (!controlSelectedAnimation) {
+                showControlPlaceholder('Choose Adjust in the Library to shape a draft.', {clearControls: true});
             }
-            setCurrentPresetSelection(null, null);
-            showControlPlaceholder('Start or select an animation to adjust its live controls.', {clearControls: true});
             return;
         }
-        setCurrentPresetSelection(runningAnimation, status.current_preset || null);
-        if (controlSelectedAnimation === runningAnimation) {
+        if (!controlSelectedAnimation || (!selectedControlIsDraft && controlSelectedAnimation === previousLiveAnimation)) {
+            controlSelectedAnimation = runningAnimation;
+            selectedControlIsDraft = false;
+        }
+        if (controlSelectedAnimation !== runningAnimation) {
+            updateControlMode();
             return;
         }
-        controlSelectedAnimation = runningAnimation;
+        if (selectedControlIsDraft) {
+            updateControlMode();
+            return;
+        }
         const liveParams = status.animation_info?.current_params;
         if (liveParams && typeof liveParams === 'object' && !Array.isArray(liveParams)) {
             controlParameterStore[runningAnimation] = {...liveParams};
         }
         highlightControlSelection(runningAnimation);
+        updateControlMode();
+        if (controlParameterSchema && Object.keys(controlParameterSchema).length
+            && document.getElementById('controlParametersCard')?.style.display !== 'none') return;
         loadControlParameters(runningAnimation, {
             placeholderMessage: `Loading controls for ${humanizeParamName(runningAnimation)}...`,
             currentParams: controlParameterStore[runningAnimation]
@@ -1035,33 +1371,31 @@
 
     function selectControlAnimation(name, options = {}) {
         controlSelectedAnimation = name;
-        delete controlParameterStore[name];
-        setCurrentPresetSelection(name, null);
+        selectedControlIsDraft = name !== liveAnimationName;
         highlightControlSelection(name);
-        if (animationRenderer && animationRenderer.previewMode) {
-            const params = controlParameterStore[name] || null;
-            animationRenderer.setPreviewAnimation(name, params);
-        }
-        const { skipStart = false, placeholderMessage = null } = options;
-        const message = placeholderMessage || (skipStart
-            ? 'Loading controls...'
-            : 'Starting animation and loading controls...');
-        showControlPlaceholder(message, {clearControls: true});
-        const startPromise = skipStart ? Promise.resolve({success: true}) : startAnimation(name);
-        startPromise.then(result => {
-            if (result.success) {
-                loadControlParameters(name, {showPlaceholder: false});
-            } else {
-                controlSelectedAnimation = null;
-                highlightControlSelection(null);
-                showControlPlaceholder('Unable to load controls. Start the animation to try again.', {clearControls: true});
-            }
-        }).catch(error => {
-            console.error('Failed to select animation', error);
-            controlSelectedAnimation = null;
-            highlightControlSelection(null);
-            showControlPlaceholder('Unable to load controls right now.', {clearControls: true});
+        const { placeholderMessage = null } = options;
+        showControlPlaceholder(placeholderMessage || 'Loading draft controls...', {clearControls: true});
+        updateControlMode();
+        loadControlParameters(name, {
+            showPlaceholder: false,
+            currentParams: controlParameterStore[name] || null
         });
+    }
+
+    function updateControlMode() {
+        const isLive = Boolean(controlSelectedAnimation && controlSelectedAnimation === liveAnimationName && !selectedControlIsDraft);
+        const badge = document.getElementById('controlModeBadge');
+        if (badge) {
+            badge.className = `control-mode-badge ${isLive ? 'is-live' : controlSelectedAnimation ? 'is-draft' : ''}`;
+            badge.textContent = isLive ? 'Editing live output' : controlSelectedAnimation ? 'Draft · wall unchanged' : 'Select a look';
+        }
+        const button = document.getElementById('takeSelectedLiveButton');
+        if (button) {
+            button.disabled = !controlSelectedAnimation || isLive;
+            button.innerHTML = isLive
+                ? '<i class="fas fa-check me-1" aria-hidden="true"></i> Selected look is live'
+                : '<i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take live';
+        }
     }
 
     function loadControlParameters(name, options = {}) {
@@ -1089,7 +1423,6 @@
                 } else {
                     controlParameterSchema = info?.parameters || {};
                     controlParameterStore[name] = currentParams || info?.current_params || {};
-                    updatePreviewPresetAction();
                     showControlPlaceholder('This animation does not expose live controls.', {clearControls: true});
                 }
             })
@@ -1119,12 +1452,39 @@
         return PARAMETER_OPTIONS[`${controlSelectedAnimation}:${name}`] || PARAMETER_OPTIONS[name] || null;
     }
 
-    function numericStep(info) {
+    function decimalPlaces(value) {
+        if (value === null || value === undefined || value === '' || !Number.isFinite(Number(value))) return 0;
+        const normalized = String(value).toLocaleLowerCase();
+        if (normalized.includes('e-')) {
+            const [coefficient, exponent] = normalized.split('e-');
+            return Number(exponent) + (coefficient.split('.')[1]?.length || 0);
+        }
+        return normalized.split('.')[1]?.length || 0;
+    }
+
+    function numericStep(info, currentValue = null) {
         if (info.type === 'int') return 1;
-        const span = Number(info.max) - Number(info.min);
-        if (span <= 1) return .01;
-        if (span <= 10) return .05;
-        return .1;
+        if (info.step !== undefined && Number(info.step) > 0) return Number(info.step);
+        const precision = Math.min(6, Math.max(
+            decimalPlaces(info.min), decimalPlaces(info.max),
+            decimalPlaces(info.default), decimalPlaces(currentValue)
+        ));
+        return 10 ** -Math.max(1, precision);
+    }
+
+    function constrainParameterValue(value, info) {
+        let constrained = Number(value);
+        const minimum = Number(info.min);
+        const maximum = Number(info.max);
+        if (Number.isFinite(minimum)) constrained = Math.max(minimum, constrained);
+        if (Number.isFinite(maximum)) constrained = Math.min(maximum, constrained);
+        const step = numericStep(info, constrained);
+        if (Number.isFinite(step) && step > 0) {
+            const origin = Number.isFinite(minimum) ? minimum : 0;
+            constrained = origin + Math.round((constrained - origin) / step) * step;
+            constrained = Number(constrained.toFixed(Math.min(10, decimalPlaces(step))));
+        }
+        return info.type === 'int' ? Math.round(constrained) : constrained;
     }
 
     function parameterPresets(info) {
@@ -1168,7 +1528,7 @@
         const value = usesLogEasing(info)
             ? minimum * ((maximum / minimum) ** ratio)
             : minimum + (maximum - minimum) * ratio;
-        return info.type === 'int' ? Math.round(value) : Number(value.toFixed(3));
+        return constrainParameterValue(value, info);
     }
 
     function handleParameterRangeInput(name, position, type, mirrorInputId) {
@@ -1181,8 +1541,11 @@
 
     function handleNumberInput(name, value, type, mirrorSliderId) {
         if (value === '' || value === null) return;
-        const converted = type === 'int' ? parseInt(value, 10) : parseFloat(value);
+        const schema = controlParameterSchema[name] || {type};
+        const converted = constrainParameterValue(type === 'int' ? parseInt(value, 10) : parseFloat(value), schema);
         if (!Number.isFinite(converted)) return;
+        const input = document.getElementById(`control-${name}-value`);
+        if (input && String(input.value) !== String(converted)) input.value = converted;
         const slider = document.getElementById(mirrorSliderId);
         if (slider && controlParameterSchema[name]) {
             slider.value = Math.max(0, Math.min(100, parameterToSlider(converted, controlParameterSchema[name])));
@@ -1262,6 +1625,17 @@
         return wrapper;
     }
 
+    function isInstallationParameter(name, info) {
+        const normalizedName = String(name || '').toLocaleLowerCase();
+        const normalizedType = String(info?.type || '').toLocaleLowerCase();
+        const defaultValue = info?.default;
+        return normalizedName === 'plant_modifiers'
+            || /(^|_)(mask_)?path$/.test(normalizedName)
+            || normalizedName.includes('mask_path')
+            || ['object', 'dict', 'list', 'array', 'json'].includes(normalizedType)
+            || (defaultValue !== null && typeof defaultValue === 'object');
+    }
+
     function resetControlParameter(name) {
         const info = controlParameterSchema[name];
         if (!info) return;
@@ -1282,6 +1656,18 @@
             parameterSnapshot[name] = currentParams[name] ?? info.default;
         });
 
+        const installationParameters = Object.entries(schema)
+            .filter(([name, info]) => isInstallationParameter(name, info));
+        if (installationParameters.length) {
+            const notice = document.createElement('div');
+            notice.className = 'parameter-installation-notice';
+            notice.innerHTML = '<i class="fas fa-shield-alt" aria-hidden="true"></i>'
+                + '<div><strong>Installation settings are protected here.</strong>'
+                + '<span>Mask files and structured plant configuration live in System or Painter, not everyday animation controls.</span></div>'
+                + '<button class="btn btn-sm btn-outline-secondary" type="button" onclick="showDashboardArea(\'system\', {focus: true})">Open System</button>';
+            container.appendChild(notice);
+        }
+
         const title = document.getElementById('controlStudioTitle');
         if (title) title.textContent = `Shape ${humanizeParamName(controlSelectedAnimation || 'the scene')}`;
 
@@ -1298,13 +1684,14 @@
         });
 
         Object.entries(schema).forEach(([paramName, paramInfo]) => {
-            if (paramName === 'speed' || paramName === 'plant_aware' || paramName === 'plant_modifiers' || colorNames.has(paramName)) return;
+            if (paramName === 'speed' || paramName === 'plant_aware' || isInstallationParameter(paramName, paramInfo) || colorNames.has(paramName)) return;
             const currentValue = parameterSnapshot[paramName];
             const prettyName = humanizeParamName(paramName);
             const controlDiv = document.createElement('div');
             controlDiv.className = 'parameter-control';
             const inputId = `control-${paramName}`;
             const numberInputId = `${inputId}-value`;
+            let labelTargetId = inputId;
             const options = parameterOptions(paramName, paramInfo);
             let inputHtml = '';
             if (options) {
@@ -1313,20 +1700,23 @@
                 const hasRange = Number.isFinite(Number(paramInfo.min)) && Number.isFinite(Number(paramInfo.max));
                 const presets = parameterPresets(paramInfo);
                 const presetSelect = presets.length ? `<select class="form-select form-select-sm parameter-preset" id="${inputId}-preset" aria-label="${escapeHtml(prettyName)} preset" onchange="applyParameterPreset('${paramName}', this.value, '${paramInfo.type}', '${inputId}', '${numberInputId}')"><option value="">Custom</option>${presets.map(([name, value]) => `<option value="${escapeHtml(name)}"${name === matchingParameterPreset(currentValue, paramInfo) ? ' selected' : ''}>${escapeHtml(humanizeParamName(name))} (${escapeHtml(value)})</option>`).join('')}</select>` : '';
-                inputHtml = `${presetSelect}${hasRange ? `<input type="range" class="form-range" id="${inputId}" min="0" max="100" step="1" value="${parameterToSlider(currentValue, paramInfo)}" oninput="handleParameterRangeInput('${paramName}', this.value, '${paramInfo.type}', '${numberInputId}')">` : ''}<div class="input-group input-group-sm"><input type="number" class="form-control parameter-value" value="${escapeHtml(currentValue)}" step="${numericStep(paramInfo)}" id="${numberInputId}" oninput="handleNumberInput('${paramName}', this.value, '${paramInfo.type}', '${inputId}')"><span class="input-group-text">${paramInfo.type === 'int' ? 'whole' : 'exact'}</span></div>`;
+                const minimum = Number.isFinite(Number(paramInfo.min)) ? ` min="${escapeHtml(paramInfo.min)}"` : '';
+                const maximum = Number.isFinite(Number(paramInfo.max)) ? ` max="${escapeHtml(paramInfo.max)}"` : '';
+                const step = numericStep(paramInfo, currentValue);
+                labelTargetId = numberInputId;
+                inputHtml = `${presetSelect}${hasRange ? `<input type="range" class="form-range" id="${inputId}" min="0" max="100" step="1" value="${parameterToSlider(currentValue, paramInfo)}" aria-label="${escapeHtml(prettyName)} slider" aria-controls="${numberInputId}" oninput="handleParameterRangeInput('${paramName}', this.value, '${paramInfo.type}', '${numberInputId}')">` : ''}<div class="input-group input-group-sm"><input type="number" class="form-control parameter-value" value="${escapeHtml(currentValue)}"${minimum}${maximum} step="${step}" id="${numberInputId}" aria-label="${escapeHtml(prettyName)} exact value" oninput="handleNumberInput('${paramName}', this.value, '${paramInfo.type}', '${inputId}')"><span class="input-group-text">${paramInfo.type === 'int' ? 'whole numbers' : `step ${step}`}</span></div>`;
             } else if (paramInfo.type === 'bool') {
-                inputHtml = `<div class="form-check form-switch pt-1"><input class="form-check-input" type="checkbox" role="switch" id="${inputId}" ${currentValue ? 'checked' : ''} onchange="updateControlParameter('${paramName}', this.checked, 'bool')"><label class="form-check-label fw-semibold" for="${inputId}">${currentValue ? 'On' : 'Off'}</label></div>`;
+                inputHtml = `<div class="form-check form-switch pt-1"><input class="form-check-input" type="checkbox" role="switch" id="${inputId}" ${currentValue ? 'checked' : ''} onchange="handleBooleanInput('${paramName}', this, '${inputId}-state')"><span class="form-check-label fw-semibold" id="${inputId}-state">${currentValue ? 'Enabled' : 'Disabled'}</span></div>`;
             } else {
                 inputHtml = `<input type="text" class="form-control" id="${inputId}" value="${escapeHtml(currentValue)}" onchange="updateControlParameter('${paramName}', this.value, 'str')">`;
             }
-            controlDiv.innerHTML = `<div class="d-flex justify-content-between gap-2"><div><div class="parameter-label">${escapeHtml(prettyName)}</div><div class="parameter-description">${escapeHtml(paramInfo.description || '')}</div></div><button class="btn btn-link btn-sm text-muted p-0 align-self-start" type="button" onclick="resetControlParameter('${paramName}')" title="Reset to ${escapeHtml(paramInfo.default)}"><i class="fas fa-rotate-left"></i></button></div>${inputHtml}`;
+            controlDiv.innerHTML = `<div class="d-flex justify-content-between gap-2"><div><label class="parameter-label" for="${labelTargetId}">${escapeHtml(prettyName)}</label><div class="parameter-description">${escapeHtml(paramInfo.description || '')}</div></div><button class="btn btn-link btn-sm text-muted p-0 align-self-start" type="button" onclick="resetControlParameter('${paramName}')" aria-label="Reset ${escapeHtml(prettyName)} to ${escapeHtml(paramInfo.default)}" title="Reset to ${escapeHtml(paramInfo.default)}"><i class="fas fa-rotate-left" aria-hidden="true"></i></button></div>${inputHtml}`;
             container.appendChild(controlDiv);
         });
 
         if (controlSelectedAnimation) {
             controlParameterStore[controlSelectedAnimation] = parameterSnapshot;
             syncPreviewParameters(controlSelectedAnimation);
-            updatePreviewPresetAction();
         }
     }
 
@@ -1353,63 +1743,6 @@
         }
     }
 
-    function setCurrentPresetSelection(animationName, preset) {
-        if (!animationName) {
-            currentPresetSelection = null;
-        } else if (preset && preset.animation === animationName) {
-            currentPresetSelection = {...preset, animation: animationName};
-        } else {
-            currentPresetSelection = {animation: animationName, is_dirty: true};
-        }
-        updatePreviewPresetAction();
-    }
-
-    function updatePreviewPresetAction() {
-        const current = document.getElementById('previewPresetCurrent');
-        const currentName = document.getElementById('previewPresetCurrentName');
-        const saveButton = document.getElementById('previewSavePresetButton');
-        const context = document.getElementById('previewPresetContext');
-        if (!current || !currentName || !saveButton || !context) return;
-
-        const animationName = controlSelectedAnimation;
-        const isCurrentPreset = Boolean(
-            animationName && currentPresetSelection &&
-            currentPresetSelection.animation === animationName &&
-            currentPresetSelection.preset_id && !currentPresetSelection.is_dirty
-        );
-        current.hidden = !isCurrentPreset;
-        saveButton.hidden = isCurrentPreset;
-        currentName.textContent = isCurrentPreset ? currentPresetSelection.name : '';
-        saveButton.disabled = !animationName || !Object.prototype.hasOwnProperty.call(controlParameterStore, animationName);
-
-        if (!animationName) {
-            context.textContent = 'Play an animation to save its current look.';
-        } else if (isCurrentPreset) {
-            context.textContent = humanizeParamName(animationName);
-            closePreviewPresetComposer();
-        } else if (currentPresetSelection?.name) {
-            context.textContent = `Modified from ${currentPresetSelection.name} · ${humanizeParamName(animationName)}`;
-        } else {
-            context.textContent = `Save the current ${humanizeParamName(animationName)} look.`;
-        }
-    }
-
-    function openPreviewPresetComposer() {
-        const composer = document.getElementById('previewPresetComposer');
-        const input = document.getElementById('previewPresetName');
-        if (!composer || !input || !controlSelectedAnimation) return;
-        composer.hidden = false;
-        input.value = '';
-        input.focus();
-    }
-
-    function closePreviewPresetComposer() {
-        const composer = document.getElementById('previewPresetComposer');
-        const input = document.getElementById('previewPresetName');
-        if (composer) composer.hidden = true;
-        if (input) input.value = '';
-    }
-
     async function saveAnimationPreset(name, category = 'Personal', description = '') {
         const animationName = controlSelectedAnimation;
         if (!animationName || !name) {
@@ -1431,30 +1764,11 @@
             showToast(payload.error || 'Failed to save preset.', 'error');
             return null;
         }
-        setCurrentPresetSelection(animationName, payload.preset);
         await loadControlPresets(animationName);
         const select = document.getElementById('controlPresetSelect');
         if (select) select.value = payload.preset.preset_id;
         showToast(`Saved preset: ${payload.preset.name}`, 'success');
         return payload.preset;
-    }
-
-    async function savePreviewPreset() {
-        const input = document.getElementById('previewPresetName');
-        const confirm = document.getElementById('previewPresetConfirm');
-        const presetName = input?.value.trim() || '';
-        if (!presetName) {
-            showToast('Enter a name for this preset.', 'info');
-            input?.focus();
-            return;
-        }
-        if (confirm) confirm.disabled = true;
-        try {
-            const saved = await saveAnimationPreset(presetName);
-            if (saved) closePreviewPresetComposer();
-        } finally {
-            if (confirm) confirm.disabled = false;
-        }
     }
 
     async function saveControlPreset() {
@@ -1483,21 +1797,20 @@
         const presetId = select.value;
         const animationName = controlSelectedAnimation;
         if (!animationName || !presetId) return;
-        const response = await fetch(
-            `/api/animations/${encodeURIComponent(animationName)}/presets/${encodeURIComponent(presetId)}/apply`,
-            {method: 'POST'}
-        );
-        const payload = await response.json();
-        if (!response.ok) {
-            showToast(payload.error || 'Failed to load preset.', 'error');
+        let preset = null;
+        try {
+            preset = await fetchDashboardPreset(animationName, presetId);
+        } catch (error) {
+            showToast(error.message || 'Failed to load preset.', 'error');
             return;
         }
-        renderControlParameterControls(controlParameterSchema, payload.preset.params || {});
-        document.getElementById('controlPresetName').value = payload.preset.name || '';
-        document.getElementById('controlPresetCategory').value = payload.preset.category || '';
-        document.getElementById('controlPresetDescription').value = payload.preset.description || '';
-        setCurrentPresetSelection(animationName, payload.preset);
-        showToast(`Loaded preset: ${payload.preset.name}`, 'success');
+        renderControlParameterControls(controlParameterSchema, preset.params || {});
+        document.getElementById('controlPresetName').value = preset.name || '';
+        document.getElementById('controlPresetCategory').value = preset.category || '';
+        document.getElementById('controlPresetDescription').value = preset.description || '';
+        selectedControlIsDraft = true;
+        updateControlMode();
+        showToast(`Loaded ${preset.name} as a draft`, 'success');
     }
 
     async function deleteControlPreset() {
@@ -1538,25 +1851,29 @@
         updateControlParametersBatch({[name]: convertedValue});
     }
 
+    function handleBooleanInput(name, input, stateId) {
+        const state = document.getElementById(stateId);
+        if (state) state.textContent = input.checked ? 'Enabled' : 'Disabled';
+        updateControlParameter(name, input.checked, 'bool');
+    }
+
     function updateControlParametersBatch(params) {
         if (!params || !Object.keys(params).length) return;
         if (controlParameterUpdateTimeout) clearTimeout(controlParameterUpdateTimeout);
         if (controlSelectedAnimation) {
             if (!controlParameterStore[controlSelectedAnimation]) controlParameterStore[controlSelectedAnimation] = {};
             Object.assign(controlParameterStore[controlSelectedAnimation], params);
-            if (currentPresetSelection?.animation === controlSelectedAnimation) {
-                currentPresetSelection = {...currentPresetSelection, is_dirty: true};
-                updatePreviewPresetAction();
-            }
             if (animationRenderer && animationRenderer.previewMode && animationRenderer.previewAnimation === controlSelectedAnimation) {
                 animationRenderer.setPreviewParams(controlParameterStore[controlSelectedAnimation]);
             }
         }
-        controlParameterUpdateTimeout = setTimeout(() => {
-            updateParameters(params).then(result => {
-                if (!result.success) console.error('Failed to update parameters:', params);
-            });
-        }, 120);
+        if (controlSelectedAnimation === liveAnimationName && !selectedControlIsDraft) {
+            controlParameterUpdateTimeout = setTimeout(() => {
+                updateParameters(params).then(result => {
+                    if (!result.success) console.error('Failed to update parameters:', params);
+                });
+            }, 120);
+        }
     }
 
     function showToast(message, type = 'info') {
@@ -1719,6 +2036,11 @@
         };
     }
 
+    function syncSceneOverlayOpacityReadout(value = document.getElementById('sceneOverlayOpacity')?.value) {
+        const output = document.getElementById('sceneOverlayOpacityValue');
+        if (output) output.value = `${Math.round((Number(value) / 255) * 100)}%`;
+    }
+
     function editedScenePayload() {
         const backgroundOption = document.getElementById('sceneBackgroundSelect')?.selectedOptions?.[0];
         const backgroundId = backgroundOption?.dataset.componentId || backgroundOption?.value;
@@ -1816,15 +2138,6 @@
         }
     }
 
-    async function stopEditedScene() {
-        try {
-            await sceneRequest('/api/v1/scene', {method: 'DELETE'});
-            showToast('Scene stop requested.', 'success');
-        } catch (error) {
-            showToast(error.message, 'error');
-        }
-    }
-
     async function recoverReceiverNative() {
         try {
             await sceneRequest('/api/v1/receiver-native/recover', {method: 'POST'});
@@ -1870,6 +2183,7 @@
             format24h.checked = Boolean(clockParameters.format_24h);
         }
         document.getElementById('sceneOverlayOpacity').value = overlay.opacity;
+        syncSceneOverlayOpacityReadout(overlay.opacity);
         document.getElementById('sceneOverlayStripOffset').value = overlay.placement.strip_translation;
         document.getElementById('sceneOverlayLedOffset').value = overlay.placement.led_translation;
         document.getElementById('sceneStalePolicy').value = overlay.stale_policy.policy;
@@ -1948,7 +2262,7 @@
         safeSetText(
             'receiverNativeArtifact',
             managedNative && driver.bundle_digest
-                ? `${String(driver.bundle_digest).slice(0, 12)}… / ${String(driver.payload_digest || '').slice(0, 12)}…`
+                ? `${String(driver.bundle_digest)} / ${String(driver.payload_digest || 'No payload digest')}`
                 : '--'
         );
         safeSetText(
@@ -2014,15 +2328,14 @@
         }
     }
 
-    async function applyScenePreset() {
+    async function loadScenePresetDraft() {
         const presetId = document.getElementById('scenePresetSelect')?.value;
         if (!presetId) return;
         try {
             const encoded = encodeURIComponent(presetId);
             const preset = await sceneRequest(`/api/v1/scene-presets/${encoded}`);
             loadSceneIntoEditor(preset.scene);
-            await sceneRequest(`/api/v1/scene-presets/${encoded}/apply`, {method: 'POST'});
-            showToast(`Applied scene preset: ${preset.name}`, 'success');
+            showToast(`Loaded ${preset.name} as a scene draft`, 'success');
         } catch (error) {
             showToast(error.message, 'error');
         }

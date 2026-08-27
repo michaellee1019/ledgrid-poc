@@ -160,8 +160,8 @@ class VibeWebIntegrationTests(unittest.TestCase):
     def test_dashboard_has_one_authoritative_global_vibe_control(self):
         html = self.client.get("/").get_data(as_text=True)
         self.assertEqual(html.count('id="globalVibeSelect"'), 1)
-        self.assertIn("Global vibe", html)
-        self.assertIn("stay independent from the selected preset", html)
+        self.assertIn("Wall mood", html)
+        self.assertIn("Changes the live wall's palette, energy, and brightness immediately", html)
         self.assertNotIn("Vibe or category", html)
         self.assertLess(html.index('id="globalSpeedRange"'), html.index('id="globalVibeSelect"'))
         self.assertLess(html.index('id="globalVibeSelect"'), html.index('id="plantModifierControls"'))

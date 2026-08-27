@@ -1,703 +1,460 @@
 {% extends "base.html" %}
 
-{% block title %}Animation Control Panel{% endblock %}
+{% block title %}Advanced Control · LED Grid Studio{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-md-8">
-        <h2><i class="fas fa-sliders-h"></i> Animation Control Panel</h2>
-        <style>
-            .dpad {
-                display: grid;
-                grid-template-columns: repeat(3, 56px);
-                grid-template-rows: repeat(3, 56px);
-                gap: 10px;
-                justify-content: center;
-                align-items: center;
-            }
+<style>
+    .advanced-shell { max-width: 1240px; margin: 0 auto; }
+    .advanced-kicker { color: #6d5dfc; font-size: .76rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .advanced-heading { font-size: clamp(1.65rem, 3vw, 2.35rem); font-weight: 780; letter-spacing: -.035em; }
+    .animation-picker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; max-height: 25rem; overflow-y: auto; padding: .15rem; }
+    .animation-btn { align-items: center; display: flex; justify-content: space-between; min-height: 2.75rem; text-align: left; }
+    .animation-btn.is-selected { background: #eeeaff; border-color: #6d5dfc; color: #332a8c; font-weight: 700; }
+    .animation-btn.is-live::after { color: #198754; content: "LIVE"; font-size: .65rem; font-weight: 800; letter-spacing: .08em; }
+    .parameter-control { border-bottom: 1px solid #e7ebf1; margin: 0; padding: 1rem 0; }
+    .parameter-control:last-child { border-bottom: 0; }
+    .parameter-description { color: #667085; font-size: .82rem; margin-top: .15rem; }
+    .parameter-range { color: #7a8495; font-size: .74rem; }
+    .draft-badge { background: #eef0f4; color: #475467; }
+    .live-badge { background: #dff7e9; color: #087443; }
+    .dpad { display: grid; gap: .55rem; grid-template-columns: repeat(3, 52px); justify-content: center; }
+    .dpad-btn, .dpad-spacer { height: 52px; width: 52px; }
+    .dpad-btn { align-items: center; background: #f8f9fa; border: 1px solid #d7dde7; border-radius: .7rem; display: flex; font-size: 1.3rem; justify-content: center; }
+    .metric-list { display: grid; gap: .55rem; }
+    .metric-row { align-items: center; border-bottom: 1px solid #edf0f4; display: flex; justify-content: space-between; padding-bottom: .5rem; }
+    .metric-row:last-child { border-bottom: 0; }
+    @media (max-width: 767.98px) {
+        .animation-picker { grid-template-columns: 1fr; max-height: none; }
+    }
+</style>
 
-            .dpad-btn {
-                font-size: 1.5rem;
-                border: 1px solid #dee2e6;
-                background: #f8f9fa;
-                border-radius: 12px;
-                height: 56px;
-                width: 56px;
-                line-height: 1;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                transition: transform 0.05s ease, box-shadow 0.05s ease;
-            }
+<main class="advanced-shell">
+    <div class="d-flex flex-wrap align-items-end justify-content-between gap-3 mb-3">
+        <div>
+            <div class="advanced-kicker">System workspace</div>
+            <h1 class="advanced-heading mb-1">Advanced control</h1>
+            <p class="text-muted mb-0">Inspect an animation safely, then choose when to take it live.</p>
+        </div>
+        <button class="btn btn-outline-secondary" type="button" onclick="refreshPluginsAndNotify()">
+            <i class="fas fa-rotate me-1" aria-hidden="true"></i> Refresh plug-ins
+        </button>
+    </div>
 
-            .dpad-btn:active {
-                transform: translateY(1px);
-                box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.15);
-            }
-
-            .dpad-spacer {
-                height: 56px;
-                width: 56px;
-            }
-
-            @media (max-width: 575.98px) {
-                .dpad {
-                    grid-template-columns: repeat(3, 48px);
-                    grid-template-rows: repeat(3, 48px);
-                    gap: 8px;
-                }
-
-                .dpad-btn,
-                .dpad-spacer {
-                    height: 48px;
-                    width: 48px;
-                }
-            }
-        </style>
-        
-        <div class="card">
-            <div class="card-header">
-                <h5>Select Animation</h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    {% for animation in animations %}
-                    <div class="col-md-6 mb-2">
-                        <button class="btn btn-outline-primary w-100 animation-btn" 
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <section class="card mb-4">
+                <div class="card-header bg-white py-3">
+                    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                        <div>
+                            <h2 class="h5 mb-1">Inspect an animation</h2>
+                            <p class="small text-muted mb-0">Selection is private and never changes the wall.</p>
+                        </div>
+                        <label class="visually-hidden" for="animationSearch">Search animations</label>
+                        <div class="input-group" style="max-width: 19rem;">
+                            <span class="input-group-text bg-white"><i class="fas fa-search" aria-hidden="true"></i></span>
+                            <input class="form-control" id="animationSearch" type="search" placeholder="Search animations" autocomplete="off">
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="animation-picker" id="animationPicker" aria-label="Animations">
+                        {% for animation in animations %}
+                        <button class="btn btn-outline-secondary animation-btn" type="button"
                                 data-animation="{{ animation.plugin_name }}"
-                                onclick="selectAnimation('{{ animation.plugin_name }}')">
-                            {{ animation.name }}
+                                data-search="{{ (animation.name ~ ' ' ~ animation.plugin_name ~ ' ' ~ (animation.description or ''))|lower }}"
+                                aria-pressed="false"
+                                onclick="inspectAnimation('{{ animation.plugin_name }}')">
+                            <span>{{ animation.name }}{% if animation.is_test %}<small class="d-block text-muted">Test / calibration</small>{% endif %}</span>
+                        </button>
+                        {% endfor %}
+                    </div>
+                    <p class="text-muted small mb-0 mt-3 d-none" id="noAnimationResults">No animations match that search.</p>
+                </div>
+            </section>
+
+            <section class="card mb-4" id="parametersCard" hidden>
+                <div class="card-header bg-white py-3">
+                    <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+                        <div>
+                            <div class="d-flex align-items-center gap-2 mb-1">
+                                <h2 class="h5 mb-0" id="selectedAnimationTitle">Animation settings</h2>
+                                <span class="badge rounded-pill draft-badge" id="editStateBadge">Draft</span>
+                            </div>
+                            <p class="small text-muted mb-0" id="editStateHelp">Changes stay private until you take this animation live.</p>
+                        </div>
+                        <button class="btn btn-primary" type="button" id="takeLiveBtn" onclick="takeSelectedLive()">
+                            <i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take live
                         </button>
                     </div>
-                    {% endfor %}
                 </div>
-                
-                <div class="mt-3">
-                    <button class="btn btn-danger" onclick="stopAnimation()" id="stopBtn">
-                        <i class="fas fa-stop"></i> Stop Animation
-                    </button>
-                </div>
-            </div>
-        </div>
-        
-        <div class="card mt-3" id="parametersCard" style="display: none;">
-            <div class="card-header">
-                <h5>Animation Parameters</h5>
-                <small class="text-muted">Adjust parameters in real-time</small>
-            </div>
-            <div class="card-body">
-                <div class="border-bottom pb-3 mb-3">
-                    <label class="form-label fw-semibold" for="presetSelect">Presets</label>
-                    <div class="input-group input-group-sm mb-2">
-                        <select class="form-select" id="presetSelect" aria-label="Animation preset" onchange="showSelectedPresetDetails()">
-                            <option value="">No saved presets</option>
-                        </select>
-                        <button class="btn btn-outline-primary" type="button" onclick="applySelectedPreset()">Load</button>
-                        <button class="btn btn-outline-danger" type="button" onclick="deleteSelectedPreset()" title="Delete selected preset">
-                            <i class="fas fa-trash"></i>
-                        </button>
+                <div class="card-body">
+                    <div class="alert alert-light border d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3" role="note">
+                        <div>
+                            <strong class="d-block">Preset management lives in Studio</strong>
+                            <span class="small text-muted">Load, save, and delete presets in one place. Advanced remains focused on full-precision parameters and diagnostics.</span>
+                        </div>
+                        <a class="btn btn-sm btn-outline-primary" href="/#now-playing">Manage presets in Studio</a>
                     </div>
-                    <div id="presetDetails" class="small text-muted mb-2" style="display: none;"></div>
-                    <div class="input-group input-group-sm">
-                        <input class="form-control" id="presetName" maxlength="64" placeholder="Preset name">
-                        <button class="btn btn-success" type="button" onclick="saveAnimationPreset()">
-                            <i class="fas fa-save"></i> Save current
-                        </button>
-                    </div>
-                    <small class="text-muted">Loading a preset starts this animation with its saved settings.</small>
+                    <div id="parametersContainer"></div>
+                    <div class="alert alert-light border small mt-3 mb-0 d-none" id="hiddenParametersNotice"></div>
                 </div>
-                <div id="parametersContainer"><!-- Parameters will be loaded here --></div>
-            </div>
+            </section>
+
+            <section class="card" id="tetrisControlsCard" hidden>
+                <div class="card-header bg-white py-3">
+                    <h2 class="h5 mb-1">Tetris controls</h2>
+                    <p class="small text-muted mb-0" id="dpadHelp">Take Tetris live to enable gameplay controls.</p>
+                </div>
+                <div class="card-body">
+                    <div class="dpad" aria-label="Tetris directional controls">
+                        <div class="dpad-spacer"></div>
+                        <button class="dpad-btn" data-direction="up" type="button" aria-label="Rotate" disabled>⬆️</button>
+                        <div class="dpad-spacer"></div>
+                        <button class="dpad-btn" data-direction="left" type="button" aria-label="Move left" disabled>⬅️</button>
+                        <div class="dpad-spacer"></div>
+                        <button class="dpad-btn" data-direction="right" type="button" aria-label="Move right" disabled>➡️</button>
+                        <div class="dpad-spacer"></div>
+                        <button class="dpad-btn" data-direction="down" type="button" aria-label="Soft drop" disabled>⬇️</button>
+                        <div class="dpad-spacer"></div>
+                    </div>
+                </div>
+            </section>
         </div>
 
-        <div class="card mt-3" id="tetrisControlsCard" style="display: none;">
-            <div class="card-header">
-                <h5>🎮 Tetris D-Pad</h5>
-                <small class="text-muted">Use ⬆️ to rotate, ⬅️/➡️ to move, ⬇️ to soft drop.</small>
-            </div>
-            <div class="card-body">
-                <div class="dpad" aria-label="Tetris D-pad">
-                    <div class="dpad-spacer"></div>
-                    <button class="dpad-btn" data-direction="up" aria-label="Rotate">⬆️</button>
-                    <div class="dpad-spacer"></div>
-                    <button class="dpad-btn" data-direction="left" aria-label="Move left">⬅️</button>
-                    <div class="dpad-spacer"></div>
-                    <button class="dpad-btn" data-direction="right" aria-label="Move right">➡️</button>
-                    <div class="dpad-spacer"></div>
-                    <button class="dpad-btn" data-direction="down" aria-label="Soft drop">⬇️</button>
-                    <div class="dpad-spacer"></div>
+        <aside class="col-lg-4">
+            <section class="card mb-3">
+                <div class="card-header bg-white py-3"><h2 class="h6 mb-0">Performance &amp; receiver</h2></div>
+                <div class="card-body small metric-list">
+                    <div class="metric-row"><span>Actual FPS</span><strong class="fps-display" id="metricActualFps">{{ "%.1f"|format(status.actual_fps) }}</strong></div>
+                    <div class="metric-row"><span>Target FPS</span><strong id="metricTargetFps">--</strong></div>
+                    <div class="metric-row"><span>Average generation</span><strong id="metricAvgGenerate">--</strong></div>
+                    <div class="metric-row"><span>Average send</span><strong id="metricAvgSend">--</strong></div>
+                    <div class="metric-row"><span>Average frame</span><strong id="metricAvgFrame">--</strong></div>
+                    <div class="metric-row"><span>Last frame</span><strong id="metricLastFrame">--</strong></div>
+                    <div class="metric-row"><span>Driver errors</span><strong id="metricDriverErrors">--</strong></div>
+                    <div class="metric-row"><span>Devices</span><strong id="metricDeviceCount">--</strong></div>
+                    <div class="metric-row"><span>SPI speed</span><strong id="metricSpiSpeed">--</strong></div>
+                    <span class="d-none" id="metricTargetFrame"></span><span class="d-none" id="metricInlineShow"></span>
+                    <span class="d-none" id="metricPerfSamples"></span><span class="d-none" id="metricDriverFrames"></span>
+                    <span class="d-none" id="metricDriverFps"></span><span class="d-none" id="metricDriverBytes"></span>
+                    <span class="d-none" id="metricDriverAvg"></span><span class="d-none" id="metricDriverLast"></span>
+                    <span class="d-none" id="metricSpiTransfers"></span><span class="d-none" id="metricCrcBytes"></span>
                 </div>
-            </div>
-        </div>
+            </section>
+
+            <section class="card mb-3">
+                <div class="card-header bg-white d-flex align-items-center justify-content-between gap-2 py-3">
+                    <div><h2 class="h6 mb-0">Raw system status</h2><small class="text-muted">Diagnostics only</small></div>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" onclick="copyAdvancedStatus()">Copy JSON</button>
+                </div>
+                <div class="card-body">
+                    <pre class="bg-dark text-white small p-2 rounded mb-0" id="advancedStatusJson" style="max-height:18rem;overflow:auto">{{ status|tojson(indent=2) }}</pre>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-header bg-white py-3"><h2 class="h6 mb-0">Keyboard shortcuts</h2></div>
+                <div class="card-body small text-muted">
+                    <div><kbd>Space</kbd> Stop live output</div>
+                    <div class="mt-2"><kbd>R</kbd> Refresh plug-ins</div>
+                    <div class="mt-2"><kbd>1</kbd>–<kbd>9</kbd> Inspect an animation</div>
+                </div>
+            </section>
+        </aside>
     </div>
-    
-    <div class="col-md-4">
-        <div class="card">
-            <div class="card-header">
-                <h5><i class="fas fa-info-circle"></i> Current Status</h5>
-            </div>
-            <div class="card-body">
-                <div class="mb-3">
-                    <strong>Animation:</strong><br>
-                    <span class="status-indicator {{ 'status-running' if status.is_running else 'status-stopped' }}"></span>
-                    <span class="status-text">
-                        {% if status.is_running %}
-                            {{ status.current_animation }}
-                        {% else %}
-                            None
-                        {% endif %}
-                    </span>
-                </div>
-                
-                <div class="mb-3">
-                    <strong>Performance:</strong><br>
-                    <span class="fps-display">{{ "%.1f"|format(status.actual_fps) }} FPS</span>
-                </div>
-                
-                <div class="mb-3">
-                    <strong>Frame Count:</strong><br>
-                    <span id="frameCount">{{ status.frame_count }}</span>
-                </div>
-            </div>
-        </div>
-
-        <div class="card mt-3">
-            <div class="card-header">
-                <h6><i class="fas fa-gauge-high"></i> Performance Snapshot</h6>
-            </div>
-            <div class="card-body small">
-                <div class="text-uppercase text-muted fw-semibold mb-2">Animation Loop</div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Target FPS</span>
-                    <strong id="metricTargetFps">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Actual FPS</span>
-                    <strong id="metricActualFps">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Target Frame</span>
-                    <strong id="metricTargetFrame">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Avg Generate</span>
-                    <strong id="metricAvgGenerate">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Avg Send</span>
-                    <strong id="metricAvgSend">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Avg Frame</span>
-                    <strong id="metricAvgFrame">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Last Frame</span>
-                    <strong id="metricLastFrame">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Inline Show</span>
-                    <strong id="metricInlineShow">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <span>Perf Samples</span>
-                    <strong id="metricPerfSamples">--</strong>
-                </div>
-
-                <div class="text-uppercase text-muted fw-semibold mb-2">Driver</div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Devices</span>
-                    <strong id="metricDeviceCount">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Frames Sent</span>
-                    <strong id="metricDriverFrames">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Pipeline FPS</span>
-                    <strong id="metricDriverFps">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Bytes Sent</span>
-                    <strong id="metricDriverBytes">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Errors</span>
-                    <strong id="metricDriverErrors">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Avg Frame</span>
-                    <strong id="metricDriverAvg">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>Last Frame</span>
-                    <strong id="metricDriverLast">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>SPI Speed</span>
-                    <strong id="metricSpiSpeed">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-                    <span>SPI Transfers</span>
-                    <strong id="metricSpiTransfers">--</strong>
-                </div>
-                <div class="d-flex justify-content-between align-items-center">
-                    <span>CRC Overhead</span>
-                    <strong id="metricCrcBytes">--</strong>
-                </div>
-            </div>
-        </div>
-        
-        <div class="card mt-3">
-            <div class="card-header">
-                <h6><i class="fas fa-keyboard"></i> Keyboard Shortcuts</h6>
-            </div>
-            <div class="card-body">
-                <small>
-                    <strong>Space:</strong> Stop animation<br>
-                    <strong>R:</strong> Refresh plugins<br>
-                    <strong>1-9:</strong> Quick select animation
-                </small>
-            </div>
-        </div>
-    </div>
-</div>
+</main>
 {% endblock %}
 
 {% block scripts %}
 <script>
-let currentAnimation = null;
+let selectedAnimation = null;
+let liveAnimation = {{ status.current_animation|tojson if status.is_running else 'null' }};
 let parameterUpdateTimeout = null;
 let dpadCooldown = null;
 let currentParameterSchema = {};
 let currentParameterValues = {};
-let currentPresetCatalog = {};
 
 function humanizeParamName(name) {
-    return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    return String(name).replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase())
+        .replace(/\bFps\b/g, 'FPS')
+        .replace(/\bRgb\b/g, 'RGB')
+        .replace(/\bLed\b/g, 'LED');
 }
 
-// Select and start animation
-function selectAnimation(name) {
-    currentAnimation = name;
-    updateTetrisControls(name);
-    
-    // Update button states
-    document.querySelectorAll('.animation-btn').forEach(btn => {
-        btn.classList.remove('btn-primary');
-        btn.classList.add('btn-outline-primary');
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+}
+
+function safeControlId(name) {
+    return `parameter-${String(name).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
+
+function decimalPlaces(value) {
+    if (value === null || value === undefined || value === '' || !Number.isFinite(Number(value))) return 0;
+    const normalized = String(value).toLowerCase();
+    if (normalized.includes('e-')) {
+        const [coefficient, exponent] = normalized.split('e-');
+        return Number(exponent) + (coefficient.split('.')[1]?.length || 0);
+    }
+    return normalized.split('.')[1]?.length || 0;
+}
+
+function numericStep(paramInfo, currentValue) {
+    if (paramInfo.type === 'int') return 1;
+    if (paramInfo.step !== undefined && Number(paramInfo.step) > 0) return paramInfo.step;
+    const precision = Math.min(6, Math.max(
+        decimalPlaces(paramInfo.min), decimalPlaces(paramInfo.max),
+        decimalPlaces(paramInfo.default), decimalPlaces(currentValue)
+    ));
+    return 10 ** -Math.max(1, precision);
+}
+
+function isInternalParameter(name, info, value) {
+    const normalized = String(name).toLowerCase();
+    const internalName = normalized.endsWith('_path') || normalized.includes('mask_path') || normalized === 'plant_modifiers';
+    const complexValue = value !== null && typeof value === 'object';
+    const complexType = ['dict', 'object', 'list', 'array', 'json'].includes(String(info.type || '').toLowerCase());
+    return internalName || complexValue || complexType;
+}
+
+function markSelection(name) {
+    document.querySelectorAll('.animation-btn').forEach(button => {
+        const isSelected = button.dataset.animation === name;
+        button.classList.toggle('is-selected', isSelected);
+        button.setAttribute('aria-pressed', String(isSelected));
     });
-    
-    document.querySelector(`[data-animation="${name}"]`).classList.remove('btn-outline-primary');
-    document.querySelector(`[data-animation="${name}"]`).classList.add('btn-primary');
-    
-    // Start animation
-    startAnimation(name).then(result => {
-        if (result.success) {
-            loadAnimationParameters(name);
-        }
-    });
 }
 
-// Load animation parameters
-function loadAnimationParameters(name) {
-    fetch(`/api/animations/${name}`)
-        .then(r => r.json())
-        .then(info => {
-            if (info.parameters) {
-                renderParameterControls(info.parameters, info.current_params);
-                document.getElementById('parametersCard').style.display = 'block';
-                loadAnimationPresets(name);
-            }
-        })
-        .catch(console.error);
+async function inspectAnimation(name) {
+    selectedAnimation = name;
+    markSelection(name);
+    updateTetrisControls();
+    const response = await fetch(`/api/animations/${encodeURIComponent(name)}`);
+    const info = await response.json();
+    if (!response.ok) throw new Error(info.error || 'Unable to inspect animation');
+    currentParameterSchema = info.parameters || {};
+    renderParameterControls(currentParameterSchema, info.current_params || {});
+    document.getElementById('selectedAnimationTitle').textContent = humanizeParamName(name);
+    document.getElementById('parametersCard').hidden = false;
+    updateEditingState();
 }
 
-function updateTetrisControls(name) {
-    const card = document.getElementById('tetrisControlsCard');
-    if (!card) return;
-    const isTetris = name && name.toLowerCase() === 'tetris';
-    card.style.display = isTetris ? 'block' : 'none';
-}
-
-function sendDpad(direction) {
-    return fetch(`/api/dpad/${direction}`, {method: 'POST'})
-        .then(r => r.json())
-        .catch(console.error);
-}
-
-// Render parameter controls
 function renderParameterControls(schema, currentParams) {
     const container = document.getElementById('parametersContainer');
-    container.innerHTML = '';
-    
-    currentParameterSchema = schema;
+    container.replaceChildren();
     currentParameterValues = {};
+    let hiddenCount = 0;
 
     Object.entries(schema).forEach(([paramName, paramInfo]) => {
         const currentValue = currentParams[paramName] ?? paramInfo.default;
+        if (isInternalParameter(paramName, paramInfo, currentValue)) {
+            hiddenCount += 1;
+            return;
+        }
         currentParameterValues[paramName] = currentValue;
+        const controlId = safeControlId(paramName);
+        const wrapper = document.createElement('div');
+        wrapper.className = 'parameter-control';
+        const description = paramInfo.description ? `<div class="parameter-description">${escapeHtml(paramInfo.description)}</div>` : '';
+        const range = paramInfo.min !== undefined && paramInfo.max !== undefined
+            ? `<div class="parameter-range">${escapeHtml(paramInfo.min)}–${escapeHtml(paramInfo.max)}</div>` : '';
         const prettyName = humanizeParamName(paramName);
-        const rangeText = (paramInfo.min !== undefined && paramInfo.max !== undefined)
-            ? `Range: ${paramInfo.min} – ${paramInfo.max} (default ${paramInfo.default})`
-            : `Default: ${paramInfo.default ?? '--'}`;
-        
-        const controlDiv = document.createElement('div');
-        controlDiv.className = 'parameter-control';
-        
-        let controlHtml = `
-            <label class="form-label">
-                <strong>${prettyName}</strong>
-                <small class="text-muted d-block">${paramInfo.description}</small>
-                <small class="text-muted">${rangeText}</small>
-            </label>
-        `;
-        
+        let labelFor = controlId;
+        let input = '';
+
         if (Array.isArray(paramInfo.options) && paramInfo.options.length) {
-            const options = paramInfo.options.map(option => {
-                const selected = String(option) === String(currentValue) ? ' selected' : '';
-                return `<option value="${option}"${selected}>${humanizeParamName(String(option))}</option>`;
-            }).join('');
-            controlHtml += `
-                <select class="form-select" id="${paramName}"
-                        onchange="updateParameter('${paramName}', this.value, 'str')">
-                    ${options}
-                </select>
-            `;
+            const options = paramInfo.options.map(option => (
+                `<option value="${escapeHtml(option)}"${String(option) === String(currentValue) ? ' selected' : ''}>${escapeHtml(humanizeParamName(option))}</option>`
+            )).join('');
+            input = `<select class="form-select mt-2" id="${controlId}" data-parameter="${escapeHtml(paramName)}" data-type="str">${options}</select>`;
         } else if (paramInfo.type === 'float' || paramInfo.type === 'int') {
-            const step = paramInfo.type === 'float' ? '0.1' : '1';
-            const numberInputId = `${paramName}-value`;
-            const presets = paramInfo.presets && !Array.isArray(paramInfo.presets)
-                ? Object.entries(paramInfo.presets)
-                : [];
-            if (presets.length) {
-                const presetOptions = presets.map(([name, value]) => {
-                    const selected = Number(value) === Number(currentValue) ? ' selected' : '';
-                    return `<option value="${value}"${selected}>${humanizeParamName(name)} (${value})</option>`;
-                }).join('');
-                controlHtml += `
-                    <select class="form-select form-select-sm mb-2" id="${paramName}-preset"
-                            onchange="handleNamedPreset('${paramName}', this.value, '${paramInfo.type}', '${numberInputId}')">
-                        <option value="">Custom</option>
-                        ${presetOptions}
-                    </select>
-                `;
-            }
-            controlHtml += `
-                <div class="row">
-                    <div class="col-8">
-                        <input type="range" class="form-range" 
-                               id="${paramName}" 
-                               min="${paramInfo.min}" 
-                               max="${paramInfo.max}" 
-                               step="${step}"
-                               value="${currentValue}"
-                               oninput="handleRangeInput('${paramName}', this.value, '${paramInfo.type}', '${numberInputId}')">
-                    </div>
-                    <div class="col-4">
-                        <input type="number" class="form-control form-control-sm" 
-                               value="${currentValue}"
-                               min="${paramInfo.min}" 
-                               max="${paramInfo.max}" 
-                               step="${step}"
-                               id="${numberInputId}"
-                               oninput="handleNumberInput('${paramName}', this.value, '${paramInfo.type}', '${paramName}')">
-                    </div>
-                </div>
-            `;
-        } else if (paramInfo.type === 'bool') {
-            controlHtml += `
-                <div class="form-check">
-                    <input type="checkbox" class="form-check-input" 
-                           id="${paramName}" 
-                           ${currentValue ? 'checked' : ''}
-                           onchange="updateParameter('${paramName}', this.checked, 'bool')">
-                    <label class="form-check-label" for="${paramName}">Enable</label>
-                </div>
-            `;
+            const step = numericStep(paramInfo, currentValue);
+            const min = paramInfo.min !== undefined ? ` min="${escapeHtml(paramInfo.min)}"` : '';
+            const max = paramInfo.max !== undefined ? ` max="${escapeHtml(paramInfo.max)}"` : '';
+            const slider = paramInfo.min !== undefined && paramInfo.max !== undefined
+                ? `<input class="form-range flex-grow-1" id="${controlId}" type="range"${min}${max} step="${step}" value="${escapeHtml(currentValue)}" aria-label="${escapeHtml(prettyName)} slider" data-parameter="${escapeHtml(paramName)}" data-type="${paramInfo.type}" data-mirror="${controlId}-number">`
+                : '';
+            if (!slider) labelFor = `${controlId}-number`;
+            input = `<div class="d-flex align-items-center gap-3 mt-2">${slider}<input class="form-control form-control-sm" style="max-width:7.5rem" id="${controlId}-number" type="number"${min}${max} step="${step}" value="${escapeHtml(currentValue)}" aria-label="${escapeHtml(prettyName)} exact value" data-parameter="${escapeHtml(paramName)}" data-type="${paramInfo.type}" data-mirror="${controlId}"></div>`;
+        } else if (paramInfo.type === 'bool' || typeof currentValue === 'boolean') {
+            input = `<div class="form-check form-switch mt-2"><input class="form-check-input" id="${controlId}" type="checkbox" data-parameter="${escapeHtml(paramName)}" data-type="bool" data-state-label="${controlId}-state"${currentValue ? ' checked' : ''}><span class="form-check-label" id="${controlId}-state">${currentValue ? 'Enabled' : 'Disabled'}</span></div>`;
+        } else if (typeof currentValue === 'string' || currentValue === null || currentValue === undefined) {
+            const type = String(paramName).toLowerCase().includes('color') && /^#[0-9a-f]{6}$/i.test(String(currentValue)) ? 'color' : 'text';
+            input = `<input class="form-control mt-2" id="${controlId}" type="${type}" value="${escapeHtml(currentValue ?? '')}" data-parameter="${escapeHtml(paramName)}" data-type="str">`;
         } else {
-            controlHtml += `
-                <input type="text" class="form-control" 
-                       id="${paramName}" 
-                       value="${currentValue}"
-                       onchange="updateParameter('${paramName}', this.value, 'str')">
-            `;
+            hiddenCount += 1;
+            return;
         }
-        
-        controlDiv.innerHTML = controlHtml;
-        container.appendChild(controlDiv);
+
+        wrapper.innerHTML = `<label class="form-label mb-0" for="${labelFor}"><strong>${escapeHtml(prettyName)}</strong>${description}${range}</label>${input}`;
+        container.appendChild(wrapper);
+    });
+
+    container.querySelectorAll('[data-parameter]').forEach(control => {
+        control.addEventListener('input', handleParameterInput);
+        control.addEventListener('change', handleParameterInput);
+    });
+    const notice = document.getElementById('hiddenParametersNotice');
+    notice.classList.toggle('d-none', hiddenCount === 0);
+    notice.textContent = hiddenCount ? `${hiddenCount} installation-level setting${hiddenCount === 1 ? '' : 's'} hidden here. Manage masks and installation data in their dedicated tools.` : '';
+}
+
+function handleParameterInput(event) {
+    const control = event.currentTarget;
+    const name = control.dataset.parameter;
+    const type = control.dataset.type;
+    let value = type === 'bool' ? control.checked : control.value;
+    if (type === 'int') value = Number.parseInt(value, 10);
+    if (type === 'float') value = Number.parseFloat(value);
+    if (type === 'bool' && control.dataset.stateLabel) {
+        const state = document.getElementById(control.dataset.stateLabel);
+        if (state) state.textContent = control.checked ? 'Enabled' : 'Disabled';
+    }
+    if (control.dataset.mirror) {
+        const mirror = document.getElementById(control.dataset.mirror);
+        if (mirror && mirror.value !== String(control.value)) mirror.value = control.value;
+    }
+    updateParameter(name, value);
+}
+
+function updateParameter(name, value) {
+    currentParameterValues[name] = value;
+    if (selectedAnimation !== liveAnimation) {
+        updateEditingState();
+        return;
+    }
+    window.clearTimeout(parameterUpdateTimeout);
+    parameterUpdateTimeout = window.setTimeout(async () => {
+        const result = await updateParameters({[name]: value});
+        if (!result.success) console.error('Failed to update parameter', name);
+    }, 100);
+}
+
+async function takeSelectedLive() {
+    if (!selectedAnimation) return;
+    const result = await startAnimation(selectedAnimation, currentParameterValues);
+    if (!result.success) {
+        window.alert(result.error || 'Unable to take this animation live.');
+        return;
+    }
+    liveAnimation = selectedAnimation;
+    updateEditingState();
+    updateLiveButtonStates();
+    updateTetrisControls();
+    await refreshAdvancedStatus();
+}
+
+async function stopLiveOutput() {
+    await stopAnimation();
+    liveAnimation = null;
+    updateEditingState();
+    updateLiveButtonStates();
+    updateTetrisControls();
+    await refreshAdvancedStatus();
+}
+
+function updateEditingState() {
+    if (!selectedAnimation) return;
+    const isLive = selectedAnimation === liveAnimation;
+    const badge = document.getElementById('editStateBadge');
+    const help = document.getElementById('editStateHelp');
+    const button = document.getElementById('takeLiveBtn');
+    badge.textContent = isLive ? 'Live tuning' : 'Draft';
+    badge.className = `badge rounded-pill ${isLive ? 'live-badge' : 'draft-badge'}`;
+    help.textContent = isLive ? 'Changes now update the live wall.' : 'Changes stay private until you take this animation live.';
+    button.innerHTML = isLive
+        ? '<i class="fas fa-check me-1" aria-hidden="true"></i> Live now'
+        : '<i class="fas fa-broadcast-tower me-1" aria-hidden="true"></i> Take live';
+    button.disabled = isLive;
+}
+
+function updateLiveButtonStates() {
+    document.querySelectorAll('.animation-btn').forEach(button => {
+        button.classList.toggle('is-live', button.dataset.animation === liveAnimation);
     });
 }
 
-function handleRangeInput(name, value, type, mirrorInputId) {
-    const mirror = document.getElementById(mirrorInputId);
-    if (mirror) {
-        mirror.value = value;
-    }
-    syncNamedPreset(name, value);
-    updateParameter(name, value, type);
+function updateTetrisControls() {
+    const isTetrisSelected = selectedAnimation?.toLowerCase() === 'tetris';
+    const isTetrisLive = liveAnimation?.toLowerCase() === 'tetris';
+    document.getElementById('tetrisControlsCard').hidden = !isTetrisSelected;
+    document.querySelectorAll('.dpad-btn').forEach(button => { button.disabled = !isTetrisLive; });
+    document.getElementById('dpadHelp').textContent = isTetrisLive
+        ? 'Tetris is live. Use the controls below or your arrow keys.'
+        : 'Take Tetris live to enable gameplay controls.';
 }
 
-function handleNumberInput(name, value, type, mirrorSliderId) {
-    if (value === '' || value === null) {
-        return;
-    }
-    const slider = document.getElementById(mirrorSliderId);
-    if (slider) {
-        slider.value = value;
-    }
-    syncNamedPreset(name, value);
-    updateParameter(name, value, type);
+function sendDpad(direction) {
+    return fetch(`/api/dpad/${direction}`, {method: 'POST'}).then(response => response.json());
 }
 
-function syncNamedPreset(name, value) {
-    const preset = document.getElementById(`${name}-preset`);
-    if (!preset) return;
-    const matchingOption = Array.from(preset.options).find(option => (
-        option.value !== '' && Number(option.value) === Number(value)
-    ));
-    preset.value = matchingOption ? matchingOption.value : '';
+async function refreshAdvancedStatus() {
+    const status = await getStatus();
+    liveAnimation = status.is_running ? status.current_animation : null;
+    updateMetricsPanel(status);
+    applyGlobalLiveStatus(status);
+    document.getElementById('advancedStatusJson').textContent = JSON.stringify(status, null, 2);
+    updateEditingState();
+    updateLiveButtonStates();
+    updateTetrisControls();
 }
 
-function handleNamedPreset(name, value, type, numberInputId) {
-    if (value === '') return;
-    const numberInput = document.getElementById(numberInputId);
-    const slider = document.getElementById(name);
-    if (numberInput) numberInput.value = value;
-    if (slider) slider.value = value;
-    updateParameter(name, value, type);
-}
-
-// Update parameter with debouncing
-function updateParameter(name, value, type) {
-    // Convert value to appropriate type
-    let convertedValue = value;
-    if (type === 'int') {
-        convertedValue = parseInt(value);
-    } else if (type === 'float') {
-        convertedValue = parseFloat(value);
-    } else if (type === 'bool') {
-        convertedValue = Boolean(value);
-    }
-    currentParameterValues[name] = convertedValue;
-    
-    // Clear existing timeout
-    if (parameterUpdateTimeout) {
-        clearTimeout(parameterUpdateTimeout);
-    }
-    
-    // Set new timeout for debounced update
-    parameterUpdateTimeout = setTimeout(() => {
-        const params = {};
-        params[name] = convertedValue;
-        
-        updateParameters(params).then(result => {
-            if (!result.success) {
-                console.error('Failed to update parameter:', name);
-            }
-        });
-    }, 100); // 100ms debounce
-}
-
-async function loadAnimationPresets(name = currentAnimation) {
-    const select = document.getElementById('presetSelect');
-    if (!select || !name) return;
+async function copyAdvancedStatus() {
+    const text = document.getElementById('advancedStatusJson').textContent;
     try {
-        const response = await fetch(`/api/animations/${encodeURIComponent(name)}/presets`);
-        const payload = await response.json();
-        select.innerHTML = '';
-        const presets = Array.isArray(payload.presets) ? payload.presets : [];
-        currentPresetCatalog = Object.fromEntries(presets.map(preset => [preset.preset_id, preset]));
-        const placeholder = document.createElement('option');
-        placeholder.value = '';
-        placeholder.textContent = presets.length ? 'Choose a preset…' : 'No saved presets';
-        select.appendChild(placeholder);
-        presets.forEach(preset => {
-            const option = document.createElement('option');
-            option.value = preset.preset_id;
-            option.textContent = preset.category ? `${preset.name} · ${preset.category}` : preset.name;
-            select.appendChild(option);
-        });
-        showSelectedPresetDetails();
+        await navigator.clipboard.writeText(text);
     } catch (error) {
-        console.error('Failed to load animation presets', error);
+        console.error('Could not copy status JSON', error);
     }
 }
 
-function showSelectedPresetDetails() {
-    const select = document.getElementById('presetSelect');
-    const details = document.getElementById('presetDetails');
-    if (!select || !details) return;
-    const preset = currentPresetCatalog[select.value];
-    details.replaceChildren();
-    if (!preset) {
-        details.style.display = 'none';
-        return;
-    }
-    if (preset.description) {
-        const description = document.createElement('span');
-        description.textContent = preset.description;
-        details.appendChild(description);
-    }
-    const colors = preset.palette && Array.isArray(preset.palette.colors)
-        ? preset.palette.colors : [];
-    if (colors.length) {
-        const swatches = document.createElement('span');
-        swatches.className = 'ms-2';
-        colors.filter(color => /^#[0-9a-fA-F]{6}$/.test(color)).forEach(color => {
-            const dot = document.createElement('span');
-            dot.style.cssText = `display:inline-block;width:12px;height:12px;border-radius:50%;margin-left:3px;background:${color};border:1px solid rgba(255,255,255,.35)`;
-            dot.title = color;
-            swatches.appendChild(dot);
-        });
-        details.appendChild(swatches);
-    }
-    details.style.display = details.childNodes.length ? 'block' : 'none';
+async function refreshPluginsAndNotify() {
+    const result = await refreshPlugins();
+    window.alert(result.success ? 'Plug-ins refreshed.' : 'Unable to refresh plug-ins.');
 }
 
-async function saveAnimationPreset() {
-    const nameInput = document.getElementById('presetName');
-    const presetName = nameInput.value.trim();
-    if (!currentAnimation || !presetName) {
-        window.alert('Select an animation and enter a preset name.');
-        return;
-    }
-    const response = await fetch(`/api/animations/${encodeURIComponent(currentAnimation)}/presets`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name: presetName, params: currentParameterValues})
+function filterAnimations() {
+    const query = document.getElementById('animationSearch').value.trim().toLowerCase();
+    let visible = 0;
+    document.querySelectorAll('.animation-btn').forEach(button => {
+        const matches = !query || button.dataset.search.includes(query);
+        button.hidden = !matches;
+        if (matches) visible += 1;
     });
-    const payload = await response.json();
-    if (!response.ok) {
-        window.alert(payload.error || 'Failed to save preset.');
-        return;
-    }
-    nameInput.value = '';
-    await loadAnimationPresets();
-    document.getElementById('presetSelect').value = payload.preset.preset_id;
-    showSelectedPresetDetails();
+    document.getElementById('noAnimationResults').classList.toggle('d-none', visible !== 0);
 }
 
-async function applySelectedPreset() {
-    const presetId = document.getElementById('presetSelect').value;
-    if (!currentAnimation || !presetId) return;
-    const response = await fetch(
-        `/api/animations/${encodeURIComponent(currentAnimation)}/presets/${encodeURIComponent(presetId)}/apply`,
-        {method: 'POST'}
-    );
-    const payload = await response.json();
-    if (!response.ok) {
-        window.alert(payload.error || 'Failed to load preset.');
-        return;
-    }
-    renderParameterControls(currentParameterSchema, payload.preset.params || {});
-}
-
-async function deleteSelectedPreset() {
-    const select = document.getElementById('presetSelect');
-    const presetId = select.value;
-    if (!currentAnimation || !presetId) return;
-    const presetName = select.options[select.selectedIndex].textContent;
-    if (!window.confirm(`Delete preset "${presetName}"?`)) return;
-    const response = await fetch(
-        `/api/animations/${encodeURIComponent(currentAnimation)}/presets/${encodeURIComponent(presetId)}`,
-        {method: 'DELETE'}
-    );
-    if (response.ok) await loadAnimationPresets();
-}
-
-// Keyboard shortcuts
-document.addEventListener('keydown', function(e) {
-    if (e.target.tagName === 'INPUT') return; // Don't interfere with input fields
-    
-    switch(e.key) {
-        case ' ':
-            e.preventDefault();
-            stopAnimation();
-            break;
-        case 'r':
-        case 'R':
-            refreshPlugins();
-            break;
-        default:
-            // Number keys 1-9 for quick animation selection
-            const num = parseInt(e.key);
-            if (num >= 1 && num <= 9) {
-                const buttons = document.querySelectorAll('.animation-btn');
-                if (buttons[num - 1]) {
-                    buttons[num - 1].click();
-                }
-            }
-    }
-});
-
-document.querySelectorAll('.dpad-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-        const direction = btn.getAttribute('data-direction');
-        if (!direction) return;
-        if (dpadCooldown) {
-            clearTimeout(dpadCooldown);
-        }
-        sendDpad(direction);
-        dpadCooldown = setTimeout(() => {
-            dpadCooldown = null;
-        }, 75);
+document.getElementById('animationSearch').addEventListener('input', filterAnimations);
+document.querySelectorAll('.dpad-btn').forEach(button => {
+    button.addEventListener('click', () => {
+        if (button.disabled || dpadCooldown) return;
+        sendDpad(button.dataset.direction);
+        dpadCooldown = window.setTimeout(() => { dpadCooldown = null; }, 75);
     });
 });
 
-// Enhanced status updates
-function updateStatus() {
-    getStatus().then(status => {
-        // Update status indicators
-        const indicator = document.querySelector('.status-indicator');
-        const statusText = document.querySelector('.status-text');
-        const fpsDisplay = document.querySelector('.fps-display');
-        const frameCount = document.getElementById('frameCount');
-        
-        if (indicator) {
-            indicator.className = 'status-indicator ' + 
-                (status.is_running ? 'status-running' : 'status-stopped');
-        }
-        
-        if (statusText) {
-            statusText.textContent = status.is_running ? 
-                status.current_animation : 'None';
-        }
-        
-        if (fpsDisplay) {
-            fpsDisplay.textContent = `${status.actual_fps.toFixed(1)} FPS`;
-        }
-        
-        if (frameCount) {
-            frameCount.textContent = status.frame_count;
-        }
-        
-        // Update current animation button state
-        if (status.is_running && status.current_animation !== currentAnimation) {
-            currentAnimation = status.current_animation;
-            updateTetrisControls(currentAnimation);
-            document.querySelectorAll('.animation-btn').forEach(btn => {
-                btn.classList.remove('btn-primary');
-                btn.classList.add('btn-outline-primary');
-            });
-            
-            const currentBtn = document.querySelector(`[data-animation="${currentAnimation}"]`);
-            if (currentBtn) {
-                currentBtn.classList.remove('btn-outline-primary');
-                currentBtn.classList.add('btn-primary');
-            }
-        } else if (!status.is_running) {
-            currentAnimation = null;
-            updateTetrisControls(null);
-        }
-    }).catch(console.error);
-}
+document.addEventListener('keydown', event => {
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return;
+    if (event.key === ' ') {
+        event.preventDefault();
+        stopLiveOutput();
+    } else if (event.key.toLowerCase() === 'r') {
+        refreshPluginsAndNotify();
+    } else if (/^[1-9]$/.test(event.key)) {
+        document.querySelectorAll('.animation-btn:not([hidden])')[Number(event.key) - 1]?.click();
+    }
+});
 
-// Start with current animation if running
+updateLiveButtonStates();
 {% if status.is_running %}
-currentAnimation = '{{ status.current_animation }}';
-updateTetrisControls(currentAnimation);
-loadAnimationParameters(currentAnimation);
+inspectAnimation({{ status.current_animation|tojson }}).catch(console.error);
 {% endif %}
+window.setInterval(refreshAdvancedStatus, 2000);
+refreshAdvancedStatus().catch(console.error);
 </script>
 {% endblock %}
