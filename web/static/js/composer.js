@@ -2075,7 +2075,11 @@
     }
 
     function bindEvents() {
-        $('componentSearch').addEventListener('input', (event) => { state.query = event.target.value; renderCatalog(); });
+        $('componentSearch').addEventListener('input', (event) => {
+            state.query = event.target.value;
+            if (state.query.trim()) $('animationCatalogDisclosure').open = true;
+            renderCatalog();
+        });
         document.querySelectorAll('[data-filter]').forEach((button) => button.addEventListener('click', () => {
             state.catalogFilter = button.dataset.filter;
             document.querySelectorAll('[data-filter]').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
@@ -2163,18 +2167,48 @@
         $('prepareOfflineButton')?.addEventListener('click', prepareOffline);
         document.querySelectorAll('[data-mobile-target]').forEach((button) => button.addEventListener('click', () => selectMobileView(button.dataset.mobileTarget)));
         document.addEventListener('keydown', (event) => {
-            const modifier = navigator.platform?.toLowerCase().includes('mac') ? event.metaKey : event.ctrlKey;
+            const key = event.key.toLowerCase();
+            const target = event.target;
+            const editing = target instanceof HTMLElement && (
+                target.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)
+            );
+            const modifier = event.metaKey || event.ctrlKey;
+
+            if (!modifier && !event.altKey && !editing) {
+                if (event.key === '/') {
+                    event.preventDefault();
+                    selectMobileView('library');
+                    $('componentSearch').focus();
+                } else if (event.code === 'Space' && state.component) {
+                    event.preventDefault();
+                    $('playButton').click();
+                } else if (key === 't') {
+                    event.preventDefault();
+                    selectMobileView('tune');
+                } else if (key === 'l') {
+                    event.preventDefault();
+                    selectMobileView('layers');
+                } else if (key === 'c') {
+                    event.preventDefault();
+                    selectMobileView('check');
+                }
+                return;
+            }
+
             if (!modifier || event.altKey) return;
-            if (event.key.toLowerCase() === 'z') {
+            if (key === 'z') {
                 event.preventDefault();
                 restoreHistory(state.historyIndex + (event.shiftKey ? 1 : -1));
-            } else if (event.key.toLowerCase() === 's') {
+            } else if (key === 's') {
                 event.preventDefault();
                 if (state.component && state.serverOnline) saveToLibrary();
                 else toast('Draft saved on this device. Reconnect to save to the server library.');
-            } else if (event.key.toLowerCase() === 'o') {
+            } else if (key === 'o') {
                 event.preventDefault();
                 $('importFile').click();
+            } else if (key === 'e') {
+                event.preventDefault();
+                if (state.component) exportJson();
             }
         });
         window.addEventListener('online', () => {

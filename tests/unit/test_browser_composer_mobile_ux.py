@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = ROOT / "web" / "templates" / "composer.html"
 STYLES = ROOT / "web" / "static" / "css" / "composer.css"
+JAVASCRIPT = ROOT / "web" / "static" / "js" / "composer.js"
 MANIFEST = ROOT / "web" / "static" / "composer.webmanifest"
 
 
@@ -35,6 +36,7 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.html = TEMPLATE.read_text(encoding="utf-8")
         cls.css = STYLES.read_text(encoding="utf-8")
+        cls.javascript = JAVASCRIPT.read_text(encoding="utf-8")
         cls.manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         cls.audit = _Audit()
         cls.audit.feed(cls.html)
@@ -138,6 +140,26 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
         ids = [attrs["id"] for _tag, attrs in self.audit.elements if attrs.get("id")]
         self.assertEqual(len(ids), len(set(ids)))
         self.assertTrue(required_ids.issubset(ids))
+
+    def test_authoring_workspace_is_dense_flat_and_keyboard_first(self) -> None:
+        self.assertIn('<meta name="theme-color" content="#242424">', self.html)
+        self.assertIn('class="toolbar-separator"', self.html)
+        self.assertIn('aria-keyshortcuts="Control+E Meta+E"', self.html)
+        self.assertIn('aria-keyshortcuts="T"', self.html)
+        self.assertIn('aria-keyshortcuts="L"', self.html)
+        self.assertIn('aria-keyshortcuts="C"', self.html)
+        self.assertLess(
+            self.html.index('id="componentSearch"'),
+            self.html.index('id="animationCatalogDisclosure"'),
+        )
+        self.assertIn("Professional authoring workspace", self.css)
+        self.assertIn("--header-height: 46px;", self.css)
+        self.assertIn("--acid: #38a2ff;", self.css)
+        self.assertIn(".wall-aura, .floor-shadow { display: none; }", self.css)
+        self.assertIn("$('animationCatalogDisclosure').open = true", self.javascript)
+        self.assertIn("event.key === '/'", self.javascript)
+        self.assertIn("event.code === 'Space'", self.javascript)
+        self.assertIn("else if (key === 'e')", self.javascript)
 
 
 if __name__ == "__main__":
