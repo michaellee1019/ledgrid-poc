@@ -9,11 +9,20 @@ Key files:
 Notes:
 - Requests are forwarded to the controller via ipc/control_channel.py.
 - Keep UI-specific logic here; avoid embedding animation logic in routes.
+- Rebuild the checked-in browser runtime assets with
+  `just browser-composer-assets`. The first Python preview on a device downloads
+  the pinned Pyodide runtime; rendering and checking then stay inside Web Workers.
 
 API endpoints:
+- `GET /composer` — installable browser-Wasm preset composer; opening it is
+  private and non-mutating
+- `GET /api/v1/composer/bootstrap` — provider-qualified schemas, full authored
+  preset parameters, geometry, and explicit browser runtime capabilities
+- `GET /composer-service-worker.js` — root-scoped offline shell worker
 - GET /api/animations
 - `GET /api/v1/components` — unified descriptor catalog, filterable by provider
   and role
+
 - `GET|POST|PUT|DELETE /api/v1/scene` — read, start, or stop the fixed scene
 - `POST /api/v1/scene/validate` — validate without changing live output
 - `PATCH /api/v1/scene/components/<target>` — targeted background or

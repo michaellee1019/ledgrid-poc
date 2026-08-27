@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#10110f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Wall Composer">
+  <title>Preset Composer · Living Wall</title>
+  <link rel="manifest" href="{{ url_for('static', filename='composer.webmanifest') }}">
+  <link rel="icon" href="{{ url_for('static', filename='icons/composer.svg') }}" type="image/svg+xml">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/composer-180.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/composer.css') }}">
+</head>
+<body>
+  <a class="skip-link" href="#composerWorkspace">Skip to composer</a>
+
+  <header class="app-header">
+    <div class="brand-lockup">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+      <span><strong>Living Wall</strong><small>Preset Composer</small></span>
+    </div>
+    <div class="document-identity">
+      <label class="sr-only" for="presetName">Preset name</label>
+      <input id="presetName" value="Untitled look" maxlength="80" autocomplete="off">
+      <span id="saveState" role="status" aria-live="polite">Loading catalog…</span>
+    </div>
+    <div class="header-actions" aria-label="Document actions">
+      <button class="icon-button" id="undoButton" type="button" title="Undo" aria-label="Undo" disabled>↶</button>
+      <button class="icon-button" id="redoButton" type="button" title="Redo" aria-label="Redo" disabled>↷</button>
+      <button class="quiet-button" id="importButton" type="button">Import</button>
+      <button class="quiet-button" id="copyButton" type="button">Copy JSON</button>
+      <button class="primary-button" id="exportButton" type="button">Export</button>
+      <input id="importFile" type="file" accept="application/json,.json" hidden>
+    </div>
+  </header>
+
+  <main class="composer-shell" id="composerWorkspace" tabindex="-1">
+    <aside class="pane library-pane mobile-view is-active" data-mobile-view="library" aria-labelledby="libraryHeading">
+      <div class="pane-heading">
+        <div><p class="eyebrow">Source</p><h1 id="libraryHeading">Choose a renderer</h1></div>
+        <span class="count-pill" id="catalogCount">0</span>
+      </div>
+      <label class="search-field" for="componentSearch">
+        <span aria-hidden="true">⌕</span>
+        <input id="componentSearch" type="search" placeholder="Search animations" autocomplete="off">
+      </label>
+      <div class="catalog-filters" role="group" aria-label="Renderer filter">
+        <button type="button" data-filter="all" aria-pressed="true">All</button>
+        <button type="button" data-filter="python" aria-pressed="false">Python</button>
+        <button type="button" data-filter="native" aria-pressed="false">C++</button>
+      </div>
+      <div class="component-list" id="componentList" role="listbox" aria-label="Animation renderers" aria-busy="true"></div>
+      <section class="preset-section" aria-labelledby="presetHeading">
+        <div class="section-heading"><h2 id="presetHeading">Starting points</h2><span id="presetCount">0</span></div>
+        <div class="preset-list" id="presetList"></div>
+      </section>
+    </aside>
+
+    <section class="stage-pane mobile-view" data-mobile-view="stage" aria-labelledby="stageHeading">
+      <div class="stage-topline">
+        <div>
+          <p class="eyebrow">Private browser preview</p>
+          <h1 id="stageHeading">Select a browser-ready animation</h1>
+          <p id="componentDescription">Frames render on this device and never change the physical wall.</p>
+        </div>
+        <div class="engine-badge" id="engineBadge" data-state="waiting"><span></span><strong>Waiting</strong><small>No worker selected</small></div>
+      </div>
+
+      <div class="preview-workspace">
+        <div class="wall-room" id="wallRoom">
+          <div class="wall-aura" aria-hidden="true"></div>
+          <div class="wall-bezel">
+            <canvas id="previewCanvas" width="33" height="138" aria-label="Local animation preview"></canvas>
+            <div class="preview-placeholder" id="previewPlaceholder"><span aria-hidden="true">✦</span><strong>Your wall, simulated here</strong><small>Choose a supported renderer to begin.</small></div>
+          </div>
+          <div class="floor-shadow" aria-hidden="true"></div>
+        </div>
+
+        <div class="compare-control" role="group" aria-label="Preview version">
+          <button type="button" data-compare="draft" aria-pressed="true">Draft</button>
+          <button type="button" data-compare="split" aria-pressed="false">Split</button>
+          <button type="button" data-compare="original" aria-pressed="false">Original</button>
+        </div>
+        <p class="split-legend" id="splitLegend" hidden><span>Original</span><span>Draft</span></p>
+      </div>
+
+      <div class="transport" aria-label="Preview transport">
+        <button class="play-button" id="playButton" type="button" aria-label="Pause preview" disabled><span aria-hidden="true">Ⅱ</span></button>
+        <span class="timecode" id="timecode">0:00.0</span>
+        <label class="sr-only" for="timeline">Preview time</label>
+        <input id="timeline" type="range" min="0" max="20" value="0" step="0.01" disabled>
+        <span class="timecode">0:20</span>
+        <label class="fps-select">Rate
+          <select id="fpsSelect">
+            <option value="24">24 fps</option>
+            <option value="30" selected>30 fps</option>
+            <option value="60">60 fps</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="provenance-note">
+        <span aria-hidden="true">◎</span>
+        <p><strong id="provenanceTitle">Local simulation</strong><span id="provenanceDetail">This is an authored renderer preview—not camera feedback or framebuffer readback from the installation.</span></p>
+      </div>
+    </section>
+
+    <aside class="pane inspector-pane mobile-view" data-mobile-view="tune" aria-labelledby="inspectorHeading">
+      <div class="inspector-tabs" role="tablist" aria-label="Inspector">
+        <button id="controlsTab" type="button" role="tab" aria-selected="true" aria-controls="controlsPanel">Tune</button>
+        <button id="checkerTab" type="button" role="tab" aria-selected="false" aria-controls="checkerPanel">Check <span id="checkerDot" aria-hidden="true"></span></button>
+      </div>
+
+      <section id="controlsPanel" role="tabpanel" aria-labelledby="controlsTab">
+        <div class="pane-heading compact">
+          <div><p class="eyebrow">Parameters</p><h1 id="inspectorHeading">Shape the look</h1></div>
+          <button class="text-button" id="resetButton" type="button" disabled>Reset</button>
+        </div>
+        <p class="empty-message" id="parameterEmpty">Controls are generated from the selected renderer’s declared schema.</p>
+        <form class="parameter-list" id="parameterList" autocomplete="off"></form>
+      </section>
+
+      <section id="checkerPanel" role="tabpanel" aria-labelledby="checkerTab" hidden>
+        <div class="checker-intro">
+          <p class="eyebrow">Local acceptance</p>
+          <h1>Check before you ship</h1>
+          <p>Samples 48 frames in a disposable worker. Nothing is sent to the wall.</p>
+          <button class="primary-button full-button" id="runCheckerButton" type="button" disabled>Run local check</button>
+        </div>
+        <div class="checker-progress" id="checkerProgress" hidden>
+          <div><span id="checkerProgressLabel">Preparing renderer…</span><strong id="checkerProgressValue">0%</strong></div>
+          <progress id="checkerProgressBar" max="48" value="0"></progress>
+        </div>
+        <div class="check-summary" id="checkSummary" data-grade="idle">
+          <span class="check-gauge" id="checkGauge">—</span>
+          <p><strong id="checkHeadline">Not checked yet</strong><span id="checkSummaryCopy">Run a local sample after tuning.</span></p>
+        </div>
+        <dl class="metric-list" id="metricList">
+          <div data-metric="schema"><dt><span class="metric-icon">✓</span> Schema</dt><dd>Waiting</dd><small>Declared values and bounds</small></div>
+          <div data-metric="motion"><dt><span class="metric-icon">↝</span> Motion</dt><dd>Waiting</dd><small>Frame-to-frame change</small></div>
+          <div data-metric="luminance"><dt><span class="metric-icon">◐</span> Luminance</dt><dd>Waiting</dd><small>Perceived brightness</small></div>
+          <div data-metric="clipping"><dt><span class="metric-icon">◇</span> Clipping</dt><dd>Waiting</dd><small>Channels pinned at full output</small></div>
+          <div data-metric="strobe"><dt><span class="metric-icon">ϟ</span> Temporal delta</dt><dd>Waiting</dd><small>Rapid full-wall transitions</small></div>
+          <div data-metric="current"><dt><span class="metric-icon">⌁</span> Estimated current</dt><dd>Waiting</dd><small>60 mA/pixel RGB upper model</small></div>
+          <div data-metric="render"><dt><span class="metric-icon">◷</span> Render p95</dt><dd>Waiting</dd><small>This browser and geometry</small></div>
+        </dl>
+        <p class="checker-caveat">Estimates are preview diagnostics, not measurements of the installed wall, power supply, receiver timing, or plant occlusion.</p>
+      </section>
+    </aside>
+  </main>
+
+  <nav class="mobile-tabs" aria-label="Composer sections">
+    <button type="button" data-mobile-target="library" aria-current="page"><span aria-hidden="true">▦</span>Looks</button>
+    <button type="button" data-mobile-target="stage"><span aria-hidden="true">◉</span>Preview</button>
+    <button type="button" data-mobile-target="tune"><span aria-hidden="true">⌁</span>Tune</button>
+    <button type="button" data-mobile-target="check"><span aria-hidden="true">✓</span>Check</button>
+  </nav>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
+  <script src="{{ url_for('static', filename='js/composer_runtime.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/composer.js') }}" defer></script>
+</body>
+</html>

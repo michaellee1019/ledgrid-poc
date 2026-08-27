@@ -494,6 +494,37 @@ The rendering benchmark is the authoritative performance gate for the installed
 clock scenes and reports p50/p95/p99/max separately; desktop results are portable
 evidence, not Raspberry Pi or physical-wall timing evidence.
 
+## Browser preset composer
+
+`/composer` is an installable, private authoring surface. It loads a
+provider-qualified catalog and full preset parameter envelopes once, then keeps
+draft editing, rendering, checking, comparison, autosave, and JSON export in the
+browser. Opening the composer does not read live wall status, start an animation,
+or call the server preview endpoints.
+
+Browser execution is capability-gated rather than inferred from catalog
+visibility:
+
+- verified Host Python components run unchanged in a Web Worker through a pinned
+  Pyodide/CPython WebAssembly runtime and a deterministic repository source
+  bundle; the same checked-in foliage and seven-globe calibration maps are
+  bundled so plant-aware curated presets do not silently lose their geometry;
+- verified receiver-native components use a separate Emscripten build of the
+  same repository C++ source and ABI-v2 callbacks used by the host preview;
+- components without a verified adapter retain generated poster/loop assets and
+  state explicitly that interactive browser rendering is unavailable.
+
+Both workers return canonical strip-major RGB bytes. The UI alone maps logical
+LED zero to the bottom of the 33 x 138 display. Browser previews remain authored
+simulations: they are never presented as receiver framebuffer readback or proof
+of physical output.
+
+The checker samples frames locally and reports schema errors, motion, luminance,
+channel clipping, temporal deltas, estimated current, and browser render-time
+percentiles. These measurements characterize the current browser and do not
+replace the host rendering gate, Raspberry Pi measurements, receiver timing, or
+photographed wall acceptance.
+
 ## Runtime boundaries
 
 The controller process owns plugin instances and hardware presentation. The web

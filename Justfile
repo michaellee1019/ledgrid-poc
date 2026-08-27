@@ -138,6 +138,11 @@ fetch-presets: fetch-wall-data
 generate-previews:
 	{{python_env}} python tools/generate_animation_previews.py --tracked-only
 
+# Rebuild the deterministic Pyodide source archive and receiver-native Wasm.
+browser-composer-assets:
+	{{python_env}} python tools/build_browser_python_bundle.py
+	python3 tools/build_browser_native.py --check
+
 # Run the Mac-only software dashboard with 30 FPS contact-strip loops.
 start-mac:
 	{{python_env}} python tools/generate_animation_previews.py --tracked-only \

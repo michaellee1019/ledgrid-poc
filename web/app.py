@@ -67,6 +67,19 @@ PAINTER_MASK_TYPES = (
     },
 )
 
+# Browser execution is deliberately capability-gated. Python components run
+# through the checked-in Pyodide source bundle; receiver-native execution uses
+# a separately built Wasm peer of the repository-owned ABI-v2 source. Keeping
+# the allowlist here makes the API honest when a component is catalog-visible
+# but its browser runtime has not been proven yet.
+BROWSER_PYTHON_COMPONENTS = frozenset({
+    'gradient',
+    'rainbow',
+    'sparkle',
+    'wave',
+})
+BROWSER_NATIVE_COMPONENTS = frozenset({'aurora_curtains_native'})
+
 class AnimationWebInterface:
     """Web interface for animation management"""
 
@@ -211,6 +224,32 @@ class AnimationWebInterface:
         def studio_next():
             """Studio Next shell; authoritative state is fetched after load."""
             return render_template('studio_next.html', local_mode=self.local_mode)
+
+        @self.app.route('/composer')
+        def browser_composer():
+            """Installable browser-native preset composer shell.
+
+            Rendering, draft persistence, checking, and export happen in the
+            browser. Loading this shell never observes or mutates live output.
+            """
+            return render_template('composer.html', local_mode=self.local_mode)
+
+        @self.app.route('/composer-service-worker.js')
+        def browser_composer_service_worker():
+            """Serve the composer worker at root scope for installable use."""
+            response = send_from_directory(
+                self.project_root / 'web' / 'static' / 'js',
+                'composer_service_worker.js',
+                mimetype='application/javascript',
+            )
+            response.headers['Service-Worker-Allowed'] = '/'
+            response.headers['Cache-Control'] = 'no-cache'
+            return response
+
+        @self.app.route('/api/v1/composer/bootstrap')
+        def api_browser_composer_bootstrap():
+            """Read-only schemas, presets, and explicit browser capabilities."""
+            return jsonify(self._browser_composer_bootstrap())
 
         @self.app.route('/api/v1/studio-next/bootstrap')
         def api_studio_next_bootstrap():
@@ -1653,6 +1692,166 @@ class AnimationWebInterface:
                 'provider_collisions': len(collisions),
             },
             'diagnostics': diagnostics,
+        }
+
+    def _browser_composer_bootstrap(self) -> Dict[str, Any]:
+        """Build the complete read model needed after the app shell loads.
+
+        Unlike the gallery summaries, composer presets include their authored
+        parameter objects. Identities remain provider-qualified, and legacy
+        preset storage is withheld when a plugin ID collides across providers.
+        """
+        raw_components = self._component_catalog()
+        providers_by_id: Dict[str, set] = {}
+        for component in raw_components:
+            plugin_id = component.get('plugin_id')
+            provider = component.get('provider')
+            if isinstance(plugin_id, str) and isinstance(provider, str):
+                providers_by_id.setdefault(plugin_id, set()).add(provider)
+        collisions = {
+            plugin_id: sorted(providers)
+            for plugin_id, providers in providers_by_id.items()
+            if len(providers) > 1
+        }
+
+        components: List[Dict[str, Any]] = []
+        for raw in sorted(
+            raw_components,
+            key=lambda item: (
+                str(item.get('name') or item.get('plugin_id') or '').casefold(),
+                str(item.get('provider') or ''),
+            ),
+        ):
+            plugin_id = raw.get('plugin_id')
+            provider = raw.get('provider')
+            if not isinstance(plugin_id, str) or not isinstance(provider, str):
+                continue
+
+            schema = raw.get('parameter_schema')
+            schema = json.loads(json.dumps(schema)) if isinstance(schema, dict) else {}
+            declared_defaults = raw.get('defaults')
+            defaults = (
+                json.loads(json.dumps(declared_defaults))
+                if isinstance(declared_defaults, dict)
+                else {
+                    name: definition.get('default')
+                    for name, definition in schema.items()
+                    if isinstance(definition, dict) and 'default' in definition
+                }
+            )
+            entrypoint = str(raw.get('entrypoint') or '')
+            class_name = (
+                entrypoint.rsplit(':', 1)[-1]
+                if provider == 'python' and ':' in entrypoint
+                else None
+            )
+
+            if provider == 'python' and plugin_id in BROWSER_PYTHON_COMPONENTS:
+                runtime = {
+                    'kind': 'python',
+                    'supported': True,
+                    'engine': 'python-pyodide-wasm',
+                    'worker_url': '/static/js/composer_python_worker.js',
+                    'asset_url': (
+                        '/static/generated/composer/ledgrid_python_runtime.zip'
+                    ),
+                }
+            elif (
+                provider == 'receiver_native'
+                and plugin_id in BROWSER_NATIVE_COMPONENTS
+            ):
+                runtime = {
+                    'kind': 'native',
+                    'supported': True,
+                    'engine': 'receiver-native-cpp-wasm',
+                    'worker_url': '/static/js/composer_native_worker.js',
+                    'asset_url': (
+                        '/static/generated/composer/'
+                        'aurora_curtains_native.wasm'
+                    ),
+                }
+            else:
+                runtime = {
+                    'kind': 'python' if provider == 'python' else 'native',
+                    'supported': False,
+                    'reason': (
+                        'This component does not yet have a verified browser-Wasm '
+                        'adapter. Its generated preview remains available as a fallback.'
+                    ),
+                }
+
+            preset_records: List[Dict[str, Any]] = []
+            if plugin_id not in collisions:
+                for summary in self._list_animation_presets(plugin_id):
+                    preset_id = summary.get('preset_id')
+                    if not isinstance(preset_id, str):
+                        continue
+                    payload = self._load_animation_preset(plugin_id, preset_id)
+                    if payload is None:
+                        continue
+                    preset = json.loads(json.dumps(summary))
+                    preset.update({
+                        'key': f'{provider}:{plugin_id}:{preset_id}',
+                        'component_key': f'{provider}:{plugin_id}',
+                        'provider': provider,
+                        'plugin_id': plugin_id,
+                        'params': json.loads(json.dumps(payload['params'])),
+                    })
+                    preset_records.append(preset)
+
+            components.append({
+                'key': f'{provider}:{plugin_id}',
+                'provider': provider,
+                'plugin_id': plugin_id,
+                'class_name': class_name,
+                'name': str(raw.get('name') or plugin_id.replace('_', ' ').title()),
+                'description': str(raw.get('description') or ''),
+                'role': str(raw.get('role') or 'background'),
+                'icon': str(raw.get('icon') or '✦'),
+                'parameter_schema': schema,
+                'defaults': defaults,
+                'presets': preset_records,
+                'browser_runtime': runtime,
+                'provider_collision': plugin_id in collisions,
+                'preview': self._studio_next_preview(
+                    provider,
+                    raw.get('preview'),
+                    None if plugin_id in collisions else self._preview_metadata(plugin_id),
+                ),
+            })
+
+        controller = self.preview_manager.controller
+        strip_count = int(controller.strip_count)
+        leds_per_strip = int(controller.leds_per_strip)
+        return {
+            'schema': 'ledgrid.browser-composer-bootstrap',
+            'schema_version': 1,
+            'generated_at': time.time(),
+            'geometry': {
+                'strip_count': strip_count,
+                'leds_per_strip': leds_per_strip,
+                'total_leds': strip_count * leds_per_strip,
+            },
+            'components': components,
+            'capabilities': {
+                'rendering': 'browser_webassembly',
+                'draft_storage': 'browser_local_storage',
+                'checker': 'browser_worker',
+                'live_wall_mutated': False,
+                'framebuffer_readback': False,
+            },
+            'diagnostics': [
+                {
+                    'code': 'provider_collision',
+                    'plugin_id': plugin_id,
+                    'providers': providers,
+                    'message': (
+                        'Presets are withheld because legacy storage is not '
+                        'provider-qualified.'
+                    ),
+                }
+                for plugin_id, providers in sorted(collisions.items())
+            ],
         }
 
     def _scene_provider_policy(self) -> SceneProviderPolicy:
