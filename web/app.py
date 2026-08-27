@@ -7,6 +7,7 @@ real time.
 """
 
 import inspect
+import hashlib
 import json
 import math
 import os
@@ -22,13 +23,19 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.feature_flags import AnimationPipelineFeatureFlags
 from animation.core.installation_profile_library import InstallationProfileLibrary
+from animation.core.installation_profile_runtime import EMPTY_INSTALLATION_PROFILE_DIGEST
 from animation.core.installation_profile_topology import (
     IDENTITY_INSTALLATION_PROFILE_TOPOLOGY,
     InstallationProfileTopology,
 )
 from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.native_background_library import NativeBackgroundLibrary
-from animation.core.plant_awareness import PlantModifierState
+from animation.core.plant_awareness import (
+    FIELD_MODIFIERS,
+    PLANT_MODIFIER_IDS,
+    SURFACE_MODIFIERS,
+    PlantModifierState,
+)
 from animation.core.preview_assets import load_catalog, merge_catalogs
 from drivers.frame_codec import (
     FRAME_ENCODING_NAME,
@@ -38,6 +45,8 @@ from drivers.frame_codec import (
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 from ipc.control_channel import FileControlChannel
 from ipc.scene_contract import (
+    BROWSER_SCENE_MAX_BYTES,
+    BROWSER_SCENE_SCHEMA,
     DEFAULT_SCENE_PROVIDER_POLICY,
     FIXED_OVERLAY_SLOT,
     SCENE_PRESET_SCHEMA,
@@ -45,10 +54,14 @@ from ipc.scene_contract import (
     SceneProviderPolicy,
     SceneValidationError,
     background_only_scene,
+    browser_scene_to_host_scene,
+    decorate_browser_component,
     decorate_catalog,
     filter_catalog,
+    normalize_browser_scene_document,
     normalize_scene_payload,
     scene_preview_identity,
+    validate_bounded_browser_json,
 )
 from web.preview_worker import RuntimePreviewWorker
 
@@ -66,6 +79,18 @@ PAINTER_MASK_TYPES = (
         'color': [255, 72, 190],
     },
 )
+
+# Browser execution is deliberately capability-gated. The generated Pyodide
+# asset contains the authoritative Python animation-plugin package, so every
+# animation component with a valid Python module:Class entrypoint can use the
+# universal worker. Separate compatibility tools such as Painter are cataloged
+# for product continuity but are not animation runtimes. Receiver-native
+# execution remains explicitly capability-bound to separately built Wasm peers.
+BROWSER_NATIVE_COMPONENT_ASSETS = {
+    'aurora_curtains_native': 'aurora_curtains_native.wasm',
+    'compiled_rainbow': 'compiled_rainbow.wasm',
+}
+BROWSER_NATIVE_COMPONENTS = frozenset(BROWSER_NATIVE_COMPONENT_ASSETS)
 
 class AnimationWebInterface:
     """Web interface for animation management"""
@@ -211,6 +236,90 @@ class AnimationWebInterface:
         def studio_next():
             """Studio Next shell; authoritative state is fetched after load."""
             return render_template('studio_next.html', local_mode=self.local_mode)
+
+        @self.app.route('/composer')
+        def browser_composer():
+            """Installable browser-native preset composer shell.
+
+            Rendering, draft persistence, checking, and export happen in the
+            browser. Loading this shell never observes or mutates live output.
+            """
+            return render_template('composer.html', local_mode=self.local_mode)
+
+        @self.app.route('/composer-service-worker.js')
+        def browser_composer_service_worker():
+            """Serve the composer worker at root scope for installable use."""
+            response = send_from_directory(
+                self.project_root / 'web' / 'static' / 'js',
+                'composer_service_worker.js',
+                mimetype='application/javascript',
+            )
+            response.headers['Service-Worker-Allowed'] = '/'
+            response.headers['Cache-Control'] = 'no-cache'
+            return response
+
+        @self.app.route('/api/v1/composer/bootstrap')
+        def api_browser_composer_bootstrap():
+            """Read-only schemas, presets, and explicit browser capabilities."""
+            return jsonify(self._browser_composer_bootstrap())
+
+        @self.app.route('/api/v1/composer/connectivity')
+        def api_browser_composer_connectivity():
+            """Small uncached reachability probe for explicit server actions."""
+            response = jsonify({
+                'schema': 'ledgrid.browser-composer-connectivity',
+                'schema_version': 1,
+                'online': True,
+                'actions': {
+                    'validate_import': True,
+                    'save_component_preset': True,
+                    'save_scene_preset': True,
+                    'activate_scene': True,
+                },
+            })
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+
+        @self.app.route('/api/v1/composer/presets/validate', methods=['POST'])
+        def api_browser_composer_validate_preset():
+            """Validate an imported component or scene preset without mutation."""
+            try:
+                if (
+                    request.content_length is not None
+                    and request.content_length > BROWSER_SCENE_MAX_BYTES
+                ):
+                    raise SceneValidationError(
+                        f'uploaded preset exceeds the {BROWSER_SCENE_MAX_BYTES}-byte limit'
+                    )
+                validated = self._validated_browser_composer_import(
+                    request.get_json(silent=True),
+                    encoded_size=request.content_length,
+                )
+            except (SceneValidationError, ValueError, TypeError) as exc:
+                return jsonify({'valid': False, 'error': str(exc)}), 400
+            return jsonify({'valid': True, **validated})
+
+        @self.app.route('/api/v1/composer/presets', methods=['POST'])
+        def api_browser_composer_save_preset():
+            """Persist one component preset without changing live playback."""
+            try:
+                result, created = self._save_browser_composer_preset(
+                    request.get_json(silent=True)
+                )
+            except FileExistsError as exc:
+                preset_id = str(exc)
+                return jsonify({
+                    'error': f'Preset {preset_id} already exists',
+                    'code': 'preset_exists',
+                    'preset_id': preset_id,
+                }), 409
+            except (SceneValidationError, ValueError, TypeError) as exc:
+                return jsonify({'error': str(exc)}), 400
+            return jsonify({
+                'success': True,
+                'created': created,
+                **result,
+            }), 201 if created else 200
 
         @self.app.route('/api/v1/studio-next/bootstrap')
         def api_studio_next_bootstrap():
@@ -373,7 +482,7 @@ class AnimationWebInterface:
             """Versioned unified catalog, including explicit editor compatibility."""
             try:
                 components = filter_catalog(
-                    self._component_catalog(),
+                    self._browser_scene_catalog(),
                     provider=request.args.get('provider'),
                     role=request.args.get('role'),
                     provider_policy=self._scene_provider_policy(),
@@ -418,10 +527,43 @@ class AnimationWebInterface:
             except SceneValidationError as exc:
                 return jsonify({'error': str(exc)}), 400
             command = self.control_channel.send_command('start_scene', scene=scene)
+            command_id = (
+                command.get('command_id') if isinstance(command, dict) else None
+            )
             return jsonify({
                 'success': True, 'scene': scene,
                 'preset_diagnostics': self._scene_preset_diagnostics(scene),
-                'command_id': command.get('command_id') if isinstance(command, dict) else None,
+                'command_id': command_id,
+                'receipt': {
+                    'schema': 'ledgrid.scene-activation-receipt',
+                    'schema_version': 1,
+                    'requested_revision': scene['revision'],
+                    'requested_identity': {
+                        'background': {
+                            'provider': scene['background']['provider'],
+                            'component_id': scene['background']['plugin_id'],
+                        },
+                        'layers': [
+                            {
+                                'role': overlay['slot_id'],
+                                'provider': overlay['component']['provider'],
+                                'component_id': overlay['component']['plugin_id'],
+                            }
+                            for overlay in scene['overlays']
+                        ],
+                        'fallback': {
+                            'provider': scene['known_python_fallback']['provider'],
+                            'component_id': scene['known_python_fallback']['plugin_id'],
+                        },
+                    },
+                    'command_id': command_id,
+                    'command_accepted': True,
+                    'accepted_live_identity': None,
+                    'observed_status': 'not_observed',
+                    'telemetry_complete': False,
+                    'camera_observation': None,
+                    'rollback_available': False,
+                },
             })
 
         @self.app.route('/api/v1/scene', methods=['DELETE'])
@@ -491,7 +633,9 @@ class AnimationWebInterface:
             payload = request.get_json(silent=True)
             try:
                 body = payload if isinstance(payload, dict) else {}
-                scene = self._validated_scene_request(body.get('scene', body))
+                scene = self._validated_scene_request(
+                    body.get('scene', body), browser_purpose='preview'
+                )
                 vibe = self._preview_vibe(body.get('vibe'))
                 status = self.control_channel.read_status() or {}
                 modifiers = PlantModifierState.from_payload(
@@ -582,6 +726,14 @@ class AnimationWebInterface:
             payload = request.get_json(silent=True)
             if not isinstance(payload, dict):
                 return jsonify({'error': 'request body must be a JSON object'}), 400
+            try:
+                validate_bounded_browser_json(
+                    payload,
+                    label='scene preset save',
+                    encoded_size=request.content_length,
+                )
+            except SceneValidationError as exc:
+                return jsonify({'error': str(exc)}), 400
             name = str(payload.get('name') or '').strip()
             preset_id = self._sanitize_preset_id(name)
             if not name or not preset_id:
@@ -589,7 +741,18 @@ class AnimationWebInterface:
             if any(key in payload for key in ('vibe', 'plant_modifiers', 'output')):
                 return jsonify({'error': 'Scene presets never capture vibe, plant, or output state'}), 400
             try:
-                scene = self._validated_scene_request(payload.get('scene'))
+                raw_scene = payload.get('scene')
+                if (
+                    isinstance(raw_scene, dict)
+                    and raw_scene.get('schema') == BROWSER_SCENE_SCHEMA
+                ):
+                    stored_scene, _host_scene = self._validated_browser_scene_document(
+                        raw_scene, purpose='save'
+                    )
+                else:
+                    stored_scene = self._validated_scene_request(
+                        raw_scene, browser_purpose='save'
+                    )
             except SceneValidationError as exc:
                 return jsonify({'error': str(exc)}), 400
             existing = self._load_scene_preset(preset_id) or {}
@@ -600,7 +763,7 @@ class AnimationWebInterface:
                 'preset_id': preset_id,
                 'name': name,
                 'description': str(payload.get('description') or ''),
-                'scene': scene,
+                'scene': stored_scene,
                 'created_at': existing.get('created_at', now),
                 'updated_at': now,
             }
@@ -1655,6 +1818,550 @@ class AnimationWebInterface:
             'diagnostics': diagnostics,
         }
 
+    def _browser_composer_bootstrap(self) -> Dict[str, Any]:
+        """Build the complete read model needed after the app shell loads.
+
+        Unlike the gallery summaries, composer presets include their authored
+        parameter objects. Identities remain provider-qualified, and legacy
+        preset storage is withheld when a plugin ID collides across providers.
+        """
+        raw_components = self._component_catalog()
+        providers_by_id: Dict[str, set] = {}
+        for component in raw_components:
+            plugin_id = component.get('plugin_id')
+            provider = component.get('provider')
+            if isinstance(plugin_id, str) and isinstance(provider, str):
+                providers_by_id.setdefault(plugin_id, set()).add(provider)
+        collisions = {
+            plugin_id: sorted(providers)
+            for plugin_id, providers in providers_by_id.items()
+            if len(providers) > 1
+        }
+
+        components: List[Dict[str, Any]] = []
+        runtime_digests: Dict[Path, str] = {}
+        for raw in sorted(
+            raw_components,
+            key=lambda item: (
+                str(item.get('name') or item.get('plugin_id') or '').casefold(),
+                str(item.get('provider') or ''),
+            ),
+        ):
+            plugin_id = raw.get('plugin_id')
+            provider = raw.get('provider')
+            if not isinstance(plugin_id, str) or not isinstance(provider, str):
+                continue
+
+            schema = raw.get('parameter_schema')
+            schema = json.loads(json.dumps(schema)) if isinstance(schema, dict) else {}
+            declared_defaults = raw.get('defaults')
+            defaults = (
+                json.loads(json.dumps(declared_defaults))
+                if isinstance(declared_defaults, dict)
+                else {
+                    name: definition.get('default')
+                    for name, definition in schema.items()
+                    if isinstance(definition, dict) and 'default' in definition
+                }
+            )
+            entrypoint = str(raw.get('entrypoint') or '')
+            class_name = (
+                entrypoint.rsplit(':', 1)[-1]
+                if provider == 'python' and ':' in entrypoint
+                else None
+            )
+
+            python_entrypoint_ready = bool(re.fullmatch(
+                r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*',
+                entrypoint,
+            ))
+            compatibility = (
+                raw.get('compatibility')
+                if isinstance(raw.get('compatibility'), dict)
+                else {}
+            )
+            is_compatibility_tool = (
+                compatibility.get('classification') == 'painter'
+            )
+
+            if provider == 'python' and is_compatibility_tool:
+                runtime = {
+                    'kind': 'python',
+                    'supported': False,
+                    'reason': (
+                        'Painter is a separate compatibility editor, not a '
+                        'bundled Python animation runtime.'
+                    ),
+                }
+            elif provider == 'python' and python_entrypoint_ready:
+                runtime = {
+                    'kind': 'python',
+                    'supported': True,
+                    'engine': 'python-pyodide-wasm',
+                    'worker_url': '/static/js/composer_python_worker.js',
+                    'asset_url': (
+                        '/static/generated/composer/ledgrid_python_runtime.zip'
+                    ),
+                }
+            elif (
+                provider == 'receiver_native'
+                and plugin_id in BROWSER_NATIVE_COMPONENTS
+            ):
+                runtime = {
+                    'kind': 'native',
+                    'supported': True,
+                    'engine': 'receiver-native-cpp-wasm',
+                    'worker_url': '/static/js/composer_native_worker.js',
+                    'asset_url': (
+                        '/static/generated/composer/'
+                        f'{BROWSER_NATIVE_COMPONENT_ASSETS[plugin_id]}'
+                    ),
+                }
+            else:
+                runtime = {
+                    'kind': 'python' if provider == 'python' else 'native',
+                    'supported': False,
+                    'reason': (
+                        'This component does not expose a verified browser-Wasm '
+                        'entrypoint. Its generated preview remains available as a fallback.'
+                    ),
+                }
+
+            if runtime.get('supported'):
+                asset_url = runtime.get('asset_url')
+                asset_path = (
+                    self.project_root / 'web' / str(asset_url).lstrip('/')
+                    if isinstance(asset_url, str)
+                    else None
+                )
+                if asset_path is not None and asset_path.is_file():
+                    runtime_digest = runtime_digests.get(asset_path)
+                    if runtime_digest is None:
+                        runtime_digest = hashlib.sha256(
+                            asset_path.read_bytes()
+                        ).hexdigest()
+                        runtime_digests[asset_path] = runtime_digest
+                    runtime['digest'] = runtime_digest
+                else:
+                    runtime['supported'] = False
+                    runtime['reason'] = (
+                        'The verified browser runtime asset is not available.'
+                    )
+                    runtime['digest'] = None
+            else:
+                runtime['digest'] = None
+
+            preset_records: List[Dict[str, Any]] = []
+            if plugin_id not in collisions:
+                for summary in self._list_animation_presets(plugin_id):
+                    preset_id = summary.get('preset_id')
+                    if not isinstance(preset_id, str):
+                        continue
+                    payload = self._load_animation_preset(plugin_id, preset_id)
+                    if payload is None:
+                        continue
+                    preset = json.loads(json.dumps(summary))
+                    preset.update({
+                        'key': f'{provider}:{plugin_id}:{preset_id}',
+                        'component_key': f'{provider}:{plugin_id}',
+                        'provider': provider,
+                        'plugin_id': plugin_id,
+                        'params': json.loads(json.dumps(payload['params'])),
+                        'preset_fingerprint': self._component_preset_fingerprint(payload),
+                    })
+                    preset_records.append(preset)
+
+            component = {
+                'key': f'{provider}:{plugin_id}',
+                'provider': provider,
+                'plugin_id': plugin_id,
+                'class_name': class_name,
+                'name': str(raw.get('name') or plugin_id.replace('_', ' ').title()),
+                'description': str(raw.get('description') or ''),
+                'role': str(raw.get('role') or 'background'),
+                'icon': str(raw.get('icon') or '✦'),
+                'parameter_schema': schema,
+                'defaults': defaults,
+                'presets': preset_records,
+                'browser_runtime': runtime,
+                'provider_collision': plugin_id in collisions,
+                'scene_compatibility': json.loads(json.dumps(
+                    raw.get('scene_compatibility') or {}
+                )),
+                'compatibility': json.loads(json.dumps(
+                    raw.get('compatibility') or {}
+                )),
+                'availability': json.loads(json.dumps(
+                    raw.get('availability') or {}
+                )),
+                'build': json.loads(json.dumps(raw.get('build') or {})),
+                'presentation': {
+                    'timing_adapter': str(
+                        (
+                            (raw.get('vibe') or {}).get('timing_adapter')
+                            if isinstance(raw.get('vibe'), dict)
+                            else None
+                        ) or 'legacy_speed_param'
+                    ),
+                    'vibe_color_policy': str(
+                        (
+                            (raw.get('vibe') or {}).get('color_policy')
+                            if isinstance(raw.get('vibe'), dict)
+                            else None
+                        ) or 'preserve'
+                    ),
+                    'vibe_capabilities': json.loads(json.dumps(
+                        (raw.get('vibe') or {}).get('capabilities') or []
+                        if isinstance(raw.get('vibe'), dict)
+                        else []
+                    )),
+                },
+                'preview': self._studio_next_preview(
+                    provider,
+                    raw.get('preview'),
+                    None if plugin_id in collisions else self._preview_metadata(plugin_id),
+                ),
+            }
+            components.append(decorate_browser_component(
+                component,
+                browser_runtime=runtime,
+                provider_collision=plugin_id in collisions,
+            ))
+
+        controller = self.preview_manager.controller
+        strip_count = int(controller.strip_count)
+        leds_per_strip = int(controller.leds_per_strip)
+        profile_status_getter = getattr(
+            self.preview_manager, 'get_installation_profile_status', None
+        )
+        profile_status = (
+            profile_status_getter() if callable(profile_status_getter) else {}
+        )
+        profile_digest = profile_status.get(
+            'selected_digest', EMPTY_INSTALLATION_PROFILE_DIGEST
+        )
+        plant_state = getattr(self.preview_manager, 'plant_modifier_state', None)
+        plant_modifiers = (
+            plant_state.to_dict()
+            if isinstance(plant_state, PlantModifierState)
+            else PlantModifierState.from_legacy(DEFAULT_PLANT_AWARE).to_dict()
+        )
+        return {
+            'schema': 'ledgrid.browser-composer-bootstrap',
+            'schema_version': 1,
+            'generated_at': time.time(),
+            'geometry': {
+                'strip_count': strip_count,
+                'leds_per_strip': leds_per_strip,
+                'total_leds': strip_count * leds_per_strip,
+            },
+            'installation_profile': {
+                'digest': profile_digest,
+                'authority': 'host',
+                'plant_modifiers': plant_modifiers,
+            },
+            'vibe_profiles': self._vibe_profile_catalog(),
+            'global_control_contract': {
+                'operator_speed_baseline': DEFAULT_ANIMATION_SPEED_SCALE,
+                'plant_modifier_ids': list(PLANT_MODIFIER_IDS),
+                'field_modifiers': sorted(FIELD_MODIFIERS),
+                'surface_modifiers': sorted(SURFACE_MODIFIERS),
+            },
+            'components': components,
+            'capabilities': {
+                'rendering': 'browser_webassembly',
+                'draft_storage': 'browser_local_storage',
+                'checker': 'browser_worker',
+                'live_wall_mutated': False,
+                'framebuffer_readback': False,
+                'server_actions': {
+                    'connectivity_url': '/api/v1/composer/connectivity',
+                    'validate_import_url': '/api/v1/composer/presets/validate',
+                    'save_component_preset_url': '/api/v1/composer/presets',
+                    'save_scene_preset_url': '/api/v1/scene-presets',
+                    'validate_scene_url': '/api/v1/scene/validate',
+                    'activate_scene_url': '/api/v1/scene',
+                    'status_url': '/api/status',
+                    'vibe_url': '/api/v1/vibe',
+                    'plant_modifiers_url': '/api/config/plant-modifiers',
+                    'brightness_url': '/api/config/brightness',
+                    'target_fps_url': '/api/config/target-fps',
+                    'operator_speed_url': '/api/config/animation-speed',
+                    'masks_url': '/api/painter/masks',
+                    'online_required': True,
+                },
+            },
+            'diagnostics': [
+                {
+                    'code': 'provider_collision',
+                    'plugin_id': plugin_id,
+                    'providers': providers,
+                    'message': (
+                        'Presets are withheld because legacy storage is not '
+                        'provider-qualified.'
+                    ),
+                }
+                for plugin_id, providers in sorted(collisions.items())
+            ],
+        }
+
+    def _browser_composer_component(
+        self,
+        *,
+        component_key: Optional[str] = None,
+        plugin_id: Optional[str] = None,
+        provider: Optional[str] = None,
+        catalog: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Resolve one exact component identity, rejecting provider ambiguity."""
+        if component_key is not None:
+            if not isinstance(component_key, str) or ':' not in component_key:
+                raise ValueError('component_key must be provider:plugin_id')
+            key_provider, key_plugin_id = component_key.split(':', 1)
+            if provider is not None and provider != key_provider:
+                raise ValueError('component provider does not match component_key')
+            if plugin_id is not None and plugin_id != key_plugin_id:
+                raise ValueError('component plugin_id does not match component_key')
+            provider, plugin_id = key_provider, key_plugin_id
+        if not isinstance(plugin_id, str) or not plugin_id:
+            raise ValueError('component plugin_id is required')
+
+        matches = [
+            item for item in (catalog if catalog is not None else self._component_catalog())
+            if item.get('plugin_id') == plugin_id
+            and (provider is None or item.get('provider') == provider)
+        ]
+        if provider is None and len(matches) > 1:
+            raise ValueError(
+                f'Component {plugin_id} exists under multiple providers; '
+                'use a provider-qualified identity'
+            )
+        if len(matches) != 1:
+            identity = f'{provider}:{plugin_id}' if provider else plugin_id
+            raise ValueError(f'Unknown component: {identity}')
+        return matches[0]
+
+    def _browser_scene_catalog(self) -> List[Dict[str, Any]]:
+        """Return catalog records with runtime-bound browser capabilities."""
+        return self._browser_composer_bootstrap()['components']
+
+    def _validated_browser_scene_document(
+        self, payload: Any, *, purpose: str
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        catalog = self._browser_scene_catalog()
+        document = normalize_browser_scene_document(
+            payload, catalog=catalog, purpose=purpose
+        )
+        if purpose == 'activation':
+            profile_digest = document['installation_profile']['digest']
+            preflight = getattr(
+                self.preview_manager, 'preflight_installation_profile', None
+            )
+            if callable(preflight):
+                try:
+                    preflight(profile_digest)
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise SceneValidationError(
+                        'browser scene.installation_profile.digest is not a '
+                        f'managed installation profile: {exc}'
+                    ) from exc
+            elif profile_digest != EMPTY_INSTALLATION_PROFILE_DIGEST:
+                raise SceneValidationError(
+                    'browser scene.installation_profile.digest cannot be '
+                    'resolved by this manager'
+                )
+        scene = browser_scene_to_host_scene(document, catalog=catalog)
+        return document, scene
+
+    def _validated_browser_composer_import(
+        self, payload: Any, *, encoded_size: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Normalize an uploaded preset into a composer draft without writes."""
+        validate_bounded_browser_json(
+            payload, label='uploaded preset', encoded_size=encoded_size
+        )
+        if not isinstance(payload, dict):
+            raise ValueError('uploaded preset must be a JSON object')
+
+        if payload.get('schema') == BROWSER_SCENE_SCHEMA:
+            document, scene = self._validated_browser_scene_document(
+                payload, purpose='import'
+            )
+            background = document['background']
+            return {
+                'kind': 'browser_scene',
+                'draft': {
+                    'component_key': (
+                        f"{background['provider']}:{background['component_id']}"
+                    ),
+                    'name': 'Imported scene',
+                    'description': '',
+                    'params': dict(background['parameters']),
+                    'browser_scene': document,
+                    'scene': scene,
+                },
+            }
+
+        if payload.get('schema') == SCENE_PRESET_SCHEMA:
+            if payload.get('schema_version') != SCENE_PRESET_VERSION:
+                raise ValueError('unsupported scene preset schema version')
+            raw_scene = payload.get('scene')
+            browser_document = None
+            if (
+                isinstance(raw_scene, dict)
+                and raw_scene.get('schema') == BROWSER_SCENE_SCHEMA
+            ):
+                browser_document, scene = self._validated_browser_scene_document(
+                    raw_scene, purpose='import'
+                )
+            else:
+                scene = self._validated_scene_request(
+                    raw_scene, browser_purpose='import'
+                )
+            background = scene['background']
+            browser_catalog = self._browser_scene_catalog()
+            descriptor = self._browser_composer_component(
+                plugin_id=background['plugin_id'],
+                provider=background['provider'],
+                catalog=browser_catalog,
+            )
+            capabilities = descriptor.get('browser_capabilities') or {}
+            if capabilities.get('previewable') is not True:
+                raise ValueError(
+                    capabilities.get('reason')
+                    or 'The imported scene background is not previewable.'
+                )
+            params = dict(descriptor.get('defaults') or {})
+            params.update(background.get('resolved_parameters') or {})
+            params.update(background.get('parameter_overrides') or {})
+            return {
+                'kind': 'scene_preset',
+                'draft': {
+                    'component_key': (
+                        f"{background['provider']}:{background['plugin_id']}"
+                    ),
+                    'name': str(payload.get('name') or 'Imported scene'),
+                    'description': str(payload.get('description') or ''),
+                    'params': params,
+                    'scene': scene,
+                    **(
+                        {'browser_scene': browser_document}
+                        if browser_document is not None else {}
+                    ),
+                },
+            }
+
+        if payload.get('schema') == 'ledgrid.scene-state' or 'scene' in payload:
+            raise ValueError(
+                'upload a ledgrid.scene-preset document, not a raw scene envelope'
+            )
+        params = payload.get('params')
+        if not isinstance(params, dict):
+            raise ValueError('component preset params must be an object')
+        browser_catalog = self._browser_scene_catalog()
+        descriptor = self._browser_composer_component(
+            component_key=payload.get('component_key'),
+            plugin_id=payload.get('plugin_id') or payload.get('animation'),
+            provider=payload.get('provider'),
+            catalog=browser_catalog,
+        )
+        capabilities = descriptor.get('browser_capabilities') or {}
+        if capabilities.get('previewable') is not True:
+            raise ValueError(
+                capabilities.get('reason')
+                or 'The imported component is not previewable.'
+            )
+        plugin_id = descriptor['plugin_id']
+        provider = descriptor['provider']
+        error = self._validate_animation_params(plugin_id, params)
+        if error:
+            raise ValueError(error)
+        return {
+            'kind': 'component_preset',
+            'draft': {
+                'component_key': f'{provider}:{plugin_id}',
+                'name': str(payload.get('name') or 'Imported preset'),
+                'description': str(payload.get('description') or ''),
+                'params': json.loads(json.dumps(params)),
+            },
+        }
+
+    def _save_browser_composer_preset(
+        self, payload: Any
+    ) -> tuple[Dict[str, Any], bool]:
+        """Persist an exact component preset without issuing a live command."""
+        validate_bounded_browser_json(payload, label='browser composer save')
+        if not isinstance(payload, dict):
+            raise ValueError('request body must be a JSON object')
+        if (
+            payload.get('schema') != 'ledgrid.browser-composer-save'
+            or payload.get('schema_version') != 1
+        ):
+            raise ValueError('unsupported browser composer save schema')
+        browser_catalog = self._browser_scene_catalog()
+        descriptor = self._browser_composer_component(
+            component_key=payload.get('component_key'), catalog=browser_catalog
+        )
+        capabilities = descriptor.get('browser_capabilities') or {}
+        if capabilities.get('saveable') is not True:
+            raise ValueError(
+                capabilities.get('reason')
+                or 'This component is not saveable from the browser composer.'
+            )
+        plugin_id = descriptor['plugin_id']
+        provider = descriptor['provider']
+        provider_count = sum(
+            item.get('plugin_id') == plugin_id
+            for item in self._component_catalog()
+        )
+        if provider_count > 1:
+            raise ValueError(
+                'This plugin ID exists under multiple providers; legacy preset '
+                'storage cannot save it safely'
+            )
+
+        name = str(payload.get('name') or '').strip()
+        if not name:
+            raise ValueError('preset name is required')
+        if len(name) > 120:
+            raise ValueError('preset name must be 120 characters or fewer')
+        preset_id = self._sanitize_preset_id(name)
+        if not preset_id:
+            raise ValueError('preset name must contain letters or numbers')
+        if not preset_id[0].isalpha():
+            preset_id = f'preset_{preset_id}'[:64]
+        params = payload.get('params')
+        if not isinstance(params, dict):
+            raise ValueError('preset params must be an object')
+        error = self._validate_animation_params(plugin_id, params)
+        if error:
+            raise ValueError(error)
+        overwrite = payload.get('overwrite', False)
+        if not isinstance(overwrite, bool):
+            raise ValueError('overwrite must be a boolean')
+
+        existing = self._load_animation_preset(plugin_id, preset_id)
+        if existing is not None and not overwrite:
+            raise FileExistsError(preset_id)
+        now = time.time()
+        preset = {
+            'version': 2,
+            'preset_id': preset_id,
+            'name': name,
+            'animation': plugin_id,
+            'provider': provider,
+            'description': str(payload.get('description') or ''),
+            'params': json.loads(json.dumps(params)),
+            'created_at': existing.get('created_at', now) if existing else now,
+            'updated_at': now,
+        }
+        self._write_animation_preset(plugin_id, preset_id, preset)
+        preset['component_key'] = f'{provider}:{plugin_id}'
+        return ({
+            'preset': preset,
+            'preset_fingerprint': self._component_preset_fingerprint(preset),
+        }, existing is None)
+
     def _scene_provider_policy(self) -> SceneProviderPolicy:
         """Resolve the manager's explicit rollout policy, failing safely off."""
         getter = getattr(self.preview_manager, 'scene_provider_policy', None)
@@ -1678,9 +2385,15 @@ class AnimationWebInterface:
                 return DEFAULT_SCENE_PROVIDER_POLICY
         return DEFAULT_SCENE_PROVIDER_POLICY
 
-    def _validated_scene_request(self, payload: Any) -> Dict[str, Any]:
+    def _validated_scene_request(
+        self, payload: Any, *, browser_purpose: str = 'activation'
+    ) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise SceneValidationError('request body must contain a scene object')
+        if payload.get('schema') == BROWSER_SCENE_SCHEMA:
+            _document, payload = self._validated_browser_scene_document(
+                payload, purpose=browser_purpose
+            )
         catalog = self._component_catalog()
         scene = normalize_scene_payload(
             payload,

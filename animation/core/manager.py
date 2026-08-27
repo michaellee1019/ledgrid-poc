@@ -484,6 +484,11 @@ class AnimationManager:
         self._validate_installation_profile_geometry(candidate.view)
         return candidate.status()
 
+    def get_installation_profile_status(self) -> Dict[str, Any]:
+        """Return the authoritative managed installation profile selection."""
+        with self._installation_profile_guard():
+            return self._installation_profile_selection.status()
+
     def select_installation_profile(
         self, digest_or_none: Optional[str]
     ) -> Dict[str, Any]:

@@ -34,7 +34,10 @@ sudo() {
     command "$@"
   fi
 }
-source <(awk '/^find_config_files$/{exit} {print}' "$1")
+# Command substitution waits for awk to finish. On macOS Bash 3.2, sourcing a
+# process substitution can race its producer when the repository has a long
+# worktree path, leaving the test shell with none of the functions below.
+eval "$(awk '/^find_config_files$/{exit} {print}' "$1")"
 '''
 
 
