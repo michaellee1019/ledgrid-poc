@@ -42,7 +42,9 @@ within-receiver host strip order, or receiver-native direction. The later direct
 AVFoundation host ramp is not mirrored and accepts the host reversal map as
 `(false,false,false,false,false)`: its four broad-block correlations were
 `+0.84`, `+0.94`, `-0.93`, and `-0.98` under the old map. Receiver-native
-direction remains independently open.
+direction remains independently open. After schema-v5 deployment, a freshly
+registered repeat measured `+0.72`, `+0.72`, `+0.84`, and `+0.95`, accepting
+the all-forward host map on all four broad receivers.
 
 At 2.4 MHz, each WS2812 data bit is represented by three parallel samples:
 

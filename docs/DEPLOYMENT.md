@@ -272,6 +272,13 @@ permutation only, not full camera homography or host/native strip-direction
 acceptance. A later direct, unflipped AVFoundation capture selected the Anker by
 name. Its reset eight-step host ramp proved logical receivers 2 and 3 also need
 forward host order. That result does not change the independent native flags.
+Clean application deployment of commit `7cc351a` activated release
+`e6f5c43245a3b9198d96a1afa8388005751d0072a0f4a341323aeb16183527e8` without
+flashing receiver firmware. The known schema-v4 file was then atomically
+migrated to schema v5 with digest
+`8fbbd06483a02351324068a10fa451e6035171e5a65d2c177c9b11e49c774bca`.
+A direct post-fix ramp accepted all four broad receivers with correlations
+`+0.72`, `+0.72`, `+0.84`, and `+0.95` after fresh camera registration.
 
 Inspect the live selection before a receiver-native deployment:
 

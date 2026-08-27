@@ -68,6 +68,11 @@ record which physical edge is light and which is dark. The partial Anker view ca
 accept only blocks whose two endpoints are visible; leave clipped or occluded
 blocks unresolved.
 
+Do not reuse image-space strip coordinates across captures. The Anker can shift
+its framing while the Mac and wall remain fixed. Re-register every frame from
+the receiver-color bands, wall edges, and the one-strip sentinel before
+calculating a direction or comparing pre/post correlations.
+
 ## Apply and accept a correction
 
 Treat the operator's observation as authoritative and use the photograph to
@@ -77,10 +82,11 @@ fixtures, documentation, and focused direction tests together; retain transport
 routes, widths, offsets, and output masks.
 
 Run focused mapping/config tests, fixture regeneration equality, the repository
-gate proportional to the change, and ordinary deployment. Repeat the same ramp
-after the final restart. Accept only when every visible broad receiver has the
-same physical light-to-dark direction, the single strip remains at the correct
-edge, all five identities are readable, and error counters add no new faults.
+gate proportional to the change, and the clean deployment appropriate to the
+changed layer. Repeat the same ramp after the final restart. Accept only when
+every visible broad receiver has the same physical light-to-dark direction, the
+single strip remains at the correct edge, all five identities are readable, and
+error counters remain stable through a fresh measured window.
 
 Save the raw frame, a wall-only crop when useful, SHA-256, active release,
 configuration digest, exact diagnostic definition, and what the partial view

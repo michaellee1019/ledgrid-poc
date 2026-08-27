@@ -131,6 +131,24 @@ field qualifies it. The pre-fix ramp is
 `run_state/physical-acceptance/20260827-strip-direction-pre-fix-direct-anker-low.jpg`
 (SHA-256 `3c39c34dbe4271db1ff3e0854daf622a0ecc2ebe3778384b20af08fba6acebc1`).
 
+The host correction and reusable `calibrate-led-strips` skill were committed as
+`7cc351a`. The complete repository gate passed 236 tests and 157 subtests after
+all production and canary firmware builds. Clean application-only deployment
+then activated release
+`e6f5c43245a3b9198d96a1afa8388005751d0072a0f4a341323aeb16183527e8`
+without reflashing the ESP32s. The known schema-v4 target selection was
+atomically migrated to schema v5 with digest
+`8fbbd06483a02351324068a10fa451e6035171e5a65d2c177c9b11e49c774bca`.
+After re-registering the Anker frame against the shifted magenta sentinel, the
+same low-exposure ramp produced post-fix correlations `+0.72`, `+0.72`, `+0.84`,
+and `+0.95`. The accepted frame is
+`run_state/physical-acceptance/20260827-strip-direction-post-fix-direct-anker-low.jpg`
+(SHA-256 `229ee152db2690b6aa51043374f4947600e81fbf9111b1e076eed74bbb93f525`).
+A fresh 20-second live window advanced roughly 1,978 accepted frames per board
+without adding CRC errors, while display, publish-drop, and SPI-queue errors
+remained zero. The prior Lava Lamp configuration was restored exactly with
+`painter_active=false`.
+
 The corrected mapping was then deployed from clean topology commit `4c97d4e`
 plus benchmark-stability commit `8ea7ac3`. Ordinary deployment succeeded in
 16 minutes 18 seconds and activated release

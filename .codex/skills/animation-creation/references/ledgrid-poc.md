@@ -140,8 +140,10 @@ For host direction, capture the Mac-attached Anker directly through the
 `calibrate-led-strips` skill; do not use Photo Booth's mirrored live preview.
 The 2026-08-27 pre-fix direct ramp measured broad-block correlations `+0.84`,
 `+0.94`, `-0.93`, and `-0.98`, qualifying the all-forward host map. It does not
-qualify the retained native map. All five return paths are readable, but strict
-release acceptance still requires fresh clean integrity and timing windows.
+qualify the retained native map. The post-fix frame required fresh registration
+because the camera framing moved; its correlations were `+0.72`, `+0.72`,
+`+0.84`, and `+0.95`. All five return paths are readable, but strict release
+acceptance still requires fresh clean integrity and timing windows.
 
 The `native-animations` branch is a retained organ donor for this work. Consult
 the donor map in `docs/plan-revamped-animation-pipeline.md` and port narrow lanes

@@ -143,6 +143,19 @@ is `run_state/physical-acceptance/20260827-strip-direction-pre-fix-direct-anker-
 This host painter test does not qualify receiver-native direction, so those bits
 remain unchanged pending the direction-marked native phase field.
 
+Clean application deployment of commit `7cc351a` activated release
+`e6f5c43245a3b9198d96a1afa8388005751d0072a0f4a341323aeb16183527e8` and
+persisted schema v5 with selection digest
+`8fbbd06483a02351324068a10fa451e6035171e5a65d2c177c9b11e49c774bca`.
+The repeated post-fix ramp measured `+0.72`, `+0.72`, `+0.84`, and `+0.95`
+after re-registering the Anker's shifted framing, so every broad receiver now
+runs light-to-dark in the same physical direction. The accepted frame is
+`run_state/physical-acceptance/20260827-strip-direction-post-fix-direct-anker-low.jpg`
+(SHA-256 `229ee152db2690b6aa51043374f4947600e81fbf9111b1e076eed74bbb93f525`).
+A fresh 20-second window advanced about 1,978 accepted frames per receiver with
+no additional CRC errors; display, publish-drop, and SPI-queue errors remained
+zero. The exact prior Lava Lamp scene was restored after the capture.
+
 The two reversal columns deliberately remain independent. Host reversal maps
 complete RGB frames and sparse RGBA foreground into the receiver's local output
 buffer. Receiver-native topology uses the exact eight-byte CONFIG form
