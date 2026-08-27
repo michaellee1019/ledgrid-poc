@@ -19,8 +19,8 @@
   <header class="app-header">
     <div class="brand-lockup">
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-      <span><strong>Living Wall</strong><small>Preset Composer</small></span>
-      <span class="server-pill" id="serverState" data-state="checking" role="status"><i aria-hidden="true"></i><span>Checking server</span></span>
+      <span class="brand-name"><strong>Living Wall</strong><small>Preset Composer</small></span>
+      <span class="server-pill" id="serverState" data-state="checking" role="status" aria-live="polite" aria-label="Wall server connection"><i aria-hidden="true"></i><span>Checking server</span></span>
     </div>
     <div class="document-identity">
       <label class="sr-only" for="presetName">Preset name</label>
@@ -42,23 +42,34 @@
   <main class="composer-shell" id="composerWorkspace" tabindex="-1">
     <aside class="pane library-pane mobile-view is-active" data-mobile-view="library" aria-labelledby="libraryHeading">
       <div class="pane-heading">
-        <div><p class="eyebrow">Source</p><h1 id="libraryHeading">Choose a renderer</h1></div>
-        <span class="count-pill" id="catalogCount">0</span>
+        <div><p class="eyebrow">Looks</p><h1 id="libraryHeading">Choose a starting point</h1></div>
       </div>
-      <label class="search-field" for="componentSearch">
-        <span aria-hidden="true">⌕</span>
-        <input id="componentSearch" type="search" placeholder="Search animations" autocomplete="off">
-      </label>
-      <div class="catalog-filters" role="group" aria-label="Renderer filter">
-        <button type="button" data-filter="all" aria-pressed="true">All</button>
-        <button type="button" data-filter="python" aria-pressed="false">Python</button>
-        <button type="button" data-filter="native" aria-pressed="false">C++</button>
-      </div>
-      <div class="component-list" id="componentList" role="listbox" aria-label="Animation renderers" aria-busy="true"></div>
-      <section class="preset-section" aria-labelledby="presetHeading">
-        <div class="section-heading"><h2 id="presetHeading">Starting points</h2><span id="presetCount">0</span></div>
+      <section class="preset-section featured-starts" aria-labelledby="presetHeading">
+        <div class="section-heading">
+          <div><h2 id="presetHeading">For the current animation</h2><small>Curated looks you can tune</small></div>
+          <span id="presetCount">0</span>
+        </div>
         <div class="preset-list" id="presetList"></div>
       </section>
+
+      <details class="catalog-disclosure" id="animationCatalogDisclosure">
+        <summary>
+          <span><strong>All animations</strong><small>Search the complete renderer catalog</small></span>
+          <span class="count-pill" id="catalogCount">0</span>
+        </summary>
+        <div class="catalog-disclosure-body">
+          <label class="search-field" for="componentSearch">
+            <span aria-hidden="true">⌕</span>
+            <input id="componentSearch" type="search" placeholder="Search animations" autocomplete="off">
+          </label>
+          <div class="catalog-filters" role="group" aria-label="Animation type filter">
+            <button type="button" data-filter="all" aria-pressed="true">All</button>
+            <button type="button" data-filter="python" aria-pressed="false">Python</button>
+            <button type="button" data-filter="native" aria-pressed="false">C++</button>
+          </div>
+          <div class="component-list" id="componentList" role="listbox" aria-label="Animation renderers" aria-busy="true"></div>
+        </div>
+      </details>
     </aside>
 
     <section class="stage-pane mobile-view" data-mobile-view="stage" aria-labelledby="stageHeading">
@@ -81,12 +92,18 @@
           <div class="floor-shadow" aria-hidden="true"></div>
         </div>
 
-        <div class="compare-control" role="group" aria-label="Preview version">
-          <button type="button" data-compare="draft" aria-pressed="true">Draft</button>
-          <button type="button" data-compare="split" aria-pressed="false">Split</button>
-          <button type="button" data-compare="original" aria-pressed="false">Original</button>
+        <div class="preview-mode-bar">
+          <div class="compare-control" role="group" aria-label="Preview version" aria-describedby="comparisonHelp">
+            <button type="button" data-compare="draft" aria-pressed="true">Draft</button>
+            <button type="button" data-compare="split" aria-pressed="false">Split</button>
+            <button type="button" data-compare="original" aria-pressed="false">Original</button>
+          </div>
+          <details class="comparison-help">
+            <summary aria-label="About Draft, Split, and Original">?</summary>
+            <p id="comparisonHelp"><strong>Draft</strong> is your edited look. <strong>Original</strong> is the starting state. <strong>Split</strong> shows Original on the left and Draft on the right.</p>
+          </details>
         </div>
-        <p class="split-legend" id="splitLegend" hidden><span>Original</span><span>Draft</span></p>
+        <p class="split-legend" id="splitLegend" aria-live="polite" hidden><span>Left · Original</span><span>Right · Draft</span></p>
       </div>
 
       <div class="transport" aria-label="Preview transport">
@@ -111,7 +128,7 @@
     </section>
 
     <aside class="pane inspector-pane mobile-view" data-mobile-view="tune" aria-labelledby="inspectorHeading">
-      <div class="inspector-tabs" role="tablist" aria-label="Inspector">
+      <div class="inspector-tabs" role="tablist" aria-label="Inspector" aria-orientation="horizontal">
         <button id="controlsTab" type="button" role="tab" aria-selected="true" aria-controls="controlsPanel">Tune</button>
         <button id="layersTab" type="button" role="tab" aria-selected="false" aria-controls="layersPanel">Layers</button>
         <button id="checkerTab" type="button" role="tab" aria-selected="false" aria-controls="checkerPanel">Check <span id="checkerDot" aria-hidden="true"></span></button>
@@ -157,15 +174,34 @@
           <p id="clockPreviewNote">The Clock is composed locally when the browser runtime exposes its layer frame.</p>
         </div>
 
-        <label class="fallback-field" for="fallbackSelect">
-          <span>Python safety fallback</span>
-          <select id="fallbackSelect"></select>
-          <small id="fallbackHelp">Python backgrounds use themselves. Native backgrounds require a real Host Python fallback.</small>
-        </label>
+        <details class="advanced-disclosure" id="installationAdvanced">
+          <summary>
+            <span><strong>Installation / Advanced</strong><small>Fallback, app installation, and offline readiness</small></span>
+          </summary>
+          <div class="advanced-disclosure-body">
+            <section class="advanced-parameters" aria-labelledby="advancedParametersHeading">
+              <h2 id="advancedParametersHeading">Advanced parameters</h2>
+              <p class="empty-message" id="advancedParameterEmpty">No advanced controls for this animation.</p>
+              <div class="parameter-list" id="advancedParameterList"></div>
+            </section>
+            <label class="fallback-field" for="fallbackSelect">
+              <span>Python safety fallback</span>
+              <select id="fallbackSelect" aria-describedby="fallbackHelp"></select>
+              <small id="fallbackHelp">Python backgrounds use themselves. Native backgrounds require a real Host Python fallback.</small>
+            </label>
+            <div class="app-readiness" aria-label="Composer app status">
+              <p><span aria-hidden="true">⌁</span><span><strong>Connection</strong><small id="networkStatus">See the wall server status in the header.</small></span></p>
+              <p><span aria-hidden="true">↓</span><span><strong>Offline editing</strong><small id="offlineReadiness" role="status" aria-live="polite" data-state="unknown">Availability is confirmed after local assets finish caching.</small></span></p>
+              <p><span aria-hidden="true">▣</span><span><strong>Installed app</strong><small id="installStatus" role="status" aria-live="polite" data-state="unknown">Installation is optional; app mode has not been detected yet.</small></span></p>
+            </div>
+            <p class="install-guidance" id="installGuidance">On iPhone, use Share, then Add to Home Screen. The installed composer keeps the same private local draft and never activates the wall without review.</p>
+          </div>
+        </details>
 
         <section class="server-surface" aria-labelledby="serverActionsHeading">
           <div class="server-surface-heading"><h2 id="serverActionsHeading">Wall actions</h2><span id="serverActionBadge">Online required</span></div>
           <p id="serverActionStatus" role="status" aria-live="polite">Drafts, checks, uploads, and downloads work locally. Saving and activation require the wall server.</p>
+          <p class="activation-readiness" id="activationReadiness" role="status" aria-live="polite" data-state="unavailable">Run Check to determine whether this draft is ready for activation.</p>
           <div class="local-action-buttons" aria-label="Local file actions">
             <button class="quiet-button" id="importPanelButton" type="button">Upload JSON</button>
             <button class="quiet-button" id="exportPanelButton" type="button">Download JSON</button>
@@ -234,8 +270,13 @@
       <p>This sends a live playback command. The composer will report command acceptance separately from observed wall state.</p>
       <dl class="activation-summary">
         <div><dt>Background</dt><dd id="activateBackground">—</dd></div>
+        <div><dt>Provider</dt><dd id="activateProvider">—</dd></div>
+        <div><dt>Runtime digest</dt><dd id="activateRuntimeDigest">—</dd></div>
+        <div><dt>Revision</dt><dd id="activateRevision">—</dd></div>
+        <div><dt>Check</dt><dd id="activateCheck">—</dd></div>
         <div><dt>Overlay</dt><dd id="activateOverlay">Off</dd></div>
         <div><dt>Fallback</dt><dd id="activateFallback">—</dd></div>
+        <div><dt>Destination</dt><dd id="activateDestination">Physical Living Wall</dd></div>
       </dl>
       <div class="dialog-actions">
         <button class="quiet-button" value="cancel">Cancel</button>

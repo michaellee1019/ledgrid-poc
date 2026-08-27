@@ -6,10 +6,15 @@
   "start_url": "/composer",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
   "orientation": "any",
   "background_color": "#10110f",
   "theme_color": "#10110f",
   "categories": ["design", "utilities"],
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "/static/icons/composer-512.png",
