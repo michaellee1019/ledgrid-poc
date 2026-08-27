@@ -151,12 +151,16 @@
             : {draftGeneration: state.draftGeneration, componentKey: state.component.key};
     }
 
-    function currentCheckIsPassing() {
-        if (state.checkResult?.status !== 'pass') return false;
+    function currentCheckAllowsActivation() {
         const expected = currentCheckBinding();
-        return ComposerState.sameCheckBinding
-            ? ComposerState.sameCheckBinding(state.checkResult.binding, expected)
-            : state.checkResult.binding?.draftGeneration === expected?.draftGeneration;
+        if (ComposerState.checkAllowsActivation) {
+            return ComposerState.checkAllowsActivation(state.checkResult, expected);
+        }
+        return Boolean(
+            state.checkResult
+            && ['pass', 'warn'].includes(state.checkResult.status)
+            && state.checkResult.binding?.draftGeneration === expected?.draftGeneration
+        );
     }
 
     function activationBlockReason() {
@@ -166,9 +170,9 @@
         if (state.serverChecking) return 'Waiting for the wall server.';
         if (!state.serverOnline) return 'Reconnect to the wall server before activation.';
         if (!state.checkResult) return 'Run Check for this exact draft before activation.';
-        if (!currentCheckIsPassing()) return state.checkResult.status === 'pass'
+        if (!currentCheckAllowsActivation()) return ['pass', 'warn'].includes(state.checkResult.status)
             ? 'The previous Check is stale. Run Check again for this draft.'
-            : 'Activation requires a passing Check for this exact draft.';
+            : 'Activation requires a completed Check with no failures for this exact draft.';
         return null;
     }
 
@@ -186,7 +190,9 @@
         });
         const reason = $('activationReadiness');
         if (reason) {
-            reason.textContent = blockReason || 'Activation-ready: this exact draft passed Check.';
+            reason.textContent = blockReason || (state.checkResult?.status === 'warn'
+                ? 'Activation-ready with cautions: review this exact checked draft before continuing.'
+                : 'Activation-ready: this exact draft passed Check.');
             reason.dataset.state = blockReason ? 'blocked' : 'ready';
         }
     }
@@ -1735,7 +1741,10 @@
         if ($('activateProvider')) $('activateProvider').textContent = state.component.provider;
         if ($('activateRuntimeDigest')) $('activateRuntimeDigest').textContent = ComposerState.runtimeDigest?.(state.component) || 'Catalog identity';
         if ($('activateRevision')) $('activateRevision').textContent = String(state.documentRevision);
-        if ($('activateCheck')) $('activateCheck').textContent = `Passed · draft generation ${state.draftGeneration}`;
+        if ($('activateCheck')) {
+            const outcome = state.checkResult?.status === 'warn' ? 'Passed with cautions' : 'Passed';
+            $('activateCheck').textContent = `${outcome} · draft generation ${state.draftGeneration}`;
+        }
         if ($('activateDestination')) $('activateDestination').textContent = 'Physical living wall';
         $('activateDialog').showModal();
     }

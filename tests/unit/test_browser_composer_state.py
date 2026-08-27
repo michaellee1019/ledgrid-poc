@@ -85,6 +85,28 @@ console.log(JSON.stringify({
         self.assertFalse(result["capability"]["activationReady"])
         self.assertIn("identity", result["capability"]["reason"])
 
+    def test_activation_accepts_current_cautions_but_rejects_failures_and_stale_checks(self) -> None:
+        result = _run_state_script("""
+const component = {key: 'host_python:solid', browser_runtime: {digest: 'runtime-1'}};
+const current = state.checkBinding(4, component, {strip_count: 33, leds_per_strip: 138, total_leds: 4554});
+const stale = state.checkBinding(3, component, {strip_count: 33, leds_per_strip: 138, total_leds: 4554});
+console.log(JSON.stringify({
+  pass: state.checkAllowsActivation({status: 'pass', binding: current}, current),
+  warn: state.checkAllowsActivation({status: 'warn', binding: current}, current),
+  fail: state.checkAllowsActivation({status: 'fail', binding: current}, current),
+  stale: state.checkAllowsActivation({status: 'pass', binding: stale}, current),
+  missing: state.checkAllowsActivation(null, current),
+}));
+""")
+
+        self.assertEqual(result, {
+            "pass": True,
+            "warn": True,
+            "fail": False,
+            "stale": False,
+            "missing": False,
+        })
+
     def test_application_invalidates_checks_and_snapshots_full_scene_history(self) -> None:
         source = COMPOSER_SOURCE.read_text(encoding="utf-8")
 
@@ -96,8 +118,8 @@ console.log(JSON.stringify({
         self.assertIn("selectedPreset: state.selectedPreset", source)
         self.assertIn("componentKey: state.component?.key", source)
         self.assertIn("resetChecker({preserveDocumentRevision: true})", source)
-        self.assertIn("currentCheckIsPassing()", source)
-        self.assertIn("Activation requires a passing Check", source)
+        self.assertIn("currentCheckAllowsActivation()", source)
+        self.assertIn("Activation requires a completed Check with no failures", source)
         self.assertIn("detail.textContent = detail.dataset.defaultDescription", source)
 
     def test_import_and_keyboard_contracts_are_bounded_and_explicit(self) -> None:
@@ -117,6 +139,7 @@ console.log(JSON.stringify({
         self.assertIn("advancedParameterList", source)
         self.assertIn("browser_capabilities?.managed_identity", source)
         self.assertIn("receipt.telemetry_complete", source)
+        self.assertIn("Passed with cautions", source)
         self.assertIn("prepareOfflineButton", source)
 
         html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")

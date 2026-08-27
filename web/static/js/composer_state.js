@@ -104,9 +104,18 @@
         return Boolean(left && right && stableJson(left) === stableJson(right));
     }
 
+    function checkAllowsActivation(result, expectedBinding) {
+        return Boolean(
+            result
+            && ['pass', 'warn'].includes(result.status)
+            && sameCheckBinding(result.binding, expectedBinding)
+        );
+    }
+
     global.LEDGridComposerState = Object.freeze({
         CHECKER_VERSION,
         capability,
+        checkAllowsActivation,
         checkBinding,
         clone,
         formatNumber,
