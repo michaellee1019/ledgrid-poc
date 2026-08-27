@@ -7,7 +7,9 @@
 #   The fifth receiver is SPI1 CE2. The HAT brings that net out on GPIO24
 #   (header pin 18, solder jumper SJ_SPI1_CE2), not the BCM default GPIO16.
 #
-# HAT layout (LEDGRID_HAT=1): 2 ESP32 modules x 8 strips = 16 strips
+# Alternate HAT compatibility layout (LEDGRID_HAT=1): 2 ESP32 modules x 8
+# strips = 16 strips. This is a host software mapping; the HAT schematic, PCB,
+# connector pinout, and BOM are not present in this repository.
 #   /dev/spidev0.0  ESP1 on SPI0 CE0
 #   /dev/spidev0.1  ESP2 on SPI0 CE1
 

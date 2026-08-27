@@ -40,11 +40,11 @@ class MultiDeviceLEDController:
         Initialize multi-device LED controller
         
         Args:
-            num_devices: Number of ESP32 devices (default: 1 for ESP32-S3 DevKitC)
+            num_devices: Number of ESP32-S3 receivers (default: 1)
             bus: SPI bus number (default: 0)
-            speed: SPI speed in Hz (default: 8MHz)
-            mode: SPI mode (default: 3)
-            strips_per_device: LED strips per device (default: 8 for ESP32-S3 DevKitC)
+            speed: SPI speed in Hz (default: SPI_SPEED, currently 20 MHz)
+            mode: SPI mode (default: SPI_MODE, currently mode 0)
+            strips_per_device: LED strips per receiver (default: 8)
             strip_count: Visible strips. May be smaller than device capacity when
                 the last receiver drives fewer than eight lanes.
             leds_per_strip: LEDs per strip (installed default: 138)

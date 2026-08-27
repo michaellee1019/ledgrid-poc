@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 LED Grid Controller - SPI version
-Controls multiple SCORPIO boards via SPI
+Controls one ESP32-S3 LED receiver over SPI.
 """
 
 import time
@@ -21,7 +21,7 @@ DEFAULT_NUM_STRIPS = DEFAULT_STRIP_COUNT
 
 # SPI Configuration
 SPI_BUS = 0  # SPI bus number (0 = /dev/spidev0.X)
-SPI_DEVICE = 0  # CE0 matches wiring to XIAO GPIO2 (D1)
+SPI_DEVICE = 0  # CE0 on the selected Raspberry Pi SPI bus
 SPI_SPEED = 20000000  # 20 MHz - CRC-16 protects against corruption
 SPI_MODE = 0  # CPOL=0, CPHA=0 - universal mode supported by all Pi SPI buses
 SPI_INTER_FRAME_DELAY = 0.0  # No delay needed - SPI is stable now

@@ -5,7 +5,9 @@ from typing import Callable, List, Optional, Tuple
 import os
 
 DEFAULT_STRIP_COUNT = 33  # 4 boards x 8 strips + 1 extra strip on a 5th board
-HAT_STRIP_COUNT = 16  # LED Grid Wall HAT: 2 ESP32 modules x 8 strips
+# Alternate HAT compatibility mode: 2 receivers x 8 strips. The carrier's
+# schematic/PCB/BOM are not present in this repository.
+HAT_STRIP_COUNT = 16
 STRIPS_PER_DEVICE = 8
 # Camera-verified physical height of the installed strips.
 DEFAULT_LEDS_PER_STRIP = 138

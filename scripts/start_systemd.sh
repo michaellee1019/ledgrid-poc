@@ -29,7 +29,7 @@ PY
 
 STRIPS=${STRIPS:-$DEFAULT_STRIPS}
 LEDS_PER_STRIP=${LEDS_PER_STRIP:-$DEFAULT_LEDS_PER_STRIP}
-# The output pipeline is capable of 200 FPS, but the hand-wired installation
+# The output pipeline is capable of 200 FPS, but the physical installation
 # defaults to a conservative ceiling. Use the live rate sweep to qualify a
 # higher value for the installed strips before overriding this environment.
 TARGET_FPS=${TARGET_FPS:-160}
