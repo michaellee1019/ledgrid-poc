@@ -32,7 +32,7 @@
       <button class="icon-button" id="redoButton" type="button" title="Redo · Ctrl/⌘ Shift Z" aria-label="Redo" aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z" disabled>↷</button>
       <span class="toolbar-separator" aria-hidden="true"></span>
       <button class="quiet-button" id="importButton" type="button" title="Open JSON · Ctrl/⌘ O" aria-keyshortcuts="Control+O Meta+O">Open</button>
-      <button class="quiet-button" id="copyButton" type="button" title="Copy JSON to clipboard">Copy</button>
+      <button class="quiet-button" id="copyButton" type="button" title="Copy JSON to clipboard" aria-label="Copy preset JSON">Copy</button>
       <button class="quiet-button" id="exportButton" type="button" title="Export JSON · Ctrl/⌘ E" aria-keyshortcuts="Control+E Meta+E">Export</button>
       <span class="toolbar-separator" aria-hidden="true"></span>
       <button class="quiet-button server-action" id="saveLibraryButton" type="button" title="Save to library · Ctrl/⌘ S" aria-keyshortcuts="Control+S Meta+S" disabled>Save</button>
@@ -117,7 +117,7 @@
         <input id="timeline" type="range" min="0" max="20" value="0" step="0.01" disabled>
         <span class="timecode">0:20</span>
         <label class="fps-select">Rate
-          <select id="fpsSelect">
+          <select id="fpsSelect" aria-label="Preview frame rate">
             <option value="24">24 fps</option>
             <option value="30" selected>30 fps</option>
             <option value="60">60 fps</option>
@@ -368,7 +368,10 @@
         <label class="mask-zoom" for="maskZoom">Zoom <input id="maskZoom" type="range" min="3" max="10" value="6" step="1"></label>
       </div>
       <div class="mask-editor-workspace">
-        <div class="mask-canvas-wrap" id="maskCanvasWrap"><canvas id="maskCanvas" aria-label="Editable plant mask grid"></canvas></div>
+        <div class="mask-canvas-wrap" id="maskCanvasWrap">
+          <p class="mask-pan-hint" id="maskPanHint">Drag on the grid to paint. Swipe the dark margin to pan.</p>
+          <canvas id="maskCanvas" aria-label="Editable plant mask grid" aria-describedby="maskPanHint"></canvas>
+        </div>
         <aside class="mask-editor-info">
           <h3>Semantic layers</h3>
           <p><i class="mask-swatch foliage" aria-hidden="true"></i><span>Foliage occlusion</span><strong id="editorFoliageCount">0</strong></p>

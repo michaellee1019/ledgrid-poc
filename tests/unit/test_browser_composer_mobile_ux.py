@@ -131,6 +131,43 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
             r"\.icon-button\s*\{\s*width:\s*44px;\s*\}",
         )
 
+    def test_mobile_keeps_touch_access_to_history_copy_and_preview_rate(self) -> None:
+        _tag, copy_attrs = self.audit.by_id("copyButton")
+        self.assertEqual(copy_attrs.get("aria-label"), "Copy preset JSON")
+        _tag, fps_attrs = self.audit.by_id("fpsSelect")
+        self.assertEqual(fps_attrs.get("aria-label"), "Preview frame rate")
+        self.assertIn(
+            ".header-actions > :not(#undoButton):not(#redoButton):not(#copyButton) { display: none; }",
+            self.css,
+        )
+        self.assertIn(".fps-select { display: flex; min-height: 44px; }", self.css)
+        self.assertIn(".fps-select select { min-height: 44px;", self.css)
+
+    def test_final_mobile_cascade_preserves_wall_and_switch_touch_targets(self) -> None:
+        self.assertIn(
+            ".switch-control input, .compact-switch input { width: 44px; height: 44px; }",
+            self.css,
+        )
+        self.assertIn(
+            ".wall-controls-heading button, .wall-apply-bar button, #editMasksButton { min-height: 44px; }",
+            self.css,
+        )
+        self.assertIn("--faint: #aaa;", self.css)
+        self.assertIn(".mobile-tabs button { padding-inline: 1px; font-size: 11px; }", self.css)
+
+    def test_mobile_header_and_mask_editor_reserve_device_safe_areas(self) -> None:
+        self.assertIn("--mobile-header-height: calc(72px + env(safe-area-inset-top));", self.css)
+        self.assertIn(
+            "height: calc(100dvh - var(--mobile-header-height) - var(--mobile-nav-height));",
+            self.css,
+        )
+        _tag, canvas_attrs = self.audit.by_id("maskCanvas")
+        self.assertEqual(canvas_attrs.get("aria-describedby"), "maskPanHint")
+        self.audit.by_id("maskPanHint")
+        self.assertIn("overscroll-behavior: auto;", self.css)
+        self.assertIn("touch-action: pan-x pan-y;", self.css)
+        self.assertIn("calc(10px + env(safe-area-inset-top))", self.css)
+
     def test_javascript_owned_ids_remain_unique(self) -> None:
         required_ids = {
             "serverState", "presetName", "saveState", "undoButton", "redoButton",
