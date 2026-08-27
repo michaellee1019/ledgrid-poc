@@ -26,7 +26,7 @@ BACKGROUND_LEVELS = {"none": 0.0, "soft": 0.35, "luminous": 0.7, "radiant": 1.0}
 
 
 class ProceduralAtmosphereBase(AnimationBase):
-    """Source-rate cached analytic simulation composed for a 32x138 wall."""
+    """Source-rate cached analytic simulation composed for the installed wall."""
 
     SCENE = ""
     DEFAULT_MOOD = "moonlit"

@@ -11,9 +11,15 @@ from typing import List, Tuple, Optional
 import numpy as np
 
 from drivers.spi_controller import LEDController, SPI_BUS, SPI_SPEED, SPI_MODE
-from drivers.led_layout import DEFAULT_LEDS_PER_STRIP
-
-DeviceMapEntry = Tuple[int, int]
+from drivers.led_layout import (
+    DEFAULT_LEDS_PER_STRIP,
+    EXTRA_STRIP_LANE,
+    MIRROR_EXTRA_STRIP_ON_ALL_LANES,
+    STRIPS_PER_DEVICE,
+    DeviceMapEntry,
+    logical_strip_count,
+    wall_device_map,
+)
 
 
 class MultiDeviceLEDController:
@@ -24,7 +30,8 @@ class MultiDeviceLEDController:
                  bus: int = SPI_BUS,
                  speed: int = SPI_SPEED,
                  mode: int = SPI_MODE,
-                 strips_per_device: int = 8,
+                 strips_per_device: int = STRIPS_PER_DEVICE,
+                 strip_count: Optional[int] = None,
                  leds_per_strip: int = DEFAULT_LEDS_PER_STRIP,
                  debug: bool = False,
                  parallel: bool = True,
@@ -38,6 +45,8 @@ class MultiDeviceLEDController:
             speed: SPI speed in Hz (default: 8MHz)
             mode: SPI mode (default: 3)
             strips_per_device: LED strips per device (default: 8 for ESP32-S3 DevKitC)
+            strip_count: Visible strips. May be smaller than device capacity when
+                the last receiver drives fewer than eight lanes.
             leds_per_strip: LEDs per strip (installed default: 138)
             debug: Enable debug output
             parallel: Send data to devices in parallel using threads
@@ -50,8 +59,10 @@ class MultiDeviceLEDController:
         self.parallel = parallel
         self._executor = None
         
-        # Calculate total dimensions
-        self.strip_count = num_devices * strips_per_device
+        # Visible geometry may be smaller than the 8-lane firmware capacity.
+        self.strip_count = logical_strip_count(
+            num_devices, strips_per_device, strip_count
+        )
         self.total_leds = self.strip_count * leds_per_strip
         self.leds_per_device = strips_per_device * leds_per_strip
         self._logical_frames_sent = 0
@@ -84,6 +95,14 @@ class MultiDeviceLEDController:
             bus, dev = entry
             map_parts.append(f"dev{idx}=spidev{bus}.{dev}")
         print(f"[LEDGRID] SPI device map ({num_devices} devices): {', '.join(map_parts)}")
+        if self.strip_count == 33:
+            if MIRROR_EXTRA_STRIP_ON_ALL_LANES:
+                print("[LEDGRID] Extra strip 32 -> dev4 all 8 lanes (SPI1 CE2)")
+            else:
+                print(
+                    f"[LEDGRID] Extra strip 32 -> dev4 lane {EXTRA_STRIP_LANE} "
+                    "(SPI1 CE2)"
+                )
         
         # Initialize individual device controllers
         self.devices: List[LEDController] = []
@@ -105,6 +124,32 @@ class MultiDeviceLEDController:
         if self.debug:
             print(f"\n✓ All {num_devices} devices initialized\n")
     
+    def _place_extra_column(self, frames):
+        """Put the 33rd strip on the fifth receiver, mirroring if the lane is unknown."""
+        if self.strip_count != 33 or len(frames) < 5:
+            return frames
+        leds = self.leds_per_strip
+        if isinstance(frames[4], np.ndarray):
+            frames[4] = np.array(frames[4], copy=True)
+            extra = frames[4][:leds].copy()
+        else:
+            extra = list(frames[4][:leds])
+        if MIRROR_EXTRA_STRIP_ON_ALL_LANES:
+            for lane in range(self.strips_per_device):
+                dest = lane * leds
+                frames[4][dest:dest + leds] = extra
+            return frames
+        if EXTRA_STRIP_LANE == 0:
+            return frames
+        dest = EXTRA_STRIP_LANE * leds
+        if isinstance(frames[4], np.ndarray):
+            frames[4][:leds] = 0
+            frames[4][dest:dest + leds] = extra
+        else:
+            frames[4][:leds] = [(0, 0, 0)] * leds
+            frames[4][dest:dest + leds] = extra
+        return frames
+
     def _split_frame(self, colors: List[Tuple[int, int, int]]) -> List[List[Tuple[int, int, int]]]:
         """
         Split full frame into per-device chunks
@@ -125,7 +170,7 @@ class MultiDeviceLEDController:
             for device_id in range(self.num_devices):
                 start = device_id * pixels_per_device
                 device_frames.append(colors[start:start + pixels_per_device])
-            return device_frames
+            return self._place_extra_column(device_frames)
 
         device_frames = []
         for device_id in range(self.num_devices):
@@ -147,7 +192,7 @@ class MultiDeviceLEDController:
 
             device_frames.append(device_colors)
 
-        return device_frames
+        return self._place_extra_column(device_frames)
     
     def _send_to_device(self, device_id: int, colors: List[Tuple[int, int, int]]):
         """Send frame data to a specific device"""
@@ -223,6 +268,25 @@ class MultiDeviceLEDController:
                 else:
                     ranges.append((local_start, local_end))
                 start = device_end
+        if self.strip_count == 33 and 4 in device_ranges:
+            leds = self.leds_per_strip
+            if MIRROR_EXTRA_STRIP_ON_ALL_LANES:
+                mirrored = []
+                for local_start, local_end in device_ranges[4]:
+                    offset_start = local_start % leds
+                    offset_end = offset_start + (local_end - local_start)
+                    for lane in range(self.strips_per_device):
+                        mirrored.append((
+                            lane * leds + offset_start,
+                            lane * leds + offset_end,
+                        ))
+                device_ranges[4] = mirrored
+            elif EXTRA_STRIP_LANE:
+                shift = EXTRA_STRIP_LANE * leds
+                device_ranges[4] = [
+                    (local_start + shift, local_end + shift)
+                    for local_start, local_end in device_ranges[4]
+                ]
 
         if self._executor is not None:
             futures = [
@@ -252,6 +316,14 @@ class MultiDeviceLEDController:
         
         device_id = strip // self.strips_per_device
         local_strip = strip % self.strips_per_device
+        if strip == 32:
+            device_id = 4
+            if device_id < self.num_devices and MIRROR_EXTRA_STRIP_ON_ALL_LANES:
+                for lane in range(self.strips_per_device):
+                    local_pixel = lane * self.leds_per_strip + led_in_strip
+                    self.devices[device_id].set_pixel(local_pixel, r, g, b)
+                return
+            local_strip = EXTRA_STRIP_LANE
         local_pixel = local_strip * self.leds_per_strip + led_in_strip
         
         if device_id < self.num_devices:
@@ -312,7 +384,6 @@ class MultiDeviceLEDController:
     def get_stats(self):
         """Return aggregated stats across all devices."""
         device_stats = []
-        total_leds = 0
         max_frames_sent = 0
         spi_transfers = 0
         bytes_sent = 0
@@ -345,7 +416,6 @@ class MultiDeviceLEDController:
                 stats = device.get_stats()
             device_stats.append(stats)
 
-            total_leds += int(stats.get('total_leds', 0) or 0)
             frames = int(stats.get('frames_sent', 0) or 0)
             # Use max (not sum) — all devices receive the same logical frame
             max_frames_sent = max(max_frames_sent, frames)
@@ -391,7 +461,8 @@ class MultiDeviceLEDController:
             'devices': device_stats,
             'aggregate': {
                 'num_devices': self.num_devices,
-                'total_leds': total_leds,
+                'strip_count': self.strip_count,
+                'total_leds': self.total_leds,
                 'frames_sent': max_frames_sent,
                 'logical_frames_sent': self._logical_frames_sent,
                 'spi_bus_count': len(self._devices_by_bus),
@@ -481,35 +552,18 @@ class MultiDeviceLEDController:
                 )
             return env_map[:num_devices]
 
-        map_entries: List[DeviceMapEntry] = []
-        
         # For 1-2 devices, just use the primary bus
         if num_devices <= 2:
-            for device_id in range(num_devices):
-                map_entries.append((primary_bus, device_id))
-            return map_entries
-        
-        # For 3+ devices, check if CE2+ exist on primary bus
-        # If not, fall back to SPI1 for devices 3-4
-        if not self._device_exists(primary_bus, 2) and self._device_exists(1, 0):
-            # Wall left-to-right: SPI0 CE0, SPI0 CE1, SPI1 CE1, SPI1 CE0
-            # (SPI1 chip-selects are swapped so logical groups 3 and 4 match
-            # physical board order on the wall.)
-            spi1_ces = [1, 0]  # CE1 then CE0
-            for idx in range(num_devices):
-                if idx < 2:
-                    map_entries.append((primary_bus, idx))
-                else:
-                    map_entries.append((1, spi1_ces[idx - 2]))
+            return [(primary_bus, device_id) for device_id in range(num_devices)]
 
+        # Wall layout: SPI0 CE0/CE1 plus SPI1, unless the primary bus already
+        # exposes CE2+ (unusual custom overlay).
+        if not self._device_exists(primary_bus, 2) and self._device_exists(1, 0):
             if self.debug:
-                print("[INFO] Using SPI1 fallback for devices 2 and 3 (CE1, CE0)")
-        else:
-            # All devices on primary bus
-            for device_id in range(num_devices):
-                map_entries.append((primary_bus, device_id))
-        
-        return map_entries
+                print("[INFO] Using SPI1 for devices 2+ (CE1, CE0, then CE2/CE3)")
+            return wall_device_map(num_devices, self._device_exists)
+
+        return [(primary_bus, device_id) for device_id in range(num_devices)]
     
     @staticmethod
     def _resolve_mode(bus: int, default_mode: int) -> int:

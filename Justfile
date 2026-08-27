@@ -62,6 +62,7 @@ test-firmware:
 	uv run --with platformio pio test -d firmware/esp32 -e native
 	uv run --with platformio pio run -d firmware/esp32 -e esp32-s3-devkitc-1
 	if rg -n 'FastLED|fastled' firmware/esp32/src firmware/esp32/include firmware/esp32/platformio.ini; then exit 1; fi
+	if rg -n 'stable/platform-espressif32' firmware/esp32/platformio.ini; then exit 1; fi
 
 # Run deployment behavior tests and validate every maintained shell script.
 test-deployment:

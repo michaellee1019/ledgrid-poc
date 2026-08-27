@@ -1,12 +1,15 @@
 # Hardware and wiring
 
-The installed wall uses a Raspberry Pi and four ESP32-S3-DevKitC-1-N16R8
-receivers. Each receiver drives eight WS2812 lanes of 138 LEDs. Firmware keeps a
-140-LED-per-lane buffer ceiling, but the installed host geometry is 32 x 138.
+The installed wall uses a Raspberry Pi and five ESP32-S3-DevKitC-1-N16R8
+receivers. Each receiver can drive eight WS2812 lanes of 138 LEDs. Firmware keeps
+a 140-LED-per-lane buffer ceiling, but the installed host geometry is 33 x 138.
+The fifth receiver is SPI1 CE2 and owns the extra rightmost strip. Until that
+ribbon's GPIO is identified, the host mirrors column 33 onto all eight firmware
+lanes of that board.
 
 ## Receiver pins
 
-All four receivers run the same firmware.
+All five receivers run the same firmware.
 
 | Function | ESP32-S3 GPIO |
 | --- | ---: |
@@ -38,21 +41,31 @@ own chip select. All grounds must be common.
 | SPI1 SCLK | 21 | 40 |
 | SPI1 CE0 | 18 | 12 |
 | SPI1 CE1 | 17 | 11 |
+| SPI1 CE2 | 24 | 18 |
+| SPI1 CE3 | 25 | 22 |
 
-The four-device layout expects:
+The five-device layout expects:
 
 ```text
 /dev/spidev0.0
 /dev/spidev0.1
 /dev/spidev1.0
 /dev/spidev1.1
+/dev/spidev1.2
 ```
 
-The host may enumerate the two SPI1 receivers in an installation-specific
-order; use the live `device_map` metric as the authoritative logical mapping.
-The full deployment configures `dtparam=spi=on` and `dtoverlay=spi1-2cs`
-idempotently. A boot-config change requires a Pi reboot before all four device
-nodes appear.
+The host may enumerate the SPI1 receivers in an installation-specific order;
+use the live `device_map` metric as the authoritative logical mapping. Logical
+strips 0-31 stay on the original four boards. Strip 32 is the rightmost column
+and is mirrored onto every lane of `/dev/spidev1.2`. The fifth receiver falls
+back to CE3 only when `spidev1.2` is missing.
+
+The HAT routes SPI1 CE2 through solder jumper `SJ_SPI1_CE2` to header pin 18
+(BCM GPIO24). That is not the `spi1-3cs` default (GPIO16 / pin 36). The full
+deployment writes `dtparam=spi=on` and `dtoverlay=spi1-3cs,cs2_pin=24`
+idempotently. A boot-config change requires a Pi reboot before CE2 moves. The
+`SJ_SPI1_CE2` jumper must be bridged or that ESP never sees chip select.
+CE3, if used, is `SJ_SPI1_CE3` on GPIO25 / pin 22.
 
 ## Power and signal integrity
 
@@ -132,11 +145,11 @@ The full timing and rollback criteria are in
 The [unified roadmap](plan-revamped-animation-pipeline.md) uses the
 `native-animations` branch as an implementation organ donor, but the branch's
 handoff recorded unresolved SPI1 MISO/MOSI coupling. That branch is not evidence
-that the installed wall can safely stage, verify, or reconcile four receiver
+that the installed wall can safely stage, verify, or reconcile five receiver
 artifacts.
 
 Before any all-wall receiver-native release, power down and verify SPI1 MISO and
 MOSI are isolated and correctly routed, then obtain fresh identity/status from
-all four receivers with no TX echo and rerun the existing streamed one-receiver
+all five receivers with no TX echo and rerun the existing streamed one-receiver
 and full-wall canaries. Only after that H0 baseline may ported loader/cache or
 sparse-overlay code proceed to the roadmap's physical gates.

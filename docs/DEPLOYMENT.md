@@ -45,7 +45,7 @@ just deploy
 Setup installs PlatformIO in a dedicated environment on the Pi and verifies
 serial permissions. The full deployment applies the supported SPI boot
 configuration and reports whether a reboot is required. After that reboot,
-confirm the expected `/dev/spidev0.0`, `0.1`, `1.0`, and `1.1` nodes and rerun
+confirm the expected `/dev/spidev0.0`, `0.1`, `1.0`, `1.1`, and `1.2` nodes and rerun
 the full deployment.
 
 ## What is deployed

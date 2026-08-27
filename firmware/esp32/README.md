@@ -66,9 +66,10 @@ pio run -e esp32-s3-devkitc-1
 pio run -e esp32-s3-devkitc-1 -t upload --upload-port /dev/ttyACM0
 ```
 
-The production target uses the pioarduino stable platform with Arduino 3.3.9 and
-ESP-IDF 5.5.4. The board target must remain `esp32-s3-devkitc1-n16r8` so PSRAM and
-flash timing match the installed controllers.
+The production target uses the pinned pioarduino `55.03.39` platform with Arduino
+3.3.9 and ESP-IDF 5.5.4. Do not point `platformio.ini` at the floating `stable`
+zip. The board target must remain `esp32-s3-devkitc1-n16r8` so PSRAM and flash
+timing match the installed controllers.
 
 ## SPI commands
 

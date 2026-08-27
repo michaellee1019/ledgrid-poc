@@ -36,7 +36,7 @@ All of these must pass before a hardware flash:
   device-to-bus/chip-select map.
 - Every active frame-based animation returns a canonical contiguous `uint8`
   frame without errors and renders at or below 4.0 ms p95 for the installed
-  32 x 138 geometry in the headless benchmark.
+  33 x 138 geometry in the headless benchmark.
 - Native firmware tests prove:
   - GRB channel order for all eight lanes;
   - exact `100` and `110` waveform samples;

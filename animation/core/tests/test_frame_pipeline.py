@@ -6,6 +6,7 @@ import threading
 import time
 import types
 import unittest
+import unittest.mock
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -152,6 +153,43 @@ class FrameContractTests(unittest.TestCase):
         self.assertEqual(len(controller.frames), 1)
         self.assertEqual(manager.frames_presented, 1)
         self.assertEqual(manager.unchanged_frames_skipped, 2)
+
+    def test_animation_loop_exits_when_presenter_already_shut_down(self):
+        manager = AnimationManager.__new__(AnimationManager)
+        manager.controller = _Controller()
+        manager.target_fps = 1000
+        manager.is_running = True
+        manager.stop_event = threading.Event()
+        manager.start_time = time.perf_counter()
+        manager.frame_count = 0
+        manager.frames_presented = 0
+        manager.unchanged_frames_skipped = 0
+        manager.current_frame_data = []
+        manager.frame_data_lock = threading.Lock()
+        manager.frame_timestamps = deque(maxlen=20)
+        manager.perf_samples = deque(maxlen=20)
+        manager.perf_lock = threading.Lock()
+        manager._last_perf_sample = {}
+        manager.current_animation = _Animation(manager.controller)
+
+        class _DeadPresenter:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def submit(self, *_args, **_kwargs):
+                raise RuntimeError("cannot schedule new futures after shutdown")
+
+        with unittest.mock.patch(
+            "animation.core.manager.ThreadPoolExecutor",
+            return_value=_DeadPresenter(),
+        ):
+            manager._animation_loop()
+
+        self.assertEqual(manager.frames_presented, 0)
+        self.assertTrue(manager.is_running)
 
     def test_manager_generates_next_frame_while_previous_frame_is_presented(self):
         send_started = threading.Event()

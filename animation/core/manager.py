@@ -9,6 +9,7 @@ Handles animation switching, parameter updates, and frame generation.
 import hashlib
 import json
 import math
+import sys
 import time
 import threading
 import traceback
@@ -510,7 +511,7 @@ class AnimationManager:
 
             # Stop frame-based animation thread if it exists
             if self.animation_thread and self.animation_thread.is_alive():
-                self.animation_thread.join(timeout=1.0)
+                self.animation_thread.join(timeout=2.0)
             self.animation_thread = None
 
             # Stop the animation (stateful animations handle their own threads)
@@ -1086,13 +1087,18 @@ class AnimationManager:
                             and self.frames_presented > 0
                             and hasattr(self.controller, 'set_frame')
                         )
-                        pending_present = presenter.submit(
-                            self._present_frame,
-                            frame,
-                            dirty_ranges,
-                            use_partial,
-                            inline_show,
-                        )
+                        try:
+                            pending_present = presenter.submit(
+                                self._present_frame,
+                                frame,
+                                dirty_ranges,
+                                use_partial,
+                                inline_show,
+                            )
+                        except RuntimeError:
+                            # ThreadPoolExecutor shuts down from atexit while a
+                            # leaked daemon loop is still running. Exit quietly.
+                            break
                         self.frames_presented += 1
                     else:
                         self.unchanged_frames_skipped += 1
@@ -1101,8 +1107,13 @@ class AnimationManager:
                     self._update_fps_tracking(loop_start)
 
                 except Exception as e:
-                    print(f"✗ Animation loop error: {e}")
-                    traceback.print_exc()
+                    if getattr(sys, "is_finalizing", lambda: False)():
+                        break
+                    try:
+                        print(f"✗ Animation loop error: {e}")
+                        traceback.print_exc()
+                    except Exception:
+                        break
                     time.sleep(0.05)
 
                 loop_duration = time.perf_counter() - loop_start

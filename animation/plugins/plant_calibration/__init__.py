@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 
 from animation import AnimationBase
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 
 Color = Tuple[int, int, int]
@@ -25,7 +26,7 @@ class PlantCalibrationAnimation(AnimationBase):
     ANIMATION_DESCRIPTION = "Static reference patterns for wall photo calibration"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.3"
-    PLANT_WALL_GEOMETRY = (32, 138)
+    PLANT_WALL_GEOMETRY = (DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP)
     EXPECTED_GLOBE_REGIONS = 7
     PATTERN_SEQUENCE_LABELS: List[str] = [
         "orientation_markers",

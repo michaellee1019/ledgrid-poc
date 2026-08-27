@@ -102,6 +102,7 @@ class StartServerTests(unittest.TestCase):
         self.assertEqual(device_count_for_strips(8), 1)
         self.assertEqual(device_count_for_strips(9), 2)
         self.assertEqual(device_count_for_strips(32), 4)
+        self.assertEqual(device_count_for_strips(33), 5)
 
     def test_state_changing_commands_request_persistence(self):
         manager = _Manager()

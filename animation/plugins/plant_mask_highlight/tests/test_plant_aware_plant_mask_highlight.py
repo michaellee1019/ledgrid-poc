@@ -9,7 +9,7 @@ from animation.plugins.plant_mask_highlight import PlantMaskHighlightAnimation
 
 
 class _Controller:
-    strip_count = 32
+    strip_count = 33
     leds_per_strip = 138
     total_leds = strip_count * leds_per_strip
 

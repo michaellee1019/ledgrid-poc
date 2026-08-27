@@ -180,7 +180,7 @@ just test-rendering
 ```
 
 The rendering benchmark is the authoritative performance gate for the installed
-32 x 138 geometry.
+33 x 138 geometry.
 
 ## Runtime boundaries
 

@@ -141,7 +141,7 @@ check_spi() {
         remote_spi_devices_ready
     else
         log_warning "Required SPI devices are missing"
-        log_warning "Wall layout expects: /dev/spidev0.0 /dev/spidev0.1 /dev/spidev1.0 /dev/spidev1.1"
+        log_warning "Wall layout expects: /dev/spidev0.0 /dev/spidev0.1 /dev/spidev1.0 /dev/spidev1.1 /dev/spidev1.2"
         log_warning "Re-run deploy to configure SPI and reboot the Pi"
     fi
 }
@@ -165,7 +165,7 @@ RestartSec=2
 Environment=PYTHONUNBUFFERED=1
 Environment=LEDGRID_SPI1_MODE=0
 Environment=LEDGRID_HAT=0
-Environment=STRIPS=32
+Environment=STRIPS=33
 
 [Install]
 WantedBy=multi-user.target

@@ -2,8 +2,10 @@
 # Configure SPI on the Raspberry Pi (idempotent).
 # Runs on the Pi (invoked remotely by deploy.sh).
 #
-# Wall layout (LEDGRID_HAT=0, default): 4 ESP32s x 8 strips = 32 strips
-#   /dev/spidev0.0 /dev/spidev0.1 /dev/spidev1.0 /dev/spidev1.1
+# Wall layout (LEDGRID_HAT=0, default): 5 ESP32s, 33 strips
+#   /dev/spidev0.0 /dev/spidev0.1 /dev/spidev1.0 /dev/spidev1.1 /dev/spidev1.2
+#   The fifth receiver is SPI1 CE2. The HAT brings that net out on GPIO24
+#   (header pin 18, solder jumper SJ_SPI1_CE2), not the BCM default GPIO16.
 #
 # HAT layout (LEDGRID_HAT=1): 2 ESP32 modules x 8 strips = 16 strips
 #   /dev/spidev0.0  ESP1 on SPI0 CE0
@@ -29,6 +31,7 @@ else
     "/dev/spidev0.1"
     "/dev/spidev1.0"
     "/dev/spidev1.1"
+    "/dev/spidev1.2"
   )
 fi
 
@@ -59,7 +62,7 @@ desired_spi_lines() {
   else
     printf '%s\n' \
       "dtparam=spi=on" \
-      "dtoverlay=spi1-2cs"
+      "dtoverlay=spi1-3cs,cs2_pin=24"
   fi
 }
 

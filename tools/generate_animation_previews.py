@@ -26,6 +26,7 @@ from animation.core.preview_assets import (
     preset_payload,
     write_catalog,
 )
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 from tools.deployment.deploy_manifest import tracked_paths
 
 
@@ -243,8 +244,8 @@ def main() -> int:
     parser.add_argument(
         "--public-prefix", default="/preview-assets/generated"
     )
-    parser.add_argument("--strips", type=int, default=32)
-    parser.add_argument("--leds-per-strip", type=int, default=138)
+    parser.add_argument("--strips", type=int, default=DEFAULT_STRIP_COUNT)
+    parser.add_argument("--leds-per-strip", type=int, default=DEFAULT_LEDS_PER_STRIP)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--tracked-only", action="store_true")
     parser.add_argument(

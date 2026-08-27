@@ -110,7 +110,7 @@ is_hat() {
 if is_hat; then
   required=(/dev/spidev0.0 /dev/spidev0.1)
 else
-  required=(/dev/spidev0.0 /dev/spidev0.1 /dev/spidev1.0 /dev/spidev1.1)
+  required=(/dev/spidev0.0 /dev/spidev0.1 /dev/spidev1.0 /dev/spidev1.1 /dev/spidev1.2)
 fi
 for dev in "${required[@]}"; do
   if [ ! -e "$dev" ]; then
@@ -170,7 +170,7 @@ ensure_remote_spi() {
     fi
 
     _deploy_log_error "Required SPI devices still missing after reboot"
-    _deploy_log_error "Expected: /dev/spidev0.0 /dev/spidev0.1 /dev/spidev1.0 /dev/spidev1.1"
+    _deploy_log_error "Expected: /dev/spidev0.0 /dev/spidev0.1 /dev/spidev1.0 /dev/spidev1.1 /dev/spidev1.2"
     _deploy_log_error "Check boot config on the Pi and run deploy again"
     return 1
 }

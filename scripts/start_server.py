@@ -16,7 +16,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from animation.core.manager import AnimationManager
 from ipc.control_channel import FileControlChannel
-from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP, default_strip_count
+from drivers.led_layout import (
+    DEFAULT_STRIP_COUNT,
+    DEFAULT_LEDS_PER_STRIP,
+    STRIPS_PER_DEVICE,
+    default_strip_count,
+    device_count_for_strips,
+)
 from drivers.frame_codec import decode_frame_data
 from web.app import create_app
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
@@ -66,11 +72,6 @@ def apply_production_stagger(controller, phases: int = PRODUCTION_STAGGER_PHASES
     return True
 
 
-def device_count_for_strips(strip_count: int, strips_per_device: int = 8) -> int:
-    """Return enough devices to cover every configured strip."""
-    return max(1, (max(1, strip_count) + strips_per_device - 1) // strips_per_device)
-
-
 def run_controller_mode(args):
     """Controller process: drives LEDs and writes status/frames to disk."""
     saved_state = None
@@ -84,7 +85,7 @@ def run_controller_mode(args):
     # Multi-device controller expects total strips, single-device expects strips per device
     if hasattr(LEDController, '__name__') and 'Multi' in LEDController.__name__:
         # Multi-device controller - calculate number of devices from strip count
-        strips_per_device = 8  # ESP32-S3 DevKitC has 8 strips
+        strips_per_device = STRIPS_PER_DEVICE
         num_devices = device_count_for_strips(args.strips, strips_per_device)
         controller = LEDController(
             num_devices=num_devices,
@@ -92,6 +93,7 @@ def run_controller_mode(args):
             speed=args.spi_speed,
             mode=0,
             strips_per_device=strips_per_device,
+            strip_count=args.strips,
             leds_per_strip=args.leds_per_strip,
             debug=args.controller_debug,
             parallel=True,

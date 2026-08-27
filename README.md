@@ -1,9 +1,9 @@
 # LED Grid Control System
 
-Controller, web UI, animation plugins, and ESP32-S3 firmware for a 32 x 138
-(4,416-pixel) plant-wall installation. A Raspberry Pi renders frames and sends
-them over two SPI buses to four receivers; each receiver drives eight WS2812
-lanes in parallel.
+Controller, web UI, animation plugins, and ESP32-S3 firmware for a 33 x 138
+(4,554-pixel) plant-wall installation. A Raspberry Pi renders frames and sends
+them over two SPI buses to five receivers; four drive eight WS2812 lanes and
+the fifth drives the extra strip.
 
 ## Local development
 

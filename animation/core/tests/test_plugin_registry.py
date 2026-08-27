@@ -97,7 +97,7 @@ class ExternalAnimation(AnimationBase):
             self.assertEqual(loaded.__name__, "ExternalAnimation")
             self.assertEqual(loaded.__module__, "external")
 
-    def test_all_plugins_render_the_installed_32_by_138_geometry(self):
+    def test_all_plugins_render_the_installed_33_by_138_geometry(self):
         controller = PreviewLEDController(
             strips=DEFAULT_STRIP_COUNT,
             leds_per_strip=DEFAULT_LEDS_PER_STRIP,

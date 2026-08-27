@@ -13,6 +13,7 @@ import numpy as np
 
 from animation import AnimationBase
 from animation.libraries.mask_effects import dilate_8, logical_mask, mask_boundary
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 
 class PlantMaskHighlightAnimation(AnimationBase):
@@ -490,8 +491,8 @@ class PlantMaskHighlightAnimation(AnimationBase):
             masks = self.get_plant_masks()
             input_overlap = len(self.mask_indices & self.globe_indices)
             geometry_valid = (
-                self.controller.strip_count == 32
-                and self.controller.leds_per_strip == 138
+                self.controller.strip_count == DEFAULT_STRIP_COUNT
+                and self.controller.leds_per_strip == DEFAULT_LEDS_PER_STRIP
             )
             globe_semantics_valid = (
                 masks.globe_regions == 7
