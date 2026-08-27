@@ -135,6 +135,7 @@
       <div class="inspector-tabs" role="tablist" aria-label="Inspector" aria-orientation="horizontal">
         <button id="controlsTab" type="button" role="tab" aria-selected="true" aria-controls="controlsPanel" title="Tune · T" aria-keyshortcuts="T">Tune <kbd aria-hidden="true">T</kbd></button>
         <button id="layersTab" type="button" role="tab" aria-selected="false" aria-controls="layersPanel" title="Layers · L" aria-keyshortcuts="L">Layers <kbd aria-hidden="true">L</kbd></button>
+        <button id="wallTab" type="button" role="tab" aria-selected="false" aria-controls="wallPanel" title="Wall · W" aria-keyshortcuts="W">Wall <kbd aria-hidden="true">W</kbd></button>
         <button id="checkerTab" type="button" role="tab" aria-selected="false" aria-controls="checkerPanel" title="Check · C" aria-keyshortcuts="C">Check <kbd aria-hidden="true">C</kbd><span id="checkerDot" aria-hidden="true"></span></button>
       </div>
 
@@ -219,6 +220,51 @@
         </section>
       </section>
 
+      <section id="wallPanel" role="tabpanel" aria-labelledby="wallTab" hidden>
+        <div class="wall-controls-heading">
+          <div><p class="eyebrow">Installation state</p><h1>Wall settings</h1></div>
+          <button class="text-button" id="refreshWallButton" type="button">Refresh</button>
+        </div>
+        <p class="wall-scope-note">These settings are independent of this look. Changes preview locally where supported and reach the physical wall only after review.</p>
+
+        <section class="wall-control-section" aria-labelledby="vibeHeading">
+          <div class="wall-section-heading"><h2 id="vibeHeading">Vibe</h2><output id="vibeReadout">Neutral</output></div>
+          <div class="vibe-options" id="vibeOptions" role="radiogroup" aria-label="Global vibe"></div>
+          <p class="wall-control-help" id="vibeProfileDetail">Atmosphere changes tempo, luminance, and supported color semantics.</p>
+        </section>
+
+        <section class="wall-control-section" aria-labelledby="playbackHeading">
+          <div class="wall-section-heading"><h2 id="playbackHeading">Playback &amp; output</h2><span>Global</span></div>
+          <label class="wall-range" for="globalBrightness"><span>Master brightness</span><output id="globalBrightnessValue" for="globalBrightness">—</output></label>
+          <input id="globalBrightness" type="range" min="0" max="255" step="1" value="128">
+          <label class="wall-range" for="globalSpeed"><span>Operator speed</span><output id="globalSpeedValue" for="globalSpeed">1.00×</output></label>
+          <input id="globalSpeed" type="range" min="0.25" max="3" step="0.05" value="1">
+          <label class="wall-range" for="globalTargetFps"><span>Target frame rate</span><output id="globalTargetFpsValue" for="globalTargetFps">—</output></label>
+          <input id="globalTargetFps" type="range" min="1" max="200" step="1" value="30">
+          <p class="wall-control-help">Operator speed multiplies the renderer’s authored speed. Master brightness and target FPS are output controls, not preset parameters.</p>
+        </section>
+
+        <section class="wall-control-section" aria-labelledby="plantHeading">
+          <div class="wall-section-heading"><h2 id="plantHeading">Plant behavior</h2><span id="plantModifierCount">0 active</span></div>
+          <p class="wall-control-help">Visual effects combine. Choose at most one field and one surface behavior. A zero-strength modifier is an exact no-op.</p>
+          <div class="plant-groups" id="plantModifierGroups"></div>
+        </section>
+
+        <section class="wall-control-section mask-summary" aria-labelledby="maskHeading">
+          <div class="wall-section-heading"><h2 id="maskHeading">Plant masks</h2><span id="maskGeometry">32 × 138</span></div>
+          <div class="mask-counts" aria-label="Calibrated mask counts">
+            <p><i class="mask-swatch foliage" aria-hidden="true"></i><span>Foliage</span><strong id="foliageMaskCount">—</strong></p>
+            <p><i class="mask-swatch bowls" aria-hidden="true"></i><span>Planter bowls</span><strong id="bowlMaskCount">—</strong></p>
+          </div>
+          <button class="quiet-button full-button" id="editMasksButton" type="button">Edit calibrated masks…</button>
+        </section>
+
+        <div class="wall-apply-bar">
+          <p id="wallDraftStatus" role="status" aria-live="polite">Loading current wall state…</p>
+          <div><button class="quiet-button" id="resetWallDraftButton" type="button" disabled>Revert</button><button class="primary-button" id="reviewWallButton" type="button" disabled>Review changes</button></div>
+        </div>
+      </section>
+
       <section id="checkerPanel" role="tabpanel" aria-labelledby="checkerTab" hidden>
         <div class="checker-intro">
           <p class="eyebrow">Local acceptance</p>
@@ -253,6 +299,7 @@
     <button type="button" data-mobile-target="stage"><span aria-hidden="true">◉</span>Preview</button>
     <button type="button" data-mobile-target="tune"><span aria-hidden="true">⌁</span>Tune</button>
     <button type="button" data-mobile-target="layers"><span aria-hidden="true">≋</span>Layers</button>
+    <button type="button" data-mobile-target="wall"><span aria-hidden="true">◫</span>Wall</button>
     <button type="button" data-mobile-target="check"><span aria-hidden="true">✓</span>Check</button>
   </nav>
 
@@ -289,6 +336,53 @@
         <button class="primary-button" id="confirmActivateButton" value="confirm">Activate on wall</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog class="action-dialog wall-review-dialog" id="wallReviewDialog" aria-labelledby="wallReviewHeading">
+    <form method="dialog">
+      <span class="dialog-icon live" aria-hidden="true">◫</span>
+      <p class="eyebrow">Physical wall</p>
+      <h2 id="wallReviewHeading">Apply wall-wide changes?</h2>
+      <p>These commands are applied in order and are not atomic. If one fails, the composer stops and refreshes observed state.</p>
+      <dl class="activation-summary" id="wallChangeSummary"></dl>
+      <div class="dialog-actions">
+        <button class="quiet-button" value="cancel">Cancel</button>
+        <button class="primary-button" id="confirmWallChangesButton" value="confirm">Apply to wall</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="mask-editor-dialog" id="maskEditorDialog" aria-labelledby="maskEditorHeading">
+    <div class="mask-editor-shell">
+      <header class="mask-editor-header">
+        <div><p class="eyebrow">Calibration geometry</p><h2 id="maskEditorHeading">Plant mask editor</h2><p id="maskEditorStatus" role="status" aria-live="polite">Loading calibrated masks…</p></div>
+        <button class="icon-button" id="closeMaskEditorButton" type="button" aria-label="Close mask editor">×</button>
+      </header>
+      <div class="mask-editor-toolbar" role="toolbar" aria-label="Mask painting tools">
+        <div class="mask-tools" role="group" aria-label="Paint layer">
+          <button type="button" data-mask-tool="1" aria-pressed="true"><i class="mask-swatch foliage" aria-hidden="true"></i>Foliage <kbd>1</kbd></button>
+          <button type="button" data-mask-tool="2" aria-pressed="false"><i class="mask-swatch bowls" aria-hidden="true"></i>Bowls <kbd>2</kbd></button>
+          <button type="button" data-mask-tool="0" aria-pressed="false">Erase <kbd>E</kbd></button>
+        </div>
+        <button class="quiet-button" id="undoMaskButton" type="button" disabled>Undo</button>
+        <label class="mask-zoom" for="maskZoom">Zoom <input id="maskZoom" type="range" min="3" max="10" value="6" step="1"></label>
+      </div>
+      <div class="mask-editor-workspace">
+        <div class="mask-canvas-wrap" id="maskCanvasWrap"><canvas id="maskCanvas" aria-label="Editable plant mask grid"></canvas></div>
+        <aside class="mask-editor-info">
+          <h3>Semantic layers</h3>
+          <p><i class="mask-swatch foliage" aria-hidden="true"></i><span>Foliage occlusion</span><strong id="editorFoliageCount">0</strong></p>
+          <p><i class="mask-swatch bowls" aria-hidden="true"></i><span>Planter bowls</span><strong id="editorBowlCount">0</strong></p>
+          <small>Drag to paint. The two layers cannot overlap. Saving updates host calibration files; it does not mirror pixels to the wall.</small>
+        </aside>
+      </div>
+      <footer class="mask-editor-actions">
+        <button class="quiet-button" id="revertMasksButton" type="button" disabled>Revert saved</button>
+        <span></span>
+        <button class="quiet-button" id="doneMaskEditorButton" type="button">Done</button>
+        <button class="primary-button" id="saveMasksButton" type="button" disabled>Save calibration</button>
+      </footer>
+    </div>
   </dialog>
 
   <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>

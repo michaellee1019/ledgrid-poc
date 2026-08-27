@@ -40,6 +40,11 @@ def _component(
             },
         },
         "defaults": {"speed": 1.0},
+        "vibe": {
+            "color_policy": "preserve",
+            "timing_adapter": "legacy_speed_param",
+            "capabilities": [],
+        },
         "build": {},
         "availability": {"state": "ready"},
         "compatibility": {
@@ -162,6 +167,31 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertTrue(response.get_json()["actions"]["activate_scene"])
         self.assert_no_live_effect()
 
+    def test_bootstrap_exposes_full_independent_wall_control_contract(self) -> None:
+        response = self.client.get("/api/v1/composer/bootstrap")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(
+            [item["vibe_id"] for item in payload["vibe_profiles"]],
+            ["neutral", "quiet", "cozy", "vivid", "celebration"],
+        )
+        contract = payload["global_control_contract"]
+        self.assertEqual(len(contract["plant_modifier_ids"]), 14)
+        self.assertEqual(
+            set(contract["field_modifiers"]),
+            {"attractor", "repulsor", "slow_zone"},
+        )
+        actions = payload["capabilities"]["server_actions"]
+        self.assertEqual(actions["status_url"], "/api/status")
+        self.assertEqual(actions["vibe_url"], "/api/v1/vibe")
+        self.assertEqual(actions["masks_url"], "/api/painter/masks")
+        self.assertEqual(
+            payload["components"][0]["presentation"]["timing_adapter"],
+            "legacy_speed_param",
+        )
+        self.assert_no_live_effect()
+
     def test_component_upload_validation_is_read_only_and_provider_qualified(self) -> None:
         response = self.client.post(
             "/api/v1/composer/presets/validate",
@@ -259,7 +289,7 @@ class BrowserComposerActionTests(unittest.TestCase):
         ):
             self.assertIn(f'id="{element_id}"', html)
         self.assertIn('data-mobile-target="layers"', html)
-        self.assertIn("grid-template-columns: repeat(5, 1fr)", css)
+        self.assertIn("grid-template-columns: repeat(6, 1fr)", css)
         self.assertIn(".server-action-buttons button, .local-action-buttons button, .mobile-tabs button { min-height: 44px; }", css)
         self.assertIn("return preset?.key || preset?.preset_id", javascript)
         self.assertIn("state.selectedPreset = record.key", javascript)
@@ -268,6 +298,26 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertIn("receipt.requested_revision", javascript)
         self.assertIn("receipt.telemetry_complete", javascript)
         self.assertIn("body: JSON.stringify(scene)", javascript)
+
+    def test_wall_workspace_is_complete_and_presets_exclude_global_state(self) -> None:
+        html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "web/static/js/composer.js").read_text(encoding="utf-8")
+
+        for element_id in (
+            "vibeOptions", "globalBrightness", "globalSpeed", "globalTargetFps",
+            "plantModifierGroups", "editMasksButton", "maskCanvas",
+            "wallReviewDialog", "confirmWallChangesButton",
+        ):
+            self.assertIn(f'id="{element_id}"', html)
+        for modifier in (
+            "illuminate", "shadow", "refract", "hue_shift", "liquid_glass",
+            "attractor", "repulsor", "slow_zone", "obstacle", "portal",
+            "bumper", "hazard", "habitat", "emitter",
+        ):
+            self.assertIn(f"'{modifier}'", javascript)
+        self.assertIn("params: authoredParams(state.component, state.params)", javascript)
+        self.assertIn("parameters: authoredParams(component, params)", javascript)
+        self.assertIn("!isGlobalInstallationParameter(key)", javascript)
 
 
 if __name__ == "__main__":

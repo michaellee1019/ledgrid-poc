@@ -6,6 +6,12 @@
     const $ = (id) => document.getElementById(id);
     const STORAGE_PREFIX = 'ledgrid.browser-composer.v1';
     const SAMPLE_FRAMES = 48;
+    const PLANT_MODIFIER_GROUPS = Object.freeze([
+        {id: 'visual', name: 'Light & material', mode: 'multiple', modifiers: ['illuminate', 'shadow', 'refract', 'hue_shift', 'liquid_glass']},
+        {id: 'field', name: 'Field · choose one', mode: 'exclusive', modifiers: ['attractor', 'repulsor', 'slow_zone']},
+        {id: 'surface', name: 'Surface · choose one', mode: 'exclusive', modifiers: ['obstacle', 'portal', 'bumper', 'hazard', 'habitat']},
+        {id: 'source', name: 'Source', mode: 'multiple', modifiers: ['emitter']},
+    ]);
     const CLOCK_STARTING_POINTS = Object.freeze([
         {key: 'composer:clock:amber-digital', name: 'Amber digital', params: {face: 'digital', palette: 'amber', format_24h: false, show_seconds: true, position_y: .5, scale: 1, glow: .45, brightness: 1, opacity: 1, backdrop_opacity: 0}},
         {key: 'composer:clock:quiet-analog', name: 'Quiet analog', params: {face: 'analog', palette: 'mono', format_24h: false, show_seconds: false, position_y: .32, scale: 1, glow: .18, brightness: .72, opacity: .88, backdrop_opacity: 0}},
@@ -47,6 +53,27 @@
         serverChecking: true,
         busyAction: null,
         lastSavedPreset: null,
+        globalSettings: {
+            observed: null,
+            draft: null,
+            dirty: false,
+            loading: false,
+            applying: false,
+            pendingObservation: false,
+            pendingSince: 0,
+        },
+        masks: {
+            loaded: false,
+            ledInfo: null,
+            cells: null,
+            savedCells: null,
+            history: [],
+            tool: 1,
+            dirty: false,
+            painting: false,
+            lastCell: null,
+            zoom: 6,
+        },
         layers: {
             clockEnabled: false,
             clockOpacity: 220,
@@ -112,6 +139,325 @@
         return payload;
     }
 
+    function globalActions() {
+        return state.bootstrap?.capabilities?.server_actions || {};
+    }
+
+    function vibeProfiles() {
+        return Array.isArray(state.bootstrap?.vibe_profiles) ? state.bootstrap.vibe_profiles : [];
+    }
+
+    function vibeProfile(vibeId = state.globalSettings.draft?.vibeId) {
+        return vibeProfiles().find((profile) => profile.vibe_id === vibeId)
+            || vibeProfiles().find((profile) => profile.vibe_id === 'neutral')
+            || {vibe_id: 'neutral', tempo_scale: 1, luminance_scale: 1};
+    }
+
+    function canonicalPlantModifiers(value) {
+        const contract = state.bootstrap?.global_control_contract || {};
+        const ids = Array.isArray(contract.plant_modifier_ids)
+            ? contract.plant_modifier_ids
+            : PLANT_MODIFIER_GROUPS.flatMap((group) => group.modifiers);
+        const rawActive = Array.isArray(value?.active) ? value.active : [];
+        const activeSet = new Set(rawActive.filter((id) => ids.includes(id)));
+        for (const group of PLANT_MODIFIER_GROUPS.filter((item) => item.mode === 'exclusive')) {
+            const selected = group.modifiers.filter((id) => activeSet.has(id));
+            selected.slice(1).forEach((id) => activeSet.delete(id));
+        }
+        const active = ids.filter((id) => activeSet.has(id));
+        const strengths = {};
+        active.forEach((id) => {
+            const fallback = id === 'obstacle' ? 1 : .5;
+            strengths[id] = Math.max(0, Math.min(1, safeNumber(value?.strengths?.[id], fallback)));
+        });
+        return {version: 1, active, strengths};
+    }
+
+    function statusVibeId(status) {
+        const raw = status?.vibe?.state || status?.vibe || {};
+        const id = raw.vibe_id || raw.id;
+        return vibeProfiles().some((profile) => profile.vibe_id === id) ? id : 'neutral';
+    }
+
+    function normalizedGlobalSettings(status = {}) {
+        const baseline = safeNumber(state.bootstrap?.global_control_contract?.operator_speed_baseline, .3) || .3;
+        const brightness = status.brightness == null ? 128 : Math.round(safeNumber(status.brightness, 128));
+        const targetFps = safeNumber(status.target_fps, 0) > 0 ? Math.round(status.target_fps) : 30;
+        const speedScale = safeNumber(status.animation_speed_scale, baseline);
+        return {
+            vibeId: statusVibeId(status),
+            brightness: Math.max(0, Math.min(255, brightness)),
+            targetFps: Math.max(1, Math.min(200, targetFps)),
+            speedMultiplier: Math.max(.25, Math.min(3, speedScale / baseline)),
+            plantModifiers: canonicalPlantModifiers(
+                status.plant_modifiers || state.bootstrap?.installation_profile?.plant_modifiers,
+            ),
+        };
+    }
+
+    function globalSettingsEqual(left, right) {
+        return JSON.stringify(left || null) === JSON.stringify(right || null);
+    }
+
+    function loadStoredGlobalDraft() {
+        try {
+            const stored = JSON.parse(localStorage.getItem(`${STORAGE_PREFIX}.global-draft`));
+            if (!stored || typeof stored !== 'object') return null;
+            return {
+                vibeId: vibeProfiles().some((profile) => profile.vibe_id === stored.vibeId) ? stored.vibeId : 'neutral',
+                brightness: Math.max(0, Math.min(255, Math.round(safeNumber(stored.brightness, 128)))),
+                targetFps: Math.max(1, Math.min(200, Math.round(safeNumber(stored.targetFps, 30)))),
+                speedMultiplier: Math.max(.25, Math.min(3, safeNumber(stored.speedMultiplier, 1))),
+                plantModifiers: canonicalPlantModifiers(stored.plantModifiers),
+            };
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    function persistGlobalDraft() {
+        if (!state.globalSettings.draft) return;
+        localStorage.setItem(`${STORAGE_PREFIX}.global-draft`, JSON.stringify(state.globalSettings.draft));
+    }
+
+    function initializeGlobalSettings() {
+        const bootstrapState = normalizedGlobalSettings({
+            plant_modifiers: state.bootstrap?.installation_profile?.plant_modifiers,
+            vibe: {state: {vibe_id: 'neutral'}},
+            brightness: 128,
+            target_fps: 30,
+            animation_speed_scale: state.bootstrap?.global_control_contract?.operator_speed_baseline,
+        });
+        state.globalSettings.observed = bootstrapState;
+        state.globalSettings.draft = loadStoredGlobalDraft() || clone(bootstrapState);
+        state.globalSettings.dirty = !globalSettingsEqual(state.globalSettings.observed, state.globalSettings.draft);
+        renderGlobalSettings();
+    }
+
+    function globalChangeList() {
+        const observed = state.globalSettings.observed;
+        const draft = state.globalSettings.draft;
+        if (!observed || !draft) return [];
+        const changes = [];
+        if (observed.vibeId !== draft.vibeId) changes.push({id: 'vibe', label: 'Vibe', before: humanize(observed.vibeId), after: humanize(draft.vibeId)});
+        if (!globalSettingsEqual(observed.plantModifiers, draft.plantModifiers)) {
+            const describe = (plant) => plant.active.length ? plant.active.map(humanize).join(', ') : 'Off';
+            changes.push({id: 'plant', label: 'Plant behavior', before: describe(observed.plantModifiers), after: describe(draft.plantModifiers)});
+        }
+        if (observed.brightness !== draft.brightness) changes.push({id: 'brightness', label: 'Master brightness', before: `${observed.brightness} / 255`, after: `${draft.brightness} / 255`});
+        if (observed.targetFps !== draft.targetFps) changes.push({id: 'targetFps', label: 'Target frame rate', before: `${observed.targetFps} fps`, after: `${draft.targetFps} fps`});
+        if (Math.abs(observed.speedMultiplier - draft.speedMultiplier) > .001) changes.push({id: 'speed', label: 'Operator speed', before: `${observed.speedMultiplier.toFixed(2)}×`, after: `${draft.speedMultiplier.toFixed(2)}×`});
+        return changes;
+    }
+
+    function renderVibeOptions(draft) {
+        const host = $('vibeOptions');
+        if (!host) return;
+        host.replaceChildren();
+        vibeProfiles().forEach((profile) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.setAttribute('role', 'radio');
+            button.setAttribute('aria-checked', String(profile.vibe_id === draft.vibeId));
+            button.textContent = humanize(profile.vibe_id);
+            button.addEventListener('click', () => updateGlobalDraft((next) => { next.vibeId = profile.vibe_id; }));
+            host.appendChild(button);
+        });
+        const profile = vibeProfile(draft.vibeId);
+        $('vibeReadout').textContent = humanize(draft.vibeId);
+        $('vibeProfileDetail').textContent = `${profile.tempo_scale.toFixed(2)}× atmosphere tempo · ${Math.round(profile.luminance_scale * 100)}% vibe luminance · palette semantics apply on compatible wall runtimes.`;
+    }
+
+    function renderPlantModifiers(draft) {
+        const host = $('plantModifierGroups');
+        if (!host) return;
+        host.replaceChildren();
+        const active = new Set(draft.plantModifiers.active);
+        PLANT_MODIFIER_GROUPS.forEach((group) => {
+            const section = document.createElement('section');
+            section.className = 'plant-group';
+            const heading = document.createElement('h3');
+            heading.textContent = group.name;
+            section.appendChild(heading);
+            group.modifiers.forEach((modifier) => {
+                const row = document.createElement('div');
+                row.className = `modifier-row${active.has(modifier) ? ' is-active' : ''}`;
+                const toggle = document.createElement('button');
+                toggle.type = 'button';
+                toggle.className = 'modifier-toggle';
+                toggle.setAttribute('aria-pressed', String(active.has(modifier)));
+                toggle.textContent = humanize(modifier);
+                toggle.addEventListener('click', () => updateGlobalDraft((next) => {
+                    const selected = new Set(next.plantModifiers.active);
+                    if (selected.has(modifier)) selected.delete(modifier);
+                    else {
+                        if (group.mode === 'exclusive') group.modifiers.forEach((id) => selected.delete(id));
+                        selected.add(modifier);
+                    }
+                    const ids = state.bootstrap.global_control_contract.plant_modifier_ids;
+                    next.plantModifiers.active = ids.filter((id) => selected.has(id));
+                    next.plantModifiers.strengths[modifier] ??= modifier === 'obstacle' ? 1 : .5;
+                    Object.keys(next.plantModifiers.strengths).forEach((id) => {
+                        if (!selected.has(id)) delete next.plantModifiers.strengths[id];
+                    });
+                }));
+                const range = document.createElement('input');
+                range.type = 'range';
+                range.min = '0';
+                range.max = '1';
+                range.step = '.05';
+                range.value = String(draft.plantModifiers.strengths[modifier] ?? (modifier === 'obstacle' ? 1 : .5));
+                range.disabled = !active.has(modifier);
+                range.setAttribute('aria-label', `${humanize(modifier)} strength`);
+                const output = document.createElement('output');
+                output.textContent = `${Math.round(safeNumber(range.value) * 100)}%`;
+                range.addEventListener('input', () => {
+                    output.textContent = `${Math.round(safeNumber(range.value) * 100)}%`;
+                    updateGlobalDraft((next) => { next.plantModifiers.strengths[modifier] = safeNumber(range.value); }, {render: false});
+                });
+                range.addEventListener('change', () => renderGlobalSettings());
+                row.append(toggle, range, output);
+                section.appendChild(row);
+            });
+            host.appendChild(section);
+        });
+        $('plantModifierCount').textContent = `${draft.plantModifiers.active.length} active`;
+    }
+
+    function renderGlobalSettings() {
+        const draft = state.globalSettings.draft;
+        if (!draft) return;
+        renderVibeOptions(draft);
+        $('globalBrightness').value = String(draft.brightness);
+        $('globalBrightnessValue').textContent = `${draft.brightness} / 255`;
+        $('globalSpeed').value = String(draft.speedMultiplier);
+        $('globalSpeedValue').textContent = `${draft.speedMultiplier.toFixed(2)}×`;
+        $('globalTargetFps').value = String(draft.targetFps);
+        $('globalTargetFpsValue').textContent = `${draft.targetFps} fps`;
+        renderPlantModifiers(draft);
+        const changes = globalChangeList();
+        state.globalSettings.dirty = changes.length > 0;
+        $('wallDraftStatus').textContent = state.globalSettings.loading
+            ? 'Reading observed wall state…'
+            : state.globalSettings.applying ? 'Applying commands in order…'
+            : state.globalSettings.pendingObservation ? 'Commands accepted · waiting for observed wall state'
+            : changes.length ? `${changes.length} unapplied wall change${changes.length === 1 ? '' : 's'} · preview is local`
+            : 'Draft matches observed wall state.';
+        $('resetWallDraftButton').disabled = !changes.length || state.globalSettings.applying;
+        $('reviewWallButton').disabled = !changes.length || !state.serverOnline || state.globalSettings.applying || state.globalSettings.pendingObservation;
+        $('reviewWallButton').title = !state.serverOnline ? 'Reconnect to review wall-wide changes.' : 'Review every wall-wide command before applying.';
+    }
+
+    function updateGlobalDraft(mutator, {render = true} = {}) {
+        if (!state.globalSettings.draft) return;
+        const next = clone(state.globalSettings.draft);
+        mutator(next);
+        next.plantModifiers = canonicalPlantModifiers(next.plantModifiers);
+        state.globalSettings.draft = next;
+        state.globalSettings.dirty = !globalSettingsEqual(next, state.globalSettings.observed);
+        persistGlobalDraft();
+        resetChecker({preserveDocumentRevision: true});
+        requestRender();
+        if (render) renderGlobalSettings();
+    }
+
+    async function refreshGlobalSettings({quiet = false, preserveDraft = true} = {}) {
+        if (!state.bootstrap || state.globalSettings.loading) return;
+        state.globalSettings.loading = true;
+        renderGlobalSettings();
+        try {
+            const payload = await requestJson(globalActions().status_url || '/api/status');
+            const observed = normalizedGlobalSettings(payload);
+            const hadDirtyDraft = state.globalSettings.dirty;
+            state.globalSettings.observed = observed;
+            if (state.globalSettings.pendingObservation) {
+                if (globalSettingsEqual(state.globalSettings.draft, observed)) {
+                    state.globalSettings.pendingObservation = false;
+                    state.globalSettings.pendingSince = 0;
+                } else if (Date.now() - state.globalSettings.pendingSince > 60000) {
+                    state.globalSettings.pendingObservation = false;
+                    state.globalSettings.pendingSince = 0;
+                }
+            } else if (!preserveDraft || !hadDirtyDraft) state.globalSettings.draft = clone(observed);
+            state.globalSettings.dirty = !globalSettingsEqual(state.globalSettings.draft, observed);
+            persistGlobalDraft();
+            if (!quiet) toast('Observed wall settings refreshed.');
+        } catch (error) {
+            if (!quiet) toast(error.message, 'error');
+        } finally {
+            state.globalSettings.loading = false;
+            renderGlobalSettings();
+            requestRender();
+        }
+    }
+
+    function reviewGlobalChanges() {
+        const changes = globalChangeList();
+        if (!changes.length || !state.serverOnline) return;
+        const summary = $('wallChangeSummary');
+        summary.replaceChildren();
+        changes.forEach((change) => {
+            const row = document.createElement('div');
+            const term = document.createElement('dt');
+            const detail = document.createElement('dd');
+            term.textContent = change.label;
+            detail.textContent = `${change.before} → ${change.after}`;
+            row.append(term, detail);
+            summary.appendChild(row);
+        });
+        $('wallReviewDialog').showModal();
+    }
+
+    async function applyGlobalChanges() {
+        if (!state.serverOnline || !state.globalSettings.dirty || state.globalSettings.applying) return;
+        const draft = clone(state.globalSettings.draft);
+        const changes = new Set(globalChangeList().map((change) => change.id));
+        const actions = globalActions();
+        state.globalSettings.applying = true;
+        renderGlobalSettings();
+        try {
+            if (changes.has('vibe')) await requestJson(actions.vibe_url || '/api/v1/vibe', {method: 'POST', body: JSON.stringify({vibe: draft.vibeId})});
+            if (changes.has('plant')) await requestJson(actions.plant_modifiers_url || '/api/config/plant-modifiers', {method: 'POST', body: JSON.stringify({plant_modifiers: draft.plantModifiers})});
+            if (changes.has('brightness')) await requestJson(actions.brightness_url || '/api/config/brightness', {method: 'POST', body: JSON.stringify({brightness: draft.brightness})});
+            if (changes.has('targetFps')) await requestJson(actions.target_fps_url || '/api/config/target-fps', {method: 'POST', body: JSON.stringify({target_fps: draft.targetFps})});
+            if (changes.has('speed')) await requestJson(actions.operator_speed_url || '/api/config/animation-speed', {method: 'POST', body: JSON.stringify({multiplier: draft.speedMultiplier})});
+            state.globalSettings.observed = clone(draft);
+            state.globalSettings.dirty = false;
+            state.globalSettings.pendingObservation = true;
+            state.globalSettings.pendingSince = Date.now();
+            persistGlobalDraft();
+            toast('Wall-wide changes were accepted.', 'success');
+        } catch (error) {
+            if (error.code === 'offline') setServerOnline(false);
+            toast(`Wall update stopped: ${error.message}`, 'error');
+            state.globalSettings.pendingObservation = false;
+            state.globalSettings.pendingSince = 0;
+            await refreshGlobalSettings({quiet: true, preserveDraft: true});
+        } finally {
+            state.globalSettings.applying = false;
+            renderGlobalSettings();
+        }
+    }
+
+    function previewElapsed(component, elapsed) {
+        if (component?.presentation?.timing_adapter === 'wall_clock') return elapsed;
+        const profile = vibeProfile();
+        return elapsed * safeNumber(profile.tempo_scale, 1) * safeNumber(state.globalSettings.draft?.speedMultiplier, 1);
+    }
+
+    function presentedFrame(frame) {
+        if (!frame) return frame;
+        const profile = vibeProfile();
+        const brightness = safeNumber(state.globalSettings.draft?.brightness, 255) / 255;
+        const multiplier = Math.max(0, Math.min(1, safeNumber(profile.luminance_scale, 1) * brightness));
+        if (Math.abs(multiplier - 1) < .001) return frame;
+        const pixels = new Uint8Array(frame.pixels.length);
+        for (let offset = 0; offset < frame.pixels.length; offset += 1) {
+            pixels[offset] = Math.round(frame.pixels[offset] * multiplier);
+        }
+        return {...frame, pixels};
+    }
+
     function setServerOnline(online, {checking = false, quiet = false} = {}) {
         state.serverOnline = Boolean(online);
         state.serverChecking = checking;
@@ -131,6 +477,8 @@
                 : 'Offline: local drafts, checks, uploads, and downloads still work. Save and Activate are unavailable.';
         }
         updateServerActionButtons();
+        renderGlobalSettings();
+        if (state.masks.loaded) updateMaskControls();
     }
 
     function componentCapability(component = state.component) {
@@ -213,6 +561,10 @@
             const url = state.bootstrap.capabilities?.server_actions?.connectivity_url || '/api/v1/composer/connectivity';
             const payload = await requestJson(url);
             setServerOnline(payload.online === true, {quiet});
+            if (payload.online === true) await Promise.all([
+                refreshGlobalSettings({quiet: true, preserveDraft: true}),
+                preloadMasks(),
+            ]);
         } catch (_error) {
             setServerOnline(false, {quiet});
         }
@@ -306,6 +658,7 @@
         const response = await fetch('/api/v1/composer/bootstrap', {headers: {'Accept': 'application/json'}});
         if (!response.ok) throw new Error(`Catalog request failed (${response.status}).`);
         state.bootstrap = assertBootstrap(await response.json());
+        initializeGlobalSettings();
         configureCanvas();
         renderCatalog();
         const lastKey = localStorage.getItem(`${STORAGE_PREFIX}.last-component`);
@@ -478,10 +831,18 @@
     function enforceInstallationParams(component, params) {
         const result = clone(params || {});
         const schema = component?.parameter_schema || {};
-        const modifiers = state.bootstrap?.installation_profile?.plant_modifiers;
+        const modifiers = state.globalSettings.draft?.plantModifiers
+            || state.bootstrap?.installation_profile?.plant_modifiers;
         if (schema.plant_modifiers && modifiers) result.plant_modifiers = clone(modifiers);
         if (schema.plant_aware && modifiers) result.plant_aware = Boolean(modifiers.active?.length);
         return result;
+    }
+
+    function authoredParams(component, params) {
+        const schema = component?.parameter_schema || {};
+        return Object.fromEntries(Object.entries(clone(params || {})).filter(([key]) => (
+            Object.prototype.hasOwnProperty.call(schema, key) && !isGlobalInstallationParameter(key)
+        )));
     }
 
     function loadAutosave(component) {
@@ -1174,10 +1535,10 @@
         try {
             const requests = [];
             if (state.compare !== 'original') {
-                requests.push(state.runtimes.draft.render(elapsed, frameIndex, clone(state.params)).then((frame) => ['draft', frame]));
+                requests.push(state.runtimes.draft.render(previewElapsed(state.component, elapsed), frameIndex, enforceInstallationParams(state.component, state.params)).then((frame) => ['draft', frame]));
             }
             if (state.compare !== 'draft') {
-                requests.push(state.runtimes.original.render(elapsed, frameIndex, clone(state.originalParams)).then((frame) => ['original', frame]));
+                requests.push(state.runtimes.original.render(previewElapsed(state.component, elapsed), frameIndex, enforceInstallationParams(state.component, state.originalParams)).then((frame) => ['original', frame]));
             }
             const results = await Promise.all(requests);
             if (generation !== state.runtimeGeneration) return;
@@ -1273,13 +1634,14 @@
         context.imageSmoothingEnabled = false;
         context.fillStyle = '#020202';
         context.fillRect(0, 0, canvas.width, canvas.height);
-        const draftFrame = state.frames.composed || state.frames.draft;
+        const draftFrame = presentedFrame(state.frames.composed || state.frames.draft);
+        const originalFrame = presentedFrame(state.frames.original);
         if (state.compare === 'draft' && draftFrame) {
             context.putImageData(canonicalImageData(draftFrame), 0, 0);
-        } else if (state.compare === 'original' && state.frames.original) {
-            context.putImageData(canonicalImageData(state.frames.original), 0, 0);
-        } else if (state.compare === 'split' && state.frames.original && draftFrame) {
-            const left = frameCanvas(state.frames.original);
+        } else if (state.compare === 'original' && originalFrame) {
+            context.putImageData(canonicalImageData(originalFrame), 0, 0);
+        } else if (state.compare === 'split' && originalFrame && draftFrame) {
+            const left = frameCanvas(originalFrame);
             const right = frameCanvas(draftFrame);
             const split = Math.floor(canvas.width / 2);
             context.drawImage(left, 0, 0, split, canvas.height, 0, 0, split, canvas.height);
@@ -1442,7 +1804,11 @@
                 const sampleStarted = performance.now();
                 let backgroundFrame;
                 try {
-                    backgroundFrame = validatedFrame(await runtime.render(index / 12, index, clone(state.params)));
+                    backgroundFrame = validatedFrame(await runtime.render(
+                        previewElapsed(state.component, index / 12),
+                        index,
+                        enforceInstallationParams(state.component, state.params),
+                    ));
                 } catch (error) {
                     throw new Error(`Background renderer failed at frame ${index + 1}: ${error.message}`);
                 }
@@ -1464,6 +1830,7 @@
                         throw new Error(`Layer compositor failed at frame ${index + 1}: ${error.message}`);
                     }
                 }
+                frame = presentedFrame(frame);
                 const pixels = frame.pixels;
                 renderTimes.push(performance.now() - sampleStarted);
                 let frameLuminance = 0;
@@ -1590,7 +1957,7 @@
             component_digest: identity.component_digest,
             runtime_digest: identity.runtime_digest,
             parameter_schema_version: identity.parameter_schema_version,
-            parameters: enforceInstallationParams(component, params),
+            parameters: authoredParams(component, params),
         };
         const presetId = preset?.preset_id;
         const fingerprint = preset?.preset_fingerprint;
@@ -1670,7 +2037,7 @@
                     component_key: state.component.key,
                     name: $('presetName').value.trim(),
                     description: 'Authored and locally previewed in the browser composer.',
-                    params: clone(state.params),
+                    params: authoredParams(state.component, state.params),
                     overwrite,
                 }),
             });
@@ -2053,8 +2420,244 @@
         }
     }
 
+    function maskCounts(cells = state.masks.cells) {
+        const counts = {foliage: 0, planter_bowls: 0};
+        if (!cells) return counts;
+        for (const value of cells) {
+            if (value === 1) counts.foliage += 1;
+            else if (value === 2) counts.planter_bowls += 1;
+        }
+        return counts;
+    }
+
+    function masksEqual(left, right) {
+        if (!left || !right || left.length !== right.length) return false;
+        for (let index = 0; index < left.length; index += 1) {
+            if (left[index] !== right[index]) return false;
+        }
+        return true;
+    }
+
+    function updateMaskControls(message = null, kind = '') {
+        const masks = state.masks;
+        const counts = maskCounts();
+        if (masks.ledInfo) {
+            $('maskGeometry').textContent = `${masks.ledInfo.strip_count} × ${masks.ledInfo.leds_per_strip}`;
+        }
+        $('foliageMaskCount').textContent = masks.loaded ? counts.foliage.toLocaleString() : '—';
+        $('bowlMaskCount').textContent = masks.loaded ? counts.planter_bowls.toLocaleString() : '—';
+        $('editorFoliageCount').textContent = counts.foliage.toLocaleString();
+        $('editorBowlCount').textContent = counts.planter_bowls.toLocaleString();
+        $('undoMaskButton').disabled = !masks.history.length;
+        $('revertMasksButton').disabled = !masks.dirty;
+        $('saveMasksButton').disabled = !masks.dirty || !state.serverOnline;
+        document.querySelectorAll('[data-mask-tool]').forEach((button) => {
+            button.setAttribute('aria-pressed', String(Number(button.dataset.maskTool) === masks.tool));
+        });
+        if (message) {
+            $('maskEditorStatus').textContent = message;
+            $('maskEditorStatus').dataset.state = kind;
+        }
+    }
+
+    function loadMaskPayload(payload) {
+        const info = payload?.led_info || {};
+        const stripCount = Number(info.strip_count);
+        const ledsPerStrip = Number(info.leds_per_strip);
+        const totalLeds = Number(info.total_leds);
+        if (!Number.isInteger(stripCount) || !Number.isInteger(ledsPerStrip) || totalLeds !== stripCount * ledsPerStrip) {
+            throw new Error('Mask calibration contains invalid geometry.');
+        }
+        const cells = new Uint8Array(totalLeds);
+        for (const index of payload.masks?.foliage || []) {
+            if (Number.isInteger(index) && index >= 0 && index < totalLeds) cells[index] = 1;
+        }
+        for (const index of payload.masks?.planter_bowls || []) {
+            if (!Number.isInteger(index) || index < 0 || index >= totalLeds) continue;
+            if (cells[index] === 1) throw new Error(`Calibrated mask layers overlap at pixel ${index}.`);
+            cells[index] = 2;
+        }
+        state.masks.ledInfo = {strip_count: stripCount, leds_per_strip: ledsPerStrip, total_leds: totalLeds};
+        state.masks.cells = cells;
+        state.masks.savedCells = cells.slice();
+        state.masks.history = [];
+        state.masks.dirty = false;
+        state.masks.loaded = true;
+    }
+
+    async function preloadMasks() {
+        if (state.masks.loaded) return;
+        try {
+            const payload = await requestJson(globalActions().masks_url || '/api/painter/masks');
+            loadMaskPayload(payload);
+            updateMaskControls();
+        } catch (_error) {
+            // Mask editing remains an explicit, retryable action when unavailable.
+        }
+    }
+
+    async function openMaskEditor() {
+        $('maskEditorDialog').showModal();
+        if (state.masks.loaded) {
+            renderMaskCanvas();
+            updateMaskControls(state.masks.dirty ? 'Unsaved mask draft restored.' : 'Calibrated masks ready. The wall is unchanged.');
+            return;
+        }
+        updateMaskControls('Loading calibrated masks…');
+        try {
+            const payload = await requestJson(globalActions().masks_url || '/api/painter/masks');
+            loadMaskPayload(payload);
+            renderMaskCanvas();
+            updateMaskControls('Calibrated masks ready. The wall is unchanged.', 'success');
+        } catch (error) {
+            updateMaskControls(error.message, 'error');
+        }
+    }
+
+    function renderMaskCanvas() {
+        const {cells, ledInfo, zoom} = state.masks;
+        if (!cells || !ledInfo) return;
+        const canvas = $('maskCanvas');
+        const width = ledInfo.strip_count;
+        const height = ledInfo.leds_per_strip;
+        canvas.width = width * zoom;
+        canvas.height = height * zoom;
+        const context = canvas.getContext('2d', {alpha: false});
+        context.fillStyle = '#080808';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        for (let strip = 0; strip < width; strip += 1) {
+            for (let led = 0; led < height; led += 1) {
+                const value = cells[strip * height + led];
+                if (!value) continue;
+                context.fillStyle = value === 1 ? '#35c86f' : '#ff9f43';
+                context.fillRect(strip * zoom, (height - 1 - led) * zoom, zoom, zoom);
+            }
+        }
+        if (zoom >= 6) {
+            context.strokeStyle = 'rgba(255,255,255,.07)';
+            context.lineWidth = 1;
+            context.beginPath();
+            for (let x = 0; x <= width; x += 1) {
+                context.moveTo(x * zoom + .5, 0);
+                context.lineTo(x * zoom + .5, canvas.height);
+            }
+            for (let y = 0; y <= height; y += 1) {
+                context.moveTo(0, y * zoom + .5);
+                context.lineTo(canvas.width, y * zoom + .5);
+            }
+            context.stroke();
+        }
+    }
+
+    function maskCellFromPointer(event) {
+        const canvas = $('maskCanvas');
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.floor((event.clientX - rect.left) * canvas.width / rect.width / state.masks.zoom);
+        const y = Math.floor((event.clientY - rect.top) * canvas.height / rect.height / state.masks.zoom);
+        if (!state.masks.ledInfo || x < 0 || y < 0 || x >= state.masks.ledInfo.strip_count || y >= state.masks.ledInfo.leds_per_strip) return null;
+        return {strip: x, led: state.masks.ledInfo.leds_per_strip - 1 - y};
+    }
+
+    function paintMaskLine(from, to) {
+        if (!from || !to || !state.masks.cells) return;
+        let x0 = from.strip;
+        let y0 = from.led;
+        const x1 = to.strip;
+        const y1 = to.led;
+        const dx = Math.abs(x1 - x0);
+        const sx = x0 < x1 ? 1 : -1;
+        const dy = -Math.abs(y1 - y0);
+        const sy = y0 < y1 ? 1 : -1;
+        let error = dx + dy;
+        while (true) {
+            state.masks.cells[x0 * state.masks.ledInfo.leds_per_strip + y0] = state.masks.tool;
+            if (x0 === x1 && y0 === y1) break;
+            const doubled = 2 * error;
+            if (doubled >= dy) { error += dy; x0 += sx; }
+            if (doubled <= dx) { error += dx; y0 += sy; }
+        }
+        state.masks.dirty = !masksEqual(state.masks.cells, state.masks.savedCells);
+        renderMaskCanvas();
+        updateMaskControls(state.masks.dirty ? 'Unsaved mask calibration draft.' : 'Draft matches saved calibration.');
+    }
+
+    function beginMaskStroke(event) {
+        if (!state.masks.cells || event.button !== 0) return;
+        const cell = maskCellFromPointer(event);
+        if (!cell) return;
+        state.masks.history.push(state.masks.cells.slice());
+        if (state.masks.history.length > 60) state.masks.history.shift();
+        state.masks.painting = true;
+        state.masks.lastCell = cell;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        paintMaskLine(cell, cell);
+    }
+
+    function continueMaskStroke(event) {
+        if (!state.masks.painting) return;
+        const cell = maskCellFromPointer(event);
+        if (!cell) return;
+        paintMaskLine(state.masks.lastCell, cell);
+        state.masks.lastCell = cell;
+    }
+
+    function endMaskStroke() {
+        state.masks.painting = false;
+        state.masks.lastCell = null;
+    }
+
+    function undoMaskStroke() {
+        const previous = state.masks.history.pop();
+        if (!previous) return;
+        state.masks.cells = previous;
+        state.masks.dirty = !masksEqual(previous, state.masks.savedCells);
+        renderMaskCanvas();
+        updateMaskControls('Last mask stroke undone.');
+    }
+
+    function revertMasks() {
+        if (!state.masks.savedCells) return;
+        state.masks.history.push(state.masks.cells.slice());
+        state.masks.cells = state.masks.savedCells.slice();
+        state.masks.dirty = false;
+        renderMaskCanvas();
+        updateMaskControls('Returned to saved calibration.');
+    }
+
+    function maskIndices(value) {
+        const indices = [];
+        state.masks.cells?.forEach((cell, index) => { if (cell === value) indices.push(index); });
+        return indices;
+    }
+
+    async function saveMasks() {
+        if (!state.masks.dirty || !state.serverOnline) return;
+        const button = $('saveMasksButton');
+        button.disabled = true;
+        updateMaskControls('Saving both calibrated mask layers…');
+        try {
+            const payload = await requestJson(globalActions().masks_url || '/api/painter/masks', {
+                method: 'POST',
+                body: JSON.stringify({
+                    led_info: state.masks.ledInfo,
+                    masks: {foliage: maskIndices(1), planter_bowls: maskIndices(2)},
+                }),
+            });
+            state.masks.savedCells = state.masks.cells.slice();
+            state.masks.history = [];
+            state.masks.dirty = false;
+            updateMaskControls(`Saved ${payload.counts.foliage.toLocaleString()} foliage and ${payload.counts.planter_bowls.toLocaleString()} bowl pixels.`, 'success');
+            toast('Plant mask calibration saved. The wall output was not changed.', 'success');
+        } catch (error) {
+            updateMaskControls(error.message, 'error');
+            toast(error.message, 'error');
+        } finally {
+            updateMaskControls();
+        }
+    }
+
     function selectInspectorTab(name) {
-        const panels = {controls: 'controlsPanel', layers: 'layersPanel', checker: 'checkerPanel'};
+        const panels = {controls: 'controlsPanel', layers: 'layersPanel', wall: 'wallPanel', checker: 'checkerPanel'};
         Object.entries(panels).forEach(([tabName, panelId]) => {
             $(`${tabName}Tab`).setAttribute('aria-selected', String(name === tabName));
             $(`${tabName}Tab`).tabIndex = name === tabName ? 0 : -1;
@@ -2063,7 +2666,7 @@
     }
 
     function selectMobileView(name) {
-        const target = name === 'check' || name === 'layers' ? 'tune' : name;
+        const target = ['check', 'layers', 'wall'].includes(name) ? 'tune' : name;
         document.querySelectorAll('.mobile-view').forEach((view) => view.classList.toggle('is-active', view.dataset.mobileView === target));
         document.querySelectorAll('[data-mobile-target]').forEach((button) => {
             if (button.dataset.mobileTarget === name) button.setAttribute('aria-current', 'page');
@@ -2071,7 +2674,9 @@
         });
         if (name === 'check') selectInspectorTab('checker');
         else if (name === 'layers') selectInspectorTab('layers');
+        else if (name === 'wall') selectInspectorTab('wall');
         else if (name === 'tune') selectInspectorTab('controls');
+        if (target === 'tune') document.querySelector('.inspector-pane').scrollTop = 0;
     }
 
     function bindEvents() {
@@ -2121,6 +2726,7 @@
         ['activateButton', 'activatePanelButton'].forEach((id) => $(id).addEventListener('click', reviewActivation));
         $('controlsTab').addEventListener('click', () => selectInspectorTab('controls'));
         $('layersTab').addEventListener('click', () => selectInspectorTab('layers'));
+        $('wallTab').addEventListener('click', () => selectInspectorTab('wall'));
         $('checkerTab').addEventListener('click', () => selectInspectorTab('checker'));
         enableRovingFocus(document.querySelector('.inspector-tabs'), '[role="tab"]', {vertical: false});
         $('clockEnabled').addEventListener('change', (event) => {
@@ -2165,9 +2771,61 @@
         });
         $('runCheckerButton').addEventListener('click', runChecker);
         $('prepareOfflineButton')?.addEventListener('click', prepareOffline);
+        $('refreshWallButton').addEventListener('click', () => refreshGlobalSettings({preserveDraft: true}));
+        $('globalBrightness').addEventListener('input', (event) => updateGlobalDraft((next) => {
+            next.brightness = Math.round(safeNumber(event.target.value, 128));
+        }));
+        $('globalSpeed').addEventListener('input', (event) => updateGlobalDraft((next) => {
+            next.speedMultiplier = safeNumber(event.target.value, 1);
+        }));
+        $('globalTargetFps').addEventListener('input', (event) => updateGlobalDraft((next) => {
+            next.targetFps = Math.round(safeNumber(event.target.value, 30));
+        }));
+        $('resetWallDraftButton').addEventListener('click', () => {
+            state.globalSettings.draft = clone(state.globalSettings.observed);
+            state.globalSettings.dirty = false;
+            persistGlobalDraft();
+            resetChecker({preserveDocumentRevision: true});
+            renderGlobalSettings();
+            requestRender();
+        });
+        $('reviewWallButton').addEventListener('click', reviewGlobalChanges);
+        $('confirmWallChangesButton').addEventListener('click', (event) => {
+            event.preventDefault();
+            $('wallReviewDialog').close();
+            applyGlobalChanges();
+        });
+        $('editMasksButton').addEventListener('click', openMaskEditor);
+        $('closeMaskEditorButton').addEventListener('click', () => $('maskEditorDialog').close());
+        $('doneMaskEditorButton').addEventListener('click', () => $('maskEditorDialog').close());
+        $('undoMaskButton').addEventListener('click', undoMaskStroke);
+        $('revertMasksButton').addEventListener('click', revertMasks);
+        $('saveMasksButton').addEventListener('click', saveMasks);
+        $('maskZoom').addEventListener('input', (event) => {
+            state.masks.zoom = Math.round(safeNumber(event.target.value, 6));
+            renderMaskCanvas();
+        });
+        document.querySelectorAll('[data-mask-tool]').forEach((button) => button.addEventListener('click', () => {
+            state.masks.tool = Number(button.dataset.maskTool);
+            updateMaskControls();
+        }));
+        $('maskCanvas').addEventListener('pointerdown', beginMaskStroke);
+        $('maskCanvas').addEventListener('pointermove', continueMaskStroke);
+        $('maskCanvas').addEventListener('pointerup', endMaskStroke);
+        $('maskCanvas').addEventListener('pointercancel', endMaskStroke);
         document.querySelectorAll('[data-mobile-target]').forEach((button) => button.addEventListener('click', () => selectMobileView(button.dataset.mobileTarget)));
         document.addEventListener('keydown', (event) => {
             const key = event.key.toLowerCase();
+            if ($('maskEditorDialog').open && !event.metaKey && !event.ctrlKey && !event.altKey) {
+                if (key === '1') state.masks.tool = 1;
+                else if (key === '2') state.masks.tool = 2;
+                else if (key === 'e') state.masks.tool = 0;
+                else if (key === 'z') undoMaskStroke();
+                else return;
+                event.preventDefault();
+                updateMaskControls();
+                return;
+            }
             const target = event.target;
             const editing = target instanceof HTMLElement && (
                 target.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)
@@ -2188,6 +2846,9 @@
                 } else if (key === 'l') {
                     event.preventDefault();
                     selectMobileView('layers');
+                } else if (key === 'w') {
+                    event.preventDefault();
+                    selectMobileView('wall');
                 } else if (key === 'c') {
                     event.preventDefault();
                     selectMobileView('check');
@@ -2219,6 +2880,11 @@
         window.addEventListener('beforeunload', () => {
             window.clearInterval(state.connectivityTimer);
             disposeRuntimes();
+        });
+        window.addEventListener('beforeunload', (event) => {
+            if (!state.masks.dirty) return;
+            event.preventDefault();
+            event.returnValue = '';
         });
     }
 

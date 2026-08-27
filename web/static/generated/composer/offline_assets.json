@@ -1,5 +1,5 @@
 {
-  "cacheVersion": "v12",
+  "cacheVersion": "v13",
   "capturedAssets": [
     "/composer",
     "/api/v1/composer/bootstrap"
@@ -7,7 +7,7 @@
   "localAssets": [
     {
       "bytes": 12434,
-      "sha256": "2f4a536fb49c39b80c3f87cdf4a8c5e736090e177cc29985264b55c367c137cc",
+      "sha256": "12f46d45a43487fbfbb3c8115e021176a3d37eebaa5bbd0c47c7eb0dc7ef1530",
       "url": "/composer-service-worker.js"
     },
     {
@@ -16,8 +16,8 @@
       "url": "/static/composer.webmanifest"
     },
     {
-      "bytes": 53345,
-      "sha256": "62b54bd2b8bff2ac4482ab1fc117d565506ccca78840d58b558f282a3bdc00fa",
+      "bytes": 61296,
+      "sha256": "974e9fdd36406f5c3f883dfc67723da64e44fb1f2134f4497ce019fbc2f28057",
       "url": "/static/css/composer.css"
     },
     {
@@ -51,8 +51,8 @@
       "url": "/static/icons/composer.svg"
     },
     {
-      "bytes": 118649,
-      "sha256": "5c04edc66fd472ff5c383744b232f480e4838bdbb09ad1b07e448517e1014fe0",
+      "bytes": 152106,
+      "sha256": "1c1b40bd9f11990be60de887a2ba5436ed320c0c746835691b9d41e53cecebb3",
       "url": "/static/js/composer.js"
     },
     {

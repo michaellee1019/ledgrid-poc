@@ -30,7 +30,12 @@ from animation.core.installation_profile_topology import (
 )
 from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.native_background_library import NativeBackgroundLibrary
-from animation.core.plant_awareness import PlantModifierState
+from animation.core.plant_awareness import (
+    FIELD_MODIFIERS,
+    PLANT_MODIFIER_IDS,
+    SURFACE_MODIFIERS,
+    PlantModifierState,
+)
 from animation.core.preview_assets import load_catalog, merge_catalogs
 from drivers.frame_codec import (
     FRAME_ENCODING_NAME,
@@ -1990,6 +1995,27 @@ class AnimationWebInterface:
                     raw.get('availability') or {}
                 )),
                 'build': json.loads(json.dumps(raw.get('build') or {})),
+                'presentation': {
+                    'timing_adapter': str(
+                        (
+                            (raw.get('vibe') or {}).get('timing_adapter')
+                            if isinstance(raw.get('vibe'), dict)
+                            else None
+                        ) or 'legacy_speed_param'
+                    ),
+                    'vibe_color_policy': str(
+                        (
+                            (raw.get('vibe') or {}).get('color_policy')
+                            if isinstance(raw.get('vibe'), dict)
+                            else None
+                        ) or 'preserve'
+                    ),
+                    'vibe_capabilities': json.loads(json.dumps(
+                        (raw.get('vibe') or {}).get('capabilities') or []
+                        if isinstance(raw.get('vibe'), dict)
+                        else []
+                    )),
+                },
                 'preview': self._studio_next_preview(
                     provider,
                     raw.get('preview'),
@@ -2034,6 +2060,13 @@ class AnimationWebInterface:
                 'authority': 'host',
                 'plant_modifiers': plant_modifiers,
             },
+            'vibe_profiles': self._vibe_profile_catalog(),
+            'global_control_contract': {
+                'operator_speed_baseline': DEFAULT_ANIMATION_SPEED_SCALE,
+                'plant_modifier_ids': list(PLANT_MODIFIER_IDS),
+                'field_modifiers': sorted(FIELD_MODIFIERS),
+                'surface_modifiers': sorted(SURFACE_MODIFIERS),
+            },
             'components': components,
             'capabilities': {
                 'rendering': 'browser_webassembly',
@@ -2048,6 +2081,13 @@ class AnimationWebInterface:
                     'save_scene_preset_url': '/api/v1/scene-presets',
                     'validate_scene_url': '/api/v1/scene/validate',
                     'activate_scene_url': '/api/v1/scene',
+                    'status_url': '/api/status',
+                    'vibe_url': '/api/v1/vibe',
+                    'plant_modifiers_url': '/api/config/plant-modifiers',
+                    'brightness_url': '/api/config/brightness',
+                    'target_fps_url': '/api/config/target-fps',
+                    'operator_speed_url': '/api/config/animation-speed',
+                    'masks_url': '/api/painter/masks',
                     'online_required': True,
                 },
             },

@@ -52,13 +52,16 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
         self.assertEqual(tag, "details")
         self.assertNotIn("open", attrs)
 
-    def test_mobile_has_one_five_destination_navigation_surface(self) -> None:
+    def test_mobile_has_one_six_destination_navigation_surface(self) -> None:
         destinations = [
             attrs["data-mobile-target"]
             for tag, attrs in self.audit.elements
             if tag == "button" and "data-mobile-target" in attrs
         ]
-        self.assertEqual(destinations, ["library", "stage", "tune", "layers", "check"])
+        self.assertEqual(
+            destinations,
+            ["library", "stage", "tune", "layers", "wall", "check"],
+        )
         mobile_rule = re.search(
             r"@media \(max-width: 760px\) \{(?P<body>.*?)\n\}",
             self.css,
@@ -134,7 +137,8 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
             "componentSearch", "componentList", "presetList", "catalogCount",
             "presetCount", "previewCanvas", "previewPlaceholder", "splitLegend",
             "playButton", "timeline", "fpsSelect", "controlsTab", "layersTab",
-            "checkerTab", "controlsPanel", "layersPanel", "checkerPanel",
+            "wallTab", "checkerTab", "controlsPanel", "layersPanel", "wallPanel",
+            "checkerPanel",
             "parameterList", "fallbackSelect", "serverActionStatus",
         }
         ids = [attrs["id"] for _tag, attrs in self.audit.elements if attrs.get("id")]
@@ -147,6 +151,7 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
         self.assertIn('aria-keyshortcuts="Control+E Meta+E"', self.html)
         self.assertIn('aria-keyshortcuts="T"', self.html)
         self.assertIn('aria-keyshortcuts="L"', self.html)
+        self.assertIn('aria-keyshortcuts="W"', self.html)
         self.assertIn('aria-keyshortcuts="C"', self.html)
         self.assertLess(
             self.html.index('id="componentSearch"'),
@@ -159,6 +164,7 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
         self.assertIn("$('animationCatalogDisclosure').open = true", self.javascript)
         self.assertIn("event.key === '/'", self.javascript)
         self.assertIn("event.code === 'Space'", self.javascript)
+        self.assertIn("else if (key === 'w')", self.javascript)
         self.assertIn("else if (key === 'e')", self.javascript)
 
 
