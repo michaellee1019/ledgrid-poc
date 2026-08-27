@@ -2,6 +2,7 @@
     'use strict';
 
     const {ComposerRuntime} = window.LEDGridComposerRuntime || {};
+    const ComposerState = window.LEDGridComposerState || {};
     const $ = (id) => document.getElementById(id);
     const STORAGE_PREFIX = 'ledgrid.browser-composer.v1';
     const SAMPLE_FRAMES = 48;
@@ -37,6 +38,9 @@
         catalogFilter: 'all',
         query: '',
         checkerGeneration: 0,
+        draftGeneration: 0,
+        documentRevision: 1,
+        checkResult: null,
         autosaveTimer: null,
         connectivityTimer: null,
         serverOnline: false,
@@ -47,12 +51,13 @@
             clockEnabled: false,
             clockOpacity: 220,
             clockParams: {},
+            clockPresetKey: '',
             fallbackKey: null,
         },
     };
 
     function clone(value) {
-        return JSON.parse(JSON.stringify(value ?? null));
+        return ComposerState.clone ? ComposerState.clone(value) : JSON.parse(JSON.stringify(value ?? null));
     }
 
     function humanize(value) {
@@ -122,11 +127,62 @@
         updateServerActionButtons();
     }
 
+    function componentCapability(component = state.component) {
+        if (ComposerState.capability) return ComposerState.capability(component);
+        return {
+            previewable: Boolean(component?.browser_runtime?.supported),
+            saveable: Boolean(component?.browser_runtime?.supported),
+            activationReady: Boolean(component?.browser_runtime?.supported),
+            reason: null,
+            managedIdentity: null,
+        };
+    }
+
+    function currentCheckBinding() {
+        if (!state.component || !state.bootstrap) return null;
+        return ComposerState.checkBinding
+            ? ComposerState.checkBinding(state.draftGeneration, state.component, state.bootstrap.geometry)
+            : {draftGeneration: state.draftGeneration, componentKey: state.component.key};
+    }
+
+    function currentCheckIsPassing() {
+        if (state.checkResult?.status !== 'pass') return false;
+        const expected = currentCheckBinding();
+        return ComposerState.sameCheckBinding
+            ? ComposerState.sameCheckBinding(state.checkResult.binding, expected)
+            : state.checkResult.binding?.draftGeneration === expected?.draftGeneration;
+    }
+
+    function activationBlockReason() {
+        if (!state.component) return 'Choose a look before activation.';
+        const capability = componentCapability();
+        if (!capability.activationReady) return capability.reason || 'This look is not activation-ready.';
+        if (state.serverChecking) return 'Waiting for the wall server.';
+        if (!state.serverOnline) return 'Reconnect to the wall server before activation.';
+        if (!state.checkResult) return 'Run Check for this exact draft before activation.';
+        if (!currentCheckIsPassing()) return state.checkResult.status === 'pass'
+            ? 'The previous Check is stale. Run Check again for this draft.'
+            : 'Activation requires a passing Check for this exact draft.';
+        return null;
+    }
+
     function updateServerActionButtons() {
-        const enabled = Boolean(state.component && state.serverOnline && !state.serverChecking && !state.busyAction);
-        ['saveLibraryButton', 'saveLibraryPanelButton', 'activateButton', 'activatePanelButton'].forEach((id) => {
-            $(id).disabled = !enabled;
+        const capability = componentCapability();
+        const saveEnabled = Boolean(state.component && capability.saveable && state.serverOnline && !state.serverChecking && !state.busyAction);
+        ['saveLibraryButton', 'saveLibraryPanelButton'].forEach((id) => {
+            $(id).disabled = !saveEnabled;
         });
+        const blockReason = activationBlockReason();
+        ['activateButton', 'activatePanelButton'].forEach((id) => {
+            $(id).disabled = Boolean(blockReason || state.busyAction);
+            $(id).title = blockReason || 'Review this checked draft before activating it on the wall.';
+            $(id).setAttribute('aria-disabled', String(Boolean(blockReason || state.busyAction)));
+        });
+        const reason = $('activationReadiness');
+        if (reason) {
+            reason.textContent = blockReason || 'Activation-ready: this exact draft passed Check.';
+            reason.dataset.state = blockReason ? 'blocked' : 'ready';
+        }
     }
 
     function setActionBusy(action, busy) {
@@ -213,13 +269,16 @@
         }
         visible.forEach((component) => {
             const runtime = component.browser_runtime || {};
+            const capability = componentCapability(component);
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'component-card';
             button.setAttribute('role', 'option');
             button.setAttribute('aria-selected', String(component.key === state.component?.key));
             button.disabled = !runtime.supported;
+            button.dataset.activationReady = String(capability.activationReady);
             if (!runtime.supported) button.title = runtime.reason || 'Browser rendering is unavailable.';
+            else if (!capability.activationReady) button.title = capability.reason || 'Preview and save only; activation is unavailable.';
 
             const icon = document.createElement('span');
             icon.className = 'component-icon';
@@ -231,7 +290,7 @@
             name.textContent = component.name || humanize(component.plugin_id);
             const meta = document.createElement('small');
             meta.textContent = runtime.supported
-                ? `${component.role ? humanize(component.role) + ' · ' : ''}${runtime.kind === 'native' ? 'C++ → Wasm' : 'Python → Pyodide'}`
+                ? `${component.role ? humanize(component.role) + ' · ' : ''}${runtime.kind === 'native' ? 'C++ → Wasm' : 'Python → Pyodide'} · ${capability.activationReady ? 'Activation-ready' : 'Preview only'}`
                 : (runtime.reason || 'Browser runtime unavailable');
             copy.append(name, meta);
             const chip = document.createElement('span');
@@ -323,6 +382,7 @@
                 ...defaultParams(clockComponent() || {}),
                 ...(existing.clockParams && typeof existing.clockParams === 'object' ? clone(existing.clockParams) : {}),
             },
+            clockPresetKey: typeof existing.clockPresetKey === 'string' ? existing.clockPresetKey : '',
             fallbackKey,
         };
     }
@@ -373,6 +433,7 @@
             option.textContent = preset.name || humanize(option.value);
             presetSelect.appendChild(option);
         });
+        presetSelect.value = state.layers.clockPresetKey || '';
         host.replaceChildren();
         Object.entries(clock?.parameter_schema || {}).forEach(([key, contract]) => {
             host.appendChild(parameterControl(key, contract || {}, {
@@ -385,8 +446,10 @@
     }
 
     function updateClockParam(key, value) {
+        if (JSON.stringify(state.layers.clockParams[key]) === JSON.stringify(value)) return;
         state.layers.clockParams[key] = value;
         state.lastSavedPreset = null;
+        state.layers.clockPresetKey = '';
         $('clockPresetSelect').value = '';
         resetChecker();
         scheduleAutosave();
@@ -400,11 +463,12 @@
         const preset = presets.find((item, index) => presetIdentity(item, index) === presetId);
         if (!preset) return;
         state.layers.clockParams = {...defaultParams(clock), ...presetParams(preset)};
+        state.layers.clockPresetKey = presetId;
         renderClockControls();
         $('clockPresetSelect').value = presetId;
         state.lastSavedPreset = null;
-        commitHistory();
         resetChecker();
+        commitHistory();
         scheduleAutosave();
         requestRender();
         toast(`Clock starting point: ${preset.name || humanize(presetId)}.`);
@@ -413,7 +477,6 @@
     async function selectComponent(component, options = {}) {
         if (!component?.browser_runtime?.supported) return;
         if (state.component?.key === component.key && !options.force) return;
-        state.checkerGeneration += 1;
         state.component = component;
         state.selectedPreset = null;
         localStorage.setItem(`${STORAGE_PREFIX}.last-component`, component.key);
@@ -422,12 +485,14 @@
         state.params = clone(saved?.params || defaults);
         state.originalParams = clone(saved?.original_params || defaults);
         state.layers = normalizedLayers(component, saved?.layers);
+        state.documentRevision = Number.isInteger(saved?.document_revision)
+            ? saved.document_revision
+            : state.documentRevision;
         state.lastSavedPreset = null;
         $('presetName').value = saved?.name || `${component.name || humanize(component.plugin_id)} draft`;
         state.elapsed = 0;
         state.frameIndex = 0;
         state.frames = {draft: null, original: null, overlay: null, composed: null};
-        resetHistory();
         resetChecker();
         updateComponentCopy();
         renderCatalog();
@@ -435,6 +500,9 @@
         renderParameterControls();
         renderLayers();
         setComposerEnabled(true);
+        if (options.historyMode === 'preserve') updateHistoryButtons();
+        else if (options.historyMode === 'commit' || (options.historyMode == null && state.history.length)) commitHistory();
+        else resetHistory();
         if (!options.deferRuntime) await startRuntimes();
         scheduleAutosave();
         requestRender();
@@ -450,10 +518,10 @@
         state.elapsed = 0;
         state.frameIndex = 0;
         state.frames = {draft: null, original: null, overlay: null, composed: null};
-        resetHistory();
         renderPresets();
         renderParameterControls();
         resetChecker();
+        commitHistory();
         restartRuntimesAtCurrentState();
         scheduleAutosave();
         toast(`Loaded ${$('presetName').value}.`);
@@ -703,16 +771,30 @@
             number.max = input.max;
             number.step = input.step;
             number.value = input.value;
+            number.setAttribute('aria-label', `${humanize(key)} precise value`);
             const applyNumeric = (raw) => {
-                const value = numericValue(raw, type, contract);
+                const value = numericValue(raw, type, {...contract, step: Number(input.step)});
                 input.value = String(value);
-                number.value = String(value);
+                number.value = formatParameterValue(value, input.step);
                 readout.textContent = formatParameterValue(value, input.step);
                 applyValue(key, value);
+                return value;
+            };
+            const commitNumeric = (source) => {
+                applyNumeric(source.value);
+                commit();
             };
             input.addEventListener('input', () => applyNumeric(input.value));
-            input.addEventListener('change', commit);
-            number.addEventListener('change', () => { applyNumeric(number.value); commit(); });
+            input.addEventListener('change', () => commitNumeric(input));
+            input.addEventListener('blur', () => commitNumeric(input));
+            number.addEventListener('change', () => commitNumeric(number));
+            number.addEventListener('blur', () => commitNumeric(number));
+            number.addEventListener('keydown', (event) => {
+                if (event.key !== 'Enter') return;
+                event.preventDefault();
+                commitNumeric(number);
+                number.select();
+            });
             readout.textContent = formatParameterValue(input.value, input.step);
             range.append(input, number);
             wrapper.appendChild(range);
@@ -767,6 +849,7 @@
     }
 
     function numericValue(raw, type, contract) {
+        if (ComposerState.normalizeNumber) return ComposerState.normalizeNumber(raw, type, contract);
         let value = type === 'int' || type === 'integer' ? Math.round(Number(raw)) : Number(raw);
         if (!Number.isFinite(value)) value = safeNumber(contract.default);
         if (contract.min != null) value = Math.max(Number(contract.min), value);
@@ -775,12 +858,14 @@
     }
 
     function formatParameterValue(value, step) {
+        if (ComposerState.formatNumber) return ComposerState.formatNumber(value, step);
         const numeric = Number(value);
         const precision = String(step).includes('.') ? Math.min(3, String(step).split('.')[1].length) : 0;
         return Number.isFinite(numeric) ? numeric.toFixed(precision) : String(value);
     }
 
     function updateParam(key, value) {
+        if (JSON.stringify(state.params[key]) === JSON.stringify(value)) return;
         state.params[key] = value;
         state.selectedPreset = null;
         state.lastSavedPreset = null;
@@ -791,7 +876,15 @@
     }
 
     function snapshot() {
-        return {params: clone(state.params), name: $('presetName').value, layers: clone(state.layers)};
+        return {
+            componentKey: state.component?.key || null,
+            params: clone(state.params),
+            originalParams: clone(state.originalParams),
+            selectedPreset: state.selectedPreset,
+            name: $('presetName').value,
+            layers: clone(state.layers),
+            documentRevision: state.documentRevision,
+        };
     }
 
     function resetHistory() {
@@ -810,24 +903,38 @@
         updateHistoryButtons();
     }
 
-    function restoreHistory(index) {
+    async function restoreHistory(index) {
         const entry = state.history[index];
         if (!entry) return;
+        const component = state.bootstrap?.components.find((item) => item.key === entry.componentKey);
+        if (!component) {
+            toast('That history entry uses a renderer that is no longer in the catalog.', 'error');
+            return;
+        }
+        const componentChanged = component.key !== state.component?.key;
         state.historyIndex = index;
+        state.component = component;
         state.params = clone(entry.params);
+        state.originalParams = clone(entry.originalParams);
         const clockWasEnabled = state.layers.clockEnabled;
         state.layers = normalizedLayers(state.component, entry.layers);
         $('presetName').value = entry.name;
-        state.selectedPreset = null;
+        state.selectedPreset = entry.selectedPreset;
+        state.documentRevision = entry.documentRevision;
         state.lastSavedPreset = null;
+        updateComponentCopy();
+        renderCatalog();
         renderParameterControls();
         renderPresets();
         renderLayers();
-        resetChecker();
+        resetChecker({preserveDocumentRevision: true});
         updateHistoryButtons();
         scheduleAutosave();
-        if (clockWasEnabled && !state.layers.clockEnabled) disposeOverlayRuntime();
-        if (!clockWasEnabled && state.layers.clockEnabled) ensureOverlayRuntime().then(requestRender).catch(() => {});
+        if (componentChanged) await startRuntimes();
+        else {
+            if (clockWasEnabled && !state.layers.clockEnabled) disposeOverlayRuntime();
+            if (!clockWasEnabled && state.layers.clockEnabled) ensureOverlayRuntime().then(requestRender).catch(() => {});
+        }
         requestRender();
     }
 
@@ -838,7 +945,7 @@
 
     function scheduleAutosave() {
         if (!state.component) return;
-        $('saveState').textContent = 'Saving locally…';
+        $('saveState').textContent = 'Autosaving draft locally…';
         window.clearTimeout(state.autosaveTimer);
         state.autosaveTimer = window.setTimeout(() => {
             const payload = {
@@ -851,11 +958,13 @@
                 params: state.params,
                 original_params: state.originalParams,
                 layers: state.layers,
+                document_revision: state.documentRevision,
+                draft_generation: state.draftGeneration,
                 saved_at: new Date().toISOString(),
             };
             try {
                 localStorage.setItem(`${STORAGE_PREFIX}.draft.${state.component.key}`, JSON.stringify(payload));
-                $('saveState').textContent = 'Saved on this device';
+                $('saveState').textContent = 'Draft autosaved locally';
             } catch (_error) {
                 $('saveState').textContent = 'Local save unavailable';
             }
@@ -1071,7 +1180,11 @@
         if (detail) row.querySelector('small').textContent = detail;
     }
 
-    function resetChecker() {
+    function resetChecker({preserveDocumentRevision = false} = {}) {
+        state.draftGeneration += 1;
+        if (!preserveDocumentRevision) state.documentRevision += 1;
+        state.checkerGeneration += 1;
+        state.checkResult = null;
         $('checkerDot').removeAttribute('data-state');
         $('checkSummary').dataset.grade = 'idle';
         $('checkGauge').textContent = '—';
@@ -1080,12 +1193,21 @@
         document.querySelectorAll('[data-metric]').forEach((row) => {
             delete row.dataset.state;
             row.querySelector('dd').textContent = 'Waiting';
+            const detail = row.querySelector('small');
+            if (!detail.dataset.defaultDescription) detail.dataset.defaultDescription = detail.textContent;
+            detail.textContent = detail.dataset.defaultDescription;
         });
+        $('checkerProgress').hidden = true;
+        $('runCheckerButton').disabled = !state.component || !state.runtimes.draft?.ready;
+        updateServerActionButtons();
     }
 
     async function runChecker() {
         if (!state.component || !ComposerRuntime) return;
         const generation = ++state.checkerGeneration;
+        const binding = currentCheckBinding();
+        state.checkResult = null;
+        updateServerActionButtons();
         const button = $('runCheckerButton');
         button.disabled = true;
         $('checkerProgress').hidden = false;
@@ -1247,7 +1369,11 @@
             $('checkSummaryCopy').textContent = failures.length
                 ? `Failed: ${failures.join(', ')}.`
                 : warnings.length ? `Review: ${warnings.join(', ')}.` : `${SAMPLE_FRAMES} ${state.layers.clockEnabled ? 'composed ' : ''}frames passed the local heuristics.`;
-            $('saveState').textContent = 'Saved on this device';
+            if (generation === state.checkerGeneration) {
+                state.checkResult = {status: grade, binding, completedAt: new Date().toISOString()};
+                updateServerActionButtons();
+            }
+            $('saveState').textContent = 'Draft autosaved locally';
         } catch (error) {
             if (generation === state.checkerGeneration && error.message !== 'Check replaced.') {
                 $('checkSummary').dataset.grade = 'fail';
@@ -1255,6 +1381,8 @@
                 $('checkHeadline').textContent = 'Checker could not finish';
                 $('checkSummaryCopy').textContent = error.message;
                 $('checkerDot').dataset.state = 'fail';
+                state.checkResult = {status: 'fail', binding, completedAt: new Date().toISOString(), error: error.message};
+                updateServerActionButtons();
             }
         } finally {
             if (overlayMode === 'shared' && typeof runtime.disposeInstance === 'function') runtime.disposeInstance('clock_overlay');
@@ -1325,7 +1453,7 @@
         return {
             schema: 'ledgrid.scene-state',
             schema_version: 1,
-            revision: Date.now(),
+            revision: state.documentRevision,
             background,
             overlays,
             known_python_fallback: knownFallback,
@@ -1441,8 +1569,10 @@
     }
 
     function reviewActivation() {
-        if (!state.serverOnline) {
-            toast('Offline: activation requires the wall server.', 'error');
+        const blockReason = activationBlockReason();
+        if (blockReason) {
+            toast(blockReason, 'error');
+            $('serverActionStatus').textContent = `Activation is not ready: ${blockReason}`;
             return;
         }
         try {
@@ -1456,6 +1586,11 @@
         $('activateBackground').textContent = state.component.name || humanize(state.component.plugin_id);
         $('activateOverlay').textContent = state.layers.clockEnabled ? `Clock · ${Math.round(state.layers.clockOpacity / 255 * 100)}%` : 'Off';
         $('activateFallback').textContent = fallback?.name || 'Unavailable';
+        if ($('activateProvider')) $('activateProvider').textContent = state.component.provider;
+        if ($('activateRuntimeDigest')) $('activateRuntimeDigest').textContent = ComposerState.runtimeDigest?.(state.component) || 'Catalog identity';
+        if ($('activateRevision')) $('activateRevision').textContent = String(state.documentRevision);
+        if ($('activateCheck')) $('activateCheck').textContent = `Passed · draft generation ${state.draftGeneration}`;
+        if ($('activateDestination')) $('activateDestination').textContent = 'Physical living wall';
         $('activateDialog').showModal();
     }
 
@@ -1493,8 +1628,8 @@
                     exactObservationUnavailable = true;
                 }
                 if (payload.active && sameObservedScene(payload.scene, scene)) {
-                    $('serverActionStatus').textContent = 'Command accepted · observed live on the wall.';
-                    toast('Scene observed live on the wall.', 'success');
+                    $('serverActionStatus').textContent = 'Command accepted · wall server reports the exact revision live · telemetry completeness not asserted · no camera observation.';
+                    toast('The wall server reports the exact scene revision live.', 'success');
                     return;
                 }
             } catch (_error) {
@@ -1511,6 +1646,8 @@
         setActionBusy('activate', true);
         $('serverActionStatus').textContent = 'Validating the exact background, Clock slot, and Python fallback…';
         try {
+            const blockReason = activationBlockReason();
+            if (blockReason) throw new Error(blockReason);
             const scene = buildScene();
             const validateUrl = state.bootstrap.capabilities?.server_actions?.validate_scene_url || '/api/v1/scene/validate';
             const validated = await requestJson(validateUrl, {method: 'POST', body: JSON.stringify(scene)});
@@ -1597,7 +1734,12 @@
         if (!component) throw new Error('The uploaded background is not in this composer catalog.');
         if (component.role !== 'background') throw new Error('A scene background must use a background component.');
         if (!component.browser_runtime?.supported) throw new Error(component.browser_runtime?.reason || 'That background cannot render in this browser.');
-        await selectComponent(component, {force: true, ignoreAutosave: true, deferRuntime: true});
+        await selectComponent(component, {
+            force: true,
+            ignoreAutosave: true,
+            deferRuntime: true,
+            historyMode: 'preserve',
+        });
         state.params = {...defaultParams(component), ...clone(draft.params || {})};
         state.originalParams = clone(state.params);
         $('presetName').value = draft.name || `${component.name} draft`;
@@ -1618,10 +1760,10 @@
         }
         const problems = schemaCheck(component, state.params);
         if (problems.length) throw new Error(`Uploaded preset is invalid: ${problems[0]}.`);
-        resetHistory();
         renderParameterControls();
         renderLayers();
         resetChecker();
+        commitHistory();
         await startRuntimes();
         scheduleAutosave();
     }
@@ -1695,16 +1837,20 @@
         $('undoButton').addEventListener('click', () => restoreHistory(state.historyIndex - 1));
         $('redoButton').addEventListener('click', () => restoreHistory(state.historyIndex + 1));
         $('resetButton').addEventListener('click', () => {
+            if (JSON.stringify(state.params) === JSON.stringify(state.originalParams)) return;
             state.params = clone(state.originalParams);
             state.selectedPreset = null;
             renderParameterControls();
             renderPresets();
-            commitHistory();
             resetChecker();
+            commitHistory();
             scheduleAutosave();
             requestRender();
         });
-        $('presetName').addEventListener('input', scheduleAutosave);
+        $('presetName').addEventListener('input', () => {
+            resetChecker();
+            scheduleAutosave();
+        });
         $('presetName').addEventListener('change', commitHistory);
         $('importButton').addEventListener('click', () => $('importFile').click());
         $('importPanelButton').addEventListener('click', () => $('importFile').click());
@@ -1722,8 +1868,8 @@
             state.lastSavedPreset = null;
             if (!state.layers.clockEnabled) disposeOverlayRuntime();
             renderLayers();
-            commitHistory();
             resetChecker();
+            commitHistory();
             scheduleAutosave();
             if (state.layers.clockEnabled) ensureOverlayRuntime().then(requestRender).catch((error) => {
                 $('clockPreviewNote').textContent = `Clock remains configured for activation; local layer preview is unavailable: ${error.message}`;
@@ -1741,7 +1887,9 @@
         $('clockOpacity').addEventListener('change', commitHistory);
         $('clockPresetSelect').addEventListener('change', (event) => applyClockPreset(event.target.value));
         $('fallbackSelect').addEventListener('change', (event) => {
+            if (state.layers.fallbackKey === event.target.value) return;
             state.layers.fallbackKey = event.target.value;
+            resetChecker();
             commitHistory();
             scheduleAutosave();
         });
