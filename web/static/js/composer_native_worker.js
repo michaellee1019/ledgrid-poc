@@ -1,17 +1,29 @@
 'use strict';
 
 const ENGINE = 'receiver-native-cpp-wasm';
-const PLUGIN_ID = 'aurora_curtains_native';
-const DEFAULT_PARAMETERS = Object.freeze({
-    brightness: 0.42,
-    curtain_width: 7,
-    layers: 3,
-    motion: 0.34,
-    shimmer: true,
+const PLUGINS = Object.freeze({
+    aurora_curtains_native: Object.freeze({
+        label: 'Aurora native',
+        defaults: Object.freeze({
+            brightness: 0.42,
+            curtain_width: 7,
+            layers: 3,
+            motion: 0.34,
+            shimmer: true,
+        }),
+    }),
+    compiled_rainbow: Object.freeze({
+        label: 'Compiled Rainbow',
+        defaults: Object.freeze({
+            preferred_cadence_hz: 30,
+            common_seed: 0,
+        }),
+    }),
 });
 
 let wasm = null;
-let activeParams = { ...DEFAULT_PARAMETERS };
+let activePluginId = null;
+let activeParams = {};
 
 function exported(name) {
     const value = wasm?.exports?.[name] || wasm?.exports?.[`_${name}`];
@@ -21,7 +33,15 @@ function exported(name) {
     return value;
 }
 
-function resolvedGeometry(geometry) {
+function pluginConfig(pluginId = activePluginId) {
+    const config = PLUGINS[pluginId];
+    if (!config) {
+        throw new Error(`Unsupported receiver-native plugin: ${pluginId || 'unknown'}`);
+    }
+    return config;
+}
+
+function resolvedGeometry(geometry, pluginId) {
     const width = Number(
         geometry?.strip_count ?? geometry?.global_strips ?? geometry?.globalStrips ?? geometry?.width ?? 33
     );
@@ -29,13 +49,24 @@ function resolvedGeometry(geometry) {
         geometry?.leds_per_strip ?? geometry?.ledsPerStrip ?? geometry?.height ?? 138
     );
     if (width !== 33 || height !== 138) {
-        throw new Error(`Aurora native preview requires 33×138 geometry, got ${width}×${height}`);
+        throw new Error(`${pluginConfig(pluginId).label} preview requires 33×138 geometry, got ${width}×${height}`);
     }
     return { width, height };
 }
 
 function resolvedParameters(params = {}) {
-    const value = { ...DEFAULT_PARAMETERS, ...(params || {}) };
+    const value = { ...pluginConfig().defaults, ...(params || {}) };
+    if (activePluginId === 'compiled_rainbow') {
+        value.preferred_cadence_hz = Number(value.preferred_cadence_hz);
+        value.common_seed = Number(value.common_seed);
+        if (!Number.isInteger(value.preferred_cadence_hz) || value.preferred_cadence_hz < 1 || value.preferred_cadence_hz > 200) {
+            throw new Error('preferred_cadence_hz must be an integer between 1 and 200');
+        }
+        if (!Number.isInteger(value.common_seed) || value.common_seed < 0 || value.common_seed > 0xffffffff) {
+            throw new Error('common_seed must be an integer between 0 and 4294967295');
+        }
+        return value;
+    }
     value.brightness = Number(value.brightness);
     value.curtain_width = Number(value.curtain_width);
     value.layers = Number(value.layers);
@@ -60,13 +91,18 @@ function resolvedParameters(params = {}) {
 
 function applyParameters(params) {
     activeParams = resolvedParameters(params);
-    const status = exported('lg_browser_set_parameters')(
-        activeParams.brightness,
-        activeParams.curtain_width,
-        activeParams.layers,
-        activeParams.motion,
-        activeParams.shimmer ? 1 : 0,
-    );
+    const status = activePluginId === 'compiled_rainbow'
+        ? exported('lg_browser_set_parameters')(
+            activeParams.preferred_cadence_hz,
+            activeParams.common_seed,
+        )
+        : exported('lg_browser_set_parameters')(
+            activeParams.brightness,
+            activeParams.curtain_width,
+            activeParams.layers,
+            activeParams.motion,
+            activeParams.shimmer ? 1 : 0,
+        );
     if (status !== 0) {
         throw new Error(`Native preview rejected parameters (bridge error ${exported('lg_browser_last_error')()})`);
     }
@@ -83,13 +119,13 @@ function splitUnsigned64(value, label) {
 }
 
 async function initialize(message) {
-    if (message.pluginId !== PLUGIN_ID) {
-        throw new Error(`Unsupported receiver-native plugin: ${message.pluginId || 'unknown'}`);
-    }
+    pluginConfig(message.pluginId);
     if (!message.assetUrl) {
         throw new Error('Native preview assetUrl is required');
     }
-    const geometry = resolvedGeometry(message.geometry);
+    activePluginId = message.pluginId;
+    activeParams = {...pluginConfig().defaults};
+    const geometry = resolvedGeometry(message.geometry, activePluginId);
     const assetUrl = new URL(message.assetUrl, self.location.href);
     const response = await fetch(assetUrl);
     if (!response.ok) {

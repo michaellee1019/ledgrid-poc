@@ -68,11 +68,16 @@ PAINTER_MASK_TYPES = (
 )
 
 # Browser execution is deliberately capability-gated. The generated Pyodide
-# asset contains the authoritative Python plugin package, so every catalog
-# component with a valid Python module:Class entrypoint can use the universal
-# worker. Receiver-native execution remains explicitly capability-bound to the
-# separately built Wasm peer of the repository-owned ABI-v2 source.
-BROWSER_NATIVE_COMPONENTS = frozenset({'aurora_curtains_native'})
+# asset contains the authoritative Python animation-plugin package, so every
+# animation component with a valid Python module:Class entrypoint can use the
+# universal worker. Separate compatibility tools such as Painter are cataloged
+# for product continuity but are not animation runtimes. Receiver-native
+# execution remains explicitly capability-bound to separately built Wasm peers.
+BROWSER_NATIVE_COMPONENT_ASSETS = {
+    'aurora_curtains_native': 'aurora_curtains_native.wasm',
+    'compiled_rainbow': 'compiled_rainbow.wasm',
+}
+BROWSER_NATIVE_COMPONENTS = frozenset(BROWSER_NATIVE_COMPONENT_ASSETS)
 
 class AnimationWebInterface:
     """Web interface for animation management"""
@@ -1794,8 +1799,25 @@ class AnimationWebInterface:
                 r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*',
                 entrypoint,
             ))
+            compatibility = (
+                raw.get('compatibility')
+                if isinstance(raw.get('compatibility'), dict)
+                else {}
+            )
+            is_compatibility_tool = (
+                compatibility.get('classification') == 'painter'
+            )
 
-            if provider == 'python' and python_entrypoint_ready:
+            if provider == 'python' and is_compatibility_tool:
+                runtime = {
+                    'kind': 'python',
+                    'supported': False,
+                    'reason': (
+                        'Painter is a separate compatibility editor, not a '
+                        'bundled Python animation runtime.'
+                    ),
+                }
+            elif provider == 'python' and python_entrypoint_ready:
                 runtime = {
                     'kind': 'python',
                     'supported': True,
@@ -1816,7 +1838,7 @@ class AnimationWebInterface:
                     'worker_url': '/static/js/composer_native_worker.js',
                     'asset_url': (
                         '/static/generated/composer/'
-                        'aurora_curtains_native.wasm'
+                        f'{BROWSER_NATIVE_COMPONENT_ASSETS[plugin_id]}'
                     ),
                 }
             else:

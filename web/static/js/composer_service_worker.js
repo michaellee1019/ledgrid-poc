@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'ledgrid-composer-shell-';
-const CACHE_NAME = `${CACHE_PREFIX}v6`;
+const CACHE_NAME = `${CACHE_PREFIX}v7`;
 const SHELL_ASSETS = [
     '/composer',
     '/static/css/composer.css',
@@ -9,6 +9,7 @@ const SHELL_ASSETS = [
     '/static/js/composer_native_worker.js',
     '/static/js/composer_python_worker.js',
     '/static/generated/composer/aurora_curtains_native.wasm',
+    '/static/generated/composer/compiled_rainbow.wasm',
     '/static/generated/composer/ledgrid_python_runtime.zip',
     '/static/composer.webmanifest',
     '/static/icons/composer-180.png',

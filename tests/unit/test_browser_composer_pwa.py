@@ -104,6 +104,7 @@ class BrowserComposerPWATests(unittest.TestCase):
             "/static/js/composer_native_worker.js",
             "/static/js/composer_python_worker.js",
             "/static/generated/composer/aurora_curtains_native.wasm",
+            "/static/generated/composer/compiled_rainbow.wasm",
             "/static/generated/composer/ledgrid_python_runtime.zip",
             "/static/composer.webmanifest",
             "/static/icons/composer-180.png",

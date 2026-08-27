@@ -14,7 +14,10 @@ Notes:
   the pinned Pyodide runtime; rendering, Clock compositing, and checking then stay
   inside Web Workers. The browser bundle contains the complete valid Python
   animation catalog and its curated assets. Receiver-native C++ previews use the
-  compact checked-in Wasm module.
+  compact checked-in Wasm modules. That lane covers both the managed Aurora
+  pilot and the feature-gated firmware builtin `compiled_rainbow`; each is
+  built from its authoritative C++ source and can be composed with the Python
+  Clock overlay entirely in the browser.
 
 API endpoints:
 - `GET /composer` — installable browser-Wasm preset composer; opening it is

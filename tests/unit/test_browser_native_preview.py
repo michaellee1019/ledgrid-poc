@@ -4,6 +4,7 @@ import base64
 import json
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -33,6 +34,7 @@ class BrowserNativeContractTests(unittest.TestCase):
     def test_committed_artifact_is_webassembly(self) -> None:
         self.assertTrue(GENERATED.is_file())
         self.assertEqual(GENERATED.read_bytes()[:4], b"\0asm")
+        self.assertEqual(stat.S_IMODE(GENERATED.stat().st_mode), 0o644)
 
 
 @unittest.skipUnless(
@@ -147,6 +149,8 @@ process.stdout.write(JSON.stringify(frames));
             directory = Path(name)
             first = build(directory / "first.wasm")
             second = build(directory / "second.wasm")
+            self.assertEqual(stat.S_IMODE(first.stat().st_mode), 0o644)
+            self.assertEqual(stat.S_IMODE(second.stat().st_mode), 0o644)
             self.assertEqual(first.read_bytes(), second.read_bytes())
             host_library = self._compile_host(directory)
             host = render_host_frames(
@@ -159,6 +163,47 @@ process.stdout.write(JSON.stringify(frames));
             )
             browser = self._render_wasm(first, scene_times_us, parameters)
         self.assertEqual(browser, host.frames)
+
+    def test_every_curated_native_preset_matches_host_preview(self) -> None:
+        manifest = json.loads(
+            (ROOT / f"animation/plugins/{PLUGIN_ID}/manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        preset_paths = sorted(
+            (ROOT / f"animation/plugins/{PLUGIN_ID}/presets").glob("*.json")
+        )
+        self.assertGreater(len(preset_paths), 0)
+        scene_times_us = [0, 1_000_000]
+        with tempfile.TemporaryDirectory(
+            prefix="ledgrid-browser-native-presets-"
+        ) as name:
+            host_library = self._compile_host(Path(name))
+            for preset_path in preset_paths:
+                with self.subTest(preset=preset_path.stem):
+                    preset = json.loads(preset_path.read_text(encoding="utf-8"))
+                    self.assertEqual(preset.get("animation"), PLUGIN_ID)
+                    parameters = preset.get("params")
+                    self.assertIsInstance(parameters, dict)
+                    host = render_host_frames(
+                        host_library,
+                        manifest,
+                        parameters=parameters,
+                        frame_count=len(scene_times_us),
+                        duration_ms=1000,
+                        repo_root=ROOT,
+                    )
+                    browser = self._render_wasm(
+                        GENERATED, scene_times_us, parameters
+                    )
+                    self.assertEqual(browser, host.frames)
+                    self.assertTrue(
+                        all(len(frame) == 33 * 138 * 3 for frame in browser)
+                    )
+                    self.assertNotEqual(
+                        browser[0], browser[1],
+                        "curated native preset did not animate between t=0 and t=1s",
+                    )
 
 
 if __name__ == "__main__":
