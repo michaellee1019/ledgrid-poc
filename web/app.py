@@ -2005,6 +2005,21 @@ class AnimationWebInterface:
         controller = self.preview_manager.controller
         strip_count = int(controller.strip_count)
         leds_per_strip = int(controller.leds_per_strip)
+        profile_status_getter = getattr(
+            self.preview_manager, 'get_installation_profile_status', None
+        )
+        profile_status = (
+            profile_status_getter() if callable(profile_status_getter) else {}
+        )
+        profile_digest = profile_status.get(
+            'selected_digest', EMPTY_INSTALLATION_PROFILE_DIGEST
+        )
+        plant_state = getattr(self.preview_manager, 'plant_modifier_state', None)
+        plant_modifiers = (
+            plant_state.to_dict()
+            if isinstance(plant_state, PlantModifierState)
+            else PlantModifierState.from_legacy(DEFAULT_PLANT_AWARE).to_dict()
+        )
         return {
             'schema': 'ledgrid.browser-composer-bootstrap',
             'schema_version': 1,
@@ -2013,6 +2028,11 @@ class AnimationWebInterface:
                 'strip_count': strip_count,
                 'leds_per_strip': leds_per_strip,
                 'total_leds': strip_count * leds_per_strip,
+            },
+            'installation_profile': {
+                'digest': profile_digest,
+                'authority': 'host',
+                'plant_modifiers': plant_modifiers,
             },
             'components': components,
             'capabilities': {

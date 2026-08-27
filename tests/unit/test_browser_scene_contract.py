@@ -317,6 +317,10 @@ class BrowserSceneWebBoundaryTests(unittest.TestCase):
         self.document = _document(self.catalog)
 
     def test_bootstrap_and_unified_catalog_expose_explicit_capabilities(self) -> None:
+        bootstrap = self.client.get("/api/v1/composer/bootstrap").get_json()
+        self.assertEqual(bootstrap["installation_profile"]["digest"], EMPTY_PROFILE)
+        self.assertEqual(bootstrap["installation_profile"]["authority"], "host")
+        self.assertEqual(bootstrap["installation_profile"]["plant_modifiers"]["version"], 1)
         for component in self.catalog:
             with self.subTest(component=component["key"]):
                 capability = component["browser_capabilities"]

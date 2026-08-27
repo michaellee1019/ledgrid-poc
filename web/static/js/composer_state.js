@@ -69,7 +69,7 @@
     }
 
     function capability(component) {
-        const declared = component?.activation_capability || component?.capability || {};
+        const declared = component?.browser_capabilities || component?.activation_capability || component?.capability || {};
         const previewable = declared.previewable ?? Boolean(component?.browser_runtime?.supported);
         const saveable = declared.saveable ?? previewable;
         const activationReady = declared.activation_ready ?? Boolean(

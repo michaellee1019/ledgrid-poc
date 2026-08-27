@@ -181,6 +181,7 @@
           <div class="advanced-disclosure-body">
             <section class="advanced-parameters" aria-labelledby="advancedParametersHeading">
               <h2 id="advancedParametersHeading">Advanced parameters</h2>
+              <p class="installation-authority" id="installationProfileStatus" role="status">Plant geometry comes from the host-managed installation profile.</p>
               <p class="empty-message" id="advancedParameterEmpty">No advanced controls for this animation.</p>
               <div class="parameter-list" id="advancedParameterList"></div>
             </section>
@@ -192,6 +193,7 @@
             <div class="app-readiness" aria-label="Composer app status">
               <p><span aria-hidden="true">⌁</span><span><strong>Connection</strong><small id="networkStatus">See the wall server status in the header.</small></span></p>
               <p><span aria-hidden="true">↓</span><span><strong>Offline editing</strong><small id="offlineReadiness" role="status" aria-live="polite" data-state="unknown">Availability is confirmed after local assets finish caching.</small></span></p>
+              <button class="quiet-button full-button" id="prepareOfflineButton" type="button">Prepare for offline use</button>
               <p><span aria-hidden="true">▣</span><span><strong>Installed app</strong><small id="installStatus" role="status" aria-live="polite" data-state="unknown">Installation is optional; app mode has not been detected yet.</small></span></p>
             </div>
             <p class="install-guidance" id="installGuidance">On iPhone, use Share, then Add to Home Screen. The installed composer keeps the same private local draft and never activates the wall without review.</p>

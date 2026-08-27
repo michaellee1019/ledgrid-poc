@@ -265,7 +265,9 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertIn("state.selectedPreset = record.key", javascript)
         self.assertIn("renderClockControls()", javascript)
         self.assertIn("runtime.renderInstance('clock_overlay'", javascript)
-        self.assertIn("observed.revision !== requested.revision", javascript)
+        self.assertIn("receipt.requested_revision", javascript)
+        self.assertIn("receipt.telemetry_complete", javascript)
+        self.assertIn("body: JSON.stringify(scene)", javascript)
 
 
 if __name__ == "__main__":

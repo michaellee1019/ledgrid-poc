@@ -263,6 +263,7 @@ h2 { font-size: .84rem; }
 .advanced-parameters .parameter-list:empty { display: none; }
 .advanced-disclosure .fallback-field { margin-top: 10px; }
 .app-readiness { display: grid; gap: 7px; margin-top: 11px; }
+.app-readiness button { min-height: 44px; }
 .app-readiness p { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 9px; margin: 0; padding: 9px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .app-readiness p > span:first-child { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--surface-soft); color: var(--acid); }
 .app-readiness strong, .app-readiness small { display: block; }

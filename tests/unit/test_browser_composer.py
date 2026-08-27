@@ -149,6 +149,8 @@ class BrowserComposerTests(unittest.TestCase):
         self.assertEqual(payload["geometry"], {
             "strip_count": 33, "leds_per_strip": 138, "total_leds": 4554,
         })
+        self.assertRegex(payload["installation_profile"]["digest"], r"^[0-9a-f]{64}$")
+        self.assertEqual(payload["installation_profile"]["authority"], "host")
         self.assertFalse(payload["capabilities"]["live_wall_mutated"])
         by_key = {item["key"]: item for item in payload["components"]}
 

@@ -100,6 +100,7 @@ class BrowserComposerPWATests(unittest.TestCase):
             "/composer-service-worker.js",
             "/static/css/composer.css",
             "/static/js/composer_compositor.js",
+            "/static/js/composer_state.js",
             "/static/js/composer_runtime.js",
             "/static/js/composer.js",
             "/static/js/composer_native_worker.js",

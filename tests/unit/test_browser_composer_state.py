@@ -62,7 +62,7 @@ console.log(JSON.stringify({
 const component = {
   key: 'receiver_native:aurora',
   browser_runtime: {supported: true, asset_digest: 'wasm-123'},
-  activation_capability: {
+  browser_capabilities: {
     previewable: true, saveable: true, activation_ready: false,
     reason: 'Managed receiver identity is unavailable.'
   }
@@ -103,18 +103,21 @@ console.log(JSON.stringify({
     def test_import_and_keyboard_contracts_are_bounded_and_explicit(self) -> None:
         source = COMPOSER_SOURCE.read_text(encoding="utf-8")
 
-        self.assertIn("file.size > 512 * 1024", source)
-        self.assertIn("depth > 12", source)
-        self.assertIn("budget.nodes > 10000", source)
+        self.assertIn("file.size > 256 * 1024", source)
+        self.assertIn("depth > 16", source)
+        self.assertIn("budget.nodes > 4096", source)
         self.assertIn("['__proto__', 'prototype', 'constructor']", source)
-        self.assertIn("payload.version !== 2", source)
+        self.assertIn("schema === 'ledgrid.browser-scene'", source)
         self.assertIn("layer?.slot_id !== 'clock_overlay'", source)
-        self.assertIn("blend_mode: 'source-over'", source)
+        self.assertIn("blend_mode: 'source_over'", source)
         self.assertIn("event.key === 'Home'", source)
         self.assertIn("event.key === 'End'", source)
         self.assertIn("Starting points for the current animation", source)
         self.assertIn("function isAdvancedParameter", source)
         self.assertIn("advancedParameterList", source)
+        self.assertIn("browser_capabilities?.managed_identity", source)
+        self.assertIn("receipt.telemetry_complete", source)
+        self.assertIn("prepareOfflineButton", source)
 
         html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")
         self.assertLess(html.index("composer_state.js"), html.index("composer_runtime.js"))

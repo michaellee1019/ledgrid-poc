@@ -1,8 +1,8 @@
 'use strict';
 
 const CACHE_PREFIX = 'ledgrid-composer-shell-';
-const CACHE_VERSION = 'v8';
-const CACHE_NAME = `${CACHE_PREFIX}v8`;
+const CACHE_VERSION = 'v9';
+const CACHE_NAME = `${CACHE_PREFIX}v9`;
 const RUNTIME_CACHE_NAME = `${CACHE_NAME}-python-runtime`;
 const OFFLINE_MANIFEST_URL = '/static/generated/composer/offline_assets.json';
 const OFFLINE_METADATA_URL = '/.ledgrid-composer/offline-metadata';
@@ -15,6 +15,7 @@ const SHELL_ASSETS = [
     '/composer-service-worker.js',
     '/static/css/composer.css',
     '/static/js/composer_compositor.js',
+    '/static/js/composer_state.js',
     '/static/js/composer_runtime.js',
     '/static/js/composer.js',
     '/static/js/composer_native_worker.js',

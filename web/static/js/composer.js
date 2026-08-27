@@ -119,6 +119,12 @@
         pill.dataset.state = checking ? 'checking' : online ? 'online' : 'offline';
         pill.querySelector('span').textContent = checking ? 'Checking server' : online ? 'Server online' : 'Local only';
         $('serverActionBadge').textContent = online ? 'Server online' : 'Local only';
+        if ($('networkStatus')) {
+            $('networkStatus').textContent = checking
+                ? 'Checking the wall server…'
+                : online ? 'Wall server online; library save and checked activation are available.' : 'Local only; server save and wall activation are disabled.';
+            $('networkStatus').dataset.state = checking ? 'checking' : online ? 'online' : 'offline';
+        }
         if (!quiet && !state.busyAction) {
             $('serverActionStatus').textContent = online
                 ? 'Server actions are available. Local preview remains separate from the physical wall.'
@@ -206,6 +212,66 @@
         }
     }
 
+    function showOfflineReadiness(payload) {
+        const status = $('offlineReadiness');
+        if (!status) return;
+        const ready = payload?.readyOffline === true;
+        status.dataset.state = ready ? 'ready' : 'not-ready';
+        status.textContent = ready ? 'Ready offline' : (payload?.reason || 'Offline assets are not ready yet.');
+        const button = $('prepareOfflineButton');
+        if (button) {
+            button.textContent = ready ? 'Refresh offline assets' : 'Prepare for offline use';
+            button.disabled = false;
+        }
+    }
+
+    async function refreshOfflineReadiness() {
+        if (typeof ComposerRuntime?.offlineStatus !== 'function') return;
+        try {
+            showOfflineReadiness(await ComposerRuntime.offlineStatus());
+        } catch (error) {
+            showOfflineReadiness({readyOffline: false, reason: error.message});
+        }
+    }
+
+    async function prepareOffline() {
+        const button = $('prepareOfflineButton');
+        if (!button || button.disabled) return;
+        button.disabled = true;
+        button.textContent = 'Preparing local assets…';
+        $('offlineReadiness').dataset.state = 'preparing';
+        $('offlineReadiness').textContent = 'Caching and verifying the pinned browser runtime and animation assets…';
+        let temporary = null;
+        try {
+            let runtime = runtimeKind(state.component) === 'python' ? state.runtimes.draft : null;
+            if (!runtime?.ready) {
+                const component = (state.bootstrap?.components || []).find((item) => (
+                    item.provider === 'python' && item.role === 'background' && item.browser_runtime?.supported
+                ));
+                if (!component) throw new Error('No browser-ready Python animation is available for offline preparation.');
+                temporary = new ComposerRuntime(component, state.bootstrap.geometry, {initTimeoutMs: 90000});
+                await temporary.init(defaultParams(component));
+                runtime = temporary;
+            }
+            showOfflineReadiness(await runtime.prepareOffline());
+        } catch (error) {
+            showOfflineReadiness({readyOffline: false, reason: `Offline preparation failed: ${error.message}`});
+            toast('Offline preparation could not finish.', 'error');
+        } finally {
+            temporary?.dispose();
+            button.disabled = false;
+        }
+    }
+
+    function updateInstallStatus() {
+        const standalone = window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
+        if (!$('installStatus')) return;
+        $('installStatus').dataset.state = standalone ? 'installed' : 'browser';
+        $('installStatus').textContent = standalone
+            ? 'Running as the installed wall composer.'
+            : 'Running in a browser tab; installation is optional.';
+    }
+
     function assertBootstrap(payload) {
         if (!payload || payload.schema !== 'ledgrid.browser-composer-bootstrap' || payload.schema_version !== 1) {
             throw new Error('The composer catalog uses an unsupported schema.');
@@ -218,6 +284,15 @@
             throw new Error('The composer catalog contains invalid wall geometry.');
         }
         if (!Array.isArray(payload.components)) throw new Error('The composer catalog has no component list.');
+        if (!/^[0-9a-f]{64}$/.test(payload.installation_profile?.digest || '')) {
+            throw new Error('The composer catalog has no managed installation-profile identity.');
+        }
+        payload.components.forEach((component) => {
+            const capabilities = component.browser_capabilities;
+            if (!capabilities || ['previewable', 'saveable', 'activation_ready'].some((key) => typeof capabilities[key] !== 'boolean')) {
+                throw new Error(`The composer catalog has no capability contract for ${component.key || component.plugin_id}.`);
+            }
+        });
         return payload;
     }
 
@@ -228,8 +303,8 @@
         configureCanvas();
         renderCatalog();
         const lastKey = localStorage.getItem(`${STORAGE_PREFIX}.last-component`);
-        const preferred = state.bootstrap.components.find((item) => item.key === lastKey && item.role === 'background' && item.browser_runtime?.supported)
-            || state.bootstrap.components.find((item) => item.role === 'background' && item.browser_runtime?.supported);
+        const preferred = state.bootstrap.components.find((item) => item.key === lastKey && item.role === 'background' && componentCapability(item).previewable)
+            || state.bootstrap.components.find((item) => item.role === 'background' && componentCapability(item).previewable);
         if (preferred) await selectComponent(preferred);
         else showCatalogUnavailable('No components currently declare a supported browser runtime.');
         await checkConnectivity();
@@ -318,9 +393,9 @@
             button.className = 'component-card';
             button.setAttribute('role', 'option');
             button.setAttribute('aria-selected', String(component.key === state.component?.key));
-            button.disabled = !runtime.supported;
+            button.disabled = !capability.previewable;
             button.dataset.activationReady = String(capability.activationReady);
-            if (!runtime.supported) button.title = runtime.reason || 'Browser rendering is unavailable.';
+            if (!capability.previewable) button.title = capability.reason || runtime.reason || 'Browser rendering is unavailable.';
             else if (!capability.activationReady) button.title = capability.reason || 'Preview and save only; activation is unavailable.';
 
             const icon = document.createElement('span');
@@ -332,13 +407,13 @@
             const name = document.createElement('strong');
             name.textContent = component.name || humanize(component.plugin_id);
             const meta = document.createElement('small');
-            meta.textContent = runtime.supported
+            meta.textContent = capability.previewable
                 ? `${component.role ? humanize(component.role) + ' · ' : ''}${runtime.kind === 'native' ? 'C++ → Wasm' : 'Python → Pyodide'} · ${capability.activationReady ? 'Activation-ready' : 'Preview only'}`
                 : (runtime.reason || 'Browser runtime unavailable');
             copy.append(name, meta);
             const chip = document.createElement('span');
-            chip.className = `runtime-chip${runtime.supported ? '' : ' unsupported'}`;
-            chip.textContent = runtime.supported ? (runtime.kind === 'native' ? 'Wasm' : 'Py') : 'Server';
+            chip.className = `runtime-chip${capability.previewable ? '' : ' unsupported'}`;
+            chip.textContent = capability.previewable ? (runtime.kind === 'native' ? 'Wasm' : 'Py') : 'Server';
             button.append(icon, copy, chip);
             button.addEventListener('click', () => selectComponent(component));
             host.appendChild(button);
@@ -391,6 +466,15 @@
                 result[key] = clone(contract.default);
             }
         });
+        return enforceInstallationParams(component, result);
+    }
+
+    function enforceInstallationParams(component, params) {
+        const result = clone(params || {});
+        const schema = component?.parameter_schema || {};
+        const modifiers = state.bootstrap?.installation_profile?.plant_modifiers;
+        if (schema.plant_modifiers && modifiers) result.plant_modifiers = clone(modifiers);
+        if (schema.plant_aware && modifiers) result.plant_aware = Boolean(modifiers.active?.length);
         return result;
     }
 
@@ -412,8 +496,7 @@
         return (state.bootstrap?.components || []).filter((item) => (
             item.provider === 'python'
             && item.role === 'background'
-            && item.compatibility?.implementation_loaded !== false
-            && item.scene_compatibility?.selectable !== false
+            && componentCapability(item).activationReady
         ));
     }
 
@@ -426,10 +509,10 @@
         return {
             clockEnabled: Boolean(existing.clockEnabled && clockComponent()),
             clockOpacity: Math.max(0, Math.min(255, Math.round(safeNumber(existing.clockOpacity, 220)))),
-            clockParams: {
+            clockParams: enforceInstallationParams(clockComponent() || {}, {
                 ...defaultParams(clockComponent() || {}),
                 ...(existing.clockParams && typeof existing.clockParams === 'object' ? clone(existing.clockParams) : {}),
-            },
+            }),
             clockPresetKey: typeof existing.clockPresetKey === 'string' ? existing.clockPresetKey : '',
             fallbackKey,
         };
@@ -438,6 +521,10 @@
     function renderLayers() {
         const component = state.component;
         if (!component) return;
+        if ($('installationProfileStatus')) {
+            const digest = state.bootstrap.installation_profile?.digest || '';
+            $('installationProfileStatus').textContent = `Plant geometry is authoritative host state · profile ${digest.slice(0, 12)}… · presets cannot override it.`;
+        }
         $('backgroundLayerIcon').textContent = component.icon || '✦';
         $('backgroundLayerName').textContent = component.name || humanize(component.plugin_id);
         $('backgroundLayerMeta').textContent = `${component.provider === 'receiver_native' ? 'Receiver C++' : 'Host Python'} · fixed background`;
@@ -483,7 +570,7 @@
         });
         presetSelect.value = state.layers.clockPresetKey || '';
         host.replaceChildren();
-        const entries = Object.entries(clock?.parameter_schema || {});
+        const entries = Object.entries(clock?.parameter_schema || {}).filter(([key]) => !isGlobalInstallationParameter(key));
         entries.filter(([key, contract]) => !isAdvancedParameter(key, contract)).forEach(([key, contract]) => {
             host.appendChild(parameterControl(key, contract || {}, {
                 params: state.layers.clockParams,
@@ -524,7 +611,7 @@
         const presets = [...(clock?.presets || []), ...CLOCK_STARTING_POINTS];
         const preset = presets.find((item, index) => presetIdentity(item, index) === presetId);
         if (!preset) return;
-        state.layers.clockParams = {...defaultParams(clock), ...presetParams(preset)};
+        state.layers.clockParams = enforceInstallationParams(clock, {...defaultParams(clock), ...presetParams(preset)});
         state.layers.clockPresetKey = presetId;
         renderClockControls();
         $('clockPresetSelect').value = presetId;
@@ -537,15 +624,15 @@
     }
 
     async function selectComponent(component, options = {}) {
-        if (!component?.browser_runtime?.supported) return;
+        if (!componentCapability(component).previewable) return;
         if (state.component?.key === component.key && !options.force) return;
         state.component = component;
         state.selectedPreset = null;
         localStorage.setItem(`${STORAGE_PREFIX}.last-component`, component.key);
         const saved = options.ignoreAutosave ? null : loadAutosave(component);
         const defaults = defaultParams(component);
-        state.params = clone(saved?.params || defaults);
-        state.originalParams = clone(saved?.original_params || defaults);
+        state.params = enforceInstallationParams(component, saved?.params || defaults);
+        state.originalParams = enforceInstallationParams(component, saved?.original_params || defaults);
         state.layers = normalizedLayers(component, saved?.layers);
         state.documentRevision = Number.isInteger(saved?.document_revision)
             ? saved.document_revision
@@ -573,7 +660,7 @@
     function applyPreset(preset, index) {
         state.selectedPreset = presetIdentity(preset, index);
         state.lastSavedPreset = null;
-        const params = {...defaultParams(state.component), ...presetParams(preset)};
+        const params = enforceInstallationParams(state.component, {...defaultParams(state.component), ...presetParams(preset)});
         state.params = clone(params);
         state.originalParams = clone(params);
         $('presetName').value = preset.name || humanize(state.selectedPreset);
@@ -767,8 +854,9 @@
         advancedHost?.replaceChildren();
         const schema = state.component?.parameter_schema || {};
         const entries = Object.entries(schema);
-        const creative = entries.filter(([key, contract]) => !isAdvancedParameter(key, contract));
-        const advanced = entries.filter(([key, contract]) => isAdvancedParameter(key, contract));
+        const authoredEntries = entries.filter(([key]) => !isGlobalInstallationParameter(key));
+        const creative = authoredEntries.filter(([key, contract]) => !isAdvancedParameter(key, contract));
+        const advanced = authoredEntries.filter(([key, contract]) => isAdvancedParameter(key, contract));
         $('parameterEmpty').hidden = creative.length > 0;
         if ($('advancedParameterEmpty')) $('advancedParameterEmpty').hidden = advanced.length > 0;
         creative.forEach(([key, contract]) => host.appendChild(parameterControl(key, contract || {})));
@@ -778,6 +866,10 @@
     function isAdvancedParameter(key, contract = {}) {
         if (contract.advanced === true || contract.installation === true || contract.visibility === 'advanced') return true;
         return /(^|_)(plant|mask|path|modifier|diagnostic|runtime|geometry|calibration|strip_map|led_map)(_|$)/i.test(key);
+    }
+
+    function isGlobalInstallationParameter(key) {
+        return ['plant_modifiers', 'plant_aware', 'installation_profile', 'installation_profile_digest'].includes(key);
     }
 
     function parameterControl(key, contract, context = {}) {
@@ -1221,7 +1313,7 @@
         requestRender();
     }
 
-    function schemaCheck(component, params) {
+    function schemaCheck(component, params, {requireAll = true} = {}) {
         const problems = [];
         const schema = component.parameter_schema || {};
         Object.keys(params || {}).filter((key) => !Object.prototype.hasOwnProperty.call(schema, key)).forEach((key) => {
@@ -1230,7 +1322,7 @@
         Object.entries(schema).forEach(([key, contract]) => {
             const value = params[key];
             if (value === undefined) {
-                problems.push(`${humanize(key)} is missing`);
+                if (requireAll) problems.push(`${humanize(key)} is missing`);
                 return;
             }
             const type = String(contract.type || '').toLowerCase();
@@ -1484,24 +1576,21 @@
     }
 
     function componentReference(component, params, preset = null) {
+        const identity = component?.browser_capabilities?.managed_identity;
+        if (!identity) throw new Error('This component has no catalog-managed browser identity.');
         const reference = {
-            plugin_id: component.plugin_id,
-            provider: component.provider,
-            parameter_overrides: {},
-            resolved_parameters: clone(params),
+            provider: identity.provider,
+            component_id: identity.component_id,
+            component_digest: identity.component_digest,
+            runtime_digest: identity.runtime_digest,
+            parameter_schema_version: identity.parameter_schema_version,
+            parameters: enforceInstallationParams(component, params),
         };
         const presetId = preset?.preset_id;
         const fingerprint = preset?.preset_fingerprint;
         if (presetId && fingerprint) {
             reference.preset_id = presetId;
             reference.preset_fingerprint = fingerprint;
-        }
-        if (component.provider === 'receiver_native') {
-            reference.bundle_digest = component.build?.bundle_digest || component.build?.contract_digest;
-            reference.expected_payload_digest = component.build?.expected_payload_digest;
-            if (!reference.bundle_digest || !reference.expected_payload_digest) {
-                throw new Error('This native background has no ready managed bundle identity, so it cannot be activated safely.');
-            }
         }
         return reference;
     }
@@ -1514,27 +1603,30 @@
         const knownFallback = state.component.provider === 'python'
             ? clone(background)
             : componentReference(fallback, defaultParams(fallback));
-        const overlays = [];
+        const layers = [];
         if (state.layers.clockEnabled) {
             const clock = clockComponent();
             if (!clock) throw new Error('Clock overlay is not available in the component catalog.');
-            overlays.push({
-                slot_id: 'clock_overlay',
+            layers.push({
+                role: 'clock',
                 component: componentReference(clock, state.layers.clockParams),
                 enabled: true,
                 opacity: state.layers.clockOpacity,
-                blend_mode: 'source-over',
-                placement: {strip_translation: 0, led_translation: 0, clip_policy: 'clip_to_wall'},
-                stale_policy: {policy: 'hold'},
+                blend_mode: 'source_over',
             });
         }
+        const profileDigest = state.bootstrap.installation_profile?.digest;
+        if (!/^[0-9a-f]{64}$/.test(profileDigest || '')) {
+            throw new Error('The host did not provide a managed installation-profile identity.');
+        }
         return {
-            schema: 'ledgrid.scene-state',
+            schema: 'ledgrid.browser-scene',
             schema_version: 1,
             revision: state.documentRevision,
             background,
-            overlays,
-            known_python_fallback: knownFallback,
+            layers,
+            installation_profile: {digest: profileDigest},
+            fallback: knownFallback,
         };
     }
 
@@ -1550,27 +1642,8 @@
         };
     }
 
-    function exportedPreset() {
-        const cleanName = $('presetName').value.trim() || `${state.component.name} draft`;
-        const presetId = presetIdForName(cleanName);
-        return {
-            version: 2,
-            preset_id: presetId,
-            name: cleanName,
-            animation: state.component.plugin_id,
-            provider: state.component.provider,
-            component_key: state.component.key,
-            params: clone(state.params),
-            provenance: {
-                authored_with: 'ledgrid-browser-preset-composer',
-                renderer_kind: state.component.browser_runtime.kind,
-                note: 'Previewed locally in a browser worker; not verified on the physical installation.',
-            },
-        };
-    }
-
     function exportedDocument() {
-        return state.layers.clockEnabled ? scenePresetDocument() : exportedPreset();
+        return buildScene();
     }
 
     async function saveToLibrary({overwrite = false} = {}) {
@@ -1608,28 +1681,23 @@
             state.selectedPreset = record.key;
             renderPresets();
 
-            if (state.layers.clockEnabled) {
-                $('serverActionStatus').textContent = 'Component saved. Saving the composed scene preset…';
-                try {
-                    const sceneUrl = state.bootstrap.capabilities?.server_actions?.save_scene_preset_url || '/api/v1/scene-presets';
-                    const scene = buildScene(state.lastSavedPreset);
-                    await requestJson(sceneUrl, {
-                        method: 'POST',
-                        body: JSON.stringify({
-                            name: $('presetName').value.trim(),
-                            description: 'Background plus the fixed Clock overlay, authored in the browser composer.',
-                            scene,
-                        }),
-                    });
-                    $('serverActionStatus').textContent = 'Saved the component preset and composed scene preset to the server library.';
-                    toast('Component and scene saved to the library.', 'success');
-                } catch (sceneError) {
-                    $('serverActionStatus').textContent = `Component preset saved; scene preset was not saved: ${sceneError.message}`;
-                    toast('Component saved, but the scene preset needs attention.', 'error');
-                }
-            } else {
-                $('serverActionStatus').textContent = `Saved “${result.preset.name}” to the server library. The physical wall was not changed.`;
-                toast('Preset saved to the library.', 'success');
+            $('serverActionStatus').textContent = 'Component saved. Saving the exact browser scene document…';
+            try {
+                const sceneUrl = state.bootstrap.capabilities?.server_actions?.save_scene_preset_url || '/api/v1/scene-presets';
+                const scene = buildScene(state.lastSavedPreset);
+                await requestJson(sceneUrl, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        name: $('presetName').value.trim(),
+                        description: 'Versioned browser scene authored and previewed locally; not physically observed.',
+                        scene,
+                    }),
+                });
+                $('serverActionStatus').textContent = 'Saved the component preset and exact scene revision to the server library. The physical wall was not changed.';
+                toast('Look and scene saved to the library.', 'success');
+            } catch (sceneError) {
+                $('serverActionStatus').textContent = `Component preset saved; scene revision was not saved: ${sceneError.message}`;
+                toast('The component saved, but the scene revision needs attention.', 'error');
             }
         } catch (error) {
             if (error.status === 409 && error.code === 'preset_exists' && !overwrite) {
@@ -1672,53 +1740,6 @@
         $('activateDialog').showModal();
     }
 
-    function stableJson(value) {
-        if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-        if (value && typeof value === 'object') {
-            return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
-        }
-        return JSON.stringify(value);
-    }
-
-    function observedSceneIdentity(scene) {
-        if (!scene) return null;
-        return {
-            revision: scene.revision,
-            background: scene.background,
-            overlays: scene.overlays,
-            known_python_fallback: scene.known_python_fallback,
-        };
-    }
-
-    function sameObservedScene(observed, requested) {
-        if (!observed || observed.revision !== requested.revision) return false;
-        return stableJson(observedSceneIdentity(observed)) === stableJson(observedSceneIdentity(requested));
-    }
-
-    async function observeActivation(scene) {
-        const deadline = Date.now() + 8000;
-        let exactObservationUnavailable = false;
-        while (Date.now() < deadline) {
-            await new Promise((resolve) => window.setTimeout(resolve, 700));
-            try {
-                const payload = await requestJson('/api/v1/scene');
-                if (payload.active && payload.scene && !Number.isInteger(payload.scene.revision)) {
-                    exactObservationUnavailable = true;
-                }
-                if (payload.active && sameObservedScene(payload.scene, scene)) {
-                    $('serverActionStatus').textContent = 'Command accepted · wall server reports the exact revision live · telemetry completeness not asserted · no camera observation.';
-                    toast('The wall server reports the exact scene revision live.', 'success');
-                    return;
-                }
-            } catch (_error) {
-                break;
-            }
-        }
-        $('serverActionStatus').textContent = exactObservationUnavailable
-            ? 'Command accepted · exact wall observation unavailable because live status did not preserve the scene revision.'
-            : 'Command accepted · exact wall observation not yet confirmed.';
-    }
-
     async function activateScene() {
         if (state.busyAction) return;
         setActionBusy('activate', true);
@@ -1728,13 +1749,20 @@
             if (blockReason) throw new Error(blockReason);
             const scene = buildScene();
             const validateUrl = state.bootstrap.capabilities?.server_actions?.validate_scene_url || '/api/v1/scene/validate';
-            const validated = await requestJson(validateUrl, {method: 'POST', body: JSON.stringify(scene)});
+            await requestJson(validateUrl, {method: 'POST', body: JSON.stringify(scene)});
             const activateUrl = state.bootstrap.capabilities?.server_actions?.activate_scene_url || '/api/v1/scene';
-            await requestJson(activateUrl, {method: 'PUT', body: JSON.stringify(validated.scene)});
-            $('serverActionStatus').textContent = 'Command accepted · awaiting wall observation.';
-            toast('Activation command accepted; checking wall state.');
-            setActionBusy('activate', false);
-            await observeActivation(validated.scene);
+            const result = await requestJson(activateUrl, {method: 'PUT', body: JSON.stringify(scene)});
+            const receipt = result.receipt || {};
+            const acceptance = receipt.command_accepted ? 'Command accepted' : 'Command not accepted';
+            const observation = receipt.observed_status === 'observed'
+                ? 'server reports observed live state'
+                : 'live state not observed';
+            const telemetry = receipt.telemetry_complete ? 'telemetry complete' : 'telemetry incomplete';
+            const camera = receipt.camera_observation ? 'camera evidence attached' : 'no camera observation';
+            $('serverActionStatus').textContent = `${acceptance} · revision ${receipt.requested_revision ?? scene.revision} · ${observation} · ${telemetry} · ${camera}.`;
+            toast(receipt.command_accepted
+                ? 'Activation command accepted; physical observation remains separate.'
+                : 'The wall did not accept the activation command.', receipt.command_accepted ? 'success' : 'error');
         } catch (error) {
             if (error.code === 'offline') setServerOnline(false);
             $('serverActionStatus').textContent = `Activation was not accepted: ${error.message}`;
@@ -1765,16 +1793,64 @@
         const blob = new Blob([`${JSON.stringify(preset, null, 2)}\n`], {type: 'application/json'});
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = `${preset.preset_id}.json`;
+        link.download = `${presetIdForName($('presetName').value)}.json`;
         document.body.appendChild(link);
         link.click();
         link.remove();
         URL.revokeObjectURL(link.href);
-        toast(state.layers.clockEnabled ? 'Scene preset downloaded.' : 'Component preset downloaded.');
+        toast('Versioned browser scene downloaded.');
     }
 
     function locallyValidatedImport(payload) {
         assertSafeImport(payload);
+        const browserScene = payload?.schema === 'ledgrid.browser-scene'
+            ? payload
+            : payload?.schema === 'ledgrid.scene-preset' && payload.scene?.schema === 'ledgrid.browser-scene'
+                ? payload.scene
+                : null;
+        if (browserScene) {
+            assertOnlyKeys(browserScene, ['schema', 'schema_version', 'revision', 'background', 'layers', 'installation_profile', 'fallback'], 'browser scene');
+            if (browserScene.schema_version !== 1) throw new Error('The uploaded browser scene uses an unsupported version.');
+            if (!Number.isInteger(browserScene.revision) || browserScene.revision < 0) throw new Error('The uploaded browser scene has an invalid revision.');
+            const background = locallyValidatedBrowserReference(browserScene.background, 'background');
+            if (!Array.isArray(browserScene.layers) || browserScene.layers.length > 1) {
+                throw new Error('Version 1 browser scenes allow at most one Clock layer.');
+            }
+            const layer = browserScene.layers[0];
+            if (layer) assertOnlyKeys(layer, ['role', 'component', 'enabled', 'opacity', 'blend_mode'], 'browser scene Clock layer');
+            if (layer && (
+                layer.role !== 'clock'
+                || layer.blend_mode !== 'source_over'
+                || typeof layer.enabled !== 'boolean'
+                || !Number.isInteger(layer.opacity)
+                || layer.opacity < 0
+                || layer.opacity > 255
+            )) throw new Error('The uploaded browser scene has an invalid fixed Clock layer.');
+            if (layer) {
+                const clock = locallyValidatedBrowserReference(layer.component, 'overlay');
+                if (clock.plugin_id !== 'clock_overlay') throw new Error('The fixed browser scene layer must use Clock.');
+            }
+            const fallback = locallyValidatedBrowserReference(browserScene.fallback, 'background');
+            if (fallback.provider !== 'python') throw new Error('The browser scene fallback must use Host Python.');
+            if (background.provider === 'python' && (
+                fallback.plugin_id !== background.plugin_id
+                || ComposerState.stableJson(browserScene.fallback.parameters) !== ComposerState.stableJson(browserScene.background.parameters)
+            )) throw new Error('A Python browser scene background must also be its exact fallback.');
+            assertOnlyKeys(browserScene.installation_profile, ['digest'], 'browser scene installation profile');
+            if (!/^[0-9a-f]{64}$/.test(browserScene.installation_profile?.digest || '')) {
+                throw new Error('The browser scene has no managed installation-profile digest.');
+            }
+            return {
+                kind: 'browser_scene',
+                draft: {
+                    component_key: background.key,
+                    name: payload.name || 'Imported browser scene',
+                    description: payload.description || '',
+                    params: clone(browserScene.background.parameters),
+                    browser_scene: clone(browserScene),
+                },
+            };
+        }
         if (payload?.schema === 'ledgrid.scene-preset' && payload.schema_version === 1 && payload.scene?.schema === 'ledgrid.scene-state') {
             if (payload.scene.schema_version !== 1) throw new Error('The uploaded scene uses an unsupported version.');
             if (!Array.isArray(payload.scene.overlays) || payload.scene.overlays.length > 1) {
@@ -1827,14 +1903,46 @@
         };
     }
 
+    function locallyValidatedBrowserReference(reference, role) {
+        if (!reference || typeof reference !== 'object') throw new Error(`The uploaded scene ${role} is invalid.`);
+        assertOnlyKeys(reference, ['provider', 'component_id', 'component_digest', 'runtime_digest', 'parameter_schema_version', 'parameters', 'preset_id', 'preset_fingerprint'], `browser scene ${role}`);
+        if ((reference.preset_id == null) !== (reference.preset_fingerprint == null)) {
+            throw new Error(`The uploaded scene ${role} preset ID and fingerprint must appear together.`);
+        }
+        if (reference.preset_id != null && (
+            !/^[a-z][a-z0-9_-]{0,63}$/.test(reference.preset_id)
+            || !/^[0-9a-f]{64}$/.test(reference.preset_fingerprint)
+        )) throw new Error(`The uploaded scene ${role} preset identity is invalid.`);
+        if (!reference.parameters || typeof reference.parameters !== 'object' || Array.isArray(reference.parameters)) {
+            throw new Error(`The uploaded scene ${role} parameters must be an object.`);
+        }
+        const key = `${reference.provider}:${reference.component_id}`;
+        const component = state.bootstrap.components.find((item) => item.key === key && item.role === role);
+        if (!component) throw new Error(`The uploaded scene ${role} is not in this catalog.`);
+        const capability = componentCapability(component);
+        if (!capability.previewable) throw new Error(capability.reason || `The uploaded scene ${role} is not previewable.`);
+        const identity = component.browser_capabilities?.managed_identity || {};
+        for (const field of ['provider', 'component_id', 'component_digest', 'runtime_digest', 'parameter_schema_version']) {
+            if (reference[field] !== identity[field]) throw new Error(`The uploaded scene ${role} ${field} does not match the catalog.`);
+        }
+        const problems = schemaCheck(component, reference.parameters, {requireAll: false});
+        if (problems.length) throw new Error(`The uploaded scene ${role} is invalid: ${problems[0]}.`);
+        return component;
+    }
+
+    function assertOnlyKeys(value, allowed, label) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`The uploaded ${label} must be an object.`);
+        const unexpected = Object.keys(value).find((key) => !allowed.includes(key));
+        if (unexpected) throw new Error(`The uploaded ${label} contains an unsupported field: ${unexpected}.`);
+    }
+
     function assertSafeImport(value, depth = 0, budget = {nodes: 0}) {
         budget.nodes += 1;
-        if (budget.nodes > 10000) throw new Error('The uploaded document contains too many values.');
-        if (depth > 12) throw new Error('The uploaded document is nested too deeply.');
+        if (budget.nodes > 4096) throw new Error('The uploaded document contains too many values.');
+        if (depth > 16) throw new Error('The uploaded document is nested too deeply.');
         if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('The uploaded document contains a non-finite number.');
-        if (typeof value === 'string' && value.length > 16384) throw new Error('The uploaded document contains an oversized text value.');
+        if (typeof value === 'string' && new TextEncoder().encode(value).byteLength > 16384) throw new Error('The uploaded document contains an oversized text value.');
         if (Array.isArray(value)) {
-            if (value.length > 1024) throw new Error('The uploaded document contains an oversized list.');
             value.forEach((item) => assertSafeImport(item, depth + 1, budget));
             return;
         }
@@ -1852,18 +1960,29 @@
         const component = state.bootstrap.components.find((item) => item.key === draft.component_key);
         if (!component) throw new Error('The uploaded background is not in this composer catalog.');
         if (component.role !== 'background') throw new Error('A scene background must use a background component.');
-        if (!component.browser_runtime?.supported) throw new Error(component.browser_runtime?.reason || 'That background cannot render in this browser.');
+        if (!componentCapability(component).previewable) throw new Error(componentCapability(component).reason || 'That background cannot render in this browser.');
         await selectComponent(component, {
             force: true,
             ignoreAutosave: true,
             deferRuntime: true,
             historyMode: 'preserve',
         });
-        state.params = {...defaultParams(component), ...clone(draft.params || {})};
+        state.params = enforceInstallationParams(component, {...defaultParams(component), ...clone(draft.params || {})});
         state.originalParams = clone(state.params);
         $('presetName').value = draft.name || `${component.name} draft`;
 
-        if (validated.kind === 'scene_preset') {
+        const browserScene = draft.browser_scene;
+        if (browserScene?.schema === 'ledgrid.browser-scene') {
+            const clock = (browserScene.layers || []).find((item) => item.role === 'clock' && item.enabled);
+            const fallback = browserScene.fallback;
+            state.documentRevision = browserScene.revision;
+            state.layers = normalizedLayers(component, {
+                clockEnabled: Boolean(clock),
+                clockOpacity: clock?.opacity ?? 220,
+                clockParams: clock ? clone(clock.component?.parameters || {}) : {},
+                fallbackKey: fallback ? `${fallback.provider}:${fallback.component_id}` : null,
+            });
+        } else if (validated.kind === 'scene_preset') {
             const scene = draft.scene;
             const clock = (scene.overlays || []).find((item) => item.slot_id === 'clock_overlay' && item.enabled);
             const fallback = scene.known_python_fallback;
@@ -1879,9 +1998,13 @@
         }
         const problems = schemaCheck(component, state.params);
         if (problems.length) throw new Error(`Uploaded preset is invalid: ${problems[0]}.`);
+        if (state.layers.clockEnabled) {
+            const clockProblems = schemaCheck(clockComponent(), state.layers.clockParams);
+            if (clockProblems.length) throw new Error(`Uploaded Clock layer is invalid: ${clockProblems[0]}.`);
+        }
         renderParameterControls();
         renderLayers();
-        resetChecker();
+        resetChecker({preserveDocumentRevision: Boolean(browserScene)});
         commitHistory();
         await startRuntimes();
         scheduleAutosave();
@@ -1889,9 +2012,8 @@
 
     async function importJson(file) {
         try {
-            if (file.size > 512 * 1024) throw new Error('Upload a JSON document no larger than 512 KB.');
+            if (file.size > 256 * 1024) throw new Error('Upload a JSON document no larger than 256 KB.');
             const source = await file.text();
-            if (source.length > 512 * 1024) throw new Error('Upload a JSON document no larger than 512 KB.');
             const payload = JSON.parse(source);
             assertSafeImport(payload);
             let validated;
@@ -2029,6 +2151,7 @@
             activateScene();
         });
         $('runCheckerButton').addEventListener('click', runChecker);
+        $('prepareOfflineButton')?.addEventListener('click', prepareOffline);
         document.querySelectorAll('[data-mobile-target]').forEach((button) => button.addEventListener('click', () => selectMobileView(button.dataset.mobileTarget)));
         document.addEventListener('keydown', (event) => {
             const modifier = navigator.platform?.toLowerCase().includes('mac') ? event.metaKey : event.ctrlKey;
@@ -2045,7 +2168,10 @@
                 $('importFile').click();
             }
         });
-        window.addEventListener('online', () => checkConnectivity());
+        window.addEventListener('online', () => {
+            checkConnectivity();
+            refreshOfflineReadiness();
+        });
         window.addEventListener('offline', () => setServerOnline(false));
         window.addEventListener('beforeunload', () => {
             window.clearInterval(state.connectivityTimer);
@@ -2054,10 +2180,17 @@
     }
 
     async function registerServiceWorker() {
-        if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+        if (!('serviceWorker' in navigator) || !window.isSecureContext) {
+            showOfflineReadiness({readyOffline: false, reason: 'Offline preparation requires a secure browser context.'});
+            return;
+        }
         try {
             await navigator.serviceWorker.register('/composer-service-worker.js', {scope: '/'});
+            await navigator.serviceWorker.ready;
+            navigator.serviceWorker.addEventListener('controllerchange', refreshOfflineReadiness, {once: true});
+            await refreshOfflineReadiness();
         } catch (error) {
+            showOfflineReadiness({readyOffline: false, reason: `Offline worker unavailable: ${error.message}`});
             console.info('Composer offline shell is not available:', error.message);
         }
     }
@@ -2065,6 +2198,7 @@
     async function initialize() {
         bindEvents();
         syncPlayButton();
+        updateInstallStatus();
         setServerOnline(false, {checking: true, quiet: true});
         window.requestAnimationFrame(animationLoop);
         registerServiceWorker();

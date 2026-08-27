@@ -1,23 +1,23 @@
 {
-  "cacheVersion": "v8",
+  "cacheVersion": "v9",
   "capturedAssets": [
     "/composer",
     "/api/v1/composer/bootstrap"
   ],
   "localAssets": [
     {
-      "bytes": 12396,
-      "sha256": "ba89ace883bcb7e6b8bd696abfc485d04ec379ebc0c6cc30257b647f0014fe3b",
+      "bytes": 12432,
+      "sha256": "4839d71e6f51f62f428fc1a8a962e5afeed9bef6a66950fb826894701de254d2",
       "url": "/composer-service-worker.js"
     },
     {
-      "bytes": 692,
-      "sha256": "9ed3b7ebbbe45caf7510861e0c35e9799f56cffe30300b57a8f4af85efdd8e1a",
+      "bytes": 861,
+      "sha256": "4cc9deaf25c8728d50110fdc9307faf9305969c51df3577713b2dbb2556f99a7",
       "url": "/static/composer.webmanifest"
     },
     {
-      "bytes": 29182,
-      "sha256": "703f9727557db34acefffbfe0c83a0535bc558866e95cba4428045f5939b7a78",
+      "bytes": 35611,
+      "sha256": "edf9ed1c6986c66c2e6d6e8f1eebef063b87acd975ec3654237e87e337e18c94",
       "url": "/static/css/composer.css"
     },
     {
@@ -51,8 +51,8 @@
       "url": "/static/icons/composer.svg"
     },
     {
-      "bytes": 90742,
-      "sha256": "8b77de1bb72456d74c524d0120223c7ec6d2734b4e814b37e00a3e16c30ee2a8",
+      "bytes": 116964,
+      "sha256": "cfd98044dd3b939b1525b292747d2c2e1b02bc3e241f0d5c666f86d104740d8d",
       "url": "/static/js/composer.js"
     },
     {
@@ -74,6 +74,11 @@
       "bytes": 22218,
       "sha256": "655191590fdf648e7c5874d1977e1372baf61517c70d729cc3fb63342fede5d2",
       "url": "/static/js/composer_runtime.js"
+    },
+    {
+      "bytes": 4700,
+      "sha256": "a218a02e62b4a47040a93d41ea35cdcdd82225902a0a167f99005755d0c74cde",
+      "url": "/static/js/composer_state.js"
     }
   ],
   "pythonRuntime": {
