@@ -16,8 +16,8 @@
       "url": "/static/composer.webmanifest"
     },
     {
-      "bytes": 64531,
-      "sha256": "6817b5e7110a37cce385f706f84a91ea3b6d62f13ae60c2a92d8e35f7502e00c",
+      "bytes": 66222,
+      "sha256": "b35c9a01b3887d48d76ffab408019cab7f08157b662cd37aaa0eb0bea903fd26",
       "url": "/static/css/composer.css"
     },
     {
@@ -51,8 +51,8 @@
       "url": "/static/icons/composer.svg"
     },
     {
-      "bytes": 153184,
-      "sha256": "086cd6151f1accde9bd944d926a5a30ad24fa9e6a516e5f69113e5484e2c434d",
+      "bytes": 153577,
+      "sha256": "02ee9132c895805df7362ba0004403729d252249782bc75b1bc523768f9018cb",
       "url": "/static/js/composer.js"
     },
     {
