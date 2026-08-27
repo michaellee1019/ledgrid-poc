@@ -225,7 +225,7 @@ class DirtyAndCoordinateGoldenTest(unittest.TestCase):
         self.assertEqual(
             geometry["receiver_strip_counts"], [8, 8, 8, 8, 1]
         )
-        self.assertEqual(geometry["physical_receiver_order"], [0, 1, 3, 2, 4])
+        self.assertEqual(geometry["physical_receiver_order"], [0, 1, 2, 3, 4])
         self.assertEqual(expected, (
             (0, 1104), (1104, 2208), (2208, 3312),
             (3312, 4416), (4416, 4554),

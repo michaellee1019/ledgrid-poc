@@ -121,7 +121,7 @@ RECEIVER_FIRMWARE_HEALTH_CAPABILITIES = {
 }
 FINALIZED_RECEIVER_ROUTES = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
 FINALIZED_RECEIVER_WIDTHS = (8, 8, 8, 8, 1)
-FINALIZED_RECEIVER_OFFSETS = (0, 8, 24, 16, 32)
+FINALIZED_RECEIVER_OFFSETS = (0, 8, 16, 24, 32)
 FINALIZED_RECEIVER_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
 FINALIZED_RECEIVER_REVERSALS = (False, False, True, True, False)
 FINALIZED_RECEIVER_SPI_MODE = 0
@@ -831,7 +831,7 @@ class CoordinatorDeployment:
             or tuple(rollout.get("receiver_strip_counts", ()))
             != (8, 8, 8, 8, 1)
             or tuple(rollout.get("receiver_global_strip_offsets", ()))
-            != (0, 8, 24, 16, 32)
+            != FINALIZED_RECEIVER_OFFSETS
         ):
             raise RuntimeError(
                 "firmware build did not select the finalized receiver topology"

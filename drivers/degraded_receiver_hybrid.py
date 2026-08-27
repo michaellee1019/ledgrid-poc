@@ -23,6 +23,14 @@ from animation.core.receiver_presentation import (
     encode_presentation_context_commit,
     encode_presentation_context_set,
 )
+from drivers.led_layout import (
+    WALL_DEVICE_MAP,
+    WALL_PHYSICAL_LANE_ORDER,
+    WALL_PHYSICAL_OUTPUT_LANE_MASKS,
+    WALL_RECEIVER_GLOBAL_STRIP_OFFSETS,
+    WALL_RECEIVER_STRIP_COUNTS,
+    WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER,
+)
 from drivers.spi_controller import (
     CAPABILITY_EXPLICIT_BASE_OWNERSHIP,
     CAPABILITY_PRESENTATION_CONTEXT_V1,
@@ -45,15 +53,15 @@ from drivers.spi_controller import (
 DEGRADED_SPI1_TRANSPORT_POLICY = "degraded_spi1_01_readable"
 READABLE_DEVICES = (0, 1)
 UNVERIFIED_DEVICES = (2, 3, 4)
-EXPECTED_DEVICE_MAP = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
+EXPECTED_DEVICE_MAP = WALL_DEVICE_MAP
 RECEIVER_COUNT = 5
-DEFAULT_PHYSICAL_LANE_ORDER = (0, 1, 3, 2, 4)
+DEFAULT_PHYSICAL_LANE_ORDER = WALL_PHYSICAL_LANE_ORDER
 DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER = (
-    False, False, True, True, False,
+    WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER
 )
-RECEIVER_STRIP_COUNTS = (8, 8, 8, 8, 1)
-RECEIVER_GLOBAL_STRIP_OFFSETS = (0, 8, 24, 16, 32)
-RECEIVER_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
+RECEIVER_STRIP_COUNTS = WALL_RECEIVER_STRIP_COUNTS
+RECEIVER_GLOBAL_STRIP_OFFSETS = WALL_RECEIVER_GLOBAL_STRIP_OFFSETS
+RECEIVER_LANE_MASKS = WALL_PHYSICAL_OUTPUT_LANE_MASKS
 CONFIG_REVERSE_LOCAL_STRIP_ORDER = 0x80
 EXPECTED_STATUS_VERSION = 4
 WRITE_ONLY_FOREGROUND_SETTLE_SECONDS = 0.050
@@ -326,8 +334,9 @@ class DegradedReceiverHybridController:
         ):
             raise DegradedReceiverHybridError(
                 "controller geometry is not the finalized 33 x 138 wall with "
-                "receiver widths (8,8,8,8,1), offsets (0,8,24,16,32), "
-                "and lane masks (0xff,0xff,0xff,0xff,0xff)"
+                f"receiver widths {RECEIVER_STRIP_COUNTS}, offsets "
+                f"{RECEIVER_GLOBAL_STRIP_OFFSETS}, and lane masks "
+                f"{RECEIVER_LANE_MASKS}"
             )
         device_map = tuple(getattr(self.controller, "device_map", ()))
         if device_map != EXPECTED_DEVICE_MAP:

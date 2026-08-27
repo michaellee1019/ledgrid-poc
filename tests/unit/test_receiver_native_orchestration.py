@@ -26,7 +26,7 @@ from drivers.multi_device import (
 
 
 WIDTHS = (8, 8, 8, 8, 1)
-OFFSETS = (0, 8, 24, 16, 32)
+OFFSETS = (0, 8, 16, 24, 32)
 BUNDLE = "31" * 32
 PAYLOAD = "42" * 32
 OLD_BUNDLE = "51" * 32

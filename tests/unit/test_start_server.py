@@ -172,10 +172,10 @@ class StartServerTests(unittest.TestCase):
             config = resolve_receiver_hybrid_runtime_config(
                 Path("."), explicit_enabled=True
             )
-        self.assertEqual(config["physical_lane_order"], (0, 1, 3, 2, 4))
+        self.assertEqual(config["physical_lane_order"], (0, 1, 2, 3, 4))
         self.assertEqual(config["receiver_strip_counts"], (8, 8, 8, 8, 1))
         self.assertEqual(
-            config["receiver_global_strip_offsets"], (0, 8, 24, 16, 32)
+            config["receiver_global_strip_offsets"], (0, 8, 16, 24, 32)
         )
         self.assertEqual(
             config["physical_output_lane_masks"], (255, 255, 255, 255, 255)
@@ -186,7 +186,7 @@ class StartServerTests(unittest.TestCase):
             (
                 5,
                 (8, 8, 8, 8, 1),
-                (0, 8, 24, 16, 32),
+                (0, 8, 16, 24, 32),
                 (255, 255, 255, 255, 255),
             ),
         )
@@ -199,7 +199,7 @@ class StartServerTests(unittest.TestCase):
         disabled_finalized = {
             "enabled": False,
             "receiver_strip_counts": (8, 8, 8, 8, 1),
-            "receiver_global_strip_offsets": (0, 8, 24, 16, 32),
+            "receiver_global_strip_offsets": (0, 8, 16, 24, 32),
             "physical_output_lane_masks": (255, 255, 255, 255, 255),
         }
         finalized_geometry = receiver_geometry_for_runtime(
@@ -210,7 +210,7 @@ class StartServerTests(unittest.TestCase):
             (
                 5,
                 (8, 8, 8, 8, 1),
-                (0, 8, 24, 16, 32),
+                (0, 8, 16, 24, 32),
                 (255, 255, 255, 255, 255),
             ),
         )
@@ -248,7 +248,7 @@ class StartServerTests(unittest.TestCase):
     def test_pre_geometry_explicit_canary_uses_finalized_defaults_only_at_33(self):
         legacy_canary = {
             "enabled": True,
-            "physical_lane_order": (0, 1, 3, 2, 4),
+            "physical_lane_order": (0, 1, 2, 3, 4),
             "reverse_strips_by_logical_receiver": (
                 False, False, True, True, False,
             ),
@@ -262,7 +262,7 @@ class StartServerTests(unittest.TestCase):
             (
                 5,
                 (8, 8, 8, 8, 1),
-                (0, 8, 24, 16, 32),
+                (0, 8, 16, 24, 32),
                 (255, 255, 255, 255, 255),
             ),
         )
@@ -294,7 +294,7 @@ class StartServerTests(unittest.TestCase):
                 enabled=False,
                 native_modules_enabled=False,
                 receiver_strip_counts=(8, 8, 8, 8, 1),
-                receiver_global_strip_offsets=(0, 8, 24, 16, 32),
+                receiver_global_strip_offsets=(0, 8, 16, 24, 32),
                 physical_output_lane_masks=(255, 255, 255, 255, 255),
             ),
             saved_state_file="/unused/state.json",
@@ -336,7 +336,7 @@ class StartServerTests(unittest.TestCase):
         )
         self.assertEqual(captured["receiver_strip_counts"], (8, 8, 8, 8, 1))
         self.assertEqual(
-            captured["receiver_global_strip_offsets"], (0, 8, 24, 16, 32)
+            captured["receiver_global_strip_offsets"], (0, 8, 16, 24, 32)
         )
         self.assertEqual(
             captured["receiver_lane_masks"], (255, 255, 255, 255, 255)
@@ -414,7 +414,7 @@ class StartServerTests(unittest.TestCase):
         self.assertEqual(
             selected,
             (
-                "wrapped", "degraded_spi1_01_readable", (0, 1, 3, 2, 4),
+                "wrapped", "degraded_spi1_01_readable", (0, 1, 2, 3, 4),
                 (False, False, True, True, False),
                 (False, False, True, True, False),
             ),
@@ -422,7 +422,7 @@ class StartServerTests(unittest.TestCase):
         self.assertEqual(
             controller.policies,
             [(
-                "degraded_spi1_01_readable", (0, 1, 3, 2, 4),
+                "degraded_spi1_01_readable", (0, 1, 2, 3, 4),
                 (False, False, True, True, False),
                 (False, False, True, True, False),
             )],

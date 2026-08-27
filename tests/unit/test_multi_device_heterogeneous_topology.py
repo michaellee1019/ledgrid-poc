@@ -25,7 +25,7 @@ from drivers.spi_controller import SPI_RESPONSE_QUEUE_DEPTH
 
 
 WIDTHS = (8, 8, 8, 8, 1)
-OFFSETS = (0, 8, 24, 16, 32)
+OFFSETS = (0, 8, 16, 24, 32)
 ROUTES = [(0, 0), (0, 1), (1, 1), (1, 0), (1, 2)]
 
 
@@ -373,7 +373,7 @@ class HeterogeneousTopologyTests(unittest.TestCase):
 
         split = controller._split_frame(frame)
 
-        expected = ((0, 7), (8, 15), (31, 24), (23, 16), (32, 32))
+        expected = ((0, 7), (8, 15), (23, 16), (31, 24), (32, 32))
         for local, (first, last) in zip(split, expected):
             self.assertEqual(local.shape, ((abs(last - first) + 1) * 138, 3))
             self.assertEqual(int(local[0, 0]), first)
@@ -398,7 +398,7 @@ class HeterogeneousTopologyTests(unittest.TestCase):
 
         controller.set_pixel(24 * 138 + 17, 4, 5, 6)
         self.assertEqual(
-            controller.devices[2].pixels,
+            controller.devices[3].pixels,
             [(7 * 138 + 17, 4, 5, 6)],
         )
 
@@ -410,19 +410,19 @@ class HeterogeneousTopologyTests(unittest.TestCase):
             frame,
             dirty_ranges=((24 * 138 + 5, 24 * 138 + 9),),
         )
-        partial_frame, ranges = controller.devices[2].partial[-1]
+        partial_frame, ranges = controller.devices[3].partial[-1]
         self.assertEqual(ranges, ((7 * 138 + 5, 7 * 138 + 9),))
         self.assertEqual(int(partial_frame[7 * 138 + 5, 0]), 24)
         self.assertEqual(
             controller._receiver_local_dirty_ranges(
                 2,
-                ((24 * 138 + 136, 25 * 138 + 2),),
+                ((16 * 138 + 136, 17 * 138 + 2),),
             ),
             [(6 * 138, 6 * 138 + 2), (8 * 138 - 2, 8 * 138)],
         )
         self.assertEqual(
             controller._receiver_local_dirty_ranges(
-                2,
+                3,
                 ((31 * 138 + 137, 32 * 138 + 1),),
             ),
             [(137, 138)],
@@ -457,18 +457,18 @@ class HeterogeneousTopologyTests(unittest.TestCase):
             dirty_ranges=None,
         )
         full_pixels = np.concatenate([pixels for _start, pixels in full])
-        self.assertEqual(int(full_pixels[0, 0]), 31)
-        self.assertEqual(int(full_pixels[-1, 0]), 24)
+        self.assertEqual(int(full_pixels[0, 0]), 23)
+        self.assertEqual(int(full_pixels[-1, 0]), 16)
 
         delta = controller._local_overlay_patches(
             overlay,
             receiver_id=2,
             update_kind=OVERLAY_UPDATE_DELTA,
-            dirty_ranges=((24 * 138 + 5, 24 * 138 + 9),),
+            dirty_ranges=((16 * 138 + 5, 16 * 138 + 9),),
         )
         self.assertEqual(len(delta), 1)
         self.assertEqual(delta[0][0], 7 * 138 + 5)
-        self.assertTrue(np.all(delta[0][1][:, 0] == 24))
+        self.assertTrue(np.all(delta[0][1][:, 0] == 16))
 
     def test_invalid_overlap_gap_and_legacy_uniform_default(self):
         with self.assertRaisesRegex(TypeError, "1 through 8"):

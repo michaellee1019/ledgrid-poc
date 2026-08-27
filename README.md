@@ -5,6 +5,8 @@ Controller, web UI, animation plugins, and ESP32-S3 firmware for a 33 x 138
 them over two SPI buses to five receivers. Four receivers expose eight logical
 WS2812 lanes and the fifth drives the extra rightmost strip as one logical lane
 through an explicit all-output broadcast mask on its otherwise dedicated board.
+The camera-measured physical order is logical receivers `(0,1,2,3,4)` from
+left to right, at global strip offsets `(0,8,16,24,32)`.
 
 ## Local development
 

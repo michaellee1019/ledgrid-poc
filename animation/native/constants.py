@@ -20,12 +20,12 @@ LOCAL_STRIPS = 8
 LEDS_PER_STRIP = 138
 RECEIVER_OFFSETS = (0, 8, 16, 24, 32)
 # (logical receiver ID, global strip offset, local width, native reversal).
-# Physical strip origins 0/8/16/24/32 map to logical IDs 0/1/3/2/4.
+# Physical strip origins 0/8/16/24/32 now map to logical IDs 0/1/2/3/4.
 RECEIVER_VIEWS = (
     (0, 0, 8, False),
     (1, 8, 8, False),
-    (3, 16, 8, True),
-    (2, 24, 8, True),
+    (2, 16, 8, True),
+    (3, 24, 8, True),
     (4, 32, 1, False),
 )
 

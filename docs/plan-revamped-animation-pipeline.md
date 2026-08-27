@@ -58,15 +58,16 @@ receiver-local features remain open.
 
 ## Plan Authority and Resolved Decisions
 
-### Finalized installed topology amendment (2026-08-25)
+### Finalized installed topology amendment (updated 2026-08-27)
 
 The live service reports `STRIPS=33`, five status-capable receivers, and the
 route map `0→0.0`, `1→0.1`, `2→1.1`, `3→1.0`, `4→1.2`. The fifth receiver owns
 one logical strip at global offset 32; the other four own eight strips each.
 The target boot source confirms `dtoverlay=spi1-3cs,cs2_pin=24`, so SPI1 CE2 is
 GPIO24/physical pin 18 and `/dev/spidev1.2` is a required readiness node.
-The physical left-to-right order extends the accepted prior mapping to
-`(0,1,3,2,4)`, with native global offsets by logical ID `(0,8,24,16,32)`.
+The camera-measured physical left-to-right order after the latest cable change
+is `(0,1,2,3,4)`, with native global offsets by logical ID
+`(0,8,16,24,32)`.
 Host direction, native direction, physical lane selection, and transport route
 remain independent domains.
 
@@ -102,8 +103,19 @@ release `c5a4b87ed038544dede152db9e228056c64b4f1d63283aabde34c1a521321dc1`,
 passed five-receiver readiness, and persisted schema v3. Independent live status
 then showed receiver 4 at width 1, offset 32, mask `0xff`, host-full-scene mode,
 and advancing accepted/displayed counters with zero display or SPI-queue errors.
-Because no usable wall camera is attached, direct human confirmation that the
-new physical column follows the scene remains the final visual observation.
+The operator directly confirmed that the new physical column follows the scene.
+
+Fresh cable-order evidence was captured later on 2026-08-27 with an Anker
+camera and the Mac Photo Booth live preview. The live preview was mirrored; its
+five receiver colors appeared magenta, blue, yellow, green, red. The diagnostic
+accounted for that mirror and establishes physical left-to-right logical order
+`(0,1,2,3,4)`, invalidating the prior `(0,1,3,2,4)` assumption after the ESP32
+cables were plugged back in differently. The one-strip fifth receiver remains
+the rightmost column. Because the Anker image includes only a partial view of the
+wall, it closes only the receiver-permutation observation; it does not accept a
+full camera homography, host within-receiver strip direction, or receiver-native
+direction. Both direction maps remain `(false,false,true,true,false)` pending
+their independent visual gates.
 
 The first read-only integrity delta on this topology did not pass H0. Across a
 10.03-second window, logical receivers 0, 1, 2, and 4 added zero CRC, SPI-queue,
@@ -1160,7 +1172,7 @@ Compile source twice:
 
 The target ELF is never executed by the web or controller process. The host
 preview renders the explicit installed slices `(8,8,8,8,1)` at native offsets
-`(0,8,24,16,32)` and stitches a 33 x 138 result so global-coordinate and
+`(0,8,16,24,32)` and stitches a 33 x 138 result so global-coordinate and
 heterogeneous-width errors are visible before packaging.
 
 Build validation includes deterministic source/toolchain fingerprints, ELF
@@ -4328,7 +4340,7 @@ distributions/artifacts, photographed H3 evidence, or the other H4 soak.
   vibe, plant-modifier revision, and profile digest on every board.
 - Inject a stage failure or unplugged receiver and prove no subset starts.
 - Start the analytic background using installed logical widths `(8,8,8,8,1)` and
-  native offsets `(0,8,24,16,32)`; record start skew and 30-minute drift.
+  native offsets `(0,8,16,24,32)`; record start skew and 30-minute drift.
 - Move the clock across receiver boundaries and test old-pixel clears, alpha,
   scheduled presentation skew, lease expiry, Pi restart/new-session snapshot,
   and partial-generation recovery. First-to-last visible skew must remain below

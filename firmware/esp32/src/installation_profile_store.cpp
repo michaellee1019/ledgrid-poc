@@ -104,7 +104,7 @@ void InstallationProfileManager::configure_identity(
     std::uint16_t leds_per_strip, std::uint16_t global_strip_offset) {
   logical_receiver_id_ = logical_receiver_id;
   reversed_ = reversed;
-  static constexpr std::uint16_t kInstalledOrigins[5] = {0, 8, 24, 16, 32};
+  static constexpr std::uint16_t kInstalledOrigins[5] = {0, 8, 16, 24, 32};
   explicit_topology_ = global_strip_offset != UINT16_MAX;
   expected_origin_ = explicit_topology_
       ? global_strip_offset

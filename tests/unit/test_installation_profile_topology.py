@@ -152,7 +152,7 @@ class InstallationProfileTopologyTests(unittest.TestCase):
         )
         self.assertEqual(
             INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.physical_lane_order,
-            (0, 1, 3, 2, 4),
+            (0, 1, 2, 3, 4),
         )
         self.assertEqual(
             INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.reverse_host_strips_by_logical_receiver,
@@ -262,11 +262,17 @@ class InstallationProfileTopologyTests(unittest.TestCase):
 
         self.assert_round_trip(source, IDENTITY_INSTALLATION_PROFILE_TOPOLOGY)
 
-    def test_installed_lane_assignment_and_native_reversal_round_trip_all_bytes(self):
+    def test_camera_measured_lane_assignment_and_native_reversal_round_trip_all_bytes(self):
         source = self.canonical_profile()
         topology = INSTALLED_INSTALLATION_PROFILE_TOPOLOGY
         receiver_profiles = slice_installation_profile(source, topology)
-        expected_origins = (0, 8, 24, 16, 32)
+        expected_origins = (0, 8, 16, 24, 32)
+
+        self.assertEqual(topology.physical_lane_order, (0, 1, 2, 3, 4))
+        self.assertEqual(
+            topology.logical_to_transport_routes,
+            ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2)),
+        )
 
         for logical_id, receiver_profile in receiver_profiles.items():
             start = expected_origins[logical_id]

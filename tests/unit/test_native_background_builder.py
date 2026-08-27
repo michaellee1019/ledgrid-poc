@@ -88,8 +88,8 @@ class NativeBackgroundBuilderTests(unittest.TestCase):
             (
                 (0, 0, 8, False),
                 (1, 8, 8, False),
-                (3, 16, 8, True),
-                (2, 24, 8, True),
+                (2, 16, 8, True),
+                (3, 24, 8, True),
                 (4, 32, 1, False),
             ),
         )

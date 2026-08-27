@@ -25,6 +25,21 @@ WALL_DEVICE_MAP: Tuple[DeviceMapEntry, ...] = (
     (1, 2),
 )
 
+# Camera-measured installed geometry, indexed by logical receiver ID unless the
+# name explicitly says physical order. Transport routes above remain a separate
+# domain: logical receivers 2 and 3 still use crossed SPI1 chip-select routes,
+# but the receivers now appear in logical-ID order from left to right.
+WALL_PHYSICAL_LANE_ORDER = (0, 1, 2, 3, 4)
+WALL_RECEIVER_STRIP_COUNTS = (8, 8, 8, 8, 1)
+WALL_RECEIVER_GLOBAL_STRIP_OFFSETS = (0, 8, 16, 24, 32)
+WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER = (
+    False, False, True, True, False,
+)
+WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER = (
+    False, False, True, True, False,
+)
+WALL_PHYSICAL_OUTPUT_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
+
 # Compatibility names for callers that special-case strip 32. The fifth board
 # owns one semantic strip; firmware broadcasts it across the board's outputs
 # because the assembled cable lane was not recorded.

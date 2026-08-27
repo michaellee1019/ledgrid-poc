@@ -17,12 +17,12 @@ vectors live in `tests/fixtures/receiver_presentation_v1.json`. Python and
 portable C++ tests must consume or reproduce those exact values before the
 corresponding behavior is activated.
 
-### Finalized topology amendment (2026-08-25)
+### Finalized topology amendment (updated 2026-08-27)
 
 The installed geometry is now 33×138 across five receivers with logical widths
 `(8,8,8,8,1)`. Transport routes are `0→0.0`, `1→0.1`, `2→1.1`, `3→1.0`, and
-`4→1.2`; physical left-to-right logical order is `(0,1,3,2,4)` and native
-global offsets by logical ID are `(0,8,24,16,32)`. Host and native reversal
+`4→1.2`; physical left-to-right logical order is `(0,1,2,3,4)` and native
+global offsets by logical ID are `(0,8,16,24,32)`. Host and native reversal
 flags by logical ID are `(false,false,true,true,false)`, and output masks are
 `(0xff,0xff,0xff,0xff,0xff)`. The last mask broadcasts one compact semantic
 strip across the dedicated receiver's physical outputs. This supersedes the
@@ -38,6 +38,14 @@ width and offset rather than `receiver_id * 8`. Logical width, transport route,
 physical output-lane mask, host strip direction, and receiver-native direction
 are independent fields. A fifth receiver may own one logical strip without
 claiming that all eight of its output lanes are semantically populated.
+
+The 2026-08-27 five-color Anker-camera view supersedes the former swapped-middle
+physical-order assumption after the receiver cables changed. Photo Booth's live
+preview was mirrored; the diagnostic's preview order was magenta, blue, yellow,
+green, red, establishing logical receivers `(0,1,2,3,4)` from physical left to
+right once the preview mirror was accounted for. The fifth column remained at
+the right edge. Because the camera showed only part of the wall, this observation
+does not accept the wall homography or either within-receiver direction map.
 
 ## Frozen schema and protocol identities
 
@@ -969,7 +977,7 @@ and defaults off. When explicitly enabled, the host accepts only a
 `ResolvedNativeBackground` from the Pi-authoritative managed library; IPC carries
 the content digest, never an arbitrary filesystem path or module bytes. Before
 probe or mutation, the controller proves the exact logical IDs `0..4`, widths
-`(8,8,8,8,1)`, offsets `(0,8,24,16,32)`, native direction flags, output-lane
+`(8,8,8,8,1)`, offsets `(0,8,16,24,32)`, native direction flags, output-lane
 masks, required capability mask, bundle digest, and payload digest.
 
 Install and activation are exact-roster transactions under one operation lock.

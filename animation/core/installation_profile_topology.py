@@ -15,12 +15,19 @@ from dataclasses import dataclass
 import numpy as np
 
 from animation.core.installation_profile import InstallationProfile, SECTION_NAMES
+from drivers.led_layout import (
+    WALL_DEVICE_MAP,
+    WALL_PHYSICAL_LANE_ORDER,
+    WALL_RECEIVER_STRIP_COUNTS,
+    WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER,
+    WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
+)
 
 
 RECEIVER_COUNT = 5
 RECEIVER_IDS = tuple(range(RECEIVER_COUNT))
 STRIPS_PER_RECEIVER = 8
-RECEIVER_STRIP_COUNTS = (8, 8, 8, 8, 1)
+RECEIVER_STRIP_COUNTS = WALL_RECEIVER_STRIP_COUNTS
 CANONICAL_GLOBAL_STRIP_COUNT = sum(RECEIVER_STRIP_COUNTS)
 
 
@@ -189,10 +196,14 @@ IDENTITY_INSTALLATION_PROFILE_TOPOLOGY = InstallationProfileTopology(
 )
 
 INSTALLED_INSTALLATION_PROFILE_TOPOLOGY = InstallationProfileTopology(
-    logical_to_transport_routes=((0, 0), (0, 1), (1, 1), (1, 0), (1, 2)),
-    physical_lane_order=(0, 1, 3, 2, 4),
-    reverse_host_strips_by_logical_receiver=(False, False, True, True, False),
-    reverse_native_strips_by_logical_receiver=(False, False, True, True, False),
+    logical_to_transport_routes=WALL_DEVICE_MAP,
+    physical_lane_order=WALL_PHYSICAL_LANE_ORDER,
+    reverse_host_strips_by_logical_receiver=(
+        WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER
+    ),
+    reverse_native_strips_by_logical_receiver=(
+        WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER
+    ),
 )
 
 

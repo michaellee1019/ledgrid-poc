@@ -14,8 +14,11 @@ from tools.deployment.receiver_hybrid_config import (
     DEFAULT_RECEIVER_STRIP_COUNTS,
     DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER,
     DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY,
+    LANE_ZERO_RECEIVER_HYBRID_CONFIG_VERSION,
     NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+    PREVIOUS_PHYSICAL_LANE_ORDER,
     PREVIOUS_PHYSICAL_OUTPUT_LANE_MASKS,
+    PREVIOUS_RECEIVER_GLOBAL_STRIP_OFFSETS,
     PREVIOUS_RECEIVER_HYBRID_CONFIG_VERSION,
     PRODUCTION_FIRMWARE_ENVIRONMENT,
     RECEIVER_HYBRID_CONFIG_RELATIVE_PATH,
@@ -76,6 +79,18 @@ class ReceiverHybridConfigTests(unittest.TestCase):
     def previous_payload(cls, **overrides):
         payload = cls.payload(
             schema_version=PREVIOUS_RECEIVER_HYBRID_CONFIG_VERSION,
+            physical_lane_order=list(PREVIOUS_PHYSICAL_LANE_ORDER),
+            receiver_global_strip_offsets=list(
+                PREVIOUS_RECEIVER_GLOBAL_STRIP_OFFSETS
+            ),
+        )
+        payload.update(overrides)
+        return payload
+
+    @classmethod
+    def lane_zero_payload(cls, **overrides):
+        payload = cls.previous_payload(
+            schema_version=LANE_ZERO_RECEIVER_HYBRID_CONFIG_VERSION,
             physical_output_lane_masks=list(
                 PREVIOUS_PHYSICAL_OUTPUT_LANE_MASKS
             ),
@@ -98,8 +113,13 @@ class ReceiverHybridConfigTests(unittest.TestCase):
         self.assertEqual(config.transport_policy, RECEIVER_HYBRID_TRANSPORT_OFF)
         self.assertEqual(config.firmware_environment, PRODUCTION_FIRMWARE_ENVIRONMENT)
         self.assertEqual(config.receiver_strip_counts, (8, 8, 8, 8, 1))
-        self.assertEqual(config.receiver_global_strip_offsets, (0, 8, 24, 16, 32))
-        self.assertEqual(config.physical_output_lane_masks, (255, 255, 255, 255, 255))
+        self.assertEqual(config.physical_lane_order, (0, 1, 2, 3, 4))
+        self.assertEqual(
+            config.receiver_global_strip_offsets, (0, 8, 16, 24, 32)
+        )
+        self.assertEqual(
+            config.physical_output_lane_masks, (255, 255, 255, 255, 255)
+        )
         self.assertEqual(config.strip_count, 33)
         self.assertRegex(config.selection_digest, r"^[0-9a-f]{64}$")
 
@@ -211,9 +231,14 @@ class ReceiverHybridConfigTests(unittest.TestCase):
     def test_schema_v2_lane_zero_config_bridges_and_migrates_to_broadcast(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
-            path = self.write(root, self.previous_payload())
+            path = self.write(root, self.lane_zero_payload())
             bridged = resolve_receiver_hybrid_config(root)
             self.assertFalse(bridged.enabled)
+            self.assertEqual(bridged.physical_lane_order, (0, 1, 2, 3, 4))
+            self.assertEqual(
+                bridged.receiver_global_strip_offsets,
+                (0, 8, 16, 24, 32),
+            )
             self.assertEqual(
                 bridged.physical_output_lane_masks,
                 (255, 255, 255, 255, 255),
@@ -237,7 +262,79 @@ class ReceiverHybridConfigTests(unittest.TestCase):
     def test_unknown_schema_v2_config_fails_without_overwrite(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
-            path = self.write(root, self.previous_payload(physical_lane_order=[0, 1, 2, 3, 4]))
+            path = self.write(
+                root,
+                self.lane_zero_payload(
+                    receiver_global_strip_offsets=[0, 8, 16, 24, 32]
+                ),
+            )
+            before = path.read_bytes()
+            with self.assertRaisesRegex(ReceiverHybridConfigError, "manual inspection"):
+                resolve_receiver_hybrid_config(root)
+            with self.assertRaisesRegex(ReceiverHybridConfigError, "manual inspection"):
+                migrate_legacy_receiver_hybrid_config(root)
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_schema_v3_permutation_bridges_and_migrates_preserving_selection(self):
+        selections = (
+            (False, False, RECEIVER_HYBRID_TRANSPORT_OFF),
+            (True, False, STRICT_RECEIVER_HYBRID_TRANSPORT_POLICY),
+            (True, True, STRICT_RECEIVER_HYBRID_TRANSPORT_POLICY),
+        )
+        for enabled, native, policy in selections:
+            with (
+                self.subTest(enabled=enabled, native=native),
+                tempfile.TemporaryDirectory() as temporary_dir,
+            ):
+                root = Path(temporary_dir)
+                path = self.write(
+                    root,
+                    self.previous_payload(
+                        enabled=enabled,
+                        native_modules_enabled=native,
+                        transport_policy=policy,
+                    ),
+                )
+
+                bridged = resolve_receiver_hybrid_config(root)
+
+                self.assertIs(bridged.enabled, enabled)
+                self.assertIs(bridged.native_modules_enabled, native)
+                self.assertEqual(bridged.physical_lane_order, (0, 1, 2, 3, 4))
+                self.assertEqual(
+                    bridged.receiver_global_strip_offsets,
+                    (0, 8, 16, 24, 32),
+                )
+                self.assertEqual(
+                    json.loads(path.read_text())["schema_version"],
+                    PREVIOUS_RECEIVER_HYBRID_CONFIG_VERSION,
+                )
+
+                config, migrated = migrate_legacy_receiver_hybrid_config(root)
+
+                self.assertTrue(migrated)
+                self.assertEqual(config, bridged)
+                stored = json.loads(path.read_text())
+                self.assertEqual(
+                    stored["schema_version"], RECEIVER_HYBRID_CONFIG_VERSION
+                )
+                self.assertEqual(stored["physical_lane_order"], [0, 1, 2, 3, 4])
+                self.assertEqual(
+                    stored["receiver_global_strip_offsets"],
+                    [0, 8, 16, 24, 32],
+                )
+                self.assertIs(stored["enabled"], enabled)
+                self.assertIs(stored["native_modules_enabled"], native)
+
+    def test_unknown_schema_v3_config_fails_without_overwrite(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            path = self.write(
+                root,
+                self.previous_payload(
+                    reverse_strips_by_logical_receiver=[False] * 5
+                ),
+            )
             before = path.read_bytes()
             with self.assertRaisesRegex(ReceiverHybridConfigError, "manual inspection"):
                 resolve_receiver_hybrid_config(root)

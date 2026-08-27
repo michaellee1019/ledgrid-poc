@@ -276,7 +276,7 @@ class _FakeTarget:
                 "receiver_hybrid_config_digest": ROLLOUT_CONFIG_DIGEST,
                 "receiver_hybrid_config": {
                     "receiver_strip_counts": [8, 8, 8, 8, 1],
-                    "receiver_global_strip_offsets": [0, 8, 24, 16, 32],
+                    "receiver_global_strip_offsets": [0, 8, 16, 24, 32],
                     "physical_output_lane_masks": [255, 255, 255, 255, 255],
                     "reverse_strips_by_logical_receiver": [
                         False, False, True, True, False,
@@ -296,7 +296,7 @@ class _FakeTarget:
                 "receiver_hybrid_config_digest": ROLLOUT_CONFIG_DIGEST,
                 "receiver_hybrid_config": {
                     "receiver_strip_counts": [8, 8, 8, 8, 1],
-                    "receiver_global_strip_offsets": [0, 8, 24, 16, 32],
+                    "receiver_global_strip_offsets": [0, 8, 16, 24, 32],
                     "physical_output_lane_masks": [255, 255, 255, 255, 255],
                     "reverse_strips_by_logical_receiver": [
                         False, False, True, True, False,
@@ -616,7 +616,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             environment,
             {
                 "receiver_strip_counts": [8, 8, 8, 8, 1],
-                "receiver_global_strip_offsets": [0, 8, 24, 16, 32],
+                "receiver_global_strip_offsets": [0, 8, 16, 24, 32],
                 "physical_output_lane_masks": [255, 255, 255, 255, 255],
                 "reverse_strips_by_logical_receiver": [
                     False, False, True, True, False,
@@ -634,7 +634,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         *, version: int, capabilities: int, responses: int = 2,
     ) -> tuple[Mapping[str, object], ...]:
         widths = (8, 8, 8, 8, 1)
-        offsets = (0, 8, 24, 16, 32)
+        offsets = (0, 8, 16, 24, 32)
         masks = (255, 255, 255, 255, 255)
         return tuple(
             {
@@ -655,7 +655,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
     def _receiver_device_map() -> tuple[Mapping[str, object], ...]:
         routes = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
         widths = (8, 8, 8, 8, 1)
-        offsets = (0, 8, 24, 16, 32)
+        offsets = (0, 8, 16, 24, 32)
         reversals = (False, False, True, True, False)
         masks = (255, 255, 255, 255, 255)
         return tuple(

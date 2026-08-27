@@ -71,7 +71,10 @@ See [Animation plugins](ANIMATION_SYSTEM.md) for the package and frame contracts
 The installed geometry is 33 strips x 138 LEDs. Four receivers own eight strips
 each; the fifth owns only the extra rightmost strip and broadcasts that one
 semantic strip across its physical outputs with lane mask `0xff`. Firmware still
-retains capacity for up to 140 LEDs per strip.
+retains capacity for up to 140 LEDs per strip. The camera-measured physical
+receiver order is `(0,1,2,3,4)`, producing explicit global offsets
+`(0,8,16,24,32)` by logical receiver ID; transport routes and direction flags
+remain separate configuration domains.
 
 ## Receiver protocol
 

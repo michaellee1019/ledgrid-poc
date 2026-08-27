@@ -1063,7 +1063,7 @@ class ShowcaseRunnerTests(unittest.TestCase):
         ))
         self.assertEqual(
             [device.committed_coverage for device in self.controller.devices],
-            [1, 2, 4, 3, 5],
+            [1, 2, 3, 4, 5],
         )
 
         host = np.zeros((WALL_PIXELS, 3), dtype=np.uint8)
@@ -1074,11 +1074,11 @@ class ShowcaseRunnerTests(unittest.TestCase):
         self.assertTrue(transport.set_frame(host))
         self.assertEqual(
             [int(device.last_host_frame[0, 0]) for device in self.controller.devices],
-            [1, 2, 4, 3, 5],
+            [1, 2, 3, 4, 5],
         )
         self.assertEqual(self.controller.devices[4].last_host_frame.shape, (138, 3))
         status = transport.get_stats()["aggregate"]["local_background"]
-        self.assertEqual(status["physical_lane_order"], [0, 1, 3, 2, 4])
+        self.assertEqual(status["physical_lane_order"], [0, 1, 2, 3, 4])
 
     def test_reversed_local_strip_order_maps_native_overlay_delta_and_host(self):
         lane_order = DEFAULT_PHYSICAL_LANE_ORDER
@@ -1139,8 +1139,8 @@ class ShowcaseRunnerTests(unittest.TestCase):
                 expected_strips,
             )
 
-        # A physical change on the left edge of the rightmost panel maps to
-        # local strip 7 of logical receiver 2, rather than corrupting strip 0.
+        # A physical change on the left edge of receiver 2's panel maps to local
+        # strip 7, rather than corrupting local strip 0.
         physical_first = RECEIVER_PIXEL_OFFSETS[2]
         delta = transport._local_patches(
             overlay,

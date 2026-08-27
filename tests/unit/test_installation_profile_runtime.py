@@ -391,7 +391,7 @@ class InstallationProfileRuntimeTests(unittest.TestCase):
         )
         changed_lane = InstallationProfileTopology(
             logical_to_transport_routes=base.logical_to_transport_routes,
-            physical_lane_order=(0, 1, 2, 3, 4),
+            physical_lane_order=(0, 1, 3, 2, 4),
             reverse_host_strips_by_logical_receiver=(
                 base.reverse_host_strips_by_logical_receiver
             ),

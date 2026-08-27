@@ -44,8 +44,8 @@ class InstallationProfileFirmwareFixtureTests(unittest.TestCase):
         self.assertEqual(tuple(map(len, fixtures)), (10264,) * 4 + (1570,))
         self.assertEqual(len({hashlib.sha256(payload).digest() for payload in fixtures}), 5)
         expected = (
-            (0, 8, False), (8, 8, False), (24, 8, True),
-            (16, 8, True), (32, 1, False),
+            (0, 8, False), (8, 8, False), (16, 8, True),
+            (24, 8, True), (32, 1, False),
         )
         calibration_digests = set()
         for logical_id, (payload, (origin, width, reversed_order)) in enumerate(

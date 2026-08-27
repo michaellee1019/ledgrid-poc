@@ -42,6 +42,9 @@ from drivers.spi_controller import (
 from drivers.led_layout import (
     DEFAULT_LEDS_PER_STRIP,
     STRIPS_PER_DEVICE,
+    WALL_PHYSICAL_LANE_ORDER,
+    WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER,
+    WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
     DeviceMapEntry,
     logical_strip_count,
     wall_device_map,
@@ -74,10 +77,12 @@ class MultiDeviceLEDController:
     """Multi-device LED controller that manages multiple ESP32 devices"""
 
     def with_receiver_hybrid_transport_policy(
-        self, transport_policy, *, physical_lane_order=(0, 1, 3, 2, 4),
-        reverse_strips_by_logical_receiver=(False, False, True, True, False),
+        self, transport_policy, *, physical_lane_order=WALL_PHYSICAL_LANE_ORDER,
+        reverse_strips_by_logical_receiver=(
+            WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER
+        ),
         reverse_native_strips_by_logical_receiver=(
-            False, False, True, True, False,
+            WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER
         ),
     ):
         """Return the controller facade selected by one explicit policy.

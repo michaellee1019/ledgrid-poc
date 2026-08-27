@@ -104,21 +104,31 @@ bridged or the fifth receiver never sees chip select.
 ### Installed lane and strip orientation
 
 Transport identity, wall position, and pixel direction are separate hardware
-facts. The finalized installed contract as of 2026-08-25 is:
+facts. The finalized installed contract as of 2026-08-27 is:
 
 | Logical receiver | SPI route | Logical width | Physical lane from left | Host strip order | Native coordinate order | Native global offset | Output mask |
 | ---: | --- | ---: | ---: | --- | --- | ---: | ---: |
 | 0 | `spidev0.0` | 8 | 0 | forward | forward | 0 | `0xff` |
 | 1 | `spidev0.1` | 8 | 1 | forward | forward | 8 | `0xff` |
-| 2 | `spidev1.1` | 8 | 3 | reversed | reversed | 24 | `0xff` |
-| 3 | `spidev1.0` | 8 | 2 | reversed | reversed | 16 | `0xff` |
+| 2 | `spidev1.1` | 8 | 2 | reversed | reversed | 16 | `0xff` |
+| 3 | `spidev1.0` | 8 | 3 | reversed | reversed | 24 | `0xff` |
 | 4 | `spidev1.2` | 1 | 4 | forward | forward | 32 | `0xff` broadcast |
 
-In config form, physical left-to-right logical order is `(0,1,3,2,4)`, while
+In config form, physical left-to-right logical order is `(0,1,2,3,4)`, while
 both the host-frame and receiver-native reversal maps are
 `(false,false,true,true,false)`. The durable runtime authority is
 `run_state/receiver_hybrid.json`; software defaults and this copied table are
 not substitutes for reading that file after a cable change.
+
+The 2026-08-27 Anker-camera diagnostic assigned one color to each logical
+receiver. Photo Booth's live preview was mirrored, and its left-to-right preview
+showed magenta, blue, yellow, green, red. Accounting for the preview mirror
+established the physical logical-receiver order `(0,1,2,3,4)` and invalidated
+the prior `(0,1,3,2,4)` assumption after the ESP32 cables changed. The partial
+view includes all five colored receiver bands and the fifth column at the
+rightmost edge, but it does not include enough wall geometry to accept the full
+homography or either host/native within-receiver direction map. Those direction
+flags remain unchanged pending their independent diagnostics.
 
 The two reversal columns deliberately remain independent. Host reversal maps
 complete RGB frames and sparse RGBA foreground into the receiver's local output

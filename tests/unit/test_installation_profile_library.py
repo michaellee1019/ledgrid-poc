@@ -83,7 +83,7 @@ class InstallationProfileLibraryTests(unittest.TestCase):
             "logical_to_transport_routes": (
                 (0, 0), (0, 1), (1, 1), (1, 0), (1, 2)
             ),
-            "physical_lane_order": (0, 1, 3, 2, 4),
+            "physical_lane_order": (0, 1, 2, 3, 4),
             "reverse_host_strips_by_logical_receiver": (
                 False,
                 False,
@@ -153,8 +153,8 @@ class InstallationProfileLibraryTests(unittest.TestCase):
             (
                 (0, 0, False),
                 (1, 8, False),
-                (3, 16, True),
-                (2, 24, True),
+                (2, 16, True),
+                (3, 24, True),
                 (4, 32, False),
             ),
         )

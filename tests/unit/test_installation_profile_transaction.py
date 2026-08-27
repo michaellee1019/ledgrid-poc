@@ -268,7 +268,7 @@ class CandidateFromResolvedTests(unittest.TestCase):
                 resolved.receiver_profiles[receiver_id].strip_origin
                 for receiver_id in range(RECEIVER_COUNT)
             ),
-            (0, 8, 24, 16, 32),
+            (0, 8, 16, 24, 32),
         )
         self.assertEqual(
             tuple(

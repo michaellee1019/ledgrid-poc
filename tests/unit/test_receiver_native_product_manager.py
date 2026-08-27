@@ -91,7 +91,7 @@ class _Controller:
         self.current_brightness = 255
         self.num_devices = 5
         self.receiver_strip_counts = (8, 8, 8, 8, 1)
-        self.receiver_global_strip_offsets = (0, 8, 24, 16, 32)
+        self.receiver_global_strip_offsets = (0, 8, 16, 24, 32)
         self.operations = []
         self.context = None
         self.session = None

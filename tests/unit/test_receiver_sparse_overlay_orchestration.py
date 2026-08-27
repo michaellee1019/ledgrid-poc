@@ -150,10 +150,10 @@ def controller(devices):
     item.leds_per_device = 1104
     if len(devices) == 5:
         item.receiver_strip_counts = (8, 8, 8, 8, 1)
-        item.receiver_global_strip_offsets = (0, 8, 24, 16, 32)
+        item.receiver_global_strip_offsets = (0, 8, 16, 24, 32)
         item.receiver_lane_masks = (0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
         item.receiver_pixel_counts = (1104, 1104, 1104, 1104, 138)
-        item.receiver_pixel_offsets = (0, 1104, 3312, 2208, 4416)
+        item.receiver_pixel_offsets = (0, 1104, 2208, 3312, 4416)
         item.reverse_host_strips_by_logical_receiver = (
             False, False, True, True, False,
         )

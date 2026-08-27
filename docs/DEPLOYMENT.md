@@ -254,12 +254,20 @@ Do not use the Python-only flow after changing any of:
 startup, firmware selection, state restore, and deployment receipts. Absence or
 an explicit disabled selection chooses the feature-off production firmware.
 The schema-v3 file also carries the finalized five-receiver topology: logical
-widths `(8,8,8,8,1)`, global offsets `(0,8,24,16,32)`, physical order
-`(0,1,3,2,4)`, and output masks `(255,255,255,255,255)`. The last mask
+widths `(8,8,8,8,1)`, global offsets `(0,8,16,24,32)`, physical order
+`(0,1,2,3,4)`, and output masks `(255,255,255,255,255)`. The last mask
 broadcasts the compact tail strip because its assembled connector lane was not
 recorded. Production, local receiver execution, and managed-native execution
 map to three allowlisted firmware environments; callers cannot persist an
 arbitrary environment.
+
+This order was remeasured after the ESP32 cables changed. In the mirrored
+2026-08-27 Photo Booth preview, the five receiver diagnostic appeared magenta,
+blue, yellow, green, red; after accounting for the preview mirror, that identifies
+logical receivers `(0,1,2,3,4)` from physical left to right, with receiver 4's
+single column still rightmost. The partial wall view is sufficient for receiver
+permutation only, not full camera homography or host/native strip-direction
+acceptance.
 
 Inspect the live selection before a receiver-native deployment:
 

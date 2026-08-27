@@ -17,11 +17,11 @@ independent stages:
 The receiver has no FastLED dependency. It uses the public ESP-IDF LCD/I80 API
 directly so buffering, completion, timing, and overload behavior are explicit.
 
-## Finalized installed topology (2026-08-25)
+## Finalized installed topology (updated 2026-08-27)
 
 Current release acceptance targets 33×138 across five receivers with logical
-widths `(8,8,8,8,1)`, physical left-to-right IDs `(0,1,3,2,4)`, and native
-global offsets by logical ID `(0,8,24,16,32)`. The fifth receiver uses SPI1
+widths `(8,8,8,8,1)`, physical left-to-right IDs `(0,1,2,3,4)`, and native
+global offsets by logical ID `(0,8,16,24,32)`. The fifth receiver uses SPI1
 CE2 and broadcasts its one semantic strip across physical outputs with mask
 `0xff`. All strict status, dense-streamed, sweep, sparse-overlay, profile, and native
 module gates require fresh evidence from all five receivers. Historical 32×138,
@@ -32,6 +32,13 @@ Logical width and physical output-lane selection are independent. Acceptance
 must prove the added logical column without treating seven padded/mirrored lanes
 on the fifth receiver as semantic pixels. The old degraded return-path recipes
 are retained only as recovery diagnostics and are not current release gates.
+
+The 2026-08-27 Anker/Photo Booth five-color diagnostic accepts only receiver
+permutation: its mirrored preview showed magenta, blue, yellow, green, red and
+established logical receivers `(0,1,2,3,4)` from physical left to right after
+accounting for the preview mirror. It also keeps the fifth single column at the
+right edge. The camera's partial wall view does not accept full homography,
+within-receiver host strip order, or receiver-native direction.
 
 At 2.4 MHz, each WS2812 data bit is represented by three parallel samples:
 

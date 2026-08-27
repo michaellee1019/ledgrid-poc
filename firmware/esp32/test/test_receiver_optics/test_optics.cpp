@@ -486,9 +486,9 @@ void test_installed_orientation_mapping_stitches_each_global_strip_once() {
   TEST_ASSERT_EQUAL_UINT8(0, owner[7]);
   TEST_ASSERT_EQUAL_UINT8(1, owner[8]);
   TEST_ASSERT_EQUAL_UINT8(1, owner[15]);
-  TEST_ASSERT_EQUAL_UINT8(3, owner[16]);
-  TEST_ASSERT_EQUAL_UINT8(3, owner[23]);
-  TEST_ASSERT_EQUAL_UINT8(2, owner[24]);
+  TEST_ASSERT_EQUAL_UINT8(2, owner[16]);
+  TEST_ASSERT_EQUAL_UINT8(2, owner[23]);
+  TEST_ASSERT_EQUAL_UINT8(3, owner[24]);
   TEST_ASSERT_EQUAL_UINT8(4, owner[32]);
   TEST_ASSERT_EQUAL_UINT8(7, local_index[7]);
   TEST_ASSERT_EQUAL_UINT8(0, local_index[8]);

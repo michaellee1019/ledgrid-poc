@@ -18,6 +18,12 @@ from drivers.led_layout import (
     EXTRA_STRIP_LANE,
     MIRROR_EXTRA_STRIP_ON_ALL_LANES,
     STRIPS_PER_DEVICE,
+    WALL_PHYSICAL_LANE_ORDER,
+    WALL_PHYSICAL_OUTPUT_LANE_MASKS,
+    WALL_RECEIVER_GLOBAL_STRIP_OFFSETS,
+    WALL_RECEIVER_STRIP_COUNTS,
+    WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER,
+    WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
     device_count_for_strips,
     logical_strip_count,
     wall_device_map,
@@ -59,10 +65,29 @@ class LedLayoutTests(unittest.TestCase):
         self.assertTrue(MIRROR_EXTRA_STRIP_ON_ALL_LANES)
         self.assertEqual(DEFAULT_RECEIVER_STRIP_COUNTS, (8, 8, 8, 8, 1))
         self.assertEqual(
-            DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS, (0, 8, 24, 16, 32)
+            DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS, (0, 8, 16, 24, 32)
         )
         self.assertEqual(
             DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS,
+            (0xFF, 0xFF, 0xFF, 0xFF, 0xFF),
+        )
+
+    def test_camera_measured_runtime_topology_keeps_domains_explicit(self):
+        self.assertEqual(WALL_PHYSICAL_LANE_ORDER, (0, 1, 2, 3, 4))
+        self.assertEqual(WALL_RECEIVER_STRIP_COUNTS, (8, 8, 8, 8, 1))
+        self.assertEqual(
+            WALL_RECEIVER_GLOBAL_STRIP_OFFSETS, (0, 8, 16, 24, 32)
+        )
+        self.assertEqual(
+            WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER,
+            (False, False, True, True, False),
+        )
+        self.assertEqual(
+            WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
+            (False, False, True, True, False),
+        )
+        self.assertEqual(
+            WALL_PHYSICAL_OUTPUT_LANE_MASKS,
             (0xFF, 0xFF, 0xFF, 0xFF, 0xFF),
         )
 
@@ -80,9 +105,9 @@ class MultiDeviceLayoutTests(unittest.TestCase):
         controller.strip_count = 33
         controller.total_leds = 66
         controller.receiver_strip_counts = (8, 8, 8, 8, 1)
-        controller.receiver_global_strip_offsets = (0, 8, 24, 16, 32)
+        controller.receiver_global_strip_offsets = (0, 8, 16, 24, 32)
         controller.receiver_pixel_counts = (16, 16, 16, 16, 2)
-        controller.receiver_pixel_offsets = (0, 16, 48, 32, 64)
+        controller.receiver_pixel_offsets = (0, 16, 32, 48, 64)
         controller.reverse_host_strips_by_logical_receiver = (
             False, False, True, True, False,
         )

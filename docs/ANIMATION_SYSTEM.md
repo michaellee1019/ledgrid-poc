@@ -7,8 +7,8 @@ parameters, presets, previews, and reload operations.
 ## Installed geometry and receiver topology
 
 The finalized wall is 33×138. Five logical receivers own widths
-`(8,8,8,8,1)`; their physical left-to-right order is `(0,1,3,2,4)` and native
-global offsets by logical ID are `(0,8,24,16,32)`. Runtime, preview, native
+`(8,8,8,8,1)`; their physical left-to-right order is `(0,1,2,3,4)` and native
+global offsets by logical ID are `(0,8,16,24,32)`. Runtime, preview, native
 build, profile, persistence, and acceptance code must consume explicit topology
 rather than infer `logical_id * 8` or assume every receiver owns eight semantic
 strips. Historical 32×138 fixtures and measurements remain useful only at the
@@ -530,12 +530,13 @@ migration input; it is not a selectable current operating mode or release gate.
 The finalized five-receiver topology keeps four independent coordinate facts:
 fixed SPI route/logical identity, physical lane permutation, host-frame/sparse
 strip direction, and receiver-native procedural direction. The target-owned
-config is authoritative and carries physical order `(0,1,3,2,4)`, widths
-`(8,8,8,8,1)`, offsets `(0,8,24,16,32)`, output masks
-`(255,255,255,255,255)`, and independent host/native reversal maps. The fifth
+config is authoritative and carries physical order `(0,1,2,3,4)`, widths
+`(8,8,8,8,1)`, offsets `(0,8,16,24,32)`, output masks
+`(255,255,255,255,255)`, and independent host/native reversal maps
+`(false,false,true,true,false)`. The fifth
 mask broadcasts one semantic strip across the dedicated receiver's outputs;
 the semantic wall remains 33 strips wide.
-`(false,false,true,true,false)`. Host transforms must not be reused as proof of
+Host transforms must not be reused as proof of
 native orientation: verify boundary-crossing foreground and a direction-marked
 native phase field separately. See [Hardware](HARDWARE.md#installed-lane-and-strip-orientation)
 for the exact installed mapping and diagnostic sequence.

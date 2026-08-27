@@ -306,7 +306,7 @@ class StartupProfileContextTests(unittest.TestCase):
         events = []
         config = {
             "enabled": True,
-            "physical_lane_order": (0, 1, 3, 2, 4),
+            "physical_lane_order": (0, 1, 2, 3, 4),
             "reverse_strips_by_logical_receiver": (
                 False, True, False, True, False,
             ),
@@ -366,7 +366,7 @@ class StartupProfileContextTests(unittest.TestCase):
         self.assertEqual(controller_kwargs["receiver_strip_counts"], (8, 8, 8, 8, 1))
         self.assertEqual(
             controller_kwargs["receiver_global_strip_offsets"],
-            (0, 8, 24, 16, 32),
+            (0, 8, 16, 24, 32),
         )
         manager_kwargs = next(event[2] for event in events if event[0] == "manager")
         self.assertEqual(manager_kwargs["installation_profile_digest"], PROFILE_A)
