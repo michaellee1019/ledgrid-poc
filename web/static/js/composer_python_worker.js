@@ -6,12 +6,14 @@ const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_BASE_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const ENGINE = 'python-pyodide-wasm';
 const RUNTIME_ROOT = '/ledgrid_python_runtime';
+const PREPARED_PACKAGES = Object.freeze(['numpy', 'pillow']);
 
 let pyodidePromise = null;
 let runtimeAssetUrl = null;
 let runtimeReady = false;
 let messageQueue = Promise.resolve();
 let pillowPromise = null;
+const latestRenderGeneration = new Map();
 
 function errorMessage(error) {
     if (error instanceof Error && error.message) return error.message;
@@ -23,8 +25,28 @@ function postError(requestId, instanceId, error) {
         type: 'error',
         requestId,
         instanceId: instanceId || 'primary',
+        generation: null,
         engine: ENGINE,
         error: errorMessage(error),
+    });
+}
+
+function renderGeneration(message) {
+    const value = Number(message.generation);
+    if (!Number.isSafeInteger(value) || value < 1) {
+        throw new Error('Render generation must be a positive safe integer.');
+    }
+    return value;
+}
+
+function postObsolete(message, generation) {
+    self.postMessage({
+        type: 'obsolete',
+        requestId: message.requestId,
+        instanceId: message.instanceId || 'primary',
+        generation,
+        latestGeneration: latestRenderGeneration.get(message.instanceId || 'primary'),
+        engine: ENGINE,
     });
 }
 
@@ -87,6 +109,12 @@ async function ensurePluginPackages(pyodide, pluginId) {
     await pillowPromise;
 }
 
+async function ensurePreparedPackages(pyodide) {
+    await pyodide.loadPackage('numpy');
+    if (!pillowPromise) pillowPromise = pyodide.loadPackage('pillow');
+    await pillowPromise;
+}
+
 function copyPythonBytes(value) {
     let converted = value;
     if (value && typeof value.toJs === 'function') {
@@ -119,6 +147,12 @@ async function render(message) {
     if (!runtimeReady) {
         throw new Error('The Python browser renderer has not been initialized.');
     }
+    const instanceId = message.instanceId || 'primary';
+    const generation = renderGeneration(message);
+    if (generation < (latestRenderGeneration.get(instanceId) || generation)) {
+        postObsolete(message, generation);
+        return;
+    }
     const pyodide = await ensurePyodide();
     pyodide.globals.set('_ledgrid_payload_json', JSON.stringify({
         instanceId: message.instanceId || 'primary',
@@ -130,6 +164,10 @@ async function render(message) {
     const resultJson = await pyodide.runPythonAsync(
         '_ledgrid_browser_runtime.render_json(_ledgrid_payload_json)'
     );
+    if (generation < (latestRenderGeneration.get(instanceId) || generation)) {
+        postObsolete(message, generation);
+        return;
+    }
     const result = JSON.parse(resultJson);
     pyodide.globals.set('_ledgrid_instance_id', result.instanceId);
     const pythonBytes = pyodide.runPython(
@@ -140,6 +178,7 @@ async function render(message) {
         type: 'frame',
         requestId: message.requestId,
         instanceId: result.instanceId,
+        generation,
         pixels: pixels.buffer,
         width: result.width,
         height: result.height,
@@ -172,7 +211,26 @@ async function dispose(message) {
         '_ledgrid_browser_runtime.dispose_json(_ledgrid_payload_json)'
     );
     const result = JSON.parse(resultJson);
+    latestRenderGeneration.delete(message.instanceId || 'primary');
     self.postMessage({type: 'disposed', requestId: message.requestId, ...result});
+}
+
+async function prepare(message) {
+    const pyodide = await ensureRuntime(message.assetUrl);
+    const requested = Array.isArray(message.packages) ? message.packages : [];
+    for (const name of requested) {
+        if (!PREPARED_PACKAGES.includes(name)) {
+            throw new Error(`Unsupported offline Python package: ${String(name)}`);
+        }
+    }
+    await ensurePreparedPackages(pyodide);
+    self.postMessage({
+        type: 'prepared',
+        requestId: message.requestId,
+        engine: ENGINE,
+        pyodideVersion: PYODIDE_VERSION,
+        packages: [...PREPARED_PACKAGES],
+    });
 }
 
 async function dispatch(message) {
@@ -182,11 +240,25 @@ async function dispatch(message) {
     if (message.type === 'init') return initialize(message);
     if (message.type === 'render') return render(message);
     if (message.type === 'dispose') return dispose(message);
+    if (message.type === 'prepare') return prepare(message);
     throw new Error(`Unsupported Python renderer message: ${String(message.type)}`);
 }
 
 self.onmessage = (event) => {
     const message = event.data;
+    if (message?.type === 'render') {
+        try {
+            const generation = renderGeneration(message);
+            const instanceId = message.instanceId || 'primary';
+            latestRenderGeneration.set(
+                instanceId,
+                Math.max(generation, latestRenderGeneration.get(instanceId) || 0),
+            );
+        } catch (error) {
+            postError(message?.requestId, message?.instanceId, error);
+            return;
+        }
+    }
     messageQueue = messageQueue
         .then(() => dispatch(message))
         .catch((error) => postError(message?.requestId, message?.instanceId, error));

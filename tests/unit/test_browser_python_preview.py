@@ -16,6 +16,7 @@ import numpy as np
 from animation.browser_preview.python.runtime import (
     BrowserPreviewRuntime,
     ENGINE,
+    MAX_RUNTIME_INSTANCES,
     PLUGIN_SPECS,
     SUPPORTED_PLUGINS,
 )
@@ -149,6 +150,7 @@ class BrowserPythonBundleTests(unittest.TestCase):
         self.assertTrue(manifest["supportsCalibratedPlantMasks"])
         self.assertTrue(manifest["supportsPlantModifiers"])
         self.assertTrue(manifest["supportsMultipleInstances"])
+        self.assertEqual(manifest["maxInstances"], MAX_RUNTIME_INSTANCES)
         self.assertTrue(manifest["supportsFixedWallTime"])
         self.assertIn("strip * ledsPerStrip + led", manifest["orientation"])
         self.assertEqual(
@@ -181,6 +183,8 @@ class BrowserPythonBundleTests(unittest.TestCase):
         self.assertIn("type: 'error'", worker)
         self.assertIn("type: 'disposed'", worker)
         self.assertIn("message.type === 'dispose'", worker)
+        self.assertIn("message.type === 'prepare'", worker)
+        self.assertIn("latestRenderGeneration", worker)
         self.assertIn("pixels: pixels.buffer", worker)
         self.assertIn("[pixels.buffer]", worker)
         self.assertNotIn("/api/preview", worker)

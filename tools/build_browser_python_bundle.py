@@ -20,6 +20,7 @@ PYODIDE_VERSION = "314.0.5"
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 DEFAULT_OUTPUT = Path("web/static/generated/composer/ledgrid_python_runtime.zip")
 ENGINE = "python-pyodide-wasm"
+MAX_RUNTIME_INSTANCES = 8
 
 
 @dataclass(frozen=True)
@@ -173,6 +174,7 @@ def build_members(repo_root: Path) -> Dict[str, bytes]:
         "supportsCalibratedPlantMasks": True,
         "supportsPlantModifiers": True,
         "supportsMultipleInstances": True,
+        "maxInstances": MAX_RUNTIME_INSTANCES,
         "supportsFixedWallTime": True,
         "plugins": [plugin.to_dict() for plugin in plugins],
         "sourceSha256": source_hashes,

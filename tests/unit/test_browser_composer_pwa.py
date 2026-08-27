@@ -97,6 +97,7 @@ class BrowserComposerPWATests(unittest.TestCase):
         assets = _service_worker_shell_assets(self.worker)
         expected = {
             "/composer",
+            "/composer-service-worker.js",
             "/static/css/composer.css",
             "/static/js/composer_compositor.js",
             "/static/js/composer_runtime.js",
@@ -106,13 +107,15 @@ class BrowserComposerPWATests(unittest.TestCase):
             "/static/generated/composer/aurora_curtains_native.wasm",
             "/static/generated/composer/compiled_rainbow.wasm",
             "/static/generated/composer/ledgrid_python_runtime.zip",
+            "/static/generated/composer/offline_assets.json",
             "/static/composer.webmanifest",
             "/static/icons/composer-180.png",
             "/static/icons/composer-512.png",
             "/static/icons/composer.svg",
         }
         self.assertEqual(assets, expected)
-        for asset in sorted(assets - {"/composer"}):
+        route_backed = {"/composer", "/composer-service-worker.js"}
+        for asset in sorted(assets - route_backed):
             self.assertTrue(
                 (STATIC / asset.removeprefix("/static/")).is_file(),
                 f"precache asset does not exist: {asset}",
@@ -121,8 +124,10 @@ class BrowserComposerPWATests(unittest.TestCase):
             self.worker,
             r"CACHE_NAME\s*=\s*`\$\{CACHE_PREFIX\}v\d+`",
         )
-        self.assertIn("cache.addAll(SHELL_ASSETS)", self.worker)
+        self.assertIn("installVersionedShell", self.worker)
+        self.assertIn("Offline asset digest mismatch", self.worker)
         self.assertIn("name.startsWith(CACHE_PREFIX)", self.worker)
+        self.assertIn("name !== RUNTIME_CACHE_NAME", self.worker)
 
     def test_navigation_and_bootstrap_have_explicit_offline_fallbacks(self) -> None:
         self.assertIn("event.request.mode === 'navigate'", self.worker)
@@ -134,6 +139,14 @@ class BrowserComposerPWATests(unittest.TestCase):
         self.assertIn("networkFirst(event.request, BOOTSTRAP_URL)", self.worker)
         self.assertIn("const cached = await caches.match(fallbackKey)", self.worker)
         self.assertIn("if (cached) return cached", self.worker)
+
+    def test_ready_offline_requires_verified_catalog_and_python_runtime(self) -> None:
+        self.assertIn("type: 'OFFLINE_STATUS'", self.worker)
+        self.assertIn("'PYTHON_RUNTIME_READY'", self.worker)
+        self.assertIn("responseDigest(bootstrap)", self.worker)
+        self.assertIn("Python runtime asset changed", self.worker)
+        self.assertIn("readyOffline: true", self.worker)
+        self.assertIn("readyOffline: false", self.worker)
 
     def test_connectivity_and_mutating_actions_are_never_cached(self) -> None:
         assets = _service_worker_shell_assets(self.worker)

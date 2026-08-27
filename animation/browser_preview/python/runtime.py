@@ -19,6 +19,7 @@ import numpy as np
 
 ENGINE = "python-pyodide-wasm"
 DEFAULT_INSTANCE_ID = "primary"
+MAX_RUNTIME_INSTANCES = 8
 _INSTANCE_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _MISSING = object()
 
@@ -200,7 +201,15 @@ class BrowserPreviewRuntime:
             "instanceId": resolved_instance_id,
             "disposed": disposed,
             "remainingInstances": len(self._instances),
+            "maxInstances": MAX_RUNTIME_INSTANCES,
         }
+
+    @staticmethod
+    def _release_instance(instance: _RuntimeInstance) -> None:
+        cleanup = getattr(instance.animation, "cleanup", None)
+        if callable(cleanup):
+            cleanup()
+        instance.frame_bytes = b""
 
     def initialize(
         self,
@@ -229,12 +238,22 @@ class BrowserPreviewRuntime:
         instance = self._instances.get(resolved_instance_id)
         reset = instance is None or identity != instance.identity
         if reset:
+            if instance is None and len(self._instances) >= MAX_RUNTIME_INSTANCES:
+                raise RuntimeError(
+                    "Python browser preview instance limit reached "
+                    f"({MAX_RUNTIME_INSTANCES}); dispose an inactive renderer first"
+                )
             module = importlib.import_module(f"animation.plugins.{plugin_id}")
             animation_class = getattr(module, class_name)
             controller = PreviewController(strip_count, leds_per_strip)
             animation = animation_class(controller, resolved_params)
-            instance = _RuntimeInstance(identity, animation, controller, spec)
-            self._instances[resolved_instance_id] = instance
+            replacement = _RuntimeInstance(identity, animation, controller, spec)
+            if instance is not None:
+                self._release_instance(instance)
+                # Replacing a renderer can release multiple large NumPy planes.
+                gc.collect()
+            instance = replacement
+            self._instances[resolved_instance_id] = replacement
         elif resolved_params:
             instance.animation.update_parameters(resolved_params)
         self._last_instance_id = resolved_instance_id
@@ -251,6 +270,8 @@ class BrowserPreviewRuntime:
             "supportedPlugins": list(SUPPORTED_PLUGINS),
             "supportsPlantModifiers": True,
             "supportsMultipleInstances": True,
+            "instanceCount": len(self._instances),
+            "maxInstances": MAX_RUNTIME_INSTANCES,
             "supportsFixedWallTime": True,
             "requiredPackages": list(spec.required_packages),
         }
@@ -390,5 +411,6 @@ class BrowserPreviewRuntime:
 
 __all__ = [
     "BrowserPreviewRuntime", "DEFAULT_INSTANCE_ID", "ENGINE", "PLUGIN_SPECS",
-    "PreviewController", "SUPPORTED_PLUGINS", "normalize_geometry",
+    "MAX_RUNTIME_INSTANCES", "PreviewController", "SUPPORTED_PLUGINS",
+    "normalize_geometry",
 ]
