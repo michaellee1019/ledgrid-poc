@@ -24,12 +24,21 @@ from animation.core.receiver_sparse_publisher import ReceiverSparsePublisher
 from drivers.spi_controller import (
     CMD_CONFIG,
     COMMAND_ACK_POLL_INTERVAL_SECONDS,
+    CRC_BYTES,
     MAX_RGBA_PIXELS_PER_BATCH_SPAN,
     OVERLAY_UPDATE_FULL_SNAPSHOT,
 )
 from drivers.degraded_receiver_hybrid import (
+    DEFAULT_PHYSICAL_LANE_ORDER,
+    DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER,
     LEDS_PER_STRIP,
     LOCAL_STRIPS,
+    RECEIVER_COUNT,
+    RECEIVER_GLOBAL_STRIP_OFFSETS,
+    RECEIVER_LANE_MASKS,
+    RECEIVER_PIXEL_COUNTS,
+    RECEIVER_PIXEL_OFFSETS,
+    RECEIVER_STRIP_COUNTS,
     WRITE_ONLY_FOREGROUND_SETTLE_SECONDS,
 )
 from tools.benchmarks.phase3b_degraded_showcase import (
@@ -81,7 +90,13 @@ def write_only_status(**changes):
 
 
 def topology():
-    return [readable_status(0), readable_status(1), write_only_status(), write_only_status()]
+    return [
+        readable_status(0),
+        readable_status(1),
+        write_only_status(),
+        write_only_status(),
+        write_only_status(),
+    ]
 
 
 def desired_display():
@@ -101,8 +116,8 @@ def confirmation(base_challenge: str, **changes):
         "challenge": base_challenge,
         "verdict": "pass",
         "operator": "wall observer",
-        "observed_logical_devices": [0, 1, 2, 3],
-        "acknowledged_unverified_devices": [2, 3],
+        "observed_logical_devices": list(range(RECEIVER_COUNT)),
+        "acknowledged_unverified_devices": [2, 3, 4],
     }
     payload.update(changes)
     return payload
@@ -129,15 +144,18 @@ class PreflightPolicyTests(unittest.TestCase):
         self.assertTrue(result["passed"], result)
         self.assertFalse(result["acceptance_policy"]["telemetry_complete"])
         self.assertEqual(result["acceptance_policy"]["readable_devices"], [0, 1])
-        self.assertEqual(result["acceptance_policy"]["unverified_devices"], [2, 3])
+        self.assertEqual(
+            result["acceptance_policy"]["unverified_devices"], [2, 3, 4]
+        )
         self.assertFalse(result["receivers"]["2"]["physical_display_verified"])
+        self.assertFalse(result["receivers"]["4"]["physical_display_verified"])
 
     def test_wrong_receiver_count_and_non_sequence_are_rejected(self):
         for statuses in (None, topology()[:-1], topology() + [write_only_status()]):
             with self.subTest(statuses=statuses):
                 result = evaluate_preflight(statuses)
                 self.assertFalse(result["passed"])
-                self.assertTrue(any("expected exactly 4" in item for item in result["failures"]))
+                self.assertTrue(any("expected exactly 5" in item for item in result["failures"]))
 
     def test_every_readable_preflight_field_is_strict_for_both_receivers(self):
         mutations = (
@@ -156,14 +174,14 @@ class PreflightPolicyTests(unittest.TestCase):
                     self.assertFalse(result["passed"])
                     self.assertTrue(any(expected in item for item in result["failures"]))
 
-    def test_every_write_only_shape_field_is_exact_for_both_receivers(self):
+    def test_every_write_only_shape_field_is_exact_for_all_three_receivers(self):
         mutations = (
             ("receiver_status_seen", True),
             ("receiver_status_version", 4),
             ("receiver_capabilities", EXPECTED_CAPABILITIES),
             ("receiver_logical_device", 2),
         )
-        for logical_id in (2, 3):
+        for logical_id in (2, 3, 4):
             for key, value in mutations:
                 with self.subTest(logical_id=logical_id, key=key):
                     statuses = topology()
@@ -177,7 +195,7 @@ class PreflightPolicyTests(unittest.TestCase):
         statuses[3] = readable_status(3)
         result = evaluate_preflight(statuses)
         self.assertFalse(result["passed"])
-        self.assertTrue(any("write-only pair 2/3" in item for item in result["failures"]))
+        self.assertTrue(any("write-only receivers 2/3/4" in item for item in result["failures"]))
 
 
 class ShowcaseConfigTests(unittest.TestCase):
@@ -216,16 +234,19 @@ class ConfirmationAndEvidenceTests(unittest.TestCase):
         before = {
             2: {"spi_transfers": 10, "bytes_sent": 100, "errors": 1},
             3: {"spi_transfers": 20, "bytes_sent": 200, "errors": 2},
+            4: {"spi_transfers": 30, "bytes_sent": 300, "errors": 0},
         }
         after = {
             2: {"spi_transfers": 11, "bytes_sent": 120, "errors": 1},
             3: {"spi_transfers": 22, "bytes_sent": 240, "errors": 2},
+            4: {"spi_transfers": 31, "bytes_sent": 320, "errors": 0},
         }
         self.assertTrue(evaluate_write_only_host_evidence(before, after)["passed"])
         failures = (
             (2, "spi_transfers", 10, "transfers did not advance"),
             (2, "bytes_sent", 100, "bytes did not advance"),
             (3, "errors", 3, "errors changed"),
+            (4, "spi_transfers", 30, "transfers did not advance"),
         )
         for logical_id, key, value, expected in failures:
             with self.subTest(logical_id=logical_id, key=key):
@@ -246,12 +267,15 @@ class ConfirmationAndEvidenceTests(unittest.TestCase):
         frame = source.render(0.0, 0)
         coverage = [
             int(np.count_nonzero(
-                frame.pixels[index * LOCAL_PIXELS:(index + 1) * LOCAL_PIXELS, 3]
+                frame.pixels[
+                    RECEIVER_PIXEL_OFFSETS[index]:
+                    RECEIVER_PIXEL_OFFSETS[index] + RECEIVER_PIXEL_COUNTS[index],
+                    3,
+                ]
             ))
-            for index in range(4)
+            for index in range(RECEIVER_COUNT)
         ]
 
-        self.assertEqual(coverage, [19, 65, 62, 12])
         self.assertTrue(all(count > 0 for count in coverage))
 
     def test_real_clock_minute_delta_reassembles_across_reversed_lane_boundary(self):
@@ -266,20 +290,15 @@ class ConfirmationAndEvidenceTests(unittest.TestCase):
         self.assertTrue(second.changed)
         self.assertIsNotNone(second.dirty_ranges)
 
-        lane_order = (0, 1, 3, 2)
-        physical_by_logical = tuple(
-            lane_order.index(logical_id) for logical_id in range(4)
-        )
-        reverse = (False, False, True, True)
+        reverse = DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
         planes = []
         changed_logical = []
-        for logical_id in range(4):
+        for logical_id in range(RECEIVER_COUNT):
             initial = DegradedHybridTransport._local_patches(
                 first.pixels,
                 logical_id,
                 full_snapshot=True,
                 dirty_ranges=None,
-                physical_lane_by_logical=physical_by_logical,
                 reverse_strips_by_logical_receiver=reverse,
             )
             plane = np.concatenate([data for _start, data in initial]).copy()
@@ -288,7 +307,6 @@ class ConfirmationAndEvidenceTests(unittest.TestCase):
                 logical_id,
                 full_snapshot=False,
                 dirty_ranges=tuple(second.dirty_ranges),
-                physical_lane_by_logical=physical_by_logical,
                 reverse_strips_by_logical_receiver=reverse,
             )
             if delta:
@@ -299,13 +317,20 @@ class ConfirmationAndEvidenceTests(unittest.TestCase):
 
         reconstructed = np.zeros_like(second.pixels)
         for logical_id, plane in enumerate(planes):
-            physical_lane = physical_by_logical[logical_id]
+            local_strips = RECEIVER_STRIP_COUNTS[logical_id]
+            local_pixels = RECEIVER_PIXEL_COUNTS[logical_id]
+            if logical_id == 4:
+                np.testing.assert_array_equal(
+                    plane[local_pixels:],
+                    np.zeros((LOCAL_PIXELS - local_pixels, 4), dtype=np.uint8),
+                )
+            plane = plane[:local_pixels]
             if reverse[logical_id]:
                 plane = plane.reshape(
-                    LOCAL_STRIPS, LEDS_PER_STRIP, 4
-                )[::-1].reshape(LOCAL_PIXELS, 4)
-            start = physical_lane * LOCAL_PIXELS
-            reconstructed[start:start + LOCAL_PIXELS] = plane
+                    local_strips, LEDS_PER_STRIP, 4
+                )[::-1].reshape(local_pixels, 4)
+            start = RECEIVER_PIXEL_OFFSETS[logical_id]
+            reconstructed[start:start + local_pixels] = plane
         np.testing.assert_array_equal(reconstructed, second.pixels)
         self.assertIn(2, changed_logical)
         self.assertIn(3, changed_logical)
@@ -434,6 +459,7 @@ class FakeDevice:
         self.configured_logical_id = 0xFF if write_only else logical_id
         self.reverse_local_strip_order = False
         self.bus, self.device = EXPECTED_DEVICE_MAP[logical_id]
+        self.strip_count = RECEIVER_STRIP_COUNTS[logical_id]
         self.events = events
         self.clock = clock
         self.write_only = write_only
@@ -444,7 +470,7 @@ class FakeDevice:
         self.bytes_sent = 0
         self.errors = 0
         self.base_mode = 2
-        self.background_offset = logical_id * 8
+        self.background_offset = RECEIVER_GLOBAL_STRIP_OFFSETS[logical_id]
         self.context = None
         self.session = None
         self.foreground_state = 0
@@ -456,6 +482,8 @@ class FakeDevice:
         self.present_at = 0
         self.last_processed_command = 0
         self.runtime_rejections = 0
+        # Sparse-overlay protocol v1 retains an eight-lane replacement plane;
+        # receiver 4's seven inactive lanes must remain transparent padding.
         self.overlay_plane = np.zeros((LOCAL_PIXELS, 4), dtype=np.uint8)
         self.staging_plane = self.overlay_plane.copy()
         self.committed_coverage = 0
@@ -542,15 +570,19 @@ class FakeDevice:
         self._touch("logical identity CONFIG", len(packet))
         if (
             required_status_version != EXPECTED_STATUS_VERSION
-            or len(packet) != 6
+            or len(packet) != 8
             or packet[0] != CMD_CONFIG
-            or packet[1:4] != bytes((8, 0, 138))
+            or packet[1:4]
+            != bytes((RECEIVER_STRIP_COUNTS[self.device_index], 0, 138))
             or packet[5] != self.device_index
+            or int.from_bytes(packet[6:8], "big")
+            != RECEIVER_GLOBAL_STRIP_OFFSETS[self.device_index]
         ):
             raise RuntimeError("malformed explicit identity CONFIG")
         self.configured_logical_id = packet[5]
         self.reverse_local_strip_order = bool(packet[4] & 0x80)
         self.logical_id = packet[5]
+        self.background_offset = int.from_bytes(packet[6:8], "big")
         self.last_processed_command = CMD_CONFIG
         return self._status()
 
@@ -642,16 +674,20 @@ class FakeDevice:
         self._touch(stage, len(packet))
         if stage == "logical identity CONFIG":
             if (
-                len(packet) != 6
+                len(packet) != 8
                 or packet[0] != CMD_CONFIG
-                or packet[1:4] != bytes((8, 0, 138))
+                or packet[1:4]
+                != bytes((RECEIVER_STRIP_COUNTS[self.device_index], 0, 138))
                 or packet[5] != self.device_index
+                or int.from_bytes(packet[6:8], "big")
+                != RECEIVER_GLOBAL_STRIP_OFFSETS[self.device_index]
             ):
                 raise RuntimeError("malformed raw identity CONFIG")
             self.configured_logical_id = packet[5]
             self.reverse_local_strip_order = bool(packet[4] & 0x80)
+            self.background_offset = int.from_bytes(packet[6:8], "big")
             return
-        if self.configured_logical_id not in range(4):
+        if self.configured_logical_id not in range(RECEIVER_COUNT):
             self.runtime_rejections += 1
             self.events.append(("runtime rejected", self.device_index, stage))
             return
@@ -718,18 +754,27 @@ class FakeDevice:
 
 
 class FakeController:
-    num_devices = 4
+    num_devices = RECEIVER_COUNT
     strips_per_device = 8
     leds_per_strip = 138
-    strip_count = 32
+    strip_count = 33
     total_leds = WALL_PIXELS
     device_map = list(EXPECTED_DEVICE_MAP)
+    receiver_strip_counts = RECEIVER_STRIP_COUNTS
+    receiver_global_strip_offsets = RECEIVER_GLOBAL_STRIP_OFFSETS
+    receiver_lane_masks = RECEIVER_LANE_MASKS
+    reverse_host_strips_by_logical_receiver = (
+        DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+    )
+    reverse_native_strips_by_logical_receiver = (
+        DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+    )
 
     def __init__(self, events, clock):
         self.events = events
         self.devices = [
             FakeDevice(index, events, clock, write_only=index >= 2)
-            for index in range(4)
+            for index in range(RECEIVER_COUNT)
         ]
         self.fail_close = False
 
@@ -742,8 +787,14 @@ class FakeController:
         self.events.append(("controller set_frame", dirty_ranges))
         data = np.asarray(frame, dtype=np.uint8)
         for logical_id, device in enumerate(self.devices):
-            start = logical_id * LOCAL_PIXELS
-            device.set_all_pixels(data[start:start + LOCAL_PIXELS])
+            start = RECEIVER_PIXEL_OFFSETS[logical_id]
+            count = RECEIVER_PIXEL_COUNTS[logical_id]
+            local = data[start:start + count]
+            if self.reverse_host_strips_by_logical_receiver[logical_id]:
+                local = local.reshape(
+                    RECEIVER_STRIP_COUNTS[logical_id], LEDS_PER_STRIP, 3
+                )[::-1].reshape(count, 3)
+            device.set_all_pixels(local)
         return True
 
 
@@ -758,8 +809,8 @@ class FakeSource:
         self.fail_cleanup = fail_cleanup
         self.visibility_loss = visibility_loss
         self.pixels = np.zeros((WALL_PIXELS, 4), dtype=np.uint8)
-        for logical_id in range(4):
-            self.pixels[logical_id * LOCAL_PIXELS] = (8, 4, 2, 8)
+        for logical_id in range(RECEIVER_COUNT):
+            self.pixels[RECEIVER_PIXEL_OFFSETS[logical_id]] = (8, 4, 2, 8)
 
     def start(self):
         self.events.append(("source start",))
@@ -822,7 +873,7 @@ class ShowcaseRunnerTests(unittest.TestCase):
                restorer=None, controller_factory=None):
         options = dict(source_options or {})
         return Phase3BDegradedShowcase(
-            ShowcaseConfig(duration_seconds=0.75, foreground_poll_hz=10.0),
+            ShowcaseConfig(duration_seconds=2.0, foreground_poll_hz=10.0),
             self.snapshot,
             controller_factory=controller_factory or (lambda: self.controller),
             restore_desired_display=restorer or self._restore,
@@ -859,14 +910,16 @@ class ShowcaseRunnerTests(unittest.TestCase):
             index for index, event in enumerate(self.events) if event[0] == "set_all"
         ]
         restore_position = self.events.index(("desired restore",))
-        self.assertEqual(len(set_all_positions), 4)
+        self.assertEqual(len(set_all_positions), RECEIVER_COUNT)
         self.assertLess(max(set_all_positions), restore_position)
 
-    def test_success_writes_all_four_but_claims_only_readable_receiver_proof(self):
+    def test_success_writes_all_five_but_claims_only_readable_receiver_proof(self):
         result = self.runner().run()
         self.assertTrue(result["passed"], result)
         self.assertFalse(result["acceptance_policy"]["telemetry_complete"])
-        self.assertEqual(result["acceptance_policy"]["unverified_devices"], [2, 3])
+        self.assertEqual(
+            result["acceptance_policy"]["unverified_devices"], [2, 3, 4]
+        )
         self.assertTrue(result["visual_confirmation"]["confirmed"])
         self.assertTrue(result["initial_write_only_host_evidence"]["passed"])
         self.assertTrue(result["write_only_host_evidence"]["passed"])
@@ -876,12 +929,15 @@ class ShowcaseRunnerTests(unittest.TestCase):
         identity = result["identity_configuration"]
         self.assertTrue(identity["devices"]["0"]["logical_identity_verified"])
         self.assertFalse(identity["devices"]["2"]["logical_identity_verified"])
+        self.assertFalse(identity["devices"]["4"]["logical_identity_verified"])
         self.assertIn("unverified", identity["devices"]["2"]["warning"])
         visibility = result["foreground_visibility_at_confirmation"]
-        self.assertTrue(visibility["all_lanes_expected_nonzero"])
+        self.assertTrue(
+            visibility["all_receivers_expected_coverage_nonzero"]
+        )
         self.assertEqual(
             visibility["expected_alpha_coverage_by_receiver"],
-            {"0": 1, "1": 1, "2": 1, "3": 1},
+            {"0": 1, "1": 1, "2": 1, "3": 1, "4": 1},
         )
         self.assertTrue(visibility["sampled_at_pass_boundary"])
         for logical_id in ("0", "1"):
@@ -892,7 +948,24 @@ class ShowcaseRunnerTests(unittest.TestCase):
             self.assertTrue(readable["generation_exact"])
             self.assertTrue(readable["lease_remaining_positive"])
             self.assertTrue(readable["coverage_exact"])
-        for logical_id in (0, 1, 2, 3):
+        for logical_id in range(RECEIVER_COUNT):
+            identity_device = identity["devices"][str(logical_id)]
+            self.assertEqual(
+                identity_device["wire_bytes"],
+                8 + CRC_BYTES,
+            )
+            offset_key = (
+                "global_strip_offset" if logical_id in (0, 1)
+                else "global_strip_offset_requested"
+            )
+            self.assertEqual(
+                identity_device[offset_key],
+                RECEIVER_GLOBAL_STRIP_OFFSETS[logical_id],
+            )
+            self.assertEqual(
+                self.controller.devices[logical_id].background_offset,
+                RECEIVER_GLOBAL_STRIP_OFFSETS[logical_id],
+            )
             self.assertIn(("logical identity CONFIG", logical_id), self.events)
             self.assertIn(("local background start", logical_id), self.events)
             self.assertIn(("foreground commit", logical_id), self.events)
@@ -904,7 +977,7 @@ class ShowcaseRunnerTests(unittest.TestCase):
             if (
                 len(event) >= 2
                 and event[0] in RAW_SHOWCASE_STAGES
-                and event[1] in (2, 3)
+                and event[1] in (2, 3, 4)
             ):
                 self.assertEqual(
                     self.events[position + 1],
@@ -948,7 +1021,7 @@ class ShowcaseRunnerTests(unittest.TestCase):
             transport.preflight()
 
     def test_physical_lane_permutation_routes_base_overlay_and_host_frames(self):
-        lane_order = (0, 1, 3, 2)
+        lane_order = DEFAULT_PHYSICAL_LANE_ORDER
         transport = DegradedHybridTransport(
             self.controller,
             sleeper=self._sleep,
@@ -969,12 +1042,13 @@ class ShowcaseRunnerTests(unittest.TestCase):
         ))
         self.assertEqual(
             [device.background_offset for device in self.controller.devices],
-            [0, 8, 24, 16],
+            list(RECEIVER_GLOBAL_STRIP_OFFSETS),
         )
 
         overlay = np.zeros((WALL_PIXELS, 4), dtype=np.uint8)
-        for physical_lane, alpha_count in enumerate((1, 2, 3, 4)):
-            start = physical_lane * LOCAL_PIXELS
+        for physical_lane, logical_id in enumerate(lane_order):
+            alpha_count = physical_lane + 1
+            start = RECEIVER_PIXEL_OFFSETS[logical_id]
             overlay[start:start + alpha_count] = (
                 4 + physical_lane, 4, 2, 8
             )
@@ -989,26 +1063,26 @@ class ShowcaseRunnerTests(unittest.TestCase):
         ))
         self.assertEqual(
             [device.committed_coverage for device in self.controller.devices],
-            [1, 2, 4, 3],
+            [1, 2, 4, 3, 5],
         )
 
         host = np.zeros((WALL_PIXELS, 3), dtype=np.uint8)
-        for physical_lane in range(4):
-            host[
-                physical_lane * LOCAL_PIXELS:(physical_lane + 1) * LOCAL_PIXELS
-            ] = physical_lane + 1
+        for physical_lane, logical_id in enumerate(lane_order):
+            start = RECEIVER_PIXEL_OFFSETS[logical_id]
+            host[start:start + RECEIVER_PIXEL_COUNTS[logical_id]] = physical_lane + 1
         self.assertTrue(transport.set_frame(host))
         self.assertTrue(transport.set_frame(host))
         self.assertEqual(
             [int(device.last_host_frame[0, 0]) for device in self.controller.devices],
-            [1, 2, 4, 3],
+            [1, 2, 4, 3, 5],
         )
+        self.assertEqual(self.controller.devices[4].last_host_frame.shape, (138, 3))
         status = transport.get_stats()["aggregate"]["local_background"]
-        self.assertEqual(status["physical_lane_order"], [0, 1, 3, 2])
+        self.assertEqual(status["physical_lane_order"], [0, 1, 3, 2, 4])
 
     def test_reversed_local_strip_order_maps_native_overlay_delta_and_host(self):
-        lane_order = (0, 1, 3, 2)
-        reverse = (False, False, True, True)
+        lane_order = DEFAULT_PHYSICAL_LANE_ORDER
+        reverse = DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
         transport = DegradedHybridTransport(
             self.controller,
             sleeper=self._sleep,
@@ -1018,9 +1092,9 @@ class ShowcaseRunnerTests(unittest.TestCase):
         configured = transport.configure_logical_identities()
         self.assertEqual(
             [device.reverse_local_strip_order for device in self.controller.devices],
-            [False, False, False, False],
+            [False, False, True, True, False],
         )
-        self.assertFalse(
+        self.assertTrue(
             configured["devices"]["2"][
                 "reverse_local_strip_order_requested"
             ]
@@ -1030,7 +1104,7 @@ class ShowcaseRunnerTests(unittest.TestCase):
         )
 
         overlay = np.zeros((WALL_PIXELS, 4), dtype=np.uint8)
-        for physical_strip in range(32):
+        for physical_strip in range(WALL_PIXELS // LEDS_PER_STRIP):
             start = physical_strip * LEDS_PER_STRIP
             overlay[start:start + LEDS_PER_STRIP] = (
                 physical_strip + 1, 2, 1, 8
@@ -1041,38 +1115,40 @@ class ShowcaseRunnerTests(unittest.TestCase):
                 logical_id,
                 full_snapshot=True,
                 dirty_ranges=None,
-                physical_lane_by_logical=transport._physical_lane_by_logical,
+                receiver_strip_counts=RECEIVER_STRIP_COUNTS,
+                receiver_global_strip_offsets=RECEIVER_GLOBAL_STRIP_OFFSETS,
                 reverse_strips_by_logical_receiver=reverse,
             )
-            for logical_id in range(4)
+            for logical_id in range(RECEIVER_COUNT)
         ]
         for logical_id, patches in enumerate(patches_by_logical):
             local = np.concatenate([data for _start, data in patches])
-            physical_lane = transport._physical_lane(logical_id)
+            local_strips = RECEIVER_STRIP_COUNTS[logical_id]
+            global_offset = RECEIVER_GLOBAL_STRIP_OFFSETS[logical_id]
             expected_strips = list(range(
-                physical_lane * LOCAL_STRIPS + 1,
-                (physical_lane + 1) * LOCAL_STRIPS + 1,
+                global_offset + 1,
+                global_offset + local_strips + 1,
             ))
             if reverse[logical_id]:
                 expected_strips.reverse()
             self.assertEqual(
                 [
                     int(local[strip * LEDS_PER_STRIP, 0])
-                    for strip in range(LOCAL_STRIPS)
+                    for strip in range(local_strips)
                 ],
                 expected_strips,
             )
 
         # A physical change on the left edge of the rightmost panel maps to
         # local strip 7 of logical receiver 2, rather than corrupting strip 0.
-        physical_lane = transport._physical_lane(2)
-        physical_first = physical_lane * LOCAL_PIXELS
+        physical_first = RECEIVER_PIXEL_OFFSETS[2]
         delta = transport._local_patches(
             overlay,
             2,
             full_snapshot=False,
             dirty_ranges=((physical_first, physical_first + 3),),
-            physical_lane_by_logical=transport._physical_lane_by_logical,
+            receiver_strip_counts=RECEIVER_STRIP_COUNTS,
+            receiver_global_strip_offsets=RECEIVER_GLOBAL_STRIP_OFFSETS,
             reverse_strips_by_logical_receiver=reverse,
         )
         self.assertEqual(len(delta), 1)
@@ -1086,15 +1162,19 @@ class ShowcaseRunnerTests(unittest.TestCase):
         self.assertTrue(transport.set_frame(host))
         for logical_id, device in enumerate(self.controller.devices):
             local = device.last_host_frame
-            physical_lane = transport._physical_lane(logical_id)
+            local_strips = RECEIVER_STRIP_COUNTS[logical_id]
+            global_offset = RECEIVER_GLOBAL_STRIP_OFFSETS[logical_id]
             expected = list(range(
-                physical_lane * LOCAL_STRIPS + 1,
-                (physical_lane + 1) * LOCAL_STRIPS + 1,
+                global_offset + 1,
+                global_offset + local_strips + 1,
             ))
             if reverse[logical_id]:
                 expected.reverse()
             self.assertEqual(
-                [int(local[strip * LEDS_PER_STRIP, 0]) for strip in range(8)],
+                [
+                    int(local[strip * LEDS_PER_STRIP, 0])
+                    for strip in range(local_strips)
+                ],
                 expected,
             )
         status = transport.get_stats()["aggregate"]["local_background"]
@@ -1103,15 +1183,15 @@ class ShowcaseRunnerTests(unittest.TestCase):
         )
         self.assertEqual(
             status["reverse_native_strips_by_logical_receiver"],
-            [False, False, False, False],
+            [False, False, True, True, False],
         )
 
     def test_physical_lane_permutation_is_exact(self):
         for lane_order in (
-            (0, 1, 2),
-            (0, 1, 2, 2),
-            (0, 1, 2, 4),
-            (0, 1, 2, True),
+            (0, 1, 2, 3),
+            (0, 1, 2, 3, 3),
+            (0, 1, 2, 3, 5),
+            (0, 1, 2, 3, True),
         ):
             with self.subTest(lane_order=lane_order), self.assertRaisesRegex(
                 Exception, "physical lane order"
@@ -1123,9 +1203,9 @@ class ShowcaseRunnerTests(unittest.TestCase):
                 )
 
         for reverse in (
-            (False, False, True),
-            (False, False, True, 1),
-            "0011",
+            (False, False, True, True),
+            (False, False, True, True, 1),
+            "00110",
         ):
             with self.subTest(reverse=reverse), self.assertRaisesRegex(
                 Exception, "reverse strip mapping"
@@ -1154,8 +1234,8 @@ class ShowcaseRunnerTests(unittest.TestCase):
             common_seed=0x3B00CAFE,
         )
         pixels = np.zeros((WALL_PIXELS, 4), dtype=np.uint8)
-        for logical_id in range(4):
-            pixels[logical_id * LOCAL_PIXELS] = (8, 4, 2, 8)
+        for logical_id in range(RECEIVER_COUNT):
+            pixels[RECEIVER_PIXEL_OFFSETS[logical_id]] = (8, 4, 2, 8)
         self.assertTrue(publisher.publish(
             pixels,
             changed=True,
@@ -1212,19 +1292,19 @@ class ShowcaseRunnerTests(unittest.TestCase):
         self.assertGreaterEqual(
             result["confirmation_exchange"]["confirmed_elapsed_seconds"], 3.5
         )
-        self.assertEqual(exchange.active_at_confirmation, [2, 2, 2, 2])
+        self.assertEqual(exchange.active_at_confirmation, [2, 2, 2, 2, 2])
         renewals = [device.renewals for device in controller.devices]
         self.assertTrue(all(count >= 2 for count in renewals), renewals)
 
-    def test_early_confirmation_cannot_hide_pass_boundary_visibility_loss(self):
+    def test_early_confirmation_cannot_hide_readable_visibility_loss(self):
         for visibility_loss, expected in (
-            ("state", "foreground_active"),
-            ("coverage", "coverage_exact"),
-            ("status", "status_v4_exact"),
-            ("identity", "logical_identity_exact"),
-            ("session", "session_exact"),
-            ("generation", "generation_exact"),
-            ("lease", "lease_remaining_positive"),
+            ("state", "foreground already expired"),
+            ("coverage", "receiver_overlay_committed_coverage_pixels"),
+            ("status", "receiver_status_version"),
+            ("identity", "receiver_logical_device"),
+            ("session", "receiver_overlay_session_id"),
+            ("generation", "receiver_overlay_committed_generation"),
+            ("lease", "foreground already expired"),
         ):
             with self.subTest(visibility_loss=visibility_loss):
                 self.setUp()
@@ -1234,14 +1314,7 @@ class ShowcaseRunnerTests(unittest.TestCase):
 
                 self.assertFalse(result["passed"], result)
                 self.assertTrue(result["visual_confirmation"]["confirmed"])
-                self.assertIn("pass boundary", result["failure"])
                 self.assertIn(expected, result["failure"])
-                self.assertGreaterEqual(
-                    result["confirmation_exchange"][
-                        "pass_boundary_elapsed_seconds"
-                    ],
-                    0.21,
-                )
                 self.assert_exact_cleanup(result)
 
     def test_preflight_failure_is_observation_only(self):

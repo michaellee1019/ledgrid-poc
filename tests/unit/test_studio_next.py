@@ -13,7 +13,7 @@ from web.app import AnimationWebInterface
 
 
 class _Controller:
-    strip_count = 32
+    strip_count = 33
     leds_per_strip = 138
     total_leds = strip_count * leds_per_strip
 
@@ -119,9 +119,9 @@ class _Channel:
             "vibe": {"state": resolve_vibe("neutral").state.to_dict()},
             "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
             "led_info": {
-                "strip_count": 32,
+                "strip_count": 33,
                 "leds_per_strip": 138,
-                "total_leds": 4416,
+                "total_leds": 4554,
             },
             "updated_at": 1787410000.0,
         }
@@ -191,8 +191,23 @@ class StudioNextBackendTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertIn('id="liveState" data-state="unknown"', html)
         self.assertIn("No fixture content is presented as live", html)
+        self.assertIn('width="33" height="138"', html)
+        self.assertIn("Living plant wall · 33 × 138 · 4,554 LEDs", html)
         self.assertEqual(self.channel.read_count, 0)
         self.assertEqual(self.channel.commands, [])
+
+    def test_installed_preview_placeholders_use_the_full_wall_geometry(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        script = (root / "web" / "static" / "js" / "studio_next.js").read_text(
+            encoding="utf-8"
+        )
+        stylesheet = (
+            root / "web" / "static" / "css" / "studio_next.css"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("canvas.width = 33", script)
+        self.assertIn("|| 33", script)
+        self.assertIn("aspect-ratio: 33 / 138", stylesheet)
 
     def test_bootstrap_is_provider_qualified_honest_and_non_mutating(self) -> None:
         response = self.client.get("/api/v1/studio-next/bootstrap")

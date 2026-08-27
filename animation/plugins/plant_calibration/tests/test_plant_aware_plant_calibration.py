@@ -8,7 +8,7 @@ from animation.plugins.plant_calibration import PlantCalibrationAnimation
 
 
 class _PlantWallController:
-    strip_count = 32
+    strip_count = 33
     leds_per_strip = 138
     total_leds = strip_count * leds_per_strip
 

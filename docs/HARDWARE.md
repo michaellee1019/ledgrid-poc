@@ -10,9 +10,10 @@ record.
 The supported installed-wall configuration (`LEDGRID_HAT=0`) uses one Raspberry
 Pi host and five ESP32-S3 receivers. Four receivers drive eight logical
 WS2812-compatible lanes and the fifth drives one logical lane, all 138 LEDs
-long, for a finalized geometry of 33 x 138 (4,554 pixels). Receiver buffers
-retain capacity for eight lanes of 140 LEDs; the fifth receiver's logical width
-and physical lane mask remain explicit rather than mirroring wall content.
+long, for a finalized geometry of 33 x 138 (4,554 pixels). The fifth receiver
+owns the extra rightmost strip. Receiver buffers retain capacity for eight lanes
+of 140 LEDs; its one-strip logical width and `0x01` physical lane mask remain
+explicit rather than mirroring wall content.
 
 Use the runtime sources below when a copied value in prose disagrees:
 
@@ -54,9 +55,10 @@ protocol details.
 
 Boards on the same bus share clock, MOSI, and MISO; each board has its own chip
 select. MOSI, clock, chip select, and common ground are required for display
-traffic. MISO is required for negotiated `LGS3` through `LGS6` status, receiver
-identity, and the full acceptance gates; only historical explicitly degraded
-write-only diagnostics can omit it.
+traffic. MISO is required for negotiated status: 320-byte `LGS3`, 416-byte
+`LGS4`, 768-byte `LGS5`, and 1,216-byte `LGS6`. Receiver identity/topology and
+the full acceptance gates also require MISO; only historical explicitly
+degraded write-only diagnostics can omit it.
 
 | Bus signal | Pi GPIO | Physical pin |
 | --- | ---: | ---: |
@@ -84,12 +86,19 @@ The five-device layout expects these device nodes:
 
 For the expected topology, when `/dev/spidev0.2` is absent, SPI1 is present, and
 `LEDGRID_DEVICE_MAP` is unset, the host maps logical receivers 0-4 to
-`spidev0.0`, `spidev0.1`, `spidev1.1`, `spidev1.0`, and `spidev1.2`, respectively. A custom
+`spidev0.0`, `spidev0.1`, `spidev1.1`, `spidev1.0`, and `spidev1.2`,
+respectively. Logical strips 0-31 stay on the original four boards; strip 32 is
+the rightmost column and remains one logical lane on the fifth board. A custom
 device-node topology can select a different fallback. No software default is
 proof of physical board labels or cable order; use the live `device_map` metric
-and a lane-order test for the running installation. The full deployment
-configures `dtparam=spi=on` and `dtoverlay=spi1-3cs,cs2_pin=24` idempotently. A boot-config
-change requires a Pi reboot before all five device nodes appear.
+and a lane-order test for the running installation.
+
+The installed carrier routes SPI1 CE2 through solder jumper `SJ_SPI1_CE2` to
+BCM GPIO24 (physical pin 18), not the `spi1-3cs` overlay's default GPIO16. The
+full deployment writes `dtparam=spi=on` and
+`dtoverlay=spi1-3cs,cs2_pin=24` idempotently. A boot-config change requires a Pi
+reboot before CE2 moves and all five device nodes appear. The jumper must be
+bridged or the fifth receiver never sees chip select.
 
 ### Installed lane and strip orientation
 
@@ -112,8 +121,13 @@ not substitutes for reading that file after a cable change.
 
 The two reversal columns deliberately remain independent. Host reversal maps
 complete RGB frames and sparse RGBA foreground into the receiver's local output
-buffer. Native reversal is a six-byte CONFIG flag used by firmware when turning
-its local strip index into a global procedural coordinate. A correct clock or
+buffer. Receiver-native topology uses the exact eight-byte CONFIG form
+`[0x07, local_width, height_hi, height_lo, flags, logical_id, offset_hi,
+offset_lo]`; flags bit 7 reverses native local strip order, logical IDs are
+`0..4`, height is LEDs per strip, and the final `u16` is the global strip offset.
+Receiver 4 therefore receives `07 01 00 8a 00 04 00 20`. Legacy four/five-byte
+CONFIG remains valid; the six-byte direction/identity form remains limited to
+IDs `0..3` and retains its previously provisioned offset. A correct clock or
 host diagnostic therefore does not prove that a receiver-native background has
 the right orientation.
 

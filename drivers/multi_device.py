@@ -30,6 +30,7 @@ from drivers.spi_controller import (
     LEDController,
     MAX_NATIVE_CHUNK_BYTES,
     MAX_RGBA_PIXELS_PER_BATCH_SPAN,
+    OVERLAY_LOCAL_PIXELS,
     OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
     OVERLAY_UPDATE_DELTA,
     OVERLAY_UPDATE_FULL_SNAPSHOT,
@@ -38,9 +39,14 @@ from drivers.spi_controller import (
     SPI_MODE,
     SPI_SPEED,
 )
-from drivers.led_layout import DEFAULT_LEDS_PER_STRIP
+from drivers.led_layout import (
+    DEFAULT_LEDS_PER_STRIP,
+    STRIPS_PER_DEVICE,
+    DeviceMapEntry,
+    logical_strip_count,
+    wall_device_map,
+)
 
-DeviceMapEntry = Tuple[int, int]
 LOCAL_BACKGROUND_REQUIRED_CAPABILITIES = (
     CAPABILITY_STATIC_LOCAL_BACKGROUND
     | CAPABILITY_PRESENTATION_CONTEXT_V1
@@ -68,9 +74,11 @@ class MultiDeviceLEDController:
     """Multi-device LED controller that manages multiple ESP32 devices"""
 
     def with_receiver_hybrid_transport_policy(
-        self, transport_policy, *, physical_lane_order=(0, 1, 2, 3),
-        reverse_strips_by_logical_receiver=(False, False, False, False),
-        reverse_native_strips_by_logical_receiver=(False, False, False, False),
+        self, transport_policy, *, physical_lane_order=(0, 1, 3, 2, 4),
+        reverse_strips_by_logical_receiver=(False, False, True, True, False),
+        reverse_native_strips_by_logical_receiver=(
+            False, False, True, True, False,
+        ),
     ):
         """Return the controller facade selected by one explicit policy.
 
@@ -199,7 +207,8 @@ class MultiDeviceLEDController:
                  bus: int = SPI_BUS,
                  speed: int = SPI_SPEED,
                  mode: int = SPI_MODE,
-                 strips_per_device: int = 8,
+                 strips_per_device: int = STRIPS_PER_DEVICE,
+                 strip_count: Optional[int] = None,
                  leds_per_strip: int = DEFAULT_LEDS_PER_STRIP,
                  debug: bool = False,
                  parallel: bool = True,
@@ -220,6 +229,8 @@ class MultiDeviceLEDController:
             speed: SPI speed in Hz (default: SPI_SPEED, currently 20 MHz)
             mode: SPI mode (default: SPI_MODE, currently mode 0)
             strips_per_device: LED strips per receiver (default: 8)
+            strip_count: Visible strips. May be smaller than device capacity when
+                the last receiver drives fewer than eight lanes.
             leds_per_strip: LEDs per strip (installed default: 138)
             debug: Enable debug output
             parallel: Send data to devices in parallel using threads
@@ -251,7 +262,19 @@ class MultiDeviceLEDController:
         if type(num_devices) is not int or not 1 <= num_devices <= 0xFF:
             raise ValueError("num_devices must be an integer from 1 through 255")
         if receiver_strip_counts is None:
-            receiver_strip_counts = (strips_per_device,) * num_devices
+            visible_strips = logical_strip_count(
+                num_devices, strips_per_device, strip_count
+            )
+            receiver_strip_counts = tuple(
+                min(strips_per_device, visible_strips - index * strips_per_device)
+                for index in range(num_devices)
+                if visible_strips - index * strips_per_device > 0
+            )
+            if len(receiver_strip_counts) != num_devices:
+                raise ValueError(
+                    "strip_count must assign at least one visible strip to "
+                    "every configured receiver"
+                )
         if (
             type(receiver_strip_counts) is not tuple
             or len(receiver_strip_counts) != num_devices
@@ -351,12 +374,19 @@ class MultiDeviceLEDController:
         self.parallel = parallel
         self._executor = None
         
-        # Calculate total dimensions
-        self.strip_count = max(
+        # Semantic receiver ranges are the geometry authority. If a caller also
+        # supplied a visible strip count, fail closed on any disagreement.
+        geometry_strip_count = max(
             offset + width for offset, width in zip(
                 self.receiver_global_strip_offsets, self.receiver_strip_counts
             )
         )
+        if strip_count is not None and strip_count != geometry_strip_count:
+            raise ValueError(
+                "strip_count does not match receiver strip ranges: "
+                f"{strip_count} != {geometry_strip_count}"
+            )
+        self.strip_count = geometry_strip_count
         self.total_leds = self.strip_count * leds_per_strip
         # Retained for legacy callers on uniform layouts. Internal routing uses
         # the exact per-receiver pixel counts below.
@@ -460,6 +490,12 @@ class MultiDeviceLEDController:
             bus, dev = entry
             map_parts.append(f"dev{idx}=spidev{bus}.{dev}")
         print(f"[LEDGRID] SPI device map ({num_devices} devices): {', '.join(map_parts)}")
+        if (
+            self.strip_count == 33
+            and self.receiver_strip_counts[-1] == 1
+            and self.receiver_lane_masks[-1] == 0x01
+        ):
+            print("[LEDGRID] Extra strip 32 -> dev4 lane 0 only (SPI1 CE2)")
         
         # Initialize individual device controllers
         self.devices: List[LEDController] = []
@@ -494,7 +530,7 @@ class MultiDeviceLEDController:
             print(f"\n✓ All {num_devices} devices initialized\n")
 
     def _initialize_receiver_identity_observability(self):
-        """Best-effort identity provisioning without blocking legacy streaming."""
+        """Best-effort topology provisioning without blocking legacy streaming."""
         for index, device in enumerate(self.devices):
             try:
                 for _ in range(2):
@@ -506,14 +542,27 @@ class MultiDeviceLEDController:
                     status = None
                     for _ in range(2):
                         status = device.query_receiver_status()
-                    if status.get("receiver_logical_device") != index:
+                    expected_topology = {
+                        "receiver_logical_device": index,
+                        "receiver_active_strips": self.receiver_strip_counts[index],
+                        "receiver_global_strip_offset": (
+                            self.receiver_global_strip_offsets[index]
+                        ),
+                        "receiver_lane_mask": self.receiver_lane_masks[index],
+                    }
+                    mismatches = [
+                        f"{field}={status.get(field)!r}, expected {expected!r}"
+                        for field, expected in expected_topology.items()
+                        if status.get(field) != expected
+                    ]
+                    if mismatches:
                         raise RuntimeError(
-                            f"reported logical identity "
-                            f"{status.get('receiver_logical_device')!r}, expected {index}"
+                            "reported topology mismatch after CONFIG/lane-mask: "
+                            + "; ".join(mismatches)
                         )
             except Exception as exc:
                 print(
-                    f"[LEDGRID] Receiver {index} identity observability unavailable: {exc}; "
+                    f"[LEDGRID] Receiver {index} topology observability unavailable: {exc}; "
                     "continuing with ordinary host streaming",
                     file=sys.stderr,
                 )
@@ -2150,10 +2199,26 @@ class MultiDeviceLEDController:
             receiver_id, pixels[local_start:local_end]
         )
         if update_kind == OVERLAY_UPDATE_FULL_SNAPSHOT:
+            # Sparse-overlay protocol v1 defines an eight-lane replacement
+            # plane even for the finalized fifth receiver, whose semantic
+            # width is one lane.  Fill the unused transport lanes with
+            # transparent pixels; never replicate column 32 into them.
+            transport_pixels = local_pixels
+            if len(local_pixels) < OVERLAY_LOCAL_PIXELS:
+                transport_pixels = np.zeros(
+                    (OVERLAY_LOCAL_PIXELS, local_pixels.shape[1]),
+                    dtype=np.uint8,
+                )
+                transport_pixels[:len(local_pixels)] = local_pixels
             return [
-                (start, local_pixels[start:start + MAX_RGBA_PIXELS_PER_BATCH_SPAN])
+                (
+                    start,
+                    transport_pixels[
+                        start:start + MAX_RGBA_PIXELS_PER_BATCH_SPAN
+                    ],
+                )
                 for start in range(
-                    0, len(local_pixels), MAX_RGBA_PIXELS_PER_BATCH_SPAN
+                    0, len(transport_pixels), MAX_RGBA_PIXELS_PER_BATCH_SPAN
                 )
             ]
 
@@ -3060,7 +3125,6 @@ class MultiDeviceLEDController:
         """Return aggregated stats across all devices."""
         self._controller_lock()
         device_stats = []
-        total_leds = 0
         max_frames_sent = 0
         spi_transfers = 0
         bytes_sent = 0
@@ -3100,7 +3164,6 @@ class MultiDeviceLEDController:
                 stats = device.get_stats()
             device_stats.append(stats)
 
-            total_leds += int(stats.get('total_leds', 0) or 0)
             frames = int(stats.get('frames_sent', 0) or 0)
             # Use max (not sum) — all devices receive the same logical frame
             max_frames_sent = max(max_frames_sent, frames)
@@ -3169,7 +3232,7 @@ class MultiDeviceLEDController:
             'aggregate': {
                 'num_devices': self.num_devices,
                 'strip_count': self.strip_count,
-                'total_leds': total_leds,
+                'total_leds': self.total_leds,
                 'frames_sent': max_frames_sent,
                 'logical_frames_sent': self._logical_frames_sent,
                 'spi_bus_count': len(self._devices_by_bus),
@@ -3313,41 +3376,21 @@ class MultiDeviceLEDController:
                 )
             return env_map[:num_devices]
 
-        map_entries: List[DeviceMapEntry] = []
-        
         # For 1-2 devices, just use the primary bus
         if num_devices <= 2:
-            for device_id in range(num_devices):
-                map_entries.append((primary_bus, device_id))
-            return map_entries
-        
-        # For 3+ devices, check if CE2+ exist on primary bus
-        # If not, fall back to SPI1. The finalized wall uses logical devices
-        # 0/1 on SPI0 CE0/CE1 and 2/3/4 on SPI1 CE1/CE0/CE2.
-        if not self._device_exists(primary_bus, 2) and self._device_exists(1, 0):
-            spi1_ces = [1, 0, 2]
-            if num_devices - 2 > len(spi1_ces):
-                raise ValueError(
-                    "automatic SPI1 fallback supports at most five receivers; "
-                    "set LEDGRID_DEVICE_MAP for a larger topology"
-                )
-            for idx in range(num_devices):
-                if idx < 2:
-                    map_entries.append((primary_bus, idx))
-                else:
-                    map_entries.append((1, spi1_ces[idx - 2]))
+            return [(primary_bus, device_id) for device_id in range(num_devices)]
 
+        # Wall layout: SPI0 CE0/CE1 plus SPI1, unless the primary bus already
+        # exposes CE2+ (unusual custom overlay).
+        if not self._device_exists(primary_bus, 2) and self._device_exists(1, 0):
             if self.debug:
                 print(
                     "[INFO] Using SPI1 fallback for logical receivers 2+ "
                     "(CE1, CE0, CE2)"
                 )
-        else:
-            # All devices on primary bus
-            for device_id in range(num_devices):
-                map_entries.append((primary_bus, device_id))
-        
-        return map_entries
+            return wall_device_map(num_devices)
+
+        return [(primary_bus, device_id) for device_id in range(num_devices)]
     
     @staticmethod
     def _resolve_mode(bus: int, default_mode: int) -> int:

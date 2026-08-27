@@ -44,7 +44,10 @@ class GifAnimationAssetTests(unittest.TestCase):
     def test_every_gif_uses_the_installed_native_resolution(self):
         for path in sorted(self.asset_dir.glob("*.gif")):
             with self.subTest(gif=path.name), Image.open(path) as image:
-                self.assertEqual(image.size, (DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP))
+                self.assertEqual(
+                    image.size,
+                    (DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP),
+                )
 
     def test_curated_assets_preserve_the_32_strip_source_and_black_tail(self):
         repository_root = Path(__file__).resolve().parents[4]

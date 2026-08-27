@@ -241,6 +241,48 @@ class PlantMaskCache:
         except Exception as exc:
             return {}, f"Failed to read {path}: {exc}"
 
+    @staticmethod
+    def _asserted_strip_count(
+        payload: Mapping[str, Any],
+        *,
+        role: str,
+        strip_count: int,
+        leds_per_strip: int,
+    ) -> Tuple[Optional[int], str]:
+        """Validate optional measured geometry without inventing calibration.
+
+        Older ad-hoc masks did not carry a geometry object, so its absence keeps
+        the compatibility path.  Once a payload asserts measured geometry, every
+        field must be internally consistent and fit inside the active canvas.
+        Invalid assertions fail closed through the cache's existing empty-mask
+        behavior.
+        """
+
+        geometry = payload.get("geometry")
+        if geometry is None:
+            return None, ""
+        if not isinstance(geometry, Mapping):
+            return None, f"{role}.geometry must be an object"
+        measured_strips = geometry.get("strip_count")
+        measured_height = geometry.get("leds_per_strip")
+        measured_pixels = geometry.get("total_leds")
+        if any(
+            type(value) is not int
+            for value in (measured_strips, measured_height, measured_pixels)
+        ):
+            return None, f"{role}.geometry dimensions must be integers"
+        if (
+            measured_strips < 1
+            or measured_strips > strip_count
+            or measured_height != leds_per_strip
+            or measured_pixels != measured_strips * measured_height
+        ):
+            return None, (
+                f"{role}.geometry does not fit the active "
+                f"{strip_count}x{leds_per_strip} canvas"
+            )
+        return measured_strips, ""
+
     def invalidate(self) -> None:
         self._key = None
         self._geometry = None
@@ -268,17 +310,49 @@ class PlantMaskCache:
 
         foliage_payload, foliage_error = self._read(foliage_path)
         globe_payload, globe_error = self._read(globe_path)
-        error = "; ".join(item for item in (foliage_error, globe_error) if item)
+        foliage_width, foliage_geometry_error = self._asserted_strip_count(
+            foliage_payload,
+            role="foliage",
+            strip_count=strip_count,
+            leds_per_strip=leds_per_strip,
+        )
+        globe_width, globe_geometry_error = self._asserted_strip_count(
+            globe_payload,
+            role="globes",
+            strip_count=strip_count,
+            leds_per_strip=leds_per_strip,
+        )
+        asserted_widths = {
+            width for width in (foliage_width, globe_width) if width is not None
+        }
+        geometry_agreement_error = (
+            "foliage and globe measured strip counts disagree"
+            if len(asserted_widths) > 1
+            else ""
+        )
+        error = "; ".join(item for item in (
+            foliage_error,
+            globe_error,
+            foliage_geometry_error,
+            globe_geometry_error,
+            geometry_agreement_error,
+        ) if item)
         if error:
             # Never half-apply one semantic layer when its companion calibration
             # is unavailable: every modifier sees the same deterministic empty wall.
             foliage_payload = {}
             globe_payload = {}
+            measured_strip_count = strip_count
+        else:
+            measured_strip_count = next(iter(asserted_widths), strip_count)
+        measured_pixel_count = measured_strip_count * leds_per_strip
         foliage_indices = indices_from_payload(
-            foliage_payload, total_leds, ("covered_indices",)
+            foliage_payload, measured_pixel_count, ("covered_indices",)
         )
         globe_indices = indices_from_payload(
-            globe_payload, total_leds, ("globe_indices", "covered_indices")
+            globe_payload,
+            measured_pixel_count,
+            ("globe_indices", "covered_indices"),
         )
         # Globes are the higher-priority semantic layer if malformed inputs overlap.
         foliage_indices -= globe_indices
@@ -288,6 +362,10 @@ class PlantMaskCache:
         expanded = obstacle.copy()
         for _ in range(radius):
             expanded = dilate_8(expanded)
+        # The installed wall may be wider than the photographed calibration.
+        # Dilation must not turn unobserved tail strips into inferred plant
+        # clearance; those strips remain open until they are actually measured.
+        expanded[measured_strip_count:] = False
 
         distance, normal_x, normal_y = _distance_and_normals(obstacle)
         region_masks: Dict[str, np.ndarray] = {}
@@ -300,7 +378,7 @@ class PlantMaskCache:
                         index = int(pixel["index"])
                     except (KeyError, TypeError, ValueError):
                         continue
-                    if 0 <= index < total_leds:
+                    if 0 <= index < measured_pixel_count:
                         region_indices[str(pixel["region"])].add(index)
             for name in GLOBE_REGION_ORDER:
                 if region_indices[name]:

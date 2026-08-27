@@ -798,7 +798,7 @@ input[type="radio"] {
 .sn-wall-frame {
   position: relative;
   width: min(100%, 194px);
-  aspect-ratio: 32 / 138;
+  aspect-ratio: 33 / 138;
   padding: 5px;
   border: 1px solid #5b6860;
   border-radius: 11px;

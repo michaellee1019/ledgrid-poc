@@ -10,6 +10,7 @@ import hashlib
 from io import BytesIO
 import json
 import math
+import sys
 import time
 import threading
 import traceback
@@ -2428,7 +2429,7 @@ class AnimationManager:
                 and self.animation_thread.is_alive()
                 and self.animation_thread is not threading.current_thread()
             ):
-                self.animation_thread.join(timeout=1.0)
+                self.animation_thread.join(timeout=2.0)
             self.animation_thread = None
 
             if self._scene_mode:
@@ -4603,13 +4604,18 @@ class AnimationManager:
                             and self.frames_presented > 0
                             and hasattr(self.controller, 'set_frame')
                         )
-                        pending_present = presenter.submit(
-                            self._present_frame,
-                            frame,
-                            dirty_ranges,
-                            use_partial,
-                            inline_show,
-                        )
+                        try:
+                            pending_present = presenter.submit(
+                                self._present_frame,
+                                frame,
+                                dirty_ranges,
+                                use_partial,
+                                inline_show,
+                            )
+                        except RuntimeError:
+                            # ThreadPoolExecutor shuts down from atexit while a
+                            # leaked daemon loop is still running. Exit quietly.
+                            break
                         self.frames_presented += 1
                     elif not receiver_hybrid:
                         self.unchanged_frames_skipped += 1
@@ -4639,17 +4645,25 @@ class AnimationManager:
                     traceback.print_exc()
                     time.sleep(0.05)
                 except Exception as e:
+                    if getattr(sys, "is_finalizing", lambda: False)():
+                        break
                     if (
                         getattr(self, "_receiver_hybrid_mode", False)
                         and getattr(self, "_active_scene_state", None) is not None
                     ):
                         scene = self._active_scene_state
-                        print(f"✗ Receiver hybrid loop failed over: {e}")
-                        traceback.print_exc()
+                        try:
+                            print(f"✗ Receiver hybrid loop failed over: {e}")
+                            traceback.print_exc()
+                        except Exception:
+                            break
                         self._activate_known_python_fallback(scene, e)
                         break
-                    print(f"✗ Animation loop error: {e}")
-                    traceback.print_exc()
+                    try:
+                        print(f"✗ Animation loop error: {e}")
+                        traceback.print_exc()
+                    except Exception:
+                        break
                     time.sleep(0.05)
 
                 loop_duration = time.perf_counter() - loop_start

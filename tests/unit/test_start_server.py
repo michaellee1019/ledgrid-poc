@@ -163,7 +163,6 @@ class StartServerTests(unittest.TestCase):
         self.assertEqual(device_count_for_strips(9), 2)
         self.assertEqual(device_count_for_strips(32), 4)
         self.assertEqual(device_count_for_strips(33), 5)
-
     def test_explicit_canary_over_durable_off_uses_exact_finalized_topology(self):
         durable_off = SimpleNamespace(enabled=False)
         with patch(

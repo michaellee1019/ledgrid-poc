@@ -3964,8 +3964,8 @@ flash: production requires v3/base ownership, local canary requires v5/local and
 profile capabilities, and native canary requires v6/the full native mask. Widths,
 offsets, output masks, and LEDs per strip are exact. The inventory ledger alone
 is not post-boot proof. The final local software gate is recorded below; keep
-the ordinary-deploy checklist item open until exact-five USB inventory,
-deployment, and fresh post-boot health pass.
+the ordinary-deploy checklist item open until the current clean checkpoint
+passes fresh post-boot health on the exact-five USB roster.
 
 The Phase 4 product lane is integrated: managed catalog binding, install/
 activate/adopt/update/recovery, startup-only adoption with deterministic Python
@@ -4022,8 +4022,48 @@ operation-sequence/result latching, and exact-roster quarantine-clear/reinstall;
 Library ordering now parses the frozen UTC-Z receipt timestamp into an instant
 instead of comparing ISO text, rejects offsets and malformed forms, and uses the
 bundle digest as a deterministic equal-instant tie-breaker.
-This is portable/build evidence only; no Phase 4 firmware has yet been deployed
-to the wall.
+
+Deployment evidence (2026-08-27; not physical acceptance): the powered USB hub
+enumerated and sequentially flashed the exact roster: `/dev/ttyACM0`
+`44:b1:76:c5:15:7c` at `1-1.1:1.0`, `/dev/ttyACM1`
+`9c:13:9e:bb:3d:14` at `1-1.2.1:1.0`, `/dev/ttyACM2`
+`44:b1:76:c3:cf:58` at `1-1.2.2:1.0`, `/dev/ttyACM3`
+`44:b1:76:c3:cf:80` at `1-1.2.3:1.0`, and `/dev/ttyACM4`
+`94:a9:90:f4:e4:9c` at `1-1.2.4:1.0`. Clean commit `8c45cdc` passed ordinary
+deployment receipt `31baf818de5e418f93e4157dec1514a5`, flashed all five
+receivers with installation digest
+`17d225f19f68e86225bd25cc6e16375c786b84ea30a758803f94c35a89fbbaae`,
+restored `living_stained_glass/before-deploy`, migrated widths `(8,8,8,8,1)`
+and offsets `(0,8,24,16,32)`, and passed fresh health for logical receivers
+0 through 4. This clears the former exact-five USB enumeration and flash
+blocker, but USB identity alone is not H0 evidence.
+
+A second clean ordinary deployment from `84f84fe`, receipt
+`000173c297a74e9a98535322d6e58e2f`, again flashed all five with installation
+digest `29a377ad6e36c5db4303916a3d1f3acd6c47457d0d720fb36e8c64ca1e723244`
+and firmware SHA-256
+`4d870175d5ed7c5d83a088fa47a8d46c3e88fbd8a081cebdedbc070304ce102f`,
+but failed post-flash health. Follow-up isolated the immediate blocker to
+logical receiver 0 returning no readable SPI status. A/B flashing the suspected
+board with the previously accepted firmware did not restore status; the current
+firmware was restored afterward. The Pi is now powered off. All 125 portable
+encoder tests and all firmware builds pass, but the observed live last-encode
+samples of approximately 0.746 ms on the one-strip receiver and 1.065 ms on the
+eight-strip receivers are not strict p95 evidence. The current ordinary-deploy
+checkpoint, hardware timing qualification, and H0 through H4 therefore remain
+open.
+
+Post-merge portable evidence (2026-08-27): after integrating upstream `main`
+at `0c738af`, the complete `just test` gate passed 1,553 Python tests plus 2,836
+subtests and 24 rendering-acceptance tests plus 3 subtests. Every installed
+33×138 animation and scene stayed below the 4 ms p95 budget; the highest
+observed p95 was 3.6049 ms for `snake-max-density`. All 125 portable firmware
+tests passed, and production, local-canary, and native-canary ESP32-S3 images
+built successfully at 275,893, 361,569, and 521,925 reported bytes. Deployment
+coverage passed 231 tests plus 154 subtests. This closes the merged tree's
+portable software gate only; the Pi remains powered off, the current merge has
+not been deployed, and the ordinary-deploy and H0 through H4 checkboxes remain
+open.
 
 Final local convergence evidence (2026-08-25): `just test` passed from the
 complete implementation tree. The main Python collection contains 1,502 tests;

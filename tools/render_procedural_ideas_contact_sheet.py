@@ -18,6 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 from animation.core.base import RenderedFrame
 from animation.core.manager import PreviewLEDController
 from animation.core.plugin_loader import AnimationPluginLoader
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
 
 PLUGIN_IDS = (
@@ -28,6 +29,21 @@ PLUGIN_IDS = (
     "living_stained_glass", "quasicrystal_bloom", "cellular_tapestry",
     "circadian_window", "night_train_windows",
 )
+
+
+def frame_to_visual(pixels: object) -> np.ndarray:
+    """Convert installed strip-major pixels into a top-down image canvas."""
+
+    logical = np.asarray(pixels, dtype=np.uint8).reshape(
+        DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP, 3
+    )
+    return logical[:, ::-1, :].transpose(1, 0, 2)
+
+
+def wall_image_size(scale: int) -> tuple[int, int]:
+    """Return the installed wall's contact-sheet image size at ``scale``."""
+
+    return DEFAULT_STRIP_COUNT * scale, DEFAULT_LEDS_PER_STRIP * scale
 
 
 def main() -> None:
@@ -46,7 +62,10 @@ def main() -> None:
     if missing:
         raise SystemExit(f"missing procedural plugins: {', '.join(missing)}")
 
-    controller = PreviewLEDController(strips=32, leds_per_strip=138)
+    controller = PreviewLEDController(
+        strips=DEFAULT_STRIP_COUNT,
+        leds_per_strip=DEFAULT_LEDS_PER_STRIP,
+    )
     tiles = []
     for plugin_id in PLUGIN_IDS:
         paths = list(loader.iter_curated_preset_files(plugin_id))
@@ -64,15 +83,14 @@ def main() -> None:
                 elapsed = args.time * step / steps
                 rendered = animation.generate_frame(elapsed, step)
             frame = rendered.pixels if isinstance(rendered, RenderedFrame) else rendered
-            logical = np.asarray(frame, dtype=np.uint8).reshape(32, 138, 3)
-            visual = logical[:, ::-1, :].transpose(1, 0, 2)
+            visual = frame_to_visual(frame)
             image = Image.fromarray(visual, "RGB").resize(
-                (32 * args.scale, 138 * args.scale), Image.Resampling.NEAREST
+                wall_image_size(args.scale), Image.Resampling.NEAREST
             )
             tiles.append((plugin_id, str(payload.get("name", "Default")), image))
 
     label_height = 30
-    tile_width, image_height = 32 * args.scale, 138 * args.scale
+    tile_width, image_height = wall_image_size(args.scale)
     rows = (len(tiles) + args.columns - 1) // args.columns
     sheet = Image.new("RGB", (tile_width * args.columns, (image_height + label_height) * rows), (14, 14, 18))
     draw = ImageDraw.Draw(sheet)

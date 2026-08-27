@@ -35,7 +35,13 @@ from ipc.runtime_control import (
     start_scene as _start_scene,
     update_scene_component as _update_scene_component,
 )
-from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP, default_strip_count
+from drivers.led_layout import (
+    DEFAULT_STRIP_COUNT,
+    DEFAULT_LEDS_PER_STRIP,
+    STRIPS_PER_DEVICE,
+    default_strip_count,
+    device_count_for_strips,
+)
 from drivers.frame_codec import decode_frame_data
 from web.app import create_app
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
@@ -179,11 +185,6 @@ def apply_production_stagger(controller, phases: int = PRODUCTION_STAGGER_PHASES
         return False
     controller.set_stagger_phases(phases)
     return True
-
-
-def device_count_for_strips(strip_count: int, strips_per_device: int = 8) -> int:
-    """Return enough devices to cover every configured strip."""
-    return max(1, (max(1, strip_count) + strips_per_device - 1) // strips_per_device)
 
 
 def _has_finalized_receiver_topology_authority(receiver_hybrid_config) -> bool:
@@ -535,8 +536,6 @@ def select_receiver_hybrid_controller(controller, receiver_hybrid_config):
             "controller policy facade"
         )
     return controller
-
-
 def run_controller_mode(args):
     """Controller process: drives LEDs and writes status/frames to disk."""
     receiver_hybrid_config = _receiver_hybrid_runtime_settings(args)
@@ -574,7 +573,7 @@ def run_controller_mode(args):
     # Multi-device controller expects total strips, single-device expects strips per device
     if hasattr(LEDController, '__name__') and 'Multi' in LEDController.__name__:
         # Multi-device controller - calculate number of devices from strip count
-        strips_per_device = 8  # The receiver firmware contract exposes 8 lanes.
+        strips_per_device = STRIPS_PER_DEVICE
         (
             num_devices,
             receiver_strip_counts,
@@ -597,6 +596,7 @@ def run_controller_mode(args):
             speed=args.spi_speed,
             mode=0,
             strips_per_device=strips_per_device,
+            strip_count=args.strips,
             leds_per_strip=args.leds_per_strip,
             debug=args.controller_debug,
             parallel=True,

@@ -162,16 +162,52 @@ class PlantModifierStateTests(unittest.TestCase):
 
     def test_installed_geometry_exposes_derivatives_and_ordered_regions(self):
         class InstalledController:
-            strip_count = 32
+            strip_count = 33
             leds_per_strip = 138
             total_leds = strip_count * leds_per_strip
         geometry = _Animation(InstalledController()).get_plant_masks()
         self.assertFalse(geometry.error)
         for value in (geometry.foliage_edge, geometry.globe_edge,
                       geometry.distance, geometry.normal_x, geometry.normal_y):
-            self.assertEqual(value.shape, (32, 138))
+            self.assertEqual(value.shape, (33, 138))
+        for value in (
+            geometry.foliage,
+            geometry.globes,
+            geometry.obstacle,
+            geometry.clearance,
+        ):
+            self.assertFalse(np.any(value[32]))
         self.assertEqual(tuple(geometry.globe_region_masks), GLOBE_REGION_ORDER)
         self.assertTrue(all(np.any(mask) for mask in geometry.globe_region_masks.values()))
+
+    def test_malformed_asserted_mask_geometry_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            foliage = Path(directory) / "foliage.json"
+            globes = Path(directory) / "globes.json"
+            foliage.write_text(json.dumps({
+                "geometry": {
+                    "strip_count": 7,
+                    "leds_per_strip": _Controller.leds_per_strip,
+                    "total_leds": 7 * _Controller.leds_per_strip,
+                },
+                "covered_indices": [3],
+            }))
+            globes.write_text(json.dumps({
+                "geometry": {
+                    "strip_count": 8,
+                    "leds_per_strip": _Controller.leds_per_strip,
+                    "total_leds": _Controller.total_leds,
+                },
+                "globe_indices": [4],
+            }))
+            geometry = _Animation(_Controller(), {
+                "plant_mask_path": str(foliage),
+                "plant_globe_mask_path": str(globes),
+            }).get_plant_masks()
+
+        self.assertIn("measured strip counts disagree", geometry.error)
+        self.assertFalse(np.any(geometry.obstacle))
+        self.assertFalse(np.any(geometry.clearance))
 
 
 if __name__ == "__main__":

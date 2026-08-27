@@ -124,6 +124,11 @@ whether a reboot is required. After that reboot, confirm the expected
 `/dev/spidev0.0`, `/dev/spidev0.1`, `/dev/spidev1.0`,
 `/dev/spidev1.1`, and `/dev/spidev1.2` nodes and rerun the full deployment.
 
+On the installed carrier, SPI1 CE2 reaches the fifth receiver through
+`SJ_SPI1_CE2` on BCM GPIO24 (physical pin 18), not the overlay's default GPIO16.
+The deployment therefore selects `dtoverlay=spi1-3cs,cs2_pin=24`; the jumper
+must be bridged before `/dev/spidev1.2` can select that receiver.
+
 ## What is deployed
 
 The normal sync set is derived from a clean Git working tree. `deploy-dirty` is

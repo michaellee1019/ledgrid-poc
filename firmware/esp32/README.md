@@ -73,12 +73,13 @@ pio run -e esp32-s3-devkitc-1-local-canary
 pio run -e esp32-s3-devkitc-1 -t upload --upload-port /dev/ttyACM0
 ```
 
-The production target uses the pinned pioarduino 55.03.39 platform with the
-`espidf` framework and ESP-IDF 5.5.4. The managed `espressif/elf_loader` 1.3.2
-component is present but disabled; dynamic loading and its command surface
-remain absent. The board target must remain `esp32-s3-devkitc1-n16r8` unless a
-replacement receiver has been
-physically identified and separately qualified; the repository does not carry
+The production target uses the pinned pioarduino `55.03.39` platform with the
+`espidf` framework and ESP-IDF 5.5.4. Do not point `platformio.ini` at the
+floating `stable` zip. The managed `espressif/elf_loader` 1.3.2 component is
+present but disabled; dynamic loading and its command surface remain absent.
+The board target must remain `esp32-s3-devkitc1-n16r8` so PSRAM and flash timing
+match the installed controllers, unless a replacement receiver has been
+physically identified and separately qualified. The repository does not carry
 an as-built receiver inventory that justifies another target.
 
 ## SPI commands
@@ -93,8 +94,8 @@ Every command is followed by a big-endian CRC-16/CCITT-FALSE.
 | CLEAR | `0x04` | none; clear and publish |
 | SET_RANGE | `0x05` | start high, start low, count, RGB bytes |
 | SET_ALL | `0x06` | tightly packed RGB bytes; publishes inline |
-| CONFIG | `0x07` | strips, length high, length low, optional debug byte |
-| STATUS_QUERY | `0x08` | 320-byte v3, negotiated 416-byte v4, or negotiated 768-byte v5 query; all bytes after ID zero |
+| CONFIG | `0x07` | local strips, LEDs/strip `u16`, optional flags, logical ID, and global offset `u16` |
+| STATUS_QUERY | `0x08` | 320-byte v3, negotiated 416-byte v4, 768-byte v5, or 1,216-byte v6 query; all bytes after ID zero |
 | LOCAL_BACKGROUND_START | `0x10` | component u16, cadence u16, global offset u32, seed u32, scene epoch u64 |
 | LOCAL_BACKGROUND_STOP | `0x11` | none |
 | LOCAL_BACKGROUND_PARAMETERS | `0x12` | cadence u16, global offset u32, seed u32 |
@@ -117,11 +118,30 @@ when the receiver is already in `HostFullScene`; they cannot take ownership.
 Brightness requests refresh the current owner without changing it. Only a
 complete accepted SET_ALL publishes and takes host ownership.
 
-Legacy CONFIG packets remain four or five bytes. Six-byte CONFIG appends a
-logical receiver ID at byte 5 (0–3); local playback fails closed until this ID
-is provisioned. Bit 7 of byte 4 is the explicit receiver-native strip-reversal
-flag. Installation-profile state remains inert until this full installed-topology
-form is received; the frozen v1 origins are `0,8,24,16` for logical IDs `0..3`.
+CONFIG retains all four accepted wire lengths. The four-byte legacy form is
+`[0x07, local_strips, leds_hi, leds_lo]`; the five-byte form appends the legacy
+debug/flags byte. The six-byte installed-direction form additionally appends a
+logical receiver ID at byte 5, accepts only IDs 0–3, and uses bit 7 of byte 4 as
+the receiver-native strip-reversal flag. It retains the receiver's previously
+provisioned global offset; the frozen v1 origins are `0,8,24,16` for logical IDs
+`0..3`.
+
+The authoritative heterogeneous-topology form is exactly eight bytes:
+
+| Byte | Field |
+| ---: | --- |
+| 0 | command `0x07` |
+| 1 | active local strip count (`1..8`) |
+| 2–3 | LEDs per strip / local height, big-endian `u16` |
+| 4 | compatibility flags; bit 7 reverses receiver-native local strip order |
+| 5 | installed logical receiver ID (`0..4`) |
+| 6–7 | global strip offset, big-endian `u16` |
+
+For the fifth receiver this is
+`07 01 00 8a 00 04 00 20`: one 138-LED strip at global offset 32. Local
+playback fails closed until identity is provisioned. The eight-byte form is
+required for receiver 4 and for an authoritative global offset; legacy six-byte
+IDs 0–3 continue to use their frozen origins for compatibility.
 
 ## Receiver status v3
 

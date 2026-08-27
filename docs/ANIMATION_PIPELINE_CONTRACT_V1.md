@@ -216,13 +216,33 @@ Local command bytes, before the shared trailing CRC-16, are:
 | `LOCAL_BACKGROUND_PARAMETERS` | `0x12` | cadence Hz `u16`, global strip offset `u32`, common seed `u32` | 11 |
 
 Component `1` is the compiled rainbow; cadence is 1–200 Hz. START requires an
-active context with the same scene epoch. CONFIG remains exactly four or five
-bytes for legacy callers; its six-byte form appends a logical receiver ID 0–3.
-Unprovisioned identity is `0xff`, and local commands fail closed until the host
-has capability-gated and verified that identity.
+active context with the same scene epoch. CONFIG accepts four compatibility
+forms. The four-byte form is `[0x07, local_strips, leds_hi, leds_lo]`; the
+five-byte form appends the legacy debug/flags byte. The six-byte form appends a
+logical receiver ID 0–3 at byte 5, uses flags bit 7 for receiver-native strip
+reversal, and retains the previously provisioned global offset. The explicit
+heterogeneous-topology form is exactly eight bytes:
 
-`STATUS_QUERY` is ID `0x08` followed by 319 zero bytes. The response is the
-following exact 320-byte, big-endian `LGS3` snapshot:
+| Byte | Field |
+| ---: | --- |
+| 0 | command `0x07` |
+| 1 | active local strip count (`1..8`) |
+| 2–3 | LEDs per strip / local height, big-endian `u16` |
+| 4 | compatibility flags; bit 7 reverses receiver-native local strip order |
+| 5 | installed logical receiver ID (`0..4`) |
+| 6–7 | global strip offset, big-endian `u16` |
+
+The finalized fifth receiver therefore receives
+`07 01 00 8a 00 04 00 20`. Unprovisioned identity is `0xff`, and local commands
+fail closed until identity is provisioned. The finalized host must additionally
+verify active local width and global offset from status v3+; receiver 4 requires
+the eight-byte form because the legacy six-byte identity range ends at 3.
+
+Status discovery uses ID `0x08` followed by 319 zero bytes and returns the exact
+320-byte, big-endian `LGS3` snapshot below. Only after its capability bits are
+observed may the host negotiate a 416-byte `LGS4`, 768-byte `LGS5`, or 1,216-byte
+`LGS6` query by padding the same command with zeros to that exact transfer size.
+The v6 record preserves the complete 768-byte v5 prefix apart from magic/version.
 
 | Offset | Bytes | Field |
 | ---: | ---: | --- |

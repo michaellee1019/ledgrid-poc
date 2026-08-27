@@ -104,7 +104,7 @@
                 <button class="library-favorite" type="button" data-library-favorite data-library-id="animation:{{ animation.plugin_name }}" aria-pressed="false" aria-label="Add {{ animation.name }} to favorites" title="Add to favorites" onclick="toggleLibraryFavorite(event, this)"><i class="far fa-star" aria-hidden="true"></i></button>
                 <div class="library-card-visual">
                     {% if animation.preview and animation.preview.poster_url and animation.preview.loop_url %}
-                    <img class="generated-preview library-preview" src="{{ animation.preview.poster_url }}" data-poster-src="{{ animation.preview.poster_url }}" data-loop-src="{{ animation.preview.loop_url }}" loading="lazy" decoding="async" width="32" height="138" alt="Pre-rendered preview of {{ animation.name }}" onerror="this.hidden=true">
+                    <img class="generated-preview library-preview" src="{{ animation.preview.poster_url }}" data-poster-src="{{ animation.preview.poster_url }}" data-loop-src="{{ animation.preview.loop_url }}" loading="lazy" decoding="async" width="33" height="138" alt="Pre-rendered preview of {{ animation.name }}" onerror="this.hidden=true">
                     {% else %}
                     <span class="animation-icon" aria-hidden="true">{{ animation.emoji }}</span>
                     {% endif %}
@@ -126,7 +126,7 @@
                 <button class="library-favorite" type="button" data-library-favorite data-library-id="preset:{{ animation.plugin_name }}:{{ preset.preset_id }}" aria-pressed="false" aria-label="Add {{ preset.name }} to favorites" title="Add to favorites" onclick="toggleLibraryFavorite(event, this)"><i class="far fa-star" aria-hidden="true"></i></button>
                 <div class="library-card-visual">
                     {% if preset.preview and preset.preview.poster_url and preset.preview.loop_url %}
-                    <img class="generated-preview library-preview" src="{{ preset.preview.poster_url }}" data-poster-src="{{ preset.preview.poster_url }}" data-loop-src="{{ preset.preview.loop_url }}" data-preview-status="{{ preset.preview.status }}" data-animation="{{ animation.plugin_name }}" data-preset-id="{{ preset.preset_id }}" loading="lazy" decoding="async" width="32" height="138" alt="Pre-rendered preview of {{ preset.name }}" onerror="this.hidden=true">
+                    <img class="generated-preview library-preview" src="{{ preset.preview.poster_url }}" data-poster-src="{{ preset.preview.poster_url }}" data-loop-src="{{ preset.preview.loop_url }}" data-preview-status="{{ preset.preview.status }}" data-animation="{{ animation.plugin_name }}" data-preset-id="{{ preset.preset_id }}" loading="lazy" decoding="async" width="33" height="138" alt="Pre-rendered preview of {{ preset.name }}" onerror="this.hidden=true">
                     {% else %}
                     <span class="animation-icon" aria-hidden="true">{{ preset.emoji }}</span>
                     {% endif %}
@@ -236,7 +236,7 @@
                                                  src="{{ preview_asset.poster_url }}"
                                                  data-poster-src="{{ preview_asset.poster_url }}"
                                                  data-loop-src="{{ preview_asset.loop_url }}"
-                                                 loading="lazy" decoding="async" width="32" height="138"
+                                                 loading="lazy" decoding="async" width="33" height="138"
                                                  alt="Host-build preview of {{ component.name or component.plugin_id }}; not current wall output"
                                                  onerror="this.hidden=true">
                                             {% endif %}

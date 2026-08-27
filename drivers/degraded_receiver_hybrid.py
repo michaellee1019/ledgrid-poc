@@ -2,7 +2,7 @@
 
 This module is the one production exception to the normal all-receiver
 acknowledgement contract.  Logical receivers 0 and 1 must provide exact
-status-v4 capability/identity telemetry.  Logical receivers 2 and 3 must have
+status-v4 capability/identity telemetry.  Logical receivers 2, 3, and 4 must have
 the installed SPI1 no-return-path shape and receive only pre-serialized,
 allowlisted commands.  Nothing in this module treats an outbound transfer as
 receiver or display proof.
@@ -44,10 +44,16 @@ from drivers.spi_controller import (
 
 DEGRADED_SPI1_TRANSPORT_POLICY = "degraded_spi1_01_readable"
 READABLE_DEVICES = (0, 1)
-UNVERIFIED_DEVICES = (2, 3)
-EXPECTED_DEVICE_MAP = ((0, 0), (0, 1), (1, 1), (1, 0))
-DEFAULT_PHYSICAL_LANE_ORDER = (0, 1, 2, 3)
-DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER = (False, False, False, False)
+UNVERIFIED_DEVICES = (2, 3, 4)
+EXPECTED_DEVICE_MAP = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
+RECEIVER_COUNT = 5
+DEFAULT_PHYSICAL_LANE_ORDER = (0, 1, 3, 2, 4)
+DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER = (
+    False, False, True, True, False,
+)
+RECEIVER_STRIP_COUNTS = (8, 8, 8, 8, 1)
+RECEIVER_GLOBAL_STRIP_OFFSETS = (0, 8, 24, 16, 32)
+RECEIVER_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0x01)
 CONFIG_REVERSE_LOCAL_STRIP_ORDER = 0x80
 EXPECTED_STATUS_VERSION = 4
 WRITE_ONLY_FOREGROUND_SETTLE_SECONDS = 0.050
@@ -62,7 +68,13 @@ EXPECTED_CAPABILITIES = (
 LOCAL_STRIPS = 8
 LEDS_PER_STRIP = 138
 LOCAL_PIXELS = LOCAL_STRIPS * LEDS_PER_STRIP
-WALL_STRIPS = 32
+RECEIVER_PIXEL_COUNTS = tuple(
+    width * LEDS_PER_STRIP for width in RECEIVER_STRIP_COUNTS
+)
+RECEIVER_PIXEL_OFFSETS = tuple(
+    offset * LEDS_PER_STRIP for offset in RECEIVER_GLOBAL_STRIP_OFFSETS
+)
+WALL_STRIPS = 33
 WALL_PIXELS = WALL_STRIPS * LEDS_PER_STRIP
 COMPILED_RAINBOW_COMPONENT_ID = 1
 BASE_LOCAL_BACKGROUND = 1
@@ -96,18 +108,19 @@ def _write_only_status(status: Any) -> bool:
 
 
 def evaluate_degraded_receiver_topology(statuses: Any) -> dict[str, Any]:
-    """Accept only the installed readable-0/1, write-only-2/3 topology."""
+    """Accept only the installed readable-0/1, write-only-2/3/4 topology."""
 
     failures: list[str] = []
     receivers: dict[str, Any] = {}
     if not isinstance(statuses, Sequence) or isinstance(statuses, (str, bytes)):
         statuses = ()
-    if len(statuses) != 4:
+    if len(statuses) != RECEIVER_COUNT:
         failures.append(
-            f"receiver telemetry has {len(statuses)} devices; expected exactly 4"
+            f"receiver telemetry has {len(statuses)} devices; expected exactly "
+            f"{RECEIVER_COUNT}"
         )
 
-    for logical_id in range(min(4, len(statuses))):
+    for logical_id in range(min(RECEIVER_COUNT, len(statuses))):
         status = statuses[logical_id]
         if logical_id in READABLE_DEVICES:
             device_failures: list[str] = []
@@ -193,6 +206,17 @@ class DegradedReceiverHybridController:
         self.strip_count = getattr(controller, "strip_count", None)
         self.total_leds = getattr(controller, "total_leds", None)
         self.leds_per_device = LOCAL_PIXELS
+        self.receiver_strip_counts = tuple(
+            getattr(controller, "receiver_strip_counts", ())
+        )
+        self.receiver_global_strip_offsets = tuple(
+            getattr(controller, "receiver_global_strip_offsets", ())
+        )
+        self.receiver_lane_masks = tuple(
+            getattr(controller, "receiver_lane_masks", ())
+        )
+        self.receiver_pixel_counts = RECEIVER_PIXEL_COUNTS
+        self.receiver_pixel_offsets = RECEIVER_PIXEL_OFFSETS
         self.inline_show = getattr(controller, "inline_show", True)
         self.debug = getattr(controller, "debug", False)
         self.physical_lane_order = self._normalize_physical_lane_order(
@@ -200,7 +224,7 @@ class DegradedReceiverHybridController:
         )
         self._physical_lane_by_logical = tuple(
             self.physical_lane_order.index(logical_id)
-            for logical_id in range(4)
+            for logical_id in range(RECEIVER_COUNT)
         )
         self.reverse_strips_by_logical_receiver = (
             self._normalize_reverse_strips(reverse_strips_by_logical_receiver)
@@ -218,7 +242,7 @@ class DegradedReceiverHybridController:
         self._scene_revision: Optional[int] = None
         self._context: Optional[ReceiverPresentationContext] = None
         self._foreground_binding: Optional[dict[str, int]] = None
-        self._expected_alpha_coverage = (0, 0, 0, 0)
+        self._expected_alpha_coverage = (0,) * RECEIVER_COUNT
         self._coverage_checks = 0
         self._identity_configuration: Optional[dict[str, Any]] = None
         self._status: dict[str, Any] = {}
@@ -227,19 +251,19 @@ class DegradedReceiverHybridController:
     @staticmethod
     def _normalize_physical_lane_order(
         value: Sequence[int],
-    ) -> tuple[int, int, int, int]:
-        if isinstance(value, (str, bytes)) or len(value) != 4:
+    ) -> tuple[int, ...]:
+        if isinstance(value, (str, bytes)) or len(value) != RECEIVER_COUNT:
             raise DegradedReceiverHybridError(
-                "physical lane order must contain four logical receiver ids"
+                "physical lane order must contain five logical receiver ids"
             )
         if any(type(item) is not int for item in value):
             raise DegradedReceiverHybridError(
                 "physical lane order values must be integers"
             )
         normalized = tuple(value)
-        if set(normalized) != {0, 1, 2, 3}:
+        if set(normalized) != set(range(RECEIVER_COUNT)):
             raise DegradedReceiverHybridError(
-                "physical lane order must be a permutation of 0,1,2,3"
+                "physical lane order must be a permutation of 0,1,2,3,4"
             )
         return normalized
 
@@ -249,10 +273,10 @@ class DegradedReceiverHybridController:
     @staticmethod
     def _normalize_reverse_strips(
         value: Sequence[bool],
-    ) -> tuple[bool, bool, bool, bool]:
-        if isinstance(value, (str, bytes)) or len(value) != 4:
+    ) -> tuple[bool, ...]:
+        if isinstance(value, (str, bytes)) or len(value) != RECEIVER_COUNT:
             raise DegradedReceiverHybridError(
-                "reverse strip mapping must contain four booleans"
+                "reverse strip mapping must contain five booleans"
             )
         if any(type(item) is not bool for item in value):
             raise DegradedReceiverHybridError(
@@ -261,11 +285,11 @@ class DegradedReceiverHybridController:
         return tuple(value)
 
     def _global_strip_offset(self, logical_id: int) -> int:
-        return self._physical_lane(logical_id) * LOCAL_STRIPS
+        return self.receiver_global_strip_offsets[logical_id]
 
     def _wall_slice(self, logical_id: int) -> slice:
-        start = self._physical_lane(logical_id) * LOCAL_PIXELS
-        return slice(start, start + LOCAL_PIXELS)
+        start = self.receiver_pixel_offsets[logical_id]
+        return slice(start, start + self.receiver_pixel_counts[logical_id])
 
     def _mapped_local_pixels(
         self, pixels: np.ndarray, logical_id: int
@@ -275,10 +299,12 @@ class DegradedReceiverHybridController:
         local = pixels[self._wall_slice(logical_id)]
         if not self.reverse_strips_by_logical_receiver[logical_id]:
             return np.ascontiguousarray(local)
+        local_strips = self.receiver_strip_counts[logical_id]
+        local_pixels = self.receiver_pixel_counts[logical_id]
         channels = local.shape[1]
         return np.ascontiguousarray(
-            local.reshape(LOCAL_STRIPS, LEDS_PER_STRIP, channels)[::-1].reshape(
-                LOCAL_PIXELS, channels
+            local.reshape(local_strips, LEDS_PER_STRIP, channels)[::-1].reshape(
+                local_pixels, channels
             )
         )
 
@@ -287,15 +313,21 @@ class DegradedReceiverHybridController:
 
     def _validate_installed_controller(self) -> None:
         if (
-            self.num_devices != 4
-            or len(self.devices) != 4
+            self.num_devices != RECEIVER_COUNT
+            or len(self.devices) != RECEIVER_COUNT
             or self.strips_per_device != LOCAL_STRIPS
             or self.leds_per_strip != LEDS_PER_STRIP
             or self.strip_count != WALL_STRIPS
             or self.total_leds != WALL_PIXELS
+            or self.receiver_strip_counts != RECEIVER_STRIP_COUNTS
+            or self.receiver_global_strip_offsets
+            != RECEIVER_GLOBAL_STRIP_OFFSETS
+            or self.receiver_lane_masks != RECEIVER_LANE_MASKS
         ):
             raise DegradedReceiverHybridError(
-                "controller geometry is not the installed 4 x 8 x 138 wall"
+                "controller geometry is not the finalized 33 x 138 wall with "
+                "receiver widths (8,8,8,8,1), offsets (0,8,24,16,32), "
+                "and lane masks (0xff,0xff,0xff,0xff,0x01)"
             )
         device_map = tuple(getattr(self.controller, "device_map", ()))
         if device_map != EXPECTED_DEVICE_MAP:
@@ -311,6 +343,14 @@ class DegradedReceiverHybridController:
             raise DegradedReceiverHybridError(
                 f"controller device objects route to {observed!r}; expected "
                 f"{EXPECTED_DEVICE_MAP!r}"
+            )
+        device_widths = tuple(
+            getattr(device, "strip_count", None) for device in self.devices
+        )
+        if device_widths != RECEIVER_STRIP_COUNTS:
+            raise DegradedReceiverHybridError(
+                f"controller device local widths are {device_widths!r}; expected "
+                f"{RECEIVER_STRIP_COUNTS!r}"
             )
 
     def _lock(self):
@@ -333,8 +373,13 @@ class DegradedReceiverHybridController:
             "physical_lane_order": list(self.physical_lane_order),
             "physical_lane_by_logical_receiver": {
                 str(logical_id): self._physical_lane(logical_id)
-                for logical_id in range(4)
+                for logical_id in range(RECEIVER_COUNT)
             },
+            "receiver_strip_counts": list(self.receiver_strip_counts),
+            "receiver_global_strip_offsets": list(
+                self.receiver_global_strip_offsets
+            ),
+            "receiver_lane_masks": list(self.receiver_lane_masks),
             "reverse_strips_by_logical_receiver": list(
                 self.reverse_strips_by_logical_receiver
             ),
@@ -414,11 +459,12 @@ class DegradedReceiverHybridController:
         )
 
     def _identity_packet(self, logical_id: int) -> bytes:
-        if logical_id not in range(4):
-            raise ValueError("logical identity must be 0..3")
+        if logical_id not in range(RECEIVER_COUNT):
+            raise ValueError("logical identity must be 0..4")
+        global_strip_offset = self.receiver_global_strip_offsets[logical_id]
         return bytes((
             CMD_CONFIG,
-            LOCAL_STRIPS,
+            self.receiver_strip_counts[logical_id],
             (LEDS_PER_STRIP >> 8) & 0xFF,
             LEDS_PER_STRIP & 0xFF,
             (
@@ -427,6 +473,8 @@ class DegradedReceiverHybridController:
                 else 0
             ),
             logical_id,
+            (global_strip_offset >> 8) & 0xFF,
+            global_strip_offset & 0xFF,
         ))
 
     def configure_logical_identities(self) -> dict[str, Any]:
@@ -447,6 +495,9 @@ class DegradedReceiverHybridController:
                     "receiver_status_version": EXPECTED_STATUS_VERSION,
                     "receiver_logical_device": logical_id,
                     "receiver_last_processed_command": CMD_CONFIG,
+                    "receiver_global_strip_offset": (
+                        self.receiver_global_strip_offsets[logical_id]
+                    ),
                 }
                 for key, value in expected.items():
                     if status.get(key) != value:
@@ -458,6 +509,9 @@ class DegradedReceiverHybridController:
                     "receiver_acknowledged": True,
                     "logical_identity_verified": True,
                     "logical_device": logical_id,
+                    "global_strip_offset": (
+                        self.receiver_global_strip_offsets[logical_id]
+                    ),
                     "reverse_local_strip_order": (
                         self.reverse_native_strips_by_logical_receiver[logical_id]
                     ),
@@ -472,6 +526,9 @@ class DegradedReceiverHybridController:
                     "receiver_acknowledged": False,
                     "logical_identity_verified": False,
                     "logical_device_requested": logical_id,
+                    "global_strip_offset_requested": (
+                        self.receiver_global_strip_offsets[logical_id]
+                    ),
                     "reverse_local_strip_order_requested": (
                         self.reverse_native_strips_by_logical_receiver[logical_id]
                     ),
@@ -533,7 +590,7 @@ class DegradedReceiverHybridController:
         begin = encode_presentation_context_begin(context)
         setting = encode_presentation_context_set(context)
         commit = encode_presentation_context_commit(context)
-        for index in range(4):
+        for index in range(RECEIVER_COUNT):
             self._invoke(
                 index,
                 "presentation begin",
@@ -549,7 +606,7 @@ class DegradedReceiverHybridController:
                 kwargs={"context": context},
             )
         anchor = self._monotonic_ns()
-        for index in range(4):
+        for index in range(RECEIVER_COUNT):
             self._invoke(
                 index,
                 "presentation commit",
@@ -610,13 +667,13 @@ class DegradedReceiverHybridController:
                 common_seed=common_seed,
                 scene_epoch=context.scene_epoch,
             )
-            for index in range(4)
+            for index in range(RECEIVER_COUNT)
         ]
         with self._lock():
             preflight = self.preflight()
             identities = self.configure_logical_identities()
             # From the first presentation mutation onward, conservatively route
-            # any host frame through this facade's all-four takeover even if a
+            # any host frame through this facade's all-five takeover even if a
             # later command raises before local start can be verified.
             self._context = context
             self._session = None
@@ -685,7 +742,7 @@ class DegradedReceiverHybridController:
             self._session = None
             self._generation = 0
             self._scene_revision = context.scene_revision
-            self._expected_alpha_coverage = (0, 0, 0, 0)
+            self._expected_alpha_coverage = (0,) * RECEIVER_COUNT
             self._foreground_binding = None
             self._mark_receiver_owned()
             self._record_status(
@@ -706,7 +763,7 @@ class DegradedReceiverHybridController:
                 global_strip_offset=self._global_strip_offset(index),
                 common_seed=common_seed,
             )
-            for index in range(4)
+            for index in range(RECEIVER_COUNT)
         ]
         with self._lock():
             if self._context is None:
@@ -795,24 +852,61 @@ class DegradedReceiverHybridController:
         *,
         full_snapshot: bool,
         dirty_ranges: Optional[tuple[tuple[int, int], ...]],
-        physical_lane_by_logical: Sequence[int] = DEFAULT_PHYSICAL_LANE_ORDER,
+        receiver_strip_counts: Sequence[int] = RECEIVER_STRIP_COUNTS,
+        receiver_global_strip_offsets: Sequence[int] = (
+            RECEIVER_GLOBAL_STRIP_OFFSETS
+        ),
         reverse_strips_by_logical_receiver: Sequence[bool] = (
             DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
         ),
     ) -> list[tuple[int, np.ndarray]]:
-        local_start = physical_lane_by_logical[logical_id] * LOCAL_PIXELS
-        local = pixels[local_start:local_start + LOCAL_PIXELS]
+        if logical_id not in range(RECEIVER_COUNT):
+            raise ValueError("logical receiver id must be 0..4")
+        if (
+            len(receiver_strip_counts) != RECEIVER_COUNT
+            or len(receiver_global_strip_offsets) != RECEIVER_COUNT
+            or len(reverse_strips_by_logical_receiver) != RECEIVER_COUNT
+        ):
+            raise ValueError(
+                "sparse mapping requires five receiver widths, offsets, and "
+                "strip directions"
+            )
+        local_strips = int(receiver_strip_counts[logical_id])
+        local_pixels = local_strips * LEDS_PER_STRIP
+        local_start = int(receiver_global_strip_offsets[logical_id]) * LEDS_PER_STRIP
+        local = pixels[local_start:local_start + local_pixels]
+        if local.shape[0] != local_pixels:
+            raise ValueError(
+                f"receiver {logical_id} slice has {local.shape[0]} pixels; "
+                f"expected {local_pixels}"
+            )
         reversed_order = reverse_strips_by_logical_receiver[logical_id]
         if reversed_order:
             channels = local.shape[1]
             local = np.ascontiguousarray(
-                local.reshape(LOCAL_STRIPS, LEDS_PER_STRIP, channels)[::-1].reshape(
-                    LOCAL_PIXELS, channels
+                local.reshape(local_strips, LEDS_PER_STRIP, channels)[::-1].reshape(
+                    local_pixels, channels
                 )
             )
         if full_snapshot:
+            # Protocol v1 snapshots still replace the receiver's fixed
+            # eight-lane overlay plane. Receiver 4 contributes one semantic
+            # lane; the other seven lanes are explicit transparent padding,
+            # never copies of column 32.
+            if local_pixels < LOCAL_PIXELS:
+                transport_local = np.zeros(
+                    (LOCAL_PIXELS, local.shape[1]), dtype=np.uint8
+                )
+                transport_local[:local_pixels] = local
+            else:
+                transport_local = local
             return [
-                (start, local[start:start + MAX_RGBA_PIXELS_PER_BATCH_SPAN])
+                (
+                    start,
+                    transport_local[
+                        start:start + MAX_RGBA_PIXELS_PER_BATCH_SPAN
+                    ],
+                )
                 for start in range(
                     0, LOCAL_PIXELS, MAX_RGBA_PIXELS_PER_BATCH_SPAN
                 )
@@ -820,14 +914,14 @@ class DegradedReceiverHybridController:
         local_ranges: list[tuple[int, int]] = []
         for start, end in dirty_ranges or ():
             first = max(local_start, start)
-            last = min(local_start + LOCAL_PIXELS, end)
+            last = min(local_start + local_pixels, end)
             while first < last:
                 physical_local = first - local_start
                 physical_strip = physical_local // LEDS_PER_STRIP
                 led_offset = physical_local % LEDS_PER_STRIP
                 count = min(last - first, LEDS_PER_STRIP - led_offset)
                 local_strip = (
-                    LOCAL_STRIPS - 1 - physical_strip
+                    local_strips - 1 - physical_strip
                     if reversed_order else physical_strip
                 )
                 mapped_first = local_strip * LEDS_PER_STRIP + led_offset
@@ -860,7 +954,7 @@ class DegradedReceiverHybridController:
         scene_epoch: int,
         base_revision: int,
         present_at_scene_time_us: int,
-        expected_coverage: tuple[int, int, int, int],
+        expected_coverage: tuple[int, ...],
         require_positive_lease: bool,
     ) -> dict[str, Any]:
         readable: dict[str, Any] = {}
@@ -930,7 +1024,7 @@ class DegradedReceiverHybridController:
             int(np.count_nonzero(
                 overlay[self._wall_slice(index), 3]
             ))
-            for index in range(4)
+            for index in range(RECEIVER_COUNT)
         )
         missing = [
             index for index, count in enumerate(expected_coverage) if count <= 0
@@ -964,12 +1058,15 @@ class DegradedReceiverHybridController:
                 index,
                 full_snapshot=full_snapshot,
                 dirty_ranges=ranges,
-                physical_lane_by_logical=self._physical_lane_by_logical,
+                receiver_strip_counts=self.receiver_strip_counts,
+                receiver_global_strip_offsets=(
+                    self.receiver_global_strip_offsets
+                ),
                 reverse_strips_by_logical_receiver=(
                     self.reverse_strips_by_logical_receiver
                 ),
             )
-            for index in range(4)
+            for index in range(RECEIVER_COUNT)
         ]
         session_packet = LEDController.serialize_controller_session_begin(
             controller_session_id=session,
@@ -1010,7 +1107,7 @@ class DegradedReceiverHybridController:
 
         with self._lock():
             if new_session:
-                for index in range(4):
+                for index in range(RECEIVER_COUNT):
                     self._invoke(
                         index,
                         "foreground session",
@@ -1129,7 +1226,7 @@ class DegradedReceiverHybridController:
             lease_ms=lease_ms,
         )
         with self._lock():
-            for index in range(4):
+            for index in range(RECEIVER_COUNT):
                 self._invoke(
                     index,
                     "foreground renew",
@@ -1178,7 +1275,7 @@ class DegradedReceiverHybridController:
             scene_revision=scene_revision,
         )
         with self._lock():
-            for index in range(4):
+            for index in range(RECEIVER_COUNT):
                 self._invoke(
                     index,
                     "foreground clear",
@@ -1215,7 +1312,7 @@ class DegradedReceiverHybridController:
                     "coverage_exact": True,
                 }
             self._generation = generation
-            self._expected_alpha_coverage = (0, 0, 0, 0)
+            self._expected_alpha_coverage = (0,) * RECEIVER_COUNT
             self._foreground_binding = None
             self.controller._sparse_overlay_generation = generation
             self.controller._sparse_overlay_snapshot_digest = None
@@ -1284,17 +1381,18 @@ class DegradedReceiverHybridController:
                     f"receiver {index} pass-boundary visibility failed "
                     + ", ".join(failed)
                 )
-        all_lanes_nonzero = all(
+        all_receivers_covered = all(
             count > 0 for count in self._expected_alpha_coverage
         )
-        if not all_lanes_nonzero:
+        if not all_receivers_covered:
             failures.append(
-                "expected foreground alpha coverage is not positive on every lane"
+                "expected foreground alpha coverage is not positive on every "
+                "receiver"
             )
         return {
             "passed": not failures,
             "failures": failures,
-            "all_lanes_expected_nonzero": all_lanes_nonzero,
+            "all_receivers_expected_coverage_nonzero": all_receivers_covered,
             "expected_alpha_coverage_by_receiver": {
                 str(index): count
                 for index, count in enumerate(self._expected_alpha_coverage)
@@ -1377,7 +1475,7 @@ class DegradedReceiverHybridController:
             self._scene_revision = None
             self._context = None
             self._foreground_binding = None
-            self._expected_alpha_coverage = (0, 0, 0, 0)
+            self._expected_alpha_coverage = (0,) * RECEIVER_COUNT
             self._mark_host_owned()
             self._record_status(
                 state="host_full_scene",
@@ -1398,21 +1496,13 @@ class DegradedReceiverHybridController:
     def set_frame(self, colors: Any, dirty_ranges: Any = None) -> Any:
         if self._context is not None or self._session is not None:
             return self.set_all_pixels(colors)
-        # After the proven complete takeover, retain the underlying controller's
-        # normal streaming path but present it in logical-device order. Dirty
-        # ranges belong to physical wall coordinates and cannot be forwarded
-        # across a non-identity permutation without remapping, so this explicit
-        # degraded path sends a complete frame.
+        # The validated underlying controller already owns exact heterogeneous
+        # origins and host reversals. Forward the canonical wall once; building
+        # a logical-device-packed frame here would double-apply that mapping.
+        # Dirty ranges remain disabled because this facade has no acknowledgement
+        # path for receivers 2/3/4.
         frame = self._normalize_host_frame(colors)
-        transport_order = np.empty_like(frame)
-        for logical_id in range(4):
-            destination = slice(
-                logical_id * LOCAL_PIXELS, (logical_id + 1) * LOCAL_PIXELS
-            )
-            transport_order[destination] = self._mapped_local_pixels(
-                frame, logical_id
-            )
-        return self.controller.set_frame(transport_order, dirty_ranges=None)
+        return self.controller.set_frame(frame, dirty_ranges=None)
 
     def clear(self) -> bool:
         return self.set_all_pixels(
@@ -1453,14 +1543,27 @@ class DegradedReceiverHybridController:
 
 
 __all__ = [
+    "DEFAULT_PHYSICAL_LANE_ORDER",
+    "DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER",
     "DEGRADED_SPI1_TRANSPORT_POLICY",
     "DegradedReceiverHybridController",
     "DegradedReceiverHybridError",
     "EXPECTED_CAPABILITIES",
     "EXPECTED_DEVICE_MAP",
     "EXPECTED_STATUS_VERSION",
+    "LEDS_PER_STRIP",
+    "LOCAL_PIXELS",
+    "LOCAL_STRIPS",
     "READABLE_DEVICES",
+    "RECEIVER_COUNT",
+    "RECEIVER_GLOBAL_STRIP_OFFSETS",
+    "RECEIVER_LANE_MASKS",
+    "RECEIVER_PIXEL_COUNTS",
+    "RECEIVER_PIXEL_OFFSETS",
+    "RECEIVER_STRIP_COUNTS",
     "UNVERIFIED_DEVICES",
+    "WALL_PIXELS",
+    "WALL_STRIPS",
     "WRITE_ONLY_FOREGROUND_SETTLE_SECONDS",
     "evaluate_degraded_receiver_topology",
 ]

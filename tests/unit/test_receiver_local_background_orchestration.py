@@ -178,17 +178,34 @@ class Device:
 def controller(devices):
     item = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
     item.devices = devices
-    item.num_devices = 4
+    item.num_devices = len(devices)
     item.strips_per_device = 8
     item.leds_per_strip = 138
     item.leds_per_device = 1104
-    item.strip_count = 32
-    item.total_leds = 4416
+    if len(devices) == 5:
+        item.receiver_strip_counts = (8, 8, 8, 8, 1)
+        item.receiver_global_strip_offsets = (0, 8, 24, 16, 32)
+        item.receiver_lane_masks = (0xFF, 0xFF, 0xFF, 0xFF, 0x01)
+        item.receiver_pixel_counts = (1104, 1104, 1104, 1104, 138)
+        item.receiver_pixel_offsets = (0, 1104, 3312, 2208, 4416)
+        item.reverse_host_strips_by_logical_receiver = (
+            False, False, True, True, False,
+        )
+        item.reverse_native_strips_by_logical_receiver = (
+            False, False, True, True, False,
+        )
+        item.strip_count = 33
+        item.total_leds = 4554
+        item._devices_by_bus = {0: [0, 1], 1: [2, 3, 4]}
+        item.device_map = [(0, 0), (0, 1), (1, 1), (1, 0), (1, 2)]
+    else:
+        item.strip_count = len(devices) * item.strips_per_device
+        item.total_leds = item.strip_count * item.leds_per_strip
+        item._devices_by_bus = {0: list(range(len(devices)))}
+        item.device_map = [(0, index) for index in range(len(devices))]
     item.debug = False
     item.parallel = False
     item._executor = None
-    item._devices_by_bus = {0: [0, 1, 2, 3]}
-    item.device_map = [(0, index) for index in range(4)]
     item._logical_frames_sent = 0
     item._transport_lock = threading.RLock()
     item._local_background_active = False
@@ -332,6 +349,33 @@ class ReceiverLocalBackgroundOrchestrationTests(unittest.TestCase):
             self.assertEqual(start[1]["scene_epoch"], 11)
             self.assertEqual(device.active_context_digest, expected_digest)
         self.assertEqual(item._local_background_status["state"], "active")
+
+    def test_fifth_receiver_starts_once_at_its_single_column_offset(self):
+        devices = [Device() for _ in range(5)]
+        item = controller(devices)
+        presentation = context()
+
+        self.assertTrue(item.start_local_background(presentation))
+
+        self.assertEqual(item.receiver_strip_counts, (8, 8, 8, 8, 1))
+        self.assertEqual(
+            [
+                next(call[1]["global_strip_offset"] for call in device.calls
+                     if call[0] == "start")
+                for device in devices
+            ],
+            [0, 8, 24, 16, 32],
+        )
+        self.assertEqual(
+            [sum(call[0] == "context_begin" for call in device.calls)
+             for device in devices],
+            [1, 1, 1, 1, 1],
+        )
+        self.assertEqual(
+            [sum(call[0] == "start" for call in device.calls)
+             for device in devices],
+            [1, 1, 1, 1, 1],
+        )
 
     def test_missing_capability_starts_no_subset_and_falls_back_every_board(self):
         devices = [Device(), Device(), Device(capable=False), Device()]

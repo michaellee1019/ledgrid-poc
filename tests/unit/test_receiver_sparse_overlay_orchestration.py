@@ -144,14 +144,31 @@ class Device:
 def controller(devices):
     item = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
     item.devices = devices
-    item.num_devices = 4
+    item.num_devices = len(devices)
     item.strips_per_device = 8
     item.leds_per_strip = 138
     item.leds_per_device = 1104
-    item.strip_count = 32
-    item.total_leds = 4416
+    if len(devices) == 5:
+        item.receiver_strip_counts = (8, 8, 8, 8, 1)
+        item.receiver_global_strip_offsets = (0, 8, 24, 16, 32)
+        item.receiver_lane_masks = (0xFF, 0xFF, 0xFF, 0xFF, 0x01)
+        item.receiver_pixel_counts = (1104, 1104, 1104, 1104, 138)
+        item.receiver_pixel_offsets = (0, 1104, 3312, 2208, 4416)
+        item.reverse_host_strips_by_logical_receiver = (
+            False, False, True, True, False,
+        )
+        item.reverse_native_strips_by_logical_receiver = (
+            False, False, True, True, False,
+        )
+        item.strip_count = 33
+        item.total_leds = 4554
+        item._devices_by_bus = {0: [0, 1], 1: [2, 3, 4]}
+        item.device_map = [(0, 0), (0, 1), (1, 1), (1, 0), (1, 2)]
+    else:
+        item.strip_count = len(devices) * item.strips_per_device
+        item.total_leds = item.strip_count * item.leds_per_strip
+        item._devices_by_bus = {0: list(range(len(devices)))}
     item._executor = None
-    item._devices_by_bus = {0: [0, 1, 2, 3]}
     item._logical_frames_sent = 0
     item._transport_lock = threading.RLock()
     item._local_background_active = True
@@ -162,8 +179,8 @@ def controller(devices):
     return item
 
 
-def transparent_wall():
-    return np.zeros((4416, 4), dtype=np.uint8)
+def transparent_wall(strip_count=32):
+    return np.zeros((strip_count * 138, 4), dtype=np.uint8)
 
 
 class ReceiverSparseOverlayOrchestrationTests(unittest.TestCase):
@@ -197,6 +214,38 @@ class ReceiverSparseOverlayOrchestrationTests(unittest.TestCase):
             self.assertEqual(device.committed_generation, 1)
         self.assertEqual(
             item._local_background_status["foreground_patch_counts"], [2, 2, 2, 2]
+        )
+
+    def test_fifth_receiver_snapshot_has_one_lane_then_transparent_padding(self):
+        devices = [Device(index) for index in range(5)]
+        item = controller(devices)
+        pixels = transparent_wall(33)
+        pixels[32 * 138:33 * 138] = (2, 3, 4, 8)
+
+        self.assertTrue(item.publish_sparse_overlay(
+            pixels,
+            controller_session_id=SESSION,
+            generation=1,
+            prior_generation=0,
+            scene_revision=7,
+            scene_epoch=11,
+            base_revision=13,
+            lease_ms=3000,
+            present_at_scene_time_us=17,
+            full_snapshot=True,
+        ))
+
+        fifth_patches = next(
+            call[2] for call in devices[4].calls if call[0] == "patches"
+        )
+        reassembled = np.zeros((1104, 4), dtype=np.uint8)
+        for start, data in fifth_patches:
+            reassembled[start:start + len(data)] = data
+        self.assertTrue(np.all(reassembled[:138] == (2, 3, 4, 8)))
+        self.assertFalse(np.any(reassembled[138:]))
+        self.assertEqual(
+            item._local_background_status["foreground_patch_counts"],
+            [2, 2, 2, 2, 2],
         )
 
     def test_boundary_delta_slices_two_boards_and_noop_commits_the_rest(self):

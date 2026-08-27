@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import unittest
 from unittest import mock
 import sys
@@ -71,6 +73,54 @@ class _Device:
         pass
 
 
+class _ObservableDevice:
+    def __init__(self, logical_id, status):
+        self.logical_device_id = logical_id
+        self._status = dict(status)
+        self.configures = 0
+        self.lane_masks = []
+        self.queries = 0
+
+    def query_receiver_status(self):
+        self.queries += 1
+        return dict(self._status)
+
+    def get_stats(self):
+        return dict(self._status)
+
+    def configure(self):
+        self.configures += 1
+
+    def set_lane_mask(self, lane_mask):
+        self.lane_masks.append(lane_mask)
+
+
+def _observability_controller(*, receiver_4_status=None):
+    controller = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
+    controller.receiver_strip_counts = WIDTHS
+    controller.receiver_global_strip_offsets = OFFSETS
+    controller.receiver_lane_masks = (0xFF, 0xFF, 0xFF, 0xFF, 0x01)
+    controller.devices = []
+    for logical_id, (width, offset, lane_mask) in enumerate(
+        zip(
+            controller.receiver_strip_counts,
+            controller.receiver_global_strip_offsets,
+            controller.receiver_lane_masks,
+        )
+    ):
+        status = {
+            "receiver_status_version": 3,
+            "receiver_logical_device": logical_id,
+            "receiver_active_strips": width,
+            "receiver_global_strip_offset": offset,
+            "receiver_lane_mask": lane_mask,
+        }
+        if logical_id == 4 and receiver_4_status is not None:
+            status.update(receiver_4_status)
+        controller.devices.append(_ObservableDevice(logical_id, status))
+    return controller
+
+
 def _controller():
     with (
         mock.patch("drivers.multi_device.LEDController", _Device),
@@ -104,6 +154,66 @@ def _controller():
 
 
 class HeterogeneousTopologyTests(unittest.TestCase):
+    def test_startup_observability_verifies_exact_fifth_receiver_topology(self):
+        controller = _observability_controller()
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stderr(stderr):
+            controller._initialize_receiver_identity_observability()
+
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(controller.devices[4].logical_device_id, 4)
+        self.assertEqual(controller.devices[4].configures, 1)
+        self.assertEqual(controller.devices[4].lane_masks, [0x01])
+        self.assertEqual(controller.devices[4].queries, 4)
+
+    def test_startup_observability_surfaces_exact_topology_mismatch_and_continues(self):
+        controller = _observability_controller(
+            receiver_4_status={
+                "receiver_logical_device": 3,
+                "receiver_active_strips": 8,
+                "receiver_global_strip_offset": 24,
+                "receiver_lane_mask": 0xFF,
+            }
+        )
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stderr(stderr):
+            controller._initialize_receiver_identity_observability()
+
+        error = stderr.getvalue()
+        self.assertIn("Receiver 4 topology observability unavailable", error)
+        self.assertIn("receiver_logical_device=3, expected 4", error)
+        self.assertIn("receiver_active_strips=8, expected 1", error)
+        self.assertIn("receiver_global_strip_offset=24, expected 32", error)
+        self.assertIn("receiver_lane_mask=255, expected 1", error)
+        self.assertIn("continuing with ordinary host streaming", error)
+        self.assertEqual(controller.devices[4].configures, 1)
+        self.assertEqual(controller.devices[4].lane_masks, [0x01])
+
+    def test_startup_observability_keeps_legacy_status_streaming_best_effort(self):
+        controller = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
+        controller.receiver_strip_counts = (8,)
+        controller.receiver_global_strip_offsets = (0,)
+        controller.receiver_lane_masks = (0xFF,)
+        legacy = _ObservableDevice(
+            0,
+            {
+                "receiver_status_version": 2,
+                "receiver_logical_device": None,
+            },
+        )
+        controller.devices = [legacy]
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stderr(stderr):
+            controller._initialize_receiver_identity_observability()
+
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(legacy.configures, 1)
+        self.assertEqual(legacy.lane_masks, [0xFF])
+        self.assertEqual(legacy.queries, 2)
+
     def test_constructor_preserves_exact_width_origin_and_visible_geometry(self):
         controller = _controller()
         self.assertEqual(controller.strip_count, 33)

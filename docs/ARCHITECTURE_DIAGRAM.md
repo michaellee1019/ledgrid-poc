@@ -1,7 +1,7 @@
 # System architecture
 
 The Raspberry Pi owns animation simulation, frame scheduling, user state, and
-SPI transport. Four ESP32-S3 receivers validate frame packets and drive the
+SPI transport. Five ESP32-S3 receivers validate frame packets and drive the
 physical strips. The receivers do not run animation logic.
 
 ```text
@@ -16,10 +16,10 @@ web process (Flask) ── control/status files ── controller process
                                                 │ two SPI buses
                          ┌──────────────────────┴──────────────────────┐
                          ▼                                             ▼
-                   ESP32-S3 x2                                    ESP32-S3 x2
+                   ESP32-S3 x2                                    ESP32-S3 x3
                    on SPI0                                        on SPI1
                          │                                             │
-                         └──────────── 32 WS2812 lanes total ──────────┘
+                         └──────────── 33 WS2812 lanes total ──────────┘
 ```
 
 ## Processes and ownership
@@ -59,7 +59,7 @@ See [Animation plugins](ANIMATION_SYSTEM.md) for the package and frame contracts
 1. The animation manager asks the active plugin for a canonical RGB frame.
 2. The manager applies scheduling and presentation hints, then passes the frame
    to `MultiDeviceLEDController`.
-3. The controller divides the logical strip-major frame into four receiver
+3. The controller divides the logical strip-major frame into five receiver
    chunks.
 4. Devices sharing an SPI bus are sent serially; SPI0 and SPI1 transfers can
    overlap.
@@ -68,8 +68,9 @@ See [Animation plugins](ANIMATION_SYSTEM.md) for the package and frame contracts
 6. A separate receiver task converts RGB into an eight-lane WS2812 waveform and
    submits it through the ESP-IDF LCD/I80 DMA peripheral.
 
-The installed geometry is 32 strips x 138 LEDs. Each receiver owns eight strips
-and retains firmware capacity for up to 140 LEDs per strip.
+The installed geometry is 33 strips x 138 LEDs. Four receivers own eight strips
+each; the fifth owns only the extra rightmost strip and uses lane mask `0x01`.
+Firmware still retains capacity for up to 140 LEDs per strip.
 
 ## Receiver protocol
 

@@ -191,7 +191,7 @@ class AnimationPreviewTests(unittest.TestCase):
 
     def test_dashboard_and_preset_api_expose_lazy_preview_metadata(self):
         class _Controller:
-            strip_count = 32
+            strip_count = 33
             leds_per_strip = 138
             total_leds = strip_count * leds_per_strip
 
@@ -223,7 +223,7 @@ class AnimationPreviewTests(unittest.TestCase):
         interface.generated_preview_dir = self.output / "generated"
         interface.runtime_preview_dir = self.output / "runtime"
         interface.animation_presets_dir = self.output / "presets"
-        catalog = empty_catalog(32, 138)
+        catalog = empty_catalog(33, 138)
         catalog["animations"]["rainbow"] = {
             "status": "ready", "poster_url": "/poster.webp", "loop_url": "/loop.webp",
         }
@@ -245,6 +245,7 @@ class AnimationPreviewTests(unittest.TestCase):
         self.assertIn(
             'class="generated-preview library-preview"', html
         )
+        self.assertIn('width="33" height="138"', html)
         self.assertIn('loading="lazy"', html)
         self.assertIn('data-loop-src="/calm-loop.webp"', html)
         summary = client.get("/api/animations/rainbow/presets").get_json()["presets"][0]

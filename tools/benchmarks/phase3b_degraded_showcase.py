@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Explicitly degraded Phase 3B0 four-wall hybrid showcase.
+"""Explicitly degraded Phase 3B0 five-receiver hybrid showcase.
 
 This tool is demonstration evidence, never release acceptance.  It accepts only
 the installed wall's exact temporary topology: logical receivers 0 and 1 must
 provide strict Phase 3B status-v4 identity/capability telemetry, while logical
-receivers 2 and 3 must both expose the exact known no-return-path state.  The
+receivers 2, 3, and 4 must expose the exact known no-return-path state.  The
 same compiled-background and sparse-foreground packets are still written to all
-four receivers, but receivers 2 and 3 remain visually unverified.
+five receivers, but receivers 2, 3, and 4 remain visually unverified.
 
 The ordinary multi-device transaction API deliberately requires every receiver
 to acknowledge commands.  This file contains the only degraded exception: it
 uses normal acknowledged methods for 0/1 and raw *pre-serialized, allowlisted*
-packets for 2/3.  There is no asset/cache/upload surface.  A complete RGB host
+packets for 2/3/4.  There is no asset/cache/upload surface.  A complete RGB host
 frame restores display ownership in ``finally`` before the exact prior desired
 display state is restored for the next controller start.
 """
@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 from copy import deepcopy
 from dataclasses import dataclass
-import hashlib
 import json
 import math
 import os
@@ -43,53 +42,33 @@ from animation.core.plant_awareness import PlantModifierState
 from animation.core.presentation_contracts import OverlayFrame, resolve_vibe
 from animation.core.receiver_presentation import (
     ReceiverPresentationContext,
-    encode_presentation_context_begin,
-    encode_presentation_context_commit,
-    encode_presentation_context_set,
 )
 from animation.core.receiver_sparse_publisher import ReceiverSparsePublisher
 from animation.plugins.clock_overlay import ClockOverlayAnimation
 from drivers.multi_device import MultiDeviceLEDController
 from drivers.degraded_receiver_hybrid import (
     DegradedReceiverHybridController as ProductionDegradedHybridTransport,
-)
-from drivers.spi_controller import (
-    CAPABILITY_EXPLICIT_BASE_OWNERSHIP,
-    CAPABILITY_PRESENTATION_CONTEXT_V1,
-    CAPABILITY_SPARSE_OVERLAY_BATCH_V1,
-    CAPABILITY_SPARSE_OVERLAY_V1,
-    CAPABILITY_STATIC_LOCAL_BACKGROUND,
-    CAPABILITY_STATUS_V3,
-    CMD_CONFIG,
-    COMMAND_ACK_POLL_INTERVAL_SECONDS,
-    CRC_BYTES,
-    LEDController,
-    MAX_RGBA_PIXELS_PER_BATCH_SPAN,
-    OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
-    OVERLAY_UPDATE_DELTA,
-    OVERLAY_UPDATE_FULL_SNAPSHOT,
-    SPI_RESPONSE_QUEUE_DEPTH,
+    DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER,
+    EXPECTED_CAPABILITIES,
+    EXPECTED_DEVICE_MAP,
+    EXPECTED_STATUS_VERSION,
+    LEDS_PER_STRIP,
+    LOCAL_PIXELS,
+    LOCAL_STRIPS,
+    READABLE_DEVICES,
+    RECEIVER_COUNT,
+    RECEIVER_GLOBAL_STRIP_OFFSETS,
+    RECEIVER_LANE_MASKS,
+    RECEIVER_PIXEL_COUNTS,
+    RECEIVER_PIXEL_OFFSETS,
+    RECEIVER_STRIP_COUNTS,
+    UNVERIFIED_DEVICES,
+    WALL_PIXELS,
+    WALL_STRIPS,
 )
 
 
-POLICY_NAME = "phase3b0_degraded_four_wall_showcase"
-READABLE_DEVICES = (0, 1)
-UNVERIFIED_DEVICES = (2, 3)
-EXPECTED_DEVICE_MAP = ((0, 0), (0, 1), (1, 1), (1, 0))
-EXPECTED_STATUS_VERSION = 4
-EXPECTED_CAPABILITIES = (
-    CAPABILITY_STATIC_LOCAL_BACKGROUND
-    | CAPABILITY_PRESENTATION_CONTEXT_V1
-    | CAPABILITY_STATUS_V3
-    | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
-    | CAPABILITY_SPARSE_OVERLAY_V1
-    | CAPABILITY_SPARSE_OVERLAY_BATCH_V1
-)
-LOCAL_STRIPS = 8
-LEDS_PER_STRIP = 138
-LOCAL_PIXELS = LOCAL_STRIPS * LEDS_PER_STRIP
-WALL_STRIPS = 32
-WALL_PIXELS = WALL_STRIPS * LEDS_PER_STRIP
+POLICY_NAME = "phase3b0_degraded_five_receiver_showcase"
 COMPILED_RAINBOW_COMPONENT_ID = 1
 BASE_LOCAL_BACKGROUND = 1
 BASE_HOST_FULL_SCENE = 2
@@ -209,10 +188,13 @@ def evaluate_preflight(statuses: Any) -> dict[str, Any]:
     receivers: dict[str, Any] = {}
     if not isinstance(statuses, Sequence) or isinstance(statuses, (str, bytes)):
         statuses = ()
-    if len(statuses) != 4:
-        failures.append(f"receiver telemetry has {len(statuses)} devices; expected exactly 4")
+    if len(statuses) != RECEIVER_COUNT:
+        failures.append(
+            f"receiver telemetry has {len(statuses)} devices; expected exactly "
+            f"{RECEIVER_COUNT}"
+        )
 
-    for logical_id in range(min(4, len(statuses))):
+    for logical_id in range(min(RECEIVER_COUNT, len(statuses))):
         status = statuses[logical_id]
         if logical_id in READABLE_DEVICES:
             device_failures = []
@@ -270,7 +252,10 @@ def evaluate_preflight(statuses: Any) -> dict[str, Any]:
         if receivers.get(str(index), {}).get("accepted")
     ]
     if readable != list(READABLE_DEVICES) or unverified != list(UNVERIFIED_DEVICES):
-        failures.append("degraded policy requires exact readable pair 0/1 and write-only pair 2/3")
+        failures.append(
+            "degraded policy requires exact readable pair 0/1 and write-only "
+            "receivers 2/3/4"
+        )
     return {
         "passed": not failures,
         "failures": failures,
@@ -296,8 +281,8 @@ def validate_visual_confirmation(payload: Any, challenge: str) -> dict[str, Any]
         "schema_version": CONFIRMATION_VERSION,
         "challenge": challenge,
         "verdict": "pass",
-        "observed_logical_devices": [0, 1, 2, 3],
-        "acknowledged_unverified_devices": [2, 3],
+        "observed_logical_devices": list(range(RECEIVER_COUNT)),
+        "acknowledged_unverified_devices": list(UNVERIFIED_DEVICES),
     }
     failures = [
         f"{key} is {payload.get(key)!r}; expected {value!r}"
@@ -313,8 +298,8 @@ def validate_visual_confirmation(payload: Any, challenge: str) -> dict[str, Any]
         "confirmed": True,
         "operator": operator.strip(),
         "challenge": challenge,
-        "observed_logical_devices": [0, 1, 2, 3],
-        "unverified_devices": [2, 3],
+        "observed_logical_devices": list(range(RECEIVER_COUNT)),
+        "unverified_devices": list(UNVERIFIED_DEVICES),
     }
 
 
@@ -441,7 +426,13 @@ class ClockForegroundSource:
 
     def render(self, elapsed: float, frame_count: int) -> OverlayFrame:
         frame = self.animation.generate_frame(elapsed, frame_count)
-        return self.compositor.compose((PlacedOverlay(frame),))
+        overlay = self.compositor.compose((PlacedOverlay(frame),))
+        # The clock glyph does not naturally occupy the one-column tail at all
+        # times. Keep one stable, dim premultiplied pixel there so the degraded
+        # showcase exercises receiver 4 without claiming telemetry or mirroring
+        # the column onto inactive lanes.
+        overlay.pixels[RECEIVER_PIXEL_OFFSETS[4]] = (8, 4, 2, 8)
+        return overlay
 
     def stop(self) -> None:
         self.animation.stop()
@@ -450,662 +441,6 @@ class ClockForegroundSource:
         self.animation.cleanup()
 
 
-class DegradedHybridTransport:
-    """Strict/readable + write-only Phase 3B command transport."""
-
-    def __init__(
-        self,
-        controller: Any,
-        *,
-        sleeper: Callable[[float], None] = time.sleep,
-    ) -> None:
-        self.controller = controller
-        self.devices = list(getattr(controller, "devices", ()))
-        self.num_devices = getattr(controller, "num_devices", len(self.devices))
-        self.strips_per_device = getattr(controller, "strips_per_device", None)
-        self.leds_per_strip = getattr(controller, "leds_per_strip", None)
-        self.strip_count = getattr(controller, "strip_count", None)
-        self.total_leds = getattr(controller, "total_leds", None)
-        self.leds_per_device = LOCAL_PIXELS
-        if (
-            self.num_devices != 4
-            or len(self.devices) != 4
-            or self.strips_per_device != LOCAL_STRIPS
-            or self.leds_per_strip != LEDS_PER_STRIP
-            or self.strip_count != WALL_STRIPS
-            or self.total_leds != WALL_PIXELS
-        ):
-            raise ShowcaseFailure("controller geometry is not the installed 4 x 8 x 138 wall")
-        device_map = getattr(controller, "device_map", None)
-        if device_map is not None and tuple(device_map) != EXPECTED_DEVICE_MAP:
-            raise ShowcaseFailure(
-                f"controller device map is {tuple(device_map)!r}; expected {EXPECTED_DEVICE_MAP!r}"
-            )
-        observed_devices = tuple(
-            (getattr(device, "bus", None), getattr(device, "device", None))
-            for device in self.devices
-        )
-        if observed_devices != EXPECTED_DEVICE_MAP:
-            raise ShowcaseFailure(
-                f"controller device objects route to {observed_devices!r}; "
-                f"expected {EXPECTED_DEVICE_MAP!r}"
-            )
-        self._sleeper = sleeper
-        self._session: Optional[bytes] = None
-        self._generation = 0
-        self._scene_revision: Optional[int] = None
-        self._expected_alpha_coverage = (0, 0, 0, 0)
-        self._coverage_checks = 0
-        self._identity_configuration: Optional[dict[str, Any]] = None
-        self._status: dict[str, Any] = {
-            "state": "initialized",
-            "operation": "none",
-            "telemetry_complete": False,
-        }
-
-    @staticmethod
-    def _fresh_status(device: Any) -> Mapping[str, Any]:
-        status = None
-        for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 1):
-            status = device.query_receiver_status()
-        if not isinstance(status, Mapping):
-            return {}
-        return dict(status)
-
-    def preflight(self) -> dict[str, Any]:
-        result = evaluate_preflight([
-            self._fresh_status(device) for device in self.devices
-        ])
-        if not result["passed"]:
-            raise ShowcaseFailure("topology preflight: " + "; ".join(result["failures"]))
-        return result
-
-    @staticmethod
-    def _require_ack(status: Any, stage: str, logical_id: int, *, overlay: bool = False) -> None:
-        if not isinstance(status, Mapping) or _integer(status, "receiver_last_result") != RESULT_OK:
-            raise ShowcaseFailure(f"receiver {logical_id} did not acknowledge {stage}")
-        if overlay and status.get("receiver_overlay_operation_result") not in OVERLAY_RESULT_OK:
-            raise ShowcaseFailure(f"receiver {logical_id} rejected {stage}")
-
-    def _write_only_packet(self, device: Any, stage: str, payload: bytes) -> None:
-        """Transmit one validated allowlisted packet without claiming an ACK."""
-
-        test_hook = getattr(device, "write_only_packet", None)
-        if callable(test_hook):
-            test_hook(stage, bytes(payload))
-        else:
-            xfer = getattr(device, "_xfer", None)
-            if not callable(xfer):
-                raise ShowcaseFailure(f"write-only receiver lacks raw transport for {stage}")
-            xfer(bytes(payload))
-        # A completed master transfer does not mean the receiver task has
-        # processed and re-queued its two-deep slave DMA slot.  Apply the same
-        # bounded refill interval used by acknowledged commands after every raw
-        # write, including identity, snapshot batches, renewals, and cleanup.
-        self._sleeper(COMMAND_ACK_POLL_INTERVAL_SECONDS)
-
-    @staticmethod
-    def _identity_packet(logical_id: int) -> bytes:
-        if logical_id not in range(4):
-            raise ValueError("logical identity must be 0..3")
-        return bytes((
-            CMD_CONFIG,
-            LOCAL_STRIPS,
-            (LEDS_PER_STRIP >> 8) & 0xFF,
-            LEDS_PER_STRIP & 0xFF,
-            0,
-            logical_id,
-        ))
-
-    def configure_logical_identities(self) -> dict[str, Any]:
-        """Explicitly bind every freshly flashed receiver before runtime commands."""
-
-        devices: dict[str, Any] = {}
-        for logical_id, device in enumerate(self.devices):
-            packet = self._identity_packet(logical_id)
-            if logical_id in READABLE_DEVICES:
-                command = getattr(device, "_command_status", None)
-                if not callable(command):
-                    raise ShowcaseFailure(
-                        f"receiver {logical_id} lacks exact CONFIG acknowledgement path"
-                    )
-                status = command(packet, required_status_version=EXPECTED_STATUS_VERSION)
-                self._require_ack(status, "logical identity CONFIG", logical_id)
-                expected = {
-                    "receiver_status_version": EXPECTED_STATUS_VERSION,
-                    "receiver_logical_device": logical_id,
-                    "receiver_last_processed_command": CMD_CONFIG,
-                }
-                for key, value in expected.items():
-                    if status.get(key) != value:
-                        raise ShowcaseFailure(
-                            f"receiver {logical_id} CONFIG reported {key}="
-                            f"{status.get(key)!r}; expected {value!r}"
-                        )
-                devices[str(logical_id)] = {
-                    "payload_bytes": len(packet),
-                    "wire_bytes": len(packet) + CRC_BYTES,
-                    "receiver_acknowledged": True,
-                    "logical_identity_verified": True,
-                    "logical_device": logical_id,
-                }
-            else:
-                self._write_only_packet(device, "logical identity CONFIG", packet)
-                devices[str(logical_id)] = {
-                    "payload_bytes": len(packet),
-                    "wire_bytes": len(packet) + CRC_BYTES,
-                    "receiver_acknowledged": False,
-                    "logical_identity_verified": False,
-                    "logical_device_requested": logical_id,
-                    "warning": (
-                        "outbound-only CONFIG; receiver identity remains unverified "
-                        "until the SPI1 return path is repaired"
-                    ),
-                }
-        result = {
-            "passed": True,
-            "telemetry_complete": False,
-            "devices": devices,
-            "unverified_devices": list(UNVERIFIED_DEVICES),
-        }
-        self._identity_configuration = result
-        self._status.update({
-            "operation": "logical_identity_config",
-            "identity_configuration": result,
-        })
-        return result
-
-    def _invoke(
-        self,
-        logical_id: int,
-        stage: str,
-        method_name: str,
-        payload: bytes,
-        *,
-        overlay: bool = False,
-        kwargs: Optional[dict[str, Any]] = None,
-    ) -> Any:
-        device = self.devices[logical_id]
-        if logical_id in READABLE_DEVICES:
-            status = getattr(device, method_name)(**(kwargs or {}))
-            self._require_ack(status, stage, logical_id, overlay=overlay)
-            return status
-        self._write_only_packet(device, stage, payload)
-        return None
-
-    def start_local_background(
-        self,
-        context: ReceiverPresentationContext,
-        *,
-        component_id: int,
-        preferred_cadence_hz: int,
-        common_seed: int,
-    ) -> bool:
-        if component_id != COMPILED_RAINBOW_COMPONENT_ID:
-            raise ShowcaseFailure("only the compiled static rainbow is allowed")
-        begin = encode_presentation_context_begin(context)
-        setting = encode_presentation_context_set(context)
-        commit = encode_presentation_context_commit(context)
-        start_packets = [
-            LEDController.serialize_local_background_start(
-                component_id=component_id,
-                preferred_cadence_hz=preferred_cadence_hz,
-                global_strip_offset=index * LOCAL_STRIPS,
-                common_seed=common_seed,
-                scene_epoch=context.scene_epoch,
-            )
-            for index in range(4)
-        ]
-        for index in range(4):
-            self._invoke(index, "presentation begin", "begin_presentation_context", begin,
-                         kwargs={"context": context})
-            self._invoke(index, "presentation set", "set_presentation_context", setting,
-                         kwargs={"context": context})
-        anchor = time.monotonic_ns()
-        for index in range(4):
-            self._invoke(index, "presentation commit", "commit_presentation_context", commit,
-                         kwargs={"context": context, "host_monotonic_anchor_ns": anchor})
-        for index in range(4):
-            kwargs = {
-                "component_id": component_id,
-                "preferred_cadence_hz": preferred_cadence_hz,
-                "global_strip_offset": index * LOCAL_STRIPS,
-                "common_seed": common_seed,
-                "scene_epoch": context.scene_epoch,
-            }
-            self._invoke(index, "local background start", "start_local_background",
-                         start_packets[index], kwargs=kwargs)
-
-        expected = {
-            "receiver_base_mode": BASE_LOCAL_BACKGROUND,
-            "receiver_component_id": component_id,
-            "receiver_declared_cadence_hz": preferred_cadence_hz,
-            "receiver_common_seed": common_seed,
-            "receiver_scene_epoch": context.scene_epoch,
-            "receiver_active_scene_revision": context.scene_revision,
-            "receiver_active_context_digest": context.context_digest.hex(),
-            "receiver_active_session_id": context.controller_session_id.hex(),
-        }
-        for index in READABLE_DEVICES:
-            status = self._fresh_status(self.devices[index])
-            for key, value in {**expected, "receiver_global_strip_offset": index * LOCAL_STRIPS}.items():
-                if status.get(key) != value:
-                    raise ShowcaseFailure(
-                        f"receiver {index} reported {key}={status.get(key)!r}; expected {value!r}"
-                    )
-        self._status.update({
-            "state": "active",
-            "operation": "local_background_start",
-            "context_digest": context.context_digest.hex(),
-        })
-        return True
-
-    @staticmethod
-    def _normalize_overlay(pixels: Any) -> np.ndarray:
-        overlay = np.asarray(pixels)
-        if overlay.shape != (WALL_PIXELS, 4):
-            raise ValueError(f"foreground must have shape ({WALL_PIXELS}, 4)")
-        if overlay.dtype != np.uint8:
-            raise TypeError("foreground must use uint8 premultiplied RGBA")
-        if np.any(overlay[:, :3] > overlay[:, 3:4]):
-            raise ValueError("foreground RGB must not exceed alpha")
-        return np.ascontiguousarray(overlay)
-
-    @staticmethod
-    def _dirty_ranges(ranges: Any) -> tuple[tuple[int, int], ...]:
-        if ranges is None:
-            raise ValueError("delta foreground requires dirty_ranges")
-        result = []
-        prior = 0
-        for item in ranges:
-            if not isinstance(item, (tuple, list)) or len(item) != 2:
-                raise TypeError("dirty ranges must be (start, end) pairs")
-            start, end = item
-            if (
-                isinstance(start, bool) or not isinstance(start, (int, np.integer))
-                or isinstance(end, bool) or not isinstance(end, (int, np.integer))
-            ):
-                raise TypeError("dirty range bounds must be integers")
-            first, last = int(start), int(end)
-            if first < 0 or last > WALL_PIXELS or first >= last or (result and first < prior):
-                raise ValueError("dirty ranges must be sorted, non-overlapping, and in bounds")
-            result.append((first, last))
-            prior = last
-        return tuple(result)
-
-    @staticmethod
-    def _local_patches(
-        pixels: np.ndarray,
-        logical_id: int,
-        *,
-        full_snapshot: bool,
-        dirty_ranges: Optional[tuple[tuple[int, int], ...]],
-    ) -> list[tuple[int, np.ndarray]]:
-        local_start = logical_id * LOCAL_PIXELS
-        local = pixels[local_start:local_start + LOCAL_PIXELS]
-        if full_snapshot:
-            return [
-                (start, local[start:start + MAX_RGBA_PIXELS_PER_BATCH_SPAN])
-                for start in range(0, LOCAL_PIXELS, MAX_RGBA_PIXELS_PER_BATCH_SPAN)
-            ]
-        patches = []
-        for start, end in dirty_ranges or ():
-            first = max(local_start, start)
-            last = min(local_start + LOCAL_PIXELS, end)
-            for first in range(first, last, MAX_RGBA_PIXELS_PER_BATCH_SPAN):
-                count = min(MAX_RGBA_PIXELS_PER_BATCH_SPAN, last - first)
-                local_first = first - local_start
-                patches.append((local_first, local[local_first:local_first + count]))
-        return patches
-
-    def publish_sparse_overlay(
-        self,
-        pixels: Any,
-        *,
-        controller_session_id: bytes,
-        generation: int,
-        prior_generation: int,
-        scene_revision: int,
-        scene_epoch: int,
-        base_revision: int,
-        lease_ms: int,
-        present_at_scene_time_us: int,
-        dirty_ranges: Any = None,
-        full_snapshot: bool = False,
-    ) -> bool:
-        overlay = self._normalize_overlay(pixels)
-        expected_coverage = tuple(
-            int(np.count_nonzero(
-                overlay[index * LOCAL_PIXELS:(index + 1) * LOCAL_PIXELS, 3]
-            ))
-            for index in range(4)
-        )
-        missing = [
-            index for index, count in enumerate(expected_coverage) if count <= 0
-        ]
-        if missing:
-            raise ShowcaseFailure(
-                "foreground has zero expected alpha coverage on logical receiver(s) "
-                + ", ".join(str(index) for index in missing)
-            )
-        session = LEDController._controller_session(controller_session_id)
-        if generation <= prior_generation or generation >= 0xFFFFFFFFFFFFFFFF:
-            raise ValueError("foreground generation is not a safe successor")
-        new_session = session != self._session
-        if new_session and (not full_snapshot or prior_generation != 0):
-            raise ValueError("new foreground authority must begin with generation-zero snapshot")
-        if not new_session and prior_generation != self._generation:
-            raise ValueError("prior foreground generation disagrees with transport")
-        ranges = None if full_snapshot else self._dirty_ranges(dirty_ranges)
-        kind = OVERLAY_UPDATE_FULL_SNAPSHOT if full_snapshot else OVERLAY_UPDATE_DELTA
-        digest = hashlib.sha256(memoryview(overlay).cast("B")).digest()
-        per_device = [
-            self._local_patches(
-                overlay, index, full_snapshot=full_snapshot, dirty_ranges=ranges
-            )
-            for index in range(4)
-        ]
-
-        session_packet = LEDController.serialize_controller_session_begin(
-            controller_session_id=session,
-            desired_revision=scene_revision,
-            authoritative_snapshot_digest=digest,
-        )
-        begin_packets = []
-        patch_packets = []
-        for patches in per_device:
-            begin_packets.append(LEDController.serialize_overlay_begin(
-                controller_session_id=session,
-                generation=generation,
-                prior_generation=prior_generation,
-                scene_revision=scene_revision,
-                scene_epoch=scene_epoch,
-                base_revision=base_revision,
-                format=OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
-                update_kind=kind,
-                expected_patches=len(patches),
-                lease_ms=lease_ms,
-            ))
-            patch_packets.append(LEDController.serialize_overlay_patch_batches(
-                controller_session_id=session,
-                generation=generation,
-                patches=patches,
-                update_kind=kind,
-            ))
-        commit_packet = LEDController.serialize_overlay_commit(
-            controller_session_id=session,
-            generation=generation,
-            scene_epoch=scene_epoch,
-            base_revision=base_revision,
-            present_at_scene_time_us=present_at_scene_time_us,
-        )
-
-        if new_session:
-            for index in range(4):
-                self._invoke(index, "foreground session", "begin_controller_session",
-                             session_packet, overlay=True, kwargs={
-                                 "controller_session_id": session,
-                                 "desired_revision": scene_revision,
-                                 "authoritative_snapshot_digest": digest,
-                             })
-        for index, patches in enumerate(per_device):
-            begin_kwargs = {
-                "controller_session_id": session,
-                "generation": generation,
-                "prior_generation": prior_generation,
-                "scene_revision": scene_revision,
-                "scene_epoch": scene_epoch,
-                "base_revision": base_revision,
-                "format": OVERLAY_FORMAT_PREMULTIPLIED_RGBA8,
-                "update_kind": kind,
-                "expected_patches": len(patches),
-                "lease_ms": lease_ms,
-            }
-            self._invoke(index, "foreground begin", "begin_overlay",
-                         begin_packets[index], overlay=True, kwargs=begin_kwargs)
-            if index in READABLE_DEVICES:
-                statuses = self.devices[index].send_overlay_patches(
-                    controller_session_id=session,
-                    generation=generation,
-                    patches=patches,
-                    update_kind=kind,
-                )
-                for status in statuses:
-                    self._require_ack(status, "foreground patch batch", index, overlay=True)
-            else:
-                for packet in patch_packets[index]:
-                    self._write_only_packet(
-                        self.devices[index], "foreground patch batch", packet
-                    )
-            commit_kwargs = {
-                "controller_session_id": session,
-                "generation": generation,
-                "scene_epoch": scene_epoch,
-                "base_revision": base_revision,
-                "present_at_scene_time_us": present_at_scene_time_us,
-            }
-            self._invoke(index, "foreground commit", "commit_overlay",
-                         commit_packet, overlay=True, kwargs=commit_kwargs)
-
-        for index in READABLE_DEVICES:
-            status = self._fresh_status(self.devices[index])
-            expected = {
-                "receiver_base_mode": BASE_LOCAL_BACKGROUND,
-                "receiver_foreground_state": 2,
-                "receiver_overlay_committed_generation": generation,
-                "receiver_overlay_staged_generation": 0,
-                "receiver_overlay_session_id": session.hex(),
-                "receiver_foreground_scene_revision": scene_revision,
-                "receiver_foreground_scene_epoch": scene_epoch,
-                "receiver_foreground_base_revision": base_revision,
-                "receiver_foreground_present_at_scene_time_us": present_at_scene_time_us,
-                "receiver_overlay_committed_coverage_pixels": expected_coverage[index],
-            }
-            for key, value in expected.items():
-                if status.get(key) != value:
-                    raise ShowcaseFailure(
-                        f"receiver {index} reported {key}={status.get(key)!r}; expected {value!r}"
-                    )
-        self._session = session
-        self._generation = generation
-        self._scene_revision = scene_revision
-        self._expected_alpha_coverage = expected_coverage
-        self._coverage_checks += 1
-        self._status.update({
-            "state": "active",
-            "operation": "foreground_publish",
-            "foreground_generation": generation,
-            "expected_alpha_coverage_by_receiver": {
-                str(index): count for index, count in enumerate(expected_coverage)
-            },
-            "coverage_checks": self._coverage_checks,
-        })
-        return True
-
-    def renew_sparse_overlay(
-        self, *, controller_session_id: bytes, generation: int, lease_ms: int
-    ) -> bool:
-        session = LEDController._controller_session(controller_session_id)
-        if session != self._session or generation != self._generation:
-            raise ValueError("foreground renewal does not match active authority")
-        packet = LEDController.serialize_overlay_renew(
-            controller_session_id=session, generation=generation, lease_ms=lease_ms
-        )
-        kwargs = {
-            "controller_session_id": session,
-            "generation": generation,
-            "lease_ms": lease_ms,
-        }
-        for index in range(4):
-            self._invoke(index, "foreground renew", "renew_overlay", packet,
-                         overlay=True, kwargs=kwargs)
-        for index in READABLE_DEVICES:
-            status = self._fresh_status(self.devices[index])
-            if (
-                status.get("receiver_foreground_state") != 2
-                or status.get("receiver_overlay_committed_generation") != generation
-                or status.get("receiver_overlay_session_id") != session.hex()
-                or status.get("receiver_overlay_committed_coverage_pixels")
-                != self._expected_alpha_coverage[index]
-            ):
-                raise ShowcaseFailure(
-                    f"receiver {index} lost foreground authority or exact coverage on renew"
-                )
-        self._status.update({"operation": "foreground_renew"})
-        return True
-
-    def clear_sparse_overlay(
-        self, *, controller_session_id: bytes, generation: int, scene_revision: int
-    ) -> bool:
-        session = LEDController._controller_session(controller_session_id)
-        packet = LEDController.serialize_overlay_clear(
-            controller_session_id=session,
-            generation=generation,
-            scene_revision=scene_revision,
-        )
-        kwargs = {
-            "controller_session_id": session,
-            "generation": generation,
-            "scene_revision": scene_revision,
-        }
-        for index in range(4):
-            self._invoke(index, "foreground clear", "clear_overlay", packet,
-                         overlay=True, kwargs=kwargs)
-        self._generation = generation
-        self._expected_alpha_coverage = (0, 0, 0, 0)
-        self._status.update({"operation": "foreground_clear"})
-        return True
-
-    def foreground_visibility(self) -> dict[str, Any]:
-        expected = {
-            str(index): count
-            for index, count in enumerate(self._expected_alpha_coverage)
-        }
-        readable = {}
-        failures = []
-        for index in READABLE_DEVICES:
-            status = self._fresh_status(self.devices[index])
-            status_version = _integer(status, "receiver_status_version")
-            logical_device = status.get("receiver_logical_device")
-            foreground_state = status.get("receiver_foreground_state")
-            observed_session = status.get("receiver_overlay_session_id")
-            observed_generation = _integer(
-                status, "receiver_overlay_committed_generation"
-            )
-            lease_remaining_ms = _integer(
-                status, "receiver_overlay_lease_remaining_ms"
-            )
-            observed_coverage = _integer(
-                status, "receiver_overlay_committed_coverage_pixels"
-            )
-            proof = {
-                "status_v4_exact": status_version == EXPECTED_STATUS_VERSION,
-                "logical_identity_exact": logical_device == index,
-                "foreground_active": foreground_state == 2,
-                "session_exact": (
-                    self._session is not None
-                    and observed_session == self._session.hex()
-                ),
-                "generation_exact": observed_generation == self._generation,
-                "lease_remaining_positive": lease_remaining_ms > 0,
-                "coverage_expected_positive": (
-                    self._expected_alpha_coverage[index] > 0
-                ),
-                "coverage_exact": (
-                    observed_coverage == self._expected_alpha_coverage[index]
-                ),
-            }
-            readable[str(index)] = {
-                "status_version": status_version,
-                "logical_device": logical_device,
-                "expected_alpha_pixels": self._expected_alpha_coverage[index],
-                "observed_committed_coverage_pixels": observed_coverage,
-                "expected_session_id": (
-                    None if self._session is None else self._session.hex()
-                ),
-                "observed_session_id": observed_session,
-                "expected_generation": self._generation,
-                "observed_generation": observed_generation,
-                "lease_remaining_ms": lease_remaining_ms,
-                **proof,
-            }
-            failed_checks = [name for name, passed in proof.items() if not passed]
-            if failed_checks:
-                failures.append(
-                    f"receiver {index} pass-boundary visibility failed "
-                    + ", ".join(failed_checks)
-                )
-        write_only = {
-            str(index): {
-                "expected_alpha_pixels": self._expected_alpha_coverage[index],
-                "receiver_telemetry_verified": False,
-                "physical_display_verified": False,
-                "warning": "expected host coverage only; receiver/display is unverified",
-            }
-            for index in UNVERIFIED_DEVICES
-        }
-        if any(count <= 0 for count in self._expected_alpha_coverage):
-            failures.append("expected foreground alpha coverage is not positive on every lane")
-        return {
-            "passed": not failures,
-            "failures": failures,
-            "all_lanes_expected_nonzero": all(
-                count > 0 for count in self._expected_alpha_coverage
-            ),
-            "expected_alpha_coverage_by_receiver": expected,
-            "readable_receivers": readable,
-            "write_only_receivers": write_only,
-            "coverage_checks": self._coverage_checks,
-            "sampled_at_pass_boundary": True,
-        }
-
-    def host_stats(self, logical_ids: Sequence[int]) -> dict[int, dict[str, int]]:
-        result = {}
-        for index in logical_ids:
-            stats = self.devices[index].get_stats()
-            result[index] = {
-                key: _integer(stats, key)
-                for key in ("spi_transfers", "bytes_sent", "errors")
-            }
-        return result
-
-    def set_all_pixels(self, pixels: Any) -> None:
-        frame = np.asarray(pixels)
-        if frame.shape != (WALL_PIXELS, 3) or frame.dtype != np.uint8:
-            raise ValueError("complete host takeover must be installed-wall uint8 RGB")
-        failures = []
-        for index, device in enumerate(self.devices):
-            local = np.ascontiguousarray(
-                frame[index * LOCAL_PIXELS:(index + 1) * LOCAL_PIXELS]
-            )
-            try:
-                accepted = device.set_all_pixels(local)
-                if accepted is False:
-                    raise RuntimeError("receiver rejected complete RGB frame")
-            except Exception as exc:
-                failures.append(f"receiver {index}: {exc}")
-        for index in READABLE_DEVICES:
-            try:
-                status = self._fresh_status(self.devices[index])
-                if status.get("receiver_base_mode") != BASE_HOST_FULL_SCENE:
-                    raise RuntimeError(
-                        f"reported base mode {status.get('receiver_base_mode')!r}"
-                    )
-            except Exception as exc:
-                failures.append(f"receiver {index} takeover proof: {exc}")
-        if failures:
-            raise ShowcaseFailure("complete host takeover failed: " + "; ".join(failures))
-        self._expected_alpha_coverage = (0, 0, 0, 0)
-        self._status.update({"state": "host_full_scene", "operation": "set_all_takeover"})
-
-    def get_stats(self) -> dict[str, Any]:
-        return {"aggregate": {"local_background": dict(self._status)}}
-
-
-# The bounded showcase and persistent service share exactly one degraded wire
-# implementation.  The legacy class above is retained temporarily as readable
-# historical context for the evidence format; all runtime construction below
-# resolves this production facade.
 DegradedHybridTransport = ProductionDegradedHybridTransport
 
 
@@ -1250,7 +585,8 @@ class Phase3BDegradedShowcase:
             },
             "warnings": [
                 "DEGRADED SHOWCASE: telemetry_complete=false; logical receivers "
-                "2 and 3 have no receiver/display proof and require direct visual observation."
+                "2, 3, and 4 have no receiver/display proof and require direct "
+                "visual observation."
             ],
             "artifact_policy": {
                 "cached_artifact_operations_allowed": False,
@@ -1514,7 +850,7 @@ def _atomic_restore_bytes(path: Path, content: bytes) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the explicitly degraded Phase 3B0 four-wall showcase. The "
+            "Run the explicitly degraded Phase 3B0 five-receiver showcase. The "
             "controller service must already be stopped; this tool never flashes, "
             "installs, uploads, or mutates cached receiver artifacts."
         )
@@ -1553,10 +889,20 @@ def main() -> None:
 
     def controller_factory() -> MultiDeviceLEDController:
         return MultiDeviceLEDController(
-            num_devices=4,
+            num_devices=RECEIVER_COUNT,
             strips_per_device=LOCAL_STRIPS,
+            strip_count=WALL_STRIPS,
             leds_per_strip=LEDS_PER_STRIP,
             device_map=list(EXPECTED_DEVICE_MAP),
+            receiver_strip_counts=RECEIVER_STRIP_COUNTS,
+            receiver_global_strip_offsets=RECEIVER_GLOBAL_STRIP_OFFSETS,
+            receiver_lane_masks=RECEIVER_LANE_MASKS,
+            reverse_host_strips_by_logical_receiver=(
+                DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+            ),
+            reverse_native_strips_by_logical_receiver=(
+                DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+            ),
         )
 
     result = Phase3BDegradedShowcase(

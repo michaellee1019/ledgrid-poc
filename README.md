@@ -3,8 +3,8 @@
 Controller, web UI, animation plugins, and ESP32-S3 firmware for a 33 x 138
 (4,554-pixel) plant-wall installation. A Raspberry Pi renders frames and sends
 them over two SPI buses to five receivers. Four receivers expose eight logical
-WS2812 lanes and the fifth exposes one logical lane through an explicit physical
-output mask.
+WS2812 lanes and the fifth drives the extra rightmost strip as one logical lane
+through an explicit physical output mask.
 
 ## Local development
 

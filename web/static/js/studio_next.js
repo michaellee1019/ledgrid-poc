@@ -991,8 +991,8 @@
       if (!look) return element('article', {class: 'sn-compare-card'}, 'Catalog item unavailable.');
       const source = look.preview.posterUrl || look.preview.loopUrl;
       const media = source
-        ? element('img', {src: source, width: 32, height: 138, alt: ''})
-        : element('canvas', {width: 32, height: 138});
+        ? element('img', {src: source, width: 33, height: 138, alt: ''})
+        : element('canvas', {width: 33, height: 138});
       const frame = element('div', {class: 'sn-wall-frame', 'aria-hidden': 'true'}, media);
       if (media instanceof HTMLCanvasElement) drawPreviewCanvas(media, look);
       const button = element('button', {
@@ -1289,7 +1289,7 @@
       const component = state.componentsByKey.get($('#sceneBackground').value);
       background = component || {key: 'scene-unselected', pluginId: 'scene-unselected'};
       const canvas = $('#scenePreviewCanvas');
-      canvas.width = 32;
+      canvas.width = 33;
       canvas.height = 138;
       drawPreviewCanvas(canvas, background, state.previewTick, {scene: true});
       const overlay = $('#sceneClockEnabled').checked
@@ -1304,7 +1304,7 @@
   function drawFrameData(canvas, payload) {
     const colors = payload?.frame_data;
     if (!(canvas instanceof HTMLCanvasElement) || !Array.isArray(colors)) return false;
-    const stripCount = Number(payload?.led_info?.strip_count) || 32;
+    const stripCount = Number(payload?.led_info?.strip_count) || 33;
     const ledsPerStrip = Number(payload?.led_info?.leds_per_strip) || 138;
     if (!Number.isInteger(stripCount) || !Number.isInteger(ledsPerStrip)
       || stripCount < 1 || ledsPerStrip < 1 || colors.length < stripCount * ledsPerStrip) return false;
