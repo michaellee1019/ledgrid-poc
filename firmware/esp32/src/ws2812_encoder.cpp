@@ -31,6 +31,38 @@ constexpr std::array<std::uint64_t, 256> make_expand_table() {
 
 constexpr auto kExpandTable = make_expand_table();
 
+// The receiver has one display owner and brightness changes only at a control
+// boundary, while every submitted frame otherwise repeats the same 256-entry
+// brightness expansion. Retaining that derived table removes 256 scales and
+// 64-bit copies from the production frame hot path. A changed brightness value
+// refreshes the whole table before any pixel uses it.
+struct BrightnessExpandCache {
+  std::array<std::uint64_t, 256> table{};
+  std::uint8_t brightness = 0;
+  bool valid = false;
+};
+
+BrightnessExpandCache brightness_expand_cache;
+
+const std::array<std::uint64_t, 256>& brightness_expand_table(
+    std::uint8_t brightness) {
+  if (brightness_expand_cache.valid &&
+      brightness_expand_cache.brightness == brightness) {
+    return brightness_expand_cache.table;
+  }
+  for (std::size_t value = 0;
+       value < brightness_expand_cache.table.size(); ++value) {
+    const auto channel = static_cast<std::uint8_t>(value);
+    const auto scaled = brightness == 255
+                            ? channel
+                            : scale_channel(channel, brightness);
+    brightness_expand_cache.table[value] = kExpandTable[scaled];
+  }
+  brightness_expand_cache.brightness = brightness;
+  brightness_expand_cache.valid = true;
+  return brightness_expand_cache.table;
+}
+
 }  // namespace
 
 std::uint8_t stagger_phase_lanes(
@@ -178,17 +210,9 @@ EncodeResult encode_parallel_grb_pixels(
   }
 
   constexpr std::uint8_t kGrbOffsets[3] = {1, 0, 2};
-  // Materialize the brightness-adjusted expansion table in internal RAM once
-  // per frame. The inner loop then needs one fast lookup per lane rather than
-  // a brightness lookup followed by a flash-resident 64-bit lookup.
-  std::array<std::uint64_t, 256> frame_expand_table{};
-  for (std::size_t value = 0; value < frame_expand_table.size(); ++value) {
-    const auto channel = static_cast<std::uint8_t>(value);
-    const auto scaled = brightness == 255
-                            ? channel
-                            : scale_channel(channel, brightness);
-    frame_expand_table[value] = kExpandTable[scaled];
-  }
+  // The inner loop needs one internal-RAM lookup per lane rather than a
+  // brightness scale followed by a flash-resident 64-bit lookup.
+  const auto& frame_expand_table = brightness_expand_table(brightness);
 
   const std::size_t lane_stride = static_cast<std::size_t>(leds_per_strip) * 3U;
   // Each of the eight bytes packed into parallel_bits holds one lane bit per
@@ -268,40 +292,75 @@ EncodeResult encode_parallel_grb_pixels(
 
       parallel_bits &= lane_bits;
 
-      // Extract the eight encoded data bits once per color channel. With
-      // three-phase edge staggering, shifting inside the phase loop repeats
-      // every 64-bit extraction three times and dominates the receiver's
-      // frame-encode tail latency. These byte-sized values are reused for all
-      // phases while preserving the exact initialized waveform.
-      const std::uint8_t bit0 = static_cast<std::uint8_t>(parallel_bits);
-      const std::uint8_t bit1 = static_cast<std::uint8_t>(parallel_bits >> 8U);
-      const std::uint8_t bit2 = static_cast<std::uint8_t>(parallel_bits >> 16U);
-      const std::uint8_t bit3 = static_cast<std::uint8_t>(parallel_bits >> 24U);
-      const std::uint8_t bit4 = static_cast<std::uint8_t>(parallel_bits >> 32U);
-      const std::uint8_t bit5 = static_cast<std::uint8_t>(parallel_bits >> 40U);
-      const std::uint8_t bit6 = static_cast<std::uint8_t>(parallel_bits >> 48U);
-      const std::uint8_t bit7 = static_cast<std::uint8_t>(parallel_bits >> 56U);
-
-      for (std::uint8_t phase = 0; phase < phases; ++phase) {
-        const std::uint8_t data_lanes = phase_lanes[phase];
-        const std::uint8_t high_lanes =
-            phase_lanes[(phase + 1U) % kSamplesPerBit];
-        std::uint8_t* symbol = dynamic_sample + phase;
-        symbol[0] = static_cast<std::uint8_t>(high_lanes | (bit0 & data_lanes));
-        symbol[3] = static_cast<std::uint8_t>(
-            high_lanes | (bit1 & data_lanes));
-        symbol[6] = static_cast<std::uint8_t>(
-            high_lanes | (bit2 & data_lanes));
-        symbol[9] = static_cast<std::uint8_t>(
-            high_lanes | (bit3 & data_lanes));
-        symbol[12] = static_cast<std::uint8_t>(
-            high_lanes | (bit4 & data_lanes));
-        symbol[15] = static_cast<std::uint8_t>(
-            high_lanes | (bit5 & data_lanes));
-        symbol[18] = static_cast<std::uint8_t>(
-            high_lanes | (bit6 & data_lanes));
-        symbol[21] = static_cast<std::uint8_t>(
-            high_lanes | (bit7 & data_lanes));
+      if (phases == kMaxStaggerPhases) {
+        // Production always uses all three samples as stagger phases. Writing
+        // one complete symbol at a time removes the generic phase loop and its
+        // modulo from every one of the 414 parallel color channels.
+        std::uint8_t* symbol = dynamic_sample;
+        std::uint32_t four_bits = static_cast<std::uint32_t>(parallel_bits);
+        for (std::uint8_t bit = 0; bit < 4; ++bit) {
+          const auto data = static_cast<std::uint8_t>(four_bits);
+          symbol[0] = static_cast<std::uint8_t>(
+              phase_lanes[1] | (data & phase_lanes[0]));
+          symbol[1] = static_cast<std::uint8_t>(
+              phase_lanes[2] | (data & phase_lanes[1]));
+          symbol[2] = static_cast<std::uint8_t>(
+              phase_lanes[0] | (data & phase_lanes[2]));
+          four_bits >>= 8U;
+          symbol += kSamplesPerBit;
+        }
+        four_bits = static_cast<std::uint32_t>(parallel_bits >> 32U);
+        for (std::uint8_t bit = 0; bit < 4; ++bit) {
+          const auto data = static_cast<std::uint8_t>(four_bits);
+          symbol[0] = static_cast<std::uint8_t>(
+              phase_lanes[1] | (data & phase_lanes[0]));
+          symbol[1] = static_cast<std::uint8_t>(
+              phase_lanes[2] | (data & phase_lanes[1]));
+          symbol[2] = static_cast<std::uint8_t>(
+              phase_lanes[0] | (data & phase_lanes[2]));
+          four_bits >>= 8U;
+          symbol += kSamplesPerBit;
+        }
+      } else {
+        // Extract the eight encoded data bits once per color channel. Shifting
+        // inside the phase loop repeats every extraction for the generic path.
+        const std::uint8_t bit0 = static_cast<std::uint8_t>(parallel_bits);
+        const std::uint8_t bit1 =
+            static_cast<std::uint8_t>(parallel_bits >> 8U);
+        const std::uint8_t bit2 =
+            static_cast<std::uint8_t>(parallel_bits >> 16U);
+        const std::uint8_t bit3 =
+            static_cast<std::uint8_t>(parallel_bits >> 24U);
+        const std::uint8_t bit4 =
+            static_cast<std::uint8_t>(parallel_bits >> 32U);
+        const std::uint8_t bit5 =
+            static_cast<std::uint8_t>(parallel_bits >> 40U);
+        const std::uint8_t bit6 =
+            static_cast<std::uint8_t>(parallel_bits >> 48U);
+        const std::uint8_t bit7 =
+            static_cast<std::uint8_t>(parallel_bits >> 56U);
+        for (std::uint8_t phase = 0; phase < phases; ++phase) {
+          const std::uint8_t data_lanes = phase_lanes[phase];
+          const std::uint8_t high_lanes =
+              phase_lanes[(phase + 1U) % kSamplesPerBit];
+          std::uint8_t* symbol = dynamic_sample + phase;
+          symbol[0] =
+              static_cast<std::uint8_t>(high_lanes | (bit0 & data_lanes));
+          symbol[3] =
+              static_cast<std::uint8_t>(high_lanes | (bit1 & data_lanes));
+          symbol[6] =
+              static_cast<std::uint8_t>(high_lanes | (bit2 & data_lanes));
+          symbol[9] =
+              static_cast<std::uint8_t>(high_lanes | (bit3 & data_lanes));
+          symbol[12] =
+              static_cast<std::uint8_t>(high_lanes | (bit4 & data_lanes));
+          symbol[15] =
+              static_cast<std::uint8_t>(high_lanes | (bit5 & data_lanes));
+          symbol[18] =
+              static_cast<std::uint8_t>(high_lanes | (bit6 & data_lanes));
+          symbol[21] =
+              static_cast<std::uint8_t>(high_lanes | (bit7 & data_lanes));
+        }
       }
       dynamic_sample += 24U;
     }

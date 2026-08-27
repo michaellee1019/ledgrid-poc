@@ -65,6 +65,23 @@ void test_encoder_scales_brightness_before_bit_expansion() {
   }
 }
 
+void test_encoder_refreshes_cached_expansion_when_brightness_changes() {
+  constexpr std::uint8_t kRgb[] = {0x63, 0xB7, 0xD2};
+  std::vector<std::uint8_t> first(ledgrid::ws2812_encoded_size(1));
+  std::vector<std::uint8_t> different(ledgrid::ws2812_encoded_size(1));
+  std::vector<std::uint8_t> repeated(ledgrid::ws2812_encoded_size(1));
+
+  TEST_ASSERT_TRUE(ledgrid::encode_parallel_grb(
+      kRgb, sizeof(kRgb), 1, 1, 37, first.data(), first.size()).ok);
+  TEST_ASSERT_TRUE(ledgrid::encode_parallel_grb(
+      kRgb, sizeof(kRgb), 1, 1, 211, different.data(), different.size()).ok);
+  TEST_ASSERT_TRUE(ledgrid::encode_parallel_grb(
+      kRgb, sizeof(kRgb), 1, 1, 37, repeated.data(), repeated.size()).ok);
+
+  TEST_ASSERT_FALSE(std::equal(first.begin(), first.end(), different.begin()));
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(first.data(), repeated.data(), first.size());
+}
+
 void test_optimized_encoder_updates_all_eight_lanes() {
   std::array<std::uint8_t, 8U * 3U> rgb{};
   for (std::size_t lane = 0; lane < 8; ++lane) {
@@ -658,6 +675,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_encoder_emits_parallel_grb_waveform);
   RUN_TEST(test_encoder_scales_brightness_before_bit_expansion);
+  RUN_TEST(test_encoder_refreshes_cached_expansion_when_brightness_changes);
   RUN_TEST(test_optimized_encoder_updates_all_eight_lanes);
   RUN_TEST(test_lane_mask_silences_unselected_lanes);
   RUN_TEST(test_lane_mask_defaults_to_every_lane);
