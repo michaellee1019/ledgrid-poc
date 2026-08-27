@@ -1929,7 +1929,13 @@
                 ? `Failed: ${failures.join(', ')}.`
                 : warnings.length ? `Review: ${warnings.join(', ')}.` : `${SAMPLE_FRAMES} ${state.layers.clockEnabled ? 'composed ' : ''}frames passed the local heuristics.`;
             if (generation === state.checkerGeneration) {
-                state.checkResult = {status: grade, binding, completedAt: new Date().toISOString()};
+                state.checkResult = {
+                    status: grade,
+                    binding,
+                    warnings: warnings.slice(),
+                    failures: failures.slice(),
+                    completedAt: new Date().toISOString(),
+                };
                 updateServerActionButtons();
             }
             $('saveState').textContent = 'Draft autosaved locally';
@@ -2127,7 +2133,10 @@
         if ($('activateRevision')) $('activateRevision').textContent = String(state.documentRevision);
         if ($('activateCheck')) {
             const outcome = state.checkResult?.status === 'warn' ? 'Passed with cautions' : 'Passed';
-            $('activateCheck').textContent = `${outcome} · draft generation ${state.draftGeneration}`;
+            const cautions = state.checkResult?.warnings?.length
+                ? ` · review ${state.checkResult.warnings.join(', ')}`
+                : '';
+            $('activateCheck').textContent = `${outcome}${cautions} · draft generation ${state.draftGeneration}`;
         }
         if ($('activateDestination')) $('activateDestination').textContent = 'Physical living wall';
         $('activateDialog').showModal();
@@ -2874,6 +2883,7 @@
             }
 
             if (!modifier || event.altKey) return;
+            if (editing && key === 'z') return;
             if (key === 'z') {
                 event.preventDefault();
                 restoreHistory(state.historyIndex + (event.shiftKey ? 1 : -1));

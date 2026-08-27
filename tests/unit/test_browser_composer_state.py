@@ -132,6 +132,9 @@ console.log(JSON.stringify({
         self.assertIn("wallSettings: clone(state.globalSettings.draft)", source)
         self.assertIn("frameBudgetMs = 1000 / targetFps", source)
         self.assertIn("Queued by server", source)
+        self.assertIn("warnings: warnings.slice()", source)
+        self.assertIn("review ${state.checkResult.warnings.join(', ')}", source)
+        self.assertIn("if (editing && key === 'z') return", source)
         self.assertIn("detail.textContent = detail.dataset.defaultDescription", source)
 
     def test_import_and_keyboard_contracts_are_bounded_and_explicit(self) -> None:
