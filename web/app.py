@@ -7,6 +7,7 @@ real time.
 """
 
 import inspect
+import hashlib
 import json
 import math
 import os
@@ -22,6 +23,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.feature_flags import AnimationPipelineFeatureFlags
 from animation.core.installation_profile_library import InstallationProfileLibrary
+from animation.core.installation_profile_runtime import EMPTY_INSTALLATION_PROFILE_DIGEST
 from animation.core.installation_profile_topology import (
     IDENTITY_INSTALLATION_PROFILE_TOPOLOGY,
     InstallationProfileTopology,
@@ -38,6 +40,8 @@ from drivers.frame_codec import (
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 from ipc.control_channel import FileControlChannel
 from ipc.scene_contract import (
+    BROWSER_SCENE_MAX_BYTES,
+    BROWSER_SCENE_SCHEMA,
     DEFAULT_SCENE_PROVIDER_POLICY,
     FIXED_OVERLAY_SLOT,
     SCENE_PRESET_SCHEMA,
@@ -45,10 +49,14 @@ from ipc.scene_contract import (
     SceneProviderPolicy,
     SceneValidationError,
     background_only_scene,
+    browser_scene_to_host_scene,
+    decorate_browser_component,
     decorate_catalog,
     filter_catalog,
+    normalize_browser_scene_document,
     normalize_scene_payload,
     scene_preview_identity,
+    validate_bounded_browser_json,
 )
 from web.preview_worker import RuntimePreviewWorker
 
@@ -271,8 +279,16 @@ class AnimationWebInterface:
         def api_browser_composer_validate_preset():
             """Validate an imported component or scene preset without mutation."""
             try:
+                if (
+                    request.content_length is not None
+                    and request.content_length > BROWSER_SCENE_MAX_BYTES
+                ):
+                    raise SceneValidationError(
+                        f'uploaded preset exceeds the {BROWSER_SCENE_MAX_BYTES}-byte limit'
+                    )
                 validated = self._validated_browser_composer_import(
-                    request.get_json(silent=True)
+                    request.get_json(silent=True),
+                    encoded_size=request.content_length,
                 )
             except (SceneValidationError, ValueError, TypeError) as exc:
                 return jsonify({'valid': False, 'error': str(exc)}), 400
@@ -461,7 +477,7 @@ class AnimationWebInterface:
             """Versioned unified catalog, including explicit editor compatibility."""
             try:
                 components = filter_catalog(
-                    self._component_catalog(),
+                    self._browser_scene_catalog(),
                     provider=request.args.get('provider'),
                     role=request.args.get('role'),
                     provider_policy=self._scene_provider_policy(),
@@ -506,10 +522,43 @@ class AnimationWebInterface:
             except SceneValidationError as exc:
                 return jsonify({'error': str(exc)}), 400
             command = self.control_channel.send_command('start_scene', scene=scene)
+            command_id = (
+                command.get('command_id') if isinstance(command, dict) else None
+            )
             return jsonify({
                 'success': True, 'scene': scene,
                 'preset_diagnostics': self._scene_preset_diagnostics(scene),
-                'command_id': command.get('command_id') if isinstance(command, dict) else None,
+                'command_id': command_id,
+                'receipt': {
+                    'schema': 'ledgrid.scene-activation-receipt',
+                    'schema_version': 1,
+                    'requested_revision': scene['revision'],
+                    'requested_identity': {
+                        'background': {
+                            'provider': scene['background']['provider'],
+                            'component_id': scene['background']['plugin_id'],
+                        },
+                        'layers': [
+                            {
+                                'role': overlay['slot_id'],
+                                'provider': overlay['component']['provider'],
+                                'component_id': overlay['component']['plugin_id'],
+                            }
+                            for overlay in scene['overlays']
+                        ],
+                        'fallback': {
+                            'provider': scene['known_python_fallback']['provider'],
+                            'component_id': scene['known_python_fallback']['plugin_id'],
+                        },
+                    },
+                    'command_id': command_id,
+                    'command_accepted': True,
+                    'accepted_live_identity': None,
+                    'observed_status': 'not_observed',
+                    'telemetry_complete': False,
+                    'camera_observation': None,
+                    'rollback_available': False,
+                },
             })
 
         @self.app.route('/api/v1/scene', methods=['DELETE'])
@@ -579,7 +628,9 @@ class AnimationWebInterface:
             payload = request.get_json(silent=True)
             try:
                 body = payload if isinstance(payload, dict) else {}
-                scene = self._validated_scene_request(body.get('scene', body))
+                scene = self._validated_scene_request(
+                    body.get('scene', body), browser_purpose='preview'
+                )
                 vibe = self._preview_vibe(body.get('vibe'))
                 status = self.control_channel.read_status() or {}
                 modifiers = PlantModifierState.from_payload(
@@ -670,6 +721,14 @@ class AnimationWebInterface:
             payload = request.get_json(silent=True)
             if not isinstance(payload, dict):
                 return jsonify({'error': 'request body must be a JSON object'}), 400
+            try:
+                validate_bounded_browser_json(
+                    payload,
+                    label='scene preset save',
+                    encoded_size=request.content_length,
+                )
+            except SceneValidationError as exc:
+                return jsonify({'error': str(exc)}), 400
             name = str(payload.get('name') or '').strip()
             preset_id = self._sanitize_preset_id(name)
             if not name or not preset_id:
@@ -677,7 +736,18 @@ class AnimationWebInterface:
             if any(key in payload for key in ('vibe', 'plant_modifiers', 'output')):
                 return jsonify({'error': 'Scene presets never capture vibe, plant, or output state'}), 400
             try:
-                scene = self._validated_scene_request(payload.get('scene'))
+                raw_scene = payload.get('scene')
+                if (
+                    isinstance(raw_scene, dict)
+                    and raw_scene.get('schema') == BROWSER_SCENE_SCHEMA
+                ):
+                    stored_scene, _host_scene = self._validated_browser_scene_document(
+                        raw_scene, purpose='save'
+                    )
+                else:
+                    stored_scene = self._validated_scene_request(
+                        raw_scene, browser_purpose='save'
+                    )
             except SceneValidationError as exc:
                 return jsonify({'error': str(exc)}), 400
             existing = self._load_scene_preset(preset_id) or {}
@@ -688,7 +758,7 @@ class AnimationWebInterface:
                 'preset_id': preset_id,
                 'name': name,
                 'description': str(payload.get('description') or ''),
-                'scene': scene,
+                'scene': stored_scene,
                 'created_at': existing.get('created_at', now),
                 'updated_at': now,
             }
@@ -1764,6 +1834,7 @@ class AnimationWebInterface:
         }
 
         components: List[Dict[str, Any]] = []
+        runtime_digests: Dict[Path, str] = {}
         for raw in sorted(
             raw_components,
             key=lambda item: (
@@ -1851,6 +1922,30 @@ class AnimationWebInterface:
                     ),
                 }
 
+            if runtime.get('supported'):
+                asset_url = runtime.get('asset_url')
+                asset_path = (
+                    self.project_root / 'web' / str(asset_url).lstrip('/')
+                    if isinstance(asset_url, str)
+                    else None
+                )
+                if asset_path is not None and asset_path.is_file():
+                    runtime_digest = runtime_digests.get(asset_path)
+                    if runtime_digest is None:
+                        runtime_digest = hashlib.sha256(
+                            asset_path.read_bytes()
+                        ).hexdigest()
+                        runtime_digests[asset_path] = runtime_digest
+                    runtime['digest'] = runtime_digest
+                else:
+                    runtime['supported'] = False
+                    runtime['reason'] = (
+                        'The verified browser runtime asset is not available.'
+                    )
+                    runtime['digest'] = None
+            else:
+                runtime['digest'] = None
+
             preset_records: List[Dict[str, Any]] = []
             if plugin_id not in collisions:
                 for summary in self._list_animation_presets(plugin_id):
@@ -1871,7 +1966,7 @@ class AnimationWebInterface:
                     })
                     preset_records.append(preset)
 
-            components.append({
+            component = {
                 'key': f'{provider}:{plugin_id}',
                 'provider': provider,
                 'plugin_id': plugin_id,
@@ -1900,7 +1995,12 @@ class AnimationWebInterface:
                     raw.get('preview'),
                     None if plugin_id in collisions else self._preview_metadata(plugin_id),
                 ),
-            })
+            }
+            components.append(decorate_browser_component(
+                component,
+                browser_runtime=runtime,
+                provider_collision=plugin_id in collisions,
+            ))
 
         controller = self.preview_manager.controller
         strip_count = int(controller.strip_count)
@@ -1951,6 +2051,7 @@ class AnimationWebInterface:
         component_key: Optional[str] = None,
         plugin_id: Optional[str] = None,
         provider: Optional[str] = None,
+        catalog: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Resolve one exact component identity, rejecting provider ambiguity."""
         if component_key is not None:
@@ -1966,7 +2067,7 @@ class AnimationWebInterface:
             raise ValueError('component plugin_id is required')
 
         matches = [
-            item for item in self._component_catalog()
+            item for item in (catalog if catalog is not None else self._component_catalog())
             if item.get('plugin_id') == plugin_id
             and (provider is None or item.get('provider') == provider)
         ]
@@ -1980,22 +2081,96 @@ class AnimationWebInterface:
             raise ValueError(f'Unknown component: {identity}')
         return matches[0]
 
+    def _browser_scene_catalog(self) -> List[Dict[str, Any]]:
+        """Return catalog records with runtime-bound browser capabilities."""
+        return self._browser_composer_bootstrap()['components']
+
+    def _validated_browser_scene_document(
+        self, payload: Any, *, purpose: str
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        catalog = self._browser_scene_catalog()
+        document = normalize_browser_scene_document(
+            payload, catalog=catalog, purpose=purpose
+        )
+        if purpose == 'activation':
+            profile_digest = document['installation_profile']['digest']
+            preflight = getattr(
+                self.preview_manager, 'preflight_installation_profile', None
+            )
+            if callable(preflight):
+                try:
+                    preflight(profile_digest)
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise SceneValidationError(
+                        'browser scene.installation_profile.digest is not a '
+                        f'managed installation profile: {exc}'
+                    ) from exc
+            elif profile_digest != EMPTY_INSTALLATION_PROFILE_DIGEST:
+                raise SceneValidationError(
+                    'browser scene.installation_profile.digest cannot be '
+                    'resolved by this manager'
+                )
+        scene = browser_scene_to_host_scene(document, catalog=catalog)
+        return document, scene
+
     def _validated_browser_composer_import(
-        self, payload: Any
+        self, payload: Any, *, encoded_size: Optional[int] = None
     ) -> Dict[str, Any]:
         """Normalize an uploaded preset into a composer draft without writes."""
+        validate_bounded_browser_json(
+            payload, label='uploaded preset', encoded_size=encoded_size
+        )
         if not isinstance(payload, dict):
             raise ValueError('uploaded preset must be a JSON object')
+
+        if payload.get('schema') == BROWSER_SCENE_SCHEMA:
+            document, scene = self._validated_browser_scene_document(
+                payload, purpose='import'
+            )
+            background = document['background']
+            return {
+                'kind': 'browser_scene',
+                'draft': {
+                    'component_key': (
+                        f"{background['provider']}:{background['component_id']}"
+                    ),
+                    'name': 'Imported scene',
+                    'description': '',
+                    'params': dict(background['parameters']),
+                    'browser_scene': document,
+                    'scene': scene,
+                },
+            }
 
         if payload.get('schema') == SCENE_PRESET_SCHEMA:
             if payload.get('schema_version') != SCENE_PRESET_VERSION:
                 raise ValueError('unsupported scene preset schema version')
-            scene = self._validated_scene_request(payload.get('scene'))
+            raw_scene = payload.get('scene')
+            browser_document = None
+            if (
+                isinstance(raw_scene, dict)
+                and raw_scene.get('schema') == BROWSER_SCENE_SCHEMA
+            ):
+                browser_document, scene = self._validated_browser_scene_document(
+                    raw_scene, purpose='import'
+                )
+            else:
+                scene = self._validated_scene_request(
+                    raw_scene, browser_purpose='import'
+                )
             background = scene['background']
+            browser_catalog = self._browser_scene_catalog()
             descriptor = self._browser_composer_component(
                 plugin_id=background['plugin_id'],
                 provider=background['provider'],
+                catalog=browser_catalog,
             )
+            capabilities = descriptor.get('browser_capabilities') or {}
+            if capabilities.get('previewable') is not True:
+                raise ValueError(
+                    capabilities.get('reason')
+                    or 'The imported scene background is not previewable.'
+                )
             params = dict(descriptor.get('defaults') or {})
             params.update(background.get('resolved_parameters') or {})
             params.update(background.get('parameter_overrides') or {})
@@ -2009,6 +2184,10 @@ class AnimationWebInterface:
                     'description': str(payload.get('description') or ''),
                     'params': params,
                     'scene': scene,
+                    **(
+                        {'browser_scene': browser_document}
+                        if browser_document is not None else {}
+                    ),
                 },
             }
 
@@ -2019,11 +2198,19 @@ class AnimationWebInterface:
         params = payload.get('params')
         if not isinstance(params, dict):
             raise ValueError('component preset params must be an object')
+        browser_catalog = self._browser_scene_catalog()
         descriptor = self._browser_composer_component(
             component_key=payload.get('component_key'),
             plugin_id=payload.get('plugin_id') or payload.get('animation'),
             provider=payload.get('provider'),
+            catalog=browser_catalog,
         )
+        capabilities = descriptor.get('browser_capabilities') or {}
+        if capabilities.get('previewable') is not True:
+            raise ValueError(
+                capabilities.get('reason')
+                or 'The imported component is not previewable.'
+            )
         plugin_id = descriptor['plugin_id']
         provider = descriptor['provider']
         error = self._validate_animation_params(plugin_id, params)
@@ -2043,6 +2230,7 @@ class AnimationWebInterface:
         self, payload: Any
     ) -> tuple[Dict[str, Any], bool]:
         """Persist an exact component preset without issuing a live command."""
+        validate_bounded_browser_json(payload, label='browser composer save')
         if not isinstance(payload, dict):
             raise ValueError('request body must be a JSON object')
         if (
@@ -2050,9 +2238,16 @@ class AnimationWebInterface:
             or payload.get('schema_version') != 1
         ):
             raise ValueError('unsupported browser composer save schema')
+        browser_catalog = self._browser_scene_catalog()
         descriptor = self._browser_composer_component(
-            component_key=payload.get('component_key')
+            component_key=payload.get('component_key'), catalog=browser_catalog
         )
+        capabilities = descriptor.get('browser_capabilities') or {}
+        if capabilities.get('saveable') is not True:
+            raise ValueError(
+                capabilities.get('reason')
+                or 'This component is not saveable from the browser composer.'
+            )
         plugin_id = descriptor['plugin_id']
         provider = descriptor['provider']
         provider_count = sum(
@@ -2130,9 +2325,15 @@ class AnimationWebInterface:
                 return DEFAULT_SCENE_PROVIDER_POLICY
         return DEFAULT_SCENE_PROVIDER_POLICY
 
-    def _validated_scene_request(self, payload: Any) -> Dict[str, Any]:
+    def _validated_scene_request(
+        self, payload: Any, *, browser_purpose: str = 'activation'
+    ) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             raise SceneValidationError('request body must contain a scene object')
+        if payload.get('schema') == BROWSER_SCENE_SCHEMA:
+            _document, payload = self._validated_browser_scene_document(
+                payload, purpose=browser_purpose
+            )
         catalog = self._component_catalog()
         scene = normalize_scene_payload(
             payload,
