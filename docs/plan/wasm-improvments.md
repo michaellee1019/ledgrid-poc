@@ -2,7 +2,8 @@
 
 ## Plan status
 
-- **Status:** Proposed
+- **Status:** Portable implementation in progress; real-device, cross-browser,
+  performance, recovery, and physical-wall gates remain open
 - **Scope:** `/composer`, its Web Workers, Wasm/Pyodide runtime assets, preset
   authoring, fixed background plus Clock composition, local checking, and the
   explicit save/activate boundary
@@ -76,15 +77,15 @@ offline guarantees for cross-origin Pyodide assets.
 
 ### Implementation checklist
 
-- [ ] Define a versioned browser-scene document containing provider, component
+- [x] Define a versioned browser-scene document containing provider, component
   ID, component/runtime digest, parameter-schema version, authored parameters,
   Clock layer state, installation-profile reference, fallback, and document
   revision.
-- [ ] Define one draft-dirty generation counter. Every parameter, preset, layer,
+- [x] Define one draft-dirty generation counter. Every parameter, preset, layer,
   installation-profile, import, reset, and runtime change advances it.
-- [ ] Bind each Check result to the exact draft generation, component/runtime
+- [x] Bind each Check result to the exact draft generation, component/runtime
   digest, geometry, and checker version that produced it.
-- [ ] Add an explicit activation-capability record to every catalog component:
+- [x] Add an explicit activation-capability record to every catalog component:
   previewable, saveable, activation-ready, reason when unavailable, and required
   managed identity.
 - [ ] Record the supported browser/device matrix and one named baseline iPhone
@@ -96,14 +97,14 @@ offline guarantees for cross-origin Pyodide assets.
 
 ### Phase 0 acceptance gate
 
-- [ ] **CONTRACT-01 (P0):** The same scene payload validates identically in the
+- [x] **CONTRACT-01 (P0):** The same scene payload validates identically in the
   browser, save API, activation API, and host composition boundary. Unknown
   schema versions, providers, component IDs, runtime digests, parameter keys,
   layer roles, and out-of-range values are rejected with field-specific errors.
-- [ ] **CONTRACT-02 (P0):** Any draft mutation makes the prior Check result stale
+- [x] **CONTRACT-02 (P0):** Any draft mutation makes the prior Check result stale
   synchronously and clears all prior metric descriptions; no stale value can be
   presented as current.
-- [ ] **CAP-01 (P1):** Every selectable renderer exposes preview and activation
+- [x] **CAP-01 (P1):** Every selectable renderer exposes preview and activation
   capability before editing begins. An activation-incompatible renderer cannot
   expose an enabled Activate action.
 - [ ] **BASE-01 (P1):** A checked-in or CI-retained baseline report includes all
@@ -114,25 +115,26 @@ offline guarantees for cross-origin Pyodide assets.
 
 ### Implementation checklist
 
-- [ ] Use one normalized numeric commit path for range input, number input,
+- [x] Use one normalized numeric commit path for range input, number input,
   Enter, blur, clamping, display precision, preview update, autosave, and history.
-- [ ] Make applying a starting point one undoable history transaction.
-- [ ] Make layer enable/disable, Clock preset changes, imports, resets, and scene
+- [x] Make applying a starting point one undoable history transaction.
+- [x] Make layer enable/disable, Clock preset changes, imports, resets, and scene
   replacement undoable without retaining orphaned workers.
-- [ ] Clear all Check values and explanatory text on invalidation.
-- [ ] Require a current passing Check before activation. If an expert bypass is
-  retained, show the stale/unchecked state and require a separate explicit
-  acknowledgement in the confirmation.
-- [ ] Include component/provider identity, runtime digest, layers, fallback,
+- [x] Clear all Check values and explanatory text on invalidation.
+- [x] Require a current non-failing Check before activation. Non-failing cautions
+  remain visible in review; missing, stale, or failed Checks remain blocked. If
+  an expert bypass is retained, show the stale/unchecked state and require a
+  separate explicit acknowledgement in the confirmation.
+- [x] Include component/provider identity, runtime digest, layers, fallback,
   check generation/status, and destination in the activation summary.
 - [ ] Preserve the previous live state on validation, save, upload, staging, or
   activation failure.
-- [ ] Return and display an activation receipt with the requested revision,
+- [x] Return and display an activation receipt with the requested revision,
   accepted live identity, observed status, and an honest telemetry-completeness
   field. Do not claim physical observation without camera evidence.
 - [ ] Provide one-tap rollback to the previous accepted live revision when the
   server reports that rollback is available.
-- [ ] Rename states and actions to `Draft autosaved locally`, `Save to library`,
+- [x] Rename states and actions to `Draft autosaved locally`, `Save to library`,
   `Download JSON`, and `Activate on wall`.
 
 ### Phase 1 acceptance gate
@@ -143,19 +145,19 @@ offline guarantees for cross-origin Pyodide assets.
 - [ ] **STATE-02 (P1):** Fifty mixed edits followed by full Undo and Redo produce
   the exact initial and final scene documents respectively, with no worker error
   or mismatched control.
-- [ ] **SAFE-01 (P0):** Loading `/composer`, selecting, editing, playing,
+- [x] **SAFE-01 (P0):** Loading `/composer`, selecting, editing, playing,
   comparing, importing, downloading, saving to the library, and running Check
   emit no wall mutation request.
-- [ ] **SAFE-02 (P0):** Activate is disabled for unsupported, invalid, unchecked,
+- [x] **SAFE-02 (P0):** Activate is disabled for unsupported, invalid, unchecked,
   stale, or failing scenes. The UI gives a persistent reason and the server
   independently rejects an equivalent crafted request.
 - [ ] **SAFE-03 (P0):** Canceling the activation confirmation sends no mutation.
   A failed activation leaves the previous live revision active and does not show
   a success message.
-- [ ] **SAFE-04 (P1):** A successful activation distinguishes command acceptance,
+- [x] **SAFE-04 (P1):** A successful activation distinguishes command acceptance,
   reported live state, telemetry completeness, and camera observation. None is
   inferred from another.
-- [ ] **SAVE-01 (P1):** Local autosave, library save, JSON download, JSON upload,
+- [x] **SAVE-01 (P1):** Local autosave, library save, JSON download, JSON upload,
   and wall activation have distinct labels, confirmations, persistence effects,
   and automated request assertions.
 
@@ -165,26 +167,26 @@ offline guarantees for cross-origin Pyodide assets.
 
 - [ ] Make `Looks` start with featured, recent, favorite, and current-renderer
   starting points; move the full renderer catalog behind `All animations`.
-- [ ] Keep starting points reachable without scrolling through the renderer
+- [x] Keep starting points reachable without scrolling through the renderer
   catalog at 390×844.
 - [ ] Add real rendered thumbnails or short deterministic preview loops generated
   from the same browser runtime and scene contract.
-- [ ] Add explicit empty/filter states, including `Editing …, hidden by filters`
+- [x] Add explicit empty/filter states, including `Editing …, hidden by filters`
   and one-tap filter clearing.
-- [ ] Separate creative controls from an `Installation / Advanced` disclosure.
+- [x] Separate creative controls from an `Installation / Advanced` disclosure.
   Hide mask paths, raw modifier JSON, and runtime diagnostics from routine Tune.
-- [ ] Expose plant behavior once as authoritative global installation state and
+- [x] Expose plant behavior once as authoritative global installation state and
   suppress duplicate per-animation controls.
-- [ ] Remove duplicate mobile navigation. Preserve one clear route among Looks,
+- [x] Remove duplicate mobile navigation. Preserve one clear route among Looks,
   Preview, Tune, Layers, and Check.
-- [ ] Fix the Draft/Split/Original overlap and add an unambiguous split divider or
+- [x] Fix the Draft/Split/Original overlap and add an unambiguous split divider or
   magnified comparison mode.
-- [ ] Explain Draft, Split, and Original on first use and through accessible help.
+- [x] Explain Draft, Split, and Original on first use and through accessible help.
 - [ ] Bring every primary mobile target to at least 44×44 CSS pixels, meet text
   contrast, preserve safe-area insets, and avoid truncating user-visible values.
-- [ ] Implement roving focus and Arrow/Home/End behavior for tablists/listboxes;
+- [x] Implement roving focus and Arrow/Home/End behavior for tablists/listboxes;
   associate every range and number field with a useful accessible name.
-- [ ] Add install guidance, standalone-mode polish, and visible online/offline/
+- [x] Add install guidance, standalone-mode polish, and visible online/offline/
   locally-ready states without nagging an already installed user.
 
 ### Phase 2 acceptance gate
@@ -192,10 +194,10 @@ offline guarantees for cross-origin Pyodide assets.
 - [ ] **DISC-01 (P1):** A first-time user can choose a curated look, tune it, add
   or change the Clock, run Check, save it, and reach activation review without
   encountering an implementation path, raw JSON control, or runtime name.
-- [ ] **DISC-02 (P1):** Featured/current starting points are visible within the
+- [x] **DISC-02 (P1):** Featured/current starting points are visible within the
   first viewport at 390×844. Search matches renderer and preset metadata, and
   filters never silently hide which renderer is being edited.
-- [ ] **RESP-01 (P0):** At 390×844 and 430×932 there is no horizontal document
+- [x] **RESP-01 (P0):** At 390×844 and 430×932 there is no horizontal document
   overflow, clipped action, obscured comparison control, unreachable content, or
   overlap among the preview, transport, comparison, and bottom navigation.
 - [ ] **A11Y-01 (P1):** Automated accessibility tests report no serious/critical
@@ -216,26 +218,26 @@ offline guarantees for cross-origin Pyodide assets.
 
 ### Implementation checklist
 
-- [ ] Keep one long-lived Python worker/interpreter per composer session and
+- [x] Keep one long-lived Python worker/interpreter per composer session and
   create/dispose renderer instances inside it instead of restarting Pyodide on
   ordinary Python component switches.
-- [ ] Bound worker instances and buffers; release replaced renderers and recover
+- [x] Bound worker instances and buffers; release replaced renderers and recover
   cleanly after worker termination or mobile-browser eviction.
-- [ ] Make render requests generation-aware and latest-request-wins so obsolete
+- [x] Make render requests generation-aware and latest-request-wins so obsolete
   slider frames cannot overwrite newer state.
-- [ ] Use transferable/reused frame buffers where measurements show that copying
+- [x] Use transferable/reused frame buffers where measurements show that copying
   is material. Keep main-thread painting bounded.
 - [ ] Preload the Python runtime opportunistically only after the shell is usable;
   show staged first-load progress and a retryable failure state.
-- [ ] Self-host or deliberately cache the pinned Pyodide runtime and required
+- [x] Self-host or deliberately cache the pinned Pyodide runtime and required
   packages. Record their versions and content digests.
-- [ ] Version service-worker caches atomically, retain the prior working shell
+- [x] Version service-worker caches atomically, retain the prior working shell
   until the replacement is complete, and delete old caches only after activation.
-- [ ] Provide an explicit `Ready offline` state only after every asset required
+- [x] Provide an explicit `Ready offline` state only after every asset required
   for the supported offline workflow is verified in cache.
-- [ ] Keep server save and wall activation disabled with clear copy while offline;
+- [x] Keep server save and wall activation disabled with clear copy while offline;
   local editing, preview, Check, autosave, import, and export remain functional.
-- [ ] Add runtime instrumentation for cold/warm initialization, render mean/p95/
+- [x] Add runtime instrumentation for cold/warm initialization, render mean/p95/
   p99/max, dropped/obsolete frames, Check duration, worker restarts, and asset
   cache state without collecting authored content.
 
@@ -259,7 +261,7 @@ offline guarantees for cross-origin Pyodide assets.
   reload can open the composer, switch among three Python renderers and both
   checked-in native previews, apply curated presets, compose Clock, run Check,
   autosave, import, and export without a network request succeeding.
-- [ ] **OFFLINE-02 (P1):** A failed or interrupted cache update leaves the prior
+- [x] **OFFLINE-02 (P1):** A failed or interrupted cache update leaves the prior
   offline-capable version launchable. A digest mismatch never produces `Ready
   offline`.
 - [ ] **RECOVER-01 (P1):** Terminating the render worker mid-preview produces a
@@ -270,18 +272,18 @@ offline guarantees for cross-origin Pyodide assets.
 
 ### Implementation checklist
 
-- [ ] Make the versioned scene document the single input to preview, Check,
+- [x] Make the versioned scene document the single input to preview, Check,
   import/export, library save, and activation validation.
-- [ ] Keep version 1 to one opaque background plus zero or one Clock overlay with
+- [x] Keep version 1 to one opaque background plus zero or one Clock overlay with
   source-over alpha. Reject extra roles, duplicate Clock layers, unsupported
   blend modes, and ambiguous ordering.
-- [ ] Make provider explicit: host Python, managed receiver-native component, or
+- [x] Make provider explicit: host Python, managed receiver-native component, or
   compiled fallback. Never expose receiver-local playback as a fake Python
   `AnimationBase` component.
-- [ ] Apply background cadence and Clock semantic cadence independently. A cached
+- [x] Apply background cadence and Clock semantic cadence independently. A cached
   Clock frame must not freeze a changing background; a high manager/render rate
   must not multiply Clock semantic events.
-- [ ] Use one canonical orientation and geometry contract across host Python,
+- [x] Use one canonical orientation and geometry contract across host Python,
   Pyodide, native Wasm, overlay composition, exported frames, and Check.
 - [ ] Apply global plant installation state consistently to every supported
   Python background and Clock-preview path. Unsupported modifiers remain exact
@@ -293,14 +295,14 @@ offline guarantees for cross-origin Pyodide assets.
 
 ### Phase 4 acceptance gate
 
-- [ ] **CAT-01 (P0):** Every browser-selectable Python component and every shipped
+- [x] **CAT-01 (P0):** Every browser-selectable Python component and every shipped
   curated Python preset renders a valid C-contiguous-equivalent 33×138 RGB frame,
   produces a visible frame where intended, and exercises at least one semantic or
   source tick beyond `t=0`.
-- [ ] **NATIVE-01 (P0):** Every browser-selectable native component has a checked-in
+- [x] **NATIVE-01 (P0):** Every browser-selectable native component has a checked-in
   or reproducibly built Wasm artifact derived from authoritative source. Declared
   curated presets pass host/Wasm frame parity at deterministic times.
-- [ ] **COMP-01 (P0):** Python background + Clock and native background + Clock
+- [x] **COMP-01 (P0):** Python background + Clock and native background + Clock
   match the canonical host source-over compositor byte-for-byte for deterministic
   fixtures covering transparent, translucent, opaque, empty, and edge pixels.
 - [ ] **COMP-02 (P1):** Background and Clock maintain independent cadence in a
@@ -313,7 +315,7 @@ offline guarantees for cross-origin Pyodide assets.
   clipping, accidental duplicate, incorrect aspect ratio, illegible Clock, or
   orientation mismatch. Each exception is either fixed or documented as
   intentional with an explicit test.
-- [ ] **IMPORT-01 (P1):** Import accepts only bounded, versioned, schema-valid JSON;
+- [x] **IMPORT-01 (P1):** Import accepts only bounded, versioned, schema-valid JSON;
   rejects traversal paths, unknown assets/providers, prototype-polluting keys,
   excessive nesting/size, and non-finite numbers; and never provides an arbitrary
   native-code upload surface.
@@ -371,14 +373,14 @@ offline guarantees for cross-origin Pyodide assets.
 
 ## Automated test deliverables
 
-- [ ] Unit tests for scene migration/validation, generation invalidation, history,
+- [x] Unit tests for scene migration/validation, generation invalidation, history,
   numeric normalization, capability derivation, import limits, cache manifests,
   and runtime recovery.
-- [ ] Deterministic compositor fixtures shared by Python host and browser tests.
-- [ ] Full Python component/preset browser-runtime matrix with non-`t=0` frames.
-- [ ] Native build reproducibility and host/Wasm parity tests for each exposed
+- [x] Deterministic compositor fixtures shared by Python host and browser tests.
+- [x] Full Python component/preset browser-runtime matrix with non-`t=0` frames.
+- [x] Native build reproducibility and host/Wasm parity tests for each exposed
   native component and curated preset.
-- [ ] Browser integration tests asserting request methods/URLs so private actions
+- [x] Browser integration tests asserting request methods/URLs so private actions
   cannot regress into live mutations.
 - [ ] Playwright functional, accessibility, offline, keyboard, and visual tests at
   390×844, 430×932, tablet, and desktop widths.
@@ -396,13 +398,18 @@ deliverables are added; update this section when they do.
 
 ```bash
 just browser-composer-assets
+python3 tools/build_browser_offline_manifest.py
 
 uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' \
   python -m unittest \
+  tests.unit.test_browser_scene_contract \
+  tests.unit.test_browser_composer_state \
   tests.unit.test_browser_composer \
   tests.unit.test_browser_composer_actions \
   tests.unit.test_browser_composer_catalog_acceptance \
   tests.unit.test_browser_composer_pwa \
+  tests.unit.test_browser_composer_mobile_ux \
+  tests.unit.test_browser_composer_runtime \
   tests.unit.test_browser_native_preview \
   tests.unit.test_browser_compiled_rainbow_preview -v
 
@@ -451,7 +458,11 @@ sheets, raw benchmark output, or test logs rather than writing “tested manuall
 
 | Date | Gate/criterion | Commit | Environment | Evidence | Result |
 |---|---|---|---|---|---|
-| _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
+| 2026-08-27 | CONTRACT-01, CONTRACT-02, CAP-01 | `377849a..08fb459` | Unit/API contract tests; 33×138 browser draft | [Portable evidence](../browser-composer-portable-evidence-2026-08-27.md) | Pass |
+| 2026-08-27 | SAFE-01, SAFE-02, SAFE-04, SAVE-01 | `ad09338`, `2859135`, `08fb459` | Unit/API request tests plus explicit review/cancel journey | [Portable evidence](../browser-composer-portable-evidence-2026-08-27.md) | Pass; no physical observation claimed |
+| 2026-08-27 | DISC-02, RESP-01 | `7364fe6`, `9f69ba2`, `2859135` | Codex in-app browser at 390×844 and 430×932 | [Portable evidence](../browser-composer-portable-evidence-2026-08-27.md) | Pass |
+| 2026-08-27 | OFFLINE-02 | `95c26f6`, `2859135`, `08fb459` | Digest/cache unit tests and server-stopped reload | [Portable evidence](../browser-composer-portable-evidence-2026-08-27.md) | Pass |
+| 2026-08-27 | CAT-01, Phase 4 NATIVE-01, COMP-01, IMPORT-01 | `95c26f6`, `ad09338`, `2859135` | Catalog, deterministic Wasm parity, compositor, and bounded-import tests | [Portable evidence](../browser-composer-portable-evidence-2026-08-27.md) | Pass |
 
 ## Final definition of done
 
