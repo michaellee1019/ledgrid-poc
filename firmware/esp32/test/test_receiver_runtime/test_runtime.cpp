@@ -8,10 +8,12 @@
 
 #include "fixtures/animation_pipeline_v1.hpp"
 #include "fixtures/receiver_presentation_v1.hpp"
+#include "ledgrid/frame_mailbox.hpp"
 #include "ledgrid/protocol.hpp"
 #include "ledgrid/receiver_task_policy.hpp"
 #include "ledgrid/receiver_runtime.hpp"
 #include "ledgrid/sha256.hpp"
+#include "ledgrid/startup_animation.hpp"
 
 namespace {
 
@@ -297,6 +299,142 @@ void test_command_ids_ownership_and_disabled_behavior_are_explicit() {
   TEST_ASSERT_EQUAL_UINT8(0, static_cast<std::uint8_t>(disabled.base_mode()));
   disabled.complete_host_frame();
   TEST_ASSERT_EQUAL_UINT8(2, static_cast<std::uint8_t>(disabled.base_mode()));
+}
+
+void test_fifth_receiver_startup_to_first_host_frame_contract_is_exact() {
+  constexpr std::uint8_t kLocalStrips = 1;
+  constexpr std::uint16_t kLedsPerStrip = 138;
+  constexpr std::size_t kRgbBytes =
+      static_cast<std::size_t>(kLocalStrips) * kLedsPerStrip * 3U;
+  constexpr std::size_t kSetAllPayloadBytes = 1U + kRgbBytes;
+  constexpr std::size_t kSetAllWireBytes =
+      kSetAllPayloadBytes + ledgrid::kAnimationPipelineCrcBytes;
+  static_assert(kRgbBytes == 414);
+  static_assert(kSetAllPayloadBytes == 415);
+  static_assert(kSetAllWireBytes == 417);
+  static_assert(8U + ledgrid::kAnimationPipelineCrcBytes == 10U);
+
+  ledgrid::ReceiverRuntime runtime(false);
+  ledgrid::ReceiverOutputState output(8, kLedsPerStrip, 50);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::BaseMode::StartupFallback),
+      static_cast<std::uint8_t>(runtime.base_mode()));
+
+  const std::array<std::uint8_t, 8> config = {
+      0x07, kLocalStrips, 0x00, 0x8A, 0x00, 0x04, 0x00, 0x20};
+  std::uint8_t logical_id = 0xFF;
+  std::uint16_t global_offset = 0;
+  TEST_ASSERT_TRUE(ledgrid::parse_receiver_topology(
+      config.data(), config.size(), logical_id, global_offset, &logical_id,
+      &global_offset));
+  TEST_ASSERT_EQUAL_UINT8(4, logical_id);
+  TEST_ASSERT_EQUAL_UINT16(32, global_offset);
+  const auto config_dispatch = ledgrid::classify_receiver_dispatch(
+      config.data(), config.size(), output.configuration().rgb_bytes(),
+      runtime.base_mode(), false);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ReceiverDispatchRoute::Operational),
+      static_cast<std::uint8_t>(config_dispatch.route));
+  TEST_ASSERT_FALSE(config_dispatch.publishes_host_frame);
+  TEST_ASSERT_FALSE(config_dispatch.may_claim_base);
+  std::array<std::uint8_t, 10> config_wire{};
+  std::memcpy(config_wire.data(), config.data(), config.size());
+  const std::uint16_t config_crc = ledgrid::animation_pipeline_crc16_ccitt(
+      config_wire.data(), config.size());
+  config_wire[config.size()] = static_cast<std::uint8_t>(config_crc >> 8U);
+  config_wire[config.size() + 1U] = static_cast<std::uint8_t>(config_crc);
+  TEST_ASSERT_TRUE(ledgrid::receiver_packet_crc_valid(
+      config_wire.data(), config_wire.size()));
+
+  const auto pre_config_ticket = ledgrid::capture_render_ticket(runtime, output);
+  TEST_ASSERT_TRUE(output.configure(kLocalStrips, kLedsPerStrip));
+  TEST_ASSERT_EQUAL_UINT(kRgbBytes, output.configuration().rgb_bytes());
+  FakePhysicalSubmitter submitter{};
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::PhysicalSubmitResult::Stale),
+      static_cast<std::uint8_t>(ledgrid::submit_rendered_frame_if_current(
+          runtime, output, pre_config_ticket, fake_physical_submit,
+          &submitter)));
+
+  std::array<std::uint8_t, kRgbBytes> startup{};
+  TEST_ASSERT_TRUE(ledgrid::render_startup_rainbow(
+      0, kLocalStrips, kLedsPerStrip, startup.data(), startup.size()));
+  const auto configured_startup = ledgrid::capture_render_ticket(runtime, output);
+  TEST_ASSERT_EQUAL_UINT8(kLocalStrips, configured_startup.output.strip_count);
+  TEST_ASSERT_EQUAL_UINT16(kLedsPerStrip,
+                           configured_startup.output.leds_per_strip);
+
+  std::vector<std::uint8_t> set_all(kSetAllWireBytes, 0);
+  set_all[0] = static_cast<std::uint8_t>(ledgrid::ReceiverCommand::SetAll);
+  for (std::size_t index = 1; index < kSetAllPayloadBytes; ++index) {
+    set_all[index] = static_cast<std::uint8_t>(index * 29U + 7U);
+  }
+  const std::uint16_t frame_crc = ledgrid::animation_pipeline_crc16_ccitt(
+      set_all.data(), kSetAllPayloadBytes);
+  set_all[kSetAllPayloadBytes] = static_cast<std::uint8_t>(frame_crc >> 8U);
+  set_all[kSetAllPayloadBytes + 1U] = static_cast<std::uint8_t>(frame_crc);
+  TEST_ASSERT_TRUE(
+      ledgrid::receiver_packet_crc_valid(set_all.data(), set_all.size()));
+
+  const auto frame_dispatch = ledgrid::classify_receiver_dispatch(
+      set_all.data(), kSetAllPayloadBytes, output.configuration().rgb_bytes(),
+      runtime.base_mode(), false);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ReceiverDispatchRoute::HostFullFrame),
+      static_cast<std::uint8_t>(frame_dispatch.route));
+  TEST_ASSERT_TRUE(frame_dispatch.publishes_host_frame);
+  TEST_ASSERT_TRUE(frame_dispatch.may_claim_base);
+  const auto short_frame = ledgrid::classify_receiver_dispatch(
+      set_all.data(), kSetAllPayloadBytes - 1U,
+      output.configuration().rgb_bytes(), runtime.base_mode(), false);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::ReceiverDispatchRoute::Reject),
+      static_cast<std::uint8_t>(short_frame.route));
+
+  ledgrid::LatestFrameMailbox mailbox;
+  const int slot = mailbox.begin_write();
+  TEST_ASSERT_GREATER_OR_EQUAL(0, slot);
+  ledgrid::FrameMetadata metadata{};
+  metadata.sequence = 1;
+  metadata.byte_count = kRgbBytes;
+  metadata.strip_count = kLocalStrips;
+  metadata.leds_per_strip = kLedsPerStrip;
+  metadata.brightness = 50;
+  TEST_ASSERT_TRUE(mailbox.commit_write(slot, metadata));
+  runtime.complete_host_frame();
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::BaseMode::HostFullScene),
+      static_cast<std::uint8_t>(runtime.base_mode()));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::BaseTransitionReason::HostTakeover),
+      static_cast<std::uint8_t>(runtime.transition_reason()));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::PhysicalSubmitResult::Stale),
+      static_cast<std::uint8_t>(ledgrid::submit_rendered_frame_if_current(
+          runtime, output, configured_startup, fake_physical_submit,
+          &submitter)));
+
+  ledgrid::ReceiverStatusV3 status{};
+  status.active_strips = kLocalStrips;
+  // Keep one semantic strip/global column while broadcasting its physical
+  // waveform until the installed tail lane is electrically identified.
+  status.lane_mask = 0xFF;
+  status.leds_per_strip = kLedsPerStrip;
+  status.base_mode = static_cast<std::uint8_t>(runtime.base_mode());
+  status.global_strip_offset = global_offset;
+  status.logical_receiver_id = logical_id;
+  std::array<std::uint8_t, ledgrid::kStatusBytesV3> encoded_status{};
+  TEST_ASSERT_TRUE(ledgrid::encode_receiver_status_v3(
+      status, encoded_status.data(), encoded_status.size()));
+  TEST_ASSERT_EQUAL_UINT8(kLocalStrips, encoded_status[6]);
+  TEST_ASSERT_EQUAL_HEX8(0xFF, encoded_status[7]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, encoded_status[8]);
+  TEST_ASSERT_EQUAL_HEX8(0x8A, encoded_status[9]);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(ledgrid::BaseMode::HostFullScene),
+      encoded_status[68]);
+  TEST_ASSERT_EQUAL_HEX8(0x20, encoded_status[83]);
+  TEST_ASSERT_EQUAL_UINT8(4, encoded_status[312]);
 }
 
 void test_start_parameter_stop_takeover_restart_and_failure_transitions() {
@@ -1834,6 +1972,7 @@ void tearDown() {}
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_command_ids_ownership_and_disabled_behavior_are_explicit);
+  RUN_TEST(test_fifth_receiver_startup_to_first_host_frame_contract_is_exact);
   RUN_TEST(test_start_parameter_stop_takeover_restart_and_failure_transitions);
   RUN_TEST(test_invalid_commands_are_atomic_and_partial_commands_never_claim);
   RUN_TEST(test_cadence_is_deadline_driven_and_counts_misses);

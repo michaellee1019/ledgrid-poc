@@ -15,6 +15,8 @@ from tools.deployment.receiver_hybrid_config import (
     DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER,
     DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY,
     NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+    PREVIOUS_PHYSICAL_OUTPUT_LANE_MASKS,
+    PREVIOUS_RECEIVER_HYBRID_CONFIG_VERSION,
     PRODUCTION_FIRMWARE_ENVIRONMENT,
     RECEIVER_HYBRID_CONFIG_RELATIVE_PATH,
     RECEIVER_HYBRID_CONFIG_SCHEMA,
@@ -70,6 +72,17 @@ class ReceiverHybridConfigTests(unittest.TestCase):
         payload.update(overrides)
         return payload
 
+    @classmethod
+    def previous_payload(cls, **overrides):
+        payload = cls.payload(
+            schema_version=PREVIOUS_RECEIVER_HYBRID_CONFIG_VERSION,
+            physical_output_lane_masks=list(
+                PREVIOUS_PHYSICAL_OUTPUT_LANE_MASKS
+            ),
+        )
+        payload.update(overrides)
+        return payload
+
     @staticmethod
     def write(root: Path, payload) -> Path:
         path = root / RECEIVER_HYBRID_CONFIG_RELATIVE_PATH
@@ -86,7 +99,7 @@ class ReceiverHybridConfigTests(unittest.TestCase):
         self.assertEqual(config.firmware_environment, PRODUCTION_FIRMWARE_ENVIRONMENT)
         self.assertEqual(config.receiver_strip_counts, (8, 8, 8, 8, 1))
         self.assertEqual(config.receiver_global_strip_offsets, (0, 8, 24, 16, 32))
-        self.assertEqual(config.physical_output_lane_masks, (255, 255, 255, 255, 1))
+        self.assertEqual(config.physical_output_lane_masks, (255, 255, 255, 255, 255))
         self.assertEqual(config.strip_count, 33)
         self.assertRegex(config.selection_digest, r"^[0-9a-f]{64}$")
 
@@ -173,7 +186,7 @@ class ReceiverHybridConfigTests(unittest.TestCase):
                 with self.assertRaisesRegex(ReceiverHybridConfigError, error):
                     resolve_receiver_hybrid_config(root)
 
-    def test_known_legacy_config_migrates_once_to_disabled_finalized_v2(self):
+    def test_known_legacy_config_migrates_once_to_disabled_current_schema(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
             path = self.write(root, self.legacy_payload())
@@ -185,13 +198,54 @@ class ReceiverHybridConfigTests(unittest.TestCase):
             self.assertFalse(config.enabled)
             self.assertEqual(config.strip_count, 33)
             stored = json.loads(path.read_text())
-            self.assertEqual(stored["schema_version"], 2)
+            self.assertEqual(stored["schema_version"], RECEIVER_HYBRID_CONFIG_VERSION)
             self.assertEqual(stored["receiver_strip_counts"], [8, 8, 8, 8, 1])
+            self.assertEqual(
+                stored["physical_output_lane_masks"],
+                [255, 255, 255, 255, 255],
+            )
             same, migrated = migrate_legacy_receiver_hybrid_config(root)
             self.assertFalse(migrated)
             self.assertEqual(same, config)
 
-    def test_absent_config_migration_materializes_finalized_v2(self):
+    def test_schema_v2_lane_zero_config_bridges_and_migrates_to_broadcast(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            path = self.write(root, self.previous_payload())
+            bridged = resolve_receiver_hybrid_config(root)
+            self.assertFalse(bridged.enabled)
+            self.assertEqual(
+                bridged.physical_output_lane_masks,
+                (255, 255, 255, 255, 255),
+            )
+            self.assertEqual(
+                json.loads(path.read_text())["physical_output_lane_masks"],
+                [255, 255, 255, 255, 1],
+            )
+
+            config, migrated = migrate_legacy_receiver_hybrid_config(root)
+
+            self.assertTrue(migrated)
+            self.assertEqual(config, bridged)
+            stored = json.loads(path.read_text())
+            self.assertEqual(stored["schema_version"], RECEIVER_HYBRID_CONFIG_VERSION)
+            self.assertEqual(
+                stored["physical_output_lane_masks"],
+                [255, 255, 255, 255, 255],
+            )
+
+    def test_unknown_schema_v2_config_fails_without_overwrite(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            path = self.write(root, self.previous_payload(physical_lane_order=[0, 1, 2, 3, 4]))
+            before = path.read_bytes()
+            with self.assertRaisesRegex(ReceiverHybridConfigError, "manual inspection"):
+                resolve_receiver_hybrid_config(root)
+            with self.assertRaisesRegex(ReceiverHybridConfigError, "manual inspection"):
+                migrate_legacy_receiver_hybrid_config(root)
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_absent_config_migration_materializes_current_schema(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
             config, migrated = migrate_legacy_receiver_hybrid_config(root)

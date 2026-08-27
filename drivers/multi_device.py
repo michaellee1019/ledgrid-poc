@@ -253,7 +253,8 @@ class MultiDeviceLEDController:
                 receiver. Defaults to contiguous origins in logical-ID order.
             receiver_lane_masks: Exact physical output-lane mask by logical
                 receiver. Defaults to the lowest ``local_strip_count`` lanes;
-                the finalized one-strip tail therefore uses lane 0 only.
+                installed callers pass an explicit all-lane broadcast mask for
+                the dedicated one-strip tail receiver.
         """
         if type(receiver_geometry_profile) is not bool:
             raise TypeError("receiver_geometry_profile must be a boolean")
@@ -493,9 +494,12 @@ class MultiDeviceLEDController:
         if (
             self.strip_count == 33
             and self.receiver_strip_counts[-1] == 1
-            and self.receiver_lane_masks[-1] == 0x01
+            and self.receiver_lane_masks[-1] == 0xFF
         ):
-            print("[LEDGRID] Extra strip 32 -> dev4 lane 0 only (SPI1 CE2)")
+            print(
+                "[LEDGRID] Extra strip 32 -> dev4 one logical strip, "
+                "broadcast across physical lanes (SPI1 CE2)"
+            )
         
         # Initialize individual device controllers
         self.devices: List[LEDController] = []
@@ -533,14 +537,21 @@ class MultiDeviceLEDController:
         """Best-effort topology provisioning without blocking legacy streaming."""
         for index, device in enumerate(self.devices):
             try:
-                for _ in range(2):
+                # The ESP32 slave keeps a two-deep response queue: a query
+                # clocks out one older response before its new snapshot can be
+                # observed. Drain depth+1 before deciding whether CONFIG may
+                # use the explicit identity/topology form.
+                for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 1):
                     device.query_receiver_status()
                 device.logical_device_id = index
                 device.configure()
                 device.set_lane_mask(self.receiver_lane_masks[index])
                 if int(device.get_stats().get("receiver_status_version", 0) or 0) >= 3:
                     status = None
-                    for _ in range(2):
+                    # CONFIG and SET_LANE_MASK each enqueue status behind
+                    # earlier replies. Require a causally post-command sample
+                    # before accepting the installed topology.
+                    for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 1):
                         status = device.query_receiver_status()
                     expected_topology = {
                         "receiver_logical_device": index,

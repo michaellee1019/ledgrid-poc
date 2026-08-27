@@ -253,11 +253,13 @@ Do not use the Python-only flow after changing any of:
 `run_state/receiver_hybrid.json` is the single target-owned authority used by
 startup, firmware selection, state restore, and deployment receipts. Absence or
 an explicit disabled selection chooses the feature-off production firmware.
-The schema-v2 file also carries the finalized five-receiver topology: logical
+The schema-v3 file also carries the finalized five-receiver topology: logical
 widths `(8,8,8,8,1)`, global offsets `(0,8,24,16,32)`, physical order
-`(0,1,3,2,4)`, and output masks `(255,255,255,255,1)`. Production, local
-receiver execution, and managed-native execution map to three allowlisted
-firmware environments; callers cannot persist an arbitrary environment.
+`(0,1,3,2,4)`, and output masks `(255,255,255,255,255)`. The last mask
+broadcasts the compact tail strip because its assembled connector lane was not
+recorded. Production, local receiver execution, and managed-native execution
+map to three allowlisted firmware environments; callers cannot persist an
+arbitrary environment.
 
 Inspect the live selection before a receiver-native deployment:
 

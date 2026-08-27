@@ -178,7 +178,7 @@ class StartServerTests(unittest.TestCase):
             config["receiver_global_strip_offsets"], (0, 8, 24, 16, 32)
         )
         self.assertEqual(
-            config["physical_output_lane_masks"], (255, 255, 255, 255, 1)
+            config["physical_output_lane_masks"], (255, 255, 255, 255, 255)
         )
 
         self.assertEqual(
@@ -187,7 +187,7 @@ class StartServerTests(unittest.TestCase):
                 5,
                 (8, 8, 8, 8, 1),
                 (0, 8, 24, 16, 32),
-                (255, 255, 255, 255, 1),
+                (255, 255, 255, 255, 255),
             ),
         )
         self.assertEqual(
@@ -200,7 +200,7 @@ class StartServerTests(unittest.TestCase):
             "enabled": False,
             "receiver_strip_counts": (8, 8, 8, 8, 1),
             "receiver_global_strip_offsets": (0, 8, 24, 16, 32),
-            "physical_output_lane_masks": (255, 255, 255, 255, 1),
+            "physical_output_lane_masks": (255, 255, 255, 255, 255),
         }
         finalized_geometry = receiver_geometry_for_runtime(
             33, disabled_finalized
@@ -211,7 +211,7 @@ class StartServerTests(unittest.TestCase):
                 5,
                 (8, 8, 8, 8, 1),
                 (0, 8, 24, 16, 32),
-                (255, 255, 255, 255, 1),
+                (255, 255, 255, 255, 255),
             ),
         )
         self.assertIs(
@@ -263,7 +263,7 @@ class StartServerTests(unittest.TestCase):
                 5,
                 (8, 8, 8, 8, 1),
                 (0, 8, 24, 16, 32),
-                (255, 255, 255, 255, 1),
+                (255, 255, 255, 255, 255),
             ),
         )
         self.assertIs(
@@ -295,7 +295,7 @@ class StartServerTests(unittest.TestCase):
                 native_modules_enabled=False,
                 receiver_strip_counts=(8, 8, 8, 8, 1),
                 receiver_global_strip_offsets=(0, 8, 24, 16, 32),
-                physical_output_lane_masks=(255, 255, 255, 255, 1),
+                physical_output_lane_masks=(255, 255, 255, 255, 255),
             ),
             saved_state_file="/unused/state.json",
             strips=33,
@@ -338,7 +338,9 @@ class StartServerTests(unittest.TestCase):
         self.assertEqual(
             captured["receiver_global_strip_offsets"], (0, 8, 24, 16, 32)
         )
-        self.assertEqual(captured["receiver_lane_masks"], (255, 255, 255, 255, 1))
+        self.assertEqual(
+            captured["receiver_lane_masks"], (255, 255, 255, 255, 255)
+        )
         self.assertEqual(
             captured["reverse_host_strips_by_logical_receiver"],
             (False, False, True, True, False),

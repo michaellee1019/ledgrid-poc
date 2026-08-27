@@ -94,7 +94,7 @@ EXPECTED_TOPOLOGY = (
         "global_strip_offset": 32,
         "bus": 1,
         "chip_select": 2,
-        "physical_output_lane_mask": 0x01,
+        "physical_output_lane_mask": 0xFF,
         "reverse_host_strip_order": False,
         "reverse_native_strip_order": False,
     },

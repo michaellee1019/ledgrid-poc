@@ -74,7 +74,7 @@ except ImportError:  # Compatibility with an older deployed helper lane.
     )
     DEFAULT_RECEIVER_STRIP_COUNTS = (8, 8, 8, 8, 1)
     DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS = (0, 8, 24, 16, 32)
-    DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0x01)
+    DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
     OFF_RECEIVER_HYBRID_CONFIG = {
         "enabled": False,
         "transport_policy": "off",
@@ -188,7 +188,7 @@ def apply_production_stagger(controller, phases: int = PRODUCTION_STAGGER_PHASES
 
 
 def _has_finalized_receiver_topology_authority(receiver_hybrid_config) -> bool:
-    """Recognize schema-v2 state and its pre-geometry explicit canary shape."""
+    """Recognize current durable state and its pre-geometry canary shape."""
 
     if _receiver_hybrid_config_value(receiver_hybrid_config, "enabled", False) is True:
         return True
@@ -272,7 +272,7 @@ def receiver_geometry_for_runtime(strip_count: int, receiver_hybrid_config):
         and num_devices == len(DEFAULT_RECEIVER_STRIP_COUNTS)
         and _has_finalized_receiver_topology_authority(receiver_hybrid_config)
     ):
-        # Compatibility for the explicit pre-schema-v2 canary shape, which
+        # Compatibility for the explicit pre-geometry canary shape, which
         # carried all independent wiring domains but not the geometry fields.
         return finalized_defaults
     return num_devices, widths, offsets, masks
@@ -363,7 +363,7 @@ def _receiver_hybrid_config_value(config, name, default=None):
 
 
 def receiver_native_modules_for_runtime(config) -> bool:
-    """Use durable schema-v2 state unless an explicit environment override exists."""
+    """Use durable current state unless an explicit environment override exists."""
 
     durable = bool(_receiver_hybrid_config_value(
         config, "native_modules_enabled", False

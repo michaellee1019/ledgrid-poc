@@ -253,7 +253,7 @@ def _wall(receivers):
     wall.receiver_global_strip_offsets = OFFSETS
     wall.receiver_pixel_counts = tuple(width * 138 for width in WIDTHS)
     wall.receiver_pixel_offsets = tuple(offset * 138 for offset in OFFSETS)
-    wall.receiver_lane_masks = (0xFF, 0xFF, 0xFF, 0xFF, 0x01)
+    wall.receiver_lane_masks = (0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
     wall.device_map = [(0, 0), (0, 1), (1, 1), (1, 0), (1, 2)]
     wall.reverse_host_strips_by_logical_receiver = (
         False, False, True, True, False

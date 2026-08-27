@@ -24,9 +24,10 @@ The installed geometry is now 33×138 across five receivers with logical widths
 `4→1.2`; physical left-to-right logical order is `(0,1,3,2,4)` and native
 global offsets by logical ID are `(0,8,24,16,32)`. Host and native reversal
 flags by logical ID are `(false,false,true,true,false)`, and output masks are
-`(0xff,0xff,0xff,0xff,0x01)`. This supersedes the frozen 32×138/four-uniform-
-receiver operating assumption below while retaining old fixtures as historical
-evidence at their measured geometry.
+`(0xff,0xff,0xff,0xff,0xff)`. The last mask broadcasts one compact semantic
+strip across the dedicated receiver's physical outputs. This supersedes the
+frozen 32×138/four-uniform-receiver operating assumption below while retaining
+old fixtures as historical evidence at their measured geometry.
 
 No schema is reinterpreted silently. Dimensions already encoded in profile,
 bundle, ABI, and receiver configuration payloads must now carry the new values;

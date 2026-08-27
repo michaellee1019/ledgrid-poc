@@ -54,16 +54,16 @@ class LedLayoutTests(unittest.TestCase):
             [(0, 0), (0, 1), (1, 1), (1, 0), (1, 2)],
         )
 
-    def test_rightmost_extra_strip_uses_only_lane_zero(self):
+    def test_rightmost_extra_strip_broadcasts_one_semantic_column(self):
         self.assertEqual(EXTRA_STRIP_LANE, 0)
-        self.assertFalse(MIRROR_EXTRA_STRIP_ON_ALL_LANES)
+        self.assertTrue(MIRROR_EXTRA_STRIP_ON_ALL_LANES)
         self.assertEqual(DEFAULT_RECEIVER_STRIP_COUNTS, (8, 8, 8, 8, 1))
         self.assertEqual(
             DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS, (0, 8, 24, 16, 32)
         )
         self.assertEqual(
             DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS,
-            (0xFF, 0xFF, 0xFF, 0xFF, 0x01),
+            (0xFF, 0xFF, 0xFF, 0xFF, 0xFF),
         )
 
     def test_layout_has_no_ce3_fallback(self):

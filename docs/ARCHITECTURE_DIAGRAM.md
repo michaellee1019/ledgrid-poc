@@ -69,8 +69,9 @@ See [Animation plugins](ANIMATION_SYSTEM.md) for the package and frame contracts
    submits it through the ESP-IDF LCD/I80 DMA peripheral.
 
 The installed geometry is 33 strips x 138 LEDs. Four receivers own eight strips
-each; the fifth owns only the extra rightmost strip and uses lane mask `0x01`.
-Firmware still retains capacity for up to 140 LEDs per strip.
+each; the fifth owns only the extra rightmost strip and broadcasts that one
+semantic strip across its physical outputs with lane mask `0xff`. Firmware still
+retains capacity for up to 140 LEDs per strip.
 
 ## Receiver protocol
 

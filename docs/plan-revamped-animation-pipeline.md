@@ -77,9 +77,27 @@ health checks, acceptance runners, and deployment reconciliation must consume an
 explicit roster of per-receiver widths and offsets. They must not pad the fifth
 receiver into an apparent eight-strip semantic slice, infer physical output lane
 from its one-strip logical width, or weaken unanimity from five to four. The live
-legacy service currently mirrors the added column across the fifth board's lanes;
-Phase 4 replaces that implicit workaround with an explicit logical-width and
-physical-lane contract before release acceptance.
+legacy service mirrored the added column across the fifth board's lanes. The
+2026-08-27 width-one cutover incorrectly replaced that workaround with an
+unverified lane-0-only mask: live receiver 4 reported ID 4, width 1, offset 32,
+host ownership, and more than 1.86 million accepted/displayed frames while the
+physical strip remained latched on startup rainbow. Schema v3 therefore keeps
+the semantic width at one and explicitly broadcasts that compact strip across
+the dedicated board's outputs with mask `0xff`. A later photographed wiring
+inventory may replace the broadcast with one verified physical lane.
+
+The same live audit exposed a separate startup health race. The two-deep ESP32
+reply-before-command queue requires three status queries before choosing the
+extended CONFIG form and three more before validating it; the prior two-query
+startup could send legacy CONFIG and miss the 30-second health deadline even
+though it self-healed later. The depth-plus-one drain and its five-receiver
+regression are now part of the deployment fix.
+
+Pre-deployment validation for this repair is complete: the full repository gate
+passed 1,556 Python tests with 2,836 subtests, 24 rendering tests with three
+subtests, all 127 portable firmware tests, production/local-canary/native-canary
+firmware builds, and 233 deployment tests with 154 subtests. Live deployment and
+post-deployment receiver evidence remain the final physical acceptance step.
 
 The first read-only integrity delta on this topology did not pass H0. Across a
 10.03-second window, logical receivers 0, 1, 2, and 4 added zero CRC, SPI-queue,

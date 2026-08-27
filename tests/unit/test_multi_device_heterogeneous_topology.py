@@ -21,6 +21,7 @@ from drivers.multi_device import (
     OVERLAY_UPDATE_DELTA,
     OVERLAY_UPDATE_FULL_SNAPSHOT,
 )
+from drivers.spi_controller import SPI_RESPONSE_QUEUE_DEPTH
 
 
 WIDTHS = (8, 8, 8, 8, 1)
@@ -95,11 +96,84 @@ class _ObservableDevice:
         self.lane_masks.append(lane_mask)
 
 
+class _QueuedObservableDevice:
+    """Model the receiver's two-deep, reply-before-command SPI queue."""
+
+    def __init__(self, logical_id, width, offset, lane_mask):
+        self.logical_device_id = logical_id
+        self.width = width
+        self.offset = offset
+        self.requested_lane_mask = lane_mask
+        self.configures = 0
+        self.extended_configurations = []
+        self.lane_masks = []
+        self.queries = 0
+        self._configured = False
+        self._configured_logical_id = 0xFF
+        self._post_config_queries = 0
+        self._latest_status = {
+            "receiver_status_version": 0,
+            "receiver_logical_device": None,
+        }
+
+    def query_receiver_status(self):
+        self.queries += 1
+        if not self._configured:
+            if self.queries <= SPI_RESPONSE_QUEUE_DEPTH:
+                status = {
+                    "receiver_status_version": 0,
+                    "receiver_logical_device": None,
+                }
+            else:
+                status = {
+                    "receiver_status_version": 3,
+                    "receiver_logical_device": 0xFF,
+                    "receiver_active_strips": 8,
+                    "receiver_global_strip_offset": 0,
+                    "receiver_lane_mask": 0xFF,
+                }
+        else:
+            self._post_config_queries += 1
+            if self._post_config_queries <= SPI_RESPONSE_QUEUE_DEPTH:
+                status = {
+                    "receiver_status_version": 3,
+                    "receiver_logical_device": 0xFF,
+                    "receiver_active_strips": 8,
+                    "receiver_global_strip_offset": 0,
+                    "receiver_lane_mask": 0xFF,
+                }
+            else:
+                status = {
+                    "receiver_status_version": 3,
+                    "receiver_logical_device": self._configured_logical_id,
+                    "receiver_active_strips": self.width,
+                    "receiver_global_strip_offset": self.offset,
+                    "receiver_lane_mask": self.lane_masks[-1],
+                }
+        self._latest_status = status
+        return dict(status)
+
+    def get_stats(self):
+        return dict(self._latest_status)
+
+    def configure(self):
+        self.configures += 1
+        extended = self._latest_status.get("receiver_status_version", 0) >= 3
+        self.extended_configurations.append(extended)
+        self._configured_logical_id = (
+            self.logical_device_id if extended else 0xFF
+        )
+        self._configured = True
+
+    def set_lane_mask(self, lane_mask):
+        self.lane_masks.append(lane_mask)
+
+
 def _observability_controller(*, receiver_4_status=None):
     controller = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
     controller.receiver_strip_counts = WIDTHS
     controller.receiver_global_strip_offsets = OFFSETS
-    controller.receiver_lane_masks = (0xFF, 0xFF, 0xFF, 0xFF, 0x01)
+    controller.receiver_lane_masks = (0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
     controller.devices = []
     for logical_id, (width, offset, lane_mask) in enumerate(
         zip(
@@ -135,6 +209,7 @@ def _controller():
             device_map=ROUTES,
             receiver_strip_counts=WIDTHS,
             receiver_global_strip_offsets=OFFSETS,
+            receiver_lane_masks=(0xFF, 0xFF, 0xFF, 0xFF, 0xFF),
             reverse_host_strips_by_logical_receiver=(
                 False,
                 False,
@@ -164,8 +239,49 @@ class HeterogeneousTopologyTests(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(controller.devices[4].logical_device_id, 4)
         self.assertEqual(controller.devices[4].configures, 1)
-        self.assertEqual(controller.devices[4].lane_masks, [0x01])
-        self.assertEqual(controller.devices[4].queries, 4)
+        self.assertEqual(controller.devices[4].lane_masks, [0xFF])
+        self.assertEqual(
+            controller.devices[4].queries,
+            2 * (SPI_RESPONSE_QUEUE_DEPTH + 1),
+        )
+
+    def test_startup_drains_queued_status_before_explicit_config_and_validation(self):
+        controller = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
+        controller.receiver_strip_counts = WIDTHS
+        controller.receiver_global_strip_offsets = OFFSETS
+        controller.receiver_lane_masks = (0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
+        controller.devices = [
+            _QueuedObservableDevice(logical_id, width, offset, lane_mask)
+            for logical_id, (width, offset, lane_mask) in enumerate(zip(
+                controller.receiver_strip_counts,
+                controller.receiver_global_strip_offsets,
+                controller.receiver_lane_masks,
+            ))
+        ]
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stderr(stderr):
+            controller._initialize_receiver_identity_observability()
+
+        self.assertEqual(stderr.getvalue(), "")
+        for logical_id, device in enumerate(controller.devices):
+            self.assertEqual(device.extended_configurations, [True])
+            self.assertEqual(device._configured_logical_id, logical_id)
+            self.assertEqual(
+                device.queries,
+                2 * (SPI_RESPONSE_QUEUE_DEPTH + 1),
+            )
+        self.assertEqual(controller.devices[4].lane_masks, [0xFF])
+        self.assertEqual(
+            controller.devices[4].get_stats(),
+            {
+                "receiver_status_version": 3,
+                "receiver_logical_device": 4,
+                "receiver_active_strips": 1,
+                "receiver_global_strip_offset": 32,
+                "receiver_lane_mask": 0xFF,
+            },
+        )
 
     def test_startup_observability_surfaces_exact_topology_mismatch_and_continues(self):
         controller = _observability_controller(
@@ -173,7 +289,7 @@ class HeterogeneousTopologyTests(unittest.TestCase):
                 "receiver_logical_device": 3,
                 "receiver_active_strips": 8,
                 "receiver_global_strip_offset": 24,
-                "receiver_lane_mask": 0xFF,
+                "receiver_lane_mask": 0x01,
             }
         )
         stderr = io.StringIO()
@@ -186,10 +302,10 @@ class HeterogeneousTopologyTests(unittest.TestCase):
         self.assertIn("receiver_logical_device=3, expected 4", error)
         self.assertIn("receiver_active_strips=8, expected 1", error)
         self.assertIn("receiver_global_strip_offset=24, expected 32", error)
-        self.assertIn("receiver_lane_mask=255, expected 1", error)
+        self.assertIn("receiver_lane_mask=1, expected 255", error)
         self.assertIn("continuing with ordinary host streaming", error)
         self.assertEqual(controller.devices[4].configures, 1)
-        self.assertEqual(controller.devices[4].lane_masks, [0x01])
+        self.assertEqual(controller.devices[4].lane_masks, [0xFF])
 
     def test_startup_observability_keeps_legacy_status_streaming_best_effort(self):
         controller = MultiDeviceLEDController.__new__(MultiDeviceLEDController)
@@ -212,7 +328,7 @@ class HeterogeneousTopologyTests(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(legacy.configures, 1)
         self.assertEqual(legacy.lane_masks, [0xFF])
-        self.assertEqual(legacy.queries, 2)
+        self.assertEqual(legacy.queries, SPI_RESPONSE_QUEUE_DEPTH + 1)
 
     def test_constructor_preserves_exact_width_origin_and_visible_geometry(self):
         controller = _controller()
@@ -234,7 +350,7 @@ class HeterogeneousTopologyTests(unittest.TestCase):
         )
         self.assertEqual(
             [entry["physical_output_lane_mask"] for entry in topology],
-            [0xFF, 0xFF, 0xFF, 0xFF, 0x01],
+            [0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
         )
         self.assertEqual(
             [(entry["bus"], entry["chip_select"]) for entry in topology],

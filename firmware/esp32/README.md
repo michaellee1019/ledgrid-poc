@@ -143,6 +143,12 @@ playback fails closed until identity is provisioned. The eight-byte form is
 required for receiver 4 and for an authoritative global offset; legacy six-byte
 IDs 0–3 continue to use their frozen origins for compatibility.
 
+When compact-lane mapping is enabled for that one-strip receiver, an output mask
+with multiple selected bits broadcasts the same semantic strip to each selected
+physical lane. The installed mask is `0xff` because the assembled connector lane
+was not recorded; input and status geometry remain exactly one strip and 138
+pixels rather than an eight-strip padded frame.
+
 ## Receiver status v3
 
 The ESP32 returns a 320-byte `LGS3` snapshot over MISO. Bytes 5–63 preserve the

@@ -168,7 +168,7 @@ preview, and atomic publication. Use `just native-plan <plugin_id>`,
 none of those operations changes display ownership or flashes firmware. Phase 4
 adds explicit `just native-install`, `just native-start`, and `just native-run`
 operations plus managed scene selection, persistence, and recovery. Those
-runtime operations are available only when the target-owned schema-v2 rollout
+runtime operations are available only when the target-owned schema-v3 rollout
 selects the strict managed-native canary; feature-off production continues to
 reject them and stream complete Python frames. A native component may remain
 catalog-visible and previewable while runtime selection is gated.
@@ -513,7 +513,7 @@ premultiplied-RGBA foreground state, sparse exact-roster host orchestration,
 leases, scheduled commit, fixed-point receiver composition, manager lifecycle,
 desired-scene persistence, and complete host RGB takeover.
 
-The absent or disabled schema-v2 rollout config selects feature-off production
+The absent or disabled schema-v3 rollout config selects feature-off production
 firmware and the Python full-frame path. Explicit local and managed-native
 canaries both require the strict all-readable policy; native execution additionally
 requires `native_modules_enabled=true`. Ordinary `just deploy` reconciles the
@@ -524,7 +524,7 @@ until the roadmap's H0-H4 physical gates are accepted.
 The retired 2026-08-14 four-receiver installation used the named
 `degraded_spi1_01_readable` policy and `(0,1,3,2)` physical order. Its status,
 camera, and 32 x 138 payload measurements are historical evidence only. The
-schema-v2 migrator recognizes exactly that legacy payload as a safe feature-off
+schema-v3 migrator recognizes exactly that legacy payload as a safe feature-off
 migration input; it is not a selectable current operating mode or release gate.
 
 The finalized five-receiver topology keeps four independent coordinate facts:
@@ -532,7 +532,9 @@ fixed SPI route/logical identity, physical lane permutation, host-frame/sparse
 strip direction, and receiver-native procedural direction. The target-owned
 config is authoritative and carries physical order `(0,1,3,2,4)`, widths
 `(8,8,8,8,1)`, offsets `(0,8,24,16,32)`, output masks
-`(255,255,255,255,1)`, and independent host/native reversal maps
+`(255,255,255,255,255)`, and independent host/native reversal maps. The fifth
+mask broadcasts one semantic strip across the dedicated receiver's outputs;
+the semantic wall remains 33 strips wide.
 `(false,false,true,true,false)`. Host transforms must not be reused as proof of
 native orientation: verify boundary-crossing foreground and a direction-marked
 native phase field separately. See [Hardware](HARDWARE.md#installed-lane-and-strip-orientation)

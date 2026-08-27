@@ -12,8 +12,9 @@ Pi host and five ESP32-S3 receivers. Four receivers drive eight logical
 WS2812-compatible lanes and the fifth drives one logical lane, all 138 LEDs
 long, for a finalized geometry of 33 x 138 (4,554 pixels). The fifth receiver
 owns the extra rightmost strip. Receiver buffers retain capacity for eight lanes
-of 140 LEDs; its one-strip logical width and `0x01` physical lane mask remain
-explicit rather than mirroring wall content.
+of 140 LEDs. Its logical width remains exactly one strip; firmware broadcasts
+that compact strip across the dedicated board's outputs because the assembled
+cable lane was not recorded. This does not add or mirror logical wall content.
 
 Use the runtime sources below when a copied value in prose disagrees:
 
@@ -111,7 +112,7 @@ facts. The finalized installed contract as of 2026-08-25 is:
 | 1 | `spidev0.1` | 8 | 1 | forward | forward | 8 | `0xff` |
 | 2 | `spidev1.1` | 8 | 3 | reversed | reversed | 24 | `0xff` |
 | 3 | `spidev1.0` | 8 | 2 | reversed | reversed | 16 | `0xff` |
-| 4 | `spidev1.2` | 1 | 4 | forward | forward | 32 | `0x01` |
+| 4 | `spidev1.2` | 1 | 4 | forward | forward | 32 | `0xff` broadcast |
 
 In config form, physical left-to-right logical order is `(0,1,3,2,4)`, while
 both the host-frame and receiver-native reversal maps are

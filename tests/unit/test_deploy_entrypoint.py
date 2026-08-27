@@ -277,7 +277,7 @@ class _FakeTarget:
                 "receiver_hybrid_config": {
                     "receiver_strip_counts": [8, 8, 8, 8, 1],
                     "receiver_global_strip_offsets": [0, 8, 24, 16, 32],
-                    "physical_output_lane_masks": [255, 255, 255, 255, 1],
+                    "physical_output_lane_masks": [255, 255, 255, 255, 255],
                     "reverse_strips_by_logical_receiver": [
                         False, False, True, True, False,
                     ],
@@ -297,7 +297,7 @@ class _FakeTarget:
                 "receiver_hybrid_config": {
                     "receiver_strip_counts": [8, 8, 8, 8, 1],
                     "receiver_global_strip_offsets": [0, 8, 24, 16, 32],
-                    "physical_output_lane_masks": [255, 255, 255, 255, 1],
+                    "physical_output_lane_masks": [255, 255, 255, 255, 255],
                     "reverse_strips_by_logical_receiver": [
                         False, False, True, True, False,
                     ],
@@ -617,7 +617,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             {
                 "receiver_strip_counts": [8, 8, 8, 8, 1],
                 "receiver_global_strip_offsets": [0, 8, 24, 16, 32],
-                "physical_output_lane_masks": [255, 255, 255, 255, 1],
+                "physical_output_lane_masks": [255, 255, 255, 255, 255],
                 "reverse_strips_by_logical_receiver": [
                     False, False, True, True, False,
                 ],
@@ -635,7 +635,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
     ) -> tuple[Mapping[str, object], ...]:
         widths = (8, 8, 8, 8, 1)
         offsets = (0, 8, 24, 16, 32)
-        masks = (255, 255, 255, 255, 1)
+        masks = (255, 255, 255, 255, 255)
         return tuple(
             {
                 "receiver_status_seen": True,
@@ -657,7 +657,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         widths = (8, 8, 8, 8, 1)
         offsets = (0, 8, 24, 16, 32)
         reversals = (False, False, True, True, False)
-        masks = (255, 255, 255, 255, 1)
+        masks = (255, 255, 255, 255, 255)
         return tuple(
             {
                 "logical_device": logical_id,

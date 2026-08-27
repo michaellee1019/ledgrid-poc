@@ -25,10 +25,11 @@ WALL_DEVICE_MAP: Tuple[DeviceMapEntry, ...] = (
     (1, 2),
 )
 
-# Compatibility names for callers that previously special-cased strip 32.
-# The finalized receiver drives that strip on lane 0 only; it is never mirrored.
+# Compatibility names for callers that special-case strip 32. The fifth board
+# owns one semantic strip; firmware broadcasts it across the board's outputs
+# because the assembled cable lane was not recorded.
 EXTRA_STRIP_LANE = 0
-MIRROR_EXTRA_STRIP_ON_ALL_LANES = False
+MIRROR_EXTRA_STRIP_ON_ALL_LANES = True
 
 
 def is_hat_layout() -> bool:

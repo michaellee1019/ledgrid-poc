@@ -53,7 +53,7 @@ DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER = (
 )
 RECEIVER_STRIP_COUNTS = (8, 8, 8, 8, 1)
 RECEIVER_GLOBAL_STRIP_OFFSETS = (0, 8, 24, 16, 32)
-RECEIVER_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0x01)
+RECEIVER_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
 CONFIG_REVERSE_LOCAL_STRIP_ORDER = 0x80
 EXPECTED_STATUS_VERSION = 4
 WRITE_ONLY_FOREGROUND_SETTLE_SECONDS = 0.050
@@ -327,7 +327,7 @@ class DegradedReceiverHybridController:
             raise DegradedReceiverHybridError(
                 "controller geometry is not the finalized 33 x 138 wall with "
                 "receiver widths (8,8,8,8,1), offsets (0,8,24,16,32), "
-                "and lane masks (0xff,0xff,0xff,0xff,0x01)"
+                "and lane masks (0xff,0xff,0xff,0xff,0xff)"
             )
         device_map = tuple(getattr(self.controller, "device_map", ()))
         if device_map != EXPECTED_DEVICE_MAP:

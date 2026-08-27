@@ -200,19 +200,19 @@ EncodeResult encode_parallel_grb_pixels(
   for (std::uint8_t bits = lane_mask; bits != 0; bits >>= 1U) {
     selected_lane_count += bits & 1U;
   }
+  // A compact one-strip receiver has only one semantic RGB source. Allow its
+  // physical mask to name one or many candidate outputs so installations with
+  // an unresolved tail-lane wire can safely broadcast that same strip without
+  // pretending the receiver owns additional logical/global strips.
+  const bool broadcast_single_strip = map_compact_strips_to_selected_lanes &&
+      strip_count == 1 && selected_lane_count != 0;
   const bool compact_mapping = map_compact_strips_to_selected_lanes &&
       strip_count < kMaxParallelStrips && selected_lane_count == strip_count;
-  std::uint8_t compact_single_lane = 0;
-  if (compact_mapping && strip_count == 1) {
-    while ((lane_mask & (1U << compact_single_lane)) == 0) {
-      ++compact_single_lane;
-    }
-  }
 
   const std::uint8_t strip_mask =
       strip_count == 8 ? 0xFFU
                        : static_cast<std::uint8_t>((1U << strip_count) - 1U);
-  const std::uint8_t active_mask = compact_mapping
+  const std::uint8_t active_mask = broadcast_single_strip || compact_mapping
       ? lane_mask : static_cast<std::uint8_t>(strip_mask & lane_mask);
   const std::uint8_t phases =
       (stagger_phases == 0 || stagger_phases > kMaxStaggerPhases)
@@ -234,8 +234,11 @@ EncodeResult encode_parallel_grb_pixels(
       const std::size_t offset =
           static_cast<std::size_t>(pixel) * 3U + kGrbOffsets[channel];
       std::uint64_t parallel_bits = 0;
-      if (compact_mapping && strip_count == 1) {
-        parallel_bits = frame_expand_table[rgb[offset]] << compact_single_lane;
+      if (broadcast_single_strip) {
+        // Each expansion byte is zero or one. Multiplication by the byte-sized
+        // lane mask duplicates that bit into every selected lane without
+        // carries between bytes, retaining the compact one-lane fast path too.
+        parallel_bits = frame_expand_table[rgb[offset]] * lane_mask;
       } else if (compact_mapping) {
         std::uint8_t logical_lane = 0;
         for (std::uint8_t physical_lane = 0; physical_lane < 8;

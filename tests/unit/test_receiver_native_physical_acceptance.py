@@ -424,7 +424,7 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
                 bus=0
             ), "aggregate device map"),
             (lambda sample: sample["aggregate"]["device_map"][4].update(
-                physical_output_lane_mask=0xFF
+                physical_output_lane_mask=0x01
             ), "aggregate device map"),
             (lambda sample: sample["aggregate"]["device_map"][3].update(
                 reverse_host_strip_order=False

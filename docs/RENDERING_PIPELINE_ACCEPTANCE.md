@@ -22,7 +22,8 @@ directly so buffering, completion, timing, and overload behavior are explicit.
 Current release acceptance targets 33×138 across five receivers with logical
 widths `(8,8,8,8,1)`, physical left-to-right IDs `(0,1,3,2,4)`, and native
 global offsets by logical ID `(0,8,24,16,32)`. The fifth receiver uses SPI1
-CE2. All strict status, dense-streamed, sweep, sparse-overlay, profile, and native
+CE2 and broadcasts its one semantic strip across physical outputs with mask
+`0xff`. All strict status, dense-streamed, sweep, sparse-overlay, profile, and native
 module gates require fresh evidence from all five receivers. Historical 32×138,
 four-receiver, and degraded-SPI1 results below remain labeled evidence for the
 hardware state on which they ran; they cannot qualify the finalized topology.
@@ -218,7 +219,7 @@ close those gates.
 The retired four-receiver installation could deliberately run the named feature-on
 firmware with the explicit `degraded_spi1_01_readable` policy for a compiled
 background plus Pi-authored sparse foreground. That schema-v1 product mode is
-retained only as a recovery diagnostic and historical evidence source; schema v2
+retained only as a recovery diagnostic and historical evidence source; schema v3
 does not allow it as a current selection or release gate. Its reports must remain
 honest: `telemetry_complete: false`, `release_acceptance: false`, readable devices
 `[0,1]`, and unverified devices `[2,3]`.
