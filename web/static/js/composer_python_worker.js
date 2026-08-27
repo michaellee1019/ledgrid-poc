@@ -11,16 +11,18 @@ let pyodidePromise = null;
 let runtimeAssetUrl = null;
 let runtimeReady = false;
 let messageQueue = Promise.resolve();
+let pillowPromise = null;
 
 function errorMessage(error) {
     if (error instanceof Error && error.message) return error.message;
     return String(error || 'Unknown Python browser renderer error');
 }
 
-function postError(requestId, error) {
+function postError(requestId, instanceId, error) {
     self.postMessage({
         type: 'error',
         requestId,
+        instanceId: instanceId || 'primary',
         engine: ENGINE,
         error: errorMessage(error),
     });
@@ -79,6 +81,12 @@ _ledgrid_browser_runtime = BrowserPreviewRuntime()
     return pyodide;
 }
 
+async function ensurePluginPackages(pyodide, pluginId) {
+    if (pluginId !== 'gif_animation') return;
+    if (!pillowPromise) pillowPromise = pyodide.loadPackage('pillow');
+    await pillowPromise;
+}
+
 function copyPythonBytes(value) {
     let converted = value;
     if (value && typeof value.toJs === 'function') {
@@ -92,7 +100,9 @@ function copyPythonBytes(value) {
 
 async function initialize(message) {
     const pyodide = await ensureRuntime(message.assetUrl);
+    await ensurePluginPackages(pyodide, message.pluginId);
     pyodide.globals.set('_ledgrid_payload_json', JSON.stringify({
+        instanceId: message.instanceId || 'primary',
         pluginId: message.pluginId,
         className: message.className,
         geometry: message.geometry,
@@ -111,26 +121,58 @@ async function render(message) {
     }
     const pyodide = await ensurePyodide();
     pyodide.globals.set('_ledgrid_payload_json', JSON.stringify({
+        instanceId: message.instanceId || 'primary',
         elapsed: message.elapsed,
         frameIndex: message.frameIndex,
         params: message.params || {},
+        wallTime: message.wallTime ?? null,
     }));
     const resultJson = await pyodide.runPythonAsync(
         '_ledgrid_browser_runtime.render_json(_ledgrid_payload_json)'
     );
     const result = JSON.parse(resultJson);
-    const pythonBytes = pyodide.runPython('_ledgrid_browser_runtime.frame_bytes');
+    pyodide.globals.set('_ledgrid_instance_id', result.instanceId);
+    const pythonBytes = pyodide.runPython(
+        '_ledgrid_browser_runtime.frame_bytes_for(_ledgrid_instance_id)'
+    );
     const pixels = copyPythonBytes(pythonBytes);
     self.postMessage({
         type: 'frame',
         requestId: message.requestId,
+        instanceId: result.instanceId,
         pixels: pixels.buffer,
         width: result.width,
         height: result.height,
         changed: result.changed,
+        role: result.role,
+        frameFormat: result.frameFormat,
+        wallClockFixed: result.wallClockFixed,
         renderMs: result.renderMs,
         engine: ENGINE,
     }, [pixels.buffer]);
+}
+
+async function dispose(message) {
+    if (!runtimeReady) {
+        self.postMessage({
+            type: 'disposed',
+            requestId: message.requestId,
+            instanceId: message.instanceId || 'primary',
+            engine: ENGINE,
+            disposed: false,
+            remainingInstances: 0,
+        });
+        return;
+    }
+    const pyodide = await ensurePyodide();
+    pyodide.globals.set('_ledgrid_payload_json', JSON.stringify({
+        instanceId: message.instanceId || 'primary',
+    }));
+    const resultJson = await pyodide.runPythonAsync(
+        '_ledgrid_browser_runtime.dispose_json(_ledgrid_payload_json)'
+    );
+    const result = JSON.parse(resultJson);
+    self.postMessage({type: 'disposed', requestId: message.requestId, ...result});
 }
 
 async function dispatch(message) {
@@ -139,6 +181,7 @@ async function dispatch(message) {
     }
     if (message.type === 'init') return initialize(message);
     if (message.type === 'render') return render(message);
+    if (message.type === 'dispose') return dispose(message);
     throw new Error(`Unsupported Python renderer message: ${String(message.type)}`);
 }
 
@@ -146,5 +189,5 @@ self.onmessage = (event) => {
     const message = event.data;
     messageQueue = messageQueue
         .then(() => dispatch(message))
-        .catch((error) => postError(message?.requestId, error));
+        .catch((error) => postError(message?.requestId, message?.instanceId, error));
 };

@@ -53,11 +53,58 @@
             return response;
         }
 
+        async initInstance(component, params = {}, instanceId = 'primary') {
+            if (!this.worker || !this.ready) {
+                throw new ComposerRuntimeError('The browser renderer is not ready.');
+            }
+            const runtime = component?.browser_runtime || {};
+            if (
+                runtime.worker_url !== this.component?.browser_runtime?.worker_url
+                || runtime.asset_url !== this.component?.browser_runtime?.asset_url
+            ) {
+                throw new ComposerRuntimeError(
+                    'A shared renderer instance must use the same browser worker and runtime asset.'
+                );
+            }
+            return this.request({
+                type: 'init',
+                instanceId,
+                pluginId: component.plugin_id,
+                className: component.class_name,
+                geometry: this.geometry,
+                params,
+                assetUrl: runtime.asset_url || null,
+            }, this.initTimeoutMs);
+        }
+
         render(elapsed, frameIndex, params) {
             if (!this.worker || !this.ready) {
                 return Promise.reject(new ComposerRuntimeError('The browser renderer is not ready.'));
             }
             return this.request({type: 'render', elapsed, frameIndex, params});
+        }
+
+        renderInstance(instanceId, elapsed, frameIndex, params, wallTime = null) {
+            if (!this.worker || !this.ready) {
+                return Promise.reject(new ComposerRuntimeError('The browser renderer is not ready.'));
+            }
+            return this.request({
+                type: 'render',
+                instanceId,
+                elapsed,
+                frameIndex,
+                params,
+                wallTime,
+            });
+        }
+
+        disposeInstance(instanceId) {
+            if (!this.worker || !this.ready || instanceId === 'primary') {
+                return Promise.resolve(null);
+            }
+            // Cleanup must never destabilize the primary preview. Older cached
+            // workers may not know this message yet, so treat cleanup as best effort.
+            return this.request({type: 'dispose', instanceId}).catch(() => null);
         }
 
         request(message, timeoutMs = this.timeoutMs) {
@@ -85,7 +132,11 @@
                 entry.reject(new ComposerRuntimeError(message.error || message.message || 'Browser renderer error.', message));
                 return;
             }
-            if (message.type !== 'ready' && message.type !== 'frame') {
+            if (
+                message.type !== 'ready'
+                && message.type !== 'frame'
+                && message.type !== 'disposed'
+            ) {
                 entry.reject(new ComposerRuntimeError(`Unexpected renderer response: ${String(message.type)}`));
                 return;
             }
