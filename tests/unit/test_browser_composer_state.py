@@ -113,6 +113,11 @@ console.log(JSON.stringify({
         self.assertIn("event.key === 'Home'", source)
         self.assertIn("event.key === 'End'", source)
         self.assertIn("Starting points for the current animation", source)
+        self.assertIn("function isAdvancedParameter", source)
+        self.assertIn("advancedParameterList", source)
+
+        html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")
+        self.assertLess(html.index("composer_state.js"), html.index("composer_runtime.js"))
 
 
 if __name__ == "__main__":

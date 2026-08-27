@@ -115,7 +115,7 @@ h2 { font-size: .84rem; }
 .preset-button strong, .preset-button small { display: block; }
 .preset-button strong { font-size: .7rem; }
 .preset-button small { margin-top: 3px; color: var(--faint); font-size: .58rem; }
-.preset-button:hover, .preset-button[aria-current="true"] { border-color: #62743b; background: #252b1e; }
+.preset-button:hover, .preset-button[aria-selected="true"] { border-color: #62743b; background: #252b1e; }
 
 .catalog-disclosure, .advanced-disclosure { margin-top: 18px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); }
 .catalog-disclosure > summary, .advanced-disclosure > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 52px; padding: 8px 11px; border-radius: 12px; cursor: pointer; list-style: none; }

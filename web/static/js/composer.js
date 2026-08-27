@@ -483,7 +483,8 @@
         });
         presetSelect.value = state.layers.clockPresetKey || '';
         host.replaceChildren();
-        Object.entries(clock?.parameter_schema || {}).forEach(([key, contract]) => {
+        const entries = Object.entries(clock?.parameter_schema || {});
+        entries.filter(([key, contract]) => !isAdvancedParameter(key, contract)).forEach(([key, contract]) => {
             host.appendChild(parameterControl(key, contract || {}, {
                 params: state.layers.clockParams,
                 prefix: 'clock-parameter',
@@ -491,6 +492,19 @@
                 onCommit: commitHistory,
             }));
         });
+        const advancedHost = $('advancedParameterList');
+        advancedHost?.querySelectorAll('.clock-advanced-control').forEach((item) => item.remove());
+        entries.filter(([key, contract]) => isAdvancedParameter(key, contract)).forEach(([key, contract]) => {
+            const control = parameterControl(key, contract || {}, {
+                params: state.layers.clockParams,
+                prefix: 'clock-advanced-parameter',
+                onUpdate: updateClockParam,
+                onCommit: commitHistory,
+            });
+            control.classList.add('clock-advanced-control');
+            advancedHost?.appendChild(control);
+        });
+        if ($('advancedParameterEmpty')) $('advancedParameterEmpty').hidden = Boolean(advancedHost?.children.length);
     }
 
     function updateClockParam(key, value) {
@@ -748,11 +762,22 @@
 
     function renderParameterControls() {
         const host = $('parameterList');
+        const advancedHost = $('advancedParameterList');
         host.replaceChildren();
+        advancedHost?.replaceChildren();
         const schema = state.component?.parameter_schema || {};
         const entries = Object.entries(schema);
-        $('parameterEmpty').hidden = entries.length > 0;
-        entries.forEach(([key, contract]) => host.appendChild(parameterControl(key, contract || {})));
+        const creative = entries.filter(([key, contract]) => !isAdvancedParameter(key, contract));
+        const advanced = entries.filter(([key, contract]) => isAdvancedParameter(key, contract));
+        $('parameterEmpty').hidden = creative.length > 0;
+        if ($('advancedParameterEmpty')) $('advancedParameterEmpty').hidden = advanced.length > 0;
+        creative.forEach(([key, contract]) => host.appendChild(parameterControl(key, contract || {})));
+        advanced.forEach(([key, contract]) => advancedHost?.appendChild(parameterControl(key, contract || {})));
+    }
+
+    function isAdvancedParameter(key, contract = {}) {
+        if (contract.advanced === true || contract.installation === true || contract.visibility === 'advanced') return true;
+        return /(^|_)(plant|mask|path|modifier|diagnostic|runtime|geometry|calibration|strip_map|led_map)(_|$)/i.test(key);
     }
 
     function parameterControl(key, contract, context = {}) {
