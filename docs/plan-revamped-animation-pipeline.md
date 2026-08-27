@@ -93,11 +93,17 @@ startup could send legacy CONFIG and miss the 30-second health deadline even
 though it self-healed later. The depth-plus-one drain and its five-receiver
 regression are now part of the deployment fix.
 
-Pre-deployment validation for this repair is complete: the full repository gate
+Validation and deployment for this repair are complete. The full repository gate
 passed 1,556 Python tests with 2,836 subtests, 24 rendering tests with three
 subtests, all 127 portable firmware tests, production/local-canary/native-canary
-firmware builds, and 233 deployment tests with 154 subtests. Live deployment and
-post-deployment receiver evidence remain the final physical acceptance step.
+firmware builds, and 233 deployment tests with 154 subtests. Clean deployment
+`da1f441d334c4394980944d1fb633224` flashed all five enumerated ESP32s, activated
+release `c5a4b87ed038544dede152db9e228056c64b4f1d63283aabde34c1a521321dc1`,
+passed five-receiver readiness, and persisted schema v3. Independent live status
+then showed receiver 4 at width 1, offset 32, mask `0xff`, host-full-scene mode,
+and advancing accepted/displayed counters with zero display or SPI-queue errors.
+Because no usable wall camera is attached, direct human confirmation that the
+new physical column follows the scene remains the final visual observation.
 
 The first read-only integrity delta on this topology did not pass H0. Across a
 10.03-second window, logical receivers 0, 1, 2, and 4 added zero CRC, SPI-queue,
