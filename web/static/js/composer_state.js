@@ -86,7 +86,13 @@
         };
     }
 
-    function checkBinding(draftGeneration, component, geometry) {
+    function checkBinding(
+        draftGeneration,
+        component,
+        geometry,
+        wallSettings = null,
+        installationProfileDigest = null,
+    ) {
         return {
             checkerVersion: CHECKER_VERSION,
             draftGeneration,
@@ -97,6 +103,8 @@
                 ledsPerStrip: Number(geometry?.leds_per_strip),
                 totalLeds: Number(geometry?.total_leds),
             },
+            wallSettings: clone(wallSettings),
+            installationProfileDigest,
         };
     }
 

@@ -67,12 +67,17 @@ const component = {
     reason: 'Managed receiver identity is unavailable.'
   }
 };
-const first = state.checkBinding(7, component, {strip_count: 33, leds_per_strip: 138, total_leds: 4554});
-const next = state.checkBinding(8, component, {strip_count: 33, leds_per_strip: 138, total_leds: 4554});
+const wallSettings = {vibeId: 'neutral', brightness: 128, targetFps: 30, speedMultiplier: 1};
+const first = state.checkBinding(7, component, {strip_count: 33, leds_per_strip: 138, total_leds: 4554}, wallSettings, 'profile-a');
+const next = state.checkBinding(8, component, {strip_count: 33, leds_per_strip: 138, total_leds: 4554}, wallSettings, 'profile-a');
+const changedWall = state.checkBinding(7, component, {strip_count: 33, leds_per_strip: 138, total_leds: 4554}, {...wallSettings, brightness: 64}, 'profile-a');
+const changedProfile = state.checkBinding(7, component, {strip_count: 33, leds_per_strip: 138, total_leds: 4554}, wallSettings, 'profile-b');
 console.log(JSON.stringify({
   first,
   same: state.sameCheckBinding(first, {...first}),
   stale: state.sameCheckBinding(first, next),
+  changedWall: state.sameCheckBinding(first, changedWall),
+  changedProfile: state.sameCheckBinding(first, changedProfile),
   capability: state.capability(component),
 }));
 """)
@@ -82,6 +87,9 @@ console.log(JSON.stringify({
         self.assertEqual(result["first"]["geometry"]["totalLeds"], 4554)
         self.assertTrue(result["same"])
         self.assertFalse(result["stale"])
+        self.assertFalse(result["changedWall"])
+        self.assertFalse(result["changedProfile"])
+        self.assertEqual(result["first"]["installationProfileDigest"], "profile-a")
         self.assertFalse(result["capability"]["activationReady"])
         self.assertIn("identity", result["capability"]["reason"])
 
@@ -120,6 +128,10 @@ console.log(JSON.stringify({
         self.assertIn("resetChecker({preserveDocumentRevision: true})", source)
         self.assertIn("currentCheckAllowsActivation()", source)
         self.assertIn("Activation requires a completed Check with no failures", source)
+        self.assertIn("Apply or revert the Wall draft", source)
+        self.assertIn("wallSettings: clone(state.globalSettings.draft)", source)
+        self.assertIn("frameBudgetMs = 1000 / targetFps", source)
+        self.assertIn("Queued by server", source)
         self.assertIn("detail.textContent = detail.dataset.defaultDescription", source)
 
     def test_import_and_keyboard_contracts_are_bounded_and_explicit(self) -> None:

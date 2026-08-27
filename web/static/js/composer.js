@@ -346,6 +346,7 @@
         $('resetWallDraftButton').disabled = !changes.length || state.globalSettings.applying;
         $('reviewWallButton').disabled = !changes.length || !state.serverOnline || state.globalSettings.applying || state.globalSettings.pendingObservation;
         $('reviewWallButton').title = !state.serverOnline ? 'Reconnect to review wall-wide changes.' : 'Review every wall-wide command before applying.';
+        updateServerActionButtons();
     }
 
     function updateGlobalDraft(mutator, {render = true} = {}) {
@@ -426,7 +427,7 @@
             state.globalSettings.pendingObservation = true;
             state.globalSettings.pendingSince = Date.now();
             persistGlobalDraft();
-            toast('Wall-wide changes were accepted.', 'success');
+            toast('Wall-wide commands sent; waiting for observed state.', 'success');
         } catch (error) {
             if (error.code === 'offline') setServerOnline(false);
             toast(`Wall update stopped: ${error.message}`, 'error');
@@ -495,8 +496,19 @@
     function currentCheckBinding() {
         if (!state.component || !state.bootstrap) return null;
         return ComposerState.checkBinding
-            ? ComposerState.checkBinding(state.draftGeneration, state.component, state.bootstrap.geometry)
-            : {draftGeneration: state.draftGeneration, componentKey: state.component.key};
+            ? ComposerState.checkBinding(
+                state.draftGeneration,
+                state.component,
+                state.bootstrap.geometry,
+                state.globalSettings.draft,
+                state.bootstrap.installation_profile?.digest || null,
+            )
+            : {
+                draftGeneration: state.draftGeneration,
+                componentKey: state.component.key,
+                wallSettings: clone(state.globalSettings.draft),
+                installationProfileDigest: state.bootstrap.installation_profile?.digest || null,
+            };
     }
 
     function currentCheckAllowsActivation() {
@@ -517,6 +529,9 @@
         if (!capability.activationReady) return capability.reason || 'This look is not activation-ready.';
         if (state.serverChecking) return 'Waiting for the wall server.';
         if (!state.serverOnline) return 'Reconnect to the wall server before activation.';
+        if (state.globalSettings.loading || state.globalSettings.applying) return 'Wait for wall-wide settings to finish updating.';
+        if (state.globalSettings.dirty) return 'Apply or revert the Wall draft before activating this checked scene.';
+        if (state.globalSettings.pendingObservation) return 'Wait until the wall reports the reviewed Wall settings before activation.';
         if (!state.checkResult) return 'Run Check for this exact draft before activation.';
         if (!currentCheckAllowsActivation()) return ['pass', 'warn'].includes(state.checkResult.status)
             ? 'The previous Check is stale. Run Check again for this draft.'
@@ -1898,8 +1913,10 @@
             updateMetric('current', `${peakCurrent.toFixed(1)} A peak`, currentStatus, `Uncalibrated ${state.bootstrap.geometry.total_leds}-pixel RGB upper model at 5 V.`);
             if (currentStatus === 'fail') failures.push('estimated current'); else if (currentStatus === 'warn') warnings.push('estimated current');
 
-            const renderStatus = p95 > 33 ? 'fail' : p95 > 16.7 ? 'warn' : 'pass';
-            updateMetric('render', `${p95.toFixed(2)} ms`, renderStatus, `${state.layers.clockEnabled ? 'Background + Clock + compositor' : runtime.engine}; measured end-to-end on this browser, not receiver hardware.`);
+            const targetFps = Math.max(1, safeNumber(state.globalSettings.draft?.targetFps, 30));
+            const frameBudgetMs = 1000 / targetFps;
+            const renderStatus = p95 > frameBudgetMs ? 'fail' : p95 > frameBudgetMs * .5 ? 'warn' : 'pass';
+            updateMetric('render', `${p95.toFixed(2)} ms`, renderStatus, `${state.layers.clockEnabled ? 'Background + Clock + compositor' : runtime.engine}; ${frameBudgetMs.toFixed(2)} ms budget at ${targetFps} fps, measured on this browser rather than receiver hardware.`);
             if (renderStatus === 'fail') failures.push('render time'); else if (renderStatus === 'warn') warnings.push('render time');
 
             const grade = failures.length ? 'fail' : warnings.length ? 'warn' : 'pass';
@@ -2129,7 +2146,7 @@
             const activateUrl = state.bootstrap.capabilities?.server_actions?.activate_scene_url || '/api/v1/scene';
             const result = await requestJson(activateUrl, {method: 'PUT', body: JSON.stringify(scene)});
             const receipt = result.receipt || {};
-            const acceptance = receipt.command_accepted ? 'Command accepted' : 'Command not accepted';
+            const acceptance = receipt.command_accepted ? 'Queued by server' : 'Command not queued';
             const observation = receipt.observed_status === 'observed'
                 ? 'server reports observed live state'
                 : 'live state not observed';
@@ -2137,8 +2154,8 @@
             const camera = receipt.camera_observation ? 'camera evidence attached' : 'no camera observation';
             $('serverActionStatus').textContent = `${acceptance} · revision ${receipt.requested_revision ?? scene.revision} · ${observation} · ${telemetry} · ${camera}.`;
             toast(receipt.command_accepted
-                ? 'Activation command accepted; physical observation remains separate.'
-                : 'The wall did not accept the activation command.', receipt.command_accepted ? 'success' : 'error');
+                ? 'Activation command queued; controller and physical observation remain separate.'
+                : 'The wall server did not queue the activation command.', receipt.command_accepted ? 'success' : 'error');
         } catch (error) {
             if (error.code === 'offline') setServerOnline(false);
             $('serverActionStatus').textContent = `Activation was not accepted: ${error.message}`;
