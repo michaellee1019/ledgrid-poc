@@ -16,8 +16,8 @@
       "url": "/static/composer.webmanifest"
     },
     {
-      "bytes": 61296,
-      "sha256": "974e9fdd36406f5c3f883dfc67723da64e44fb1f2134f4497ce019fbc2f28057",
+      "bytes": 64531,
+      "sha256": "6817b5e7110a37cce385f706f84a91ea3b6d62f13ae60c2a92d8e35f7502e00c",
       "url": "/static/css/composer.css"
     },
     {
@@ -31,8 +31,8 @@
       "url": "/static/generated/composer/compiled_rainbow.wasm"
     },
     {
-      "bytes": 2473025,
-      "sha256": "3433b0217f6ade688cd9faf9be9ec21553222c31220e373cfe4fa5d437d8b435",
+      "bytes": 2475263,
+      "sha256": "3329dd5bd295e75c6a9fbac5b16ed783986cf040dc153458903075a83283b17d",
       "url": "/static/generated/composer/ledgrid_python_runtime.zip"
     },
     {
@@ -51,8 +51,8 @@
       "url": "/static/icons/composer.svg"
     },
     {
-      "bytes": 152106,
-      "sha256": "1c1b40bd9f11990be60de887a2ba5436ed320c0c746835691b9d41e53cecebb3",
+      "bytes": 153184,
+      "sha256": "086cd6151f1accde9bd944d926a5a30ad24fa9e6a516e5f69113e5484e2c434d",
       "url": "/static/js/composer.js"
     },
     {
@@ -76,8 +76,8 @@
       "url": "/static/js/composer_runtime.js"
     },
     {
-      "bytes": 4975,
-      "sha256": "7141685cbffb219b065c846c18e68d7e67c866cc834a62aef1c226b75b477d01",
+      "bytes": 5163,
+      "sha256": "91fcd64e64738e5d4e508c89bed9d5303c61a040362b1d0f959aa379b486ab76",
       "url": "/static/js/composer_state.js"
     }
   ],
