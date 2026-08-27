@@ -180,6 +180,9 @@ const component = {
 
     def test_service_worker_readiness_requires_verified_shell_catalog_and_python(self) -> None:
         source = SERVICE_WORKER_JS.read_text(encoding="utf-8")
+        self.assertIn(f"const CACHE_VERSION = '{CACHE_VERSION}'", source)
+        self.assertIn("const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`", source)
+        self.assertNotIn("`${CACHE_PREFIX}v13`", source)
         self.assertIn("installVersionedShell", source)
         self.assertIn("Offline asset digest mismatch", source)
         self.assertIn("await caches.delete(CACHE_NAME)", source)
@@ -190,6 +193,8 @@ const component = {
         self.assertIn("responseDigest(bootstrap)", source)
         self.assertIn("Python runtime asset changed", source)
         self.assertIn("readyOffline: false", source)
+        self.assertIn("name.startsWith(CACHE_PREFIX)", source)
+        self.assertIn("names.filter", source)
 
 
 if __name__ == "__main__":

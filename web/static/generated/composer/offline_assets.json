@@ -1,13 +1,13 @@
 {
-  "cacheVersion": "v13",
+  "cacheVersion": "v14",
   "capturedAssets": [
     "/composer",
     "/api/v1/composer/bootstrap"
   ],
   "localAssets": [
     {
-      "bytes": 12434,
-      "sha256": "12f46d45a43487fbfbb3c8115e021176a3d37eebaa5bbd0c47c7eb0dc7ef1530",
+      "bytes": 12447,
+      "sha256": "92bb5d78022cff9823404fecada5d75e1a6eb65790a17b4caf60d11e54196e4a",
       "url": "/composer-service-worker.js"
     },
     {
