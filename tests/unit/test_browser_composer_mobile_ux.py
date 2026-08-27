@@ -16,6 +16,30 @@ JAVASCRIPT = ROOT / "web" / "static" / "js" / "composer.js"
 MANIFEST = ROOT / "web" / "static" / "composer.webmanifest"
 
 
+def _media_bodies(css: str, query: str) -> list[str]:
+    """Return balanced media bodies so assertions can target the final cascade."""
+    marker = f"@media ({query}) {{"
+    bodies: list[str] = []
+    cursor = 0
+    while True:
+        start = css.find(marker, cursor)
+        if start < 0:
+            return bodies
+        body_start = start + len(marker)
+        depth = 1
+        index = body_start
+        while index < len(css) and depth:
+            if css[index] == "{":
+                depth += 1
+            elif css[index] == "}":
+                depth -= 1
+            index += 1
+        if depth:
+            raise AssertionError(f"unbalanced media rule: {query}")
+        bodies.append(css[body_start:index - 1])
+        cursor = index
+
+
 class _Audit(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -38,6 +62,7 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
         cls.css = STYLES.read_text(encoding="utf-8")
         cls.javascript = JAVASCRIPT.read_text(encoding="utf-8")
         cls.manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        cls.final_mobile_css = _media_bodies(cls.css, "max-width: 760px")[-1]
         cls.audit = _Audit()
         cls.audit.feed(cls.html)
 
@@ -136,24 +161,48 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
         self.assertEqual(copy_attrs.get("aria-label"), "Copy preset JSON")
         _tag, fps_attrs = self.audit.by_id("fpsSelect")
         self.assertEqual(fps_attrs.get("aria-label"), "Preview frame rate")
-        self.assertIn(
-            ".header-actions > :not(#undoButton):not(#redoButton):not(#copyButton) { display: none; }",
-            self.css,
+        self.assertRegex(
+            self.final_mobile_css,
+            r"#copyButton\s*\{[^}]*display:\s*inline-grid;",
         )
-        self.assertIn(".fps-select { display: flex; min-height: 44px; }", self.css)
-        self.assertIn(".fps-select select { min-height: 44px;", self.css)
+        self.assertRegex(
+            self.final_mobile_css,
+            r"\.fps-select\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*44px;",
+        )
+        self.assertRegex(
+            self.final_mobile_css,
+            r"\.fps-select select\s*\{[^}]*min-height:\s*44px;",
+        )
 
     def test_final_mobile_cascade_preserves_wall_and_switch_touch_targets(self) -> None:
-        self.assertIn(
-            ".switch-control input, .compact-switch input { width: 44px; height: 44px; }",
-            self.css,
+        for pattern in (
+            r"\.switch-control input, \.compact-switch input\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;",
+            r"\.wall-controls-heading button, \.wall-apply-bar button, #editMasksButton\s*\{[^}]*min-height:\s*44px;",
+            r"\.catalog-disclosure > summary, \.advanced-disclosure > summary,[^}]*min-height:\s*44px;",
+            r"\.catalog-filters button,[^}]*min-height:\s*44px;",
+            r"\.fallback-field select,[^}]*min-height:\s*44px;",
+            r"\.parameter-list input\[type=\"number\"\], \.parameter-list input\[type=\"text\"\],[^}]*min-height:\s*44px;",
+        ):
+            self.assertRegex(self.final_mobile_css, pattern)
+        self.assertIn("--faint: #aaa;", self.final_mobile_css)
+        self.assertRegex(
+            self.final_mobile_css,
+            r"\.mobile-tabs button\s*\{[^}]*font-size:\s*11px;",
         )
-        self.assertIn(
-            ".wall-controls-heading button, .wall-apply-bar button, #editMasksButton { min-height: 44px; }",
-            self.css,
+
+    def test_mobile_stage_children_cannot_expand_the_viewport(self) -> None:
+        self.assertRegex(
+            self.final_mobile_css,
+            r"\.stage-pane\.is-active\s*\{[^}]*grid-template-columns:\s*minmax\(0,1fr\);[^}]*width:\s*100%;",
         )
-        self.assertIn("--faint: #aaa;", self.css)
-        self.assertIn(".mobile-tabs button { padding-inline: 1px; font-size: 11px; }", self.css)
+        self.assertRegex(
+            self.final_mobile_css,
+            r"\.provenance-note, \.provenance-note p, \.provenance-note p span\s*\{[^}]*min-width:\s*0;[^}]*max-width:\s*100%;",
+        )
+        self.assertRegex(
+            self.final_mobile_css,
+            r"\.provenance-note p span\s*\{[^}]*flex:\s*1 1 160px;[^}]*overflow:\s*hidden;",
+        )
 
     def test_mobile_header_and_mask_editor_reserve_device_safe_areas(self) -> None:
         self.assertIn("--mobile-header-height: calc(72px + env(safe-area-inset-top));", self.css)
@@ -164,8 +213,10 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
         _tag, canvas_attrs = self.audit.by_id("maskCanvas")
         self.assertEqual(canvas_attrs.get("aria-describedby"), "maskPanHint")
         self.audit.by_id("maskPanHint")
-        self.assertIn("overscroll-behavior: auto;", self.css)
-        self.assertIn("touch-action: pan-x pan-y;", self.css)
+        self.assertIn("overscroll-behavior: auto;", self.final_mobile_css)
+        self.assertIn("touch-action: pan-x pan-y;", self.final_mobile_css)
+        self.assertIn("calc(48px + env(safe-area-inset-right))", self.final_mobile_css)
+        self.assertIn("calc(48px + env(safe-area-inset-left))", self.final_mobile_css)
         self.assertIn("calc(10px + env(safe-area-inset-top))", self.css)
 
     def test_javascript_owned_ids_remain_unique(self) -> None:
