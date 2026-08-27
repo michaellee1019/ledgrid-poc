@@ -203,6 +203,14 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
             self.final_mobile_css,
             r"\.provenance-note p span\s*\{[^}]*flex:\s*1 1 160px;[^}]*overflow:\s*hidden;",
         )
+        self.assertRegex(
+            self.final_mobile_css,
+            r"\.transport\s*\{[^}]*grid-template-columns:\s*44px auto minmax\(0,1fr\) auto auto;",
+        )
+        self.assertRegex(
+            self.final_mobile_css,
+            r"\.play-button\s*\{[^}]*width:\s*44px;[^}]*min-width:\s*44px;[^}]*max-width:\s*44px;",
+        )
 
     def test_mobile_header_and_mask_editor_reserve_device_safe_areas(self) -> None:
         self.assertIn("--mobile-header-height: calc(72px + env(safe-area-inset-top));", self.css)
