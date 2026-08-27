@@ -33,7 +33,7 @@ WALL_PHYSICAL_LANE_ORDER = (0, 1, 2, 3, 4)
 WALL_RECEIVER_STRIP_COUNTS = (8, 8, 8, 8, 1)
 WALL_RECEIVER_GLOBAL_STRIP_OFFSETS = (0, 8, 16, 24, 32)
 WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER = (
-    False, False, True, True, False,
+    False, False, False, False, False,
 )
 WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER = (
     False, False, True, True, False,

@@ -144,10 +144,11 @@ required for receiver 4 and for an authoritative global offset; legacy six-byte
 IDs 0–3 continue to use their frozen origins for compatibility.
 
 The camera-measured installed global offsets by logical receiver ID are
-`(0,8,16,24,32)`. Host and native reversals remain
-`(false,false,true,true,false)`; those direction flags are independent from the
-physical receiver permutation and were not requalified by the partial camera
-view used to establish the new cable order.
+`(0,8,16,24,32)`. A direct unmirrored host light-to-dark diagnostic qualified
+the host reversal map as `(false,false,false,false,false)`. Native reversals
+remain `(false,false,true,true,false)` pending an independent receiver-native
+phase-field diagnostic; a host painter frame cannot qualify this firmware-local
+coordinate domain.
 
 When compact-lane mapping is enabled for that one-strip receiver, an output mask
 with multiple selected bits broadcasts the same semantic strip to each selected

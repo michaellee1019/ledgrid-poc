@@ -48,6 +48,7 @@ from animation.plugins.clock_overlay import ClockOverlayAnimation
 from drivers.multi_device import MultiDeviceLEDController
 from drivers.degraded_receiver_hybrid import (
     DegradedReceiverHybridController as ProductionDegradedHybridTransport,
+    DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
     DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER,
     EXPECTED_CAPABILITIES,
     EXPECTED_DEVICE_MAP,
@@ -901,7 +902,7 @@ def main() -> None:
                 DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
             ),
             reverse_native_strips_by_logical_receiver=(
-                DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+                DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER
             ),
         )
 

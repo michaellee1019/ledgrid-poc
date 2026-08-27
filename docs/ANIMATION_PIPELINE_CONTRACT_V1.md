@@ -22,8 +22,10 @@ corresponding behavior is activated.
 The installed geometry is now 33×138 across five receivers with logical widths
 `(8,8,8,8,1)`. Transport routes are `0→0.0`, `1→0.1`, `2→1.1`, `3→1.0`, and
 `4→1.2`; physical left-to-right logical order is `(0,1,2,3,4)` and native
-global offsets by logical ID are `(0,8,16,24,32)`. Host and native reversal
-flags by logical ID are `(false,false,true,true,false)`, and output masks are
+global offsets by logical ID are `(0,8,16,24,32)`. Host reversal flags by
+logical ID are `(false,false,false,false,false)`; independently, native reversal
+flags remain `(false,false,true,true,false)` pending their native phase-field
+test. Output masks are
 `(0xff,0xff,0xff,0xff,0xff)`. The last mask broadcasts one compact semantic
 strip across the dedicated receiver's physical outputs. This supersedes the
 frozen 32×138/four-uniform-receiver operating assumption below while retaining
@@ -46,6 +48,10 @@ green, red, establishing logical receivers `(0,1,2,3,4)` from physical left to
 right once the preview mirror was accounted for. The fifth column remained at
 the right edge. Because the camera showed only part of the wall, this observation
 does not accept the wall homography or either within-receiver direction map.
+The subsequent unmirrored direct-AVFoundation eight-step ramp qualified the host
+map only: physical broad-block correlations were `+0.84`, `+0.94`, `-0.93`, and
+`-0.98` under the old map, so the current host map is all-forward. A host painter
+frame is not evidence for receiver-native coordinates.
 
 ## Frozen schema and protocol identities
 

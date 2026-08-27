@@ -279,7 +279,7 @@ class _FakeTarget:
                     "receiver_global_strip_offsets": [0, 8, 16, 24, 32],
                     "physical_output_lane_masks": [255, 255, 255, 255, 255],
                     "reverse_strips_by_logical_receiver": [
-                        False, False, True, True, False,
+                        False, False, False, False, False,
                     ],
                     "reverse_native_strips_by_logical_receiver": [
                         False, False, True, True, False,
@@ -299,7 +299,7 @@ class _FakeTarget:
                     "receiver_global_strip_offsets": [0, 8, 16, 24, 32],
                     "physical_output_lane_masks": [255, 255, 255, 255, 255],
                     "reverse_strips_by_logical_receiver": [
-                        False, False, True, True, False,
+                        False, False, False, False, False,
                     ],
                     "reverse_native_strips_by_logical_receiver": [
                         False, False, True, True, False,
@@ -619,7 +619,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 "receiver_global_strip_offsets": [0, 8, 16, 24, 32],
                 "physical_output_lane_masks": [255, 255, 255, 255, 255],
                 "reverse_strips_by_logical_receiver": [
-                    False, False, True, True, False,
+                    False, False, False, False, False,
                 ],
                 "reverse_native_strips_by_logical_receiver": [
                     False, False, True, True, False,
@@ -656,7 +656,8 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         routes = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
         widths = (8, 8, 8, 8, 1)
         offsets = (0, 8, 16, 24, 32)
-        reversals = (False, False, True, True, False)
+        host_reversals = (False, False, False, False, False)
+        native_reversals = (False, False, True, True, False)
         masks = (255, 255, 255, 255, 255)
         return tuple(
             {
@@ -665,8 +666,8 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 "chip_select": routes[logical_id][1],
                 "local_strip_count": widths[logical_id],
                 "global_strip_offset": offsets[logical_id],
-                "reverse_host_strip_order": reversals[logical_id],
-                "reverse_native_strip_order": reversals[logical_id],
+                "reverse_host_strip_order": host_reversals[logical_id],
+                "reverse_native_strip_order": native_reversals[logical_id],
                 "physical_output_lane_mask": masks[logical_id],
                 "spi_speed_hz": 8_000_000,
                 "spi_mode": 0,

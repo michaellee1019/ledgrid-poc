@@ -30,6 +30,7 @@ from drivers.spi_controller import (
 )
 from drivers.degraded_receiver_hybrid import (
     DEFAULT_PHYSICAL_LANE_ORDER,
+    DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
     DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER,
     LEDS_PER_STRIP,
     LOCAL_STRIPS,
@@ -767,7 +768,7 @@ class FakeController:
         DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
     )
     reverse_native_strips_by_logical_receiver = (
-        DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+        DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER
     )
 
     def __init__(self, events, clock):
@@ -1082,7 +1083,8 @@ class ShowcaseRunnerTests(unittest.TestCase):
 
     def test_reversed_local_strip_order_maps_native_overlay_delta_and_host(self):
         lane_order = DEFAULT_PHYSICAL_LANE_ORDER
-        reverse = DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+        reverse = (False, False, True, True, False)
+        self.controller.reverse_host_strips_by_logical_receiver = reverse
         transport = DegradedHybridTransport(
             self.controller,
             sleeper=self._sleep,

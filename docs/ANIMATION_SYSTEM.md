@@ -532,7 +532,8 @@ fixed SPI route/logical identity, physical lane permutation, host-frame/sparse
 strip direction, and receiver-native procedural direction. The target-owned
 config is authoritative and carries physical order `(0,1,2,3,4)`, widths
 `(8,8,8,8,1)`, offsets `(0,8,16,24,32)`, output masks
-`(255,255,255,255,255)`, and independent host/native reversal maps
+`(255,255,255,255,255)`, host reversal map
+`(false,false,false,false,false)`, and independently retained native reversal map
 `(false,false,true,true,false)`. The fifth
 mask broadcasts one semantic strip across the dedicated receiver's outputs;
 the semantic wall remains 33 strips wide.

@@ -110,12 +110,13 @@ facts. The finalized installed contract as of 2026-08-27 is:
 | ---: | --- | ---: | ---: | --- | --- | ---: | ---: |
 | 0 | `spidev0.0` | 8 | 0 | forward | forward | 0 | `0xff` |
 | 1 | `spidev0.1` | 8 | 1 | forward | forward | 8 | `0xff` |
-| 2 | `spidev1.1` | 8 | 2 | reversed | reversed | 16 | `0xff` |
-| 3 | `spidev1.0` | 8 | 3 | reversed | reversed | 24 | `0xff` |
+| 2 | `spidev1.1` | 8 | 2 | forward | reversed (pending native test) | 16 | `0xff` |
+| 3 | `spidev1.0` | 8 | 3 | forward | reversed (pending native test) | 24 | `0xff` |
 | 4 | `spidev1.2` | 1 | 4 | forward | forward | 32 | `0xff` broadcast |
 
-In config form, physical left-to-right logical order is `(0,1,2,3,4)`, while
-both the host-frame and receiver-native reversal maps are
+In config form, physical left-to-right logical order is `(0,1,2,3,4)`. The
+camera-qualified host-frame reversal map is `(false,false,false,false,false)`;
+the independently retained receiver-native map is
 `(false,false,true,true,false)`. The durable runtime authority is
 `run_state/receiver_hybrid.json`; software defaults and this copied table are
 not substitutes for reading that file after a cable change.
@@ -126,9 +127,21 @@ showed magenta, blue, yellow, green, red. Accounting for the preview mirror
 established the physical logical-receiver order `(0,1,2,3,4)` and invalidated
 the prior `(0,1,3,2,4)` assumption after the ESP32 cables changed. The partial
 view includes all five colored receiver bands and the fifth column at the
-rightmost edge, but it does not include enough wall geometry to accept the full
-homography or either host/native within-receiver direction map. Those direction
-flags remain unchanged pending their independent diagnostics.
+rightmost edge, but it did not accept either within-receiver direction map.
+
+A later direct AVFoundation capture selected `Anker PowerConf C200` by name and
+did not apply a horizontal flip. Its five-color frame showed sensor-true physical
+order red, green, blue, yellow, magenta
+(`run_state/physical-acceptance/20260827-strip-order-direct-anker.jpg`, SHA-256
+`1d580fbb8bac71c90254a2f66974409cd6389b21b3fda024b7172dd904aaca7e`).
+An eight-step neutral ramp, reset within each broad receiver, then measured
+light-to-dark correlations `+0.84`, `+0.94`, `-0.93`, and `-0.98` from physical
+left to right. The negative third and fourth blocks prove that both host reversal
+bits inherited from the earlier layout were wrong. The accepted pre-fix evidence
+is `run_state/physical-acceptance/20260827-strip-direction-pre-fix-direct-anker-low.jpg`
+(SHA-256 `3c39c34dbe4271db1ff3e0854daf622a0ecc2ebe3778384b20af08fba6acebc1`).
+This host painter test does not qualify receiver-native direction, so those bits
+remain unchanged pending the direction-marked native phase field.
 
 The two reversal columns deliberately remain independent. Host reversal maps
 complete RGB frames and sparse RGBA foreground into the receiver's local output

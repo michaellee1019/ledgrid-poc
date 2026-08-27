@@ -343,7 +343,7 @@ class StartServerTests(unittest.TestCase):
         )
         self.assertEqual(
             captured["reverse_host_strips_by_logical_receiver"],
-            (False, False, True, True, False),
+            (False, False, False, False, False),
         )
         self.assertEqual(
             captured["reverse_native_strips_by_logical_receiver"],
@@ -415,7 +415,7 @@ class StartServerTests(unittest.TestCase):
             selected,
             (
                 "wrapped", "degraded_spi1_01_readable", (0, 1, 2, 3, 4),
-                (False, False, True, True, False),
+                (False, False, False, False, False),
                 (False, False, True, True, False),
             ),
         )
@@ -423,7 +423,7 @@ class StartServerTests(unittest.TestCase):
             controller.policies,
             [(
                 "degraded_spi1_01_readable", (0, 1, 2, 3, 4),
-                (False, False, True, True, False),
+                (False, False, False, False, False),
                 (False, False, True, True, False),
             )],
         )

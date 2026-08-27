@@ -80,7 +80,7 @@ class LedLayoutTests(unittest.TestCase):
         )
         self.assertEqual(
             WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER,
-            (False, False, True, True, False),
+            (False, False, False, False, False),
         )
         self.assertEqual(
             WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,

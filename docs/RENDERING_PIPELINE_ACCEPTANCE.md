@@ -38,7 +38,11 @@ permutation: its mirrored preview showed magenta, blue, yellow, green, red and
 established logical receivers `(0,1,2,3,4)` from physical left to right after
 accounting for the preview mirror. It also keeps the fifth single column at the
 right edge. The camera's partial wall view does not accept full homography,
-within-receiver host strip order, or receiver-native direction.
+within-receiver host strip order, or receiver-native direction. The later direct
+AVFoundation host ramp is not mirrored and accepts the host reversal map as
+`(false,false,false,false,false)`: its four broad-block correlations were
+`+0.84`, `+0.94`, `-0.93`, and `-0.98` under the old map. Receiver-native
+direction remains independently open.
 
 At 2.4 MHz, each WS2812 data bit is represented by three parallel samples:
 

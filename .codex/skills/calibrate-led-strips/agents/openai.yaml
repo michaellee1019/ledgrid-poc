@@ -1,0 +1,4 @@
+interface:
+  display_name: "Calibrate LED Strips"
+  short_description: "Measure LED strip order and direction by camera"
+  default_prompt: "Use $calibrate-led-strips to diagnose and correct the LED wall's receiver and strip orientation."

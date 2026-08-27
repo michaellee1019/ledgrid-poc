@@ -12,14 +12,17 @@ from tools.deployment.receiver_hybrid_config import (
     DEFAULT_PHYSICAL_OUTPUT_LANE_MASKS,
     DEFAULT_RECEIVER_GLOBAL_STRIP_OFFSETS,
     DEFAULT_RECEIVER_STRIP_COUNTS,
+    DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
     DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER,
     DEGRADED_RECEIVER_HYBRID_TRANSPORT_POLICY,
     LANE_ZERO_RECEIVER_HYBRID_CONFIG_VERSION,
     NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT,
+    PERMUTED_RECEIVER_HYBRID_CONFIG_VERSION,
     PREVIOUS_PHYSICAL_LANE_ORDER,
     PREVIOUS_PHYSICAL_OUTPUT_LANE_MASKS,
     PREVIOUS_RECEIVER_GLOBAL_STRIP_OFFSETS,
     PREVIOUS_RECEIVER_HYBRID_CONFIG_VERSION,
+    PREVIOUS_REVERSE_STRIPS_BY_LOGICAL_RECEIVER,
     PRODUCTION_FIRMWARE_ENVIRONMENT,
     RECEIVER_HYBRID_CONFIG_RELATIVE_PATH,
     RECEIVER_HYBRID_CONFIG_SCHEMA,
@@ -48,7 +51,7 @@ class ReceiverHybridConfigTests(unittest.TestCase):
                 DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
             ),
             "reverse_native_strips_by_logical_receiver": list(
-                DEFAULT_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+                DEFAULT_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER
             ),
             "receiver_strip_counts": list(DEFAULT_RECEIVER_STRIP_COUNTS),
             "receiver_global_strip_offsets": list(
@@ -79,6 +82,17 @@ class ReceiverHybridConfigTests(unittest.TestCase):
     def previous_payload(cls, **overrides):
         payload = cls.payload(
             schema_version=PREVIOUS_RECEIVER_HYBRID_CONFIG_VERSION,
+            reverse_strips_by_logical_receiver=list(
+                PREVIOUS_REVERSE_STRIPS_BY_LOGICAL_RECEIVER
+            ),
+        )
+        payload.update(overrides)
+        return payload
+
+    @classmethod
+    def permuted_payload(cls, **overrides):
+        payload = cls.previous_payload(
+            schema_version=PERMUTED_RECEIVER_HYBRID_CONFIG_VERSION,
             physical_lane_order=list(PREVIOUS_PHYSICAL_LANE_ORDER),
             receiver_global_strip_offsets=list(
                 PREVIOUS_RECEIVER_GLOBAL_STRIP_OFFSETS
@@ -89,7 +103,7 @@ class ReceiverHybridConfigTests(unittest.TestCase):
 
     @classmethod
     def lane_zero_payload(cls, **overrides):
-        payload = cls.previous_payload(
+        payload = cls.permuted_payload(
             schema_version=LANE_ZERO_RECEIVER_HYBRID_CONFIG_VERSION,
             physical_output_lane_masks=list(
                 PREVIOUS_PHYSICAL_OUTPUT_LANE_MASKS
@@ -275,7 +289,7 @@ class ReceiverHybridConfigTests(unittest.TestCase):
                 migrate_legacy_receiver_hybrid_config(root)
             self.assertEqual(path.read_bytes(), before)
 
-    def test_schema_v3_permutation_bridges_and_migrates_preserving_selection(self):
+    def test_schema_v4_host_direction_bridges_and_migrates_preserving_selection(self):
         selections = (
             (False, False, RECEIVER_HYBRID_TRANSPORT_OFF),
             (True, False, STRICT_RECEIVER_HYBRID_TRANSPORT_POLICY),
@@ -326,12 +340,42 @@ class ReceiverHybridConfigTests(unittest.TestCase):
                 self.assertIs(stored["enabled"], enabled)
                 self.assertIs(stored["native_modules_enabled"], native)
 
+    def test_schema_v3_permutation_bridges_and_migrates_preserving_selection(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            path = self.write(root, self.permuted_payload())
+
+            bridged = resolve_receiver_hybrid_config(root)
+
+            self.assertEqual(bridged.physical_lane_order, (0, 1, 2, 3, 4))
+            self.assertEqual(
+                bridged.reverse_strips_by_logical_receiver,
+                (False, False, False, False, False),
+            )
+            self.assertEqual(
+                bridged.reverse_native_strips_by_logical_receiver,
+                (False, False, True, True, False),
+            )
+            self.assertEqual(
+                json.loads(path.read_text())["schema_version"],
+                PERMUTED_RECEIVER_HYBRID_CONFIG_VERSION,
+            )
+
+            config, migrated = migrate_legacy_receiver_hybrid_config(root)
+
+            self.assertTrue(migrated)
+            self.assertEqual(config, bridged)
+            self.assertEqual(
+                json.loads(path.read_text())["schema_version"],
+                RECEIVER_HYBRID_CONFIG_VERSION,
+            )
+
     def test_unknown_schema_v3_config_fails_without_overwrite(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
             path = self.write(
                 root,
-                self.previous_payload(
+                self.permuted_payload(
                     reverse_strips_by_logical_receiver=[False] * 5
                 ),
             )

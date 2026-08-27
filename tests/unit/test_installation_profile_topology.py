@@ -156,7 +156,7 @@ class InstallationProfileTopologyTests(unittest.TestCase):
         )
         self.assertEqual(
             INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.reverse_host_strips_by_logical_receiver,
-            (False, False, True, True, False),
+            (False, False, False, False, False),
         )
         self.assertEqual(
             INSTALLED_INSTALLATION_PROFILE_TOPOLOGY.reverse_native_strips_by_logical_receiver,

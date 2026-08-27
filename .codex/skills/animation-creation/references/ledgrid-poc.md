@@ -82,8 +82,8 @@ Read this reference only when working in the `ledgrid-poc` repository.
 ## Receiver-side firmware animations
 
 The existing deployed architecture normally streams four logical 8-by-138
-frame slices from the Pi to four ESP32-S3 receivers. The compiled startup
-rainbow is the current exception. Work that makes receiver animations
+frame slices plus one 1-by-138 tail slice from the Pi to five ESP32-S3
+receivers. The compiled startup rainbow is the current exception. Work that makes receiver animations
 selectable or uploadable crosses the firmware, SPI driver, multi-device
 controller, manager lifecycle, IPC status, persistence, and dashboard; do not
 implement it as an isolated firmware renderer.
@@ -99,11 +99,12 @@ uses:
 
 | Domain | Installed value |
 | --- | --- |
-| logical receiver to SPI route | `0→0.0`, `1→0.1`, `2→1.1`, `3→1.0` |
-| logical receivers from physical left to right | `(0,1,3,2)` |
-| host full-frame/sparse strip reversal | `(false,false,true,true)` |
-| receiver-native coordinate reversal | `(false,false,true,true)` |
-| receiver-native global offsets by logical ID | `(0,8,24,16)` |
+| logical receiver to SPI route | `0→0.0`, `1→0.1`, `2→1.1`, `3→1.0`, `4→1.2` |
+| logical receivers from physical left to right | `(0,1,2,3,4)` |
+| logical receiver widths | `(8,8,8,8,1)` |
+| host full-frame/sparse strip reversal | `(false,false,false,false,false)` |
+| receiver-native coordinate reversal | `(false,false,true,true,false)` pending native phase test |
+| receiver-native global offsets by logical ID | `(0,8,16,24,32)` |
 
 The two direction maps happen to match now but remain separate contracts. Host
 reversal is applied while slicing complete RGB and premultiplied-RGBA content.
@@ -135,13 +136,12 @@ For orientation work, use this sequence:
    ordinary `just deploy` and capture again. Persist the accepted crop, SHA-256,
    release, receipt, config digest, and status sample in the phase plan.
 
-The accepted post-deploy evidence is
-`run_state/physical-acceptance/20260814-rainbow-clock-continuous-native.png`
-(SHA-256
-`7c04792eafd64f33c90e2fe6c2f2aba0829ac1a48640b46f0fc69dfcd373bfa9`).
-It proves visible rainbow/clock continuity, not acknowledgement or release
-acceptance on write-only logical receivers 2/3. The current degraded policy must
-continue to report `telemetry_complete=false` and `release_acceptance=false`.
+For host direction, capture the Mac-attached Anker directly through the
+`calibrate-led-strips` skill; do not use Photo Booth's mirrored live preview.
+The 2026-08-27 pre-fix direct ramp measured broad-block correlations `+0.84`,
+`+0.94`, `-0.93`, and `-0.98`, qualifying the all-forward host map. It does not
+qualify the retained native map. All five return paths are readable, but strict
+release acceptance still requires fresh clean integrity and timing windows.
 
 The `native-animations` branch is a retained organ donor for this work. Consult
 the donor map in `docs/plan-revamped-animation-pipeline.md` and port narrow lanes

@@ -117,6 +117,20 @@ full camera homography, host within-receiver strip direction, or receiver-native
 direction. Both direction maps remain `(false,false,true,true,false)` pending
 their independent visual gates.
 
+Direct strip-direction evidence later on 2026-08-27 supersedes the host half of
+that pending statement. AVFoundation selected `Anker PowerConf C200` by name and
+captured sensor-true frames without Photo Booth or `hflip`. The five-color frame
+showed red, green, blue, yellow, magenta from physical left to right (SHA-256
+`1d580fbb8bac71c90254a2f66974409cd6389b21b3fda024b7172dd904aaca7e`).
+An eight-step light-to-dark host ramp then produced broad-block correlations
+`+0.84`, `+0.94`, `-0.93`, and `-0.98`, proving that both inherited host
+reversals on logical receivers 2 and 3 were wrong. Schema v5 therefore migrates
+the host map to `(false,false,false,false,false)` while retaining the independent
+native map `(false,false,true,true,false)` until a receiver-native signed phase
+field qualifies it. The pre-fix ramp is
+`run_state/physical-acceptance/20260827-strip-direction-pre-fix-direct-anker-low.jpg`
+(SHA-256 `3c39c34dbe4271db1ff3e0854daf622a0ecc2ebe3778384b20af08fba6acebc1`).
+
 The corrected mapping was then deployed from clean topology commit `4c97d4e`
 plus benchmark-stability commit `8ea7ac3`. Ordinary deployment succeeded in
 16 minutes 18 seconds and activated release

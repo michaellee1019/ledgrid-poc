@@ -123,7 +123,8 @@ FINALIZED_RECEIVER_ROUTES = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
 FINALIZED_RECEIVER_WIDTHS = (8, 8, 8, 8, 1)
 FINALIZED_RECEIVER_OFFSETS = (0, 8, 16, 24, 32)
 FINALIZED_RECEIVER_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
-FINALIZED_RECEIVER_REVERSALS = (False, False, True, True, False)
+FINALIZED_RECEIVER_HOST_REVERSALS = (False, False, False, False, False)
+FINALIZED_RECEIVER_NATIVE_REVERSALS = (False, False, True, True, False)
 FINALIZED_RECEIVER_SPI_MODE = 0
 
 
@@ -202,8 +203,8 @@ def receiver_firmware_health_contract(
         or widths != FINALIZED_RECEIVER_WIDTHS
         or offsets != FINALIZED_RECEIVER_OFFSETS
         or lane_masks != FINALIZED_RECEIVER_LANE_MASKS
-        or host_reversals != FINALIZED_RECEIVER_REVERSALS
-        or native_reversals != FINALIZED_RECEIVER_REVERSALS
+        or host_reversals != FINALIZED_RECEIVER_HOST_REVERSALS
+        or native_reversals != FINALIZED_RECEIVER_NATIVE_REVERSALS
     ):
         raise RuntimeError(
             "firmware build did not select finalized receiver health topology"
