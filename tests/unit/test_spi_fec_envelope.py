@@ -134,11 +134,14 @@ def _status_v7_with_terminal_counts(
     return response
 
 
-def _status_v3(receiver_packets):
+def _status_v3(receiver_packets, *, fec=False):
     response = bytearray(protocol.RECEIVER_STATUS_BYTES_V3)
     response[:5] = b"LGS3\x03"
     response[12:16] = receiver_packets.to_bytes(4, "big")
-    response[64:68] = protocol.CAPABILITY_ALIGNED_ENVELOPE_V1.to_bytes(4, "big")
+    capabilities = protocol.CAPABILITY_ALIGNED_ENVELOPE_V1
+    if fec:
+        capabilities |= protocol.CAPABILITY_FEC_ENVELOPE_V2
+    response[64:68] = capabilities.to_bytes(4, "big")
     response[314] = protocol.STAGGER_OFF
     return response
 
@@ -452,6 +455,46 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         self.assertEqual(item._receiver_fec_uncorrectable_packets_process_delta, 1)
         self.assertEqual(item._receiver_fec_semantic_crc_errors_process_delta, 1)
         self.assertEqual(item._receiver_fec_framing_errors_process_delta, 2)
+
+    def test_fec_waits_for_v7_baseline_after_queued_v3_capability_prefixes(self):
+        item = _controller(requested=True)
+
+        for receiver_packets in (1, 2, 3, 4):
+            self.assertTrue(
+                protocol.LEDController._update_receiver_status(
+                    item, _status_v3(receiver_packets, fec=True)
+                )
+            )
+            self.assertFalse(item._fec_transport_enabled)
+            self.assertIsNone(item._receiver_fec_terminal_baseline)
+
+        for receiver_packets in (5, 6, 7):
+            self.assertTrue(
+                protocol.LEDController._update_receiver_status(
+                    item,
+                    _status_v7_with_terminal_counts(
+                        receiver_packets,
+                        uncorrectable=4,
+                        semantic_crc=0,
+                        framing=3,
+                    ),
+                )
+            )
+
+        self.assertTrue(item._fec_transport_enabled)
+        self.assertTrue(item._receiver_fec_terminal_baseline_finalized)
+        self.assertFalse(item._receiver_fec_terminal_baseline_invalid)
+        self.assertEqual(
+            item._receiver_fec_terminal_baseline,
+            {
+                "uncorrectable_packets": 4,
+                "semantic_crc_errors": 0,
+                "framing_errors": 3,
+            },
+        )
+        self.assertEqual(item._receiver_fec_uncorrectable_packets_process_delta, 0)
+        self.assertEqual(item._receiver_fec_semantic_crc_errors_process_delta, 0)
+        self.assertEqual(item._receiver_fec_framing_errors_process_delta, 0)
 
     def test_finalized_fec_baseline_survives_queued_downgrade_acknowledgements(self):
         item = _controller(requested=True)

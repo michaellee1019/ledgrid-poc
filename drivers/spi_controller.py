@@ -1463,13 +1463,30 @@ class LEDController:
             self._receiver_capabilities & CAPABILITY_ALIGNED_ENVELOPE_V1,
             self._receiver_packets,
         )
-        self._observe_fec_transport_capability(
-            (
-                self._receiver_capabilities & CAPABILITY_ALIGNED_ENVELOPE_V1
-                and self._receiver_capabilities & CAPABILITY_FEC_ENVELOPE_V2
-            ),
-            self._receiver_packets,
+        fec_advertised = bool(
+            self._receiver_capabilities & CAPABILITY_ALIGNED_ENVELOPE_V1
+            and self._receiver_capabilities & CAPABILITY_FEC_ENVELOPE_V2
         )
+        fec_terminal_telemetry_available = bool(
+            len(response) >= RECEIVER_STATUS_BYTES_V7
+            and tuple(int(response[index]) for index in range(4))
+            == RECEIVER_STATUS_MAGIC_V7
+            and int(response[4]) == 7
+        )
+        if (
+            getattr(self, "_fec_transport_requested", False)
+            and fec_advertised
+            and not fec_terminal_telemetry_available
+        ):
+            # The v3 capability prefix can arrive several queued responses
+            # before the v7 terminal counters.  It is not enough evidence to
+            # enable FEC because no process lifetime baseline can be captured.
+            self._reset_fec_transport_candidate()
+        else:
+            self._observe_fec_transport_capability(
+                fec_advertised,
+                self._receiver_packets,
+            )
         self._receiver_base_mode = int(response[68])
         self._receiver_foreground_state = int(response[69])
         self._receiver_maintenance_state = int(response[70])
