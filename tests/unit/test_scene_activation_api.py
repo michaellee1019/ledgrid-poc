@@ -9,9 +9,16 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
+from animation.core.receiver_static_component import (
+    COMPILED_RAINBOW_EXPECTED_PAYLOAD_DIGEST,
+    receiver_static_component_descriptor,
+)
 from animation.core.presentation_contracts import resolve_vibe
 from ipc.control_channel import FileControlChannel
+from ipc.runtime_control import manager_controller_runtime_digests
+from ipc.scene_contract import component_contract_digest
 from tests.unit.test_browser_scene_contract import _Manager, _document
 from web.activation_token_store import ActivationTokenStore
 from web.app import AnimationWebInterface
@@ -19,6 +26,7 @@ from web.app import AnimationWebInterface
 
 SESSION_ID = "a" * 32
 CURRENT_IDENTITY = "b" * 64
+RELEASE_ID = "c" * 64
 
 
 class _Clock:
@@ -61,6 +69,7 @@ class SceneActivationApiTests(unittest.TestCase):
             str(root / "activations"),
         )
         self.channel.write_status({
+            "release_id": RELEASE_ID,
             "controller_session_id": SESSION_ID,
             "controller_state_revision": 7,
             "active_identity": {"current_identity": CURRENT_IDENTITY},
@@ -75,6 +84,7 @@ class SceneActivationApiTests(unittest.TestCase):
             self.channel,
             _Manager(),
             local_mode=True,
+            release_id=RELEASE_ID,
             activation_token_store_path=root / "tokens.sqlite3",
             activation_enabled=True,
         )
@@ -112,6 +122,133 @@ class SceneActivationApiTests(unittest.TestCase):
                 "nominalVoltageVolts": 5.0,
             },
         }
+
+    def test_check_uses_controller_catalog_runtime_identity_not_web_projection(self):
+        checked = self._check().get_json()
+        authoritative = manager_controller_runtime_digests(
+            self.interface.preview_manager
+        )
+        for component in checked["basis"]["components"]:
+            qualified_id = (
+                f"{component['provider']}:{component['component_id']}"
+            )
+            self.assertEqual(
+                component["controller_runtime_digest"],
+                authoritative[qualified_id],
+            )
+        background = checked["basis"]["components"][0]
+        self.assertNotEqual(
+            background["controller_runtime_digest"],
+            background["component_digest"],
+        )
+
+    def test_check_requires_exact_non_null_web_and_controller_release(self):
+        original_status = self.channel.read_status()
+        cases = (
+            ("missing_web", None, RELEASE_ID),
+            ("missing_controller", RELEASE_ID, None),
+            ("mismatched", RELEASE_ID, "d" * 64),
+        )
+        for label, web_release, controller_release in cases:
+            with self.subTest(label=label):
+                status = deepcopy(original_status)
+                if controller_release is None:
+                    status.pop("release_id", None)
+                else:
+                    status["release_id"] = controller_release
+                self.channel.write_status(status)
+                self.interface.release_id = web_release
+
+                response = self._check()
+
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(
+                    response.get_json()["code"], "controller_state_unavailable"
+                )
+                with sqlite3.connect(
+                    Path(self.temporary.name) / "tokens.sqlite3"
+                ) as database:
+                    self.assertEqual(
+                        database.execute(
+                            "SELECT COUNT(*) FROM activation_tokens"
+                        ).fetchone()[0],
+                        0,
+                    )
+                self.assertEqual(self.channel.list_activation_commands(), [])
+
+    def test_runtime_authority_covers_host_and_receiver_component_roles(self):
+        manager = _Manager()
+        python_background = deepcopy(manager.components[0])
+        python_overlay = deepcopy(manager.components[1])
+        managed_native = {
+            "plugin_id": "managed_native",
+            "provider": "receiver_native",
+            "role": "background",
+            "entrypoint": "receiver_module:managed_native",
+            "parameter_schema_version": 1,
+            "parameter_schema": {},
+            "defaults": {},
+            "build": {
+                "expected_payload_digest": "3" * 64,
+                "bundle_digest": "4" * 64,
+            },
+        }
+        compiled_native = receiver_static_component_descriptor({
+            "receiver_local_background": True,
+            "receiver_sparse_overlay": True,
+        })
+        self.assertIsNotNone(compiled_native)
+        manager.components = [
+            python_background,
+            python_overlay,
+            managed_native,
+            compiled_native,
+        ]
+        interface = AnimationWebInterface(
+            self.channel, manager, local_mode=True, release_id=RELEASE_ID
+        )
+        projected = [
+            {"provider": item["provider"], "plugin_id": item["plugin_id"]}
+            for item in manager.components
+        ]
+
+        identities = interface._activation_runtime_digests(projected)
+
+        self.assertEqual(
+            identities["python:gradient"],
+            component_contract_digest(python_background),
+        )
+        self.assertEqual(
+            identities["python:clock_overlay"],
+            component_contract_digest(python_overlay),
+        )
+        self.assertEqual(identities["receiver_native:managed_native"], "3" * 64)
+        self.assertEqual(
+            identities["receiver_native:compiled_rainbow"],
+            COMPILED_RAINBOW_EXPECTED_PAYLOAD_DIGEST,
+        )
+
+    def test_missing_or_rekeyed_runtime_authority_fails_closed(self):
+        catalog = [
+            {"provider": "python", "plugin_id": "gradient"},
+            {"provider": "python", "plugin_id": "clock_overlay"},
+        ]
+        cases = (
+            {},
+            {
+                "python:gradient": "1" * 64,
+                "python:renamed_clock": "2" * 64,
+            },
+        )
+        for authority in cases:
+            with self.subTest(authority=authority), patch(
+                "web.app.manager_controller_runtime_digests",
+                return_value=authority,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "controller runtime identity is unavailable"
+                ):
+                    self.interface._activation_runtime_digests(catalog)
 
     def _activation_body(self, checked: dict, *, scene=None, globals_=None) -> dict:
         return {

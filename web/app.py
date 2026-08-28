@@ -66,6 +66,7 @@ from drivers.frame_codec import (
 )
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 from ipc.control_channel import FileControlChannel
+from ipc.runtime_control import manager_controller_runtime_digests
 from ipc.scene_contract import (
     BROWSER_SCENE_MAX_BYTES,
     BROWSER_SCENE_SCHEMA,
@@ -2201,41 +2202,24 @@ class AnimationWebInterface:
                 # or exact retry. Never pretend it reached the controller queue.
                 continue
 
-    @staticmethod
     def _activation_runtime_digests(
-        catalog: List[Dict[str, Any]],
+        self, catalog: List[Dict[str, Any]],
     ) -> Dict[str, str]:
-        """Bind controller execution to one managed catalog identity per component."""
+        """Bind Check to the controller's authoritative runtime derivation."""
 
-        result: Dict[str, str] = {}
-        for component in catalog:
-            provider = component.get('provider')
-            component_id = component.get('plugin_id')
-            if not all(isinstance(value, str) and value for value in (
-                provider, component_id
-            )):
-                continue
-            build = component.get('build')
-            build = build if isinstance(build, dict) else {}
-            capabilities = component.get('browser_capabilities')
-            capabilities = capabilities if isinstance(capabilities, dict) else {}
-            identity = capabilities.get('managed_identity')
-            identity = identity if isinstance(identity, dict) else {}
-            candidates = (
-                component.get('controller_runtime_digest'),
-                build.get('expected_payload_digest'),
-                build.get('bundle_digest'),
-                build.get('contract_digest'),
-                component.get('component_digest'),
-                identity.get('component_digest'),
+        result = manager_controller_runtime_digests(self.preview_manager)
+        required = {
+            f"{component.get('provider')}:{component.get('plugin_id')}"
+            for component in catalog
+            if isinstance(component.get('provider'), str)
+            and isinstance(component.get('plugin_id'), str)
+        }
+        missing = sorted(required - result.keys())
+        if missing:
+            raise SceneValidationError(
+                'controller runtime identity is unavailable for '
+                + ', '.join(missing)
             )
-            digest = next((
-                value for value in candidates
-                if isinstance(value, str)
-                and re.fullmatch(r'[0-9a-f]{64}', value) is not None
-            ), None)
-            if digest is not None:
-                result[f'{provider}:{component_id}'] = digest
         return result
 
     @staticmethod
@@ -2262,6 +2246,33 @@ class AnimationWebInterface:
         ):
             raise RuntimeError('controller active identity is invalid')
         return session_id, state_revision, current_identity_digest
+
+    def _require_activation_release_identity(
+        self, status: Dict[str, Any]
+    ) -> str:
+        """Require web and controller to execute one immutable release."""
+
+        web_release = self.release_id
+        controller_release = status.get('release_id')
+        if (
+            not isinstance(web_release, str)
+            or re.fullmatch(r'[0-9a-f]{64}', web_release) is None
+        ):
+            raise RuntimeError(
+                'web release identity is unavailable for guarded activation'
+            )
+        if (
+            not isinstance(controller_release, str)
+            or re.fullmatch(r'[0-9a-f]{64}', controller_release) is None
+        ):
+            raise RuntimeError(
+                'controller release identity is unavailable for guarded activation'
+            )
+        if controller_release != web_release:
+            raise RuntimeError(
+                'web and controller release identities do not match'
+            )
+        return web_release
 
     def _canonical_activation_global_settings(self, payload: Any) -> Dict[str, Any]:
         settings = normalize_global_settings_payload(payload)
@@ -2440,6 +2451,7 @@ class AnimationWebInterface:
             dict(status) if isinstance(status, dict)
             else dict(self.control_channel.read_status() or {})
         )
+        self._require_activation_release_identity(controller_status)
         session_id, state_revision, current_identity = (
             self._activation_controller_identity(controller_status)
         )
