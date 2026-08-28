@@ -2837,6 +2837,67 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 result["firmware_installation_digest"],
             )
 
+    def test_openocd_flash_retries_only_pre_attach_usb_serial_race(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            self._production_binary(workspace)
+            devices = _receiver_devices()
+            calls = 0
+
+            def program(**kwargs):
+                nonlocal calls
+                calls += 1
+                result = self._program_success(**kwargs)
+                if calls == 1:
+                    return {
+                        **result,
+                        "returncode": 1,
+                        "verify_count": 0,
+                        "output": (
+                            "Info : No device matches the serial string\n"
+                            "Error: esp_usb_jtag: could not find or open device!\n"
+                            "** OpenOCD init failed **\n"
+                        ),
+                        "outcome": "failed",
+                    }
+                return result
+
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace",
+                    return_value=(workspace, True),
+                ),
+                patch.object(
+                    deploy_target, "_discover_receiver_devices",
+                    return_value=devices,
+                ),
+                patch.object(
+                    deploy_target, "_pinned_openocd",
+                    return_value=self._verified_openocd(),
+                ),
+                patch.object(
+                    deploy_target, "_program_receiver_openocd", side_effect=program,
+                ),
+            ):
+                result = deploy_target.flash_firmware(root, "a" * 64)
+
+            self.assertEqual(result["outcome"], "executed")
+            self.assertEqual(calls, 6)
+            evidence = json.loads(
+                Path(
+                    result["receiver_firmware_inventory"]["flash_evidence_path"]
+                ).read_text()
+            )
+            self.assertEqual(len(evidence["boards"]), 5)
+            first = evidence["boards"][0]
+            self.assertEqual(first["outcome"], "success")
+            self.assertEqual(first["transport_attempt_count"], 2)
+            self.assertEqual(len(first["transport_attempts"]), 2)
+            self.assertEqual(first["transport_attempts"][0]["verify_count"], 0)
+            self.assertEqual(first["transport_attempts"][1]["outcome"], "success")
+
     def test_missing_inventory_migrates_once_then_matching_hardware_skips(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)

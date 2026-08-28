@@ -1903,6 +1903,75 @@ def _program_receiver_openocd(
     }
 
 
+def _retryable_openocd_init_failure(result: Mapping[str, Any]) -> bool:
+    """Return whether OpenOCD failed before it attached to the selected board."""
+
+    output = str(result.get("output", ""))
+    return (
+        result.get("outcome") == "failed"
+        and result.get("verify_count") == 0
+        and "** OpenOCD init failed **" in output
+        and (
+            "No device matches the serial string" in output
+            or "could not find or open device" in output
+        )
+    )
+
+
+def _program_receiver_with_init_retry(
+    *,
+    executable: Path,
+    scripts: Path,
+    bundle_root: Path,
+    artifacts: Sequence[Mapping[str, Any]],
+    installation_digest: str,
+    device: Any,
+    expected_devices: Sequence[Any],
+    receiver_count: int,
+) -> dict[str, Any]:
+    """Retry only a verified pre-attach USB race within the roster wait bound."""
+
+    deadline = time.monotonic() + RECEIVER_USB_STABILIZATION_SECONDS
+    current = device
+    attempts: list[dict[str, Any]] = []
+    while True:
+        result = _program_receiver_openocd(
+            executable=executable,
+            scripts=scripts,
+            bundle_root=bundle_root,
+            artifacts=artifacts,
+            installation_digest=installation_digest,
+            device=current,
+        )
+        attempts.append(result)
+        if result["outcome"] == "success" or not _retryable_openocd_init_failure(
+            result
+        ):
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            observed = _wait_for_receiver_binding(
+                expected_devices,
+                receiver_count=receiver_count,
+                phase=f"before retrying programming {device.hardware_serial}",
+                timeout=remaining,
+            )
+        except RuntimeError as exc:
+            result = {**result, "retry_stabilization_error": str(exc)}
+            break
+        current = {
+            observed_device.hardware_serial: observed_device
+            for observed_device in observed
+        }[device.hardware_serial]
+    return {
+        **result,
+        "transport_attempt_count": len(attempts),
+        "transport_attempts": attempts,
+    }
+
+
 def _best_effort_stop_receiver_service() -> None:
     try:
         _command(
@@ -2095,21 +2164,24 @@ def flash_firmware(
                 current = {
                     device.hardware_serial: device for device in observed
                 }[target.device.hardware_serial]
-                result = _program_receiver_openocd(
+                result = _program_receiver_with_init_retry(
                     executable=openocd,
                     scripts=openocd_scripts,
                     bundle_root=bundle_root,
                     artifacts=immutable_artifacts,
                     installation_digest=installation_digest,
                     device=current,
+                    expected_devices=devices,
+                    receiver_count=receiver_count,
                 )
                 board_results.append(result)
                 _atomic_json(evidence_path, evidence)
                 if result["outcome"] != "success":
                     raise RuntimeError(
                         "receiver OpenOCD program/readback verification failed for "
-                        f"serial={current.hardware_serial} "
-                        f"usb_path={current.physical_location} port={current.port} "
+                        f"serial={result['hardware_serial']} "
+                        f"usb_path={result['physical_location']} "
+                        f"port={result['port']} "
                         f"returncode={result['returncode']} "
                         f"verify_count={result['verify_count']}/"
                         f"{result['expected_verify_count']}"

@@ -223,6 +223,13 @@ healthy receivers into the ROM bootloader on every deployment. Use
 `just deploy-force-firmware` when the ledger should be overridden and every
 attached receiver deliberately reconciled.
 
+During that reconciliation, a receiver that re-enumerates between the exact
+roster check and OpenOCD attachment may be retried only when OpenOCD proves it
+never attached and verified zero flash regions. Every retry revalidates the
+same five factory serials and physical USB paths within the existing bounded
+stabilization window. Partial programming, timeouts, and readback failures are
+never retried automatically and remain fail-closed evidence.
+
 Phase 4 post-flash contract: full-deploy health reports a `receiver_contract`
 derived from the selected firmware environment. It must prove the exact
 five-device roster, logical identities,
