@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -150,6 +152,26 @@ class RuntimeEnvironmentTests(unittest.TestCase):
         assert result.migrated_legacy is not None
         self.assertTrue((result.migrated_legacy / "bin" / "python").exists())
         self.assertTrue((self.root / "venv").is_symlink())
+
+    def test_empty_link_placeholder_does_not_collide_with_preserved_legacy(self):
+        link = self.root / "venv"
+        link.mkdir()
+        legacy_digest = hashlib.sha256(
+            os.fsencode(str(link.resolve()))
+        ).hexdigest()[:12]
+        preserved = self.root / ".venvs" / f"legacy-venv-{legacy_digest}"
+        preserved.mkdir(parents=True)
+        (preserved / "retained.txt").write_text("prior migration", encoding="utf-8")
+
+        result = self._ensure()
+
+        self.assertIsNone(result.migrated_legacy)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve(), result.path)
+        self.assertEqual(
+            (preserved / "retained.txt").read_text(encoding="utf-8"),
+            "prior migration",
+        )
 
     def test_identity_includes_python_platform_and_lock_bytes(self):
         first = current_interpreter_identity(self.lock)

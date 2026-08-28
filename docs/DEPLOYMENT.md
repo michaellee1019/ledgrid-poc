@@ -173,7 +173,11 @@ selected through an atomic `venv` symlink
 to a fresh, digest-addressed `.venvs/` environment keyed by the hash-pinned
 runtime lock and the Pi Python/platform identity. A candidate environment must
 import both controller and web entrypoints before it can become active; an
-unchanged identity performs no installation.
+unchanged identity performs no installation. A non-empty legacy `venv`
+directory is preserved before the symlink cutover; an empty fresh-slate
+mountpoint carries no runtime and is removed idempotently, including when an
+older preserved legacy environment already occupies its content-addressed
+destination.
 
 Phase 4 first-cutover contract: immediately after `app.stage`, full deploy runs
 `app.bootstrap_legacy` when the target has no selected `current` release but

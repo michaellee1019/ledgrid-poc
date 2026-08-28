@@ -168,13 +168,23 @@ def _activate_link(root: Path, selected: Path, link_name: str) -> Path | None:
     link = root / link_name
     migrated: Path | None = None
     if link.exists() and not link.is_symlink():
-        legacy_digest = hashlib.sha256(os.fsencode(str(link.resolve()))).hexdigest()[:12]
-        migrated = root / ENVIRONMENTS_DIR / f"legacy-{link.name}-{legacy_digest}"
-        if migrated.exists():
-            raise RuntimeError(
-                f"cannot preserve legacy environment: destination exists: {migrated}"
-            )
-        link.rename(migrated)
+        if link.is_dir() and next(link.iterdir(), None) is None:
+            # A fresh-slate cleanup can deliberately leave the historical
+            # mountpoint as an empty directory after removing its selection.
+            # It contains no environment to preserve and must not collide with
+            # an older, already-retained legacy migration.
+            link.rmdir()
+        else:
+            legacy_digest = hashlib.sha256(
+                os.fsencode(str(link.resolve()))
+            ).hexdigest()[:12]
+            migrated = root / ENVIRONMENTS_DIR / f"legacy-{link.name}-{legacy_digest}"
+            if migrated.exists():
+                raise RuntimeError(
+                    "cannot preserve legacy environment: "
+                    f"destination exists: {migrated}"
+                )
+            link.rename(migrated)
     temporary_link = link.with_name(f".{link.name}.next-{os.getpid()}")
     try:
         temporary_link.unlink(missing_ok=True)
