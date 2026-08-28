@@ -109,21 +109,20 @@ firmware, so new-host/old-firmware traffic remains legacy and
 old-host/new-firmware traffic remains decodable. CRC-error accounting is
 unchanged for legacy and v1 traffic.
 
-Aligned-envelope v2 is an explicit per-receiver FEC fallback. Its protected
-data begins `0x0b, 2, inner_v1_wire_bytes:u16`, followed by the complete
-canonical v1 envelope, including the v1 header, zero padding, and CRC. The
-entire sequence is split into even-count fixed codewords: 128 systematic data
-bytes plus two SECDED bytes (11 shortened-Hamming parity bits, one overall even
-parity bit, and four reserved-zero bits). Thus the installed eight-strip
-`SET_ALL` is 26 codewords/3,380 bytes and the one-strip form is four
-codewords/520 bytes; the maximum is 30 codewords/3,900 bytes and 3,830 semantic
-bytes. The decoder recognizes only an even-codeword shape whose raw 16-bit
-marker is exact or one bit from `0x0b02`, corrects before validating the v2
-header and nested v1 CRC, and rejects a double error in one codeword without
-dispatch or frame mutation. Valid legacy and v1 packets remain accepted.
+Aligned-envelope v3 is the active per-receiver FEC fallback. Two separated raw
+headers identify `0x0b, 3, inner_v1_wire_bytes:u16`; the protected payload
+contains another header plus the complete canonical v1 envelope, including
+alignment and CRC. Each byte-interleaved codeword has 16 systematic GF(256)
+data symbols and three parity symbols. It corrects one arbitrary byte and
+detects two per codeword; interleaving spreads any contiguous burst no longer
+than the codeword count across distinct codewords. The installed eight-strip
+`SET_ALL` is 208 codewords/3,960 bytes, the one-strip form is 28 codewords/540
+bytes, and the maximum is 212 codewords/4,036 bytes and 3,382 semantic bytes.
+The v2 decoder/capability remains accepted for old-Host rollback compatibility.
+Valid legacy and v1 packets remain accepted.
 
-Capability `fec_envelope_v2 = 1<<15` and three fresh, counter-advancing status
-observations gate Host use. The maintained service requests it only for logical
+Capability `fec_envelope_v3 = 1<<16` and three fresh, counter-advancing status
+observations gate new-Host use. The maintained service requests it only for logical
 receiver 3 through `LEDGRID_FEC_RECEIVER_IDS=3`; every other receiver remains
 v1. Status v7 is 1,248 bytes and reports received, accepted, corrected packet
 and codeword, uncorrectable, semantic-CRC, framing, and last/maximum decode-time

@@ -83,7 +83,7 @@ spi_slave_transaction_t spi_transactions[kSpiQueueDepth] = {};
 
 std::uint8_t working_frame[kMaxRgbBytes] = {};
 std::uint8_t fec_semantic_buffer[
-    ledgrid::kFecMaxCodewords * ledgrid::kFecDataBytes] = {};
+    ledgrid::kFecScratchBytes] = {};
 std::uint8_t startup_frame[kMaxRgbBytes] = {};
 #if LEDGRID_ENABLE_LOCAL_BACKGROUND
 std::uint8_t composite_frame[kMaxRgbBytes] = {};
@@ -667,7 +667,8 @@ ledgrid::ReceiverStatusV7 status_snapshot() {
   status.capabilities = ledgrid::kCapabilityStatusV3 |
                         ledgrid::kCapabilityExplicitBaseOwnership |
                         ledgrid::kCapabilityAlignedEnvelopeV1 |
-                        ledgrid::kCapabilityFecEnvelopeV2;
+                        ledgrid::kCapabilityFecEnvelopeV2 |
+                        ledgrid::kCapabilityFecEnvelopeV3;
   if (receiver_runtime.local_background_enabled()) {
     status.capabilities |= ledgrid::kCapabilityStaticLocalBackground |
                            ledgrid::kCapabilityPresentationContextV1 |

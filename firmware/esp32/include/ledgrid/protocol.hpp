@@ -40,19 +40,38 @@ constexpr std::size_t kAlignedEnvelopeMaxSemanticBytes =
 // Hamming check bits plus one overall even-parity bit make each codeword 130
 // wire bytes. The codeword count is rounded up to an even number so the
 // complete SPI transaction remains 32-bit DMA aligned.
-constexpr std::uint8_t kFecEnvelopeVersion = 2;
+constexpr std::uint8_t kFecEnvelopeVersionV2 = 2;
 constexpr std::size_t kFecEnvelopeHeaderBytes = 4;
-constexpr std::size_t kFecDataBytes = 128;
-constexpr std::size_t kFecParityBytes = 2;
+constexpr std::size_t kFecV2DataBytes = 128;
+constexpr std::size_t kFecV2ParityBytes = 2;
+constexpr std::size_t kFecV2CodewordBytes =
+    kFecV2DataBytes + kFecV2ParityBytes;
+constexpr std::size_t kFecV2ParityBits = 11;
+constexpr std::uint16_t kFecV2ParityMask = (1U << kFecV2ParityBits) - 1U;
+constexpr std::uint16_t kFecV2OverallParityMask = 1U << kFecV2ParityBits;
+constexpr std::size_t kFecV2MaxCodewords = 30;
+constexpr std::size_t kFecV2EnvelopeMaxSemanticBytes =
+    kFecV2MaxCodewords * kFecV2DataBytes - kFecEnvelopeHeaderBytes -
+    kAlignedEnvelopeHeaderBytes - kAnimationPipelineCrcBytes;
+
+// V3 retains the canonical v1 inner packet but uses 16 data symbols plus
+// three GF(256) parity symbols. Codewords are byte-interleaved across the wire,
+// so any contiguous burst no longer than the codeword count changes at most
+// one symbol per codeword. Three independent syndromes correct one arbitrary
+// byte and detect two; separated prefix/suffix discriminators keep framing
+// attributable when one end of the transaction is damaged.
+constexpr std::uint8_t kFecEnvelopeVersion = 3;
+constexpr std::size_t kFecDataBytes = 16;
+constexpr std::size_t kFecParityBytes = 3;
 constexpr std::size_t kFecCodewordBytes =
     kFecDataBytes + kFecParityBytes;
-constexpr std::size_t kFecParityBits = 11;
-constexpr std::uint16_t kFecParityMask = (1U << kFecParityBits) - 1U;
-constexpr std::uint16_t kFecOverallParityMask = 1U << kFecParityBits;
-constexpr std::size_t kFecMaxCodewords = 30;
+constexpr std::size_t kFecWireHeaderBytes = 2U * kFecEnvelopeHeaderBytes;
+constexpr std::size_t kFecMaxCodewords = 212;
 constexpr std::size_t kFecEnvelopeMaxSemanticBytes =
     kFecMaxCodewords * kFecDataBytes - kFecEnvelopeHeaderBytes -
     kAlignedEnvelopeHeaderBytes - kAnimationPipelineCrcBytes;
+constexpr std::size_t kFecScratchBytes =
+    kFecV2MaxCodewords * kFecV2DataBytes;
 constexpr std::size_t kInstallationProfilePreflightBytes = 69;
 constexpr std::size_t kInstallationProfileBeginBytes = 81;
 constexpr std::size_t kInstallationProfileChunkHeaderBytes = 5;
@@ -128,6 +147,7 @@ enum ReceiverCapability : std::uint32_t {
   kCapabilityNativeGuardedLoaderV1 = 1U << 13U,
   kCapabilityAlignedEnvelopeV1 = 1U << 14U,
   kCapabilityFecEnvelopeV2 = 1U << 15U,
+  kCapabilityFecEnvelopeV3 = 1U << 16U,
 };
 
 struct ReceiverPacketPayload {

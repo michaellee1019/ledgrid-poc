@@ -2946,9 +2946,9 @@ def _receiver_health_rejection(
         fec_frames = int(status["fec_frames_sent"])
         if (
             int(status["fec_codewords_sent"])
-            != (26 * fec_frames if expected_fec else 0)
+            != (208 * fec_frames if expected_fec else 0)
             or int(status["fec_parity_bytes_sent"])
-            != (52 * fec_frames if expected_fec else 0)
+            != (624 * fec_frames if expected_fec else 0)
             or int(status["fec_data_padding_bytes_sent"])
             != (4 * fec_frames if expected_fec else 0)
             or (not expected_fec and fec_frames != 0)
@@ -3037,7 +3037,7 @@ def _receiver_health_rejection(
         if (
             corrected_packets > accepted
             or corrected_codewords < corrected_packets
-            or corrected_codewords > 26 * corrected_packets
+            or corrected_codewords > 208 * corrected_packets
         ):
             return f"receiver {logical_id} corrected FEC accounting is inconsistent"
         last_decode_us = int(status["receiver_fec_last_decode_us"])
@@ -3065,7 +3065,7 @@ def _receiver_health_rejection(
             status,
             label=f"receiver {logical_id}",
             minimum_buffer_size=(
-                3380 if expected_fec else 3320 if logical_id < 4 else 424
+                3960 if expected_fec else 3320 if logical_id < 4 else 424
             ),
         )
         if sampling_rejection is not None:
@@ -3116,7 +3116,7 @@ def _receiver_health_rejection(
     aggregate_sampling_rejection = _full_frame_sampling_snapshot_rejection(
         sample.receiver_aggregate,
         label="aggregate",
-        minimum_buffer_size=3380,
+        minimum_buffer_size=3960,
     )
     if aggregate_sampling_rejection is not None:
         return aggregate_sampling_rejection
@@ -3191,7 +3191,7 @@ def _transport_accounting_delta_rejection(
             return f"{label} FEC accounting counter reset"
         if (
             deltas["transport_envelope_bytes_sent"]
-            != 4 * transfers + 4 * fec_frames
+            != 4 * transfers + 12 * fec_frames
         ):
             return f"{label} envelope accounting is inconsistent"
         if deltas["crc_bytes_sent"] != 2 * transfers:
@@ -3294,7 +3294,7 @@ def _transport_accounting_delta_rejection(
             if (
                 corrected_packets > accepted
                 or corrected_codewords < corrected_packets
-                or corrected_codewords > 26 * corrected_packets
+                or corrected_codewords > 208 * corrected_packets
             ):
                 return (
                     f"receiver {logical_id} corrected FEC delta is inconsistent"
@@ -3309,7 +3309,7 @@ def _transport_accounting_delta_rejection(
                 * 3
             )
             expected_wire = (
-                3380
+                3960
                 if last.get("fec_transport_enabled") is True
                 else ((expected_semantic + 9) // 4) * 4
             )
@@ -3405,7 +3405,7 @@ def _transport_accounting_evidence(
             * 3
         )
         expected_wire = (
-            3380
+            3960
             if item.get("fec_transport_enabled") is True
             else ((expected_semantic + 9) // 4) * 4
         )
@@ -3461,7 +3461,7 @@ def _transport_accounting_evidence(
             {
                 "logical_device": logical_id,
                 "expected_full_frame_wire_bytes": (
-                    3380
+                    3960
                     if after_by_id[logical_id].get("fec_transport_enabled") is True
                     else (
                         (

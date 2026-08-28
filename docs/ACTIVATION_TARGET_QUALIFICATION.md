@@ -25,7 +25,8 @@ PERF-01 passes only when all of the following hold in one observation window:
   observation), with logical identities `0..4`, routes
   `0.0, 0.1, 1.1, 1.0, 1.2`, widths
   `8, 8, 8, 8, 1`, offsets `0, 8, 16, 24, 32`, installed direction maps, and
-  aligned-envelope capability `1<<14` and FEC capability `1<<15`; every Host receiver reports
+  aligned-envelope capability `1<<14`, retained FEC-v2 rollback capability
+  `1<<15`, and active FEC-v3 capability `1<<16`; every Host receiver reports
   `transport_envelope_enabled=true`, the aggregate enabled count is exactly
   five, and positive semantic/envelope/padding byte deltas reconcile exactly
   with wire-byte, transfer, CRC-byte, and FEC-parity deltas; exactly logical
@@ -33,8 +34,9 @@ PERF-01 passes only when all of the following hold in one observation window:
   negotiation;
 - every receiver's dedicated successful `SET_ALL` counters advance at at least
   `150 FPS`; logical receivers 0-2 reconcile exactly from 3,313 semantic bytes
-  to 3,320 aligned wire bytes per frame, logical receiver 3 from 3,313 to 3,380
-  FEC wire bytes (26 codewords, 52 parity bytes, four outer zero-tail bytes),
+  to 3,320 aligned wire bytes per frame, logical receiver 3 from 3,313 to 3,960
+  FEC wire bytes (208 byte-interleaved codewords, 624 parity bytes, four outer
+  zero-tail bytes, and two four-byte raw headers),
   and logical receiver 4 from 415
   semantic bytes to 424 aligned wire bytes per frame, so status/SHOW/partial
   traffic cannot substitute for full-frame stress;
@@ -81,7 +83,7 @@ wall. A failed capture leaves the previous evidence file untouched. A fresh
 Composer Check loads the strict envelope only when its binding digest matches.
 The retained target-evidence envelope is schema v3 and includes a strict
 `transport` proof: exact aggregate and logical-device `0..4` full-frame/FEC deltas,
-the 3,320/3,380/424-byte expected wire sizes, separate latest and sticky maximum
+the 3,320/3,960/424-byte expected wire sizes, separate latest and sticky maximum
 status-version fields, final sample-gap/FEC-decode gauges, selected spidev
 buffer capacities, and write-only fast-path support. Aggregate additive values
 must equal the receiver sums, while gap, capacity, and support aggregates must
@@ -112,7 +114,7 @@ requires DMA RX buffers and transaction lengths to be word-aligned/four-byte
 multiples and warns that inappropriate Host writes may be discarded. The
 versioned envelope satisfies that rule and keeps terminal faults visible.
 Because retained wall evidence contains 26 receiver-3 CRC failures in 60 seconds
-at 20 MHz, PERF-01 remains red until full-size 3,380-byte receiver-3 FEC traffic
+at 20 MHz, PERF-01 remains red until full-size 3,380-byte v2 receiver-3 FEC traffic
 meets the exact 150-FPS gate with zero legacy/terminal fault growth.
 
 ## POWER-01 status: OPERATOR_WAIVED

@@ -78,7 +78,7 @@ def _device(receiver_id: int, elapsed: float) -> dict:
         "receiver_status_version": 7,
         "receiver_status_max_version_seen": 7,
         "receiver_status_seen": True,
-        "receiver_capabilities": 0xC00C,
+        "receiver_capabilities": 0x1C00C,
         "transport_envelope_enabled": True,
         "transport_envelope_negotiation_candidate": None,
         "transport_envelope_negotiation_streak": 0,
@@ -101,7 +101,7 @@ def _device(receiver_id: int, elapsed: float) -> dict:
         "spi_transfers": base + frames,
         "bytes_sent": base + frames * full_frame_wire,
         "semantic_bytes_sent": base + frames * full_frame_semantic,
-        "transport_envelope_bytes_sent": base + frames * (8 if fec_enabled else 4),
+        "transport_envelope_bytes_sent": base + frames * (16 if fec_enabled else 4),
         "transport_padding_bytes_sent": base + frames * (
             5 if fec_enabled else (-(full_frame_semantic + 6)) % 4
         ),
@@ -118,8 +118,8 @@ def _device(receiver_id: int, elapsed: float) -> dict:
         "full_frame_write_only_supported": True,
         "crc_bytes_sent": base + frames * 2,
         "fec_frames_sent": full_frame_total if fec_enabled else 0,
-        "fec_codewords_sent": 26 * full_frame_total if fec_enabled else 0,
-        "fec_parity_bytes_sent": 52 * full_frame_total if fec_enabled else 0,
+        "fec_codewords_sent": 208 * full_frame_total if fec_enabled else 0,
+        "fec_parity_bytes_sent": 624 * full_frame_total if fec_enabled else 0,
         "fec_data_padding_bytes_sent": 4 * full_frame_total if fec_enabled else 0,
         "receiver_operation_sequence": base + frames,
         "receiver_packets": base + frames,

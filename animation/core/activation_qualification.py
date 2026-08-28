@@ -745,7 +745,7 @@ _TARGET_TRANSPORT_FINAL_FIELDS = (
     "spidev_buffer_size",
     "full_frame_write_only_supported",
 )
-_TARGET_TRANSPORT_EXPECTED_WIRE_BYTES = (3320, 3320, 3320, 3380, 424)
+_TARGET_TRANSPORT_EXPECTED_WIRE_BYTES = (3320, 3320, 3320, 3960, 424)
 _TARGET_TRANSPORT_MAX_SAMPLE_GAP = 256
 _TARGET_FEC_DELTA_FIELDS = (
     "fec_frames_sent",
@@ -792,8 +792,8 @@ def _target_fec_item(
         )
         expected_host = {
             "fec_frames_sent": expected_fec_frames,
-            "fec_codewords_sent": 26 * expected_fec_frames,
-            "fec_parity_bytes_sent": 52 * expected_fec_frames,
+            "fec_codewords_sent": 208 * expected_fec_frames,
+            "fec_parity_bytes_sent": 624 * expected_fec_frames,
             "fec_data_padding_bytes_sent": 4 * expected_fec_frames,
         }
         for field, expected in expected_host.items():
@@ -826,7 +826,7 @@ def _target_fec_item(
         if (
             corrected_packets > accepted
             or corrected_codewords < corrected_packets
-            or corrected_codewords > 26 * corrected_packets
+            or corrected_codewords > 208 * corrected_packets
         ):
             raise QualificationValidationError(
                 f"{label}.deltas corrected FEC accounting is inconsistent"
