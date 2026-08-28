@@ -355,6 +355,23 @@ class _FakeManager:
         }
 
 
+class _DisabledReceiverProfileController:
+    _receiver_geometry_profile_enabled = False
+    _installation_profile_wall = None
+
+    def __init__(self) -> None:
+        self.getter_calls = 0
+        self.install_calls = 0
+
+    def installation_profile_wall(self):
+        self.getter_calls += 1
+        raise RuntimeError("disabled receiver profile getter must not run")
+
+    def install_installation_profile(self, _candidate):
+        self.install_calls += 1
+        raise RuntimeError("disabled receiver profile installer must not run")
+
+
 class RuntimeActivationTransactionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.catalog = _catalog()
@@ -911,6 +928,349 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
         self.assertEqual(manager.mutation_count, 0)
         self.assertEqual(coordinator.state_revision, 0)
 
+    def test_explicit_disabled_empty_profile_noop_never_touches_receivers(self) -> None:
+        manager, coordinator = self.coordinator()
+        controller = _DisabledReceiverProfileController()
+        manager.controller = controller
+        command = self.command(
+            coordinator,
+            profile_digest=EMPTY_INSTALLATION_PROFILE_DIGEST,
+        )
+
+        status = coordinator.activate(command)
+
+        self.assertEqual(status["phase"], "active")
+        self.assertEqual(
+            status["observed_identity"],
+            activation_identity_from_basis(command["basis"]),
+        )
+        self.assertTrue(status["rollback"]["available"])
+        self.assertEqual(manager.profile, EMPTY_INSTALLATION_PROFILE_DIGEST)
+        self.assertEqual(controller.getter_calls, 0)
+        self.assertEqual(controller.install_calls, 0)
+
+    def test_empty_profile_noop_rejects_every_nonexact_authority_case(self) -> None:
+        cases = (
+            ("enabled gate", True, EMPTY_INSTALLATION_PROFILE_DIGEST, False),
+            ("unknown gate", None, EMPTY_INSTALLATION_PROFILE_DIGEST, False),
+            ("nonempty current", False, PROFILE_A, False),
+            ("nonempty desired", False, EMPTY_INSTALLATION_PROFILE_DIGEST, True),
+            ("receiver native", False, EMPTY_INSTALLATION_PROFILE_DIGEST, False),
+        )
+        for label, gate, current_profile, nonempty_desired in cases:
+            with self.subTest(case=label):
+                manager, coordinator = self.coordinator()
+                controller = _DisabledReceiverProfileController()
+                if gate is None:
+                    controller._receiver_geometry_profile_enabled = None
+                else:
+                    controller._receiver_geometry_profile_enabled = gate
+                manager.controller = controller
+                manager.profile = current_profile
+                desired_profile = (
+                    PROFILE_A
+                    if nonempty_desired
+                    else EMPTY_INSTALLATION_PROFILE_DIGEST
+                )
+                command = self.command(
+                    coordinator,
+                    profile_digest=desired_profile,
+                )
+                before = manager.state()
+                receiver_runtime = label == "receiver native"
+
+                with patch.object(
+                    ControllerActivationCoordinator,
+                    "_uses_receiver_runtime",
+                    return_value=receiver_runtime,
+                ):
+                    status = coordinator.activate(command)
+
+                self.assertEqual(status["phase"], "failed")
+                self.assertIsNone(status["observed_identity"])
+                self.assertEqual(manager.state(), before)
+                self.assertEqual(manager.mutation_count, 0)
+                self.assertEqual(coordinator.state_revision, 0)
+                self.assertGreaterEqual(controller.getter_calls, 1)
+                self.assertEqual(controller.install_calls, 0)
+
+    def test_disabled_gate_with_cached_active_binding_cannot_use_empty_noop(self) -> None:
+        class BoundReceiver:
+            @staticmethod
+            def transaction_snapshot():
+                return SimpleNamespace(active_binding=object())
+
+        class Controller(_DisabledReceiverProfileController):
+            def __init__(self) -> None:
+                super().__init__()
+                self._installation_profile_wall = SimpleNamespace(
+                    receivers=(BoundReceiver(),)
+                )
+
+            def installation_profile_wall(self):
+                self.getter_calls += 1
+                return self._installation_profile_wall
+
+        manager, coordinator = self.coordinator()
+        controller = Controller()
+        manager.controller = controller
+        command = self.command(
+            coordinator,
+            profile_digest=EMPTY_INSTALLATION_PROFILE_DIGEST,
+        )
+        before = manager.state()
+
+        status = coordinator.activate(command)
+
+        self.assertEqual(status["phase"], "failed")
+        self.assertIn("no exact clear transaction", status["error"])
+        self.assertEqual(manager.state(), before)
+        self.assertEqual(manager.mutation_count, 0)
+        self.assertGreaterEqual(controller.getter_calls, 1)
+        self.assertEqual(controller.install_calls, 0)
+
+    def test_empty_profile_noop_authority_is_rechecked_before_snapshot(self) -> None:
+        controller = _DisabledReceiverProfileController()
+
+        def drift(phase: str, boundary: str, _activation_id: str) -> None:
+            if phase == "preflighting" and boundary == "complete":
+                controller._receiver_geometry_profile_enabled = True
+
+        manager, coordinator = self.coordinator(fault_injector=drift)
+        manager.controller = controller
+        before = manager.state()
+
+        status = coordinator.activate(self.command(
+            coordinator,
+            profile_digest=EMPTY_INSTALLATION_PROFILE_DIGEST,
+        ))
+
+        self.assertEqual(status["phase"], "failed")
+        self.assertIn("changed before snapshot", status["error"])
+        self.assertEqual(manager.state(), before)
+        self.assertEqual(manager.mutation_count, 0)
+        self.assertEqual(controller.getter_calls, 0)
+        self.assertEqual(controller.install_calls, 0)
+
+    def test_empty_profile_noop_requires_explicit_valid_current_profile(self) -> None:
+        cases = (
+            ("missing", object()),
+            ("null", None),
+            ("malformed", "not-a-sha256"),
+        )
+        for label, replacement in cases:
+            with self.subTest(case=label):
+                manager, coordinator = self.coordinator()
+                controller = _DisabledReceiverProfileController()
+                manager.controller = controller
+                command = self.command(
+                    coordinator,
+                    profile_digest=EMPTY_INSTALLATION_PROFILE_DIGEST,
+                )
+                original_status = manager.get_current_status
+
+                def invalid_status():
+                    status = original_status()
+                    if label == "missing":
+                        status.pop("installation_profile_digest")
+                    else:
+                        status["installation_profile_digest"] = replacement
+                    return status
+
+                manager.get_current_status = invalid_status
+                before = manager.state()
+
+                status = coordinator.activate(command)
+
+                self.assertEqual(status["phase"], "failed")
+                self.assertIsNone(status["observed_identity"])
+                self.assertIn("installation_profile_digest", status["error"])
+                self.assertEqual(manager.state(), before)
+                self.assertEqual(manager.mutation_count, 0)
+                self.assertEqual(coordinator.state_revision, 0)
+                self.assertEqual(controller.getter_calls, 0)
+                self.assertEqual(controller.install_calls, 0)
+
+    def test_host_only_missing_profile_constructs_activates_and_reconciles(self) -> None:
+        def omit_profile(manager: _FakeManager) -> None:
+            original_status = manager.get_current_status
+
+            def host_only_status():
+                status = original_status()
+                status.pop("installation_profile_digest")
+                return status
+
+            manager.get_current_status = host_only_status
+
+        manager = _FakeManager(
+            self.catalog, self.initial_scene, self.initial_globals
+        )
+        omit_profile(manager)
+        coordinator = ControllerActivationCoordinator(manager)
+        command = self.command(
+            coordinator,
+            profile_digest=EMPTY_INSTALLATION_PROFILE_DIGEST,
+        )
+
+        active = coordinator.activate(command)
+
+        self.assertEqual(active["phase"], "active")
+        self.assertEqual(
+            active["observed_identity"],
+            activation_identity_from_basis(command["basis"]),
+        )
+
+        restarted_manager = _FakeManager(
+            self.catalog, manager.scene, self.desired_globals
+        )
+        omit_profile(restarted_manager)
+        restarted = ControllerActivationCoordinator(restarted_manager)
+
+        reconciled = restarted.reconcile_durable_active(command, active)
+
+        self.assertEqual(reconciled["phase"], "active")
+        self.assertEqual(
+            reconciled["observed_identity"],
+            activation_identity_from_basis(command["basis"]),
+        )
+        self.assertFalse(reconciled["rollback"]["available"])
+        self.assertEqual(restarted_manager.mutation_count, 0)
+
+    def test_host_only_fallback_requires_every_profile_seam_absent(self) -> None:
+        cases = (
+            ("controller absent", None, True),
+            ("plain controller", SimpleNamespace(), True),
+            (
+                "getter none",
+                SimpleNamespace(installation_profile_wall=None),
+                False,
+            ),
+            (
+                "installer none",
+                SimpleNamespace(install_installation_profile=None),
+                False,
+            ),
+            (
+                "getter only",
+                SimpleNamespace(installation_profile_wall=lambda: None),
+                False,
+            ),
+            (
+                "installer only",
+                SimpleNamespace(install_installation_profile=lambda _item: None),
+                False,
+            ),
+            (
+                "rollout marker",
+                SimpleNamespace(_receiver_geometry_profile_enabled=False),
+                False,
+            ),
+            (
+                "cached-wall marker",
+                SimpleNamespace(_installation_profile_wall=None),
+                False,
+            ),
+        )
+        for label, controller, host_only in cases:
+            with self.subTest(case=label):
+                manager = _FakeManager(
+                    self.catalog, self.initial_scene, self.initial_globals
+                )
+                if controller is not None:
+                    manager.controller = controller
+                original_status = manager.get_current_status
+
+                def missing_profile_status():
+                    status = original_status()
+                    status.pop("installation_profile_digest")
+                    return status
+
+                manager.get_current_status = missing_profile_status
+
+                if host_only:
+                    coordinator = ControllerActivationCoordinator(manager)
+                    self.assertEqual(
+                        coordinator.controller_status()["active_identity"][
+                            "installation_profile_digest"
+                        ],
+                        EMPTY_INSTALLATION_PROFILE_DIGEST,
+                    )
+                else:
+                    with self.assertRaisesRegex(
+                        ValueError, "installation_profile_digest is missing"
+                    ):
+                        ControllerActivationCoordinator(manager)
+
+    def test_empty_profile_noop_rollback_revalidates_profile_authority(self) -> None:
+        cases = (
+            ("missing", object()),
+            ("null", None),
+            ("malformed", "not-a-sha256"),
+        )
+        for label, replacement in cases:
+            with self.subTest(case=label):
+                invalid = [False]
+
+                def inject(phase: str, boundary: str, _activation_id: str) -> None:
+                    if phase == "applying" and boundary == "brightness":
+                        invalid[0] = True
+                        raise RuntimeError("injected authority loss after mutation")
+
+                manager, coordinator = self.coordinator(fault_injector=inject)
+                controller = _DisabledReceiverProfileController()
+                manager.controller = controller
+                original_status = manager.get_current_status
+
+                def invalid_status():
+                    status = original_status()
+                    if invalid[0]:
+                        if label == "missing":
+                            status.pop("installation_profile_digest")
+                        else:
+                            status["installation_profile_digest"] = replacement
+                    return status
+
+                manager.get_current_status = invalid_status
+
+                status = coordinator.activate(self.command(
+                    coordinator,
+                    profile_digest=EMPTY_INSTALLATION_PROFILE_DIGEST,
+                ))
+
+                self.assertEqual(status["phase"], "failed")
+                self.assertEqual(status["rollback"]["result"], "failed")
+                self.assertIn(
+                    "installation_profile_digest", status["rollback"]["error"]
+                )
+                self.assertIsNone(status["observed_identity"])
+                self.assertEqual(coordinator.state_revision, 1)
+                self.assertEqual(controller.getter_calls, 0)
+                self.assertEqual(controller.install_calls, 0)
+
+    def test_empty_profile_noop_snapshot_compensates_late_host_failure(self) -> None:
+        def inject(phase: str, boundary: str, _activation_id: str) -> None:
+            if phase == "applying" and boundary == "brightness":
+                raise RuntimeError("injected late host mutation failure")
+
+        manager, coordinator = self.coordinator(fault_injector=inject)
+        controller = _DisabledReceiverProfileController()
+        manager.controller = controller
+        before = manager.state()
+
+        status = coordinator.activate(self.command(
+            coordinator,
+            profile_digest=EMPTY_INSTALLATION_PROFILE_DIGEST,
+        ))
+
+        self.assertEqual(status["phase"], "rolled_back")
+        self.assertEqual(status["rollback"]["result"], "succeeded")
+        self.assertTrue(status["telemetry"]["complete"])
+        self.assertTrue(status["telemetry"]["fresh"])
+        self.assertEqual(manager.state(), before)
+        self.assertEqual(coordinator.state_revision, 1)
+        self.assertEqual(controller.getter_calls, 0)
+        self.assertEqual(controller.install_calls, 0)
+
     def test_receiver_activation_rejects_stale_preexisting_evidence(self) -> None:
         desired_revision = self.desired_scene["revision"]
 
@@ -979,6 +1339,32 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
         self.assertEqual(reconciled["phase"], "failed")
         self.assertIn("does not match", reconciled["error"])
         self.assertFalse(reconciled["rollback"]["available"])
+        self.assertEqual(restarted_manager.mutation_count, 0)
+
+    def test_restart_reconciliation_never_defaults_missing_profile_to_empty(self) -> None:
+        _manager, prior = self.coordinator()
+        command = self.command(prior)
+        durable_active = prior.activate(command)
+        restarted_manager = _FakeManager(
+            self.catalog, self.desired_scene, self.desired_globals
+        )
+        restarted_manager.profile = PROFILE_A
+        restarted_manager.controller = _DisabledReceiverProfileController()
+        restarted = ControllerActivationCoordinator(restarted_manager)
+        original_status = restarted_manager.get_current_status
+
+        def missing_profile_status():
+            status = original_status()
+            status.pop("installation_profile_digest")
+            return status
+
+        restarted_manager.get_current_status = missing_profile_status
+
+        with self.assertRaisesRegex(
+            ValueError, "installation_profile_digest is missing"
+        ):
+            restarted.reconcile_durable_active(command, durable_active)
+
         self.assertEqual(restarted_manager.mutation_count, 0)
 
     def test_receiver_evidence_requires_exact_correlation_and_advancement(self) -> None:

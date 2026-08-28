@@ -355,6 +355,7 @@ class ControllerStateSnapshot:
     scene: dict[str, Any] | None
     global_settings: dict[str, Any]
     installation_profile_digest: str
+    receiver_profile_noop: bool = False
     receiver_profile_wall: Any = None
     receiver_profile_snapshots: tuple[Any, ...] = ()
 
@@ -615,11 +616,9 @@ class ControllerActivationCoordinator:
         status = self._manager_status()
         scene = self._current_scene(status)
         globals_state = self._current_global_settings(status)
-        profile = status.get(
-            "installation_profile_digest", EMPTY_INSTALLATION_PROFILE_DIGEST
+        profile = self._current_profile_digest(
+            status, boundary="active identity derivation"
         )
-        if not isinstance(profile, str):
-            profile = EMPTY_INSTALLATION_PROFILE_DIGEST
         return {
             "scene_identity": (
                 None
@@ -955,8 +954,8 @@ class ControllerActivationCoordinator:
                 current_status,
                 revision=desired["global_settings"]["revision"],
             )
-            current_profile = current_status.get(
-                "installation_profile_digest", EMPTY_INSTALLATION_PROFILE_DIGEST
+            current_profile = self._current_profile_digest(
+                current_status, boundary="active restart reconciliation"
             )
             runtimes = manager_controller_runtime_digests(self.manager)
             runtimes_match = all(
@@ -1048,8 +1047,8 @@ class ControllerActivationCoordinator:
         current_globals = self._current_global_settings(
             current_status, revision=desired["global_settings"]["revision"]
         )
-        current_profile = current_status.get(
-            "installation_profile_digest", EMPTY_INSTALLATION_PROFILE_DIGEST
+        current_profile = self._current_profile_digest(
+            current_status, boundary="nonterminal restart reconciliation"
         )
         runtimes = manager_controller_runtime_digests(self.manager)
         runtimes_match = all(
@@ -1128,7 +1127,59 @@ class ControllerActivationCoordinator:
                 "activation cancelled before mutation"
             )
 
-    def _capture_receiver_profile_snapshot(self) -> tuple[Any, tuple[Any, ...]]:
+    def _empty_receiver_profile_noop_allowed(
+        self,
+        *,
+        current_scene: Mapping[str, Any] | None,
+        desired_scene: Mapping[str, Any] | None,
+        current_profile: str,
+        desired_profile: str,
+    ) -> bool:
+        """Return the one physical-controller case requiring no profile I/O."""
+
+        controller = getattr(self.manager, "controller", None)
+        return bool(
+            current_profile == EMPTY_INSTALLATION_PROFILE_DIGEST
+            and desired_profile == EMPTY_INSTALLATION_PROFILE_DIGEST
+            and not self._uses_receiver_runtime(current_scene)
+            and not self._uses_receiver_runtime(desired_scene)
+            and getattr(
+                controller, "_receiver_geometry_profile_enabled", None
+            ) is False
+            and hasattr(controller, "_installation_profile_wall")
+            and getattr(controller, "_installation_profile_wall") is None
+        )
+
+    def _receiver_profile_authority_is_host_only(self) -> bool:
+        controller = getattr(self.manager, "controller", None)
+        return bool(
+            not hasattr(controller, "installation_profile_wall")
+            and not hasattr(controller, "install_installation_profile")
+            and not hasattr(controller, "_receiver_geometry_profile_enabled")
+            and not hasattr(controller, "_installation_profile_wall")
+        )
+
+    def _current_profile_digest(
+        self, status: Mapping[str, Any], *, boundary: str
+    ) -> str:
+        if "installation_profile_digest" not in status:
+            if self._receiver_profile_authority_is_host_only():
+                return EMPTY_INSTALLATION_PROFILE_DIGEST
+            raise ControllerActivationValidationError(
+                f"current installation_profile_digest is missing during {boundary}"
+            )
+        profile = _strict_digest(
+            status["installation_profile_digest"],
+            f"current installation_profile_digest during {boundary}",
+        )
+        assert isinstance(profile, str)
+        return profile
+
+    def _capture_receiver_profile_snapshot(
+        self, *, receiver_profile_noop: bool = False
+    ) -> tuple[Any, tuple[Any, ...]]:
+        if receiver_profile_noop:
+            return None, ()
         controller = getattr(self.manager, "controller", None)
         getter = getattr(controller, "installation_profile_wall", None)
         if not callable(getter):
@@ -1388,7 +1439,9 @@ class ControllerActivationCoordinator:
             > before.get("publisher_last_success_at", float("-inf"))
         )
 
-    def _snapshot(self) -> ControllerStateSnapshot:
+    def _snapshot(
+        self, *, receiver_profile_noop: bool = False
+    ) -> ControllerStateSnapshot:
         status = self._manager_status()
         scene = self._current_scene(status)
         globals_state = self._current_global_settings(status)
@@ -1396,17 +1449,28 @@ class ControllerActivationCoordinator:
             raise ControllerActivationValidationError(
                 "current painter or legacy animation state cannot be restored exactly"
             )
-        profile = status.get(
-            "installation_profile_digest", EMPTY_INSTALLATION_PROFILE_DIGEST
+        profile = self._current_profile_digest(
+            status, boundary="snapshot"
         )
-        _strict_digest(profile, "current installation_profile_digest")
-        wall, receiver_snapshots = self._capture_receiver_profile_snapshot()
+        if receiver_profile_noop and not self._empty_receiver_profile_noop_allowed(
+            current_scene=scene,
+            desired_scene=scene,
+            current_profile=profile,
+            desired_profile=profile,
+        ):
+            raise ControllerActivationConflictError(
+                "empty receiver profile no-op authority changed before snapshot"
+            )
+        wall, receiver_snapshots = self._capture_receiver_profile_snapshot(
+            receiver_profile_noop=receiver_profile_noop
+        )
         body = {
             "state_revision": self._state_revision,
             "active_identity": self._active_identity,
             "scene": scene,
             "global_settings": globals_state,
             "installation_profile_digest": profile,
+            "receiver_profile_noop": receiver_profile_noop,
         }
         return ControllerStateSnapshot(
             snapshot_id=_canonical_json_sha256(body),
@@ -1415,11 +1479,14 @@ class ControllerActivationCoordinator:
             scene=None if scene is None else _copy_json(scene),
             global_settings=_copy_json(globals_state),
             installation_profile_digest=profile,
+            receiver_profile_noop=receiver_profile_noop,
             receiver_profile_wall=wall,
             receiver_profile_snapshots=receiver_snapshots,
         )
 
-    def _preflight(self, record: _ActivationRecord) -> tuple[dict[str, Any], dict[str, Any], str]:
+    def _preflight(
+        self, record: _ActivationRecord
+    ) -> tuple[dict[str, Any], dict[str, Any], str, bool]:
         command = record.command
         activation_id = command["activation_id"]
         basis = command["basis"]
@@ -1484,6 +1551,16 @@ class ControllerActivationCoordinator:
         self._check_cancelled(record)
 
         profile = desired["installation_profile_digest"]
+        current_status = self._manager_status()
+        current_profile = self._current_profile_digest(
+            current_status, boundary="preflight"
+        )
+        receiver_profile_noop = self._empty_receiver_profile_noop_allowed(
+            current_scene=self._current_scene(current_status),
+            desired_scene=scene,
+            current_profile=current_profile,
+            desired_profile=profile,
+        )
         profile_preflight = getattr(
             self.manager, "preflight_installation_profile", None
         )
@@ -1494,7 +1571,8 @@ class ControllerActivationCoordinator:
                 "manager cannot preflight the desired installation profile"
             )
         if profile == EMPTY_INSTALLATION_PROFILE_DIGEST:
-            self._preflight_empty_receiver_profile()
+            if not receiver_profile_noop:
+                self._preflight_empty_receiver_profile()
         else:
             # Resolve all receiver transaction authority before snapshot/mutation.
             self._receiver_profile_context(profile)
@@ -1519,7 +1597,7 @@ class ControllerActivationCoordinator:
             )
         self._fault("preflighting", "complete", activation_id)
         self._check_cancelled(record)
-        return scene, globals_state, profile
+        return scene, globals_state, profile, receiver_profile_noop
 
     def _install_receiver_profile(self, profile_digest: str) -> None:
         if profile_digest == EMPTY_INSTALLATION_PROFILE_DIGEST:
@@ -1542,10 +1620,28 @@ class ControllerActivationCoordinator:
                 "receiver installation-profile identity proof is stale or incomplete"
             )
 
-    def _apply_profile(self, profile_digest: str) -> None:
-        current = self._manager_status().get(
-            "installation_profile_digest", EMPTY_INSTALLATION_PROFILE_DIGEST
+    def _apply_profile(
+        self,
+        profile_digest: str,
+        *,
+        desired_scene: Mapping[str, Any] | None,
+        receiver_profile_noop: bool = False,
+    ) -> None:
+        current_status = self._manager_status()
+        current = self._current_profile_digest(
+            current_status, boundary="apply"
         )
+        if receiver_profile_noop:
+            if not self._empty_receiver_profile_noop_allowed(
+                current_scene=self._current_scene(current_status),
+                desired_scene=desired_scene,
+                current_profile=current,
+                desired_profile=profile_digest,
+            ):
+                raise ControllerActivationConflictError(
+                    "empty receiver profile no-op authority changed after preflight"
+                )
+            return
         # Receiver-capable controllers must prove/rebind the exact generation
         # even when the host selection already names the desired digest.
         self._install_receiver_profile(profile_digest)
@@ -1580,12 +1676,17 @@ class ControllerActivationCoordinator:
         *,
         activation_id: str,
         inject_faults: bool,
+        receiver_profile_noop: bool = False,
     ) -> None:
         def boundary(name: str) -> None:
             if inject_faults:
                 self._fault("applying", name, activation_id)
 
-        self._apply_profile(profile_digest)
+        self._apply_profile(
+            profile_digest,
+            desired_scene=scene,
+            receiver_profile_noop=receiver_profile_noop,
+        )
         boundary("installation_profile")
         self.manager.set_plant_modifiers(globals_state["plant_modifiers"])
         boundary("plant_modifiers")
@@ -1650,7 +1751,21 @@ class ControllerActivationCoordinator:
         scene: Mapping[str, Any],
         globals_state: Mapping[str, Any],
         profile_digest: str,
+        *,
+        receiver_profile_noop: bool = False,
     ) -> tuple[dict[str, Any], bool, bool]:
+        status = self._manager_status()
+        observed_scene = self._current_scene(status)
+        observed_profile = self._current_profile_digest(
+            status, boundary="observation"
+        )
+        if receiver_profile_noop and not self._empty_receiver_profile_noop_allowed(
+            current_scene=observed_scene,
+            desired_scene=scene,
+            current_profile=observed_profile,
+            desired_profile=profile_digest,
+        ):
+            return self._derive_active_identity(), False, True
         if self._observer is not None:
             raw = self._observer(record.command)
             if raw is None:
@@ -1668,19 +1783,17 @@ class ControllerActivationCoordinator:
                 bool(raw.get("telemetry_fresh", raw.get("fresh", False))),
             )
 
-        status = self._manager_status()
-        observed_scene = self._current_scene(status)
         observed_globals = self._current_global_settings(
             status, revision=globals_state["revision"]
-        )
-        observed_profile = status.get(
-            "installation_profile_digest", EMPTY_INSTALLATION_PROFILE_DIGEST
         )
         if (
             observed_scene != scene
             or observed_globals != globals_state
             or observed_profile != profile_digest
-            or not self._receiver_profile_matches(profile_digest)
+            or (
+                not receiver_profile_noop
+                and not self._receiver_profile_matches(profile_digest)
+            )
         ):
             return self._derive_active_identity(), False, True
         if self._uses_receiver_runtime(scene):
@@ -1706,13 +1819,19 @@ class ControllerActivationCoordinator:
         scene: Mapping[str, Any],
         globals_state: Mapping[str, Any],
         profile_digest: str,
+        *,
+        receiver_profile_noop: bool = False,
     ) -> dict[str, Any]:
         deadline = self._clock() + self.observation_timeout
         expected = record.status["normalized_identity"]
         while True:
             self._fault("observing", "poll", record.command["activation_id"])
             observed, complete, fresh = self._observed_identity(
-                record, scene, globals_state, profile_digest
+                record,
+                scene,
+                globals_state,
+                profile_digest,
+                receiver_profile_noop=receiver_profile_noop,
             )
             if observed == expected and complete and fresh:
                 self._fault("observing", "matched", record.command["activation_id"])
@@ -1742,11 +1861,14 @@ class ControllerActivationCoordinator:
                 snapshot.installation_profile_digest,
                 activation_id=record.command["activation_id"],
                 inject_faults=False,
+                receiver_profile_noop=snapshot.receiver_profile_noop,
             )
             self._restore_receiver_profile_snapshot(snapshot)
             prior_global_revision = self._global_settings_revision
             self._global_settings_revision = snapshot.global_settings["revision"]
-            current = self._snapshot()
+            current = self._snapshot(
+                receiver_profile_noop=snapshot.receiver_profile_noop
+            )
             if (
                 current.scene != snapshot.scene
                 or current.global_settings != snapshot.global_settings
@@ -1779,7 +1901,21 @@ class ControllerActivationCoordinator:
             # the desired activation never became active.
             self._state_revision += 1
             self._global_settings_revision = self._state_revision
-            self._active_identity = self._derive_active_identity()
+            try:
+                self._active_identity = self._derive_active_identity()
+            except Exception as identity_exc:
+                # Authority loss must not escape before the terminal receipt.
+                # Publish a unique, non-activation CAS identity so every prior
+                # Check is invalid and every new activation still encounters
+                # the explicit current-profile validation before mutation.
+                self._active_identity = {
+                    "authority": "unavailable",
+                    "state_revision": self._state_revision,
+                    "error_digest": _canonical_json_sha256({
+                        "rollback_error": str(exc),
+                        "identity_error": str(identity_exc),
+                    }),
+                }
             return False
         if self._commit_callback is not None:
             try:
@@ -1805,8 +1941,15 @@ class ControllerActivationCoordinator:
             mutation_started = False
             try:
                 self._set_phase(record, "preflighting")
-                scene, globals_state, profile = self._preflight(record)
-                snapshot = self._snapshot()
+                (
+                    scene,
+                    globals_state,
+                    profile,
+                    receiver_profile_noop,
+                ) = self._preflight(record)
+                snapshot = self._snapshot(
+                    receiver_profile_noop=receiver_profile_noop
+                )
                 record.snapshot = snapshot
                 if self._uses_receiver_runtime(scene):
                     record.receiver_evidence_before = (
@@ -1826,9 +1969,16 @@ class ControllerActivationCoordinator:
                     profile,
                     activation_id=activation_id,
                     inject_faults=True,
+                    receiver_profile_noop=receiver_profile_noop,
                 )
                 self._set_phase(record, "observing")
-                observed = self._observe(record, scene, globals_state, profile)
+                observed = self._observe(
+                    record,
+                    scene,
+                    globals_state,
+                    profile,
+                    receiver_profile_noop=receiver_profile_noop,
+                )
                 self._state_revision += 1
                 self._global_settings_revision = globals_state["revision"]
                 self._active_identity = _copy_json(observed)
