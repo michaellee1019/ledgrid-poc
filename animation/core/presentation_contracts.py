@@ -18,6 +18,7 @@ from typing import Any, Mapping, Optional, Tuple
 
 import numpy as np
 
+from animation.component_parameters import SCENE_EXTERNAL_COMPONENT_PARAMETERS
 from animation.core.compositing import normalize_optional_dirty_ranges
 from animation.core.installation_profile_runtime import InstallationProfileRuntimeView
 
@@ -224,8 +225,7 @@ class ComponentRef:
             _digest("preset_fingerprint", self.preset_fingerprint)
         for name in ("parameter_overrides", "resolved_parameters"):
             object.__setattr__(self, name, _immutable_mapping(name, getattr(self, name)))
-        reserved = {"plant_aware", "plant_modifiers", "vibe", "output"}
-        leaked = sorted(reserved & (
+        leaked = sorted(SCENE_EXTERNAL_COMPONENT_PARAMETERS & (
             set(self.parameter_overrides) | set(self.resolved_parameters)
         ))
         if leaked:

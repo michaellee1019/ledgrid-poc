@@ -18,6 +18,8 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Type
 
 from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
 
+from animation.component_parameters import SCENE_EXTERNAL_COMPONENT_PARAMETERS
+
 from .base import AnimationBase, StatefulAnimationBase
 from .presentation_contracts import (
     COMPONENT_DESCRIPTOR_SCHEMA,
@@ -68,9 +70,6 @@ _NATIVE_VIBE_REQUIRED_FIELDS = frozenset(
 _NATIVE_VIBE_ALLOWED_FIELDS = _NATIVE_VIBE_REQUIRED_FIELDS | {"semantic_roles"}
 _NATIVE_ENTRYPOINT = "ledgrid.native-background-abi:2"
 _NATIVE_SOURCE = "native/background.cpp"
-_NATIVE_RESERVED_PARAMETERS = frozenset(
-    {"plant_aware", "plant_modifiers", "vibe", "output"}
-)
 _INT32_MIN = -(2**31)
 _INT32_MAX = 2**31 - 1
 _UINT64_MAX = 2**64 - 1
@@ -454,7 +453,7 @@ def _normalize_native_parameter_schema(
             not isinstance(name, str)
             or len(name) > 48
             or not _PARAMETER_ID.fullmatch(name)
-            or name in _NATIVE_RESERVED_PARAMETERS
+            or name in SCENE_EXTERNAL_COMPONENT_PARAMETERS
         ):
             raise ValueError(
                 f"invalid receiver-native parameter name {name!r}: {manifest_path}"

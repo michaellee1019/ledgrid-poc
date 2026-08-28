@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from typing import Any, Iterable, Optional
 
+from animation.component_parameters import SCENE_EXTERNAL_COMPONENT_PARAMETERS
 from animation.core.presentation_contracts import component_preset_fingerprint
 
 
@@ -959,12 +960,23 @@ def browser_scene_to_host_scene(
         component_id = component["component_id"]
         descriptor = indexed_catalog[(provider, component_id)]
         defaults = descriptor.get("defaults")
-        resolved = dict(defaults) if isinstance(defaults, Mapping) else {}
-        resolved.update(component["parameters"])
+        resolved = {
+            name: value
+            for name, value in (
+                defaults.items() if isinstance(defaults, Mapping) else ()
+            )
+            if name not in SCENE_EXTERNAL_COMPONENT_PARAMETERS
+        }
+        overrides = {
+            name: value
+            for name, value in component["parameters"].items()
+            if name not in SCENE_EXTERNAL_COMPONENT_PARAMETERS
+        }
+        resolved.update(overrides)
         result = {
             "plugin_id": component_id,
             "provider": provider,
-            "parameter_overrides": dict(component["parameters"]),
+            "parameter_overrides": overrides,
             "resolved_parameters": resolved,
         }
         if "preset_id" in component:
@@ -1077,6 +1089,15 @@ def _component_ref(
             )
     overrides = _object(payload.get("parameter_overrides", {}), f"{label}.parameter_overrides")
     resolved = _object(payload.get("resolved_parameters", {}), f"{label}.resolved_parameters")
+    leaked = sorted(
+        SCENE_EXTERNAL_COMPONENT_PARAMETERS
+        & (set(overrides) | set(resolved))
+    )
+    if leaked:
+        raise SceneValidationError(
+            f"{label} must not capture scene-external state: "
+            + ", ".join(leaked)
+        )
 
     if catalog is not None:
         descriptor = catalog_index(catalog).get((plugin_id, provider))

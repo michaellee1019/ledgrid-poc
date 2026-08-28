@@ -21,6 +21,7 @@ from typing import Optional, Dict, Any, List
 import numpy as np
 from PIL import Image
 
+from animation.component_parameters import SCENE_EXTERNAL_COMPONENT_PARAMETERS
 from animation.core import AnimationBase, RenderedFrame, StatefulAnimationBase, AnimationPluginLoader
 from animation.core.compositing import (
     HostForegroundCompositor,
@@ -1117,7 +1118,7 @@ class AnimationManager:
             raise TypeError("component parameters must be an object")
         return {
             key: value for key, value in payload.items()
-            if key not in {"plant_aware", "plant_modifiers", "vibe", "output"}
+            if key not in SCENE_EXTERNAL_COMPONENT_PARAMETERS
         }
 
     @staticmethod

@@ -126,7 +126,13 @@ def _component(component_id: str, *, role: str = "background") -> dict:
                 "default": 1.0,
             },
         },
-        "defaults": {"speed": 1.0},
+        "defaults": {
+            "speed": 1.0,
+            "plant_aware": False,
+            "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
+            "vibe": {"id": "neutral"},
+            "output": {"brightness": 50},
+        },
         "availability": {"state": "ready"},
         "compatibility": {
             "composable": True,

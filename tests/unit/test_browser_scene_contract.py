@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
 
+from animation.component_parameters import SCENE_EXTERNAL_COMPONENT_PARAMETERS
+from animation.core.presentation_contracts import SceneState
 from ipc.scene_contract import (
     BROWSER_SCENE_MAX_BYTES,
     BROWSER_SCENE_SCHEMA,
@@ -16,6 +19,7 @@ from ipc.scene_contract import (
     decorate_browser_component,
     decorate_catalog,
     normalize_browser_scene_document,
+    normalize_scene_payload,
     validate_bounded_browser_json,
 )
 from web.app import AnimationWebInterface
@@ -48,8 +52,19 @@ def _component(
                 "type": "str",
                 "default": "config/managed-map.json",
             },
+            "plant_aware": {
+                "type": "bool",
+                "default": False,
+            },
         },
-        "defaults": {"speed": 1.0, "map_path": "config/managed-map.json"},
+        "defaults": {
+            "speed": 1.0,
+            "map_path": "config/managed-map.json",
+            "plant_aware": False,
+            "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
+            "vibe": {"id": "neutral"},
+            "output": {"brightness": 50},
+        },
         "availability": {"state": "ready"},
         "compatibility": {
             "composable": composable,
@@ -93,6 +108,7 @@ def _binding(component: dict, *, speed: float = 0.7) -> dict:
         "parameters": {
             "speed": speed,
             "map_path": "config/managed-map.json",
+            "plant_aware": True,
         },
     }
 
@@ -144,6 +160,22 @@ class BrowserScenePortableContractTests(unittest.TestCase):
         self.assertFalse(preview_only["activation_ready"])
         self.assertIn("Preview-only", preview_only["reason"])
 
+    def test_scene_external_parameter_authority_is_shared_by_all_consumers(self) -> None:
+        consumers = (
+            "animation.core.presentation_contracts",
+            "animation.core.manager",
+            "animation.core.component_catalog",
+            "animation.native.schema",
+            "ipc.scene_contract",
+        )
+        for module_name in consumers:
+            with self.subTest(module=module_name):
+                module = importlib.import_module(module_name)
+                self.assertIs(
+                    module.SCENE_EXTERNAL_COMPONENT_PARAMETERS,
+                    SCENE_EXTERNAL_COMPONENT_PARAMETERS,
+                )
+
     def test_document_round_trips_and_adapts_to_existing_host_scene(self) -> None:
         normalized = normalize_browser_scene_document(
             self.document, catalog=self.catalog, purpose="activation"
@@ -156,6 +188,35 @@ class BrowserScenePortableContractTests(unittest.TestCase):
         self.assertEqual(host["background"]["parameter_overrides"]["speed"], 0.7)
         self.assertEqual(host["overlays"][0]["slot_id"], "clock_overlay")
         self.assertEqual(host["overlays"][0]["opacity"], 220)
+        reserved = {"plant_aware", "plant_modifiers", "vibe", "output"}
+        refs = (
+            host["background"],
+            host["overlays"][0]["component"],
+            host["known_python_fallback"],
+        )
+        for ref in refs:
+            self.assertFalse(reserved & set(ref["parameter_overrides"]))
+            self.assertFalse(reserved & set(ref["resolved_parameters"]))
+            self.assertEqual(ref["resolved_parameters"]["map_path"], "config/managed-map.json")
+        self.assertEqual(SceneState.from_payload(host).to_dict(), host)
+
+    def test_host_boundary_rejects_scene_external_component_state(self) -> None:
+        host = browser_scene_to_host_scene(self.document, catalog=self.catalog)
+        cases = (
+            ("background", "parameter_overrides", "plant_aware", False),
+            ("background", "resolved_parameters", "plant_modifiers", {}),
+            ("known_python_fallback", "parameter_overrides", "vibe", {}),
+            ("known_python_fallback", "resolved_parameters", "output", {}),
+        )
+        for ref_name, collection, name, value in cases:
+            with self.subTest(ref=ref_name, collection=collection, name=name):
+                candidate = deepcopy(host)
+                candidate[ref_name][collection][name] = value
+                with self.assertRaisesRegex(
+                    SceneValidationError,
+                    rf"{ref_name}.*scene-external state.*{name}",
+                ):
+                    normalize_scene_payload(candidate, catalog=self.catalog)
 
     def test_identity_schema_parameter_and_revision_errors_name_the_field(self) -> None:
         mutations = (

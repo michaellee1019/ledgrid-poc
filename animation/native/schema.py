@@ -15,6 +15,8 @@ import struct
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from animation.component_parameters import SCENE_EXTERNAL_COMPONENT_PARAMETERS
+
 from .constants import (
     ABI_HEADER_PATH,
     ABI_SCHEMA,
@@ -50,7 +52,6 @@ _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _INT32_MIN = -(2**31)
 _INT32_MAX = 2**31 - 1
 _UINT64_MAX = 2**64 - 1
-_RESERVED_PARAMETERS = frozenset(("plant_aware", "plant_modifiers", "vibe", "output"))
 _VIBE_CAPABILITIES = frozenset(("palette_roles", "tempo", "luminance"))
 _VIBE_COLOR_POLICIES = frozenset(("semantic", "grade", "preserve"))
 _TIMING_ADAPTERS = frozenset(("legacy_speed_param", "scaled_context", "wall_clock"))
@@ -201,7 +202,7 @@ def validate_parameter_schema(value: Any) -> tuple[dict[str, dict[str, Any]], di
         if (
             not isinstance(name, str)
             or _PARAMETER_ID.fullmatch(name) is None
-            or name in _RESERVED_PARAMETERS
+            or name in SCENE_EXTERNAL_COMPONENT_PARAMETERS
         ):
             raise NativeManifestError(f"invalid parameter name {name!r}")
     schema: dict[str, dict[str, Any]] = {}
