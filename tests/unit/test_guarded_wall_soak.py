@@ -69,10 +69,16 @@ def _device(receiver_id: int, elapsed: float) -> dict:
     expected = soak.EXPECTED_TOPOLOGY_BY_ID[receiver_id]
     frames = int(elapsed * 155)
     base = 1000 + receiver_id * 100
+    full_frame_semantic = 1 + expected["local_strip_count"] * 138 * 3
+    full_frame_wire = ((full_frame_semantic + 9) // 4) * 4
     return {
         "receiver_status_version": 3,
         "receiver_status_seen": True,
-        "receiver_capabilities": 12,
+        "receiver_capabilities": 0x400C,
+        "transport_envelope_enabled": True,
+        "transport_envelope_negotiation_candidate": None,
+        "transport_envelope_negotiation_streak": 0,
+        "transport_envelope_negotiation_required": 3,
         "receiver_logical_device": receiver_id,
         "receiver_active_strips": expected["local_strip_count"],
         "receiver_global_strip_offset": expected["global_strip_offset"],
@@ -84,7 +90,13 @@ def _device(receiver_id: int, elapsed: float) -> dict:
         "errors": 0,
         "frames_sent": base + frames,
         "spi_transfers": base + frames,
-        "bytes_sent": base + frames * 3315,
+        "bytes_sent": base + frames * 3320,
+        "semantic_bytes_sent": base + frames * 3313,
+        "transport_envelope_bytes_sent": base + frames * 4,
+        "transport_padding_bytes_sent": base + frames,
+        "full_frame_transfers": base + frames,
+        "full_frame_semantic_bytes_sent": base + frames * full_frame_semantic,
+        "full_frame_wire_bytes_sent": base + frames * full_frame_wire,
         "crc_bytes_sent": base + frames * 2,
         "receiver_operation_sequence": base + frames,
         "receiver_packets": base + frames,
@@ -125,12 +137,31 @@ def _status(elapsed: float) -> dict:
         "driver_stats": {
             "aggregate": {
                 "device_map": [deepcopy(item) for item in soak.EXPECTED_TOPOLOGY],
+                "transport_envelope_devices": 5,
                 "errors": 0,
                 "frames_sent": 5000 + frames,
                 "logical_frames_sent": 5000 + frames,
-                "spi_transfers": 5000 + frames * 5,
-                "bytes_sent": 5000 + frames * 4 * 3315,
-                "crc_bytes_sent": 5000 + frames * 2 * 5,
+                "spi_transfers": sum(item["spi_transfers"] for item in devices),
+                "bytes_sent": sum(item["bytes_sent"] for item in devices),
+                "semantic_bytes_sent": sum(
+                    item["semantic_bytes_sent"] for item in devices
+                ),
+                "transport_envelope_bytes_sent": sum(
+                    item["transport_envelope_bytes_sent"] for item in devices
+                ),
+                "transport_padding_bytes_sent": sum(
+                    item["transport_padding_bytes_sent"] for item in devices
+                ),
+                "full_frame_transfers": sum(
+                    item["full_frame_transfers"] for item in devices
+                ),
+                "full_frame_semantic_bytes_sent": sum(
+                    item["full_frame_semantic_bytes_sent"] for item in devices
+                ),
+                "full_frame_wire_bytes_sent": sum(
+                    item["full_frame_wire_bytes_sent"] for item in devices
+                ),
+                "crc_bytes_sent": sum(item["crc_bytes_sent"] for item in devices),
                 "receiver_crc_errors": sum(range(5)),
                 "receiver_packets": sum(
                     item["receiver_packets"] for item in devices
@@ -344,7 +375,7 @@ class GuardedWallSoakTests(unittest.TestCase):
         report = _run(_config(), _API(clock, missing), clock)
         self.assertFalse(report["passed"])
         self.assertIn(
-            "aggregate counter crc_bytes_sent is unavailable",
+            "aligned transport counter crc_bytes_sent is unavailable",
             report["failures"][0],
         )
 
@@ -358,6 +389,107 @@ class GuardedWallSoakTests(unittest.TestCase):
         report = _run(_config(), _API(clock, missing_tail), clock)
         self.assertFalse(report["passed"])
         self.assertIn("expected 5", report["failures"][0])
+
+    def test_aligned_transport_capability_is_required(self) -> None:
+        def legacy_capabilities(status, _activation_status, _elapsed):
+            if status is not None:
+                status["driver_stats"]["devices"][3]["receiver_capabilities"] = 0x000C
+
+        clock = _Clock()
+        report = _run(_config(), _API(clock, legacy_capabilities), clock)
+        self.assertFalse(report["passed"])
+        self.assertIn("aligned transport capabilities", report["failures"][0])
+
+    def test_aligned_transport_host_state_and_exact_aggregate_are_required(self) -> None:
+        def host_disabled(status, _activation_status, _elapsed):
+            if status is not None:
+                status["driver_stats"]["devices"][3][
+                    "transport_envelope_enabled"
+                ] = False
+
+        def aggregate_short(status, _activation_status, _elapsed):
+            if status is not None:
+                status["driver_stats"]["aggregate"][
+                    "transport_envelope_devices"
+                ] = 4
+
+        def negotiation_pending(status, _activation_status, _elapsed):
+            if status is not None:
+                status["driver_stats"]["devices"][1].update({
+                    "transport_envelope_negotiation_candidate": False,
+                    "transport_envelope_negotiation_streak": 1,
+                })
+
+        def negotiation_missing(status, _activation_status, _elapsed):
+            if status is not None:
+                status["driver_stats"]["devices"][1].pop(
+                    "transport_envelope_negotiation_candidate"
+                )
+
+        for label, mutate, expected in (
+            ("host disabled", host_disabled, "host aligned transport is not enabled"),
+            ("aggregate short", aggregate_short, "exactly 5 receivers"),
+            ("negotiation pending", negotiation_pending, "negotiation is not settled"),
+            ("negotiation missing", negotiation_missing, "negotiation is not settled"),
+        ):
+            with self.subTest(label=label):
+                clock = _Clock()
+                report = _run(_config(), _API(clock, mutate), clock)
+                self.assertFalse(report["passed"])
+                self.assertIn(expected, report["failures"][0])
+
+    def test_aligned_transport_accounting_rejects_stall_and_wire_drift(self) -> None:
+        transport_fields = (
+            "spi_transfers", "bytes_sent", "semantic_bytes_sent",
+            "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
+            "crc_bytes_sent",
+        )
+
+        def stalled(status, _activation_status, elapsed):
+            if status is None or elapsed < 900:
+                return
+            baseline = _device(2, 0)
+            device = status["driver_stats"]["devices"][2]
+            for field in transport_fields:
+                device[field] = baseline[field]
+                status["driver_stats"]["aggregate"][field] = sum(
+                    item[field] for item in status["driver_stats"]["devices"]
+                )
+
+        def drifted(status, _activation_status, elapsed):
+            if status is None or elapsed < 900:
+                return
+            status["driver_stats"]["devices"][1]["bytes_sent"] += 1
+            status["driver_stats"]["aggregate"]["bytes_sent"] += 1
+
+        def status_only(status, _activation_status, elapsed):
+            if status is None or elapsed < 900:
+                return
+            fields = (
+                "full_frame_transfers", "full_frame_semantic_bytes_sent",
+                "full_frame_wire_bytes_sent",
+            )
+            for receiver_id, device in enumerate(
+                status["driver_stats"]["devices"]
+            ):
+                baseline = _device(receiver_id, 0)
+                for field in fields:
+                    device[field] = baseline[field]
+            for field in fields:
+                status["driver_stats"]["aggregate"][field] = sum(
+                    item[field] for item in status["driver_stats"]["devices"]
+                )
+
+        for label, mutate, expected in (
+            ("stalled", stalled, "did not advance"),
+            ("drifted", drifted, "wire-byte accounting is inconsistent"),
+            ("status-only", status_only, "full_frame_transfers did not advance"),
+        ):
+            with self.subTest(label=label):
+                clock = _Clock()
+                report = _run(_config(), _API(clock, mutate), clock)
+                self.assertFalse(report["passed"])
+                self.assertTrue(any(expected in failure for failure in report["failures"]))
 
     def test_short_diagnostic_cannot_claim_wall_02(self) -> None:
         clock = _Clock()

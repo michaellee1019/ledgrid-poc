@@ -12,6 +12,7 @@ if "spidev" not in sys.modules:
 
 from drivers.multi_device import MultiDeviceLEDController
 from drivers.spi_controller import (
+    CAPABILITY_ALIGNED_ENVELOPE_V1,
     CAPABILITY_EXPLICIT_BASE_OWNERSHIP,
     CAPABILITY_PRESENTATION_CONTEXT_V1,
     CAPABILITY_SPARSE_OVERLAY_V1,
@@ -24,7 +25,8 @@ from drivers.spi_controller import (
 
 
 ALL_CAPABILITIES = (
-    CAPABILITY_STATIC_LOCAL_BACKGROUND
+    CAPABILITY_ALIGNED_ENVELOPE_V1
+    | CAPABILITY_STATIC_LOCAL_BACKGROUND
     | CAPABILITY_PRESENTATION_CONTEXT_V1
     | CAPABILITY_STATUS_V3
     | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
@@ -209,7 +211,7 @@ class ReceiverSparseOverlayOrchestrationTests(unittest.TestCase):
             self.assertEqual(begin["expected_patches"], 2)
             patches = next(call[2] for call in device.calls if call[0] == "patches")
             self.assertEqual([(start, len(data)) for start, data in patches], [
-                (0, 1015), (1015, 89),
+                (0, 1014), (1014, 90),
             ])
             self.assertEqual(device.committed_generation, 1)
         self.assertEqual(

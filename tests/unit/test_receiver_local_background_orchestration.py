@@ -15,6 +15,7 @@ from animation.core.presentation_contracts import resolve_vibe
 from animation.core.receiver_presentation import ReceiverPresentationContext
 from drivers.multi_device import MultiDeviceLEDController
 from drivers.spi_controller import (
+    CAPABILITY_ALIGNED_ENVELOPE_V1,
     CAPABILITY_EXPLICIT_BASE_OWNERSHIP,
     CAPABILITY_PRESENTATION_CONTEXT_V1,
     CAPABILITY_STATIC_LOCAL_BACKGROUND,
@@ -22,7 +23,8 @@ from drivers.spi_controller import (
 )
 
 ALL_LOCAL_CAPABILITIES = (
-    CAPABILITY_STATIC_LOCAL_BACKGROUND
+    CAPABILITY_ALIGNED_ENVELOPE_V1
+    | CAPABILITY_STATIC_LOCAL_BACKGROUND
     | CAPABILITY_PRESENTATION_CONTEXT_V1
     | CAPABILITY_STATUS_V3
     | CAPABILITY_EXPLICIT_BASE_OWNERSHIP

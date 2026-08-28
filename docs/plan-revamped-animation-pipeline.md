@@ -2378,9 +2378,10 @@ Portable/integrated evidence on 2026-08-13:
 - The installed dense target-200 saturation run reported receiver encode p95
   490 us, display p95 4,442 us, and 9,362 accepted plus 9,362 displayed frames
   over 60.279 seconds (155.31 FPS), with no superseded frame or integrity error.
-  One 8 x 138 SET_ALL packet is 3,315 bytes and takes 1,326 us at 20 MHz; the
-  nominal WS2812 output is 4,440 us. The measured rate agrees with the current
-  effective SPI-plus-encode-plus-display budget, so the installed full-frame
+  The historical pre-envelope 8 x 138 SET_ALL packet was 3,315 bytes and took
+  1,326 us at 20 MHz; current aligned wire is 3,320 bytes and 1,328 us. The
+  nominal WS2812 output is 4,440 us. The measured historical rate agrees with
+  that SPI-plus-encode-plus-display budget, so the installed full-frame
   release gate now targets 160 FPS and requires 150 FPS. Target 200 remains an
   output-rate saturation characterization rather than a production claim.
 - After encoding the explicit degraded-return-path policy and fixing documented
@@ -2712,6 +2713,8 @@ Portable-slice evidence and open gates (2026-08-13):
   the pinned production image, restarted `ledgrid.service`, and restored
   `living_stained_glass`; the post-run production probe reported status versions
   `[3, 3, 0, 0]`, capabilities `[12, 12, 0, 0]`, and zero host/receiver errors.
+  Those values are retained historical pre-envelope evidence, not the current
+  production capability requirement; current firmware adds `1<<14`.
 - [x] Physical execution exposed three acceptance-tool defects before the
   receiver-side stop: direct CLI imports depended on the current directory;
   v4 acknowledgements and complete-host takeover could legitimately trail the
@@ -4077,8 +4080,9 @@ immutable `current` exists, records a content-addressed `legacy_app_bootstrap`
 schema-v1 receipt artifact, and uses that release as the compensation target.
 Full-deploy health must also emit an environment-derived `receiver_contract`
 proving exact five-roster identity/topology and minimum status/capabilities after
-flash: production requires v3/base ownership, local canary requires v5/local and
-profile capabilities, and native canary requires v6/the full native mask. Widths,
+flash: every environment requires aligned transport `1<<14`; production also
+requires v3/base ownership, local canary requires v5/local and profile
+capabilities, and native canary requires v6/the full native mask. Widths,
 offsets, output masks, and LEDs per strip are exact. The inventory ledger alone
 is not post-boot proof. The final local software gate is recorded below; keep
 the ordinary-deploy checklist item open until the current clean checkpoint
@@ -4546,9 +4550,11 @@ summary:
   it never persists or mutates authored values.
 - Pilot selections are Clock, `aurora_curtains`, `snake`, `world_flags`, future
   `aurora_curtains_native`, and receiver-safe `hue_shift`.
-- The dormant foreground protocol reserves exact big-endian IDs and sizes; a
-  4,096-byte transfer carries 1,016 RGBA pixels, so one 8 x 138 receiver
-  snapshot is the golden two-patch sequence `[0, 1016)`, `[1016, 1104)`.
+- The frozen legacy foreground fixtures retain their exact big-endian IDs and
+  1,016-pixel semantic ceiling. Production aligned-envelope packing carries at
+  most 1,015 single-span RGBA pixels, so one 8 x 138 receiver snapshot is
+  `[0, 1015)`, `[1015, 1104)`; batch packing uses `[0, 1014)`,
+  `[1014, 1104)`.
 
 These resolutions do not reopen the core boundaries: vibe stays independent,
 provider stays explicit, foreground uses alpha, the Pi remains authoritative,

@@ -40,7 +40,9 @@ The receiver deliberately separates transport and display work:
 1. Boot enters explicit `StartupFallback` and renders the firmware-resident
    45-degree rainbow. `LocalBackground` and `HostFullScene` are separate base
    ownership states; foreground and maintenance state remain orthogonal.
-2. Two SPI slave DMA transactions are kept queued.
+2. Two SPI slave DMA transactions are kept queued. Current hosts clock only
+   four-byte-multiple transactions after capability discovery, as required by
+   ESP32-S3 SPI-slave DMA.
 3. The ESP-IDF `app_main` task consumes completed packets, checks CRC-16, and updates a
    compact RGB working frame.
 4. Only a complete valid `SET_ALL` takes host ownership. PING, configuration,
@@ -84,7 +86,28 @@ an as-built receiver inventory that justifies another target.
 
 ## SPI commands
 
-Every command is followed by a big-endian CRC-16/CCITT-FALSE.
+The command rows below describe semantic bytes. Current firmware additionally
+accepts aligned transport envelope v1 (`0x0b`): command `u8`, envelope version
+`u8=1`, semantic length `u16`, the exact semantic command, zero padding, then
+one big-endian CRC-16/CCITT-FALSE covering the entire envelope and padding. The
+total wire size must be a multiple of four and no more than 4,096 bytes; the
+semantic size is therefore at most 4,090 bytes. Nonzero padding, an unknown
+version, an inconsistent size, a bad CRC, or an unaligned envelope fails closed.
+
+For rolling compatibility, firmware still decodes the legacy
+`semantic || CRC-16` packet. A new host sends only legacy discovery traffic
+until three consecutive valid status-v3+ snapshots advertise aligned-envelope
+capability `1<<14` with a strictly advancing receiver-owned `receiver_packets`
+counter. Repeated stale, malformed, truncated, or bad-magic snapshots reset the
+pending streak without changing the active framing state; a counter rollback
+starts a new three-observation epoch. Once enabled, downgrade likewise requires
+three fresh consecutive capability-absent observations, so one corrupt MISO
+snapshot cannot flip transport state. Every later command, including the full
+negotiated status query, is enveloped. Deployment health requires both the bit
+and Host envelope-enabled state on all five receivers before accepting the new
+firmware, so new-host/old-firmware traffic remains legacy and
+old-host/new-firmware traffic remains decodable. CRC-error accounting is
+unchanged; the envelope does not correct or conceal corruption.
 
 | Command | Code | Payload |
 |---|---:|---|
@@ -106,7 +129,7 @@ Every command is followed by a big-endian CRC-16/CCITT-FALSE.
 | OVERLAY_PATCH_BATCH | `0x35` | session/generation, span count, sorted `(start, count, RGBA)` entries |
 | PROFILE_PREFLIGHT | `0x40` | global ID, receiver-payload digest, size |
 | PROFILE_BEGIN | `0x41` | preflight token, both digests, size, logical ID, strip origin, direction |
-| PROFILE_CHUNK | `0x42` | ordered offset u32 and at most 4,089 data bytes |
+| PROFILE_CHUNK | `0x42` | ordered offset u32 and at most 4,085 data bytes from an aligned host; legacy decode retains 4,089 |
 | PROFILE_FINALIZE/VERIFY | `0x43`–`0x44` | global ID and receiver-payload digest |
 | PROFILE_ACTIVATE | `0x45` | expected generation and staged binding |
 | PROFILE_RESTORE | `0x46` | expected generation and exact active/staged/rollback snapshot |
@@ -176,6 +199,11 @@ Because SPI responses are queued before the command they accompany, the host
 uses `last_processed_command` plus `operation_sequence` to bind later status to
 the exact CRC-valid operation. Status queries do not advance that sequence.
 
+Aligned-envelope capability bit `1<<14` is present in every current firmware
+environment. A 320/416/768/1,216-byte semantic status query clocks
+328/424/776/1,224 bytes respectively after wrapping, leaving room for the full
+MISO snapshot while satisfying the DMA transaction-length rule.
+
 When status-v3 advertises sparse-overlay capability bit `1<<4`, a new host may
 switch to a 416-byte query. Batch command `0x35` additionally requires bit
 `1<<5`; receivers without it retain the original one-span `0x31` command. The
@@ -232,10 +260,12 @@ one-receiver canary passes.
 The canary feature also owns one bounded aggregate foreground plane. Two fixed
 4,416-byte premultiplied-RGBA buffers and two fixed 1,104-byte coverage maps
 stage full snapshots or deltas transactionally; feature-off production builds
-do not allocate them. Legacy full snapshots use canonical 1,016+88-pixel
-single-span patches. Batch-mode snapshots use 1,015+89-pixel spans because the
-28-byte packet header, four-byte span descriptor, and CRC share the 4,096-byte
-transaction ceiling. Batch `expected_patches` and status `accepted_patches`
+do not allocate them. The retained legacy semantic decoder accepts canonical
+1,016+88-pixel single-span patches. Current aligned hosts use at most 1,015
+pixels per single-span patch. Batch-mode snapshots use 1,014+90-pixel spans
+because the 28-byte packet header, four-byte span descriptor, and aligned
+envelope share the 4,096-byte transaction ceiling. Batch `expected_patches` and
+status `accepted_patches`
 count logical spans; one operation-sequenced status-v4 result proves the entire
 CRC-bound batch. Delta spans may move or clear content with alpha zero, and a
 zero-patch delta is a valid generation-agreement no-op. Scheduled commits retain
@@ -252,8 +282,9 @@ inheriting pre-takeover counters.
 
 Only `esp32-s3-devkitc-1-local-canary` advertises local/context/sparse capability
 bits and accepts these commands. The ordinary production image stays on status
-v3, advertises only status/explicit-ownership capabilities, rejects the feature
-surface, and remains the image selected by ordinary deployment.
+v3, advertises aligned transport plus status/explicit-ownership capabilities,
+rejects the feature surface, and remains the image selected by ordinary
+deployment.
 
 The `native-animations` branch is the organ donor for the loader-capable ESP-IDF
 baseline, ABI, asset upload/cache, typed parameters, receiver control, status,

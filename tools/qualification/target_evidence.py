@@ -50,6 +50,18 @@ _ERROR_COUNTERS = (
 )
 _INSTALLED_ROUTES = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
 _INSTALLED_NATIVE_REVERSALS = (False, False, True, True, False)
+_REQUIRED_RECEIVER_CAPABILITIES = 0x400C
+_TRANSPORT_COUNTERS = (
+    "spi_transfers",
+    "bytes_sent",
+    "semantic_bytes_sent",
+    "transport_envelope_bytes_sent",
+    "transport_padding_bytes_sent",
+    "crc_bytes_sent",
+    "full_frame_transfers",
+    "full_frame_semantic_bytes_sent",
+    "full_frame_wire_bytes_sent",
+)
 
 
 class TargetEvidenceError(RuntimeError):
@@ -82,10 +94,105 @@ def _number(value: Any, label: str, *, minimum: float = 0.0) -> float:
     return result
 
 
+def _require_receiver_capabilities(
+    device: Mapping[str, Any], logical_id: int
+) -> None:
+    capabilities = _integer(
+        device.get("receiver_capabilities"),
+        f"receiver {logical_id} capabilities",
+    )
+    if (
+        capabilities & _REQUIRED_RECEIVER_CAPABILITIES
+        != _REQUIRED_RECEIVER_CAPABILITIES
+    ):
+        raise TargetEvidenceError(
+            f"receiver {logical_id} lacks required aligned transport capabilities"
+        )
+
+
 def _integer(value: Any, label: str, *, minimum: int = 0) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise TargetEvidenceError(f"{label} is unavailable or invalid")
     return value
+
+
+def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
+    aggregate = driver.get("aggregate")
+    devices = driver.get("devices")
+    if not isinstance(aggregate, Mapping) or not isinstance(devices, list):
+        raise TargetEvidenceError("aligned transport metrics are unavailable")
+    if aggregate.get("transport_envelope_devices") != INSTALLED_RECEIVER_COUNT:
+        raise TargetEvidenceError("aligned transport is not enabled on exactly five receivers")
+    totals = {field: 0 for field in _TRANSPORT_COUNTERS}
+    for logical_id, device in enumerate(devices):
+        if not isinstance(device, Mapping):
+            raise TargetEvidenceError(f"receiver {logical_id} metrics are malformed")
+        if device.get("transport_envelope_enabled") is not True:
+            raise TargetEvidenceError(
+                f"receiver {logical_id} host aligned transport is not enabled"
+            )
+        if (
+            "transport_envelope_negotiation_candidate" not in device
+            or device.get("transport_envelope_negotiation_candidate") is not None
+            or type(device.get("transport_envelope_negotiation_streak")) is not int
+            or device.get("transport_envelope_negotiation_streak") != 0
+            or type(device.get("transport_envelope_negotiation_required")) is not int
+            or device.get("transport_envelope_negotiation_required") != 3
+        ):
+            raise TargetEvidenceError(
+                f"receiver {logical_id} aligned transport negotiation is not settled"
+            )
+        for field in _TRANSPORT_COUNTERS:
+            totals[field] += _integer(
+                device.get(field), f"receiver {logical_id} {field}"
+            )
+    for field, expected in totals.items():
+        observed = _integer(aggregate.get(field), f"aggregate {field}")
+        if observed != expected:
+            raise TargetEvidenceError(
+                f"aggregate {field} drifted from per-receiver total"
+            )
+
+
+def _require_transport_accounting_delta(
+    before: Mapping[str, Any], after: Mapping[str, Any], label: str,
+    *, expected_full_semantic_bytes: int | None = None,
+) -> None:
+    deltas = {
+        field: _integer(after.get(field), f"{label} final {field}")
+        - _integer(before.get(field), f"{label} initial {field}")
+        for field in _TRANSPORT_COUNTERS
+    }
+    for field, delta in deltas.items():
+        if delta <= 0:
+            raise TargetEvidenceError(f"{label} {field} did not advance")
+    transfers = deltas["spi_transfers"]
+    if deltas["transport_envelope_bytes_sent"] != 4 * transfers:
+        raise TargetEvidenceError(f"{label} envelope accounting is inconsistent")
+    if deltas["crc_bytes_sent"] != 2 * transfers:
+        raise TargetEvidenceError(f"{label} CRC accounting is inconsistent")
+    expected_wire = (
+        deltas["semantic_bytes_sent"]
+        + deltas["transport_envelope_bytes_sent"]
+        + deltas["transport_padding_bytes_sent"]
+        + deltas["crc_bytes_sent"]
+    )
+    if deltas["bytes_sent"] != expected_wire:
+        raise TargetEvidenceError(f"{label} wire-byte accounting is inconsistent")
+    if expected_full_semantic_bytes is not None:
+        full_transfers = deltas["full_frame_transfers"]
+        expected_full_wire_bytes = (
+            (expected_full_semantic_bytes + 6 + 3) // 4
+        ) * 4
+        if (
+            deltas["full_frame_semantic_bytes_sent"]
+            != expected_full_semantic_bytes * full_transfers
+            or deltas["full_frame_wire_bytes_sent"]
+            != expected_full_wire_bytes * full_transfers
+        ):
+            raise TargetEvidenceError(
+                f"{label} full-frame SET_ALL accounting is inconsistent"
+            )
 
 
 def _percentile(values: Sequence[float], ratio: float) -> float:
@@ -128,6 +235,7 @@ def validate_installed_topology(metrics: Any) -> None:
         or len(devices) != INSTALLED_RECEIVER_COUNT
     ):
         raise TargetEvidenceError("aggregate geometry is not the exact installed wall")
+    _require_transport_accounting_snapshot(driver)
     device_map = aggregate.get("device_map")
     if not isinstance(device_map, list) or len(device_map) != INSTALLED_RECEIVER_COUNT:
         raise TargetEvidenceError("installed logical receiver route map is unavailable")
@@ -180,6 +288,7 @@ def validate_installed_topology(metrics: Any) -> None:
                     f"receiver {logical_id} reported {field} is "
                     f"{device.get(field)!r}, expected {expected!r}"
                 )
+        _require_receiver_capabilities(device, logical_id)
         offset += width
 
 
@@ -366,7 +475,10 @@ def build_target_evidence(
     receiver_times: list[float] = []
     receiver_rates: list[float] = []
     for sample_index, sample in enumerate(metrics_samples):
-        devices = sample.get("driver", {}).get("devices")
+        sample_driver = sample.get("driver", {})
+        if not isinstance(sample_driver, Mapping):
+            raise TargetEvidenceError(f"metrics sample {sample_index} driver is malformed")
+        devices = sample_driver.get("devices")
         if not isinstance(devices, list) or len(devices) != INSTALLED_RECEIVER_COUNT:
             raise TargetEvidenceError(
                 f"metrics sample {sample_index} does not contain five receivers"
@@ -393,7 +505,32 @@ def build_target_evidence(
             # The critical per-stage latency, not their artificial sum, is the
             # receiver's cadence-bound frame-time observation.
             receiver_times.append(max(encode_ms, show_ms))
+    _require_transport_accounting_delta(
+        first["driver"]["aggregate"],
+        last["driver"]["aggregate"],
+        "aggregate aligned transport",
+    )
     for logical_id, (before, after) in enumerate(zip(first_devices, last_devices)):
+        _require_transport_accounting_delta(
+            before,
+            after,
+            f"receiver {logical_id} aligned transport",
+            expected_full_semantic_bytes=(
+                1 + INSTALLED_RECEIVER_STRIP_COUNTS[logical_id]
+                * INSTALLED_LEDS_PER_STRIP * 3
+            ),
+        )
+        full_frames = _integer(
+            after.get("full_frame_transfers"),
+            f"receiver {logical_id} final full-frame transfers",
+        ) - _integer(
+            before.get("full_frame_transfers"),
+            f"receiver {logical_id} initial full-frame transfers",
+        )
+        if full_frames / elapsed_seconds < target_fps:
+            raise TargetEvidenceError(
+                f"receiver {logical_id} full-frame SET_ALL rate is below {target_fps} FPS"
+            )
         for counter in _ERROR_COUNTERS:
             delta = _integer(after.get(counter), f"receiver {logical_id} {counter}") - _integer(
                 before.get(counter), f"receiver {logical_id} initial {counter}"

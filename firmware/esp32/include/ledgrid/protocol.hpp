@@ -21,6 +21,17 @@ constexpr std::uint8_t kStatusProtocolVersionV5 = 5;
 constexpr std::size_t kStatusBytesV5 = 768;
 constexpr std::uint8_t kStatusProtocolVersionV6 = 6;
 constexpr std::size_t kStatusBytesV6 = 1216;
+// ESP32-S3 SPI slave DMA requires every Host write to be a multiple of one
+// 32-bit word.  The transport envelope carries an exact semantic length and
+// CRC-covered zero padding so command parsers never mistake DMA padding for
+// command data.  Receivers continue to accept legacy packets during rolling
+// deployment; Hosts only emit the envelope after discovering its capability.
+constexpr std::uint8_t kAlignedEnvelopeVersion = 1;
+constexpr std::size_t kAlignedEnvelopeHeaderBytes = 4;
+constexpr std::size_t kSpiDmaAlignmentBytes = 4;
+constexpr std::size_t kAlignedEnvelopeMaxSemanticBytes =
+    kAnimationPipelineMaxTransactionBytes - kAlignedEnvelopeHeaderBytes -
+    kAnimationPipelineCrcBytes;
 constexpr std::size_t kInstallationProfilePreflightBytes = 69;
 constexpr std::size_t kInstallationProfileBeginBytes = 81;
 constexpr std::size_t kInstallationProfileChunkHeaderBytes = 5;
@@ -41,6 +52,7 @@ enum class ReceiverCommand : std::uint8_t {
   StatusQuery = 0x08,
   SetLaneMask = 0x09,
   SetStagger = 0x0A,
+  AlignedEnvelope = 0x0B,
   LocalBackgroundStart = 0x10,
   LocalBackgroundStop = 0x11,
   LocalBackgroundParameters = 0x12,
@@ -93,6 +105,13 @@ enum ReceiverCapability : std::uint32_t {
   kCapabilityNativeTypedParametersV1 = 1U << 11U,
   kCapabilityNativeQuarantineV1 = 1U << 12U,
   kCapabilityNativeGuardedLoaderV1 = 1U << 13U,
+  kCapabilityAlignedEnvelopeV1 = 1U << 14U,
+};
+
+struct ReceiverPacketPayload {
+  const std::uint8_t* data = nullptr;
+  std::size_t size = 0;
+  bool aligned_envelope = false;
 };
 
 enum class ReceiverOperationResult : std::uint8_t {
@@ -344,6 +363,16 @@ bool receiver_packet_crc_valid(
     const std::uint8_t* packet,
     std::size_t packet_size,
     std::uint16_t* computed_crc = nullptr);
+bool decode_receiver_packet_payload(
+    const std::uint8_t* packet,
+    std::size_t packet_size,
+    ReceiverPacketPayload* payload);
+// Decode framing after receiver_packet_crc_valid() has already accepted this
+// exact packet.  Keeping this separate avoids hashing every live frame twice.
+bool decode_crc_valid_receiver_packet_payload(
+    const std::uint8_t* packet,
+    std::size_t packet_size,
+    ReceiverPacketPayload* payload);
 bool valid_status_query(const std::uint8_t* command, std::size_t size);
 bool valid_status_query(
     const std::uint8_t* command,

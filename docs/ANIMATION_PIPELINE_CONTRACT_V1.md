@@ -214,6 +214,32 @@ not enable receiver loading, activation, or installed-wall execution.
 
 ## Phase 3A receiver ownership and status v3
 
+### DMA-aligned transport envelope
+
+All command layouts in this document are semantic bytes. Aligned transport
+envelope v1 has wire command `0x0b`, version `1`, semantic length `u16`, the
+exact semantic bytes, zero padding, and one trailing CRC-16/CCITT-FALSE over
+the complete header, semantic payload, and padding. Its total wire size is a
+multiple of four and at most 4,096 bytes, leaving at most 4,090 semantic bytes.
+Malformed version, length, padding, alignment, or CRC rejects without semantic
+dispatch. The receiver retains explicit legacy `semantic || CRC` decode.
+
+Capability `aligned_envelope_v1 = 1<<14` gates Host use. Startup PING and status
+discovery remain legacy. Enabling requires three consecutive exact parsed
+status-v3+ snapshots that advertise the bit and carry a strictly advancing
+receiver-owned `receiver_packets` counter. Stale, malformed, truncated, or
+bad-magic input resets the pending streak without flipping active framing; a
+counter rollback begins a new observation epoch. Once enabled, three fresh
+consecutive capability-absent observations are required to downgrade, so one
+corrupt snapshot cannot disable the envelope. The legacy four-byte and
+authoritative eight-byte CONFIG forms, full frames, and negotiated
+320/416/768/1,216-byte status queries then use aligned wire lengths 12, 16,
+3,320, and 328/424/776/1,224 bytes respectively. Production deployment requires
+the capability, all five Host envelope-enabled flags, and the exact aggregate
+enabled count before health acceptance, preserving the firmware-first rolling
+order. The outer CRC replaces, rather than nests, the legacy command CRC;
+existing valid/invalid CRC counters retain their integrity meaning.
+
 The live base states are `StartupFallback=0`, `LocalBackground=1`, and
 `HostFullScene=2`. Foreground is `Cleared=0` in this phase and maintenance is
 `Inactive=0`. `PING`, `CONFIG`, `STATUS_QUERY`, brightness, partial RGB,
@@ -280,9 +306,10 @@ The v6 record preserves the complete 768-byte v5 prefix apart from magic/version
 | 316 | 4 | operation sequence |
 
 Capability bits are static local background `1<<0`, presentation context v1
-`1<<1`, status v3 `1<<2`, and explicit ownership `1<<3`. The ordinary image
-advertises status/ownership only; the named canary image also advertises the
-local/context bits.
+`1<<1`, status v3 `1<<2`, explicit ownership `1<<3`, and aligned transport
+`1<<14`. Every current image advertises aligned transport. The ordinary image
+otherwise advertises status/ownership only; the named canary image also
+advertises the local/context bits.
 
 Every CRC-valid dispatched non-status command advances the nonwrapping
 operation sequence exactly once and records its command/result. CRC failures
@@ -518,7 +545,7 @@ version-1 lifecycle:
 | --- | ---: | --- | ---: |
 | `PROFILE_PREFLIGHT` | `0x40` | global ID `bytes[32]`, payload digest `bytes[32]`, payload bytes `u32` | 69 |
 | `PROFILE_BEGIN` | `0x41` | preflight token `u64`, global ID `bytes[32]`, payload digest `bytes[32]`, payload bytes `u32`, logical receiver ID `u8`, physical strip origin `u16`, flags `u8` | 81 |
-| `PROFILE_CHUNK` | `0x42` | payload offset `u32`, data `bytes[1..4089]` | 6 through 4,094 |
+| `PROFILE_CHUNK` | `0x42` | payload offset `u32`, data `bytes[1..4085]` | 6 through 4,090 semantic bytes |
 | `PROFILE_FINALIZE` | `0x43` | global ID `bytes[32]`, payload digest `bytes[32]` | 65 |
 | `PROFILE_VERIFY` | `0x44` | global ID `bytes[32]`, payload digest `bytes[32]` | 65 |
 | `PROFILE_ACTIVATE` | `0x45` | expected binding generation `u64`, global ID `bytes[32]`, payload digest `bytes[32]` | 73 |
@@ -531,17 +558,19 @@ digest bytes. BEGIN flag bit 0 is receiver-view reversed strip order; all other
 bits are zero. Its logical ID, aligned physical origin, and direction must match
 provisioned receiver identity and installed topology before payload acceptance.
 
-The CRC leaves exactly 4,089 chunk-data bytes:
+The aligned envelope leaves exactly 4,085 production chunk-data bytes:
 
 ```text
-4096 - command(1) - offset(4) - crc(2) = 4089
+4090 semantic - command(1) - offset(4) = 4085
 ```
 
-The canonical receiver view therefore transfers at offsets `0`, `4089`, and
-`8178` with data lengths `4089`, `4089`, and `2086`. Chunks are strictly
+The canonical receiver view therefore transfers at offsets `0`, `4085`, and
+`8170` with data lengths `4085`, `4085`, and `2094`. Chunks are strictly
 contiguous. An exact retry of the latest accepted chunk is idempotent; a gap,
 overlap, conflicting retry, overflow, extra byte, or post-finalize chunk rejects
-without making partial data visible.
+without making partial data visible. The rollback decoder still accepts the
+former 4,089-byte legacy chunk when it arrives in legacy framing; current Hosts
+never select that ceiling after aligned capability discovery.
 
 PREFLIGHT is read-only. Success returns a nonzero opaque token bound to the
 candidate identities and size, receiver identity/topology, binding generation,
@@ -888,14 +917,14 @@ revision, scene epoch, base revision, and presentation time `u64`; lease
 milliseconds `u32`; patch start/count and expected-patch count `u16`; format
 and update-kind `u8`.
 
-The patch limit is exact:
+The aligned-host patch limit is exact:
 
 ```text
-max_rgba_pixels = floor((4096 - 30 - 2) / 4) = 1016
+max_rgba_pixels = floor((4090 semantic - 30) / 4) = 1015
 ```
 
 An installed receiver's 1,104-pixel full foreground snapshot is therefore two
-ascending patches: `[0, 1016)` and `[1016, 1104)`. Patches are contiguous or
+ascending patches: `[0, 1015)` and `[1015, 1104)`. Patches are contiguous or
 strictly ascending and non-overlapping as declared by the update kind. An exact
 retry of the latest accepted patch is idempotent; a byte-conflicting retry,
 overlap, gap where a full snapshot requires continuity, or out-of-order patch is
@@ -922,17 +951,19 @@ Each span count is nonzero, every RGBA body is premultiplied, and entries are
 sorted, non-overlapping, and in receiver-local bounds. Full snapshots are also
 contiguous from local pixel zero across packet boundaries. Including the
 28-byte fixed header, four bytes per span descriptor, and the two-byte CRC, the
-exact capacity rule is:
+exact aligned-host capacity rule is:
 
 ```text
-sum(pixel_counts) + span_count <= 1016
+sum(pixel_counts) + span_count <= 1015
 ```
 
-Consequently one batch can contain at most 1,015 pixels in one span or 508
-one-pixel spans. The largest legal batch is 4,094 bytes; the two unused bytes at
-the 4,096-byte ceiling are unavoidable because both descriptors and pixels are
-four-byte units. A canonical batch-mode 1,104-pixel snapshot uses logical spans
-`[0, 1015)` and `[1015, 1104)` in two packets.
+Consequently one batch can contain at most 1,014 pixels in one span or 507
+one-pixel spans. The largest legal semantic batch is 4,088 bytes; the aligned
+envelope pads its 4,094 unaligned bytes to the 4,096-byte wire ceiling. A
+canonical batch-mode 1,104-pixel snapshot uses logical spans `[0, 1014)` and
+`[1014, 1104)` in two packets. Legacy semantic serializers and the receiver's
+rollback decoder retain the former 1,016/1,015-pixel limits, but production
+packing does not emit them.
 
 `OVERLAY_BEGIN.expected_patches` and status-v4 `accepted_patches` count logical
 spans, not SPI packets: a legacy patch contributes one and a batch contributes

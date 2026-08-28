@@ -34,6 +34,12 @@ SPI_INTER_FRAME_DELAY = 0.0  # No delay needed - SPI is stable now
 
 MAX_SPI_TRANSFER = 4096
 CRC_BYTES = 2
+SPI_DMA_ALIGNMENT_BYTES = 4
+ALIGNED_ENVELOPE_VERSION = 1
+ALIGNED_ENVELOPE_HEADER_BYTES = 4
+MAX_ALIGNED_SEMANTIC_BYTES = (
+    MAX_SPI_TRANSFER - ALIGNED_ENVELOPE_HEADER_BYTES - CRC_BYTES
+)
 RECEIVER_STATUS_MAGIC = (ord('L'), ord('G'), ord('S'), ord('1'))
 RECEIVER_STATUS_MAGIC_V2 = (ord('L'), ord('G'), ord('S'), ord('2'))
 RECEIVER_STATUS_MAGIC_V3 = (ord('L'), ord('G'), ord('S'), ord('3'))
@@ -49,10 +55,11 @@ RECEIVER_STATUS_BYTES_V6 = 1216
 # The ESP32 slave keeps two response buffers queued. A command's result is
 # therefore observable after two complete status-query transfers.
 SPI_RESPONSE_QUEUE_DEPTH = 2
+TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS = 3
 COMMAND_ACK_MAX_STATUS_QUERIES = 16
 COMMAND_ACK_POLL_INTERVAL_SECONDS = 0.001
-MAX_PIXELS_SET_ALL = (MAX_SPI_TRANSFER - 1 - CRC_BYTES) // 3
-MAX_PIXELS_PER_RANGE = min(255, (MAX_SPI_TRANSFER - 4 - CRC_BYTES) // 3)
+MAX_PIXELS_SET_ALL = (MAX_ALIGNED_SEMANTIC_BYTES - 1) // 3
+MAX_PIXELS_PER_RANGE = min(255, (MAX_ALIGNED_SEMANTIC_BYTES - 4) // 3)
 
 GLOBAL_OPTS_WITH_VALUE = {"--bus", "--device", "--spi-speed", "--mode", "--brightness", "--strips", "--leds-per-strip"}
 GLOBAL_BOOL_OPTS = {"--debug"}
@@ -116,6 +123,7 @@ CMD_CONFIG = 0x07
 CMD_STATUS_QUERY = 0x08
 CMD_SET_LANE_MASK = 0x09
 CMD_SET_STAGGER = 0x0A
+CMD_ALIGNED_ENVELOPE = 0x0B
 CMD_LOCAL_BACKGROUND_START = 0x10
 CMD_LOCAL_BACKGROUND_STOP = 0x11
 CMD_LOCAL_BACKGROUND_PARAMS = 0x12
@@ -152,6 +160,48 @@ CMD_NATIVE_RESTORE = 0x5B
 CMD_NATIVE_QUARANTINE_CLEAR = 0x5C
 CMD_PING = 0xFF
 
+
+def _aligned_envelope_wire_size(semantic_length):
+    """Return the exact word-aligned wire size for one semantic packet."""
+    if isinstance(semantic_length, bool) or not isinstance(semantic_length, int):
+        raise TypeError("semantic_length must be an integer")
+    if semantic_length < 1 or semantic_length > MAX_ALIGNED_SEMANTIC_BYTES:
+        raise ValueError(
+            f"aligned semantic packet must contain 1..{MAX_ALIGNED_SEMANTIC_BYTES} bytes"
+        )
+    unpadded = ALIGNED_ENVELOPE_HEADER_BYTES + semantic_length + CRC_BYTES
+    padding = (-unpadded) % SPI_DMA_ALIGNMENT_BYTES
+    return unpadded + padding
+
+
+def _encode_aligned_envelope(payload, output=None):
+    """Encode one semantic command into the CRC-covered DMA-safe envelope."""
+    try:
+        semantic = memoryview(payload).cast("B")
+    except (TypeError, ValueError) as exc:
+        raise TypeError("payload must be a contiguous bytes-like object") from exc
+    semantic_length = len(semantic)
+    wire_size = _aligned_envelope_wire_size(semantic_length)
+    if output is None:
+        wire = bytearray(wire_size)
+    else:
+        if not isinstance(output, bytearray) or len(output) != wire_size:
+            raise ValueError("output must be a bytearray of the exact aligned wire size")
+        wire = output
+    wire[0] = CMD_ALIGNED_ENVELOPE
+    wire[1] = ALIGNED_ENVELOPE_VERSION
+    wire[2] = (semantic_length >> 8) & 0xFF
+    wire[3] = semantic_length & 0xFF
+    semantic_end = ALIGNED_ENVELOPE_HEADER_BYTES + semantic_length
+    wire[ALIGNED_ENVELOPE_HEADER_BYTES:semantic_end] = semantic
+    wire[semantic_end:-CRC_BYTES] = b"\x00" * (
+        wire_size - semantic_end - CRC_BYTES
+    )
+    crc = _crc16_ccitt(memoryview(wire)[:-CRC_BYTES])
+    wire[-2] = (crc >> 8) & 0xFF
+    wire[-1] = crc & 0xFF
+    return wire
+
 LOCAL_BACKGROUND_RAINBOW = 1
 MIN_LOCAL_BACKGROUND_CADENCE_HZ = 1
 MAX_LOCAL_BACKGROUND_CADENCE_HZ = 200
@@ -176,9 +226,17 @@ OVERLAY_UPDATE_FULL_SNAPSHOT = 1
 OVERLAY_UPDATE_DELTA = 2
 OVERLAY_LOCAL_PIXELS = 8 * 138
 MAX_RGBA_PIXELS_PER_PATCH = (
-    MAX_SPI_TRANSFER - OVERLAY_PATCH_HEADER_BYTES - CRC_BYTES
+    MAX_ALIGNED_SEMANTIC_BYTES - OVERLAY_PATCH_HEADER_BYTES
 ) // 4
 MAX_RGBA_PIXELS_PER_BATCH_SPAN = (
+    MAX_ALIGNED_SEMANTIC_BYTES
+    - OVERLAY_PATCH_BATCH_HEADER_BYTES
+    - OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
+) // 4
+LEGACY_MAX_RGBA_PIXELS_PER_PATCH = (
+    MAX_SPI_TRANSFER - OVERLAY_PATCH_HEADER_BYTES - CRC_BYTES
+) // 4
+LEGACY_MAX_RGBA_PIXELS_PER_BATCH_SPAN = (
     MAX_SPI_TRANSFER
     - OVERLAY_PATCH_BATCH_HEADER_BYTES
     - OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
@@ -188,7 +246,7 @@ PROFILE_BINDING_BYTES = 64
 PROFILE_PREFLIGHT_BYTES = 69
 PROFILE_BEGIN_BYTES = 81
 PROFILE_CHUNK_HEADER_BYTES = 5
-MAX_PROFILE_CHUNK_BYTES = MAX_SPI_TRANSFER - PROFILE_CHUNK_HEADER_BYTES - CRC_BYTES
+MAX_PROFILE_CHUNK_BYTES = MAX_ALIGNED_SEMANTIC_BYTES - PROFILE_CHUNK_HEADER_BYTES
 PROFILE_BINDING_COMMAND_BYTES = 65
 PROFILE_ACTIVATE_BYTES = 73
 PROFILE_RESTORE_BYTES = 204
@@ -225,7 +283,7 @@ NATIVE_PROBE_BYTES = 33
 NATIVE_PREFLIGHT_BYTES = 86
 NATIVE_BEGIN_BYTES = 94
 NATIVE_CHUNK_HEADER_BYTES = 5
-MAX_NATIVE_CHUNK_BYTES = MAX_SPI_TRANSFER - NATIVE_CHUNK_HEADER_BYTES - CRC_BYTES
+MAX_NATIVE_CHUNK_BYTES = MAX_ALIGNED_SEMANTIC_BYTES - NATIVE_CHUNK_HEADER_BYTES
 NATIVE_BINDING_COMMAND_BYTES = 65
 NATIVE_ACTIVATE_HEADER_BYTES = 87
 NATIVE_PARAMETERS_HEADER_BYTES = 71
@@ -322,6 +380,7 @@ CAPABILITY_NATIVE_CACHE_V1 = 1 << 10
 CAPABILITY_NATIVE_TYPED_PARAMETERS_V1 = 1 << 11
 CAPABILITY_NATIVE_QUARANTINE_V1 = 1 << 12
 CAPABILITY_NATIVE_GUARDED_LOADER_V1 = 1 << 13
+CAPABILITY_ALIGNED_ENVELOPE_V1 = 1 << 14
 
 ALL_LANES_MASK = 0xFF
 STAGGER_OFF = 1
@@ -379,6 +438,12 @@ class LEDController:
         self._frames_sent = 0
         self._spi_transfers = 0
         self._bytes_sent = 0
+        self._semantic_bytes_sent = 0
+        self._transport_envelope_bytes_sent = 0
+        self._transport_padding_bytes_sent = 0
+        self._full_frame_transfers = 0
+        self._full_frame_semantic_bytes_sent = 0
+        self._full_frame_wire_bytes_sent = 0
         self._crc_bytes_sent = 0
         self._errors = 0
         self._last_frame_duration = 0.0
@@ -491,9 +556,25 @@ class LEDController:
         self._receiver_profile_restores = 0
         self._clear_receiver_native_status()
         self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V3
+        # Rolling-deployment safety: emit legacy packets until this exact
+        # receiver proves aligned-envelope support across three fresh,
+        # counter-advancing status snapshots. New firmware continues decoding
+        # both wire formats.
+        self._transport_envelope_enabled = False
+        self._transport_envelope_candidate = None
+        self._transport_envelope_candidate_streak = 0
+        self._transport_envelope_last_receiver_packets = None
+        self._transport_envelope_fresh_observations = 0
+        self._transport_envelope_stale_observations = 0
+        self._transport_envelope_counter_resets = 0
+        self._transport_envelope_invalid_resets = 0
+        self._transport_envelope_transitions = 0
         self._presentation_commit_context_cache = {}
         self._monotonic_ns = time.monotonic_ns
         self._frame_packet = bytearray(1 + self.total_leds * 3 + CRC_BYTES)
+        self._aligned_frame_packet = bytearray(
+            _aligned_envelope_wire_size(1 + self.total_leds * 3)
+        )
         
         if self.debug:
             print("SPI Controller initialized")
@@ -529,20 +610,58 @@ class LEDController:
         if transport_lock is None:
             transport_lock = self._transport_lock = threading.RLock()
         with transport_lock:
-            if payload_length < 1 or payload_length + CRC_BYTES > MAX_SPI_TRANSFER:
+            envelope_enabled = bool(
+                getattr(self, "_transport_envelope_enabled", False)
+            )
+            maximum_payload = (
+                MAX_ALIGNED_SEMANTIC_BYTES
+                if envelope_enabled
+                else MAX_SPI_TRANSFER - CRC_BYTES
+            )
+            if payload_length < 1 or payload_length > maximum_payload:
                 raise ValueError(
-                    f"SPI transaction must be 1..{MAX_SPI_TRANSFER} bytes including CRC"
+                    f"SPI semantic transaction must be 1..{maximum_payload} bytes"
                 )
             if len(buf) != payload_length + CRC_BYTES:
                 raise ValueError("packet buffer must contain exactly payload plus CRC storage")
-            crc = _crc16_ccitt(memoryview(buf)[:payload_length])
-            buf[payload_length] = (crc >> 8) & 0xFF
-            buf[payload_length + 1] = crc & 0xFF
-            self._bytes_sent += len(buf)
+            if envelope_enabled:
+                reusable = None
+                aligned_frame = getattr(self, "_aligned_frame_packet", None)
+                if buf is getattr(self, "_frame_packet", None):
+                    expected = _aligned_envelope_wire_size(payload_length)
+                    if isinstance(aligned_frame, bytearray) and len(aligned_frame) == expected:
+                        reusable = aligned_frame
+                wire = _encode_aligned_envelope(
+                    memoryview(buf)[:payload_length], output=reusable
+                )
+                envelope_bytes = ALIGNED_ENVELOPE_HEADER_BYTES
+                padding_bytes = (
+                    len(wire)
+                    - ALIGNED_ENVELOPE_HEADER_BYTES
+                    - payload_length
+                    - CRC_BYTES
+                )
+            else:
+                crc = _crc16_ccitt(memoryview(buf)[:payload_length])
+                buf[payload_length] = (crc >> 8) & 0xFF
+                buf[payload_length + 1] = crc & 0xFF
+                wire = buf
+                envelope_bytes = 0
+                padding_bytes = 0
+            self._bytes_sent += len(wire)
+            self._semantic_bytes_sent = (
+                getattr(self, "_semantic_bytes_sent", 0) + payload_length
+            )
+            self._transport_envelope_bytes_sent = (
+                getattr(self, "_transport_envelope_bytes_sent", 0) + envelope_bytes
+            )
+            self._transport_padding_bytes_sent = (
+                getattr(self, "_transport_padding_bytes_sent", 0) + padding_bytes
+            )
             self._crc_bytes_sent += CRC_BYTES
             self._spi_transfers += 1
             try:
-                response = self.spi.xfer2(buf)
+                response = self.spi.xfer2(wire)
                 self._update_receiver_status(response)
                 return response
             except Exception:
@@ -743,15 +862,32 @@ class LEDController:
         # command. Short control/configuration transfers cannot carry either
         # status structure and therefore are not telemetry misses.
         if response is None or len(response) < RECEIVER_STATUS_BYTES:
+            self._reset_transport_envelope_candidate(invalid=False)
             return
-        if len(response) < RECEIVER_STATUS_BYTES_V2 and getattr(
-            self, '_receiver_status_version', 0
-        ) >= 2:
-            # A v2 receiver needs a 68-byte transaction to return its complete
-            # atomic status snapshot. Do not interpret a truncated prefix.
-            return
-
         magic = tuple(int(response[index]) for index in range(4))
+        indicated_status_bytes = {
+            RECEIVER_STATUS_MAGIC_V2: RECEIVER_STATUS_BYTES_V2,
+            RECEIVER_STATUS_MAGIC_V3: RECEIVER_STATUS_BYTES_V3,
+            RECEIVER_STATUS_MAGIC_V4: RECEIVER_STATUS_BYTES_V4,
+            RECEIVER_STATUS_MAGIC_V5: RECEIVER_STATUS_BYTES_V5,
+            RECEIVER_STATUS_MAGIC_V6: RECEIVER_STATUS_BYTES_V6,
+        }.get(magic)
+        if indicated_status_bytes is not None and len(response) < indicated_status_bytes:
+            self._reset_transport_envelope_candidate(invalid=False)
+            return
+        known_status_bytes = {
+            2: RECEIVER_STATUS_BYTES_V2,
+            3: RECEIVER_STATUS_BYTES_V3,
+            4: RECEIVER_STATUS_BYTES_V4,
+            5: RECEIVER_STATUS_BYTES_V5,
+            6: RECEIVER_STATUS_BYTES_V6,
+        }.get(getattr(self, '_receiver_status_version', 0), RECEIVER_STATUS_BYTES)
+        if indicated_status_bytes is None and len(response) < known_status_bytes:
+            # The Host clocked an ordinary command shorter than the known
+            # atomic status snapshot. This breaks a pending consecutive streak
+            # but is neither corruption nor a telemetry miss.
+            self._reset_transport_envelope_candidate(invalid=False)
+            return
         if magic == RECEIVER_STATUS_MAGIC_V6 and len(response) >= RECEIVER_STATUS_BYTES_V6:
             self._update_receiver_status_v6(response)
             return
@@ -795,9 +931,13 @@ class LEDController:
             self._note_legacy_snapshot(
                 self._receiver_stagger_phases == LEGACY_SNAPSHOT_SENTINEL
             )
+            self._observe_transport_envelope_capability(
+                False, self._receiver_packets
+            )
             return
 
         if magic != RECEIVER_STATUS_MAGIC:
+            self._reset_transport_envelope_candidate(invalid=True)
             if getattr(self, '_receiver_status_seen', False):
                 self._receiver_status_misses = getattr(self, '_receiver_status_misses', 0) + 1
             return
@@ -814,6 +954,69 @@ class LEDController:
         self._receiver_last_show_us = self._response_u16(response, 24)
         self._receiver_active_strips = int(response[26])
         self._receiver_leds_per_strip = self._response_u16(response, 27)
+        self._observe_transport_envelope_capability(
+            False, self._receiver_packets
+        )
+
+    def _reset_transport_envelope_candidate(self, *, invalid=False):
+        """Discard an unproven transition without changing active framing."""
+        self._transport_envelope_candidate = None
+        self._transport_envelope_candidate_streak = 0
+        if invalid:
+            self._transport_envelope_invalid_resets = (
+                getattr(self, "_transport_envelope_invalid_resets", 0) + 1
+            )
+
+    def _observe_transport_envelope_capability(
+        self, advertised, receiver_packets
+    ):
+        """Commit a framing transition after three fresh receiver observations."""
+        advertised = bool(advertised)
+        receiver_packets = int(receiver_packets)
+        last_packets = getattr(
+            self, "_transport_envelope_last_receiver_packets", None
+        )
+        if last_packets is not None and receiver_packets == last_packets:
+            self._transport_envelope_stale_observations = (
+                getattr(self, "_transport_envelope_stale_observations", 0) + 1
+            )
+            self._reset_transport_envelope_candidate()
+            return False
+        if last_packets is not None and receiver_packets < last_packets:
+            # Receiver reboot, counter reset, or uint32 wrap starts a new
+            # evidence epoch. The first post-reset observation may seed, but
+            # can never by itself change active framing.
+            self._transport_envelope_counter_resets = (
+                getattr(self, "_transport_envelope_counter_resets", 0) + 1
+            )
+            self._reset_transport_envelope_candidate()
+        self._transport_envelope_last_receiver_packets = receiver_packets
+        self._transport_envelope_fresh_observations = (
+            getattr(self, "_transport_envelope_fresh_observations", 0) + 1
+        )
+
+        active = bool(getattr(self, "_transport_envelope_enabled", False))
+        if advertised == active:
+            self._reset_transport_envelope_candidate()
+            return True
+        candidate = getattr(self, "_transport_envelope_candidate", None)
+        if candidate is advertised:
+            self._transport_envelope_candidate_streak = (
+                getattr(self, "_transport_envelope_candidate_streak", 0) + 1
+            )
+        else:
+            self._transport_envelope_candidate = advertised
+            self._transport_envelope_candidate_streak = 1
+        if (
+            self._transport_envelope_candidate_streak
+            >= TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
+        ):
+            self._transport_envelope_enabled = advertised
+            self._transport_envelope_transitions = (
+                getattr(self, "_transport_envelope_transitions", 0) + 1
+            )
+            self._reset_transport_envelope_candidate()
+        return True
 
     def _update_receiver_status_v3(self, response):
         """Parse status v3 after the firmware-defined layout is available."""
@@ -845,6 +1048,10 @@ class LEDController:
         self._receiver_last_displayed_sequence = self._response_u32(response, 56)
         self._receiver_display_errors = self._response_u32(response, 60)
         self._receiver_capabilities = self._response_u32(response, 64)
+        self._observe_transport_envelope_capability(
+            self._receiver_capabilities & CAPABILITY_ALIGNED_ENVELOPE_V1,
+            self._receiver_packets,
+        )
         self._receiver_base_mode = int(response[68])
         self._receiver_foreground_state = int(response[69])
         self._receiver_maintenance_state = int(response[70])
@@ -1824,7 +2031,9 @@ class LEDController:
             "generation", generation, 0xFFFFFFFFFFFFFFFF
         )
         first_pixel = cls._bounded_uint("start", start, 0xFFFF)
-        rgba, count = cls._premultiplied_rgba_bytes(premultiplied_rgba)
+        rgba, count = cls._premultiplied_rgba_bytes(
+            premultiplied_rgba, maximum=LEGACY_MAX_RGBA_PIXELS_PER_PATCH
+        )
         if first_pixel + count > OVERLAY_LOCAL_PIXELS:
             raise ValueError(
                 f"overlay patch [{first_pixel}, {first_pixel + count}) exceeds "
@@ -1859,7 +2068,7 @@ class LEDController:
                 raise ValueError("each batch span must be a (start, RGBA) pair")
             first_pixel = cls._bounded_uint("start", item[0], 0xFFFF)
             rgba, count = cls._premultiplied_rgba_bytes(
-                item[1], maximum=MAX_RGBA_PIXELS_PER_BATCH_SPAN
+                item[1], maximum=LEGACY_MAX_RGBA_PIXELS_PER_BATCH_SPAN
             )
             if first_pixel + count > OVERLAY_LOCAL_PIXELS:
                 raise ValueError(
@@ -1948,17 +2157,20 @@ class LEDController:
 
         packets = []
         packet_spans = []
-        packet_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES + CRC_BYTES
+        packet_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES
         for span in normalized:
             span_bytes = OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES + len(span[1])
-            if packet_spans and packet_bytes + span_bytes > MAX_SPI_TRANSFER:
+            if (
+                packet_spans
+                and packet_bytes + span_bytes > MAX_ALIGNED_SEMANTIC_BYTES
+            ):
                 packets.append(cls.serialize_overlay_patch_batch(
                     controller_session_id=controller_session_id,
                     generation=generation,
                     spans=packet_spans,
                 ))
                 packet_spans = []
-                packet_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES + CRC_BYTES
+                packet_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES
             packet_spans.append(span)
             packet_bytes += span_bytes
         if packet_spans:
@@ -2019,7 +2231,15 @@ class LEDController:
         return self._overlay_command_status(self.serialize_overlay_begin(**kwargs))
 
     def send_overlay_patch(self, **kwargs):
-        return self._overlay_command_status(self.serialize_overlay_patch(**kwargs))
+        payload = self.serialize_overlay_patch(**kwargs)
+        if (
+            getattr(self, "_transport_envelope_enabled", False)
+            and len(payload) > MAX_ALIGNED_SEMANTIC_BYTES
+        ):
+            raise ValueError(
+                "overlay patch exceeds the aligned transport semantic limit"
+            )
+        return self._overlay_command_status(payload)
 
     def commit_overlay(self, **kwargs):
         return self._overlay_command_status(self.serialize_overlay_commit(**kwargs))
@@ -2038,9 +2258,15 @@ class LEDController:
             raise RuntimeError(
                 "receiver has not advertised sparse-overlay batch-v1 support"
             )
-        return self._overlay_command_status(
-            self.serialize_overlay_patch_batch(**kwargs)
-        )
+        payload = self.serialize_overlay_patch_batch(**kwargs)
+        if (
+            getattr(self, "_transport_envelope_enabled", False)
+            and len(payload) > MAX_ALIGNED_SEMANTIC_BYTES
+        ):
+            raise ValueError(
+                "overlay patch batch exceeds the aligned transport semantic limit"
+            )
+        return self._overlay_command_status(payload)
 
     def _overlay_command_status(self, payload):
         status = self._command_status(payload, required_status_version=4)
@@ -2073,17 +2299,31 @@ class LEDController:
             & CAPABILITY_SPARSE_OVERLAY_BATCH_V1
         ):
             # A sparse-v1 receiver can still consume the original single-span
-            # packets. The batch serializer above performs the complete
-            # ordering/full-coverage preflight before any legacy packet is sent.
-            packets = tuple(
-                self.serialize_overlay_patch(
-                    controller_session_id=controller_session_id,
-                    generation=generation,
-                    start=start,
-                    premultiplied_rgba=rgba,
-                )
-                for start, rgba in patch_items
+            # packets. Re-split them to the final negotiated transport limit
+            # and materialize every packet before I/O; otherwise an aligned
+            # host could stage an early span and only then reject a later
+            # legacy-sized span.
+            maximum_pixels = (
+                MAX_RGBA_PIXELS_PER_PATCH
+                if getattr(self, "_transport_envelope_enabled", False)
+                else LEGACY_MAX_RGBA_PIXELS_PER_PATCH
             )
+            fallback_packets = []
+            for start, value in patch_items:
+                rgba, count = self._premultiplied_rgba_bytes(
+                    value, maximum=OVERLAY_LOCAL_PIXELS
+                )
+                for offset in range(0, count, maximum_pixels):
+                    span_count = min(maximum_pixels, count - offset)
+                    byte_start = offset * 4
+                    byte_end = byte_start + span_count * 4
+                    fallback_packets.append(self.serialize_overlay_patch(
+                        controller_session_id=controller_session_id,
+                        generation=generation,
+                        start=start + offset,
+                        premultiplied_rgba=rgba[byte_start:byte_end],
+                    ))
+            packets = tuple(fallback_packets)
         statuses = []
         for packet in packets:
             statuses.append(self._overlay_command_status(packet))
@@ -2373,6 +2613,9 @@ class LEDController:
         expected_packet_size = 1 + self.total_leds * 3 + CRC_BYTES
         if len(self._frame_packet) != expected_packet_size:
             self._frame_packet = bytearray(expected_packet_size)
+        expected_aligned_size = _aligned_envelope_wire_size(1 + self.total_leds * 3)
+        if len(getattr(self, "_aligned_frame_packet", ())) != expected_aligned_size:
+            self._aligned_frame_packet = bytearray(expected_aligned_size)
         self._refresh_configuration(force=True)
         if self.debug:
             print(f"✓ Configuration sent (strips={self.strip_count}, leds/strip={self.leds_per_strip})")
@@ -2404,6 +2647,9 @@ class LEDController:
         try:
             if total_pixels <= MAX_PIXELS_SET_ALL:
                 payload_length = 1 + total_pixels * 3
+                aligned_frame = bool(
+                    getattr(self, "_transport_envelope_enabled", False)
+                )
                 buf = self._frame_packet
                 buf[0] = CMD_SET_ALL
                 if rgb_bytes is not None:
@@ -2416,6 +2662,21 @@ class LEDController:
                         buf[idx + 2] = int(b) & 0xFF
                         idx += 3
                 self._xfer_packet(buf, payload_length)
+                self._full_frame_transfers = (
+                    getattr(self, "_full_frame_transfers", 0) + 1
+                )
+                self._full_frame_semantic_bytes_sent = (
+                    getattr(self, "_full_frame_semantic_bytes_sent", 0)
+                    + payload_length
+                )
+                self._full_frame_wire_bytes_sent = (
+                    getattr(self, "_full_frame_wire_bytes_sent", 0)
+                    + (
+                        _aligned_envelope_wire_size(payload_length)
+                        if aligned_frame
+                        else payload_length + CRC_BYTES
+                    )
+                )
                 if SPI_INTER_FRAME_DELAY > 0:
                     time.sleep(SPI_INTER_FRAME_DELAY)
             else:
@@ -2467,6 +2728,50 @@ class LEDController:
             'frames_sent': self._frames_sent,
             'spi_transfers': self._spi_transfers,
             'bytes_sent': self._bytes_sent,
+            'semantic_bytes_sent': getattr(self, '_semantic_bytes_sent', 0),
+            'transport_envelope_enabled': bool(
+                getattr(self, '_transport_envelope_enabled', False)
+            ),
+            'transport_envelope_negotiation_required': (
+                TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
+            ),
+            'transport_envelope_negotiation_candidate': getattr(
+                self, '_transport_envelope_candidate', None
+            ),
+            'transport_envelope_negotiation_streak': getattr(
+                self, '_transport_envelope_candidate_streak', 0
+            ),
+            'transport_envelope_last_receiver_packets': getattr(
+                self, '_transport_envelope_last_receiver_packets', None
+            ),
+            'transport_envelope_fresh_observations': getattr(
+                self, '_transport_envelope_fresh_observations', 0
+            ),
+            'transport_envelope_stale_observations': getattr(
+                self, '_transport_envelope_stale_observations', 0
+            ),
+            'transport_envelope_counter_resets': getattr(
+                self, '_transport_envelope_counter_resets', 0
+            ),
+            'transport_envelope_invalid_resets': getattr(
+                self, '_transport_envelope_invalid_resets', 0
+            ),
+            'transport_envelope_transitions': getattr(
+                self, '_transport_envelope_transitions', 0
+            ),
+            'transport_envelope_bytes_sent': getattr(
+                self, '_transport_envelope_bytes_sent', 0
+            ),
+            'transport_padding_bytes_sent': getattr(
+                self, '_transport_padding_bytes_sent', 0
+            ),
+            'full_frame_transfers': getattr(self, '_full_frame_transfers', 0),
+            'full_frame_semantic_bytes_sent': getattr(
+                self, '_full_frame_semantic_bytes_sent', 0
+            ),
+            'full_frame_wire_bytes_sent': getattr(
+                self, '_full_frame_wire_bytes_sent', 0
+            ),
             'crc_bytes_sent': self._crc_bytes_sent,
             'errors': self._errors,
             'receiver_status_seen': self._receiver_status_seen,

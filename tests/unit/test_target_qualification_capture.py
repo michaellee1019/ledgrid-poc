@@ -27,9 +27,30 @@ PROFILE = "0" * 64
 def _device(logical_id: int, displayed: int) -> dict:
     widths = (8, 8, 8, 8, 1)
     offsets = (0, 8, 16, 24, 32)
+    transfers = displayed
+    semantic_bytes = transfers * 3313
+    envelope_bytes = transfers * 4
+    padding_bytes = transfers
+    crc_bytes = transfers * 2
+    full_frame_semantic = 1 + widths[logical_id] * 138 * 3
+    full_frame_wire = ((full_frame_semantic + 9) // 4) * 4
     return {
         "receiver_logical_device": logical_id,
         "receiver_status_version": 3,
+        "receiver_capabilities": 0x400C,
+        "transport_envelope_enabled": True,
+        "transport_envelope_negotiation_candidate": None,
+        "transport_envelope_negotiation_streak": 0,
+        "transport_envelope_negotiation_required": 3,
+        "spi_transfers": transfers,
+        "semantic_bytes_sent": semantic_bytes,
+        "transport_envelope_bytes_sent": envelope_bytes,
+        "transport_padding_bytes_sent": padding_bytes,
+        "crc_bytes_sent": crc_bytes,
+        "bytes_sent": semantic_bytes + envelope_bytes + padding_bytes + crc_bytes,
+        "full_frame_transfers": transfers,
+        "full_frame_semantic_bytes_sent": transfers * full_frame_semantic,
+        "full_frame_wire_bytes_sent": transfers * full_frame_wire,
         "receiver_active_strips": widths[logical_id],
         "receiver_global_strip_offset": offsets[logical_id],
         "receiver_leds_per_strip": 138,
@@ -53,6 +74,13 @@ def _metrics(*, final: bool) -> dict:
     widths = (8, 8, 8, 8, 1)
     offsets = (0, 8, 16, 24, 32)
     native_reversed = (False, False, True, True, False)
+    devices = [_device(index, displayed) for index in range(5)]
+    transport_fields = (
+        "spi_transfers", "bytes_sent", "semantic_bytes_sent",
+        "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
+        "crc_bytes_sent", "full_frame_transfers",
+        "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
+    )
     return {
         "animation": {"target_fps": 150, "actual_fps": 150.4},
         "performance": {
@@ -70,6 +98,11 @@ def _metrics(*, final: bool) -> dict:
                 "num_devices": 5,
                 "strip_count": 33,
                 "total_leds": 4554,
+                "transport_envelope_devices": 5,
+                **{
+                    field: sum(device[field] for device in devices)
+                    for field in transport_fields
+                },
                 "device_map": [
                     {
                         "logical_device": logical_id,
@@ -86,7 +119,7 @@ def _metrics(*, final: bool) -> dict:
                     for logical_id in range(5)
                 ],
             },
-            "devices": [_device(index, displayed) for index in range(5)],
+            "devices": devices,
         },
     }
 
@@ -282,16 +315,102 @@ class TargetQualificationCaptureTests(unittest.TestCase):
             ("route", ("device_map", 2, "chip_select", 0)),
             ("width", ("device_map", 4, "local_strip_count", 8)),
             ("offset", ("devices", 3, "receiver_global_strip_offset", 16)),
+            ("capabilities", ("devices", 0, "receiver_capabilities", 0x000C)),
+            ("host disabled", ("devices", 2, "transport_envelope_enabled", False)),
+            ("aggregate disabled", ("aggregate", 0, "transport_envelope_devices", 4)),
         )
         for label, (collection, index, field, replacement) in mutations:
             with self.subTest(label=label):
                 changed = deepcopy(metrics)
                 if collection == "device_map":
                     changed["driver"]["aggregate"][collection][index][field] = replacement
+                elif collection == "aggregate":
+                    changed["driver"]["aggregate"][field] = replacement
                 else:
                     changed["driver"][collection][index][field] = replacement
-                with self.assertRaisesRegex(TargetEvidenceError, field):
+                expected_error = (
+                    "aligned transport capabilities"
+                    if label == "capabilities"
+                    else "not enabled"
+                    if label == "host disabled"
+                    else "exactly five"
+                    if label == "aggregate disabled"
+                    else field
+                )
+                with self.assertRaisesRegex(TargetEvidenceError, expected_error):
                     validate_installed_topology(changed)
+
+    def test_perf_rejects_missing_stalled_and_drifted_transport_accounting(self) -> None:
+        cases = []
+        missing = _metrics(final=True)
+        missing["driver"]["devices"][0].pop("semantic_bytes_sent")
+        cases.append(("missing", missing, "semantic_bytes_sent"))
+        stalled = _metrics(final=True)
+        initial = _metrics(final=False)
+        for field in (
+            "spi_transfers", "bytes_sent", "semantic_bytes_sent",
+            "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
+            "crc_bytes_sent",
+        ):
+            stalled["driver"]["devices"][0][field] = initial["driver"]["devices"][0][field]
+            stalled["driver"]["aggregate"][field] = sum(
+                device[field] for device in stalled["driver"]["devices"]
+            )
+        cases.append(("stalled", stalled, "did not advance"))
+        status_only = _metrics(final=True)
+        for field in (
+            "full_frame_transfers", "full_frame_semantic_bytes_sent",
+            "full_frame_wire_bytes_sent",
+        ):
+            for logical_id in range(5):
+                status_only["driver"]["devices"][logical_id][field] = (
+                    initial["driver"]["devices"][logical_id][field]
+                )
+            status_only["driver"]["aggregate"][field] = sum(
+                device[field] for device in status_only["driver"]["devices"]
+            )
+        cases.append(("status-only", status_only, "full_frame_transfers did not advance"))
+        drifted = _metrics(final=True)
+        drifted["driver"]["devices"][0]["bytes_sent"] += 1
+        drifted["driver"]["aggregate"]["bytes_sent"] += 1
+        cases.append(("drifted", drifted, "wire-byte accounting"))
+        for label, final, expected in cases:
+            with self.subTest(label=label), self.assertRaisesRegex(
+                TargetEvidenceError, expected
+            ):
+                build_target_evidence(
+                    [_metrics(final=False), final],
+                    elapsed_seconds=1.0,
+                    binding_digest=BINDING,
+                    captured_at=2_000_000,
+                    target_fps=150,
+                    brightness=50,
+                    environment="Raspberry Pi 4 test",
+                )
+
+    def test_perf_requires_complete_settled_three_observation_negotiation(self) -> None:
+        cases = []
+        missing = _metrics(final=False)
+        missing["driver"]["devices"][0].pop(
+            "transport_envelope_negotiation_candidate"
+        )
+        cases.append(("missing", missing))
+        pending = _metrics(final=False)
+        pending["driver"]["devices"][0].update({
+            "transport_envelope_negotiation_candidate": False,
+            "transport_envelope_negotiation_streak": 1,
+        })
+        cases.append(("pending", pending))
+        wrong_required = _metrics(final=False)
+        wrong_required["driver"]["devices"][0][
+            "transport_envelope_negotiation_required"
+        ] = 2
+        cases.append(("wrong required", wrong_required))
+        for label, metrics in cases:
+            with self.subTest(label=label), self.assertRaisesRegex(
+                TargetEvidenceError, "negotiation is not settled"
+            ):
+                validate_installed_topology(metrics)
 
     def test_activation_receipt_must_match_every_retained_identity(self) -> None:
         validate_active_activation(

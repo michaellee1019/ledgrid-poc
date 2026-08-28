@@ -158,7 +158,8 @@ class ReceiverNativeHostProtocolTests(unittest.TestCase):
         payload = protocol.LEDController.serialize_native_chunk(
             offset=7, data=b"x" * protocol.MAX_NATIVE_CHUNK_BYTES
         )
-        self.assertEqual(len(payload), 4094)
+        self.assertEqual(len(payload), protocol.MAX_ALIGNED_SEMANTIC_BYTES)
+        item._transport_envelope_enabled = True
         item._xfer(payload)
         packet = item.spi.packets[-1]
         self.assertEqual(len(packet), 4096)

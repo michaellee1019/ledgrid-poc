@@ -129,9 +129,10 @@ class ProfileProtocolTests(unittest.TestCase):
         payload = protocol.LEDController.serialize_profile_chunk(
             offset=0x01020304, data=b"x" * protocol.MAX_PROFILE_CHUNK_BYTES
         )
-        self.assertEqual(len(payload), 4094)
+        self.assertEqual(len(payload), protocol.MAX_ALIGNED_SEMANTIC_BYTES)
         self.assertEqual(payload[:5], b"\x42\x01\x02\x03\x04")
         item = controller()
+        item._transport_envelope_enabled = True
         item._xfer(payload)
         self.assertEqual(len(item.spi.packets[-1]), protocol.MAX_SPI_TRANSFER)
 

@@ -59,12 +59,18 @@ static_assert(configNUMBER_OF_CORES > ledgrid::kReceiverDisplayTaskCore,
 static_assert(kSpiBufferSize == 4096, "transport contract changed");
 static_assert(kSpiFrameBytes <= kSpiBufferSize,
               "maximum RGB frame plus CRC exceeds transport buffer");
+static_assert(1U + kMaxRgbBytes <=
+                  ledgrid::kAlignedEnvelopeMaxSemanticBytes,
+              "maximum RGB frame exceeds aligned semantic bound");
 static_assert(ledgrid::kStatusBytesV3 + kCrcBytes <= kSpiBufferSize,
               "status query plus CRC exceeds transport buffer");
 static_assert(ledgrid::kStatusBytesV5 + kCrcBytes <= kSpiBufferSize,
               "status-v5 query plus CRC exceeds transport buffer");
 static_assert(ledgrid::kStatusBytesV6 + kCrcBytes <= kSpiBufferSize,
               "status-v6 query plus CRC exceeds transport buffer");
+static_assert(ledgrid::kStatusBytesV6 <=
+                  ledgrid::kAlignedEnvelopeMaxSemanticBytes,
+              "status-v6 query exceeds aligned semantic bound");
 
 DMA_ATTR std::uint8_t spi_rx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
 DMA_ATTR std::uint8_t spi_tx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
@@ -643,7 +649,8 @@ ledgrid::ReceiverStatusV6 status_snapshot() {
   status.lane_mask = applied_lane_mask.load(std::memory_order_relaxed);
   status.leds_per_strip = output.leds_per_strip;
   status.capabilities = ledgrid::kCapabilityStatusV3 |
-                        ledgrid::kCapabilityExplicitBaseOwnership;
+                        ledgrid::kCapabilityExplicitBaseOwnership |
+                        ledgrid::kCapabilityAlignedEnvelopeV1;
   if (receiver_runtime.local_background_enabled()) {
     status.capabilities |= ledgrid::kCapabilityStaticLocalBackground |
                            ledgrid::kCapabilityPresentationContextV1 |
@@ -1280,7 +1287,6 @@ extern "C" void app_main() {
     if (bytes < 1U + kCrcBytes) {
       ++crc_errors;
     } else {
-      const std::size_t payload_bytes = bytes - kCrcBytes;
       const std::uint32_t crc_started =
           static_cast<std::uint32_t>(esp_timer_get_time());
       const bool crc_valid =
@@ -1291,29 +1297,41 @@ extern "C" void app_main() {
         ++crc_errors;
       } else {
         ++crc_ok_packets;
+        ledgrid::ReceiverPacketPayload decoded{};
+        if (!ledgrid::decode_crc_valid_receiver_packet_payload(
+                packet, bytes, &decoded)) {
+          lock_runtime();
+          receiver_runtime.set_last_result(
+              ledgrid::ReceiverOperationResult::InvalidCommand);
+          unlock_runtime();
+          queue_spi_transaction(index, false, false, false);
+          continue;
+        }
+        const std::uint8_t* command = decoded.data;
+        const std::size_t payload_bytes = decoded.size;
         const bool status_query =
-            packet[0] == static_cast<std::uint8_t>(
-                             ledgrid::ReceiverCommand::StatusQuery);
+            command[0] == static_cast<std::uint8_t>(
+                              ledgrid::ReceiverCommand::StatusQuery);
         bool dispatch_allowed = true;
         std::uint32_t operation_sequence = 0;
         if (!status_query) {
           lock_runtime();
-          dispatch_allowed = operation_tracker.begin(packet[0]);
+          dispatch_allowed = operation_tracker.begin(command[0]);
           operation_sequence = operation_tracker.sequence();
           unlock_runtime();
         }
         ledgrid::NativeModuleResult native_result =
             ledgrid::NativeModuleResult::None;
         const bool accepted = dispatch_allowed &&
-            process_command(packet, payload_bytes, &native_result);
+            process_command(command, payload_bytes, &native_result);
 #if LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES
-        if (dispatch_allowed && is_native_module_command(packet[0])) {
+        if (dispatch_allowed && is_native_module_command(command[0])) {
           // Rendering runs on the display task and may update live failure
           // telemetry while the SPI queue drains. Preserve the exact result of
           // this operation alongside the sequence/command acknowledgement.
           lock_native();
           native_operation_result_latch.record(
-              operation_sequence, packet[0], native_result);
+              operation_sequence, command[0], native_result);
           unlock_native();
         }
 #endif
@@ -1325,7 +1343,7 @@ extern "C" void app_main() {
             payload_bytes == ledgrid::kStatusBytesV6;
         if (!status_query && dispatch_allowed) {
           lock_runtime();
-          if (packet[0] < 0x10 || packet[0] == 0xFF) {
+          if (command[0] < 0x10 || command[0] == 0xFF) {
             receiver_runtime.set_last_result(
                 accepted ? ledgrid::ReceiverOperationResult::Ok
                          : ledgrid::ReceiverOperationResult::InvalidCommand);

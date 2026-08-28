@@ -63,6 +63,10 @@ All of these must pass before a hardware flash:
 - Host transport tests prove SPI0 and SPI1 bus groups overlap while chip selects
   sharing one bus remain serialized; live telemetry reports the complete logical
   device-to-bus/chip-select map.
+- Host and firmware transport tests prove legacy discovery/rollback decoding,
+  capability-gated envelope enablement, exact CRC-covered bytes, zero-only
+  padding, four-byte alignment, full v3-v6 status-query semantics, maximum-size
+  rejection, and separate semantic/envelope/padding/wire byte accounting.
 - Every active frame-based animation returns a canonical contiguous `uint8`
   frame without errors and renders at or below 4.0 ms p95 for the installed
   33 x 138 geometry in the headless benchmark.
@@ -145,8 +149,11 @@ The reported rate uses the monotonic interval between the first and last
 receiver-counter samples; HTTP request time before the first sample and cleanup
 time cannot dilute the measured cadence.
 
-The installed timing budget is explicit. One receiver SET_ALL is 3,315 bytes
-(one command byte, 8 x 138 x RGB8, and two CRC bytes), or 1,326 us at 20 MHz.
+The installed timing budget is explicit. One receiver aligned SET_ALL is 3,320
+wire bytes (a 3,313-byte semantic command plus the versioned length header, one
+zero pad byte, and two CRC bytes), or 1,328 us at 20 MHz. The four full receivers
+plus the one-strip tail clock 13,704 bytes, or 5,481.6 us of aggregate bus time
+when treated serially; the two independent SPI buses overlap in the live host.
 The nominal 138-pixel WS2812 transaction is 4,440 us including the 300 us reset.
 The installed target-200 run measured 490 us encode p95, 4,442 us display p95,
 and 9,362 accepted and displayed frames over 60.279 seconds: 155.31 FPS with no
@@ -154,6 +161,15 @@ integrity or accounting error. That agrees with the current effective serial
 SPI-plus-encode-plus-display budget and does not support a 180 FPS release gate.
 Target 200 remains an output-rate saturation characterization, not production
 capacity acceptance.
+
+The aligned envelope is a standards-compliance prerequisite, not yet a claim of
+live integrity resolution. [Espressif's ESP32-S3 SPI-slave documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/spi_slave.html)
+requires DMA RX buffers and transaction lengths to be word-aligned/four-byte
+multiples and warns that inappropriate Host write lengths may be discarded.
+Retained live data also contains rare CRC failures on an aligned 420-byte data
+transfer, so only a new full-size aligned SET_ALL stress gate can establish
+whether this repair is sufficient. Every failed outer CRC remains visible and
+rejected; no acceptance result may reinterpret alignment as correction.
 
 The capacity gate passes only when receiver telemetry shows:
 
@@ -203,7 +219,15 @@ It binds the activation receipt and exact Check basis digest, canonical Python
 scene digest, immutable web and controller release, controller
 session/revision/current identity, exact
 33×138 five-receiver topology, and 150 FPS target. Every receiver must sustain
-at least 150 displayed FPS with complete mailbox accounting. The receipt's full
+at least 150 displayed FPS with complete mailbox accounting. Every receiver
+must also advertise aligned-envelope support, report settled Host envelope
+enablement, and contribute positive semantic/header/padding byte deltas that
+reconcile exactly with aggregate wire bytes, transfers, and CRC bytes; the
+aggregate enabled count must remain exactly five. Dedicated successful
+`SET_ALL` counters must advance at at least 150 FPS on every receiver and prove
+exact 3,313→3,320 semantic-to-wire bytes per frame for logical receivers 0-3
+and 415→424 for logical receiver 4; status queries, SHOW/CLEAR, and partial
+updates cannot satisfy this full-frame requirement. The receipt's full
 requested, normalized, and observed scene/component/global/profile identities
 must be unanimous and must equal the controller's full active identity. Any
 controller status staleness, activation identity or telemetry drift, counter

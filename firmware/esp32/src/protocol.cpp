@@ -540,6 +540,67 @@ bool receiver_packet_crc_valid(
   return received == calculated;
 }
 
+bool decode_receiver_packet_payload(
+    const std::uint8_t* packet,
+    std::size_t packet_size,
+    ReceiverPacketPayload* payload) {
+  if (!receiver_packet_crc_valid(packet, packet_size)) {
+    if (payload != nullptr) *payload = {};
+    return false;
+  }
+  return decode_crc_valid_receiver_packet_payload(packet, packet_size, payload);
+}
+
+bool decode_crc_valid_receiver_packet_payload(
+    const std::uint8_t* packet,
+    std::size_t packet_size,
+    ReceiverPacketPayload* payload) {
+  if (payload == nullptr) return false;
+  *payload = {};
+  if (packet == nullptr ||
+      packet_size < 1U + kAnimationPipelineCrcBytes ||
+      packet_size > kAnimationPipelineMaxTransactionBytes) {
+    return false;
+  }
+
+  const std::size_t outer_payload_size =
+      packet_size - kAnimationPipelineCrcBytes;
+  if (packet[0] !=
+      static_cast<std::uint8_t>(ReceiverCommand::AlignedEnvelope)) {
+    payload->data = packet;
+    payload->size = outer_payload_size;
+    return true;
+  }
+
+  if (packet_size % kSpiDmaAlignmentBytes != 0U ||
+      outer_payload_size < kAlignedEnvelopeHeaderBytes + 1U ||
+      packet[1] != kAlignedEnvelopeVersion) {
+    return false;
+  }
+  const std::size_t semantic_size =
+      (static_cast<std::size_t>(packet[2]) << 8U) | packet[3];
+  if (semantic_size == 0U ||
+      semantic_size > kAlignedEnvelopeMaxSemanticBytes) {
+    return false;
+  }
+  const std::size_t unpadded_size =
+      kAlignedEnvelopeHeaderBytes + semantic_size +
+      kAnimationPipelineCrcBytes;
+  const std::size_t padding_size =
+      (kSpiDmaAlignmentBytes - unpadded_size % kSpiDmaAlignmentBytes) %
+      kSpiDmaAlignmentBytes;
+  if (packet_size != unpadded_size + padding_size) return false;
+  const std::size_t padding_offset =
+      kAlignedEnvelopeHeaderBytes + semantic_size;
+  for (std::size_t index = 0; index < padding_size; ++index) {
+    if (packet[padding_offset + index] != 0U) return false;
+  }
+  payload->data = packet + kAlignedEnvelopeHeaderBytes;
+  payload->size = semantic_size;
+  payload->aligned_envelope = true;
+  return true;
+}
+
 bool valid_status_query(const std::uint8_t* command, std::size_t size) {
   return valid_status_query(command, size, false, false, false);
 }

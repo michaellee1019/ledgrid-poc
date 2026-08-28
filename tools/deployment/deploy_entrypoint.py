@@ -112,12 +112,13 @@ DEFAULT_SSH_OPTIONS = (
 )
 
 RECEIVER_FIRMWARE_HEALTH_CAPABILITIES = {
-    # Production remains complete-host-takeover/status-v3 only.
-    PRODUCTION_FIRMWARE_ENVIRONMENT: (3, 0x000C),
+    # Every current environment requires the DMA-safe aligned transport.
+    # Production otherwise remains complete-host-takeover/status-v3 only.
+    PRODUCTION_FIRMWARE_ENVIRONMENT: (3, 0x400C),
     # Local/profile canary negotiates the status-v5 extension.
-    DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (5, 0x00FF),
+    DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (5, 0x40FF),
     # Managed native requires every capability through guarded loading.
-    NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (6, 0x3FFF),
+    NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (6, 0x7FFF),
 }
 FINALIZED_RECEIVER_ROUTES = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
 FINALIZED_RECEIVER_WIDTHS = (8, 8, 8, 8, 1)

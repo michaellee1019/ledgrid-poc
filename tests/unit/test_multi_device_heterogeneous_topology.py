@@ -21,7 +21,10 @@ from drivers.multi_device import (
     OVERLAY_UPDATE_DELTA,
     OVERLAY_UPDATE_FULL_SNAPSHOT,
 )
-from drivers.spi_controller import SPI_RESPONSE_QUEUE_DEPTH
+from drivers.spi_controller import (
+    SPI_RESPONSE_QUEUE_DEPTH,
+    TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS,
+)
 
 
 WIDTHS = (8, 8, 8, 8, 1)
@@ -242,7 +245,9 @@ class HeterogeneousTopologyTests(unittest.TestCase):
         self.assertEqual(controller.devices[4].lane_masks, [0xFF])
         self.assertEqual(
             controller.devices[4].queries,
-            2 * (SPI_RESPONSE_QUEUE_DEPTH + 1),
+            2 * SPI_RESPONSE_QUEUE_DEPTH
+            + TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
+            + 1,
         )
 
     def test_startup_drains_queued_status_before_explicit_config_and_validation(self):
@@ -269,7 +274,9 @@ class HeterogeneousTopologyTests(unittest.TestCase):
             self.assertEqual(device._configured_logical_id, logical_id)
             self.assertEqual(
                 device.queries,
-                2 * (SPI_RESPONSE_QUEUE_DEPTH + 1),
+                2 * SPI_RESPONSE_QUEUE_DEPTH
+                + TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
+                + 1,
             )
         self.assertEqual(controller.devices[4].lane_masks, [0xFF])
         self.assertEqual(
@@ -328,7 +335,11 @@ class HeterogeneousTopologyTests(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(legacy.configures, 1)
         self.assertEqual(legacy.lane_masks, [0xFF])
-        self.assertEqual(legacy.queries, SPI_RESPONSE_QUEUE_DEPTH + 1)
+        self.assertEqual(
+            legacy.queries,
+            SPI_RESPONSE_QUEUE_DEPTH
+            + TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS,
+        )
 
     def test_constructor_preserves_exact_width_origin_and_visible_geometry(self):
         controller = _controller()

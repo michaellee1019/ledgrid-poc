@@ -21,7 +21,16 @@ PERF-01 passes only when all of the following hold in one observation window:
 - the live plugin, brightness, profile, and target FPS match the checked basis;
 - a fresh status drain reports exactly five status-v3 receivers with logical
   identities `0..4`, routes `0.0, 0.1, 1.1, 1.0, 1.2`, widths
-  `8, 8, 8, 8, 1`, offsets `0, 8, 16, 24, 32`, and installed direction maps;
+  `8, 8, 8, 8, 1`, offsets `0, 8, 16, 24, 32`, installed direction maps, and
+  aligned-envelope capability `1<<14`; every Host receiver reports
+  `transport_envelope_enabled=true`, the aggregate enabled count is exactly
+  five, and positive semantic/envelope/padding byte deltas reconcile exactly
+  with wire-byte, transfer, and CRC-byte deltas;
+- every receiver's dedicated successful `SET_ALL` counters advance at at least
+  `150 FPS`; logical receivers 0-3 reconcile exactly from 3,313 semantic bytes
+  to 3,320 aligned wire bytes per frame, and logical receiver 4 from 415
+  semantic bytes to 424 aligned wire bytes per frame, so status/SHOW/partial
+  traffic cannot substitute for full-frame stress;
 - every sampled Raspberry Pi rolling window reports ordered mean, p95, p99, and
   maximum latency; the retained values are the worst seen anywhere in the
   capture, p95 does not exceed the `6.67 ms` frame period, and the minimum
@@ -53,6 +62,15 @@ The helper is observation-only apart from a receiver status query and the
 atomic evidence-file replacement. It never starts, stops, or reconfigures the
 wall. A failed capture leaves the previous evidence file untouched. A fresh
 Composer Check loads the strict envelope only when its binding digest matches.
+
+The aligned transport is necessary but not itself PERF-01 integrity evidence.
+[Espressif's ESP32-S3 SPI-slave DMA contract](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/spi_slave.html)
+requires DMA RX buffers and transaction lengths to be word-aligned/four-byte
+multiples and warns that inappropriate Host writes may be discarded. The
+versioned envelope satisfies that rule and leaves CRC failures visible. Because
+retained wall evidence still contains rare CRC failure on an aligned 420-byte
+data transfer, PERF-01 remains red until full-size 3,320-byte SET_ALL traffic
+meets the exact 150-FPS gate with zero CRC-error delta.
 
 ## POWER-01 status: OPERATOR_WAIVED
 

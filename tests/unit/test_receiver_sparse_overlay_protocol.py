@@ -73,6 +73,7 @@ class FakeSparseSpi:
         capabilities = (
             protocol.CAPABILITY_STATUS_V3
             | protocol.CAPABILITY_EXPLICIT_BASE_OWNERSHIP
+            | protocol.CAPABILITY_ALIGNED_ENVELOPE_V1
         )
         if self.sparse_capable:
             capabilities |= (
@@ -88,6 +89,11 @@ class FakeSparseSpi:
 
     def xfer2(self, packet):
         wire = bytes(packet)
+        command = wire[0]
+        semantic_length = len(wire) - protocol.CRC_BYTES
+        if command == protocol.CMD_ALIGNED_ENVELOPE:
+            semantic_length = int.from_bytes(wire[2:4], "big")
+            command = wire[protocol.ALIGNED_ENVELOPE_HEADER_BYTES]
         self.packets.append(wire)
         prior = self.queued.pop(0)
         prior_status_bytes = self.queued_status_bytes.pop(0)
@@ -96,7 +102,7 @@ class FakeSparseSpi:
             response += bytes(len(wire) - len(response))
         else:
             response = response[:len(wire)]
-        if wire[0] == protocol.CMD_STATUS_QUERY and self.pending_ack is not None:
+        if command == protocol.CMD_STATUS_QUERY and self.pending_ack is not None:
             command, sequence, remaining = self.pending_ack
             remaining -= 1
             if remaining <= 0:
@@ -105,22 +111,22 @@ class FakeSparseSpi:
                 self.pending_ack = None
             else:
                 self.pending_ack = (command, sequence, remaining)
-        elif wire[0] != protocol.CMD_STATUS_QUERY and self.acknowledge:
+        elif command != protocol.CMD_STATUS_QUERY and self.acknowledge:
             next_sequence = self.operation_sequence + 1
             if self.acknowledge_after_status_queries:
                 self.pending_ack = (
-                    wire[0],
+                    command,
                     next_sequence,
                     self.acknowledge_after_status_queries,
                 )
             else:
-                self.last_command = wire[0]
+                self.last_command = command
                 self.operation_sequence = next_sequence
         self.queued.append((self.last_command, self.operation_sequence))
         requested_v4 = (
-            wire[0] == protocol.CMD_STATUS_QUERY
+            command == protocol.CMD_STATUS_QUERY
             and self.sparse_capable
-            and len(wire) >= protocol.RECEIVER_STATUS_BYTES_V4
+            and semantic_length >= protocol.RECEIVER_STATUS_BYTES_V4
         )
         self.queued_status_bytes.append(
             protocol.RECEIVER_STATUS_BYTES_V4
@@ -373,13 +379,14 @@ class SparseOverlaySerializerTests(unittest.TestCase):
             update_kind=protocol.OVERLAY_UPDATE_FULL_SNAPSHOT,
         )
         self.assertEqual(len(packets), 2)
+        self.assertEqual(len(packets[0]), 4088)
         self.assertEqual(
-            len(packets[0]) + protocol.CRC_BYTES,
-            protocol.MAX_SPI_TRANSFER - 2,
+            len(protocol._encode_aligned_envelope(packets[0])),
+            protocol.MAX_SPI_TRANSFER,
         )
         self.assertEqual(packets[0][26:28], b"\x00\x01")
-        self.assertEqual(packets[0][28:32], b"\x00\x00\x03\xf7")
-        self.assertEqual(packets[1][28:32], b"\x03\xf7\x00\x59")
+        self.assertEqual(packets[0][28:32], b"\x00\x00\x03\xf6")
+        self.assertEqual(packets[1][28:32], b"\x03\xf6\x00\x5a")
 
     def test_batch_rejects_empty_unsorted_overlap_out_of_bounds_and_overflow(self):
         common = dict(controller_session_id=SESSION, generation=1)
@@ -396,20 +403,16 @@ class SparseOverlaySerializerTests(unittest.TestCase):
                     **common, spans=spans
                 )
 
-    def test_maximum_patch_exactly_fills_transfer_after_crc(self):
-        item = controller()
-        item.send_overlay_patch(
+    def test_maximum_aligned_patch_exactly_fills_wire_transfer(self):
+        payload = protocol.LEDController.serialize_overlay_patch(
             controller_session_id=SESSION,
             generation=1,
             start=0,
             premultiplied_rgba=zeros(protocol.MAX_RGBA_PIXELS_PER_PATCH),
         )
-        packet = next(
-            packet for packet in item.spi.packets
-            if packet[0] == protocol.CMD_OVERLAY_PATCH
-        )
+        packet = protocol._encode_aligned_envelope(payload)
         self.assertEqual(len(packet), protocol.MAX_SPI_TRANSFER)
-        self.assertEqual(packet[26:30], b"\x00\x00\x03\xf8")
+        self.assertEqual(packet[30:34], b"\x00\x00\x03\xf7")
         self.assertEqual(
             packet[-2:],
             binascii.crc_hqx(packet[:-2], 0xFFFF).to_bytes(2, "big"),
@@ -460,7 +463,7 @@ class SparseOverlaySerializerTests(unittest.TestCase):
             np.zeros((1, 4), dtype=np.uint16),
             np.zeros((4,), dtype=np.uint8),
             np.zeros((4, 4), dtype=np.uint8)[::2],
-            zeros(protocol.MAX_RGBA_PIXELS_PER_PATCH + 1),
+            zeros(protocol.LEGACY_MAX_RGBA_PIXELS_PER_PATCH + 1),
         )
         for rgba in bad_rgba:
             with self.subTest(rgba=type(rgba).__name__), self.assertRaises(
@@ -771,6 +774,28 @@ class SparseOverlayDriverTests(unittest.TestCase):
             packet[0] == protocol.CMD_OVERLAY_PATCH_BATCH
             for packet in item.spi.packets
         ))
+
+        item._transport_envelope_enabled = True
+        item._receiver_capabilities &= ~protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
+        before = len(item.spi.packets)
+        statuses = item.send_overlay_patches(
+            controller_session_id=SESSION,
+            generation=2,
+            patches=[(0, zeros(88)), (88, zeros(1016))],
+            update_kind=protocol.OVERLAY_UPDATE_FULL_SNAPSHOT,
+        )
+        emitted = item.spi.packets[before:]
+        patch_packets = [
+            packet for packet in emitted
+            if packet[protocol.ALIGNED_ENVELOPE_HEADER_BYTES]
+            == protocol.CMD_OVERLAY_PATCH
+        ]
+        self.assertEqual(len(statuses), 3)
+        self.assertEqual(len(patch_packets), 3)
+        self.assertTrue(all(len(packet) <= protocol.MAX_SPI_TRANSFER for packet in emitted))
+        self.assertTrue(all(len(packet) % 4 == 0 for packet in emitted))
+        self.assertTrue(all(packet[0] == protocol.CMD_ALIGNED_ENVELOPE for packet in emitted))
+
         item._receiver_capabilities |= protocol.CAPABILITY_SPARSE_OVERLAY_BATCH_V1
         statuses = item.send_overlay_patches(
             controller_session_id=SESSION,
@@ -781,7 +806,11 @@ class SparseOverlayDriverTests(unittest.TestCase):
         self.assertEqual(len(statuses), 2)
         batch_packets = [
             packet for packet in item.spi.packets
-            if packet[0] == protocol.CMD_OVERLAY_PATCH_BATCH
+            if (
+                packet[protocol.ALIGNED_ENVELOPE_HEADER_BYTES]
+                if packet[0] == protocol.CMD_ALIGNED_ENVELOPE
+                else packet[0]
+            ) == protocol.CMD_OVERLAY_PATCH_BATCH
         ]
         self.assertEqual(len(batch_packets), 2)
         self.assertEqual(

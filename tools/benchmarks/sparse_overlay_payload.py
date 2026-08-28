@@ -49,8 +49,10 @@ RECEIVER_PIXEL_OFFSETS = tuple(
 )
 LOCAL_PIXELS = RECEIVER_STRIPS * LEDS_PER_STRIP
 WALL_PIXELS = WALL_STRIPS * LEDS_PER_STRIP
-# Frozen docs/ANIMATION_PIPELINE_CONTRACT_V1.md and status-v4 wire constants.
+# Frozen semantic command/status sizes plus the production DMA-safe envelope.
 CRC_BYTES = 2
+ALIGNED_ENVELOPE_HEADER_BYTES = 4
+SPI_DMA_ALIGNMENT_BYTES = 4
 CONTROLLER_SESSION_BEGIN_BYTES = 58
 OVERLAY_BEGIN_BYTES = 66
 OVERLAY_PATCH_HEADER_BYTES = 30
@@ -62,26 +64,35 @@ RECEIVER_STATUS_BYTES_V3 = 320
 RECEIVER_STATUS_BYTES_V4 = 416
 SPI_RESPONSE_QUEUE_DEPTH = 2
 MAX_SPI_TRANSFER = 4096
+MAX_ALIGNED_SEMANTIC_BYTES = (
+    MAX_SPI_TRANSFER - ALIGNED_ENVELOPE_HEADER_BYTES - CRC_BYTES
+)
 MAX_RGBA_PIXELS_PER_PATCH = (
-    MAX_SPI_TRANSFER - OVERLAY_PATCH_HEADER_BYTES - CRC_BYTES
+    MAX_ALIGNED_SEMANTIC_BYTES - OVERLAY_PATCH_HEADER_BYTES
 ) // 4
 MAX_RGBA_PIXELS_PER_BATCH_SPAN = (
-    MAX_SPI_TRANSFER
+    MAX_ALIGNED_SEMANTIC_BYTES
     - OVERLAY_PATCH_BATCH_HEADER_BYTES
     - OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
-    - CRC_BYTES
 ) // 4
-LOCAL_RGB_PACKET_BYTES = 1 + LOCAL_PIXELS * 3 + CRC_BYTES
+
+
+def aligned_wire_size(semantic_bytes: int) -> int:
+    unpadded = ALIGNED_ENVELOPE_HEADER_BYTES + semantic_bytes + CRC_BYTES
+    return unpadded + (-unpadded) % SPI_DMA_ALIGNMENT_BYTES
+
+
+LOCAL_RGB_PACKET_BYTES = aligned_wire_size(1 + LOCAL_PIXELS * 3)
 RECEIVER_RGB_PACKET_BYTES = tuple(
-    1 + pixels * 3 + CRC_BYTES for pixels in RECEIVER_PIXELS
+    aligned_wire_size(1 + pixels * 3) for pixels in RECEIVER_PIXELS
 )
 FULL_WALL_RGB_PACKET_BYTES = sum(RECEIVER_RGB_PACKET_BYTES)
 # Sparse commands enter a mixed v3/v4 two-deep response queue: two pre-drain
 # queries establish the prior sequence, then three post-command queries clock
 # past the queued prior-v4 and v3 snapshots to observe the command's v4 result.
 ACK_STATUS_TRANSFERS = SPI_RESPONSE_QUEUE_DEPTH * 2 + 1
-STATUS_V3_QUERY_TRANSFER_BYTES = RECEIVER_STATUS_BYTES_V3 + CRC_BYTES
-STATUS_V4_QUERY_TRANSFER_BYTES = RECEIVER_STATUS_BYTES_V4 + CRC_BYTES
+STATUS_V3_QUERY_TRANSFER_BYTES = aligned_wire_size(RECEIVER_STATUS_BYTES_V3)
+STATUS_V4_QUERY_TRANSFER_BYTES = aligned_wire_size(RECEIVER_STATUS_BYTES_V4)
 
 
 @dataclass
@@ -117,7 +128,7 @@ class WireAccount:
     def add_acknowledged_command(self, name: str, pre_crc_bytes: int) -> None:
         if pre_crc_bytes < 1:
             raise ValueError("command packet must include at least its command byte")
-        packet_bytes = pre_crc_bytes + CRC_BYTES
+        packet_bytes = aligned_wire_size(pre_crc_bytes)
         self.spi_clocked_bytes += packet_bytes
         self.command_packet_bytes += packet_bytes
         self.command_count += 1
@@ -201,7 +212,7 @@ def patch_packet_bytes(ranges: Iterable[Sequence[int]]) -> int:
         count = int(end) - int(start)
         if not 1 <= count <= MAX_RGBA_PIXELS_PER_PATCH:
             raise ValueError("patch count is outside the frozen wire bound")
-        total += OVERLAY_PATCH_HEADER_BYTES + count * 4 + CRC_BYTES
+        total += aligned_wire_size(OVERLAY_PATCH_HEADER_BYTES + count * 4)
     return total
 
 
@@ -212,7 +223,7 @@ def _batch_packets(
 
     packets: list[tuple[tuple[int, int], ...]] = []
     packet: list[tuple[int, int]] = []
-    packet_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES + CRC_BYTES
+    packet_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES
     for raw_start, raw_end in ranges:
         start = int(raw_start)
         end = int(raw_end)
@@ -220,10 +231,10 @@ def _batch_packets(
         if not 1 <= count <= MAX_RGBA_PIXELS_PER_BATCH_SPAN:
             raise ValueError("batch span count is outside the frozen wire bound")
         span_bytes = OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES + count * 4
-        if packet and packet_bytes + span_bytes > MAX_SPI_TRANSFER:
+        if packet and packet_bytes + span_bytes > MAX_ALIGNED_SEMANTIC_BYTES:
             packets.append(tuple(packet))
             packet = []
-            packet_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES + CRC_BYTES
+            packet_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES
         packet.append((start, end))
         packet_bytes += span_bytes
     if packet:
@@ -234,11 +245,11 @@ def _batch_packets(
 def batch_packet_bytes(ranges: Iterable[Sequence[int]]) -> int:
     total = 0
     for packet in _batch_packets(ranges):
-        total += OVERLAY_PATCH_BATCH_HEADER_BYTES + CRC_BYTES
-        total += sum(
+        semantic_bytes = OVERLAY_PATCH_BATCH_HEADER_BYTES + sum(
             OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES + (end - start) * 4
             for start, end in packet
         )
+        total += aligned_wire_size(semantic_bytes)
     return total
 
 
@@ -416,10 +427,7 @@ def build_report(
     baseline_spi_bytes = baseline_frames * FULL_WALL_RGB_PACKET_BYTES
     trace_savings = 1.0 - account.spi_clocked_bytes / baseline_spi_bytes
     ordinary_rgba_bytes = ordinary["patch_pixels"] * 4
-    ordinary_header_crc_bytes = (
-        ordinary["batch_count"] * (OVERLAY_PATCH_BATCH_HEADER_BYTES + CRC_BYTES)
-        + ordinary["patch_count"] * OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES
-    )
+    ordinary_header_crc_bytes = ordinary["batch_packet_bytes"] - ordinary_rgba_bytes
 
     patch_bytes = [
         frame["batch_packet_bytes"]
@@ -446,7 +454,7 @@ def build_report(
             "overlay_patch_batch_header_bytes": OVERLAY_PATCH_BATCH_HEADER_BYTES,
             "overlay_patch_batch_span_header_bytes": OVERLAY_PATCH_BATCH_SPAN_HEADER_BYTES,
             "max_rgba_pixels_per_batch_span": MAX_RGBA_PIXELS_PER_BATCH_SPAN,
-            "batch_capacity_formula": "sum(pixel_counts) + span_count <= 1016",
+            "batch_capacity_formula": "sum(pixel_counts) + span_count <= 1015",
             "status_response_queue_depth": SPI_RESPONSE_QUEUE_DEPTH,
             "status_transfers_per_acknowledged_command": ACK_STATUS_TRANSFERS,
             "status_v3_query_transfer_bytes": STATUS_V3_QUERY_TRANSFER_BYTES,
@@ -551,7 +559,7 @@ def build_report(
 
 def validate_report(report: dict) -> None:
     contract = report["wire_contract"]
-    if contract["local_rgb_packet_bytes"] != 3315:
+    if contract["local_rgb_packet_bytes"] != 3320:
         raise RuntimeError("receiver-local RGB accounting drifted")
     if contract["receiver_rgb_packet_bytes"] != list(RECEIVER_RGB_PACKET_BYTES):
         raise RuntimeError("heterogeneous receiver RGB accounting drifted")

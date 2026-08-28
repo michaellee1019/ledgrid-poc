@@ -24,6 +24,44 @@ std::uint32_t read_u32(const std::uint8_t* input) {
          input[3];
 }
 
+void write_packet_crc(std::vector<std::uint8_t>* packet) {
+  const std::size_t offset =
+      packet->size() - ledgrid::kAnimationPipelineCrcBytes;
+  const std::uint16_t crc = ledgrid::animation_pipeline_crc16_ccitt(
+      packet->data(), offset);
+  (*packet)[offset] = static_cast<std::uint8_t>(crc >> 8U);
+  (*packet)[offset + 1U] = static_cast<std::uint8_t>(crc);
+}
+
+std::vector<std::uint8_t> legacy_packet(
+    const std::vector<std::uint8_t>& semantic) {
+  std::vector<std::uint8_t> packet(
+      semantic.size() + ledgrid::kAnimationPipelineCrcBytes, 0);
+  std::copy(semantic.begin(), semantic.end(), packet.begin());
+  write_packet_crc(&packet);
+  return packet;
+}
+
+std::vector<std::uint8_t> aligned_packet(
+    const std::vector<std::uint8_t>& semantic) {
+  const std::size_t unpadded = ledgrid::kAlignedEnvelopeHeaderBytes +
+      semantic.size() + ledgrid::kAnimationPipelineCrcBytes;
+  const std::size_t wire_size =
+      unpadded + (ledgrid::kSpiDmaAlignmentBytes -
+                  unpadded % ledgrid::kSpiDmaAlignmentBytes) %
+                     ledgrid::kSpiDmaAlignmentBytes;
+  std::vector<std::uint8_t> packet(wire_size, 0);
+  packet[0] = static_cast<std::uint8_t>(
+      ledgrid::ReceiverCommand::AlignedEnvelope);
+  packet[1] = ledgrid::kAlignedEnvelopeVersion;
+  packet[2] = static_cast<std::uint8_t>(semantic.size() >> 8U);
+  packet[3] = static_cast<std::uint8_t>(semantic.size());
+  std::copy(semantic.begin(), semantic.end(),
+            packet.begin() + ledgrid::kAlignedEnvelopeHeaderBytes);
+  write_packet_crc(&packet);
+  return packet;
+}
+
 void test_encoder_emits_parallel_grb_waveform() {
   // Two strips, one RGB pixel each. Only strip 0 green bit 7 is set.
   const std::uint8_t rgb[] = {0x00, 0x80, 0x00, 0x00, 0x00, 0x00};
@@ -666,6 +704,127 @@ void test_status_v2_layout_is_stable() {
       status, encoded.data(), ledgrid::kStatusBytesV2 - 1));
 }
 
+void test_aligned_envelope_decodes_exact_semantic_payload_and_legacy_packets() {
+  const std::vector<std::uint8_t> semantic = {
+      static_cast<std::uint8_t>(ledgrid::ReceiverCommand::SetRange),
+      0x00, 0x02, 0x01, 0x11, 0x22, 0x33};
+  const auto envelope = aligned_packet(semantic);
+  TEST_ASSERT_EQUAL_UINT32(0, envelope.size() % 4U);
+  TEST_ASSERT_EQUAL_UINT32(16, envelope.size());
+  TEST_ASSERT_EQUAL_HEX8(0, envelope[11]);
+
+  ledgrid::ReceiverPacketPayload decoded{};
+  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
+      envelope.data(), envelope.size(), &decoded));
+  TEST_ASSERT_TRUE(decoded.aligned_envelope);
+  TEST_ASSERT_EQUAL_UINT32(semantic.size(), decoded.size);
+  TEST_ASSERT_EQUAL_MEMORY(semantic.data(), decoded.data, semantic.size());
+
+  const auto legacy = legacy_packet(semantic);
+  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
+      legacy.data(), legacy.size(), &decoded));
+  TEST_ASSERT_FALSE(decoded.aligned_envelope);
+  TEST_ASSERT_EQUAL_UINT32(semantic.size(), decoded.size);
+  TEST_ASSERT_EQUAL_MEMORY(semantic.data(), decoded.data, semantic.size());
+}
+
+void test_aligned_envelope_accepts_frame_and_exact_maximum_semantic_sizes() {
+  std::vector<std::uint8_t> frame(1U + 8U * 138U * 3U, 0x5A);
+  frame[0] = static_cast<std::uint8_t>(ledgrid::ReceiverCommand::SetAll);
+  const auto frame_packet = aligned_packet(frame);
+  TEST_ASSERT_EQUAL_UINT32(3320, frame_packet.size());
+  TEST_ASSERT_EQUAL_UINT32(0, frame_packet.size() % 4U);
+
+  ledgrid::ReceiverPacketPayload decoded{};
+  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
+      frame_packet.data(), frame_packet.size(), &decoded));
+  TEST_ASSERT_EQUAL_UINT32(frame.size(), decoded.size);
+  TEST_ASSERT_EQUAL_MEMORY(frame.data(), decoded.data, frame.size());
+
+  std::vector<std::uint8_t> maximum(
+      ledgrid::kAlignedEnvelopeMaxSemanticBytes, 0xA6);
+  maximum[0] = static_cast<std::uint8_t>(
+      ledgrid::ReceiverCommand::NativeModuleChunk);
+  const auto maximum_packet = aligned_packet(maximum);
+  TEST_ASSERT_EQUAL_UINT32(
+      ledgrid::kAnimationPipelineMaxTransactionBytes, maximum_packet.size());
+  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
+      maximum_packet.data(), maximum_packet.size(), &decoded));
+  TEST_ASSERT_EQUAL_UINT32(maximum.size(), decoded.size);
+}
+
+void test_aligned_envelope_preserves_full_status_query_semantics() {
+  struct Case {
+    std::size_t semantic_size;
+    std::size_t wire_size;
+    bool sparse_overlay;
+    bool installation_profile;
+    bool native_modules;
+  };
+  constexpr std::array<Case, 4> kCases = {{
+      {ledgrid::kStatusBytesV3, 328, false, false, false},
+      {ledgrid::kStatusBytesV4, 424, true, false, false},
+      {ledgrid::kStatusBytesV5, 776, true, true, false},
+      {ledgrid::kStatusBytesV6, 1224, true, true, true},
+  }};
+
+  for (const auto& test_case : kCases) {
+    std::vector<std::uint8_t> semantic(test_case.semantic_size, 0);
+    semantic[0] = static_cast<std::uint8_t>(
+        ledgrid::ReceiverCommand::StatusQuery);
+    const auto packet = aligned_packet(semantic);
+    TEST_ASSERT_EQUAL_UINT32(test_case.wire_size, packet.size());
+
+    ledgrid::ReceiverPacketPayload decoded{};
+    TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
+        packet.data(), packet.size(), &decoded));
+    TEST_ASSERT_EQUAL_UINT32(test_case.semantic_size, decoded.size);
+    TEST_ASSERT_TRUE(ledgrid::valid_status_query(
+        decoded.data, decoded.size, test_case.sparse_overlay,
+        test_case.installation_profile, test_case.native_modules));
+  }
+}
+
+void test_aligned_envelope_rejects_bad_crc_version_length_padding_and_alignment() {
+  const std::vector<std::uint8_t> semantic = {
+      static_cast<std::uint8_t>(ledgrid::ReceiverCommand::Show)};
+  const auto canonical = aligned_packet(semantic);
+  ledgrid::ReceiverPacketPayload decoded{};
+
+  auto bad_crc = canonical;
+  bad_crc[4] ^= 0x01;
+  TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
+      bad_crc.data(), bad_crc.size(), &decoded));
+
+  auto bad_version = canonical;
+  bad_version[1] = ledgrid::kAlignedEnvelopeVersion + 1U;
+  write_packet_crc(&bad_version);
+  TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
+      bad_version.data(), bad_version.size(), &decoded));
+
+  auto bad_length = canonical;
+  bad_length[3] = 3;
+  write_packet_crc(&bad_length);
+  TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
+      bad_length.data(), bad_length.size(), &decoded));
+
+  auto bad_padding = canonical;
+  bad_padding[5] = 0x7E;
+  write_packet_crc(&bad_padding);
+  TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
+      bad_padding.data(), bad_padding.size(), &decoded));
+
+  std::vector<std::uint8_t> unaligned = {
+      static_cast<std::uint8_t>(ledgrid::ReceiverCommand::AlignedEnvelope),
+      ledgrid::kAlignedEnvelopeVersion, 0, 1,
+      static_cast<std::uint8_t>(ledgrid::ReceiverCommand::Show), 0, 0};
+  write_packet_crc(&unaligned);
+  TEST_ASSERT_TRUE(ledgrid::receiver_packet_crc_valid(
+      unaligned.data(), unaligned.size()));
+  TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
+      unaligned.data(), unaligned.size(), &decoded));
+}
+
 }  // namespace
 
 void setUp() {}
@@ -692,5 +851,9 @@ int main(int, char**) {
   RUN_TEST(test_startup_rainbow_cycles_once_per_second_and_checks_bounds);
   RUN_TEST(test_mailbox_replaces_only_unread_ready_frames);
   RUN_TEST(test_status_v2_layout_is_stable);
+  RUN_TEST(test_aligned_envelope_decodes_exact_semantic_payload_and_legacy_packets);
+  RUN_TEST(test_aligned_envelope_accepts_frame_and_exact_maximum_semantic_sizes);
+  RUN_TEST(test_aligned_envelope_preserves_full_status_query_semantics);
+  RUN_TEST(test_aligned_envelope_rejects_bad_crc_version_length_padding_and_alignment);
   return UNITY_END();
 }

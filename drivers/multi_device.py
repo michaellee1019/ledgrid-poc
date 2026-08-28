@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Tuple, Optional
 import numpy as np
 
 from drivers.spi_controller import (
+    CAPABILITY_ALIGNED_ENVELOPE_V1,
     CAPABILITY_EXPLICIT_BASE_OWNERSHIP,
     CAPABILITY_PRESENTATION_CONTEXT_V1,
     CAPABILITY_STATIC_LOCAL_BACKGROUND,
@@ -35,6 +36,7 @@ from drivers.spi_controller import (
     OVERLAY_UPDATE_DELTA,
     OVERLAY_UPDATE_FULL_SNAPSHOT,
     SPI_RESPONSE_QUEUE_DEPTH,
+    TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS,
     SPI_BUS,
     SPI_MODE,
     SPI_SPEED,
@@ -51,7 +53,8 @@ from drivers.led_layout import (
 )
 
 LOCAL_BACKGROUND_REQUIRED_CAPABILITIES = (
-    CAPABILITY_STATIC_LOCAL_BACKGROUND
+    CAPABILITY_ALIGNED_ENVELOPE_V1
+    | CAPABILITY_STATIC_LOCAL_BACKGROUND
     | CAPABILITY_PRESENTATION_CONTEXT_V1
     | CAPABILITY_STATUS_V3
     | CAPABILITY_EXPLICIT_BASE_OWNERSHIP
@@ -62,7 +65,8 @@ SPARSE_OVERLAY_REQUIRED_CAPABILITIES = (
     | CAPABILITY_SPARSE_OVERLAY_BATCH_V1
 )
 NATIVE_BACKGROUND_REQUIRED_CAPABILITIES = (
-    CAPABILITY_STATUS_V6
+    CAPABILITY_ALIGNED_ENVELOPE_V1
+    | CAPABILITY_STATUS_V6
     | CAPABILITY_NATIVE_MODULE_V2
     | CAPABILITY_NATIVE_CACHE_V1
     | CAPABILITY_NATIVE_TYPED_PARAMETERS_V1
@@ -546,7 +550,13 @@ class MultiDeviceLEDController:
                 # clocks out one older response before its new snapshot can be
                 # observed. Drain depth+1 before deciding whether CONFIG may
                 # use the explicit identity/topology form.
-                for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 1):
+                # Two identical boot-time queue entries may precede the first
+                # receiver-owned packet-counter advance. Drain enough samples
+                # to prove three fresh capability observations before CONFIG.
+                for _ in range(
+                    SPI_RESPONSE_QUEUE_DEPTH
+                    + TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
+                ):
                     device.query_receiver_status()
                 device.logical_device_id = index
                 device.configure()
@@ -3152,6 +3162,13 @@ class MultiDeviceLEDController:
         max_frames_sent = 0
         spi_transfers = 0
         bytes_sent = 0
+        semantic_bytes_sent = 0
+        transport_envelope_bytes_sent = 0
+        transport_padding_bytes_sent = 0
+        full_frame_transfers = 0
+        full_frame_semantic_bytes_sent = 0
+        full_frame_wire_bytes_sent = 0
+        transport_envelope_devices = 0
         crc_bytes_sent = 0
         errors = 0
         receiver_status_devices = 0
@@ -3193,6 +3210,24 @@ class MultiDeviceLEDController:
             max_frames_sent = max(max_frames_sent, frames)
             spi_transfers += int(stats.get('spi_transfers', 0) or 0)
             bytes_sent += int(stats.get('bytes_sent', 0) or 0)
+            semantic_bytes_sent += int(stats.get('semantic_bytes_sent', 0) or 0)
+            transport_envelope_bytes_sent += int(
+                stats.get('transport_envelope_bytes_sent', 0) or 0
+            )
+            transport_padding_bytes_sent += int(
+                stats.get('transport_padding_bytes_sent', 0) or 0
+            )
+            full_frame_transfers += int(
+                stats.get('full_frame_transfers', 0) or 0
+            )
+            full_frame_semantic_bytes_sent += int(
+                stats.get('full_frame_semantic_bytes_sent', 0) or 0
+            )
+            full_frame_wire_bytes_sent += int(
+                stats.get('full_frame_wire_bytes_sent', 0) or 0
+            )
+            if stats.get('transport_envelope_enabled'):
+                transport_envelope_devices += 1
             crc_bytes_sent += int(stats.get('crc_bytes_sent', 0) or 0)
             errors += int(stats.get('errors', 0) or 0)
             if stats.get('receiver_status_seen'):
@@ -3293,6 +3328,13 @@ class MultiDeviceLEDController:
                 ],
                 'spi_transfers': spi_transfers,
                 'bytes_sent': bytes_sent,
+                'semantic_bytes_sent': semantic_bytes_sent,
+                'transport_envelope_bytes_sent': transport_envelope_bytes_sent,
+                'transport_padding_bytes_sent': transport_padding_bytes_sent,
+                'full_frame_transfers': full_frame_transfers,
+                'full_frame_semantic_bytes_sent': full_frame_semantic_bytes_sent,
+                'full_frame_wire_bytes_sent': full_frame_wire_bytes_sent,
+                'transport_envelope_devices': transport_envelope_devices,
                 'crc_bytes_sent': crc_bytes_sent,
                 'errors': errors,
                 'receiver_status_devices': receiver_status_devices,

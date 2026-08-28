@@ -44,6 +44,7 @@ DEFAULT_SAMPLE_INTERVAL_SECONDS = 5.0
 DEFAULT_TIMEOUT_SECONDS = 15.0
 DEFAULT_TARGET_FPS = 150
 DEFAULT_MIN_DISPLAYED_FPS = 150.0
+REQUIRED_RECEIVER_CAPABILITIES = 0x400C
 EXPECTED_GEOMETRY = {"strip_count": 33, "leds_per_strip": 138, "total_leds": 4554}
 EXPECTED_TOPOLOGY = (
     {
@@ -115,6 +116,12 @@ CONTINUITY_COUNTERS = (
     "frames_sent",
     "spi_transfers",
     "bytes_sent",
+    "semantic_bytes_sent",
+    "transport_envelope_bytes_sent",
+    "transport_padding_bytes_sent",
+    "full_frame_transfers",
+    "full_frame_semantic_bytes_sent",
+    "full_frame_wire_bytes_sent",
     "crc_bytes_sent",
     "receiver_operation_sequence",
     "receiver_packets",
@@ -130,6 +137,12 @@ AGGREGATE_CONTINUITY_COUNTERS = (
     "logical_frames_sent",
     "spi_transfers",
     "bytes_sent",
+    "semantic_bytes_sent",
+    "transport_envelope_bytes_sent",
+    "transport_padding_bytes_sent",
+    "full_frame_transfers",
+    "full_frame_semantic_bytes_sent",
+    "full_frame_wire_bytes_sent",
     "crc_bytes_sent",
     "receiver_packets",
     "receiver_crc_ok_packets",
@@ -142,6 +155,10 @@ DEVICE_SAMPLE_FIELDS = (
     "receiver_status_version",
     "receiver_status_seen",
     "receiver_capabilities",
+    "transport_envelope_enabled",
+    "transport_envelope_negotiation_candidate",
+    "transport_envelope_negotiation_streak",
+    "transport_envelope_negotiation_required",
     "receiver_logical_device",
     "receiver_active_strips",
     "receiver_global_strip_offset",
@@ -286,6 +303,8 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
             )
     driver = _mapping(status.get("driver_stats"))
     aggregate = _mapping(driver.get("aggregate"))
+    if aggregate.get("transport_envelope_devices") != len(EXPECTED_TOPOLOGY):
+        failures.append("aligned transport is not enabled on exactly 5 receivers")
     device_map = _sequence(aggregate.get("device_map"))
     if len(device_map) != len(EXPECTED_TOPOLOGY):
         failures.append(
@@ -328,6 +347,30 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
         version = _integer(item.get("receiver_status_version"))
         if version is None or version < 3:
             failures.append(f"receiver {logical_id} does not report status v3+")
+        capabilities = _integer(item.get("receiver_capabilities"))
+        if (
+            capabilities is None
+            or capabilities & REQUIRED_RECEIVER_CAPABILITIES
+            != REQUIRED_RECEIVER_CAPABILITIES
+        ):
+            failures.append(
+                f"receiver {logical_id} lacks required aligned transport capabilities"
+            )
+        if item.get("transport_envelope_enabled") is not True:
+            failures.append(
+                f"receiver {logical_id} host aligned transport is not enabled"
+            )
+        if (
+            "transport_envelope_negotiation_candidate" not in item
+            or item.get("transport_envelope_negotiation_candidate") is not None
+            or type(item.get("transport_envelope_negotiation_streak")) is not int
+            or item.get("transport_envelope_negotiation_streak") != 0
+            or type(item.get("transport_envelope_negotiation_required")) is not int
+            or item.get("transport_envelope_negotiation_required") != 3
+        ):
+            failures.append(
+                f"receiver {logical_id} aligned transport negotiation is not settled"
+            )
         checks = {
             "receiver_active_strips": expected["local_strip_count"],
             "receiver_global_strip_offset": expected["global_strip_offset"],
@@ -339,6 +382,28 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
                 failures.append(
                     f"receiver {logical_id} {field} is {item.get(field)!r}; expected {value!r}"
                 )
+    transport_fields = (
+        "spi_transfers", "bytes_sent", "semantic_bytes_sent",
+        "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
+        "crc_bytes_sent", "full_frame_transfers",
+        "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
+    )
+    for field in transport_fields:
+        total = 0
+        available = True
+        for raw in devices:
+            value = _integer(_mapping(raw).get(field))
+            if value is None:
+                available = False
+                break
+            total += value
+        aggregate_value = _integer(aggregate.get(field))
+        if not available or aggregate_value is None:
+            failures.append(f"aligned transport counter {field} is unavailable")
+        elif aggregate_value != total:
+            failures.append(
+                f"aggregate {field} drifted from per-receiver total"
+            )
     return failures
 
 
@@ -485,6 +550,10 @@ def normalize_sample(
         "aggregate": {
             key: aggregate.get(key)
             for key in AGGREGATE_CONTINUITY_COUNTERS
+        } | {
+            "transport_envelope_devices": aggregate.get(
+                "transport_envelope_devices"
+            ),
         },
         "devices": devices,
         "activation": {
@@ -505,6 +574,53 @@ def normalize_sample(
             "rollback": dict(_mapping(activation.get("rollback"))),
         },
     }
+
+
+def _transport_delta_failures(
+    before: Mapping[str, Any], after: Mapping[str, Any], label: str,
+    *, expected_full_semantic_bytes: int | None = None,
+) -> list[str]:
+    fields = (
+        "spi_transfers", "bytes_sent", "semantic_bytes_sent",
+        "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
+        "crc_bytes_sent", "full_frame_transfers",
+        "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
+    )
+    deltas = {field: _counter_delta(before, after, field) for field in fields}
+    failures = []
+    for field, delta in deltas.items():
+        if delta is None:
+            failures.append(f"{label} counter {field} is unavailable")
+        elif delta <= 0:
+            failures.append(f"{label} counter {field} did not advance")
+    if failures:
+        return failures
+    transfers = deltas["spi_transfers"] or 0
+    if deltas["transport_envelope_bytes_sent"] != 4 * transfers:
+        failures.append(f"{label} envelope accounting is inconsistent")
+    if deltas["crc_bytes_sent"] != 2 * transfers:
+        failures.append(f"{label} CRC accounting is inconsistent")
+    expected_wire = (
+        (deltas["semantic_bytes_sent"] or 0)
+        + (deltas["transport_envelope_bytes_sent"] or 0)
+        + (deltas["transport_padding_bytes_sent"] or 0)
+        + (deltas["crc_bytes_sent"] or 0)
+    )
+    if deltas["bytes_sent"] != expected_wire:
+        failures.append(f"{label} wire-byte accounting is inconsistent")
+    if expected_full_semantic_bytes is not None:
+        full_transfers = deltas["full_frame_transfers"] or 0
+        expected_full_wire_bytes = ((expected_full_semantic_bytes + 9) // 4) * 4
+        if (
+            deltas["full_frame_semantic_bytes_sent"]
+            != expected_full_semantic_bytes * full_transfers
+            or deltas["full_frame_wire_bytes_sent"]
+            != expected_full_wire_bytes * full_transfers
+        ):
+            failures.append(
+                f"{label} full-frame SET_ALL accounting is inconsistent"
+            )
+    return failures
 
 
 def evaluate_transition(
@@ -532,6 +648,9 @@ def evaluate_transition(
         delta = _counter_delta(before_aggregate, after_aggregate, field)
         if delta is not None and delta > 0:
             failures.append(f"aggregate error counter {field} increased by {delta}")
+    failures.extend(_transport_delta_failures(
+        before_aggregate, after_aggregate, "aggregate aligned transport"
+    ))
 
     before_devices = {
         _integer(_mapping(item).get("receiver_logical_device")): _mapping(item)
@@ -556,6 +675,16 @@ def evaluate_transition(
                 failures.append(
                     f"receiver {receiver_id} error counter {field} increased by {delta}"
                 )
+        failures.extend(_transport_delta_failures(
+            first,
+            last,
+            f"receiver {receiver_id} aligned transport",
+            expected_full_semantic_bytes=(
+                1
+                + EXPECTED_TOPOLOGY_BY_ID[receiver_id]["local_strip_count"]
+                * EXPECTED_GEOMETRY["leds_per_strip"] * 3
+            ),
+        ))
     return failures
 
 
@@ -590,6 +719,9 @@ def evaluate_series(samples: Sequence[Mapping[str, Any]], config: WallSoakConfig
             failures.append(f"aggregate error counter {field} is unavailable")
         elif delta != 0:
             failures.append(f"aggregate error counter {field} increased by {delta}")
+    failures.extend(_transport_delta_failures(
+        first_aggregate, last_aggregate, "aggregate aligned transport"
+    ))
 
     device_results: dict[str, Any] = {}
     first_devices = {
@@ -617,15 +749,32 @@ def evaluate_series(samples: Sequence[Mapping[str, Any]], config: WallSoakConfig
             delta = deltas[field]
             if delta is not None and delta != 0:
                 receiver_failures.append(f"error counter {field} increased by {delta}")
+        receiver_failures.extend(_transport_delta_failures(
+            before,
+            after,
+            f"receiver {receiver_id} aligned transport",
+            expected_full_semantic_bytes=(
+                1
+                + EXPECTED_TOPOLOGY_BY_ID[receiver_id]["local_strip_count"]
+                * EXPECTED_GEOMETRY["leds_per_strip"] * 3
+            ),
+        ))
         accepted = deltas.get("receiver_frames_accepted") or 0
         displayed = deltas.get("receiver_frames_displayed") or 0
         superseded = deltas.get("receiver_frames_superseded") or 0
         displayed_fps = displayed / elapsed if elapsed > 0 else 0.0
+        full_frame_transfers = deltas.get("full_frame_transfers") or 0
+        full_frame_fps = full_frame_transfers / elapsed if elapsed > 0 else 0.0
         if accepted <= 0 or displayed <= 0:
             receiver_failures.append("frame counters did not advance")
         if displayed_fps < config.min_displayed_fps:
             receiver_failures.append(
                 f"displayed rate {displayed_fps:.3f} FPS is below "
+                f"{config.min_displayed_fps:g} FPS"
+            )
+        if full_frame_fps < config.min_displayed_fps:
+            receiver_failures.append(
+                f"full-frame SET_ALL rate {full_frame_fps:.3f} FPS is below "
                 f"{config.min_displayed_fps:g} FPS"
             )
         if displayed + superseded < max(0, accepted - 3):
@@ -647,6 +796,7 @@ def evaluate_series(samples: Sequence[Mapping[str, Any]], config: WallSoakConfig
             "failures": receiver_failures,
             "deltas": deltas,
             "displayed_fps": displayed_fps,
+            "full_frame_fps": full_frame_fps,
             "mailbox_outstanding": outstanding,
         }
         failures.extend(

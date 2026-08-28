@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -2483,6 +2484,8 @@ class TargetHealthSample:
     ready: bool = True
     receiver_device_map: tuple[Mapping[str, Any], ...] = ()
     receiver_statuses: tuple[Mapping[str, Any], ...] = ()
+    transport_envelope_devices: int = 0
+    receiver_aggregate: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -2525,13 +2528,17 @@ def _sample_health(root: Path, *, unit: str, api_url: str) -> TargetHealthSample
             raise RuntimeError("controller receiver device map is malformed")
         logical_ids.append(logical_id)
     updated_at = status.get("updated_at") or status.get("timestamp")
-    values = (
-        updated_at,
-        led_info.get("strip_count"),
-        led_info.get("leds_per_strip"),
-        aggregate.get("num_devices"),
-    )
-    if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in values):
+    if (
+        isinstance(updated_at, bool)
+        or not isinstance(updated_at, (int, float))
+        or not math.isfinite(float(updated_at))
+        or any(type(value) is not int for value in (
+            led_info.get("strip_count"),
+            led_info.get("leds_per_strip"),
+            aggregate.get("num_devices"),
+            aggregate.get("transport_envelope_devices"),
+        ))
+    ):
         raise RuntimeError("controller status lacks timestamp, geometry, or receiver topology")
     return TargetHealthSample(
         sampled_at=sampled_at,
@@ -2544,6 +2551,8 @@ def _sample_health(root: Path, *, unit: str, api_url: str) -> TargetHealthSample
         ready=status.get("is_running") is True,
         receiver_device_map=receiver_device_map,
         receiver_statuses=receiver_statuses,
+        transport_envelope_devices=int(aggregate["transport_envelope_devices"]),
+        receiver_aggregate=dict(aggregate),
     )
 
 
@@ -2600,6 +2609,11 @@ def _receiver_health_rejection(
     required_capabilities: int,
     expected_devices: Sequence[Mapping[str, Any]],
 ) -> Optional[str]:
+    if sample.transport_envelope_devices != len(expected_devices):
+        return (
+            "host aligned transport is enabled for "
+            f"{sample.transport_envelope_devices} receivers; expected {len(expected_devices)}"
+        )
     if len(sample.receiver_device_map) != len(expected_devices):
         return "host receiver device map is incomplete"
     host_by_id: dict[int, Mapping[str, Any]] = {}
@@ -2664,13 +2678,168 @@ def _receiver_health_rejection(
             or capabilities & required_capabilities != required_capabilities
         ):
             return f"receiver {logical_id} lacks required firmware capabilities"
+        if status.get("transport_envelope_enabled") is not True:
+            return f"receiver {logical_id} host aligned transport is not enabled"
+        if (
+            "transport_envelope_negotiation_candidate" not in status
+            or status.get("transport_envelope_negotiation_candidate") is not None
+            or type(status.get("transport_envelope_negotiation_streak")) is not int
+            or status.get("transport_envelope_negotiation_streak") != 0
+            or type(status.get("transport_envelope_negotiation_required")) is not int
+            or status.get("transport_envelope_negotiation_required") != 3
+        ):
+            return f"receiver {logical_id} aligned transport negotiation is not settled"
         for expected_name, observed_name in field_mapping.items():
             if status.get(observed_name) != expected[expected_name]:
                 return (
                     f"receiver {logical_id} reported {observed_name}="
                     f"{status.get(observed_name)!r}, expected {expected[expected_name]}"
                 )
+    transport_fields = (
+        "spi_transfers", "bytes_sent", "semantic_bytes_sent",
+        "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
+        "crc_bytes_sent", "full_frame_transfers",
+        "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
+    )
+    for field in transport_fields:
+        values = [status.get(field) for status in sample.receiver_statuses]
+        if any(type(value) is not int or value < 0 for value in values):
+            return f"per-receiver aligned transport counter {field} is unavailable"
+        aggregate_value = sample.receiver_aggregate.get(field)
+        if type(aggregate_value) is not int or aggregate_value < 0:
+            return f"aggregate aligned transport counter {field} is unavailable"
+        if aggregate_value != sum(values):
+            return f"aggregate {field} drifted from per-receiver total"
     return None
+
+
+def _transport_accounting_delta_rejection(
+    before: TargetHealthSample, after: TargetHealthSample
+) -> Optional[str]:
+    fields = (
+        "spi_transfers", "bytes_sent", "semantic_bytes_sent",
+        "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
+        "crc_bytes_sent",
+    )
+
+    def rejection(
+        first: Mapping[str, Any], last: Mapping[str, Any], label: str
+    ) -> Optional[str]:
+        deltas = {field: int(last[field]) - int(first[field]) for field in fields}
+        for field, delta in deltas.items():
+            if delta <= 0:
+                return f"{label} {field} did not advance"
+        transfers = deltas["spi_transfers"]
+        if deltas["transport_envelope_bytes_sent"] != 4 * transfers:
+            return f"{label} envelope accounting is inconsistent"
+        if deltas["crc_bytes_sent"] != 2 * transfers:
+            return f"{label} CRC accounting is inconsistent"
+        if deltas["bytes_sent"] != (
+            deltas["semantic_bytes_sent"]
+            + deltas["transport_envelope_bytes_sent"]
+            + deltas["transport_padding_bytes_sent"]
+            + deltas["crc_bytes_sent"]
+        ):
+            return f"{label} wire-byte accounting is inconsistent"
+        return None
+
+    aggregate_rejection = rejection(
+        before.receiver_aggregate,
+        after.receiver_aggregate,
+        "aggregate aligned transport",
+    )
+    if aggregate_rejection is not None:
+        return aggregate_rejection
+    before_by_id = {
+        int(item["receiver_logical_device"]): item for item in before.receiver_statuses
+    }
+    after_by_id = {
+        int(item["receiver_logical_device"]): item for item in after.receiver_statuses
+    }
+    for logical_id in sorted(after_by_id):
+        device_rejection = rejection(
+            before_by_id[logical_id],
+            after_by_id[logical_id],
+            f"receiver {logical_id} aligned transport",
+        )
+        if device_rejection is not None:
+            return device_rejection
+    return None
+
+
+def _transport_accounting_evidence(
+    before: TargetHealthSample, after: TargetHealthSample
+) -> Mapping[str, Any]:
+    fields = (
+        "spi_transfers", "bytes_sent", "semantic_bytes_sent",
+        "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
+        "crc_bytes_sent", "full_frame_transfers",
+        "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
+    )
+
+    def counters(
+        first: Mapping[str, Any], last: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        return {
+            field: {
+                "before": int(first[field]),
+                "after": int(last[field]),
+                "delta": int(last[field]) - int(first[field]),
+            }
+            for field in fields
+        }
+
+    before_by_id = {
+        int(item["receiver_logical_device"]): item for item in before.receiver_statuses
+    }
+    after_by_id = {
+        int(item["receiver_logical_device"]): item for item in after.receiver_statuses
+    }
+    full_frame_traffic_proven = True
+    for logical_id, item in after_by_id.items():
+        prior = before_by_id[logical_id]
+        transfers = int(item["full_frame_transfers"]) - int(
+            prior["full_frame_transfers"]
+        )
+        semantic_bytes = int(item["full_frame_semantic_bytes_sent"]) - int(
+            prior["full_frame_semantic_bytes_sent"]
+        )
+        wire_bytes = int(item["full_frame_wire_bytes_sent"]) - int(
+            prior["full_frame_wire_bytes_sent"]
+        )
+        expected_semantic = (
+            1
+            + int(item["receiver_active_strips"])
+            * int(item["receiver_leds_per_strip"])
+            * 3
+        )
+        expected_wire = ((expected_semantic + 9) // 4) * 4
+        full_frame_traffic_proven &= (
+            transfers > 0
+            and semantic_bytes == expected_semantic * transfers
+            and wire_bytes == expected_wire * transfers
+        )
+    return {
+        "enabled_devices": after.transport_envelope_devices,
+        "negotiation_required": 3,
+        "negotiation_settled": all(
+            item.get("transport_envelope_enabled") is True
+            and item.get("transport_envelope_negotiation_candidate") is None
+            and item.get("transport_envelope_negotiation_streak") == 0
+            for item in after.receiver_statuses
+        ),
+        "full_frame_traffic_proven": full_frame_traffic_proven,
+        "aggregate": counters(before.receiver_aggregate, after.receiver_aggregate),
+        "devices": [
+            {
+                "logical_device": logical_id,
+                "counters": counters(
+                    before_by_id[logical_id], after_by_id[logical_id]
+                ),
+            }
+            for logical_id in sorted(after_by_id)
+        ],
+    }
 
 
 def _receiver_response_counters(
@@ -2753,6 +2922,12 @@ def fresh_health(
                         "receiver status responses did not advance for logical "
                         f"devices {stale_ids}"
                     )
+                elif (
+                    transport_rejection := _transport_accounting_delta_rejection(
+                        accepted[-1], sample
+                    )
+                ) is not None:
+                    rejection = transport_rejection
 
             if rejection is not None:
                 accepted.clear()
@@ -2784,6 +2959,11 @@ def fresh_health(
                                 }
                                 for logical_id in range(receivers)
                             ],
+                            "aligned_transport_evidence": (
+                                _transport_accounting_evidence(
+                                    accepted[0], sample
+                                )
+                            ),
                         }
                     return health
         except Exception as exc:
