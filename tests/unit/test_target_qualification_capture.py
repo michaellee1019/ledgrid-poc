@@ -198,6 +198,82 @@ class TargetQualificationCaptureTests(unittest.TestCase):
         })
         self.assertIn("2 sampled rolling controller windows", controller["environment"])
 
+    def test_heavy_tail_mean_above_p95_is_retained_and_ordered_upward(self) -> None:
+        heavy_tail = _metrics(final=False)
+        heavy_tail["performance"].update({
+            "avg_frame_ms": 5.0,
+            "p95_frame_ms": 1.0,
+            "p99_frame_ms": 100.0,
+            "max_frame_ms": 100.0,
+        })
+        clean = _metrics(final=True)
+        source_windows = (heavy_tail["performance"], clean["performance"])
+
+        result = build_target_evidence(
+            [heavy_tail, clean],
+            elapsed_seconds=1.0,
+            binding_digest=BINDING,
+            captured_at=2_000_000,
+            target_fps=150,
+            brightness=50,
+            environment="Raspberry Pi 4 test",
+        )
+
+        controller = next(
+            item for item in result["evidence"]
+            if item["source"] == "controller_pi"
+        )
+        retained = controller["frame_time_ms"]
+        self.assertEqual(controller["sample_count"], 2)
+        self.assertEqual(retained, {
+            "mean": 5.0,
+            "p95": 5.0,
+            "p99": 100.0,
+            "max": 100.0,
+        })
+        source_fields = {
+            "mean": "avg_frame_ms",
+            "p95": "p95_frame_ms",
+            "p99": "p99_frame_ms",
+            "max": "max_frame_ms",
+        }
+        for name, source_field in source_fields.items():
+            self.assertGreaterEqual(
+                retained[name],
+                max(window[source_field] for window in source_windows),
+            )
+
+    def test_invalid_controller_statistics_are_rejected(self) -> None:
+        for label, updates in (
+            (
+                "p95 above p99",
+                {"p95_frame_ms": 4.1, "p99_frame_ms": 4.0},
+            ),
+            (
+                "p99 above max",
+                {"p99_frame_ms": 5.1, "max_frame_ms": 5.0},
+            ),
+            (
+                "mean above max",
+                {"avg_frame_ms": 5.1, "max_frame_ms": 5.0},
+            ),
+        ):
+            with self.subTest(label=label):
+                invalid = _metrics(final=True)
+                invalid["performance"].update(updates)
+                with self.assertRaisesRegex(
+                    TargetEvidenceError, "statistics are invalid"
+                ):
+                    build_target_evidence(
+                        [_metrics(final=False), invalid],
+                        elapsed_seconds=1.0,
+                        binding_digest=BINDING,
+                        captured_at=2_000_000,
+                        target_fps=150,
+                        brightness=50,
+                        environment="Raspberry Pi 4 test",
+                    )
+
     def test_installed_topology_binds_widths_routes_and_offsets(self) -> None:
         metrics = _metrics(final=False)
         validate_installed_topology(metrics)

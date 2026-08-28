@@ -18,7 +18,7 @@ if "spidev" not in sys.modules:
     sys.modules["spidev"] = spidev_stub
 
 from animation.core.base import AnimationBase, RenderedFrame
-from animation.core.manager import AnimationManager
+from animation.core.manager import AnimationManager, _plan_frame_deadline
 from animation.plugins.rainbow import RainbowAnimation
 from animation.plugins.solid import SolidColorAnimation
 from drivers.multi_device import MultiDeviceLEDController
@@ -49,6 +49,66 @@ class _Animation(AnimationBase):
 
 
 class FrameContractTests(unittest.TestCase):
+    def test_absolute_deadlines_pay_back_repeated_sleep_overshoot(self):
+        now = 0.0
+        deadline = None
+        prior_target = None
+        frame_starts = []
+        target_fps = 150
+        overshoot = 0.0004
+
+        for _ in range(151):
+            frame_started = now
+            frame_starts.append(frame_started)
+            work_finished = frame_started + 0.002
+            deadline, sleep_for = _plan_frame_deadline(
+                deadline,
+                prior_target,
+                frame_started=frame_started,
+                work_finished=work_finished,
+                target_fps=target_fps,
+            )
+            prior_target = target_fps
+            now = work_finished + sleep_for + (overshoot if sleep_for else 0.0)
+
+        elapsed = frame_starts[-1] - frame_starts[0]
+        self.assertGreaterEqual(150 / elapsed, 149.9)
+        relative_elapsed = 150 * ((1.0 / target_fps) + overshoot)
+        self.assertLess(150 / relative_elapsed, 142.0)
+
+    def test_absolute_deadlines_skip_expired_periods_without_bursting(self):
+        period = 1.0 / 150
+        deadline, sleep_for = _plan_frame_deadline(
+            None,
+            None,
+            frame_started=0.0,
+            work_finished=0.030,
+            target_fps=150,
+        )
+
+        self.assertGreater(deadline, 0.030)
+        self.assertGreater(sleep_for, 0.0)
+        self.assertLessEqual(sleep_for, period)
+
+    def test_live_target_change_starts_new_cadence_epoch(self):
+        deadline, _ = _plan_frame_deadline(
+            None,
+            None,
+            frame_started=1.0,
+            work_finished=1.002,
+            target_fps=100,
+        )
+        changed_deadline, sleep_for = _plan_frame_deadline(
+            deadline,
+            100,
+            frame_started=1.01,
+            work_finished=1.012,
+            target_fps=200,
+        )
+
+        self.assertAlmostEqual(changed_deadline, 1.015)
+        self.assertAlmostEqual(sleep_for, 0.003)
+
     def test_manager_bounds_live_target_fps(self):
         manager = AnimationManager.__new__(AnimationManager)
         self.assertEqual(manager.set_target_fps(160), 160)
@@ -68,7 +128,11 @@ class FrameContractTests(unittest.TestCase):
                 "send": 0.002,
                 "show": 0.003,
                 "process": 0.004,
+                "target_period": 0.010,
+                "deadline_missed": False,
                 "sleep": 0.005,
+                "requested_sleep": 0.0045,
+                "deadline_lateness": 0.0005,
                 "frame": 0.006,
             },
             {
@@ -76,7 +140,11 @@ class FrameContractTests(unittest.TestCase):
                 "send": 0.003,
                 "show": 0.004,
                 "process": 0.005,
+                "target_period": 0.010,
+                "deadline_missed": False,
                 "sleep": 0.006,
+                "requested_sleep": 0.0055,
+                "deadline_lateness": 0.0005,
                 "frame": 0.007,
             },
         ))
@@ -86,7 +154,40 @@ class FrameContractTests(unittest.TestCase):
 
         self.assertEqual(summary["max_generate_ms"], 2.0)
         self.assertEqual(summary["max_frame_ms"], 7.0)
+        self.assertAlmostEqual(summary["avg_requested_sleep_ms"], 5.0)
+        self.assertEqual(summary["max_deadline_lateness_ms"], 0.5)
         self.assertGreaterEqual(summary["max_frame_ms"], summary["p99_frame_ms"])
+
+    def test_performance_summary_does_not_reclassify_mixed_target_samples(self):
+        manager = AnimationManager.__new__(AnimationManager)
+        manager.controller = type("Controller", (), {"inline_show": True})()
+        manager.frames_presented = 2
+        manager.unchanged_frames_skipped = 0
+        manager.perf_lock = threading.Lock()
+
+        transitions = (
+            (100, 200),
+            (200, 100),
+        )
+        for old_target, current_target in transitions:
+            with self.subTest(old_target=old_target, current_target=current_target):
+                samples = []
+                for target in (old_target, current_target):
+                    target_period = 1.0 / target
+                    samples.append({
+                        "process": 0.007,
+                        "target_period": target_period,
+                        "deadline_missed": 0.007 > target_period,
+                        "frame": 0.007,
+                    })
+                manager.target_fps = current_target
+                manager.perf_samples = deque(samples)
+                manager._last_perf_sample = samples[-1]
+
+                summary = manager._get_perf_summary()
+
+                self.assertEqual(summary["deadline_misses"], 1)
+                self.assertEqual(summary["deadline_miss_ratio"], 0.5)
 
     def test_base_rotates_two_canonical_buffers(self):
         animation = _Animation(_Controller())

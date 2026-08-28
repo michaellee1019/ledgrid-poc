@@ -288,9 +288,14 @@ def build_target_evidence(
                 ("max", "max_frame_ms"),
             )
         }
-        if not window["mean"] <= window["p95"] <= window["p99"] <= window["max"]:
+        # A small number of extreme frames can legitimately pull the mean
+        # above p95.  Percentiles themselves, however, must remain ordered.
+        if (
+            window["mean"] > window["max"]
+            or not window["p95"] <= window["p99"] <= window["max"]
+        ):
             raise TargetEvidenceError(
-                f"controller timing summary {sample_index} is unordered"
+                f"controller timing summary {sample_index} statistics are invalid"
             )
         _integer(
             performance.get("samples"),
@@ -316,17 +321,19 @@ def build_target_evidence(
     # Rolling windows overlap. Summing their internal frame counts would invent
     # independent samples, so the envelope reports the actual number of rolling
     # summaries observed and conservatively retains the worst statistic seen.
-    controller_stats = {
+    observed_controller_stats = {
         name: max(window[name] for window in controller_windows)
         for name in ("mean", "p95", "p99", "max")
     }
-    if not (
-        controller_stats["mean"]
-        <= controller_stats["p95"]
-        <= controller_stats["p99"]
-        <= controller_stats["max"]
-    ):
-        raise TargetEvidenceError("controller timing statistics are unordered")
+    # The retained evidence schema requires mean <= p95 <= p99 <= max.  Make
+    # the independently retained worst observations schema-ordered by raising
+    # upper fields only; never discard or reduce an observed statistic.
+    controller_stats = {"mean": observed_controller_stats["mean"]}
+    for name, lower_name in (("p95", "mean"), ("p99", "p95"), ("max", "p99")):
+        controller_stats[name] = max(
+            observed_controller_stats[name],
+            controller_stats[lower_name],
+        )
     controller_samples = len(performance_summaries)
     observed_fps = min(observed_fps_samples)
     deadline_ratio = max(deadline_ratio_samples)

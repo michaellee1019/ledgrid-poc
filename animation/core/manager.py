@@ -119,6 +119,35 @@ except ImportError:
                 pass
 
 
+def _plan_frame_deadline(
+    prior_deadline: Optional[float],
+    prior_target_fps: Optional[int],
+    *,
+    frame_started: float,
+    work_finished: float,
+    target_fps: int,
+) -> tuple[float, float]:
+    """Plan one absolute frame deadline without accumulating sleep drift.
+
+    Ordinary scheduler oversleep is paid back by the next frame. If execution
+    falls at least one whole period behind, expired deadlines are skipped so a
+    stalled process never emits an unbounded catch-up burst. A live target-FPS
+    change starts a new cadence epoch at the current frame boundary.
+    """
+
+    bounded_target = max(1, int(target_fps) or 1)
+    period = 1.0 / bounded_target
+    if prior_deadline is None or prior_target_fps != bounded_target:
+        deadline = frame_started + period
+    else:
+        deadline = prior_deadline + period
+
+    if work_finished - deadline >= period:
+        expired = math.floor((work_finished - deadline) / period) + 1
+        deadline += expired * period
+    return deadline, max(0.0, deadline - work_finished)
+
+
 class PreviewLEDController:
     """
     Lightweight controller used for preview generation.
@@ -4541,6 +4570,8 @@ class AnimationManager:
             run_generation = getattr(self, '_run_generation', 0)
         inline_show = getattr(self.controller, "inline_show", False)
         pending_present = None
+        next_frame_deadline = None
+        scheduled_target_fps = None
 
         # One presentation may overlap generation of the next frame. We resolve
         # it before the animation can rotate back to the same one of its two
@@ -4673,18 +4704,36 @@ class AnimationManager:
                     time.sleep(0.05)
 
                 loop_duration = time.perf_counter() - loop_start
-                target_frame_time = 1.0 / max(1, int(self.target_fps) or 1)
-                sleep_time = max(0.0, target_frame_time - loop_duration)
+                current_target_fps = max(1, int(self.target_fps) or 1)
+                target_period = 1.0 / current_target_fps
+                next_frame_deadline, sleep_time = _plan_frame_deadline(
+                    next_frame_deadline,
+                    scheduled_target_fps,
+                    frame_started=loop_start,
+                    work_finished=loop_start + loop_duration,
+                    target_fps=current_target_fps,
+                )
+                scheduled_target_fps = current_target_fps
+                actual_sleep_time = 0.0
                 if sleep_time > 0:
+                    sleep_started = time.perf_counter()
                     time.sleep(sleep_time)
+                    actual_sleep_time = time.perf_counter() - sleep_started
+                frame_duration = time.perf_counter() - loop_start
 
                 self._record_perf_sample({
                     'generate': generate_duration,
                     'send': send_duration,
                     'show': show_duration,
                     'process': loop_duration,
-                    'sleep': sleep_time,
-                    'frame': loop_duration + sleep_time,
+                    'target_period': target_period,
+                    'deadline_missed': loop_duration > target_period,
+                    'sleep': actual_sleep_time,
+                    'requested_sleep': sleep_time,
+                    'deadline_lateness': max(
+                        0.0, loop_start + frame_duration - next_frame_deadline
+                    ),
+                    'frame': frame_duration,
                 })
 
             if pending_present is not None:
@@ -4876,7 +4925,12 @@ class AnimationManager:
                 return {}
 
             count = len(self.perf_samples)
-            totals = {key: 0.0 for key in ('generate', 'send', 'show', 'process', 'sleep', 'frame')}
+            totals = {
+                key: 0.0 for key in (
+                    'generate', 'send', 'show', 'process', 'sleep',
+                    'requested_sleep', 'deadline_lateness', 'frame',
+                )
+            }
             for sample in self.perf_samples:
                 for key in totals.keys():
                     totals[key] += sample.get(key, 0.0)
@@ -4897,7 +4951,7 @@ class AnimationManager:
                 summary[f'max_{key}_ms'] = ordered[-1] * 1000.0
 
             deadline_misses = sum(
-                sample.get('process', 0.0) > (target_frame_ms / 1000.0)
+                bool(sample.get('deadline_missed', False))
                 for sample in self.perf_samples
             )
             summary['deadline_misses'] = deadline_misses
