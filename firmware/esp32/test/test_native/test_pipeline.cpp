@@ -1197,7 +1197,9 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
   TEST_ASSERT_EQUAL_UINT16(2, two_report.corrected_codewords);
   TEST_ASSERT_EQUAL_MEMORY(semantic.data(), two_decoded.data, semantic.size());
 
-  // Every parity-symbol class is independently correctable.
+  // Every parity-symbol class can be damaged without changing the protected
+  // systematic payload. The semantic-CRC fast path accepts these without
+  // spending time on an unnecessary Reed-Solomon repair.
   for (std::size_t parity_symbol = 0;
        parity_symbol < ledgrid::kFecParityBytes; ++parity_symbol) {
     auto parity_damaged = canonical;
@@ -1209,7 +1211,7 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
     TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
         parity_damaged.data(), parity_damaged.size(), &parity_decoded,
         &parity_report, scratch.data(), scratch.size()));
-    TEST_ASSERT_EQUAL_UINT16(1, parity_report.corrected_codewords);
+    TEST_ASSERT_EQUAL_UINT16(0, parity_report.corrected_codewords);
     TEST_ASSERT_EQUAL_MEMORY(
         semantic.data(), parity_decoded.data, semantic.size());
   }

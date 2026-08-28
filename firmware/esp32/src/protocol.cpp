@@ -637,6 +637,62 @@ bool receiver_packet_crc_valid(
   return received == calculated;
 }
 
+bool fec_v5_systematic_payload_valid(
+    const std::uint8_t* packet,
+    std::size_t codewords,
+    std::uint8_t* scratch) {
+  const std::size_t decoded_capacity = codewords * kFecDataBytes;
+  const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;
+  for (std::size_t block = 0; block < codewords; ++block) {
+    for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
+      scratch[block * kFecDataBytes + symbol] =
+          packet[matrix_offset + symbol * codewords + block];
+    }
+  }
+
+  if (decoded_capacity < kFecEnvelopeHeaderBytes +
+                             kAlignedEnvelopeHeaderBytes + 1U +
+                             kAnimationPipelineCrcBytes ||
+      scratch[0] != static_cast<std::uint8_t>(
+          ReceiverCommand::AlignedEnvelope) ||
+      scratch[1] != kFecEnvelopeVersion) {
+    return false;
+  }
+  const std::size_t inner_wire_size =
+      (static_cast<std::size_t>(scratch[2]) << 8U) | scratch[3];
+  const std::uint8_t* inner = scratch + kFecEnvelopeHeaderBytes;
+  if (inner_wire_size < kAlignedEnvelopeHeaderBytes + 1U +
+                            kAnimationPipelineCrcBytes ||
+      inner_wire_size > decoded_capacity - kFecEnvelopeHeaderBytes ||
+      inner_wire_size % kSpiDmaAlignmentBytes != 0U ||
+      inner[0] != static_cast<std::uint8_t>(
+          ReceiverCommand::AlignedEnvelope) ||
+      inner[1] != kAlignedEnvelopeVersion) {
+    return false;
+  }
+  const std::size_t semantic_size =
+      (static_cast<std::size_t>(inner[2]) << 8U) | inner[3];
+  if (semantic_size == 0U || semantic_size > kFecEnvelopeMaxSemanticBytes) {
+    return false;
+  }
+  const std::size_t inner_unpadded = kAlignedEnvelopeHeaderBytes +
+      semantic_size + kAnimationPipelineCrcBytes;
+  const std::size_t inner_padding =
+      (kSpiDmaAlignmentBytes - inner_unpadded % kSpiDmaAlignmentBytes) %
+      kSpiDmaAlignmentBytes;
+  if (inner_wire_size != inner_unpadded + inner_padding) return false;
+  std::size_t required_codewords =
+      (kFecEnvelopeHeaderBytes + inner_wire_size + kFecDataBytes - 1U) /
+      kFecDataBytes;
+  required_codewords += (4U - required_codewords % 4U) % 4U;
+  if (required_codewords != codewords) return false;
+  for (std::size_t index = kFecEnvelopeHeaderBytes + inner_wire_size;
+       index < decoded_capacity; ++index) {
+    if (scratch[index] != 0U) return false;
+  }
+  return receiver_packet_crc_valid(inner, inner_wire_size);
+}
+
 ReceiverFecPacketOutcome receiver_fec_packet_outcome(
     bool decoded_ok, const ReceiverPacketDecodeReport& report) {
   if (!report.fec_envelope_attempted) {
@@ -744,7 +800,16 @@ bool decode_receiver_packet_payload(
   if (fec_v5) {
     const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;
     constexpr std::size_t kMaximumCorrections = kFecParityBytes / 2U;
-    for (std::size_t block = 0; block < codewords; ++block) {
+    // Clean installed frames are overwhelmingly the common case. Deinterleave
+    // the systematic bytes and validate the complete canonical inner packet
+    // before paying for 40,800 GF(256) syndrome operations. Any data, length,
+    // padding, or semantic-CRC damage still enters the bounded RS decoder.
+    // Parity-only damage is safe to ignore because it cannot change the
+    // authenticated semantic payload.
+    const bool systematic_payload_valid = fec_v5_systematic_payload_valid(
+        packet, codewords, scratch);
+    for (std::size_t block = 0;
+         !systematic_payload_valid && block < codewords; ++block) {
       std::uint8_t syndromes[kFecParityBytes] = {};
       for (std::size_t symbol = 0; symbol < kFecCodewordBytes; ++symbol) {
         const std::uint8_t value =
