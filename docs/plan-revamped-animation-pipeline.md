@@ -4561,6 +4561,116 @@ provider stays explicit, foreground uses alpha, the Pi remains authoritative,
 complete host frames remain fallback, and unsigned native code remains
 restricted to trusted repository builds.
 
+## Fresh-slate handoff — 2026-08-28
+
+The wall is intentionally left with no runnable deployment selected. This is a
+recovery checkpoint, not production acceptance.
+
+### Verified starting state
+
+- Local branch `update-animation-pipeline` is based at
+  `7bf6d342741abd2ad5c3f392ed5fd418b70958f3`. Before this handoff-only plan
+  update, the worktree was clean and the branch contained no deletions relative
+  to `main`.
+- The complete portable gate at that commit passed: 1,929 Python tests plus
+  3,401 subtests, 35 rendering tests plus 5 subtests, 139 native firmware tests,
+  all three ESP32-S3 build environments, and 269 deployment tests plus 191
+  subtests.
+- The exact retained desktop REL-01 matrix passed Chromium 151, Firefox 153,
+  and WebKit 26.5: 24/24 journeys and 276/276 assertions with zero wall
+  mutation. The retained ignored artifact is
+  `run_state/browser_qualification/evidence/rel01-browser-evidence-clean-7bf6d34.json`
+  (SHA-256
+  `7ba0c9e47a92c8b3c27fb521b4e78552a95fd3f1ac2fd93f0d7a7a2538f9d46f`).
+- All five production ESP32-S3 receivers were erased by immutable factory
+  serial, not tty number. Full 16 MiB readback from every receiver produced the
+  all-`0xff` digest
+  `dffab0dd410657cb30c7b2fd7f2586a4792e8472e58882b3532581f8111a646d`.
+- Disposable Pi deployment state is absent: the selected app and venv symlinks,
+  app/support releases, incoming staging, deployment receipts and activation
+  state, firmware inventory/markers, logs, generated builds, and ESP32
+  `.pio` output were deleted. `ledgrid.service` is disabled/inactive, TCP
+  5000 is closed, and root-filesystem use fell from 69% to 43%.
+- A graceful Pi shutdown was followed by a Home Assistant relay-off interval
+  from 19:14:59Z through 19:15:45Z, then a cold boot. The boot ID changed from
+  `5d796aca-31a1-42ec-befb-f950e97105a2` to
+  `762e227b-00ee-4de3-ab83-487271cf681a`. Raw SSH emitted
+  `PASS_RAW_SSH_COLD_SLATE_GREEN`.
+- The kernel observed the exact five approved serial/location pairs after the
+  cold boot. The non-production sixth receiver
+  `44:B1:76:C3:CF:B8` remains isolated with USB hub `1-1` port 3 off.
+  Blank receivers may cycle their ROM USB endpoints until firmware is restored;
+  this is expected and is not application readiness.
+- Home Assistant is restored with the wall relay on, its Z-Wave node alive, and
+  the six intentionally enabled relay-changing automations on, including
+  `automation.all_off_webhook`.
+- Calibration, presets, the mutable recovery checkout, unselected cached
+  virtual environments, PlatformIO recovery tooling/cache, SSH, and the target
+  SPI boot configuration were deliberately preserved. They cannot select or run
+  a release without a new deployment. Do not reinterpret them as accepted
+  deployment evidence.
+
+### Remaining investigation and acceptance order
+
+1. **Fix the pre-FEC baseline race before any deployment.**
+   The final candidate release
+   `004b8facca25df99c12b6ddd48447e6c9ccce838c68824f968d0b6be1a050ee7`
+   failed closed and restored the prior app because logical receiver 3 reported
+   lifetime uncorrectable/framing counts `8/10` while semantic errors stayed
+   zero. The leading hypothesis is that the first queued valid v7 response
+   (`0/0/0`) froze the baseline before a later pre-enable response exposed
+   historical `8/0/10`.
+
+   Acceptance: track monotonic valid v7 lifetime snapshots until FEC enable is
+   actually acknowledged; add a regression for a queued `0/0/0 -> 8/0/10`
+   pre-enable sequence; prove unchanged first post-enable counters yield zero
+   deltas, later increases are counted, queued acknowledgements cannot move the
+   enable boundary backward, and reset/invalid-version paths still fail closed.
+
+2. **Re-run the complete local gate and make a clean checkpoint.**
+
+   Acceptance: focused host/transport tests pass first, followed by the full
+   Python, rendering, native-firmware, all-three-build, deployment, regeneration,
+   syntax, and diff gates. Re-run the exact desktop browser matrix if browser
+   code or fixtures changed. Confirm a clean worktree and no unintended
+   deletions or compatibility regressions versus current `main`.
+
+3. **Bootstrap the blank wall with forced firmware reconciliation.**
+   Because all receivers are erased and their Pi inventory ledger was removed,
+   the next hardware operation must use `just deploy-force-firmware`; an
+   ordinary deploy is not an acceptable first recovery command.
+
+   Acceptance: isolate the sixth USB port first; bind the same five immutable
+   serial/location pairs; flash every receiver; create one new release and one
+   new inventory/receipt lineage only; require selected release and commit
+   identity to match the clean checkpoint; and pass fresh exact-five post-boot
+   status/capability/topology readiness with no inherited receipt or counter
+   baseline.
+
+4. **Run the guarded Rainbow/FEC activation and short performance evidence.**
+
+   Acceptance: activation is receipt-bound and unanimous; the first integrity
+   window starts only after acknowledged FEC enable; a 60-second PERF-01 capture
+   has zero new semantic, uncorrectable, framing, CRC, queue, reset, watchdog, or
+   cadence faults; timing percentiles and actual displayed cadence are retained;
+   and failure restores the known Python full-scene fallback.
+
+5. **Run the remaining wall soak and recovery evidence.**
+
+   Acceptance: WALL-02 runs for the declared 30 minutes on the exact release and
+   activation receipt, maintains stable identity/mode and zero integrity/error
+   deltas, then returns to a Python full scene without rebooting or reflashing.
+   Retain a direct physical wall observation for visible seams/corruption and
+   label exactly what it proves.
+
+6. **Close documentation and release status from evidence only.**
+
+   Electrical measurements and physical iPhone/installed/VoiceOver gates are
+   explicitly operator-waived for this work and must be labeled
+   `OPERATOR_WAIVED`, never `PASS`. Do not enable receiver-native defaults or
+   claim production readiness unless every non-waived required gate above has
+   current same-release evidence.
+
 ## Assumptions
 
 - The installation remains one Mac development machine, one Raspberry Pi, and
