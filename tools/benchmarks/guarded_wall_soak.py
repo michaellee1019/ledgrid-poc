@@ -275,7 +275,11 @@ def _sampling_snapshot_failures(
         current_gap > maximum_gap
         or maximum_gap > MAX_FULL_FRAME_STATUS_SAMPLE_GAP
     ):
-        failures.append(f"{label} full-frame status sample gap is outside 0..256")
+        failures.append(
+            f"{label} full-frame status sample gap is outside 0..256 "
+            f"(current={current_gap}, maximum={maximum_gap}; "
+            "expected current <= maximum)"
+        )
     buffer_size = _integer(item.get("spidev_buffer_size"))
     if buffer_size is None or buffer_size < minimum_buffer_size:
         failures.append(

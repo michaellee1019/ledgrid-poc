@@ -2491,8 +2491,10 @@ class TargetHealthSample:
 
 @dataclass(frozen=True)
 class ReceiverHealthContract:
+    schema_version: int
     minimum_status_version: int
     required_capabilities: int
+    fec_receiver_ids: tuple[int, ...]
     devices: tuple[Mapping[str, Any], ...]
 
 
@@ -2543,7 +2545,12 @@ def _full_frame_sampling_snapshot_rejection(
         or current_gap > maximum_gap
         or maximum_gap > MAX_FULL_FRAME_STATUS_SAMPLE_GAP
     ):
-        return f"{label} full-frame status sample gap is outside 0..256"
+        return (
+            f"{label} full-frame status sample gap is outside 0.."
+            f"{MAX_FULL_FRAME_STATUS_SAMPLE_GAP} "
+            f"(current={current_gap}, maximum={maximum_gap}; "
+            "expected current <= maximum)"
+        )
     buffer_size = item.get("spidev_buffer_size")
     if type(buffer_size) is not int or buffer_size < minimum_buffer_size:
         return f"{label} spidev buffer is below {minimum_buffer_size} bytes"
@@ -2660,16 +2667,22 @@ def _sample_health(root: Path, *, unit: str, api_url: str) -> TargetHealthSample
 def _validate_receiver_health_contract(
     contract: Mapping[str, Any], *, receivers: int,
 ) -> ReceiverHealthContract:
-    if contract.get("schema_version") != 1:
+    if contract.get("schema_version") != 2:
         raise ValueError("unsupported receiver health contract version")
     minimum_version = contract.get("minimum_status_version")
     required_capabilities = contract.get("required_capabilities")
+    raw_fec_receiver_ids = contract.get("fec_receiver_ids")
     raw_devices = contract.get("devices")
     if (
         type(minimum_version) is not int
         or not 1 <= minimum_version <= 255
         or type(required_capabilities) is not int
         or not 0 <= required_capabilities <= 0xFFFFFFFF
+        or not isinstance(raw_fec_receiver_ids, list)
+        or any(type(value) is not int for value in raw_fec_receiver_ids)
+        or len(set(raw_fec_receiver_ids)) != len(raw_fec_receiver_ids)
+        or any(not 0 <= value < receivers for value in raw_fec_receiver_ids)
+        or tuple(raw_fec_receiver_ids) != (3,)
         or not isinstance(raw_devices, list)
         or len(raw_devices) != receivers
     ):
@@ -2697,8 +2710,10 @@ def _validate_receiver_health_contract(
             field: item[field] for field in (*integer_fields, *boolean_fields)
         })
     return ReceiverHealthContract(
+        schema_version=2,
         minimum_status_version=minimum_version,
         required_capabilities=required_capabilities,
+        fec_receiver_ids=tuple(raw_fec_receiver_ids),
         devices=tuple(devices),
     )
 
@@ -2708,6 +2723,7 @@ def _receiver_health_rejection(
     *,
     minimum_version: int,
     required_capabilities: int,
+    fec_receiver_ids: Sequence[int],
     expected_devices: Sequence[Mapping[str, Any]],
 ) -> Optional[str]:
     if sample.transport_envelope_devices != len(expected_devices):
@@ -2715,6 +2731,9 @@ def _receiver_health_rejection(
             "host aligned transport is enabled for "
             f"{sample.transport_envelope_devices} receivers; expected {len(expected_devices)}"
         )
+    expected_fec_ids = tuple(fec_receiver_ids)
+    if expected_fec_ids != (3,):
+        return "receiver health FEC policy is not exactly logical receiver 3"
     if len(sample.receiver_device_map) != len(expected_devices):
         return "host receiver device map is incomplete"
     host_by_id: dict[int, Mapping[str, Any]] = {}
@@ -2734,12 +2753,15 @@ def _receiver_health_rejection(
     for expected in expected_devices:
         logical_id = expected["logical_device"]
         observed = host_by_id[logical_id]
-        for field in host_fields:
-            value = observed.get(field)
-            if type(value) is not type(expected[field]) or value != expected[field]:
+        for host_field in host_fields:
+            value = observed.get(host_field)
+            if (
+                type(value) is not type(expected[host_field])
+                or value != expected[host_field]
+            ):
                 return (
-                    f"host receiver {logical_id} reported {field}={value!r}, "
-                    f"expected {expected[field]!r}"
+                    f"host receiver {logical_id} reported {host_field}={value!r}, "
+                    f"expected {expected[host_field]!r}"
                 )
 
     if len(sample.receiver_statuses) != len(expected_devices):
@@ -2790,6 +2812,75 @@ def _receiver_health_rejection(
             or status.get("transport_envelope_negotiation_required") != 3
         ):
             return f"receiver {logical_id} aligned transport negotiation is not settled"
+        expected_fec = logical_id in expected_fec_ids
+        if (
+            status.get("fec_transport_requested") is not expected_fec
+            or status.get("fec_transport_enabled") is not expected_fec
+        ):
+            return (
+                f"receiver {logical_id} FEC selection does not match the "
+                "receiver-3 deployment policy"
+            )
+        if (
+            "fec_transport_negotiation_candidate" not in status
+            or status.get("fec_transport_negotiation_candidate") is not None
+            or type(status.get("fec_transport_negotiation_streak")) is not int
+            or status.get("fec_transport_negotiation_streak") != 0
+            or type(status.get("fec_transport_negotiation_required")) is not int
+            or status.get("fec_transport_negotiation_required") != 3
+        ):
+            return f"receiver {logical_id} FEC transport negotiation is not settled"
+        fec_counter_fields = (
+            "fec_frames_sent", "fec_codewords_sent",
+            "fec_parity_bytes_sent", "fec_data_padding_bytes_sent",
+            "receiver_fec_packets_received", "receiver_fec_packets_accepted",
+            "receiver_fec_corrected_packets", "receiver_fec_corrected_codewords",
+            "receiver_fec_uncorrectable_packets",
+            "receiver_fec_semantic_crc_errors", "receiver_fec_framing_errors",
+            "receiver_fec_last_decode_us", "receiver_fec_max_decode_us",
+        )
+        if any(
+            type(status.get(field)) is not int or status.get(field) < 0
+            for field in fec_counter_fields
+        ):
+            return f"receiver {logical_id} FEC accounting is unavailable"
+        fec_frames = int(status["fec_frames_sent"])
+        if (
+            int(status["fec_codewords_sent"])
+            != (26 * fec_frames if expected_fec else 0)
+            or int(status["fec_parity_bytes_sent"])
+            != (52 * fec_frames if expected_fec else 0)
+            or int(status["fec_data_padding_bytes_sent"])
+            != (4 * fec_frames if expected_fec else 0)
+            or (not expected_fec and fec_frames != 0)
+        ):
+            return f"receiver {logical_id} host FEC accounting is inconsistent"
+        received = int(status["receiver_fec_packets_received"])
+        accepted = int(status["receiver_fec_packets_accepted"])
+        corrected_packets = int(status["receiver_fec_corrected_packets"])
+        corrected_codewords = int(status["receiver_fec_corrected_codewords"])
+        terminal = sum(int(status[field]) for field in (
+            "receiver_fec_uncorrectable_packets",
+            "receiver_fec_semantic_crc_errors",
+            "receiver_fec_framing_errors",
+        ))
+        if received != accepted + terminal:
+            return f"receiver {logical_id} FEC outcome accounting is inconsistent"
+        if terminal != 0:
+            return f"receiver {logical_id} has terminal FEC transport errors"
+        if (
+            corrected_packets > accepted
+            or corrected_codewords < corrected_packets
+            or corrected_codewords > 26 * corrected_packets
+        ):
+            return f"receiver {logical_id} corrected FEC accounting is inconsistent"
+        last_decode_us = int(status["receiver_fec_last_decode_us"])
+        max_decode_us = int(status["receiver_fec_max_decode_us"])
+        if (
+            last_decode_us > max_decode_us
+            or (not expected_fec and (received != 0 or last_decode_us != 0 or max_decode_us != 0))
+        ):
+            return f"receiver {logical_id} FEC receive accounting is inconsistent"
         for expected_name, observed_name in field_mapping.items():
             if status.get(observed_name) != expected[expected_name]:
                 return (
@@ -2799,30 +2890,52 @@ def _receiver_health_rejection(
         sampling_rejection = _full_frame_sampling_snapshot_rejection(
             status,
             label=f"receiver {logical_id}",
-            minimum_buffer_size=3320 if logical_id < 4 else 424,
+            minimum_buffer_size=(
+                3380 if expected_fec else 3320 if logical_id < 4 else 424
+            ),
         )
         if sampling_rejection is not None:
             return sampling_rejection
+    if (
+        sample.receiver_aggregate.get("fec_transport_requested_devices")
+        != len(expected_fec_ids)
+        or sample.receiver_aggregate.get("fec_transport_enabled_devices")
+        != len(expected_fec_ids)
+    ):
+        return "host FEC transport is not requested and enabled on exactly one receiver"
     transport_fields = (
         "spi_transfers", "bytes_sent", "semantic_bytes_sent",
         "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
         "crc_bytes_sent", "full_frame_transfers",
         "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
+        "fec_frames_sent", "fec_codewords_sent", "fec_parity_bytes_sent",
+        "fec_data_padding_bytes_sent", "receiver_fec_packets_received",
+        "receiver_fec_packets_accepted", "receiver_fec_corrected_packets",
+        "receiver_fec_corrected_codewords", "receiver_fec_uncorrectable_packets",
+        "receiver_fec_semantic_crc_errors", "receiver_fec_framing_errors",
         *FULL_FRAME_SAMPLING_COUNTERS,
     )
-    for field in transport_fields:
-        values = [status.get(field) for status in sample.receiver_statuses]
+    for counter_name in transport_fields:
+        values = [
+            status.get(counter_name) for status in sample.receiver_statuses
+        ]
         if any(type(value) is not int or value < 0 for value in values):
-            return f"per-receiver aligned transport counter {field} is unavailable"
-        aggregate_value = sample.receiver_aggregate.get(field)
+            return (
+                "per-receiver aligned transport counter "
+                f"{counter_name} is unavailable"
+            )
+        aggregate_value = sample.receiver_aggregate.get(counter_name)
         if type(aggregate_value) is not int or aggregate_value < 0:
-            return f"aggregate aligned transport counter {field} is unavailable"
+            return (
+                "aggregate aligned transport counter "
+                f"{counter_name} is unavailable"
+            )
         if aggregate_value != sum(values):
-            return f"aggregate {field} drifted from per-receiver total"
+            return f"aggregate {counter_name} drifted from per-receiver total"
     aggregate_sampling_rejection = _full_frame_sampling_snapshot_rejection(
         sample.receiver_aggregate,
         label="aggregate",
-        minimum_buffer_size=3320,
+        minimum_buffer_size=3380,
     )
     if aggregate_sampling_rejection is not None:
         return aggregate_sampling_rejection
@@ -2843,10 +2956,18 @@ def _receiver_health_rejection(
             status.get("full_frame_write_only_supported") is True
             for status in sample.receiver_statuses
         ),
+        "receiver_fec_last_decode_us": max(
+            int(status["receiver_fec_last_decode_us"])
+            for status in sample.receiver_statuses
+        ),
+        "receiver_fec_max_decode_us": max(
+            int(status["receiver_fec_max_decode_us"])
+            for status in sample.receiver_statuses
+        ),
     }
-    for field, expected in gauge_expectations.items():
-        if sample.receiver_aggregate.get(field) != expected:
-            return f"aggregate {field} drifted from per-receiver value"
+    for gauge_name, expected in gauge_expectations.items():
+        if sample.receiver_aggregate.get(gauge_name) != expected:
+            return f"aggregate {gauge_name} drifted from per-receiver value"
     return None
 
 
@@ -2863,11 +2984,26 @@ def _transport_accounting_delta_rejection(
         first: Mapping[str, Any], last: Mapping[str, Any], label: str
     ) -> Optional[str]:
         deltas = {field: int(last[field]) - int(first[field]) for field in fields}
-        for field, delta in deltas.items():
+        for counter_name, delta in deltas.items():
             if delta <= 0:
-                return f"{label} {field} did not advance"
+                return f"{label} {counter_name} did not advance"
         transfers = deltas["spi_transfers"]
-        if deltas["transport_envelope_bytes_sent"] != 4 * transfers:
+        fec_values = (
+            first.get("fec_frames_sent", 0),
+            last.get("fec_frames_sent", 0),
+            first.get("fec_parity_bytes_sent", 0),
+            last.get("fec_parity_bytes_sent", 0),
+        )
+        if any(type(value) is not int or value < 0 for value in fec_values):
+            return f"{label} FEC accounting is unavailable"
+        fec_frames = int(fec_values[1]) - int(fec_values[0])
+        fec_parity_bytes = int(fec_values[3]) - int(fec_values[2])
+        if fec_frames < 0 or fec_parity_bytes < 0:
+            return f"{label} FEC accounting counter reset"
+        if (
+            deltas["transport_envelope_bytes_sent"]
+            != 4 * transfers + 4 * fec_frames
+        ):
             return f"{label} envelope accounting is inconsistent"
         if deltas["crc_bytes_sent"] != 2 * transfers:
             return f"{label} CRC accounting is inconsistent"
@@ -2876,6 +3012,7 @@ def _transport_accounting_delta_rejection(
             + deltas["transport_envelope_bytes_sent"]
             + deltas["transport_padding_bytes_sent"]
             + deltas["crc_bytes_sent"]
+            + fec_parity_bytes
         ):
             return f"{label} wire-byte accounting is inconsistent"
         return None
@@ -2915,6 +3052,91 @@ def _transport_accounting_delta_rejection(
         )
         if device_sampling_rejection is not None:
             return device_sampling_rejection
+        first = before_by_id[logical_id]
+        last = after_by_id[logical_id]
+        full_frames = int(last["full_frame_transfers"]) - int(
+            first["full_frame_transfers"]
+        )
+        fec_frames = int(last.get("fec_frames_sent", 0)) - int(
+            first.get("fec_frames_sent", 0)
+        )
+        expected_fec_frames = (
+            full_frames if last.get("fec_transport_enabled") is True else 0
+        )
+        if fec_frames != expected_fec_frames:
+            return f"receiver {logical_id} FEC frame accounting is inconsistent"
+        receiver_fec_fields = (
+            "receiver_fec_packets_received",
+            "receiver_fec_packets_accepted",
+            "receiver_fec_corrected_packets",
+            "receiver_fec_corrected_codewords",
+            "receiver_fec_uncorrectable_packets",
+            "receiver_fec_semantic_crc_errors",
+            "receiver_fec_framing_errors",
+        )
+        receiver_fec_deltas = {
+            field_name: int(last.get(field_name, 0))
+            - int(first.get(field_name, 0))
+            for field_name in receiver_fec_fields
+        }
+        if any(delta < 0 for delta in receiver_fec_deltas.values()):
+            return f"receiver {logical_id} FEC receiver counter reset"
+        received = receiver_fec_deltas["receiver_fec_packets_received"]
+        accepted = receiver_fec_deltas["receiver_fec_packets_accepted"]
+        corrected_packets = receiver_fec_deltas[
+            "receiver_fec_corrected_packets"
+        ]
+        corrected_codewords = receiver_fec_deltas[
+            "receiver_fec_corrected_codewords"
+        ]
+        terminal = sum(receiver_fec_deltas[field_name] for field_name in (
+            "receiver_fec_uncorrectable_packets",
+            "receiver_fec_semantic_crc_errors",
+            "receiver_fec_framing_errors",
+        ))
+        if last.get("fec_transport_enabled") is True:
+            if fec_frames != received or received != accepted:
+                return (
+                    f"receiver {logical_id} host/receiver FEC frame delta "
+                    "is inconsistent"
+                )
+            if terminal != 0:
+                return f"receiver {logical_id} terminal FEC outcome increased"
+            if (
+                corrected_packets > accepted
+                or corrected_codewords < corrected_packets
+                or corrected_codewords > 26 * corrected_packets
+            ):
+                return (
+                    f"receiver {logical_id} corrected FEC delta is inconsistent"
+                )
+        elif fec_frames != 0 or any(receiver_fec_deltas.values()):
+            return f"receiver {logical_id} non-FEC transport reported FEC activity"
+        if full_frames > 0:
+            expected_semantic = (
+                1
+                + int(last["receiver_active_strips"])
+                * int(last["receiver_leds_per_strip"])
+                * 3
+            )
+            expected_wire = (
+                3380
+                if last.get("fec_transport_enabled") is True
+                else ((expected_semantic + 9) // 4) * 4
+            )
+            semantic_delta = int(last["full_frame_semantic_bytes_sent"]) - int(
+                first["full_frame_semantic_bytes_sent"]
+            )
+            wire_delta = int(last["full_frame_wire_bytes_sent"]) - int(
+                first["full_frame_wire_bytes_sent"]
+            )
+            if semantic_delta != expected_semantic * full_frames:
+                return f"receiver {logical_id} full-frame semantic accounting is inconsistent"
+            if wire_delta != expected_wire * full_frames:
+                return (
+                    f"receiver {logical_id} full-frame wire accounting is inconsistent; "
+                    f"expected {expected_wire} bytes per frame"
+                )
     return None
 
 
@@ -2971,7 +3193,11 @@ def _transport_accounting_evidence(
             * int(item["receiver_leds_per_strip"])
             * 3
         )
-        expected_wire = ((expected_semantic + 9) // 4) * 4
+        expected_wire = (
+            3380
+            if item.get("fec_transport_enabled") is True
+            else ((expected_semantic + 9) // 4) * 4
+        )
         full_frame_traffic_proven &= (
             transfers > 0
             and semantic_bytes == expected_semantic * transfers
@@ -2998,6 +3224,10 @@ def _transport_accounting_evidence(
         )
     return {
         "enabled_devices": after.transport_envelope_devices,
+        "fec_receiver_ids": [
+            logical_id for logical_id, item in sorted(after_by_id.items())
+            if item.get("fec_transport_enabled") is True
+        ],
         "negotiation_required": 3,
         "negotiation_settled": all(
             item.get("transport_envelope_enabled") is True
@@ -3019,6 +3249,21 @@ def _transport_accounting_evidence(
         "devices": [
             {
                 "logical_device": logical_id,
+                "expected_full_frame_wire_bytes": (
+                    3380
+                    if after_by_id[logical_id].get("fec_transport_enabled") is True
+                    else (
+                        (
+                            1
+                            + int(after_by_id[logical_id]["receiver_active_strips"])
+                            * int(after_by_id[logical_id]["receiver_leds_per_strip"])
+                            * 3
+                            + 9
+                        )
+                        // 4
+                    )
+                    * 4
+                ),
                 "counters": counters(
                     before_by_id[logical_id], after_by_id[logical_id]
                 ),
@@ -3092,6 +3337,7 @@ def fresh_health(
                     sample,
                     minimum_version=contract.minimum_status_version,
                     required_capabilities=contract.required_capabilities,
+                    fec_receiver_ids=contract.fec_receiver_ids,
                     expected_devices=contract.devices,
                 )
             ) is not None:
@@ -3136,8 +3382,10 @@ def fresh_health(
                         first_responses = _receiver_response_counters(accepted[0])
                         last_responses = _receiver_response_counters(sample)
                         health["receiver_contract"] = {
+                            "schema_version": contract.schema_version,
                             "minimum_status_version": contract.minimum_status_version,
                             "required_capabilities": contract.required_capabilities,
+                            "fec_receiver_ids": list(contract.fec_receiver_ids),
                             "verified_logical_devices": list(range(receivers)),
                             "status_response_evidence": [
                                 {

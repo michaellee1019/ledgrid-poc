@@ -183,7 +183,11 @@ def _require_full_frame_sampling_snapshot(
         current_gap > maximum_gap
         or maximum_gap > _MAX_FULL_FRAME_STATUS_SAMPLE_GAP
     ):
-        raise TargetEvidenceError(f"{label} full-frame status sample gap is outside 0..256")
+        raise TargetEvidenceError(
+            f"{label} full-frame status sample gap is outside 0..256 "
+            f"(current={current_gap}, maximum={maximum_gap}; "
+            "expected current <= maximum)"
+        )
     buffer_size = _integer(
         item.get("spidev_buffer_size"), f"{label} spidev_buffer_size", minimum=1
     )

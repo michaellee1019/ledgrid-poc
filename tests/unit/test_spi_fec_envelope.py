@@ -22,16 +22,20 @@ class _RecordingSpi:
 
     def __init__(self):
         self.packets = []
+        self.response_packets = []
+        self.write_only_packets = []
 
     def open(self, _bus, _device):
         return None
 
     def xfer2(self, packet):
         self.packets.append(bytes(packet))
+        self.response_packets.append(bytes(packet))
         return bytes(len(packet))
 
     def writebytes2(self, packet):
         self.packets.append(bytes(packet))
+        self.write_only_packets.append(bytes(packet))
 
 
 def _controller(*, requested):
@@ -226,6 +230,36 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         self.assertEqual(item._fec_parity_bytes_sent, 52)
         self.assertEqual(item._fec_data_padding_bytes_sent, 4)
         self.assertEqual(item._full_frame_wire_bytes_sent, 3380)
+
+    def test_scheduled_fec_sample_uses_query_then_write_only_frame(self):
+        item = _controller(requested=True)
+        item._transport_envelope_enabled = True
+        item._fec_transport_enabled = True
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V7
+        item._update_receiver_status = lambda _response: True
+        colors = np.zeros((8 * 138, 3), dtype=np.uint8)
+
+        item.set_all_pixels(colors, wall_frame_sequence=76)
+
+        self.assertEqual(len(item.spi.response_packets), 1)
+        self.assertEqual(
+            len(item.spi.response_packets[0]),
+            protocol._aligned_envelope_wire_size(
+                protocol.RECEIVER_STATUS_BYTES_V7
+            ),
+        )
+        self.assertEqual(len(item.spi.write_only_packets), 1)
+        self.assertEqual(len(item.spi.write_only_packets[0]), 3380)
+        self.assertEqual(item.spi.write_only_packets[0][:2], b"\x0b\x02")
+        self.assertEqual(item._spi_transfers, 2)
+        self.assertEqual(item._fec_frames_sent, 1)
+        self.assertEqual(item._full_frame_transfers, 1)
+        self.assertEqual(item._full_frame_status_transfers, 1)
+        self.assertEqual(item._full_frame_status_samples, 1)
+        self.assertEqual(item._full_frame_status_sample_misses, 0)
+        self.assertEqual(item._full_frame_write_only_transfers, 0)
+        self.assertEqual(item._full_frame_frames_since_status_sample, 0)
+        self.assertEqual(item._full_frame_max_status_sample_gap, 0)
 
     def test_failed_transfer_does_not_claim_fec_or_full_frame_sent(self):
         item = _controller(requested=True)

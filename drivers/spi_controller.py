@@ -3118,15 +3118,24 @@ class LEDController:
                     "_receiver_status_query_bytes",
                     RECEIVER_STATUS_BYTES_V3,
                 ))
-                short_wire_status_fallback = (
+                separate_status_query = (
                     scheduled_status_sample
-                    and self._selected_full_frame_wire_size() < status_query_bytes
+                    and (
+                        self._fec_full_frame_enabled()
+                        or self._selected_full_frame_wire_size()
+                        < status_query_bytes
+                    )
                 )
-                if short_wire_status_fallback:
-                    # A one-strip aligned SET_ALL is only 424 wire bytes, too
-                    # short to clock a status-v6 snapshot. Sample first with a
-                    # status-capable query, then keep the actual frame on the
-                    # write-only fast path. The logical frame is still
+                if separate_status_query:
+                    # A one-strip aligned SET_ALL is too short to clock a
+                    # complete status snapshot. FEC SET_ALL frames are long
+                    # enough, but the protected host-to-receiver envelope does
+                    # not define a corresponding receiver-to-host FEC payload;
+                    # treating the raw MISO prefix of that transfer as a status
+                    # sample made the proof depend on an unrelated 3380-byte
+                    # full-duplex path. Sample first with the established
+                    # status-query transaction, then keep the actual frame on
+                    # the write-only path. The logical frame is still
                     # classified exactly once below.
                     transport_lock = getattr(self, "_transport_lock", None)
                     if transport_lock is None:
