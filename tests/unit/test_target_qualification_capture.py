@@ -7,14 +7,18 @@ import tempfile
 from pathlib import Path
 import unittest
 
+from animation.core.activation_qualification import canonical_json_sha256
 from tools.qualification.target_evidence import (
     TargetEvidenceError,
     atomic_write_json,
     build_target_evidence,
+    capture,
     metric_stats,
     validate_active_activation,
     validate_installed_topology,
+    validate_runtime_identity,
 )
+from tools.benchmarks.live_display_state import canonical_scene_digest
 
 
 BINDING = "a" * 64
@@ -22,6 +26,8 @@ BASIS = "b" * 64
 SCENE = "c" * 64
 GLOBALS = "d" * 64
 PROFILE = "0" * 64
+RELEASE = "e" * 64
+SESSION = "f" * 32
 
 
 def _device(logical_id: int, displayed: int) -> dict:
@@ -34,6 +40,7 @@ def _device(logical_id: int, displayed: int) -> dict:
     crc_bytes = transfers * 2
     full_frame_semantic = 1 + widths[logical_id] * 138 * 3
     full_frame_wire = ((full_frame_semantic + 9) // 4) * 4
+    status_transfers = transfers // 16
     return {
         "receiver_logical_device": logical_id,
         "receiver_status_version": 3,
@@ -51,6 +58,14 @@ def _device(logical_id: int, displayed: int) -> dict:
         "full_frame_transfers": transfers,
         "full_frame_semantic_bytes_sent": transfers * full_frame_semantic,
         "full_frame_wire_bytes_sent": transfers * full_frame_wire,
+        "full_frame_status_transfers": status_transfers,
+        "full_frame_status_samples": status_transfers - logical_id,
+        "full_frame_status_sample_misses": logical_id,
+        "full_frame_write_only_transfers": transfers - status_transfers,
+        "full_frame_frames_since_status_sample": transfers % 16,
+        "full_frame_max_status_sample_gap": 15,
+        "spidev_buffer_size": 4096,
+        "full_frame_write_only_supported": True,
         "receiver_active_strips": widths[logical_id],
         "receiver_global_strip_offset": offsets[logical_id],
         "receiver_leds_per_strip": 138,
@@ -80,6 +95,8 @@ def _metrics(*, final: bool) -> dict:
         "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
         "crc_bytes_sent", "full_frame_transfers",
         "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
+        "full_frame_status_transfers", "full_frame_status_samples",
+        "full_frame_status_sample_misses", "full_frame_write_only_transfers",
     )
     return {
         "animation": {"target_fps": 150, "actual_fps": 150.4},
@@ -103,6 +120,21 @@ def _metrics(*, final: bool) -> dict:
                     field: sum(device[field] for device in devices)
                     for field in transport_fields
                 },
+                "full_frame_frames_since_status_sample": max(
+                    device["full_frame_frames_since_status_sample"]
+                    for device in devices
+                ),
+                "full_frame_max_status_sample_gap": max(
+                    device["full_frame_max_status_sample_gap"]
+                    for device in devices
+                ),
+                "spidev_buffer_size": min(
+                    device["spidev_buffer_size"] for device in devices
+                ),
+                "full_frame_write_only_supported": all(
+                    device["full_frame_write_only_supported"]
+                    for device in devices
+                ),
                 "device_map": [
                     {
                         "logical_device": logical_id,
@@ -136,8 +168,36 @@ def _receipt() -> dict:
         "basis_digest": BASIS,
         "phase": "active",
         "requested_identity": identity,
+        "normalized_identity": deepcopy(identity),
         "observed_identity": deepcopy(identity),
+        "controller": {"session_id": SESSION, "state_revision_after": 7},
         "telemetry": {"complete": True, "fresh": True, "observed_at": 123},
+    }
+
+
+def _runtime_identity() -> dict:
+    identity = _receipt()["requested_identity"]
+    return {
+        "release_id": RELEASE,
+        "controller_session_id": SESSION,
+        "controller_state_revision": 7,
+        "current_identity_digest": canonical_json_sha256(identity),
+    }
+
+
+RUNTIME_IDENTITY = _runtime_identity()
+
+
+def _live_status() -> dict:
+    identity = deepcopy(_receipt()["requested_identity"])
+    return {
+        "release_id": RELEASE,
+        "controller_release_id": RELEASE,
+        "release_consistent": True,
+        "controller_session_id": SESSION,
+        "controller_state_revision": 7,
+        "active_identity": identity,
+        "current_identity_digest": canonical_json_sha256(identity),
     }
 
 
@@ -159,6 +219,7 @@ class TargetQualificationCaptureTests(unittest.TestCase):
             target_fps=150,
             brightness=50,
             environment="Raspberry Pi 4; test window; 33x138; 150 FPS",
+            runtime_identity=RUNTIME_IDENTITY,
         )
 
         by_source = {item["source"]: item for item in result["evidence"]}
@@ -170,6 +231,33 @@ class TargetQualificationCaptureTests(unittest.TestCase):
         self.assertEqual(by_source["receiver"]["cadence"]["observed_fps"], 150.0)
         self.assertLess(by_source["receiver"]["frame_time_ms"]["max"], 4.5)
         self.assertIsNone(by_source["receiver"]["electrical"])
+        self.assertEqual(result["schema_version"], 2)
+        transport = result["transport"]
+        self.assertEqual(
+            [item["logical_device"] for item in transport["devices"]],
+            list(range(5)),
+        )
+        self.assertEqual(
+            transport["devices"][0]["deltas"],
+            {
+                "full_frame_transfers": 150,
+                "full_frame_status_transfers": 9,
+                "full_frame_status_samples": 9,
+                "full_frame_status_sample_misses": 0,
+                "full_frame_write_only_transfers": 141,
+            },
+        )
+        self.assertEqual(
+            transport["aggregate"]["deltas"]["full_frame_transfers"], 750
+        )
+        self.assertEqual(
+            transport["aggregate"]["final"]["spidev_buffer_size"], 4096
+        )
+        self.assertEqual(result["runtime_identity"], RUNTIME_IDENTITY)
+        self.assertEqual(
+            by_source["receiver"]["transport_digest"],
+            canonical_json_sha256(transport),
+        )
 
     def test_integrity_delta_and_missing_max_fail_without_evidence(self) -> None:
         corrupted = _metrics(final=True)
@@ -183,6 +271,7 @@ class TargetQualificationCaptureTests(unittest.TestCase):
                 target_fps=150,
                 brightness=50,
                 environment="Raspberry Pi 4 test",
+                runtime_identity=RUNTIME_IDENTITY,
             )
 
         missing = _metrics(final=True)
@@ -196,6 +285,7 @@ class TargetQualificationCaptureTests(unittest.TestCase):
                 target_fps=150,
                 brightness=50,
                 environment="Raspberry Pi 4 test",
+                runtime_identity=RUNTIME_IDENTITY,
             )
 
     def test_earlier_controller_spike_survives_later_clean_rolling_window(self) -> None:
@@ -216,6 +306,7 @@ class TargetQualificationCaptureTests(unittest.TestCase):
             target_fps=150,
             brightness=50,
             environment="Raspberry Pi 4 test",
+            runtime_identity=RUNTIME_IDENTITY,
         )
 
         controller = next(
@@ -250,6 +341,7 @@ class TargetQualificationCaptureTests(unittest.TestCase):
             target_fps=150,
             brightness=50,
             environment="Raspberry Pi 4 test",
+            runtime_identity=RUNTIME_IDENTITY,
         )
 
         controller = next(
@@ -305,6 +397,7 @@ class TargetQualificationCaptureTests(unittest.TestCase):
                         target_fps=150,
                         brightness=50,
                         environment="Raspberry Pi 4 test",
+                        runtime_identity=RUNTIME_IDENTITY,
                     )
 
     def test_installed_topology_binds_widths_routes_and_offsets(self) -> None:
@@ -361,6 +454,8 @@ class TargetQualificationCaptureTests(unittest.TestCase):
         for field in (
             "full_frame_transfers", "full_frame_semantic_bytes_sent",
             "full_frame_wire_bytes_sent",
+            "full_frame_status_transfers", "full_frame_status_samples",
+            "full_frame_status_sample_misses", "full_frame_write_only_transfers",
         ):
             for logical_id in range(5):
                 status_only["driver"]["devices"][logical_id][field] = (
@@ -386,6 +481,7 @@ class TargetQualificationCaptureTests(unittest.TestCase):
                     target_fps=150,
                     brightness=50,
                     environment="Raspberry Pi 4 test",
+                    runtime_identity=RUNTIME_IDENTITY,
                 )
 
     def test_perf_requires_complete_settled_three_observation_negotiation(self) -> None:
@@ -412,6 +508,124 @@ class TargetQualificationCaptureTests(unittest.TestCase):
             ):
                 validate_installed_topology(metrics)
 
+    def test_perf_rejects_invalid_full_frame_status_sampling_telemetry(self) -> None:
+        def sum_field(metrics, field):
+            metrics["driver"]["aggregate"][field] = sum(
+                device[field] for device in metrics["driver"]["devices"]
+            )
+
+        missing = _metrics(final=False)
+        missing["driver"]["devices"][0].pop("full_frame_status_samples")
+
+        broken = _metrics(final=False)
+        broken["driver"]["devices"][0]["full_frame_write_only_transfers"] += 1
+        sum_field(broken, "full_frame_write_only_transfers")
+
+        unclassified = _metrics(final=False)
+        unclassified["driver"]["devices"][0]["full_frame_status_samples"] -= 1
+        sum_field(unclassified, "full_frame_status_samples")
+
+        excessive_gap = _metrics(final=False)
+        excessive_gap["driver"]["devices"][0]["full_frame_frames_since_status_sample"] = 257
+        excessive_gap["driver"]["devices"][0]["full_frame_max_status_sample_gap"] = 257
+        excessive_gap["driver"]["aggregate"]["full_frame_frames_since_status_sample"] = 257
+        excessive_gap["driver"]["aggregate"]["full_frame_max_status_sample_gap"] = 257
+
+        unsupported = _metrics(final=False)
+        unsupported["driver"]["devices"][0]["full_frame_write_only_supported"] = False
+        unsupported["driver"]["aggregate"]["full_frame_write_only_supported"] = False
+
+        undersized = _metrics(final=False)
+        undersized["driver"]["devices"][0]["spidev_buffer_size"] = 3319
+        undersized["driver"]["aggregate"]["spidev_buffer_size"] = 3319
+
+        for label, metrics, expected in (
+            ("missing", missing, "full_frame_status_samples is unavailable"),
+            ("broken invariant", broken, "transfer invariant is broken"),
+            ("unclassified", unclassified, "status transfer classification is broken"),
+            ("gap", excessive_gap, "gap is outside 0..256"),
+            ("unsupported", unsupported, "fast path is unavailable"),
+            ("buffer", undersized, "below 3320 bytes"),
+        ):
+            with self.subTest(label=label), self.assertRaisesRegex(
+                TargetEvidenceError, expected
+            ):
+                validate_installed_topology(metrics)
+
+        initial = _metrics(final=False)
+        miss = _metrics(final=True)
+        miss["driver"]["devices"][0]["full_frame_status_sample_misses"] += 1
+        miss["driver"]["devices"][0]["full_frame_status_transfers"] += 1
+        miss["driver"]["devices"][0]["full_frame_write_only_transfers"] -= 1
+        sum_field(miss, "full_frame_status_sample_misses")
+        sum_field(miss, "full_frame_status_transfers")
+        sum_field(miss, "full_frame_write_only_transfers")
+
+        stalled_samples = _metrics(final=True)
+        stalled_samples["driver"]["devices"][0]["full_frame_status_samples"] = (
+            initial["driver"]["devices"][0]["full_frame_status_samples"]
+        )
+        stalled_samples["driver"]["devices"][0]["full_frame_status_transfers"] = (
+            initial["driver"]["devices"][0]["full_frame_status_transfers"]
+        )
+        stalled_samples["driver"]["devices"][0]["full_frame_write_only_transfers"] = (
+            stalled_samples["driver"]["devices"][0]["full_frame_transfers"]
+            - stalled_samples["driver"]["devices"][0]["full_frame_status_transfers"]
+        )
+        sum_field(stalled_samples, "full_frame_status_samples")
+        sum_field(stalled_samples, "full_frame_status_transfers")
+        sum_field(stalled_samples, "full_frame_write_only_transfers")
+
+        reset_samples = _metrics(final=True)
+        reset_samples["driver"]["devices"][0]["full_frame_status_samples"] = (
+            initial["driver"]["devices"][0]["full_frame_status_samples"] - 1
+        )
+        reset_samples["driver"]["devices"][0]["full_frame_status_transfers"] = (
+            reset_samples["driver"]["devices"][0]["full_frame_status_samples"]
+            + reset_samples["driver"]["devices"][0][
+                "full_frame_status_sample_misses"
+            ]
+        )
+        reset_samples["driver"]["devices"][0]["full_frame_write_only_transfers"] = (
+            reset_samples["driver"]["devices"][0]["full_frame_transfers"]
+            - reset_samples["driver"]["devices"][0]["full_frame_status_transfers"]
+        )
+        sum_field(reset_samples, "full_frame_status_samples")
+        sum_field(reset_samples, "full_frame_status_transfers")
+        sum_field(reset_samples, "full_frame_write_only_transfers")
+
+        reset_gap = _metrics(final=True)
+        for device in reset_gap["driver"]["devices"]:
+            device["full_frame_max_status_sample_gap"] = 14
+            device["full_frame_frames_since_status_sample"] = min(
+                device["full_frame_frames_since_status_sample"], 14
+            )
+        reset_gap["driver"]["aggregate"]["full_frame_max_status_sample_gap"] = 14
+        reset_gap["driver"]["aggregate"]["full_frame_frames_since_status_sample"] = max(
+            device["full_frame_frames_since_status_sample"]
+            for device in reset_gap["driver"]["devices"]
+        )
+
+        for label, final, expected in (
+            ("miss", miss, "sample misses increased"),
+            ("stalled", stalled_samples, "status samples did not advance"),
+            ("counter reset", reset_samples, "sampling counter reset"),
+            ("gap reset", reset_gap, "maximum status sample gap reset"),
+        ):
+            with self.subTest(label=label), self.assertRaisesRegex(
+                TargetEvidenceError, expected
+            ):
+                build_target_evidence(
+                    [initial, final],
+                    elapsed_seconds=1.0,
+                    binding_digest=BINDING,
+                    captured_at=2_000_000,
+                    target_fps=150,
+                    brightness=50,
+                    environment="Raspberry Pi 4 test",
+                    runtime_identity=RUNTIME_IDENTITY,
+                )
+
     def test_activation_receipt_must_match_every_retained_identity(self) -> None:
         validate_active_activation(
             _receipt(),
@@ -429,6 +643,13 @@ class TargetQualificationCaptureTests(unittest.TestCase):
                     "digest", "9" * 64
                 ),
             ),
+            (
+                "normalized drift",
+                lambda value: value["normalized_identity"]["scene_identity"].__setitem__(
+                    "digest", "8" * 64
+                ),
+            ),
+            ("missing normalized", lambda value: value.pop("normalized_identity")),
             ("basis drift", lambda value: value.__setitem__("basis_digest", "9" * 64)),
         ):
             with self.subTest(label=label):
@@ -443,6 +664,129 @@ class TargetQualificationCaptureTests(unittest.TestCase):
                         global_settings_digest=GLOBALS,
                         profile_digest=PROFILE,
                     )
+
+    def test_runtime_identity_binds_release_session_and_active_runtime(self) -> None:
+        self.assertEqual(
+            validate_runtime_identity(_live_status(), _receipt()),
+            RUNTIME_IDENTITY,
+        )
+        cases = []
+        release_mismatch = _live_status()
+        release_mismatch["controller_release_id"] = "8" * 64
+        cases.append(("release", release_mismatch, _receipt()))
+        bad_consistency = _live_status()
+        bad_consistency["release_consistent"] = False
+        cases.append(("consistent", bad_consistency, _receipt()))
+        session_mismatch = _receipt()
+        session_mismatch["controller"]["session_id"] = "7" * 32
+        cases.append(("session", _live_status(), session_mismatch))
+        revision_mismatch = _live_status()
+        revision_mismatch["controller_state_revision"] = 8
+        cases.append(("revision", revision_mismatch, _receipt()))
+        missing_receipt_revision = _receipt()
+        missing_receipt_revision["controller"].pop("state_revision_after")
+        cases.append(("missing receipt revision", _live_status(), missing_receipt_revision))
+        runtime_mismatch = _live_status()
+        runtime_mismatch["current_identity_digest"] = "6" * 64
+        cases.append(("runtime", runtime_mismatch, _receipt()))
+        receipt_runtime_mismatch = _receipt()
+        receipt_runtime_mismatch["requested_identity"]["scene_identity"][
+            "digest"
+        ] = "5" * 64
+        cases.append(("receipt runtime", _live_status(), receipt_runtime_mismatch))
+        normalized_mismatch = _receipt()
+        normalized_mismatch["normalized_identity"]["scene_identity"][
+            "digest"
+        ] = "4" * 64
+        cases.append(("normalized runtime", _live_status(), normalized_mismatch))
+        for label, status, receipt in cases:
+            with self.subTest(label=label), self.assertRaises(TargetEvidenceError):
+                validate_runtime_identity(status, receipt)
+
+    def test_capture_rejects_same_runtime_after_controller_revision_changes(self) -> None:
+        scene = {
+            "schema": "ledgrid.scene-state",
+            "schema_version": 1,
+            "revision": 7,
+            "background": {
+                "provider": "python",
+                "plugin_id": "rainbow",
+                "resolved_parameters": {"speed": 0.3},
+                "parameter_overrides": {},
+            },
+            "overlays": [],
+            "known_python_fallback": {
+                "provider": "python",
+                "plugin_id": "rainbow",
+                "resolved_parameters": {"speed": 0.3},
+                "parameter_overrides": {},
+            },
+        }
+        scene_digest = canonical_scene_digest(scene)
+        receipt = _receipt()
+        for field in (
+            "requested_identity", "normalized_identity", "observed_identity"
+        ):
+            receipt[field]["scene_identity"]["digest"] = scene_digest
+        status_calls = 0
+
+        def live_status() -> dict:
+            nonlocal status_calls
+            status_calls += 1
+            identity = deepcopy(receipt["requested_identity"])
+            status = _live_status()
+            status.update({
+                "controller_state_revision": 7 if status_calls <= 2 else 8,
+                "active_identity": identity,
+                "current_identity_digest": canonical_json_sha256(identity),
+                "scene_state": deepcopy(scene),
+                "target_fps": 150,
+                "brightness": 50,
+                "installation_profile_digest": PROFILE,
+                "current_animation": "rainbow",
+                "is_running": True,
+            })
+            return status
+
+        metrics = _metrics(final=False)
+        metrics["driver"]["aggregate"]["receiver_status_refresh"] = {
+            "request_id": "refresh-1",
+            "completed_at": 1.0,
+            "passed": True,
+            "errors": [],
+        }
+
+        def get_json(url: str):
+            if url.endswith("/api/status"):
+                return live_status()
+            if "/api/v1/scene/activations/" in url:
+                return deepcopy(receipt)
+            if url.endswith("/api/metrics"):
+                return deepcopy(metrics)
+            raise AssertionError(f"unexpected URL {url}")
+
+        with self.assertRaisesRegex(
+            TargetEvidenceError, "state revision does not match live status"
+        ):
+            capture(
+                base_url="http://test",
+                binding_digest=BINDING,
+                basis_digest=BASIS,
+                scene_digest=scene_digest,
+                global_settings_digest=GLOBALS,
+                profile_digest=PROFILE,
+                activation_id="perf-canary",
+                plugin="rainbow",
+                target_fps=150,
+                brightness=50,
+                warmup=0.0,
+                duration=0.0,
+                interval=1.0,
+                get_json=get_json,
+                post_json=lambda _url, _payload: {"request_id": "refresh-1"},
+                monotonic=lambda: 0.0,
+                sleep=lambda _seconds: None,
+            )
 
     def test_atomic_write_replaces_only_after_complete_serialization(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

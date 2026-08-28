@@ -122,6 +122,10 @@ CONTINUITY_COUNTERS = (
     "full_frame_transfers",
     "full_frame_semantic_bytes_sent",
     "full_frame_wire_bytes_sent",
+    "full_frame_status_transfers",
+    "full_frame_status_samples",
+    "full_frame_status_sample_misses",
+    "full_frame_write_only_transfers",
     "crc_bytes_sent",
     "receiver_operation_sequence",
     "receiver_packets",
@@ -143,6 +147,10 @@ AGGREGATE_CONTINUITY_COUNTERS = (
     "full_frame_transfers",
     "full_frame_semantic_bytes_sent",
     "full_frame_wire_bytes_sent",
+    "full_frame_status_transfers",
+    "full_frame_status_samples",
+    "full_frame_status_sample_misses",
+    "full_frame_write_only_transfers",
     "crc_bytes_sent",
     "receiver_packets",
     "receiver_crc_ok_packets",
@@ -167,8 +175,20 @@ DEVICE_SAMPLE_FIELDS = (
     "receiver_base_mode",
     "receiver_last_encode_us",
     "receiver_last_show_us",
+    "full_frame_frames_since_status_sample",
+    "full_frame_max_status_sample_gap",
+    "spidev_buffer_size",
+    "full_frame_write_only_supported",
     *CONTINUITY_COUNTERS,
 )
+
+FULL_FRAME_SAMPLING_COUNTERS = (
+    "full_frame_status_transfers",
+    "full_frame_status_samples",
+    "full_frame_status_sample_misses",
+    "full_frame_write_only_transfers",
+)
+MAX_FULL_FRAME_STATUS_SAMPLE_GAP = 256
 
 
 class WallSoakError(RuntimeError):
@@ -202,6 +222,93 @@ def _counter_delta(before: Mapping[str, Any], after: Mapping[str, Any], key: str
     first = _integer(before.get(key))
     last = _integer(after.get(key))
     return None if first is None or last is None else last - first
+
+
+def _sampling_snapshot_failures(
+    item: Mapping[str, Any], label: str, *, minimum_buffer_size: int
+) -> list[str]:
+    failures: list[str] = []
+    total = _integer(item.get("full_frame_transfers"))
+    status_transfers = _integer(item.get("full_frame_status_transfers"))
+    samples = _integer(item.get("full_frame_status_samples"))
+    misses = _integer(item.get("full_frame_status_sample_misses"))
+    write_only = _integer(item.get("full_frame_write_only_transfers"))
+    counters = (total, status_transfers, samples, misses, write_only)
+    if None in counters or any(value < 0 for value in counters if value is not None):
+        return [f"{label} full-frame sampling counters are unavailable"]
+    if status_transfers + write_only != total:
+        failures.append(f"{label} full-frame sampling transfer invariant is broken")
+    if samples > status_transfers:
+        failures.append(f"{label} full-frame status samples exceed transfers")
+    if samples + misses != status_transfers:
+        failures.append(
+            f"{label} full-frame status transfer classification is broken"
+        )
+    current_gap = _integer(item.get("full_frame_frames_since_status_sample"))
+    maximum_gap = _integer(item.get("full_frame_max_status_sample_gap"))
+    if current_gap is None or maximum_gap is None:
+        failures.append(f"{label} full-frame status sample gap is unavailable")
+    elif (
+        current_gap > maximum_gap
+        or maximum_gap > MAX_FULL_FRAME_STATUS_SAMPLE_GAP
+    ):
+        failures.append(f"{label} full-frame status sample gap is outside 0..256")
+    buffer_size = _integer(item.get("spidev_buffer_size"))
+    if buffer_size is None or buffer_size < minimum_buffer_size:
+        failures.append(
+            f"{label} spidev buffer is below {minimum_buffer_size} bytes"
+        )
+    if item.get("full_frame_write_only_supported") is not True:
+        failures.append(f"{label} full-frame write-only fast path is unavailable")
+    return failures
+
+
+def _sampling_delta_failures(
+    before: Mapping[str, Any], after: Mapping[str, Any], label: str
+) -> list[str]:
+    total_delta = _counter_delta(before, after, "full_frame_transfers")
+    deltas = {
+        field: _counter_delta(before, after, field)
+        for field in FULL_FRAME_SAMPLING_COUNTERS
+    }
+    if total_delta is None or any(delta is None for delta in deltas.values()):
+        return [f"{label} full-frame sampling delta is unavailable"]
+    failures: list[str] = []
+    if total_delta < 0 or any(delta < 0 for delta in deltas.values()):
+        failures.append(f"{label} full-frame sampling counter reset")
+        return failures
+    if (
+        deltas["full_frame_status_transfers"]
+        + deltas["full_frame_write_only_transfers"]
+        != total_delta
+    ):
+        failures.append(f"{label} full-frame sampling delta invariant is broken")
+    if deltas["full_frame_status_samples"] <= 0:
+        failures.append(f"{label} full-frame status samples did not advance")
+    if deltas["full_frame_write_only_transfers"] <= 0:
+        failures.append(f"{label} full-frame write-only transfers did not advance")
+    if (
+        deltas["full_frame_status_samples"]
+        > deltas["full_frame_status_transfers"]
+    ):
+        failures.append(f"{label} full-frame status sample delta exceeds transfers")
+    if (
+        deltas["full_frame_status_samples"]
+        + deltas["full_frame_status_sample_misses"]
+        != deltas["full_frame_status_transfers"]
+    ):
+        failures.append(
+            f"{label} full-frame status transfer delta classification is broken"
+        )
+    if deltas["full_frame_status_sample_misses"] != 0:
+        failures.append(f"{label} full-frame status sample misses increased")
+    before_max = _integer(before.get("full_frame_max_status_sample_gap"))
+    after_max = _integer(after.get("full_frame_max_status_sample_gap"))
+    if before_max is None or after_max is None:
+        failures.append(f"{label} full-frame maximum status sample gap is unavailable")
+    elif after_max < before_max:
+        failures.append(f"{label} full-frame maximum status sample gap reset")
+    return failures
 
 
 @dataclass(frozen=True)
@@ -382,11 +489,18 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
                 failures.append(
                     f"receiver {logical_id} {field} is {item.get(field)!r}; expected {value!r}"
                 )
+        failures.extend(_sampling_snapshot_failures(
+            item,
+            f"receiver {logical_id}",
+            minimum_buffer_size=3320 if logical_id < 4 else 424,
+        ))
     transport_fields = (
         "spi_transfers", "bytes_sent", "semantic_bytes_sent",
         "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
         "crc_bytes_sent", "full_frame_transfers",
         "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
+        "full_frame_status_transfers", "full_frame_status_samples",
+        "full_frame_status_sample_misses", "full_frame_write_only_transfers",
     )
     for field in transport_fields:
         total = 0
@@ -404,6 +518,33 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
             failures.append(
                 f"aggregate {field} drifted from per-receiver total"
             )
+    failures.extend(_sampling_snapshot_failures(
+        aggregate, "aggregate", minimum_buffer_size=3320
+    ))
+    if devices:
+        gauge_expectations = {
+            "full_frame_frames_since_status_sample": max(
+                (_integer(_mapping(raw).get("full_frame_frames_since_status_sample")) or 0)
+                for raw in devices
+            ),
+            "full_frame_max_status_sample_gap": max(
+                (_integer(_mapping(raw).get("full_frame_max_status_sample_gap")) or 0)
+                for raw in devices
+            ),
+            "spidev_buffer_size": min(
+                (_integer(_mapping(raw).get("spidev_buffer_size")) or 0)
+                for raw in devices
+            ),
+            "full_frame_write_only_supported": all(
+                _mapping(raw).get("full_frame_write_only_supported") is True
+                for raw in devices
+            ),
+        }
+        for field, expected in gauge_expectations.items():
+            if aggregate.get(field) != expected:
+                failures.append(
+                    f"aggregate {field} drifted from per-receiver value"
+                )
     return failures
 
 
@@ -554,6 +695,16 @@ def normalize_sample(
             "transport_envelope_devices": aggregate.get(
                 "transport_envelope_devices"
             ),
+            "full_frame_frames_since_status_sample": aggregate.get(
+                "full_frame_frames_since_status_sample"
+            ),
+            "full_frame_max_status_sample_gap": aggregate.get(
+                "full_frame_max_status_sample_gap"
+            ),
+            "spidev_buffer_size": aggregate.get("spidev_buffer_size"),
+            "full_frame_write_only_supported": aggregate.get(
+                "full_frame_write_only_supported"
+            ),
         },
         "devices": devices,
         "activation": {
@@ -651,6 +802,9 @@ def evaluate_transition(
     failures.extend(_transport_delta_failures(
         before_aggregate, after_aggregate, "aggregate aligned transport"
     ))
+    failures.extend(_sampling_delta_failures(
+        before_aggregate, after_aggregate, "aggregate aligned transport"
+    ))
 
     before_devices = {
         _integer(_mapping(item).get("receiver_logical_device")): _mapping(item)
@@ -684,6 +838,9 @@ def evaluate_transition(
                 + EXPECTED_TOPOLOGY_BY_ID[receiver_id]["local_strip_count"]
                 * EXPECTED_GEOMETRY["leds_per_strip"] * 3
             ),
+        ))
+        failures.extend(_sampling_delta_failures(
+            first, last, f"receiver {receiver_id} aligned transport"
         ))
     return failures
 
@@ -722,6 +879,9 @@ def evaluate_series(samples: Sequence[Mapping[str, Any]], config: WallSoakConfig
     failures.extend(_transport_delta_failures(
         first_aggregate, last_aggregate, "aggregate aligned transport"
     ))
+    failures.extend(_sampling_delta_failures(
+        first_aggregate, last_aggregate, "aggregate aligned transport"
+    ))
 
     device_results: dict[str, Any] = {}
     first_devices = {
@@ -758,6 +918,9 @@ def evaluate_series(samples: Sequence[Mapping[str, Any]], config: WallSoakConfig
                 + EXPECTED_TOPOLOGY_BY_ID[receiver_id]["local_strip_count"]
                 * EXPECTED_GEOMETRY["leds_per_strip"] * 3
             ),
+        ))
+        receiver_failures.extend(_sampling_delta_failures(
+            before, after, f"receiver {receiver_id} aligned transport"
         ))
         accepted = deltas.get("receiver_frames_accepted") or 0
         displayed = deltas.get("receiver_frames_displayed") or 0

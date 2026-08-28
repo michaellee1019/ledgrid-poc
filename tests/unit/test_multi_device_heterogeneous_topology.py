@@ -42,11 +42,16 @@ class _Device:
         self.spi_mode = kwargs["mode"]
         self.reverse_native_strip_order = kwargs["reverse_native_strip_order"]
         self.frames = []
+        self.wall_frame_sequences = []
         self.pixels = []
         self.partial = []
+        self.fail_wall_frame_sequences = set()
         self.fail_native_stop = False
 
-    def set_all_pixels(self, frame):
+    def set_all_pixels(self, frame, *, wall_frame_sequence=None):
+        self.wall_frame_sequences.append(wall_frame_sequence)
+        if wall_frame_sequence in self.fail_wall_frame_sequences:
+            raise OSError("injected frame failure")
         self.frames.append(np.asarray(frame).copy())
 
     def set_partial_frame(self, frame, ranges):
@@ -232,6 +237,84 @@ def _controller():
 
 
 class HeterogeneousTopologyTests(unittest.TestCase):
+    def test_status_sample_and_write_only_counters_aggregate_exactly(self):
+        controller = _controller()
+        for logical_id, device in enumerate(controller.devices):
+            original = device.get_stats
+            device.get_stats = (
+                lambda original=original, logical_id=logical_id: {
+                    **original(),
+                    "full_frame_transfers": 100 + logical_id,
+                    "full_frame_status_transfers": 2 + 2 * logical_id,
+                    "full_frame_status_samples": 2 + logical_id,
+                    "full_frame_status_sample_misses": logical_id,
+                    "full_frame_write_only_transfers": 98 - logical_id,
+                    "full_frame_frames_since_status_sample": 4 + logical_id,
+                    "full_frame_max_status_sample_gap": 120 + logical_id,
+                    "spidev_buffer_size": 4096 - logical_id,
+                    "full_frame_write_only_supported": True,
+                }
+            )
+
+        aggregate = controller.get_stats()["aggregate"]
+
+        self.assertEqual(aggregate["full_frame_transfers"], 510)
+        self.assertEqual(aggregate["full_frame_status_transfers"], 30)
+        self.assertEqual(aggregate["full_frame_status_samples"], 20)
+        self.assertEqual(aggregate["full_frame_status_sample_misses"], 10)
+        self.assertEqual(aggregate["full_frame_write_only_transfers"], 480)
+        self.assertEqual(aggregate["full_frame_frames_since_status_sample"], 8)
+        self.assertEqual(aggregate["full_frame_max_status_sample_gap"], 124)
+        self.assertEqual(aggregate["spidev_buffer_size"], 4092)
+        self.assertTrue(aggregate["full_frame_write_only_supported"])
+        self.assertEqual(
+            aggregate["full_frame_transfers"],
+            aggregate["full_frame_status_transfers"]
+            + aggregate["full_frame_write_only_transfers"],
+        )
+        self.assertEqual(
+            aggregate["full_frame_status_transfers"],
+            aggregate["full_frame_status_samples"]
+            + aggregate["full_frame_status_sample_misses"],
+        )
+        controller.devices[3].get_stats = lambda: {
+            "spidev_buffer_size": None,
+            "full_frame_write_only_supported": False,
+        }
+        degraded = controller.get_stats()["aggregate"]
+        self.assertEqual(degraded["spidev_buffer_size"], 4092)
+        self.assertFalse(degraded["full_frame_write_only_supported"])
+
+    def test_wall_frame_sequence_stays_shared_after_one_receiver_failure(self):
+        controller = _controller()
+        controller._display_ownership_known = True
+        controller.devices[2].fail_wall_frame_sequences.add(1)
+        frame = np.zeros((33 * 138, 3), dtype=np.uint8)
+
+        controller.set_all_pixels(frame)
+        controller.set_all_pixels(frame)
+        controller.set_all_pixels(frame)
+
+        for device in controller.devices:
+            self.assertEqual(device.wall_frame_sequences, [0, 1, 2])
+        self.assertEqual(len(controller.devices[2].frames), 2)
+        self.assertEqual(controller._logical_wall_frame_sequence, 3)
+
+    def test_dense_partial_fallbacks_share_global_sequence_across_subsets(self):
+        controller = _controller()
+        controller._display_ownership_known = True
+        frame = np.zeros((33 * 138, 3), dtype=np.uint8)
+
+        controller.set_frame(frame, dirty_ranges=((0, 8 * 138),))
+        controller.set_frame(frame, dirty_ranges=((8 * 138, 16 * 138),))
+        controller.set_all_pixels(frame)
+
+        self.assertEqual(controller.devices[0].wall_frame_sequences, [0, 2])
+        self.assertEqual(controller.devices[1].wall_frame_sequences, [1, 2])
+        for device in controller.devices[2:]:
+            self.assertEqual(device.wall_frame_sequences, [2])
+        self.assertEqual(controller._logical_wall_frame_sequence, 3)
+
     def test_startup_observability_verifies_exact_fifth_receiver_topology(self):
         controller = _observability_controller()
         stderr = io.StringIO()

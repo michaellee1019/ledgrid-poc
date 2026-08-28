@@ -71,6 +71,8 @@ def _device(receiver_id: int, elapsed: float) -> dict:
     base = 1000 + receiver_id * 100
     full_frame_semantic = 1 + expected["local_strip_count"] * 138 * 3
     full_frame_wire = ((full_frame_semantic + 9) // 4) * 4
+    full_frame_total = base + frames
+    status_transfers = full_frame_total // 16
     return {
         "receiver_status_version": 3,
         "receiver_status_seen": True,
@@ -94,9 +96,17 @@ def _device(receiver_id: int, elapsed: float) -> dict:
         "semantic_bytes_sent": base + frames * 3313,
         "transport_envelope_bytes_sent": base + frames * 4,
         "transport_padding_bytes_sent": base + frames,
-        "full_frame_transfers": base + frames,
+        "full_frame_transfers": full_frame_total,
         "full_frame_semantic_bytes_sent": base + frames * full_frame_semantic,
         "full_frame_wire_bytes_sent": base + frames * full_frame_wire,
+        "full_frame_status_transfers": status_transfers,
+        "full_frame_status_samples": status_transfers - receiver_id,
+        "full_frame_status_sample_misses": receiver_id,
+        "full_frame_write_only_transfers": full_frame_total - status_transfers,
+        "full_frame_frames_since_status_sample": full_frame_total % 16,
+        "full_frame_max_status_sample_gap": 15,
+        "spidev_buffer_size": 4096,
+        "full_frame_write_only_supported": True,
         "crc_bytes_sent": base + frames * 2,
         "receiver_operation_sequence": base + frames,
         "receiver_packets": base + frames,
@@ -160,6 +170,30 @@ def _status(elapsed: float) -> dict:
                 ),
                 "full_frame_wire_bytes_sent": sum(
                     item["full_frame_wire_bytes_sent"] for item in devices
+                ),
+                "full_frame_status_transfers": sum(
+                    item["full_frame_status_transfers"] for item in devices
+                ),
+                "full_frame_status_samples": sum(
+                    item["full_frame_status_samples"] for item in devices
+                ),
+                "full_frame_status_sample_misses": sum(
+                    item["full_frame_status_sample_misses"] for item in devices
+                ),
+                "full_frame_write_only_transfers": sum(
+                    item["full_frame_write_only_transfers"] for item in devices
+                ),
+                "full_frame_frames_since_status_sample": max(
+                    item["full_frame_frames_since_status_sample"] for item in devices
+                ),
+                "full_frame_max_status_sample_gap": max(
+                    item["full_frame_max_status_sample_gap"] for item in devices
+                ),
+                "spidev_buffer_size": min(
+                    item["spidev_buffer_size"] for item in devices
+                ),
+                "full_frame_write_only_supported": all(
+                    item["full_frame_write_only_supported"] for item in devices
                 ),
                 "crc_bytes_sent": sum(item["crc_bytes_sent"] for item in devices),
                 "receiver_crc_errors": sum(range(5)),
@@ -468,6 +502,8 @@ class GuardedWallSoakTests(unittest.TestCase):
             fields = (
                 "full_frame_transfers", "full_frame_semantic_bytes_sent",
                 "full_frame_wire_bytes_sent",
+                "full_frame_status_transfers", "full_frame_status_samples",
+                "full_frame_status_sample_misses", "full_frame_write_only_transfers",
             )
             for receiver_id, device in enumerate(
                 status["driver_stats"]["devices"]
@@ -484,6 +520,108 @@ class GuardedWallSoakTests(unittest.TestCase):
             ("stalled", stalled, "did not advance"),
             ("drifted", drifted, "wire-byte accounting is inconsistent"),
             ("status-only", status_only, "full_frame_transfers did not advance"),
+        ):
+            with self.subTest(label=label):
+                clock = _Clock()
+                report = _run(_config(), _API(clock, mutate), clock)
+                self.assertFalse(report["passed"])
+                self.assertTrue(any(expected in failure for failure in report["failures"]))
+
+    def test_full_frame_status_sampling_missing_invariant_miss_gap_and_reset_fail(self) -> None:
+        def sync(status, field):
+            status["driver_stats"]["aggregate"][field] = sum(
+                item[field] for item in status["driver_stats"]["devices"]
+            )
+
+        def missing(status, _activation_status, _elapsed):
+            if status is not None:
+                status["driver_stats"]["devices"][0].pop(
+                    "full_frame_status_samples"
+                )
+
+        def broken(status, _activation_status, _elapsed):
+            if status is not None:
+                status["driver_stats"]["devices"][0][
+                    "full_frame_write_only_transfers"
+                ] += 1
+                sync(status, "full_frame_write_only_transfers")
+
+        def unclassified(status, _activation_status, _elapsed):
+            if status is not None:
+                status["driver_stats"]["devices"][0][
+                    "full_frame_status_samples"
+                ] -= 1
+                sync(status, "full_frame_status_samples")
+
+        def excessive_gap(status, _activation_status, _elapsed):
+            if status is not None:
+                status["driver_stats"]["devices"][0].update({
+                    "full_frame_frames_since_status_sample": 257,
+                    "full_frame_max_status_sample_gap": 257,
+                })
+                status["driver_stats"]["aggregate"].update({
+                    "full_frame_frames_since_status_sample": 257,
+                    "full_frame_max_status_sample_gap": 257,
+                })
+
+        def sample_miss(status, _activation_status, elapsed):
+            if status is not None and elapsed >= 900:
+                status["driver_stats"]["devices"][0][
+                    "full_frame_status_sample_misses"
+                ] += 1
+                status["driver_stats"]["devices"][0][
+                    "full_frame_status_transfers"
+                ] += 1
+                status["driver_stats"]["devices"][0][
+                    "full_frame_write_only_transfers"
+                ] -= 1
+                sync(status, "full_frame_status_sample_misses")
+                sync(status, "full_frame_status_transfers")
+                sync(status, "full_frame_write_only_transfers")
+
+        def sample_reset(status, _activation_status, elapsed):
+            if status is not None and elapsed >= 900:
+                device = status["driver_stats"]["devices"][0]
+                device["full_frame_status_samples"] = (
+                    _device(0, 0)["full_frame_status_samples"] - 1
+                )
+                device["full_frame_status_transfers"] = (
+                    device["full_frame_status_samples"]
+                    + device["full_frame_status_sample_misses"]
+                )
+                device["full_frame_write_only_transfers"] = (
+                    device["full_frame_transfers"]
+                    - device["full_frame_status_transfers"]
+                )
+                sync(status, "full_frame_status_samples")
+                sync(status, "full_frame_status_transfers")
+                sync(status, "full_frame_write_only_transfers")
+
+        def gap_reset(status, _activation_status, elapsed):
+            if status is not None and elapsed >= 900:
+                for device in status["driver_stats"]["devices"]:
+                    device["full_frame_max_status_sample_gap"] = 14
+                    device["full_frame_frames_since_status_sample"] = min(
+                        device["full_frame_frames_since_status_sample"], 14
+                    )
+                status["driver_stats"]["aggregate"][
+                    "full_frame_max_status_sample_gap"
+                ] = 14
+                status["driver_stats"]["aggregate"][
+                    "full_frame_frames_since_status_sample"
+                ] = max(
+                    device["full_frame_frames_since_status_sample"]
+                    for device in status["driver_stats"]["devices"]
+                )
+
+        for label, mutate, expected in (
+            ("missing", missing, "sampling counters are unavailable"),
+            ("invariant", broken, "transfer invariant is broken"),
+            ("unclassified", unclassified, "status transfer classification is broken"),
+            ("gap", excessive_gap, "gap is outside 0..256"),
+            ("miss", sample_miss, "sample misses increased"),
+            ("reset", sample_reset, "sampling counter reset"),
+            ("gap reset", gap_reset, "maximum status sample gap reset"),
         ):
             with self.subTest(label=label):
                 clock = _Clock()

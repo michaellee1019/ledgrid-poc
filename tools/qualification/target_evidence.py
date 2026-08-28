@@ -28,6 +28,7 @@ if str(_REPOSITORY_ROOT) not in sys.path:
 from animation.core.activation_qualification import (
     TARGET_EVIDENCE_SCHEMA,
     TARGET_EVIDENCE_VERSION,
+    canonical_json_sha256,
     normalize_target_qualification_evidence,
 )
 from tools.benchmarks.live_display_state import require_active_scene
@@ -41,6 +42,7 @@ from tools.benchmarks.receiver_acceptance import (
 
 
 _DIGEST = __import__("re").compile(r"[0-9a-f]{64}\Z")
+_SESSION_ID = __import__("re").compile(r"[0-9a-f]{32}\Z")
 _ERROR_COUNTERS = (
     "receiver_crc_errors",
     "receiver_publish_drops",
@@ -62,6 +64,17 @@ _TRANSPORT_COUNTERS = (
     "full_frame_semantic_bytes_sent",
     "full_frame_wire_bytes_sent",
 )
+_FULL_FRAME_SAMPLING_COUNTERS = (
+    "full_frame_status_transfers",
+    "full_frame_status_samples",
+    "full_frame_status_sample_misses",
+    "full_frame_write_only_transfers",
+)
+_FULL_FRAME_EVIDENCE_COUNTERS = (
+    "full_frame_transfers",
+    *_FULL_FRAME_SAMPLING_COUNTERS,
+)
+_MAX_FULL_FRAME_STATUS_SAMPLE_GAP = 256
 
 
 class TargetEvidenceError(RuntimeError):
@@ -116,6 +129,146 @@ def _integer(value: Any, label: str, *, minimum: int = 0) -> int:
     return value
 
 
+def _require_full_frame_sampling_snapshot(
+    item: Mapping[str, Any], label: str, *, minimum_buffer_size: int
+) -> None:
+    total = _integer(item.get("full_frame_transfers"), f"{label} full_frame_transfers")
+    status_transfers = _integer(
+        item.get("full_frame_status_transfers"),
+        f"{label} full_frame_status_transfers",
+    )
+    samples = _integer(
+        item.get("full_frame_status_samples"),
+        f"{label} full_frame_status_samples",
+    )
+    misses = _integer(
+        item.get("full_frame_status_sample_misses"),
+        f"{label} full_frame_status_sample_misses",
+    )
+    write_only = _integer(
+        item.get("full_frame_write_only_transfers"),
+        f"{label} full_frame_write_only_transfers",
+    )
+    if status_transfers + write_only != total:
+        raise TargetEvidenceError(f"{label} full-frame sampling transfer invariant is broken")
+    if samples > status_transfers:
+        raise TargetEvidenceError(f"{label} full-frame status samples exceed transfers")
+    if samples + misses != status_transfers:
+        raise TargetEvidenceError(
+            f"{label} full-frame status transfer classification is broken"
+        )
+    current_gap = _integer(
+        item.get("full_frame_frames_since_status_sample"),
+        f"{label} full_frame_frames_since_status_sample",
+    )
+    maximum_gap = _integer(
+        item.get("full_frame_max_status_sample_gap"),
+        f"{label} full_frame_max_status_sample_gap",
+    )
+    if (
+        current_gap > maximum_gap
+        or maximum_gap > _MAX_FULL_FRAME_STATUS_SAMPLE_GAP
+    ):
+        raise TargetEvidenceError(f"{label} full-frame status sample gap is outside 0..256")
+    buffer_size = _integer(
+        item.get("spidev_buffer_size"), f"{label} spidev_buffer_size", minimum=1
+    )
+    if buffer_size < minimum_buffer_size:
+        raise TargetEvidenceError(
+            f"{label} spidev buffer {buffer_size} is below {minimum_buffer_size} bytes"
+        )
+    if item.get("full_frame_write_only_supported") is not True:
+        raise TargetEvidenceError(f"{label} full-frame write-only fast path is unavailable")
+
+
+def _require_full_frame_sampling_delta(
+    before: Mapping[str, Any], after: Mapping[str, Any], label: str
+) -> None:
+    total_delta = _integer(
+        after.get("full_frame_transfers"), f"{label} final full_frame_transfers"
+    ) - _integer(
+        before.get("full_frame_transfers"), f"{label} initial full_frame_transfers"
+    )
+    deltas = {
+        field: _integer(after.get(field), f"{label} final {field}")
+        - _integer(before.get(field), f"{label} initial {field}")
+        for field in _FULL_FRAME_SAMPLING_COUNTERS
+    }
+    if total_delta < 0 or any(delta < 0 for delta in deltas.values()):
+        raise TargetEvidenceError(f"{label} full-frame sampling counter reset")
+    if (
+        deltas["full_frame_status_transfers"]
+        + deltas["full_frame_write_only_transfers"]
+        != total_delta
+    ):
+        raise TargetEvidenceError(f"{label} full-frame sampling delta invariant is broken")
+    if deltas["full_frame_status_samples"] <= 0:
+        raise TargetEvidenceError(f"{label} full-frame status samples did not advance")
+    if deltas["full_frame_write_only_transfers"] <= 0:
+        raise TargetEvidenceError(f"{label} full-frame write-only transfers did not advance")
+    if (
+        deltas["full_frame_status_samples"]
+        > deltas["full_frame_status_transfers"]
+    ):
+        raise TargetEvidenceError(f"{label} full-frame status sample delta exceeds transfers")
+    if (
+        deltas["full_frame_status_samples"]
+        + deltas["full_frame_status_sample_misses"]
+        != deltas["full_frame_status_transfers"]
+    ):
+        raise TargetEvidenceError(
+            f"{label} full-frame status transfer delta classification is broken"
+        )
+    if deltas["full_frame_status_sample_misses"] != 0:
+        raise TargetEvidenceError(f"{label} full-frame status sample misses increased")
+    if _integer(
+        after.get("full_frame_max_status_sample_gap"),
+        f"{label} final full_frame_max_status_sample_gap",
+    ) < _integer(
+        before.get("full_frame_max_status_sample_gap"),
+        f"{label} initial full_frame_max_status_sample_gap",
+    ):
+        raise TargetEvidenceError(f"{label} full-frame maximum status sample gap reset")
+
+
+def _full_frame_transport_evidence_item(
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+    *,
+    expected_wire_bytes: int,
+    logical_device: int | None = None,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "expected_wire_bytes": expected_wire_bytes,
+        "deltas": {
+            field: _integer(after.get(field), f"final {field}")
+            - _integer(before.get(field), f"initial {field}")
+            for field in _FULL_FRAME_EVIDENCE_COUNTERS
+        },
+        "final": {
+            "full_frame_frames_since_status_sample": _integer(
+                after.get("full_frame_frames_since_status_sample"),
+                "final full_frame_frames_since_status_sample",
+            ),
+            "full_frame_max_status_sample_gap": _integer(
+                after.get("full_frame_max_status_sample_gap"),
+                "final full_frame_max_status_sample_gap",
+            ),
+            "spidev_buffer_size": _integer(
+                after.get("spidev_buffer_size"),
+                "final spidev_buffer_size",
+                minimum=1,
+            ),
+            "full_frame_write_only_supported": (
+                after.get("full_frame_write_only_supported") is True
+            ),
+        },
+    }
+    if logical_device is not None:
+        item["logical_device"] = logical_device
+    return item
+
+
 def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
     aggregate = driver.get("aggregate")
     devices = driver.get("devices")
@@ -123,7 +276,11 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
         raise TargetEvidenceError("aligned transport metrics are unavailable")
     if aggregate.get("transport_envelope_devices") != INSTALLED_RECEIVER_COUNT:
         raise TargetEvidenceError("aligned transport is not enabled on exactly five receivers")
-    totals = {field: 0 for field in _TRANSPORT_COUNTERS}
+    additive_fields = _TRANSPORT_COUNTERS + _FULL_FRAME_SAMPLING_COUNTERS
+    totals = {field: 0 for field in additive_fields}
+    current_gaps: list[int] = []
+    maximum_gaps: list[int] = []
+    buffer_sizes: list[int] = []
     for logical_id, device in enumerate(devices):
         if not isinstance(device, Mapping):
             raise TargetEvidenceError(f"receiver {logical_id} metrics are malformed")
@@ -142,7 +299,16 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
             raise TargetEvidenceError(
                 f"receiver {logical_id} aligned transport negotiation is not settled"
             )
-        for field in _TRANSPORT_COUNTERS:
+        minimum_wire_size = 3320 if logical_id < 4 else 424
+        _require_full_frame_sampling_snapshot(
+            device,
+            f"receiver {logical_id}",
+            minimum_buffer_size=minimum_wire_size,
+        )
+        current_gaps.append(int(device["full_frame_frames_since_status_sample"]))
+        maximum_gaps.append(int(device["full_frame_max_status_sample_gap"]))
+        buffer_sizes.append(int(device["spidev_buffer_size"]))
+        for field in additive_fields:
             totals[field] += _integer(
                 device.get(field), f"receiver {logical_id} {field}"
             )
@@ -151,6 +317,20 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
         if observed != expected:
             raise TargetEvidenceError(
                 f"aggregate {field} drifted from per-receiver total"
+            )
+    _require_full_frame_sampling_snapshot(
+        aggregate, "aggregate", minimum_buffer_size=3320
+    )
+    expected_gauges = {
+        "full_frame_frames_since_status_sample": max(current_gaps),
+        "full_frame_max_status_sample_gap": max(maximum_gaps),
+        "spidev_buffer_size": min(buffer_sizes),
+        "full_frame_write_only_supported": True,
+    }
+    for field, expected in expected_gauges.items():
+        if aggregate.get(field) != expected:
+            raise TargetEvidenceError(
+                f"aggregate {field} drifted from per-receiver value"
             )
 
 
@@ -310,9 +490,18 @@ def validate_active_activation(
     if payload.get("phase") != "active":
         raise TargetEvidenceError("guarded activation is not active")
     requested = payload.get("requested_identity")
+    normalized = payload.get("normalized_identity")
     observed = payload.get("observed_identity")
-    if not isinstance(requested, Mapping) or requested != observed:
-        raise TargetEvidenceError("activation identity is not freshly observed exactly")
+    if (
+        not isinstance(requested, Mapping)
+        or not isinstance(normalized, Mapping)
+        or not isinstance(observed, Mapping)
+        or requested != normalized
+        or requested != observed
+    ):
+        raise TargetEvidenceError(
+            "activation requested, normalized, and observed identities are not unanimous"
+        )
     scene = requested.get("scene_identity")
     global_settings = requested.get("global_settings_identity")
     if not isinstance(scene, Mapping) or scene.get("digest") != scene_digest:
@@ -358,6 +547,89 @@ def validate_live_status(
     return status
 
 
+def validate_runtime_identity(
+    status: Any,
+    activation_receipt: Any,
+) -> dict[str, Any]:
+    """Return the exact release/session/runtime identity of one live receipt."""
+
+    if not isinstance(status, Mapping):
+        raise TargetEvidenceError("live status is unavailable or malformed")
+    release_id = status.get("release_id")
+    controller_release_id = status.get("controller_release_id")
+    if (
+        status.get("release_consistent") is not True
+        or not isinstance(release_id, str)
+        or _DIGEST.fullmatch(release_id) is None
+        or controller_release_id != release_id
+    ):
+        raise TargetEvidenceError(
+            "web and controller release identities are unavailable or inconsistent"
+        )
+    session_id = status.get("controller_session_id")
+    if (
+        not isinstance(session_id, str)
+        or _SESSION_ID.fullmatch(session_id) is None
+    ):
+        raise TargetEvidenceError("controller session identity is unavailable or invalid")
+    state_revision = _integer(
+        status.get("controller_state_revision"),
+        "controller state revision",
+    )
+    current_identity_digest = status.get("current_identity_digest")
+    active_identity = status.get("active_identity")
+    if (
+        not isinstance(current_identity_digest, str)
+        or _DIGEST.fullmatch(current_identity_digest) is None
+        or not isinstance(active_identity, Mapping)
+        or canonical_json_sha256(active_identity) != current_identity_digest
+    ):
+        raise TargetEvidenceError("controller runtime identity is unavailable or invalid")
+    if not isinstance(activation_receipt, Mapping):
+        raise TargetEvidenceError("activation receipt is unavailable or malformed")
+    controller = activation_receipt.get("controller")
+    requested = activation_receipt.get("requested_identity")
+    normalized = activation_receipt.get("normalized_identity")
+    observed = activation_receipt.get("observed_identity")
+    if (
+        not isinstance(controller, Mapping)
+        or controller.get("session_id") != session_id
+    ):
+        raise TargetEvidenceError(
+            "activation receipt controller session does not match live status"
+        )
+    receipt_revision = _integer(
+        controller.get("state_revision_after"),
+        "activation receipt controller state revision",
+    )
+    if receipt_revision != state_revision:
+        raise TargetEvidenceError(
+            "activation receipt controller state revision does not match live status"
+        )
+    if (
+        not isinstance(requested, Mapping)
+        or not isinstance(normalized, Mapping)
+        or not isinstance(observed, Mapping)
+        or requested != normalized
+        or requested != observed
+    ):
+        raise TargetEvidenceError(
+            "activation requested, normalized, and observed identities are not unanimous"
+        )
+    if (
+        canonical_json_sha256(requested) != current_identity_digest
+    ):
+        raise TargetEvidenceError(
+            "activation receipt runtime identity does not match live status"
+        )
+    return {
+        "release_id": release_id,
+        "controller_session_id": session_id,
+        "controller_state_revision": state_revision,
+        "current_identity_digest": current_identity_digest,
+    }
+
+
 def build_target_evidence(
     metrics_samples: Sequence[Mapping[str, Any]],
     *,
@@ -367,6 +639,7 @@ def build_target_evidence(
     target_fps: int,
     brightness: int,
     environment: str,
+    runtime_identity: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Build the strict envelope from an already identity-checked window."""
 
@@ -510,6 +783,11 @@ def build_target_evidence(
         last["driver"]["aggregate"],
         "aggregate aligned transport",
     )
+    _require_full_frame_sampling_delta(
+        first["driver"]["aggregate"],
+        last["driver"]["aggregate"],
+        "aggregate aligned transport",
+    )
     for logical_id, (before, after) in enumerate(zip(first_devices, last_devices)):
         _require_transport_accounting_delta(
             before,
@@ -519,6 +797,9 @@ def build_target_evidence(
                 1 + INSTALLED_RECEIVER_STRIP_COUNTS[logical_id]
                 * INSTALLED_LEDS_PER_STRIP * 3
             ),
+        )
+        _require_full_frame_sampling_delta(
+            before, after, f"receiver {logical_id} aligned transport"
         )
         full_frames = _integer(
             after.get("full_frame_transfers"),
@@ -557,6 +838,24 @@ def build_target_evidence(
         "captured_at": captured_at,
         "electrical": None,
     }
+    transport = {
+        "aggregate": _full_frame_transport_evidence_item(
+            first["driver"]["aggregate"],
+            last["driver"]["aggregate"],
+            expected_wire_bytes=3320,
+        ),
+        "devices": [
+            _full_frame_transport_evidence_item(
+                before,
+                after,
+                expected_wire_bytes=(3320 if logical_id < 4 else 424),
+                logical_device=logical_id,
+            )
+            for logical_id, (before, after) in enumerate(
+                zip(first_devices, last_devices)
+            )
+        ],
+    }
     envelope = {
         "schema": TARGET_EVIDENCE_SCHEMA,
         "schema_version": TARGET_EVIDENCE_VERSION,
@@ -564,6 +863,8 @@ def build_target_evidence(
         "binding_digest": binding_digest,
         "captured_at": captured_at,
         "environment": environment,
+        "runtime_identity": dict(runtime_identity),
+        "transport": transport,
         "evidence": [
             {
                 **common,
@@ -584,6 +885,7 @@ def build_target_evidence(
             {
                 **common,
                 "source": "receiver",
+                "transport_digest": canonical_json_sha256(transport),
                 "environment": (
                     environment
                     + "; five ESP32-S3 receivers; frame time=max(encode,show) stage"
@@ -650,21 +952,24 @@ def capture(
         expected_provider="python",
     )
     activation_url = f"{base}/api/v1/scene/activations/{activation_id}"
+    initial_receipt = get_json(activation_url)
     validate_active_activation(
-        get_json(activation_url),
+        initial_receipt,
         activation_id=activation_id,
         basis_digest=basis_digest,
         scene_digest=scene_digest,
         global_settings_digest=global_settings_digest,
         profile_digest=profile_digest,
     )
+    initial_status = get_json(f"{base}/api/status")
     validate_live_status(
-        get_json(f"{base}/api/status"),
+        initial_status,
         target_fps=target_fps,
         brightness=brightness,
         profile_digest=profile_digest,
         plugin=plugin,
     )
+    runtime_identity = validate_runtime_identity(initial_status, initial_receipt)
     refresh = post_json(f"{base}/api/v1/receivers/status/refresh", {})
     request_id = refresh.get("request_id") if isinstance(refresh, Mapping) else None
     if not isinstance(request_id, str) or not request_id:
@@ -716,21 +1021,27 @@ def capture(
         expected_plugin=plugin,
         expected_provider="python",
     )
+    final_receipt = get_json(activation_url)
     validate_active_activation(
-        get_json(activation_url),
+        final_receipt,
         activation_id=activation_id,
         basis_digest=basis_digest,
         scene_digest=scene_digest,
         global_settings_digest=global_settings_digest,
         profile_digest=profile_digest,
     )
+    final_status = get_json(f"{base}/api/status")
     validate_live_status(
-        get_json(f"{base}/api/status"),
+        final_status,
         target_fps=target_fps,
         brightness=brightness,
         profile_digest=profile_digest,
         plugin=plugin,
     )
+    if validate_runtime_identity(final_status, final_receipt) != runtime_identity:
+        raise TargetEvidenceError(
+            "release, controller session, or runtime identity changed during capture"
+        )
     captured_at = int(time.time() * 1000)
     model_path = Path("/proc/device-tree/model")
     model = (
@@ -751,6 +1062,7 @@ def capture(
         target_fps=target_fps,
         brightness=brightness,
         environment=environment,
+        runtime_identity=runtime_identity,
     )
 
 

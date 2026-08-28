@@ -135,7 +135,7 @@ class Device:
         self.calls.append(("renew", fields))
         return self._status("renew")
 
-    def set_all_pixels(self, colors):
+    def set_all_pixels(self, colors, *, wall_frame_sequence=None):
         self.calls.append(("set_all", len(colors)))
         if "set_all" in self.fail:
             raise OSError("set_all failed")

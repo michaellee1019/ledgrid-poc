@@ -2495,6 +2495,106 @@ class ReceiverHealthContract:
     devices: tuple[Mapping[str, Any], ...]
 
 
+FULL_FRAME_SAMPLING_COUNTERS = (
+    "full_frame_status_transfers",
+    "full_frame_status_samples",
+    "full_frame_status_sample_misses",
+    "full_frame_write_only_transfers",
+)
+FULL_FRAME_SAMPLING_STATE_FIELDS = (
+    "full_frame_frames_since_status_sample",
+    "full_frame_max_status_sample_gap",
+    "spidev_buffer_size",
+    "full_frame_write_only_supported",
+)
+MAX_FULL_FRAME_STATUS_SAMPLE_GAP = 256
+
+
+def _full_frame_sampling_snapshot_rejection(
+    item: Mapping[str, Any], *, label: str, minimum_buffer_size: int
+) -> Optional[str]:
+    integer_fields = ("full_frame_transfers", *FULL_FRAME_SAMPLING_COUNTERS)
+    if any(
+        type(item.get(field)) is not int or item.get(field) < 0
+        for field in integer_fields
+    ):
+        return f"{label} full-frame sampling counters are unavailable"
+    if (
+        item["full_frame_status_transfers"]
+        + item["full_frame_write_only_transfers"]
+        != item["full_frame_transfers"]
+    ):
+        return f"{label} full-frame sampling transfer invariant is broken"
+    if item["full_frame_status_samples"] > item["full_frame_status_transfers"]:
+        return f"{label} full-frame status samples exceed transfers"
+    if (
+        item["full_frame_status_samples"]
+        + item["full_frame_status_sample_misses"]
+        != item["full_frame_status_transfers"]
+    ):
+        return f"{label} full-frame status transfer classification is broken"
+    current_gap = item.get("full_frame_frames_since_status_sample")
+    maximum_gap = item.get("full_frame_max_status_sample_gap")
+    if type(current_gap) is not int or type(maximum_gap) is not int:
+        return f"{label} full-frame status sample gap is unavailable"
+    if (
+        current_gap < 0
+        or current_gap > maximum_gap
+        or maximum_gap > MAX_FULL_FRAME_STATUS_SAMPLE_GAP
+    ):
+        return f"{label} full-frame status sample gap is outside 0..256"
+    buffer_size = item.get("spidev_buffer_size")
+    if type(buffer_size) is not int or buffer_size < minimum_buffer_size:
+        return f"{label} spidev buffer is below {minimum_buffer_size} bytes"
+    if item.get("full_frame_write_only_supported") is not True:
+        return f"{label} full-frame write-only fast path is unavailable"
+    return None
+
+
+def _full_frame_sampling_delta_rejection(
+    before: Mapping[str, Any], after: Mapping[str, Any], *, label: str
+) -> Optional[str]:
+    total_delta = int(after["full_frame_transfers"]) - int(
+        before["full_frame_transfers"]
+    )
+    deltas = {
+        field: int(after[field]) - int(before[field])
+        for field in FULL_FRAME_SAMPLING_COUNTERS
+    }
+    if total_delta < 0 or any(delta < 0 for delta in deltas.values()):
+        return f"{label} full-frame sampling counter reset"
+    if (
+        deltas["full_frame_status_transfers"]
+        + deltas["full_frame_write_only_transfers"]
+        != total_delta
+    ):
+        return f"{label} full-frame sampling delta invariant is broken"
+    if (
+        deltas["full_frame_status_samples"]
+        + deltas["full_frame_status_sample_misses"]
+        != deltas["full_frame_status_transfers"]
+    ):
+        return f"{label} full-frame status transfer delta classification is broken"
+    if total_delta > 0:
+        if deltas["full_frame_status_samples"] <= 0:
+            return f"{label} full-frame status samples did not advance"
+        if deltas["full_frame_write_only_transfers"] <= 0:
+            return f"{label} full-frame write-only transfers did not advance"
+        if (
+            deltas["full_frame_status_samples"]
+            > deltas["full_frame_status_transfers"]
+        ):
+            return f"{label} full-frame status sample delta exceeds transfers"
+        if deltas["full_frame_status_sample_misses"] != 0:
+            return f"{label} full-frame status sample misses increased"
+    if (
+        int(after["full_frame_max_status_sample_gap"])
+        < int(before["full_frame_max_status_sample_gap"])
+    ):
+        return f"{label} full-frame maximum status sample gap reset"
+    return None
+
+
 def _sample_health(root: Path, *, unit: str, api_url: str) -> TargetHealthSample:
     active = _command(("systemctl", "is-active", "--quiet", unit), check=False)
     if active.returncode:
@@ -2695,11 +2795,19 @@ def _receiver_health_rejection(
                     f"receiver {logical_id} reported {observed_name}="
                     f"{status.get(observed_name)!r}, expected {expected[expected_name]}"
                 )
+        sampling_rejection = _full_frame_sampling_snapshot_rejection(
+            status,
+            label=f"receiver {logical_id}",
+            minimum_buffer_size=3320 if logical_id < 4 else 424,
+        )
+        if sampling_rejection is not None:
+            return sampling_rejection
     transport_fields = (
         "spi_transfers", "bytes_sent", "semantic_bytes_sent",
         "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
         "crc_bytes_sent", "full_frame_transfers",
         "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
+        *FULL_FRAME_SAMPLING_COUNTERS,
     )
     for field in transport_fields:
         values = [status.get(field) for status in sample.receiver_statuses]
@@ -2710,6 +2818,34 @@ def _receiver_health_rejection(
             return f"aggregate aligned transport counter {field} is unavailable"
         if aggregate_value != sum(values):
             return f"aggregate {field} drifted from per-receiver total"
+    aggregate_sampling_rejection = _full_frame_sampling_snapshot_rejection(
+        sample.receiver_aggregate,
+        label="aggregate",
+        minimum_buffer_size=3320,
+    )
+    if aggregate_sampling_rejection is not None:
+        return aggregate_sampling_rejection
+    gauge_expectations = {
+        "full_frame_frames_since_status_sample": max(
+            int(status["full_frame_frames_since_status_sample"])
+            for status in sample.receiver_statuses
+        ),
+        "full_frame_max_status_sample_gap": max(
+            int(status["full_frame_max_status_sample_gap"])
+            for status in sample.receiver_statuses
+        ),
+        "spidev_buffer_size": min(
+            int(status["spidev_buffer_size"])
+            for status in sample.receiver_statuses
+        ),
+        "full_frame_write_only_supported": all(
+            status.get("full_frame_write_only_supported") is True
+            for status in sample.receiver_statuses
+        ),
+    }
+    for field, expected in gauge_expectations.items():
+        if sample.receiver_aggregate.get(field) != expected:
+            return f"aggregate {field} drifted from per-receiver value"
     return None
 
 
@@ -2750,6 +2886,13 @@ def _transport_accounting_delta_rejection(
     )
     if aggregate_rejection is not None:
         return aggregate_rejection
+    aggregate_sampling_rejection = _full_frame_sampling_delta_rejection(
+        before.receiver_aggregate,
+        after.receiver_aggregate,
+        label="aggregate aligned transport",
+    )
+    if aggregate_sampling_rejection is not None:
+        return aggregate_sampling_rejection
     before_by_id = {
         int(item["receiver_logical_device"]): item for item in before.receiver_statuses
     }
@@ -2764,6 +2907,13 @@ def _transport_accounting_delta_rejection(
         )
         if device_rejection is not None:
             return device_rejection
+        device_sampling_rejection = _full_frame_sampling_delta_rejection(
+            before_by_id[logical_id],
+            after_by_id[logical_id],
+            label=f"receiver {logical_id} aligned transport",
+        )
+        if device_sampling_rejection is not None:
+            return device_sampling_rejection
     return None
 
 
@@ -2775,6 +2925,7 @@ def _transport_accounting_evidence(
         "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
         "crc_bytes_sent", "full_frame_transfers",
         "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
+        *FULL_FRAME_SAMPLING_COUNTERS,
     )
 
     def counters(
@@ -2789,6 +2940,11 @@ def _transport_accounting_evidence(
             for field in fields
         }
 
+    def sampling_state(item: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {
+            field: item[field] for field in FULL_FRAME_SAMPLING_STATE_FIELDS
+        }
+
     before_by_id = {
         int(item["receiver_logical_device"]): item for item in before.receiver_statuses
     }
@@ -2796,6 +2952,7 @@ def _transport_accounting_evidence(
         int(item["receiver_logical_device"]): item for item in after.receiver_statuses
     }
     full_frame_traffic_proven = True
+    full_frame_sampling_proven = True
     for logical_id, item in after_by_id.items():
         prior = before_by_id[logical_id]
         transfers = int(item["full_frame_transfers"]) - int(
@@ -2819,6 +2976,25 @@ def _transport_accounting_evidence(
             and semantic_bytes == expected_semantic * transfers
             and wire_bytes == expected_wire * transfers
         )
+        status_transfers = int(item["full_frame_status_transfers"]) - int(
+            prior["full_frame_status_transfers"]
+        )
+        samples = int(item["full_frame_status_samples"]) - int(
+            prior["full_frame_status_samples"]
+        )
+        misses = int(item["full_frame_status_sample_misses"]) - int(
+            prior["full_frame_status_sample_misses"]
+        )
+        write_only = int(item["full_frame_write_only_transfers"]) - int(
+            prior["full_frame_write_only_transfers"]
+        )
+        full_frame_sampling_proven &= (
+            transfers > 0
+            and status_transfers == samples + misses
+            and samples > 0
+            and misses == 0
+            and write_only > 0
+        )
     return {
         "enabled_devices": after.transport_envelope_devices,
         "negotiation_required": 3,
@@ -2829,13 +3005,24 @@ def _transport_accounting_evidence(
             for item in after.receiver_statuses
         ),
         "full_frame_traffic_proven": full_frame_traffic_proven,
-        "aggregate": counters(before.receiver_aggregate, after.receiver_aggregate),
+        "full_frame_sampling_proven": (
+            full_frame_traffic_proven and full_frame_sampling_proven
+        ),
+        "aggregate": counters(
+            before.receiver_aggregate, after.receiver_aggregate
+        ),
+        "aggregate_sampling_state": {
+            "before": sampling_state(before.receiver_aggregate),
+            "after": sampling_state(after.receiver_aggregate),
+        },
         "devices": [
             {
                 "logical_device": logical_id,
                 "counters": counters(
                     before_by_id[logical_id], after_by_id[logical_id]
                 ),
+                "state_before": sampling_state(before_by_id[logical_id]),
+                "state_after": sampling_state(after_by_id[logical_id]),
             }
             for logical_id in sorted(after_by_id)
         ],

@@ -18,13 +18,13 @@ from typing import Any
 
 
 QUALIFICATION_RECORD_SCHEMA = "ledgrid.activation-qualification-record"
-QUALIFICATION_RECORD_VERSION = 1
+QUALIFICATION_RECORD_VERSION = 2
 QUALIFICATION_RESULT_SCHEMA = "ledgrid.activation-qualification-result"
 QUALIFICATION_RESULT_VERSION = 1
 INSTALLATION_BUDGET_SCHEMA = "ledgrid.installation-qualification-budget"
 INSTALLATION_BUDGET_VERSION = 1
 TARGET_EVIDENCE_SCHEMA = "ledgrid.target-qualification-evidence"
-TARGET_EVIDENCE_VERSION = 1
+TARGET_EVIDENCE_VERSION = 2
 EVIDENCE_SOURCES = ("browser", "controller_pi", "receiver")
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -32,6 +32,7 @@ DEFAULT_INSTALLATION_BUDGET_PATH = (
     _REPOSITORY_ROOT / "config/installation_qualification_budget.json"
 )
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_CONTROLLER_SESSION_ID = re.compile(r"^[0-9a-f]{32}$")
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$")
 
 
@@ -583,6 +584,7 @@ def _evidence(value: Any, index: int) -> dict[str, Any]:
         {
             "source",
             "binding_digest",
+            "transport_digest",
             "captured_at",
             "environment",
             "sample_count",
@@ -605,7 +607,17 @@ def _evidence(value: Any, index: int) -> dict[str, Any]:
     )
     changed = cadence.get("changed_frame_ratio")
     electrical = payload.get("electrical")
-    return {
+    has_transport_digest = "transport_digest" in payload
+    transport_digest = payload.get("transport_digest")
+    if has_transport_digest and source != "receiver":
+        raise QualificationValidationError(
+            f"{label}.transport_digest is only valid for receiver evidence"
+        )
+    if source == "receiver" and not has_transport_digest:
+        raise QualificationValidationError(
+            f"{label}.transport_digest is required for receiver evidence"
+        )
+    result = {
         "source": source,
         "binding_digest": _digest(
             payload.get("binding_digest"), f"{label}.binding_digest"
@@ -649,6 +661,11 @@ def _evidence(value: Any, index: int) -> dict[str, Any]:
             else _electrical(electrical, source, f"{label}.electrical")
         ),
     }
+    if source == "receiver":
+        result["transport_digest"] = _digest(
+            transport_digest, f"{label}.transport_digest"
+        )
+    return result
 
 
 def normalize_activation_qualification_record(value: Any) -> dict[str, Any]:
@@ -713,6 +730,245 @@ def activation_qualification_record_digest(value: Any) -> str:
     return canonical_json_sha256(normalize_activation_qualification_record(value))
 
 
+_TARGET_TRANSPORT_DELTA_FIELDS = (
+    "full_frame_transfers",
+    "full_frame_status_transfers",
+    "full_frame_status_samples",
+    "full_frame_status_sample_misses",
+    "full_frame_write_only_transfers",
+)
+_TARGET_TRANSPORT_FINAL_FIELDS = (
+    "full_frame_frames_since_status_sample",
+    "full_frame_max_status_sample_gap",
+    "spidev_buffer_size",
+    "full_frame_write_only_supported",
+)
+_TARGET_TRANSPORT_EXPECTED_WIRE_BYTES = (3320, 3320, 3320, 3320, 424)
+_TARGET_TRANSPORT_MAX_SAMPLE_GAP = 256
+
+
+def _target_transport_item(
+    value: Any,
+    label: str,
+    *,
+    expected_logical_device: int | None,
+    expected_wire_bytes: int,
+) -> dict[str, Any]:
+    payload = _object(value, label)
+    allowed = {"expected_wire_bytes", "deltas", "final"}
+    if expected_logical_device is not None:
+        allowed.add("logical_device")
+    _only(payload, allowed, label)
+    if expected_logical_device is not None:
+        logical_device = _integer(
+            payload.get("logical_device"),
+            f"{label}.logical_device",
+            maximum=4,
+        )
+        if logical_device != expected_logical_device:
+            raise QualificationValidationError(
+                f"{label}.logical_device must be {expected_logical_device}"
+            )
+    observed_wire_bytes = _integer(
+        payload.get("expected_wire_bytes"),
+        f"{label}.expected_wire_bytes",
+        minimum=1,
+    )
+    if observed_wire_bytes != expected_wire_bytes:
+        raise QualificationValidationError(
+            f"{label}.expected_wire_bytes must be {expected_wire_bytes}"
+        )
+
+    raw_deltas = _object(payload.get("deltas"), f"{label}.deltas")
+    _only(raw_deltas, set(_TARGET_TRANSPORT_DELTA_FIELDS), f"{label}.deltas")
+    deltas = {
+        field: _integer(raw_deltas.get(field), f"{label}.deltas.{field}")
+        for field in _TARGET_TRANSPORT_DELTA_FIELDS
+    }
+    if (
+        deltas["full_frame_status_transfers"]
+        + deltas["full_frame_write_only_transfers"]
+        != deltas["full_frame_transfers"]
+    ):
+        raise QualificationValidationError(
+            f"{label}.deltas must partition every full-frame transfer"
+        )
+    if (
+        deltas["full_frame_status_samples"]
+        > deltas["full_frame_status_transfers"]
+    ):
+        raise QualificationValidationError(
+            f"{label}.deltas successful samples exceed status transfers"
+        )
+    if (
+        deltas["full_frame_status_samples"]
+        + deltas["full_frame_status_sample_misses"]
+        != deltas["full_frame_status_transfers"]
+    ):
+        raise QualificationValidationError(
+            f"{label}.deltas must classify every status transfer"
+        )
+    if deltas["full_frame_status_samples"] == 0:
+        raise QualificationValidationError(
+            f"{label}.deltas must contain a successful status sample"
+        )
+    if deltas["full_frame_status_sample_misses"] != 0:
+        raise QualificationValidationError(
+            f"{label}.deltas status sample misses must be zero"
+        )
+    if deltas["full_frame_write_only_transfers"] == 0:
+        raise QualificationValidationError(
+            f"{label}.deltas must exercise the write-only fast path"
+        )
+
+    raw_final = _object(payload.get("final"), f"{label}.final")
+    _only(raw_final, set(_TARGET_TRANSPORT_FINAL_FIELDS), f"{label}.final")
+    current_gap = _integer(
+        raw_final.get("full_frame_frames_since_status_sample"),
+        f"{label}.final.full_frame_frames_since_status_sample",
+        maximum=_TARGET_TRANSPORT_MAX_SAMPLE_GAP,
+    )
+    maximum_gap = _integer(
+        raw_final.get("full_frame_max_status_sample_gap"),
+        f"{label}.final.full_frame_max_status_sample_gap",
+        maximum=_TARGET_TRANSPORT_MAX_SAMPLE_GAP,
+    )
+    if current_gap > maximum_gap:
+        raise QualificationValidationError(
+            f"{label}.final current status sample gap exceeds lifetime maximum"
+        )
+    buffer_size = _integer(
+        raw_final.get("spidev_buffer_size"),
+        f"{label}.final.spidev_buffer_size",
+        minimum=expected_wire_bytes,
+    )
+    if raw_final.get("full_frame_write_only_supported") is not True:
+        raise QualificationValidationError(
+            f"{label}.final.full_frame_write_only_supported must be true"
+        )
+    result = {
+        "expected_wire_bytes": observed_wire_bytes,
+        "deltas": deltas,
+        "final": {
+            "full_frame_frames_since_status_sample": current_gap,
+            "full_frame_max_status_sample_gap": maximum_gap,
+            "spidev_buffer_size": buffer_size,
+            "full_frame_write_only_supported": True,
+        },
+    }
+    if expected_logical_device is not None:
+        result["logical_device"] = expected_logical_device
+    return result
+
+
+def _target_transport_evidence(value: Any) -> dict[str, Any]:
+    payload = _object(value, "target qualification evidence.transport")
+    _only(
+        payload,
+        {"aggregate", "devices"},
+        "target qualification evidence.transport",
+    )
+    label = "target qualification evidence.transport"
+    aggregate = _target_transport_item(
+        payload.get("aggregate"),
+        f"{label}.aggregate",
+        expected_logical_device=None,
+        expected_wire_bytes=max(_TARGET_TRANSPORT_EXPECTED_WIRE_BYTES),
+    )
+    raw_devices = payload.get("devices")
+    if not isinstance(raw_devices, list) or len(raw_devices) != 5:
+        raise QualificationValidationError(
+            f"{label}.devices must contain exactly five receivers"
+        )
+    devices_by_id: dict[int, dict[str, Any]] = {}
+    for index, item in enumerate(raw_devices):
+        raw_item = _object(item, f"{label}.devices[{index}]")
+        logical_device = _integer(
+            raw_item.get("logical_device"),
+            f"{label}.devices[{index}].logical_device",
+            maximum=4,
+        )
+        if logical_device in devices_by_id:
+            raise QualificationValidationError(
+                f"{label}.devices contains duplicate logical_device {logical_device}"
+            )
+        devices_by_id[logical_device] = _target_transport_item(
+            raw_item,
+            f"{label}.devices[{index}]",
+            expected_logical_device=logical_device,
+            expected_wire_bytes=_TARGET_TRANSPORT_EXPECTED_WIRE_BYTES[logical_device],
+        )
+    if sorted(devices_by_id) != list(range(5)):
+        raise QualificationValidationError(
+            f"{label}.devices must contain logical devices 0 through 4"
+        )
+    devices = [devices_by_id[logical_device] for logical_device in range(5)]
+    for field in _TARGET_TRANSPORT_DELTA_FIELDS:
+        if aggregate["deltas"][field] != sum(
+            device["deltas"][field] for device in devices
+        ):
+            raise QualificationValidationError(
+                f"{label}.aggregate.deltas.{field} drifted from receiver sum"
+            )
+    expected_final = {
+        "full_frame_frames_since_status_sample": max(
+            device["final"]["full_frame_frames_since_status_sample"]
+            for device in devices
+        ),
+        "full_frame_max_status_sample_gap": max(
+            device["final"]["full_frame_max_status_sample_gap"]
+            for device in devices
+        ),
+        "spidev_buffer_size": min(
+            device["final"]["spidev_buffer_size"] for device in devices
+        ),
+        "full_frame_write_only_supported": all(
+            device["final"]["full_frame_write_only_supported"] is True
+            for device in devices
+        ),
+    }
+    if aggregate["final"] != expected_final:
+        raise QualificationValidationError(
+            f"{label}.aggregate.final drifted from receiver values"
+        )
+    return {"aggregate": aggregate, "devices": devices}
+
+
+def _target_runtime_identity(value: Any) -> dict[str, Any]:
+    label = "target qualification evidence.runtime_identity"
+    payload = _object(value, label)
+    _only(
+        payload,
+        {
+            "release_id",
+            "controller_session_id",
+            "controller_state_revision",
+            "current_identity_digest",
+        },
+        label,
+    )
+    session_id = payload.get("controller_session_id")
+    if (
+        not isinstance(session_id, str)
+        or _CONTROLLER_SESSION_ID.fullmatch(session_id) is None
+    ):
+        raise QualificationValidationError(
+            f"{label}.controller_session_id must be a lowercase 128-bit hexadecimal ID"
+        )
+    return {
+        "release_id": _digest(payload.get("release_id"), f"{label}.release_id"),
+        "controller_session_id": session_id,
+        "controller_state_revision": _integer(
+            payload.get("controller_state_revision"),
+            f"{label}.controller_state_revision",
+        ),
+        "current_identity_digest": _digest(
+            payload.get("current_identity_digest"),
+            f"{label}.current_identity_digest",
+        ),
+    }
+
+
 def normalize_target_qualification_evidence(value: Any) -> dict[str, Any]:
     """Normalize one atomically retained controller/receiver capture.
 
@@ -731,6 +987,8 @@ def normalize_target_qualification_evidence(value: Any) -> dict[str, Any]:
             "binding_digest",
             "captured_at",
             "environment",
+            "runtime_identity",
+            "transport",
             "evidence",
         },
         "target qualification evidence",
@@ -776,6 +1034,14 @@ def normalize_target_qualification_evidence(value: Any) -> dict[str, Any]:
                 f"{item['source']} evidence does not match the envelope capture time"
             )
     evidence.sort(key=lambda item: EVIDENCE_SOURCES.index(item["source"]))
+    runtime_identity = _target_runtime_identity(payload.get("runtime_identity"))
+    transport = _target_transport_evidence(payload.get("transport"))
+    transport_digest = canonical_json_sha256(transport)
+    receiver = next(item for item in evidence if item["source"] == "receiver")
+    if receiver["transport_digest"] != transport_digest:
+        raise QualificationValidationError(
+            "receiver evidence transport_digest does not match normalized transport proof"
+        )
     return {
         "schema": TARGET_EVIDENCE_SCHEMA,
         "schema_version": TARGET_EVIDENCE_VERSION,
@@ -790,6 +1056,8 @@ def normalize_target_qualification_evidence(value: Any) -> dict[str, Any]:
             payload.get("environment"),
             "target qualification evidence.environment",
         ),
+        "runtime_identity": runtime_identity,
+        "transport": transport,
         "evidence": evidence,
     }
 

@@ -641,6 +641,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         envelope_bytes = transfers * 4
         padding_bytes = transfers
         crc_bytes = transfers * 2
+        status_transfers = transfers // 10
         return tuple(
             {
                 "receiver_status_seen": True,
@@ -667,6 +668,14 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                     transfers
                     * (((1 + widths[logical_id] * 138 * 3 + 9) // 4) * 4)
                 ),
+                "full_frame_status_transfers": status_transfers,
+                "full_frame_status_samples": status_transfers,
+                "full_frame_status_sample_misses": 0,
+                "full_frame_write_only_transfers": transfers - status_transfers,
+                "full_frame_frames_since_status_sample": transfers % 10,
+                "full_frame_max_status_sample_gap": 9,
+                "spidev_buffer_size": 4096,
+                "full_frame_write_only_supported": True,
                 "receiver_logical_device": logical_id,
                 "receiver_active_strips": widths[logical_id],
                 "receiver_global_strip_offset": offsets[logical_id],
@@ -685,11 +694,31 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
             "crc_bytes_sent", "full_frame_transfers",
             "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
+            "full_frame_status_transfers", "full_frame_status_samples",
+            "full_frame_status_sample_misses", "full_frame_write_only_transfers",
         )
-        return {
+        aggregate = {
             field: sum(int(item[field]) for item in statuses)
             for field in fields
         }
+        aggregate.update({
+            "full_frame_frames_since_status_sample": max(
+                int(item["full_frame_frames_since_status_sample"])
+                for item in statuses
+            ),
+            "full_frame_max_status_sample_gap": max(
+                int(item["full_frame_max_status_sample_gap"])
+                for item in statuses
+            ),
+            "spidev_buffer_size": min(
+                int(item["spidev_buffer_size"]) for item in statuses
+            ),
+            "full_frame_write_only_supported": all(
+                item["full_frame_write_only_supported"] is True
+                for item in statuses
+            ),
+        })
+        return aggregate
 
     def _health_sample(
         self, *, responses: int = 2,
@@ -1111,6 +1140,13 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 self.assertEqual(transport_evidence["enabled_devices"], 5)
                 self.assertTrue(transport_evidence["negotiation_settled"])
                 self.assertTrue(transport_evidence["full_frame_traffic_proven"])
+                self.assertTrue(transport_evidence["full_frame_sampling_proven"])
+                self.assertEqual(
+                    transport_evidence["aggregate_sampling_state"]["after"][
+                        "spidev_buffer_size"
+                    ],
+                    4096,
+                )
                 self.assertEqual(transport_evidence["negotiation_required"], 3)
                 self.assertEqual(len(transport_evidence["devices"]), 5)
                 self.assertGreater(
@@ -1270,6 +1306,187 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             "wire-byte accounting is inconsistent",
             deploy_target._transport_accounting_delta_rejection(before, drifted),
         )
+
+    def test_production_health_retains_false_full_frame_proofs_when_scene_emits_none(
+        self,
+    ) -> None:
+        before = self._health_sample(responses=2)
+        after_statuses = [dict(item) for item in self._receiver_statuses(
+            version=3, capabilities=0x400C, responses=3,
+        )]
+        full_frame_fields = (
+            "full_frame_transfers",
+            "full_frame_semantic_bytes_sent",
+            "full_frame_wire_bytes_sent",
+            *deploy_target.FULL_FRAME_SAMPLING_COUNTERS,
+            "full_frame_frames_since_status_sample",
+            "full_frame_max_status_sample_gap",
+        )
+        for logical_id, status in enumerate(after_statuses):
+            for field in full_frame_fields:
+                status[field] = before.receiver_statuses[logical_id][field]
+        observed = tuple(after_statuses)
+        after = self._health_sample(
+            responses=3,
+            statuses=observed,
+            receiver_aggregate=self._receiver_aggregate(observed),
+        )
+
+        self.assertIsNone(
+            deploy_target._transport_accounting_delta_rejection(before, after)
+        )
+        evidence = deploy_target._transport_accounting_evidence(before, after)
+        self.assertFalse(evidence["full_frame_traffic_proven"])
+        self.assertFalse(evidence["full_frame_sampling_proven"])
+        self.assertGreater(evidence["aggregate"]["spi_transfers"]["delta"], 0)
+
+        reset_gap_statuses = [dict(item) for item in observed]
+        for item in reset_gap_statuses:
+            item["full_frame_max_status_sample_gap"] = 8
+            item["full_frame_frames_since_status_sample"] = min(
+                item["full_frame_frames_since_status_sample"], 8
+            )
+        reset_gap = tuple(reset_gap_statuses)
+        after_reset = self._health_sample(
+            responses=3,
+            statuses=reset_gap,
+            receiver_aggregate=self._receiver_aggregate(reset_gap),
+        )
+        self.assertIn(
+            "maximum status sample gap reset",
+            deploy_target._transport_accounting_delta_rejection(
+                before, after_reset
+            ),
+        )
+
+    def test_production_health_rejects_invalid_full_frame_sampling_and_fast_path(self) -> None:
+        contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
+        expected_devices = tuple(contract["devices"])
+        complete = self._receiver_statuses(version=3, capabilities=0x400C)
+
+        missing = [dict(item) for item in complete]
+        missing[0].pop("full_frame_status_samples")
+
+        broken = [dict(item) for item in complete]
+        broken[0]["full_frame_write_only_transfers"] += 1
+
+        unclassified = [dict(item) for item in complete]
+        unclassified[0]["full_frame_status_samples"] -= 1
+
+        excessive_gap = [dict(item) for item in complete]
+        excessive_gap[0].update({
+            "full_frame_frames_since_status_sample": 257,
+            "full_frame_max_status_sample_gap": 257,
+        })
+
+        unsupported = [dict(item) for item in complete]
+        unsupported[0]["full_frame_write_only_supported"] = False
+
+        undersized = [dict(item) for item in complete]
+        undersized[0]["spidev_buffer_size"] = 3319
+
+        for label, statuses, expected in (
+            ("missing", missing, "sampling counters are unavailable"),
+            ("invariant", broken, "transfer invariant is broken"),
+            ("unclassified", unclassified, "status transfer classification is broken"),
+            ("gap", excessive_gap, "gap is outside 0..256"),
+            ("unsupported", unsupported, "fast path is unavailable"),
+            ("buffer", undersized, "below 3320 bytes"),
+        ):
+            with self.subTest(label=label):
+                observed = tuple(statuses)
+                aggregate = (
+                    self._receiver_aggregate(complete)
+                    if label == "missing"
+                    else self._receiver_aggregate(observed)
+                )
+                reason = deploy_target._receiver_health_rejection(
+                    self._health_sample(
+                        statuses=observed, receiver_aggregate=aggregate
+                    ),
+                    minimum_version=int(contract["minimum_status_version"]),
+                    required_capabilities=int(contract["required_capabilities"]),
+                    expected_devices=expected_devices,
+                )
+                self.assertIn(expected, reason)
+
+        before = self._health_sample(responses=2)
+
+        miss = [dict(item) for item in self._receiver_statuses(
+            version=3, capabilities=0x400C, responses=3,
+        )]
+        miss[0]["full_frame_status_sample_misses"] += 1
+        miss[0]["full_frame_status_transfers"] += 1
+        miss[0]["full_frame_write_only_transfers"] -= 1
+
+        stalled = [dict(item) for item in self._receiver_statuses(
+            version=3, capabilities=0x400C, responses=3,
+        )]
+        stalled[0]["full_frame_status_samples"] = before.receiver_statuses[0][
+            "full_frame_status_samples"
+        ]
+        stalled[0]["full_frame_status_transfers"] = before.receiver_statuses[0][
+            "full_frame_status_transfers"
+        ]
+        stalled[0]["full_frame_write_only_transfers"] = (
+            stalled[0]["full_frame_transfers"]
+            - stalled[0]["full_frame_status_transfers"]
+        )
+
+        unclassified_delta = [dict(item) for item in self._receiver_statuses(
+            version=3, capabilities=0x400C, responses=3,
+        )]
+        unclassified_delta[0]["full_frame_status_samples"] = (
+            before.receiver_statuses[0]["full_frame_status_samples"]
+        )
+
+        reset = [dict(item) for item in self._receiver_statuses(
+            version=3, capabilities=0x400C, responses=3,
+        )]
+        reset[0]["full_frame_status_samples"] = (
+            before.receiver_statuses[0]["full_frame_status_samples"] - 1
+        )
+        reset[0]["full_frame_status_transfers"] = (
+            reset[0]["full_frame_status_samples"]
+            + reset[0]["full_frame_status_sample_misses"]
+        )
+        reset[0]["full_frame_write_only_transfers"] = (
+            reset[0]["full_frame_transfers"]
+            - reset[0]["full_frame_status_transfers"]
+        )
+
+        reset_gap = [dict(item) for item in self._receiver_statuses(
+            version=3, capabilities=0x400C, responses=3,
+        )]
+        for item in reset_gap:
+            item["full_frame_max_status_sample_gap"] = 8
+            item["full_frame_frames_since_status_sample"] = min(
+                item["full_frame_frames_since_status_sample"], 8
+            )
+
+        for label, statuses, expected in (
+            ("miss", miss, "sample misses increased"),
+            ("stalled", stalled, "status samples did not advance"),
+            (
+                "unclassified",
+                unclassified_delta,
+                "status transfer delta classification is broken",
+            ),
+            ("reset", reset, "sampling counter reset"),
+            ("gap reset", reset_gap, "maximum status sample gap reset"),
+        ):
+            with self.subTest(label=label):
+                after = self._health_sample(
+                    responses=3,
+                    statuses=tuple(statuses),
+                    receiver_aggregate=self._receiver_aggregate(tuple(statuses)),
+                )
+                self.assertIn(
+                    expected,
+                    deploy_target._transport_accounting_delta_rejection(
+                        before, after
+                    ),
+                )
 
     def test_receiver_contract_rejects_each_host_device_map_mutation(self) -> None:
         contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)

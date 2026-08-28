@@ -11,6 +11,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+from animation.core.activation_qualification import canonical_json_sha256
 from animation.core.receiver_static_component import (
     COMPILED_RAINBOW_EXPECTED_PAYLOAD_DIGEST,
     receiver_static_component_descriptor,
@@ -25,8 +26,9 @@ from web.app import AnimationWebInterface
 
 
 SESSION_ID = "a" * 32
-CURRENT_IDENTITY = "b" * 64
 RELEASE_ID = "c" * 64
+ACTIVE_IDENTITY = {"current_identity": "b" * 64}
+CURRENT_IDENTITY = canonical_json_sha256(ACTIVE_IDENTITY)
 
 
 class _Clock:
@@ -58,6 +60,45 @@ def _global_settings(revision: int = 3) -> dict:
     }
 
 
+def _target_transport() -> dict:
+    devices = [
+        {
+            "logical_device": logical_device,
+            "expected_wire_bytes": 3320 if logical_device < 4 else 424,
+            "deltas": {
+                "full_frame_transfers": 300,
+                "full_frame_status_transfers": 2,
+                "full_frame_status_samples": 2,
+                "full_frame_status_sample_misses": 0,
+                "full_frame_write_only_transfers": 298,
+            },
+            "final": {
+                "full_frame_frames_since_status_sample": logical_device,
+                "full_frame_max_status_sample_gap": 255,
+                "spidev_buffer_size": 4096,
+                "full_frame_write_only_supported": True,
+            },
+        }
+        for logical_device in range(5)
+    ]
+    return {
+        "aggregate": {
+            "expected_wire_bytes": 3320,
+            "deltas": {
+                field: sum(device["deltas"][field] for device in devices)
+                for field in devices[0]["deltas"]
+            },
+            "final": {
+                "full_frame_frames_since_status_sample": 4,
+                "full_frame_max_status_sample_gap": 255,
+                "spidev_buffer_size": 4096,
+                "full_frame_write_only_supported": True,
+            },
+        },
+        "devices": devices,
+    }
+
+
 class SceneActivationApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -72,7 +113,8 @@ class SceneActivationApiTests(unittest.TestCase):
             "release_id": RELEASE_ID,
             "controller_session_id": SESSION_ID,
             "controller_state_revision": 7,
-            "active_identity": {"current_identity": CURRENT_IDENTITY},
+            "active_identity": deepcopy(ACTIVE_IDENTITY),
+            "current_identity_digest": CURRENT_IDENTITY,
             "installation_profile_digest": "0" * 64,
             "brightness": 128,
             "target_fps": 30,
@@ -364,11 +406,18 @@ class SceneActivationApiTests(unittest.TestCase):
         captured_at = int(time.time() * 1000)
         target_evidence = {
             "schema": "ledgrid.target-qualification-evidence",
-            "schema_version": 1,
+            "schema_version": 2,
             "revision": 1,
             "binding_digest": binding_digest,
             "captured_at": captured_at,
             "environment": "exact Raspberry Pi and five-receiver test capture",
+            "runtime_identity": {
+                "release_id": RELEASE_ID,
+                "controller_session_id": SESSION_ID,
+                "controller_state_revision": 7,
+                "current_identity_digest": CURRENT_IDENTITY,
+            },
+            "transport": _target_transport(),
             "evidence": [],
         }
         for source in ("controller_pi", "receiver"):
@@ -388,6 +437,13 @@ class SceneActivationApiTests(unittest.TestCase):
                 },
                 "electrical": None,
             })
+        receiver = next(
+            item for item in target_evidence["evidence"]
+            if item["source"] == "receiver"
+        )
+        receiver["transport_digest"] = canonical_json_sha256(
+            target_evidence["transport"]
+        )
         legacy_status = self.channel.read_status()
         legacy_status["activation_qualification_evidence"] = deepcopy(
             target_evidence["evidence"]
@@ -422,6 +478,79 @@ class SceneActivationApiTests(unittest.TestCase):
         self.assertNotIn("stale_controller_pi_evidence", blockers)
         self.assertTrue(checked["qualification"]["gates"]["performance"]["passed"])
         self.assertFalse(checked["qualification"]["gates"]["power"]["passed"])
+
+        # The activation authority must commit to the exact normalized
+        # transport proof, not just the accompanying cadence summaries.
+        changed_transport = deepcopy(target_evidence)
+        changed_transport["transport"]["devices"][0]["deltas"][
+            "full_frame_transfers"
+        ] += 1
+        changed_transport["transport"]["devices"][0]["deltas"][
+            "full_frame_write_only_transfers"
+        ] += 1
+        changed_transport["transport"]["aggregate"]["deltas"][
+            "full_frame_transfers"
+        ] += 1
+        changed_transport["transport"]["aggregate"]["deltas"][
+            "full_frame_write_only_transfers"
+        ] += 1
+        next(
+            item for item in changed_transport["evidence"]
+            if item["source"] == "receiver"
+        )["transport_digest"] = canonical_json_sha256(
+            changed_transport["transport"]
+        )
+        target_path.write_text(json.dumps(changed_transport), encoding="utf-8")
+        changed_check = self.client.post("/api/v1/scene/checks", json={
+            "scene": self.scene,
+            "global_settings": self.globals,
+            "browser_evidence": evidence,
+        }).get_json()
+        self.assertNotEqual(
+            checked["qualification"]["record_digest"],
+            changed_check["qualification"]["record_digest"],
+        )
+
+        for field, replacement in (
+            ("release_id", "d" * 64),
+            ("controller_session_id", "e" * 32),
+            ("controller_state_revision", 8),
+            ("current_identity_digest", "f" * 64),
+        ):
+            with self.subTest(replayed_identity=field):
+                replayed = deepcopy(target_evidence)
+                replayed["runtime_identity"][field] = replacement
+                target_path.write_text(json.dumps(replayed), encoding="utf-8")
+                rejected = self.client.post("/api/v1/scene/checks", json={
+                    "scene": self.scene,
+                    "global_settings": self.globals,
+                    "browser_evidence": evidence,
+                }).get_json()
+                self.assertIn(
+                    "missing_controller_pi_evidence",
+                    rejected["qualification"]["blockers"],
+                )
+                self.assertIn(
+                    "missing_receiver_evidence",
+                    rejected["qualification"]["blockers"],
+                )
+
+        missing_revision = deepcopy(target_evidence)
+        missing_revision["runtime_identity"].pop("controller_state_revision")
+        target_path.write_text(json.dumps(missing_revision), encoding="utf-8")
+        rejected = self.client.post("/api/v1/scene/checks", json={
+            "scene": self.scene,
+            "global_settings": self.globals,
+            "browser_evidence": evidence,
+        }).get_json()
+        self.assertIn(
+            "missing_controller_pi_evidence",
+            rejected["qualification"]["blockers"],
+        )
+        self.assertIn(
+            "missing_receiver_evidence",
+            rejected["qualification"]["blockers"],
+        )
 
     def test_check_rejects_unrestorable_live_legacy_and_painter_before_token(self) -> None:
         token_path = Path(self.temporary.name) / "tokens.sqlite3"

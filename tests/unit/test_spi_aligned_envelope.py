@@ -1,5 +1,7 @@
 import binascii
+from pathlib import Path
 import sys
+import tempfile
 import threading
 import types
 import unittest
@@ -21,10 +23,22 @@ class _RecordingSpi:
 
     def __init__(self):
         self.packets = []
+        self.response_packets = []
+        self.write_only_packets = []
+        self.miso_responses = []
 
     def xfer2(self, packet):
-        self.packets.append(bytes(packet))
+        packet = bytes(packet)
+        self.packets.append(packet)
+        self.response_packets.append(packet)
+        if self.miso_responses:
+            return self.miso_responses.pop(0)
         return bytes(len(packet))
+
+    def writebytes2(self, packet):
+        packet = bytes(packet)
+        self.packets.append(packet)
+        self.write_only_packets.append(packet)
 
 
 def _controller(*, envelope):
@@ -32,6 +46,11 @@ def _controller(*, envelope):
     item.spi = _RecordingSpi()
     item._transport_lock = threading.RLock()
     item._transport_envelope_enabled = envelope
+    item.logical_device_id = 0
+    item._spidev_buffer_size = protocol.MAX_SPI_TRANSFER
+    item._writebytes2_supported = None
+    item._last_transfer_captured_response = False
+    item._last_transfer_status_sampled = False
     item._bytes_sent = 0
     item._semantic_bytes_sent = 0
     item._transport_envelope_bytes_sent = 0
@@ -43,7 +62,21 @@ def _controller(*, envelope):
     item._aligned_frame_packet = bytearray(
         protocol._aligned_envelope_wire_size(1 + 8 * 138 * 3)
     )
-    item._update_receiver_status = lambda _response: None
+    item._update_receiver_status = lambda _response: True
+    item.strip_count = 8
+    item.leds_per_strip = 138
+    item.total_leds = 8 * 138
+    item._full_frame_transfers = 0
+    item._full_frame_status_transfers = 0
+    item._full_frame_status_samples = 0
+    item._full_frame_status_sample_misses = 0
+    item._full_frame_write_only_transfers = 0
+    item._full_frame_frames_since_status_sample = 0
+    item._full_frame_max_status_sample_gap = 0
+    item._full_frame_sequence = 0
+    item._frames_sent = 0
+    item._last_frame_duration = 0.0
+    item._total_frame_duration = 0.0
     return item
 
 
@@ -56,6 +89,15 @@ def _status_v3(receiver_packets, *, aligned):
     )
     response[64:68] = capabilities.to_bytes(4, "big")
     response[314] = protocol.STAGGER_OFF
+    return response
+
+
+def _status_v6(receiver_packets, *, aligned):
+    response = bytearray(protocol.RECEIVER_STATUS_BYTES_V6)
+    response[:protocol.RECEIVER_STATUS_BYTES_V3] = _status_v3(
+        receiver_packets, aligned=aligned
+    )
+    response[:5] = b"LGS6\x06"
     return response
 
 
@@ -127,6 +169,25 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
         self.assert_crc(packet)
         with self.assertRaisesRegex(ValueError, "1..4090"):
             protocol._encode_aligned_envelope(semantic + b"x")
+
+    def test_spidev_buffer_capacity_requires_positive_decimal_sysfs_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "bufsiz"
+            for value, expected in (
+                ("4096\n", 4096),
+                ("0\n", None),
+                ("-1\n", None),
+                ("4096.0\n", None),
+                ("unavailable\n", None),
+            ):
+                with self.subTest(value=value):
+                    path.write_text(value, encoding="ascii")
+                    self.assertEqual(
+                        protocol._read_spidev_buffer_size(path), expected
+                    )
+            self.assertIsNone(
+                protocol._read_spidev_buffer_size(path.with_name("missing"))
+            )
 
     def test_controller_keeps_legacy_wire_until_three_fresh_observations(self):
         item = _controller(envelope=False)
@@ -238,6 +299,8 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
         self.assertEqual(item._transport_padding_bytes_sent, 1)
         self.assertEqual(item._crc_bytes_sent, 2)
         self.assertEqual(item._bytes_sent, 8)
+        self.assertEqual(len(item.spi.response_packets), 1)
+        self.assertEqual(item.spi.write_only_packets, [])
 
     def test_successful_set_all_has_dedicated_exact_broad_and_tail_accounting(self):
         for strips, semantic_bytes, wire_bytes in (
@@ -267,6 +330,274 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
         self.assertEqual(len(item.spi.packets[-1]), 3320)
         self.assertEqual(len(item._aligned_frame_packet), 3320)
         self.assert_crc(item.spi.packets[-1])
+
+    def test_aligned_full_frames_stagger_one_status_sample_across_five_receivers(self):
+        due_by_frame = {}
+        for logical_id in range(5):
+            item = _controller(envelope=True)
+            item.logical_device_id = logical_id
+            due = [
+                frame
+                for frame in range(protocol.FULL_FRAME_STATUS_SAMPLE_INTERVAL)
+                if item._full_frame_status_response_required(frame)
+            ]
+            self.assertEqual(len(due), 1)
+            due_by_frame.setdefault(due[0], []).append(logical_id)
+
+        self.assertEqual(len(due_by_frame), 5)
+        self.assertTrue(all(len(receivers) == 1 for receivers in due_by_frame.values()))
+
+    def test_single_receiver_default_sequence_remains_monotonic_and_validated(self):
+        item = _controller(envelope=True)
+        self.assertEqual(item._claim_full_frame_sequence(None), 0)
+        self.assertEqual(item._claim_full_frame_sequence(None), 1)
+        self.assertEqual(item._claim_full_frame_sequence(7), 7)
+        self.assertEqual(item._claim_full_frame_sequence(None), 8)
+        for invalid in (-1, 1.5, True, "9"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, "non-negative integer"):
+                    item._claim_full_frame_sequence(invalid)
+
+    def test_aligned_full_frame_uses_writebytes2_between_status_samples(self):
+        item = _controller(envelope=True)
+        item.logical_device_id = 0
+        item._refresh_configuration = lambda: None
+        frame = np.zeros((8 * 138, 3), dtype=np.uint8)
+
+        item.set_all_pixels(frame)
+        item.set_all_pixels(frame)
+
+        self.assertEqual(len(item.spi.response_packets), 1)
+        self.assertEqual(len(item.spi.write_only_packets), 1)
+        self.assertEqual(item._full_frame_transfers, 2)
+        self.assertEqual(item._full_frame_status_transfers, 1)
+        self.assertEqual(item._full_frame_status_samples, 1)
+        self.assertEqual(item._full_frame_status_sample_misses, 0)
+        self.assertEqual(item._full_frame_write_only_transfers, 1)
+        self.assertEqual(
+            item._full_frame_status_transfers
+            + item._full_frame_write_only_transfers,
+            item._full_frame_transfers,
+        )
+
+    def test_tail_scheduled_sample_uses_status_query_then_write_only_frame(self):
+        item = _controller(envelope=True)
+        item.logical_device_id = 4
+        item.strip_count = 1
+        item.total_leds = 138
+        item._frame_packet = bytearray(1 + 138 * 3 + protocol.CRC_BYTES)
+        item._aligned_frame_packet = bytearray(424)
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+        item._refresh_configuration = lambda: None
+        item._update_receiver_status = types.MethodType(
+            protocol.LEDController._update_receiver_status, item
+        )
+        item.spi.miso_responses = [_status_v6(20, aligned=True)]
+
+        item.set_all_pixels(
+            np.zeros((138, 3), dtype=np.uint8),
+            wall_frame_sequence=102,
+        )
+        item.set_all_pixels(
+            np.zeros((138, 3), dtype=np.uint8),
+            wall_frame_sequence=103,
+        )
+
+        self.assertEqual(len(item.spi.response_packets), 1)
+        self.assertEqual(len(item.spi.response_packets[0]), 1224)
+        self.assertEqual(item.spi.response_packets[0][0], protocol.CMD_ALIGNED_ENVELOPE)
+        self.assertEqual(len(item.spi.write_only_packets), 2)
+        self.assertTrue(all(
+            len(packet) == 424 for packet in item.spi.write_only_packets
+        ))
+        self.assertEqual(item._spi_transfers, 3)
+        self.assertEqual(item._full_frame_transfers, 2)
+        self.assertEqual(item._full_frame_status_transfers, 1)
+        self.assertEqual(item._full_frame_status_samples, 1)
+        self.assertEqual(item._full_frame_status_sample_misses, 0)
+        self.assertEqual(item._full_frame_write_only_transfers, 1)
+        self.assertEqual(item._full_frame_frames_since_status_sample, 1)
+        self.assertEqual(item._full_frame_max_status_sample_gap, 1)
+
+    def test_tail_truncated_fallback_is_a_miss_never_a_sample(self):
+        item = _controller(envelope=True)
+        item.logical_device_id = 4
+        item.strip_count = 1
+        item.total_leds = 138
+        item._frame_packet = bytearray(1 + 138 * 3 + protocol.CRC_BYTES)
+        item._aligned_frame_packet = bytearray(424)
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V6
+        item._refresh_configuration = lambda: None
+        item._update_receiver_status = types.MethodType(
+            protocol.LEDController._update_receiver_status, item
+        )
+        item.spi.miso_responses = [
+            _status_v6(20, aligned=True)[:424]
+        ]
+
+        item.set_all_pixels(
+            np.zeros((138, 3), dtype=np.uint8),
+            wall_frame_sequence=102,
+        )
+
+        self.assertEqual(item._full_frame_transfers, 1)
+        self.assertEqual(item._full_frame_status_transfers, 1)
+        self.assertEqual(item._full_frame_status_samples, 0)
+        self.assertEqual(item._full_frame_status_sample_misses, 1)
+        self.assertEqual(item._full_frame_write_only_transfers, 0)
+        self.assertEqual(item._full_frame_frames_since_status_sample, 1)
+        self.assertEqual(item._full_frame_max_status_sample_gap, 1)
+        self.assertEqual(len(item.spi.write_only_packets), 1)
+
+    def test_split_capacity_falls_back_for_broad_but_keeps_tail_fast_path(self):
+        broad = _controller(envelope=True)
+        broad._spidev_buffer_size = 3319
+        broad._refresh_configuration = lambda: None
+        broad.set_all_pixels(
+            np.zeros((8 * 138, 3), dtype=np.uint8), wall_frame_sequence=1
+        )
+
+        tail = _controller(envelope=True)
+        tail.strip_count = 1
+        tail.total_leds = 138
+        tail._frame_packet = bytearray(1 + 138 * 3 + protocol.CRC_BYTES)
+        tail._aligned_frame_packet = bytearray(424)
+        tail._spidev_buffer_size = 3319
+        tail._refresh_configuration = lambda: None
+        tail.set_all_pixels(
+            np.zeros((138, 3), dtype=np.uint8), wall_frame_sequence=1
+        )
+
+        self.assertEqual(len(broad.spi.response_packets), 1)
+        self.assertEqual(broad.spi.write_only_packets, [])
+        self.assertFalse(broad._full_frame_write_only_supported())
+        self.assertEqual(broad._full_frame_status_transfers, 1)
+        self.assertEqual(len(tail.spi.response_packets), 0)
+        self.assertEqual(len(tail.spi.write_only_packets), 1)
+        self.assertTrue(tail._full_frame_write_only_supported())
+        self.assertEqual(tail._full_frame_write_only_transfers, 1)
+
+    def test_unavailable_or_invalid_capacity_uses_one_full_duplex_transfer(self):
+        for capacity in (None, 0, -1, "4096"):
+            with self.subTest(capacity=capacity):
+                item = _controller(envelope=True)
+                item._spidev_buffer_size = capacity
+                item._refresh_configuration = lambda: None
+                item.set_all_pixels(
+                    np.zeros((8 * 138, 3), dtype=np.uint8),
+                    wall_frame_sequence=1,
+                )
+                self.assertEqual(len(item.spi.packets), 1)
+                self.assertEqual(len(item.spi.response_packets), 1)
+                self.assertEqual(item.spi.write_only_packets, [])
+                self.assertEqual(item._full_frame_status_transfers, 1)
+                self.assertEqual(item._full_frame_write_only_transfers, 0)
+
+    def test_fresh_status_samples_are_subset_and_stale_or_invalid_are_misses(self):
+        item = _controller(envelope=True)
+        item._refresh_configuration = lambda: None
+        item._update_receiver_status = types.MethodType(
+            protocol.LEDController._update_receiver_status, item
+        )
+        frame = np.zeros((8 * 138, 3), dtype=np.uint8)
+        fresh = bytes(_status_v3(20, aligned=True))
+        item.spi.miso_responses = [
+            bytes(3320),
+            fresh[:100],
+            fresh + bytes(3320 - len(fresh)),
+            fresh + bytes(3320 - len(fresh)),
+        ]
+
+        item.set_all_pixels(frame, wall_frame_sequence=0)
+        item.set_all_pixels(frame, wall_frame_sequence=1)
+        item.set_all_pixels(frame, wall_frame_sequence=128)
+        item.set_all_pixels(frame, wall_frame_sequence=256)
+        item.set_all_pixels(frame, wall_frame_sequence=384)
+
+        self.assertEqual(item._full_frame_transfers, 5)
+        self.assertEqual(item._full_frame_status_transfers, 4)
+        self.assertEqual(item._full_frame_status_samples, 1)
+        self.assertEqual(item._full_frame_status_sample_misses, 3)
+        self.assertEqual(item._full_frame_write_only_transfers, 1)
+        self.assertEqual(item._full_frame_frames_since_status_sample, 1)
+        self.assertEqual(item._full_frame_max_status_sample_gap, 3)
+        self.assertEqual(
+            item._full_frame_status_transfers
+            + item._full_frame_write_only_transfers,
+            item._full_frame_transfers,
+        )
+
+    def test_missing_writebytes2_falls_back_to_one_full_duplex_transfer(self):
+        item = _controller(envelope=True)
+        item.spi.writebytes2 = None
+        item._refresh_configuration = lambda: None
+        item._full_frame_transfers = 1
+        item._full_frame_status_transfers = 1
+        item._full_frame_status_samples = 1
+        item.set_all_pixels(
+            np.zeros((8 * 138, 3), dtype=np.uint8), wall_frame_sequence=1
+        )
+
+        self.assertEqual(len(item.spi.packets), 1)
+        self.assertEqual(len(item.spi.response_packets), 1)
+        self.assertEqual(item._spi_transfers, 1)
+        self.assertEqual(item._frames_sent, 1)
+        self.assertEqual(item._full_frame_transfers, 2)
+        self.assertEqual(item._full_frame_status_transfers, 2)
+        self.assertEqual(item._full_frame_status_samples, 2)
+        self.assertEqual(item._full_frame_write_only_transfers, 0)
+        self.assertFalse(item._writebytes2_supported)
+        self.assertTrue(item._last_transfer_captured_response)
+
+    def test_unsupported_writebytes2_falls_back_without_duplicate_or_error(self):
+        item = _controller(envelope=True)
+        attempts = []
+
+        def unsupported(_packet):
+            attempts.append(True)
+            raise NotImplementedError("buffer writes unavailable")
+
+        item.spi.writebytes2 = unsupported
+        item._refresh_configuration = lambda: None
+        item._full_frame_transfers = 1
+        item._full_frame_status_transfers = 1
+        item._full_frame_status_samples = 1
+        item.set_all_pixels(
+            np.zeros((8 * 138, 3), dtype=np.uint8), wall_frame_sequence=1
+        )
+
+        self.assertEqual(attempts, [True])
+        self.assertEqual(len(item.spi.packets), 1)
+        self.assertEqual(len(item.spi.response_packets), 1)
+        self.assertEqual(item._spi_transfers, 1)
+        self.assertEqual(item._frames_sent, 1)
+        self.assertEqual(item._full_frame_transfers, 2)
+        self.assertEqual(item._full_frame_status_transfers, 2)
+        self.assertEqual(item._full_frame_status_samples, 2)
+        self.assertEqual(item._full_frame_write_only_transfers, 0)
+        self.assertEqual(item._errors, 0)
+        self.assertFalse(item._writebytes2_supported)
+
+    def test_ambiguous_writebytes2_io_error_is_not_retried(self):
+        item = _controller(envelope=True)
+        attempts = []
+
+        def failed_ioctl(_packet):
+            attempts.append(True)
+            raise OSError("transfer failed")
+
+        item.spi.writebytes2 = failed_ioctl
+        with self.assertRaisesRegex(OSError, "transfer failed"):
+            item._xfer_packet(
+                item._frame_packet,
+                1 + 8 * 138 * 3,
+                response_required=False,
+            )
+
+        self.assertEqual(attempts, [True])
+        self.assertEqual(item.spi.response_packets, [])
+        self.assertEqual(item._spi_transfers, 1)
+        self.assertEqual(item._errors, 1)
 
     def test_controller_rejects_oversized_semantic_payload_before_io(self):
         item = _controller(envelope=True)

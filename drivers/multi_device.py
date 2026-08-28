@@ -408,6 +408,7 @@ class MultiDeviceLEDController:
             offset * leds_per_strip for offset in self.receiver_global_strip_offsets
         )
         self._logical_frames_sent = 0
+        self._logical_wall_frame_sequence = 0
         self._transport_lock = threading.RLock()
         self._local_background_active = False
         self._local_background_context_digest = None
@@ -1845,26 +1846,50 @@ class MultiDeviceLEDController:
 
         return device_frames
     
-    def _send_to_device(self, device_id: int, colors: List[Tuple[int, int, int]]):
+    def _claim_logical_wall_frame_sequence(self):
+        """Reserve one sequence shared by every receiver send for a wall frame."""
+        sequence = getattr(self, "_logical_wall_frame_sequence", 0)
+        self._logical_wall_frame_sequence = sequence + 1
+        return sequence
+
+    def _send_to_device(
+        self,
+        device_id: int,
+        colors: List[Tuple[int, int, int]],
+        wall_frame_sequence=None,
+    ):
         """Send frame data to a specific device"""
         try:
-            self.devices[device_id].set_all_pixels(colors)
+            if wall_frame_sequence is None:
+                self.devices[device_id].set_all_pixels(colors)
+            else:
+                self.devices[device_id].set_all_pixels(
+                    colors, wall_frame_sequence=wall_frame_sequence
+                )
             return True
         except Exception as e:
             if self.debug:
                 print(f"✗ Error sending to device {device_id}: {e}")
             return False
 
-    def _send_bus_frames(self, device_ids, device_frames):
+    def _send_bus_frames(
+        self, device_ids, device_frames, wall_frame_sequence=None
+    ):
         """Serialize chip selects on one bus while independent buses overlap."""
         successful = True
         for device_id in device_ids:
             successful = self._send_to_device(
-                device_id, device_frames[device_id]
+                device_id, device_frames[device_id], wall_frame_sequence
             ) and successful
         return successful
 
-    def _send_bus_partial(self, device_ids, device_frames, device_ranges):
+    def _send_bus_partial(
+        self,
+        device_ids,
+        device_frames,
+        device_ranges,
+        wall_frame_sequence=None,
+    ):
         for device_id in device_ids:
             ranges = device_ranges.get(device_id)
             if not ranges:
@@ -1872,7 +1897,15 @@ class MultiDeviceLEDController:
             try:
                 dirty_pixels = sum(end - start for start, end in ranges)
                 if dirty_pixels > self.receiver_pixel_counts[device_id] * 0.35:
-                    self.devices[device_id].set_all_pixels(device_frames[device_id])
+                    if wall_frame_sequence is None:
+                        self.devices[device_id].set_all_pixels(
+                            device_frames[device_id]
+                        )
+                    else:
+                        self.devices[device_id].set_all_pixels(
+                            device_frames[device_id],
+                            wall_frame_sequence=wall_frame_sequence,
+                        )
                 else:
                     self.devices[device_id].set_partial_frame(device_frames[device_id], ranges)
             except Exception as exc:
@@ -1895,11 +1928,17 @@ class MultiDeviceLEDController:
             # Split frame into per-device chunks. A complete SET_ALL is the
             # protocol's universal takeover path; no local STOP is required.
             device_frames = self._split_frame(colors)
+            wall_frame_sequence = self._claim_logical_wall_frame_sequence()
             successful = True
 
             if self._executor is not None:
                 futures = [
-                    self._executor.submit(self._send_bus_frames, device_ids, device_frames)
+                    self._executor.submit(
+                        self._send_bus_frames,
+                        device_ids,
+                        device_frames,
+                        wall_frame_sequence,
+                    )
                     for device_ids in self._devices_by_bus.values()
                 ]
                 for future in futures:
@@ -1907,7 +1946,9 @@ class MultiDeviceLEDController:
             else:
                 # Send to devices sequentially
                 for device_id, device_colors in enumerate(device_frames):
-                    successful = self._send_to_device(device_id, device_colors) and successful
+                    successful = self._send_to_device(
+                        device_id, device_colors, wall_frame_sequence
+                    ) and successful
             self._logical_frames_sent += 1
             if successful and (
                 was_local or was_native or had_sparse_authority
@@ -2034,6 +2075,7 @@ class MultiDeviceLEDController:
 
         with self._controller_lock():
             device_frames = self._split_frame(colors)
+            wall_frame_sequence = self._claim_logical_wall_frame_sequence()
             device_ranges = {}
             for device_id in range(self.num_devices):
                 ranges = self._receiver_local_dirty_ranges(
@@ -2049,6 +2091,7 @@ class MultiDeviceLEDController:
                         device_ids,
                         device_frames,
                         device_ranges,
+                        wall_frame_sequence,
                     )
                     for device_ids in self._devices_by_bus.values()
                 ]
@@ -2056,7 +2099,12 @@ class MultiDeviceLEDController:
                     future.result()
             else:
                 for device_ids in self._devices_by_bus.values():
-                    self._send_bus_partial(device_ids, device_frames, device_ranges)
+                    self._send_bus_partial(
+                        device_ids,
+                        device_frames,
+                        device_ranges,
+                        wall_frame_sequence,
+                    )
             self._logical_frames_sent += 1
     
     def set_pixel(self, pixel: int, r: int, g: int, b: int):
@@ -3166,6 +3214,14 @@ class MultiDeviceLEDController:
         transport_envelope_bytes_sent = 0
         transport_padding_bytes_sent = 0
         full_frame_transfers = 0
+        full_frame_status_transfers = 0
+        full_frame_status_samples = 0
+        full_frame_status_sample_misses = 0
+        full_frame_write_only_transfers = 0
+        full_frame_frames_since_status_sample = 0
+        full_frame_max_status_sample_gap = 0
+        spidev_buffer_sizes = []
+        full_frame_write_only_support = []
         full_frame_semantic_bytes_sent = 0
         full_frame_wire_bytes_sent = 0
         transport_envelope_devices = 0
@@ -3219,6 +3275,32 @@ class MultiDeviceLEDController:
             )
             full_frame_transfers += int(
                 stats.get('full_frame_transfers', 0) or 0
+            )
+            full_frame_status_transfers += int(
+                stats.get('full_frame_status_transfers', 0) or 0
+            )
+            full_frame_status_samples += int(
+                stats.get('full_frame_status_samples', 0) or 0
+            )
+            full_frame_status_sample_misses += int(
+                stats.get('full_frame_status_sample_misses', 0) or 0
+            )
+            full_frame_write_only_transfers += int(
+                stats.get('full_frame_write_only_transfers', 0) or 0
+            )
+            full_frame_frames_since_status_sample = max(
+                full_frame_frames_since_status_sample,
+                int(stats.get('full_frame_frames_since_status_sample', 0) or 0),
+            )
+            full_frame_max_status_sample_gap = max(
+                full_frame_max_status_sample_gap,
+                int(stats.get('full_frame_max_status_sample_gap', 0) or 0),
+            )
+            spidev_buffer_size = stats.get('spidev_buffer_size')
+            if type(spidev_buffer_size) is int and spidev_buffer_size > 0:
+                spidev_buffer_sizes.append(spidev_buffer_size)
+            full_frame_write_only_support.append(
+                stats.get('full_frame_write_only_supported') is True
             )
             full_frame_semantic_bytes_sent += int(
                 stats.get('full_frame_semantic_bytes_sent', 0) or 0
@@ -3332,6 +3414,27 @@ class MultiDeviceLEDController:
                 'transport_envelope_bytes_sent': transport_envelope_bytes_sent,
                 'transport_padding_bytes_sent': transport_padding_bytes_sent,
                 'full_frame_transfers': full_frame_transfers,
+                'full_frame_status_transfers': full_frame_status_transfers,
+                'full_frame_status_samples': full_frame_status_samples,
+                'full_frame_status_sample_misses': (
+                    full_frame_status_sample_misses
+                ),
+                'full_frame_write_only_transfers': (
+                    full_frame_write_only_transfers
+                ),
+                'full_frame_frames_since_status_sample': (
+                    full_frame_frames_since_status_sample
+                ),
+                'full_frame_max_status_sample_gap': (
+                    full_frame_max_status_sample_gap
+                ),
+                'spidev_buffer_size': (
+                    min(spidev_buffer_sizes) if spidev_buffer_sizes else None
+                ),
+                'full_frame_write_only_supported': (
+                    bool(full_frame_write_only_support)
+                    and all(full_frame_write_only_support)
+                ),
                 'full_frame_semantic_bytes_sent': full_frame_semantic_bytes_sent,
                 'full_frame_wire_bytes_sent': full_frame_wire_bytes_sent,
                 'transport_envelope_devices': transport_envelope_devices,

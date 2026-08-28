@@ -31,6 +31,11 @@ PERF-01 passes only when all of the following hold in one observation window:
   to 3,320 aligned wire bytes per frame, and logical receiver 4 from 415
   semantic bytes to 424 aligned wire bytes per frame, so status/SHOW/partial
   traffic cannot substitute for full-frame stress;
+- full-frame response sampling remains auditable while the write-only fast path
+  is active: sampled-response transfers plus write-only transfers equal every
+  full-frame transfer, successfully parsed samples advance, sample-miss deltas
+  stay zero, current and lifetime maximum sample gaps stay within 256 frames,
+  and every selected spidev buffer can hold its receiver's maximum wire frame;
 - every sampled Raspberry Pi rolling window reports ordered mean, p95, p99, and
   maximum latency; the retained values are the worst seen anywhere in the
   capture, p95 does not exceed the `6.67 ms` frame period, and the minimum
@@ -62,6 +67,25 @@ The helper is observation-only apart from a receiver status query and the
 atomic evidence-file replacement. It never starts, stops, or reconfigures the
 wall. A failed capture leaves the previous evidence file untouched. A fresh
 Composer Check loads the strict envelope only when its binding digest matches.
+The retained target-evidence envelope is schema v2 and includes a strict
+`transport` proof: exact aggregate and logical-device `0..4` full-frame deltas,
+the 3,320/424-byte expected wire sizes, final sample-gap gauges, selected spidev
+buffer capacities, and write-only fast-path support. Aggregate additive values
+must equal the receiver sums, while gap, capacity, and support aggregates must
+equal the receiver maximum, minimum, and conjunction respectively. Schema-v1,
+omitted, malformed, unknown, reset, or internally drifted transport evidence is
+rejected rather than treated as a compatible receipt.
+
+The same envelope is scoped to one immutable app release, one controller
+process session and state revision, and the exact active controller runtime
+identity. The activation receipt's requested, normalized, and observed
+identities must be unanimous, and its post-activation revision must equal the
+live controller revision at both capture boundaries. The receiver evidence
+carries the canonical digest of the normalized transport proof, and activation
+qualification-record schema v2 makes that digest mandatory. A deploy,
+controller restart, state mutation, runtime-identity change, missing identity
+field, or digest mismatch invalidates the retained target evidence and requires
+a fresh capture; evidence from release A can never qualify release B.
 
 The aligned transport is necessary but not itself PERF-01 integrity evidence.
 [Espressif's ESP32-S3 SPI-slave DMA contract](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/spi_slave.html)

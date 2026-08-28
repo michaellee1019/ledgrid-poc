@@ -154,6 +154,29 @@ wire bytes (a 3,313-byte semantic command plus the versioned length header, one
 zero pad byte, and two CRC bytes), or 1,328 us at 20 MHz. The four full receivers
 plus the one-strip tail clock 13,704 bytes, or 5,481.6 us of aggregate bus time
 when treated serially; the two independent SPI buses overlap in the live host.
+For aligned streaming the Host avoids allocating an unused multi-kilobyte MISO
+list on most `SET_ALL` transactions. It retains one staggered fresh sample per
+receiver every 128 shared wall-frame sequences and never schedules more than one
+receiver sample on a wall frame. Receivers 0-3 capture that sample in-band on
+their 3,320-byte frame. Receiver 4's 424-byte frame cannot clock the 1,216-byte
+status-v6 snapshot, so its scheduled phase adds one 1,224-byte aligned status
+query before the write-only tail frame: 489.6 us at 20 MHz, once per 128 wall
+frames. Explicit status refreshes and all control commands also remain full
+duplex. Before using `writebytes2`, the Host proves the entire selected wire
+packet fits the positive kernel spidev buffer capacity; otherwise the frame
+falls back once to full duplex and may therefore receive an additional
+unscheduled response. Raw full-duplex, fresh-sample, sample-miss,
+response-skipped, current-gap, maximum-gap, capacity, and support telemetry
+remain visible per receiver and in the aggregate. This scheduling optimization
+does not relax any CRC, status-refresh, display-rate, or mailbox acceptance
+threshold.
+
+The Host scheduler also keeps 0.5% cadence headroom below 200 FPS, wakes 2 ms
+before an absolute deadline, yields the GIL while presentation workers finish,
+and bounds busy spinning to the final 0.5 ms. This makes 150 FPS a minimum
+cadence despite coarse timer wakes without allowing unbounded catch-up or
+changing the configured target and p95 budget.
+
 The nominal 138-pixel WS2812 transaction is 4,440 us including the 300 us reset.
 The installed target-200 run measured 490 us encode p95, 4,442 us display p95,
 and 9,362 accepted and displayed frames over 60.279 seconds: 155.31 FPS with no

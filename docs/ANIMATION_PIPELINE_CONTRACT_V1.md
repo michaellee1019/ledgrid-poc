@@ -240,6 +240,33 @@ enabled count before health acceptance, preserving the firmware-first rolling
 order. The outer CRC replaces, rather than nests, the legacy command CRC;
 existing valid/invalid CRC counters retain their integrity meaning.
 
+After envelope negotiation settles, ordinary full-frame streaming may use the
+buffer-protocol `writebytes2` path because `SET_ALL` has no same-transaction
+acknowledgement to consume. The Host must first read a positive kernel
+`/sys/module/spidev/parameters/bufsiz` value and prove that the complete selected
+wire packet fits; otherwise that frame uses one full-duplex transfer because
+`writebytes2` may split an oversized write and release chip select between
+pieces. Every explicit status query and every control command remains full
+duplex. The five installed receivers retain staggered full-frame status samples
+at distinct phases of one shared 128-wall-frame sequence, so no wall frame
+schedules more than one ordinary sample and each receiver is scheduled every
+0.853 seconds at 150 FPS. Receivers 0-3 capture the status snapshot in-band on
+their 3,320-byte SET_ALL transfer. Receiver 4's 424-byte wire frame cannot hold
+the 1,216-byte status-v6 snapshot, so its scheduled phase first clocks one
+status-capable query and then keeps the SET_ALL write-only; truncation is never
+counted as a successful sample. A receiver without proven write-only support may
+fall back to full duplex on an otherwise unsampled frame. Explicit acceptance
+status refreshes remain authoritative and continue to observe the receiver-owned
+CRC, packet, mailbox, and display counters. Per-device and aggregate
+`full_frame_status_transfers` and `full_frame_write_only_transfers` counters must
+sum to `full_frame_transfers`. Fresh `full_frame_status_samples` are a subset of
+the raw full-duplex transfers; malformed, truncated, and stale snapshots advance
+`full_frame_status_sample_misses`, while current and maximum frame-gap gauges
+prove freshness. `spidev_buffer_size` exposes the exact capacity proof and
+`full_frame_write_only_supported` exposes whether the selected full-frame wire
+size is safe. An unavailable buffer-write API falls back to one full-duplex
+transfer, while an ambiguous I/O failure is never retried blindly.
+
 The live base states are `StartupFallback=0`, `LocalBackground=1`, and
 `HostFullScene=2`. Foreground is `Cleared=0` in this phase and maintenance is
 `Inactive=0`. `PING`, `CONFIG`, `STATUS_QUERY`, brightness, partial RGB,

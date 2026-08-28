@@ -18,7 +18,14 @@ if "spidev" not in sys.modules:
     sys.modules["spidev"] = spidev_stub
 
 from animation.core.base import AnimationBase, RenderedFrame
-from animation.core.manager import AnimationManager, _plan_frame_deadline
+from animation.core.manager import (
+    FRAME_DEADLINE_COARSE_WINDOW_SECONDS,
+    FRAME_DEADLINE_SPIN_SECONDS,
+    FRAME_SCHEDULER_HEADROOM_RATIO,
+    AnimationManager,
+    _plan_frame_deadline,
+    _wait_for_frame_deadline,
+)
 from animation.plugins.rainbow import RainbowAnimation
 from animation.plugins.solid import SolidColorAnimation
 from drivers.multi_device import MultiDeviceLEDController
@@ -75,6 +82,84 @@ class FrameContractTests(unittest.TestCase):
         self.assertGreaterEqual(150 / elapsed, 149.9)
         relative_elapsed = 150 * ((1.0 / target_fps) + overshoot)
         self.assertLess(150 / relative_elapsed, 142.0)
+
+    def test_internal_headroom_runs_inside_configured_frame_budget(self):
+        deadline, sleep_for = _plan_frame_deadline(
+            None,
+            None,
+            frame_started=0.0,
+            work_finished=0.002,
+            target_fps=150,
+        )
+
+        expected = (1.0 - FRAME_SCHEDULER_HEADROOM_RATIO) / 150
+        self.assertAlmostEqual(deadline, expected)
+        self.assertAlmostEqual(sleep_for, expected - 0.002)
+        self.assertLess(deadline, 1.0 / 150)
+
+    def test_internal_headroom_never_exceeds_200_fps_ceiling(self):
+        deadline, sleep_for = _plan_frame_deadline(
+            None,
+            None,
+            frame_started=1.0,
+            work_finished=1.001,
+            target_fps=200,
+        )
+
+        self.assertAlmostEqual(deadline, 1.005)
+        self.assertAlmostEqual(sleep_for, 0.004)
+
+    def test_precision_wait_coarse_sleeps_then_spins_at_boundary(self):
+        deadline = 2.0
+        readings = iter((
+            1.997,
+            1.9996,
+            1.9998,
+            1.99995,
+            2.000001,
+        ))
+        sleeps = []
+
+        observed = _wait_for_frame_deadline(
+            deadline,
+            clock=lambda: next(readings),
+            sleeper=sleeps.append,
+        )
+
+        self.assertAlmostEqual(
+            sleeps[0], 0.003 - FRAME_DEADLINE_COARSE_WINDOW_SECONDS
+        )
+        self.assertGreaterEqual(observed, deadline)
+        self.assertLess(observed - deadline, 0.00001)
+
+    def test_precision_wait_does_not_sleep_or_spin_when_behind(self):
+        calls = []
+
+        observed = _wait_for_frame_deadline(
+            2.0,
+            clock=lambda: calls.append(True) or 2.001,
+            sleeper=lambda _seconds: self.fail("late frame must not sleep"),
+        )
+
+        self.assertEqual(observed, 2.001)
+        self.assertEqual(calls, [True])
+
+    def test_precision_wait_yields_between_coarse_and_spin_windows(self):
+        readings = iter((0.0, 0.0015, 0.0026, 0.003001))
+        sleeps = []
+
+        observed = _wait_for_frame_deadline(
+            0.003,
+            clock=lambda: next(readings),
+            sleeper=sleeps.append,
+        )
+
+        self.assertEqual(len(sleeps), 2)
+        self.assertAlmostEqual(
+            sleeps[0], 0.003 - FRAME_DEADLINE_COARSE_WINDOW_SECONDS
+        )
+        self.assertEqual(sleeps[1], 0)
+        self.assertGreaterEqual(observed, 0.003)
 
     def test_absolute_deadlines_skip_expired_periods_without_bursting(self):
         period = 1.0 / 150
@@ -510,7 +595,7 @@ class MultiDevicePartialTests(unittest.TestCase):
         overlapped = threading.Event()
 
         class BlockingDevice:
-            def set_all_pixels(self, _colors):
+            def set_all_pixels(self, _colors, *, wall_frame_sequence=None):
                 try:
                     started.wait(timeout=0.5)
                     overlapped.set()
@@ -545,7 +630,7 @@ class MultiDevicePartialTests(unittest.TestCase):
             def __init__(self, index):
                 self.index = index
 
-            def set_all_pixels(self, _colors):
+            def set_all_pixels(self, _colors, *, wall_frame_sequence=None):
                 order.append(self.index)
 
         controller = MultiDeviceLEDController.__new__(MultiDeviceLEDController)

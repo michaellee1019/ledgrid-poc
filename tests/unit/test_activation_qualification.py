@@ -10,6 +10,7 @@ from animation.core.activation_qualification import (
     QualificationValidationError,
     activation_qualification_binding_digest,
     activation_qualification_record_digest,
+    canonical_json_sha256,
     evaluate_activation_qualification,
     installation_qualification_budget_digest,
     load_installation_qualification_budget,
@@ -20,6 +21,9 @@ from animation.core.activation_qualification import (
 
 
 NOW_MS = 2_000_000
+RELEASE_ID = "e" * 64
+SESSION_ID = "f" * 32
+CURRENT_IDENTITY_DIGEST = "9" * 64
 
 
 def _calibrated_budget() -> dict:
@@ -88,8 +92,9 @@ def _evidence(
     *,
     captured_at: int = NOW_MS - 10_000,
     electrical: dict | None = None,
+    transport_digest: str | None = None,
 ) -> dict:
-    return {
+    result = {
         "source": source,
         "binding_digest": binding_digest,
         "captured_at": captured_at,
@@ -103,6 +108,56 @@ def _evidence(
         },
         "electrical": electrical,
     }
+    if source == "receiver":
+        result["transport_digest"] = transport_digest or "1" * 64
+    return result
+
+
+def _target_runtime_identity() -> dict:
+    return {
+        "release_id": RELEASE_ID,
+        "controller_session_id": SESSION_ID,
+        "controller_state_revision": 7,
+        "current_identity_digest": CURRENT_IDENTITY_DIGEST,
+    }
+
+
+def _target_transport() -> dict:
+    devices = []
+    for logical_device in range(5):
+        devices.append({
+            "logical_device": logical_device,
+            "expected_wire_bytes": 3320 if logical_device < 4 else 424,
+            "deltas": {
+                "full_frame_transfers": 1500,
+                "full_frame_status_transfers": 6,
+                "full_frame_status_samples": 6,
+                "full_frame_status_sample_misses": 0,
+                "full_frame_write_only_transfers": 1494,
+            },
+            "final": {
+                "full_frame_frames_since_status_sample": logical_device,
+                "full_frame_max_status_sample_gap": 15,
+                "spidev_buffer_size": 4096,
+                "full_frame_write_only_supported": True,
+            },
+        })
+    return {
+        "aggregate": {
+            "expected_wire_bytes": 3320,
+            "deltas": {
+                field: sum(device["deltas"][field] for device in devices)
+                for field in devices[0]["deltas"]
+            },
+            "final": {
+                "full_frame_frames_since_status_sample": 4,
+                "full_frame_max_status_sample_gap": 15,
+                "spidev_buffer_size": 4096,
+                "full_frame_write_only_supported": True,
+            },
+        },
+        "devices": devices,
+    }
 
 
 def _record(*, browser_estimate: bool = True) -> dict:
@@ -115,7 +170,7 @@ def _record(*, browser_estimate: bool = True) -> dict:
     )
     return {
         "schema": QUALIFICATION_RECORD_SCHEMA,
-        "schema_version": 1,
+        "schema_version": 2,
         "revision": 3,
         "qualification_version": "portable-v1",
         "binding": binding,
@@ -290,6 +345,7 @@ class ActivationQualificationTests(unittest.TestCase):
     def test_source_labels_are_unique_and_control_electrical_authority(self) -> None:
         duplicate = _record()
         duplicate["evidence"][2]["source"] = "browser"
+        duplicate["evidence"][2].pop("transport_digest")
         with self.assertRaisesRegex(QualificationValidationError, "duplicate sources"):
             normalize_activation_qualification_record(duplicate)
 
@@ -351,18 +407,26 @@ class ActivationQualificationTests(unittest.TestCase):
     def test_target_evidence_envelope_requires_one_exact_simultaneous_pair(self) -> None:
         binding_digest = activation_qualification_binding_digest(_binding())
         captured_at = NOW_MS - 1_000
+        transport = _target_transport()
         envelope = {
             "schema": "ledgrid.target-qualification-evidence",
-            "schema_version": 1,
+            "schema_version": 2,
             "revision": 1,
             "binding_digest": binding_digest,
             "captured_at": captured_at,
             "environment": "Raspberry Pi and exact installed five-receiver wall",
+            "runtime_identity": _target_runtime_identity(),
+            "transport": transport,
             "evidence": [
                 _evidence(
                     "controller_pi", binding_digest, captured_at=captured_at,
                 ),
-                _evidence("receiver", binding_digest, captured_at=captured_at),
+                _evidence(
+                    "receiver",
+                    binding_digest,
+                    captured_at=captured_at,
+                    transport_digest=canonical_json_sha256(transport),
+                ),
             ],
         }
         normalized = normalize_target_qualification_evidence(envelope)
@@ -370,6 +434,7 @@ class ActivationQualificationTests(unittest.TestCase):
             [item["source"] for item in normalized["evidence"]],
             ["controller_pi", "receiver"],
         )
+        self.assertEqual(len(normalized["transport"]["devices"]), 5)
 
         for label, mutate in (
             ("missing receiver", lambda value: value["evidence"].pop()),
@@ -391,6 +456,278 @@ class ActivationQualificationTests(unittest.TestCase):
                 mutate(changed)
                 with self.assertRaises(QualificationValidationError):
                     normalize_target_qualification_evidence(changed)
+
+    def test_target_evidence_v2_transport_is_strict_and_self_consistent(self) -> None:
+        binding_digest = activation_qualification_binding_digest(_binding())
+        captured_at = NOW_MS - 1_000
+        transport = _target_transport()
+        envelope = {
+            "schema": "ledgrid.target-qualification-evidence",
+            "schema_version": 2,
+            "revision": 1,
+            "binding_digest": binding_digest,
+            "captured_at": captured_at,
+            "environment": "Raspberry Pi and exact installed five-receiver wall",
+            "runtime_identity": _target_runtime_identity(),
+            "transport": transport,
+            "evidence": [
+                _evidence("controller_pi", binding_digest, captured_at=captured_at),
+                _evidence(
+                    "receiver",
+                    binding_digest,
+                    captured_at=captured_at,
+                    transport_digest=canonical_json_sha256(transport),
+                ),
+            ],
+        }
+        reordered = deepcopy(envelope)
+        reordered["transport"]["devices"].reverse()
+        self.assertEqual(
+            [
+                item["logical_device"]
+                for item in normalize_target_qualification_evidence(reordered)[
+                    "transport"
+                ]["devices"]
+            ],
+            list(range(5)),
+        )
+
+        mutations = (
+            ("v1", lambda value: value.__setitem__("schema_version", 1)),
+            ("omission", lambda value: value.pop("transport")),
+            (
+                "unknown",
+                lambda value: value["transport"].__setitem__("legacy", {}),
+            ),
+            (
+                "unknown nested",
+                lambda value: value["transport"]["devices"][0]["final"].__setitem__(
+                    "legacy", 1
+                ),
+            ),
+            (
+                "missing nested",
+                lambda value: value["transport"]["devices"][0]["deltas"].pop(
+                    "full_frame_status_samples"
+                ),
+            ),
+            (
+                "wrong roster",
+                lambda value: value["transport"]["devices"].pop(),
+            ),
+            (
+                "wrong logical id",
+                lambda value: value["transport"]["devices"][1].__setitem__(
+                    "logical_device", 2
+                ),
+            ),
+            (
+                "wrong wire size",
+                lambda value: value["transport"]["devices"][4].__setitem__(
+                    "expected_wire_bytes", 3320
+                ),
+            ),
+            (
+                "partition drift",
+                lambda value: value["transport"]["devices"][0]["deltas"].__setitem__(
+                    "full_frame_write_only_transfers", 1493
+                ),
+            ),
+            (
+                "malformed counter",
+                lambda value: value["transport"]["devices"][0]["deltas"].__setitem__(
+                    "full_frame_transfers", True
+                ),
+            ),
+            (
+                "samples exceed transfers",
+                lambda value: value["transport"]["devices"][0]["deltas"].__setitem__(
+                    "full_frame_status_samples", 7
+                ),
+            ),
+            (
+                "unclassified status transfer",
+                lambda value: value["transport"]["devices"][0]["deltas"].__setitem__(
+                    "full_frame_status_samples", 5
+                ),
+            ),
+            (
+                "zero samples",
+                lambda value: value["transport"]["devices"][0]["deltas"].__setitem__(
+                    "full_frame_status_samples", 0
+                ),
+            ),
+            (
+                "zero write-only",
+                lambda value: value["transport"]["devices"][0]["deltas"].update({
+                    "full_frame_transfers": 6,
+                    "full_frame_write_only_transfers": 0,
+                }),
+            ),
+            (
+                "aggregate drift",
+                lambda value: value["transport"]["aggregate"]["deltas"].__setitem__(
+                    "full_frame_status_samples", 29
+                ),
+            ),
+            (
+                "current exceeds maximum gap",
+                lambda value: value["transport"]["devices"][0]["final"].update({
+                    "full_frame_frames_since_status_sample": 16,
+                    "full_frame_max_status_sample_gap": 15,
+                }),
+            ),
+            (
+                "aggregate final drift",
+                lambda value: value["transport"]["aggregate"]["final"].__setitem__(
+                    "full_frame_frames_since_status_sample", 3
+                ),
+            ),
+            (
+                "sample miss",
+                lambda value: value["transport"]["devices"][0]["deltas"].__setitem__(
+                    "full_frame_status_sample_misses", 1
+                ),
+            ),
+            (
+                "sample gap",
+                lambda value: value["transport"]["devices"][0]["final"].__setitem__(
+                    "full_frame_max_status_sample_gap", 257
+                ),
+            ),
+            (
+                "small buffer",
+                lambda value: value["transport"]["devices"][0]["final"].__setitem__(
+                    "spidev_buffer_size", 3319
+                ),
+            ),
+            (
+                "unsupported",
+                lambda value: value["transport"]["devices"][0]["final"].__setitem__(
+                    "full_frame_write_only_supported", False
+                ),
+            ),
+        )
+        for label, mutate in mutations:
+            with self.subTest(label=label):
+                changed = deepcopy(envelope)
+                mutate(changed)
+                with self.assertRaises(QualificationValidationError):
+                    normalize_target_qualification_evidence(changed)
+
+    def test_target_runtime_identity_and_transport_digest_fail_closed(self) -> None:
+        binding_digest = activation_qualification_binding_digest(_binding())
+        captured_at = NOW_MS - 1_000
+        transport = _target_transport()
+        envelope = {
+            "schema": "ledgrid.target-qualification-evidence",
+            "schema_version": 2,
+            "revision": 1,
+            "binding_digest": binding_digest,
+            "captured_at": captured_at,
+            "environment": "exact target runtime",
+            "runtime_identity": _target_runtime_identity(),
+            "transport": transport,
+            "evidence": [
+                _evidence("controller_pi", binding_digest, captured_at=captured_at),
+                _evidence(
+                    "receiver",
+                    binding_digest,
+                    captured_at=captured_at,
+                    transport_digest=canonical_json_sha256(transport),
+                ),
+            ],
+        }
+        normalized = normalize_target_qualification_evidence(envelope)
+        self.assertEqual(normalized["runtime_identity"], _target_runtime_identity())
+
+        for label, mutate in (
+            ("missing runtime", lambda value: value.pop("runtime_identity")),
+            (
+                "unknown runtime field",
+                lambda value: value["runtime_identity"].__setitem__("legacy", 1),
+            ),
+            (
+                "bad release",
+                lambda value: value["runtime_identity"].__setitem__("release_id", "x"),
+            ),
+            (
+                "bad session",
+                lambda value: value["runtime_identity"].__setitem__(
+                    "controller_session_id", "f" * 31
+                ),
+            ),
+            (
+                "missing revision",
+                lambda value: value["runtime_identity"].pop(
+                    "controller_state_revision"
+                ),
+            ),
+            (
+                "bad revision",
+                lambda value: value["runtime_identity"].__setitem__(
+                    "controller_state_revision", -1
+                ),
+            ),
+            (
+                "bad current identity",
+                lambda value: value["runtime_identity"].__setitem__(
+                    "current_identity_digest", None
+                ),
+            ),
+            (
+                "transport digest mismatch",
+                lambda value: value["evidence"][1].__setitem__(
+                    "transport_digest", "2" * 64
+                ),
+            ),
+        ):
+            with self.subTest(label=label):
+                changed = deepcopy(envelope)
+                mutate(changed)
+                with self.assertRaises(QualificationValidationError):
+                    normalize_target_qualification_evidence(changed)
+
+    def test_receiver_transport_digest_is_bound_into_record_digest(self) -> None:
+        record = _record()
+        receiver = next(
+            item for item in record["evidence"] if item["source"] == "receiver"
+        )
+        first = activation_qualification_record_digest(record)
+
+        changed = deepcopy(record)
+        changed_receiver = next(
+            item for item in changed["evidence"] if item["source"] == "receiver"
+        )
+        changed_receiver["transport_digest"] = "2" * 64
+        self.assertNotEqual(first, activation_qualification_record_digest(changed))
+
+        invalid = deepcopy(record)
+        browser = next(
+            item for item in invalid["evidence"] if item["source"] == "browser"
+        )
+        browser["transport_digest"] = "3" * 64
+        with self.assertRaises(QualificationValidationError):
+            normalize_activation_qualification_record(invalid)
+
+        missing = deepcopy(record)
+        next(
+            item for item in missing["evidence"] if item["source"] == "receiver"
+        ).pop("transport_digest")
+        with self.assertRaises(QualificationValidationError):
+            normalize_activation_qualification_record(missing)
+
+        null_browser = deepcopy(record)
+        next(
+            item for item in null_browser["evidence"] if item["source"] == "browser"
+        )["transport_digest"] = None
+        with self.assertRaises(QualificationValidationError):
+            normalize_activation_qualification_record(null_browser)
+
+        legacy = deepcopy(record)
+        legacy["schema_version"] = 1
+        with self.assertRaises(QualificationValidationError):
+            normalize_activation_qualification_record(legacy)
 
 
 if __name__ == "__main__":

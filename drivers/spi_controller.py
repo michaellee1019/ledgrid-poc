@@ -10,6 +10,7 @@ import argparse
 import binascii
 from dataclasses import replace
 import math
+from pathlib import Path
 import struct
 import spidev
 import sys
@@ -33,6 +34,7 @@ SPI_MODE = 0  # CPOL=0, CPHA=0 - universal mode supported by all Pi SPI buses
 SPI_INTER_FRAME_DELAY = 0.0  # No delay needed - SPI is stable now
 
 MAX_SPI_TRANSFER = 4096
+SPIDEV_BUFFER_SIZE_PATH = Path("/sys/module/spidev/parameters/bufsiz")
 CRC_BYTES = 2
 SPI_DMA_ALIGNMENT_BYTES = 4
 ALIGNED_ENVELOPE_VERSION = 1
@@ -56,6 +58,18 @@ RECEIVER_STATUS_BYTES_V6 = 1216
 # therefore observable after two complete status-query transfers.
 SPI_RESPONSE_QUEUE_DEPTH = 2
 TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS = 3
+# Full-frame streaming does not consume a command acknowledgement, but parsing
+# the several-kilobyte full-duplex response from every SET_ALL forces spidev to
+# materialize thousands of Python integers per receiver and frame.  Keep an
+# ordinary fresh status sample from every receiver at least once per 128 frames.
+# Receivers 0-3 capture it in-band on their broad SET_ALL transaction.  The
+# one-strip tail cannot clock the full status block with its shorter SET_ALL, so
+# its scheduled phase uses one status-length query immediately before the
+# write-only frame.  Other explicit status queries and control commands remain
+# full duplex.  The installed phases are distinct so one wall frame samples at
+# most one receiver.
+FULL_FRAME_STATUS_SAMPLE_INTERVAL = 128
+FULL_FRAME_STATUS_SAMPLE_RECEIVERS = 5
 COMMAND_ACK_MAX_STATUS_QUERIES = 16
 COMMAND_ACK_POLL_INTERVAL_SECONDS = 0.001
 MAX_PIXELS_SET_ALL = (MAX_ALIGNED_SEMANTIC_BYTES - 1) // 3
@@ -111,6 +125,18 @@ def _normalize_global_args(argv):
 def _crc16_ccitt(data):
     """CRC-16/CCITT-FALSE using CPython's native implementation."""
     return binascii.crc_hqx(data, 0xFFFF)
+
+
+def _read_spidev_buffer_size(path=SPIDEV_BUFFER_SIZE_PATH):
+    """Return the proven kernel spidev transfer capacity, or ``None``."""
+    try:
+        value = Path(path).read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        return None
+    if not value.isdecimal():
+        return None
+    capacity = int(value)
+    return capacity if capacity > 0 else None
 
 # Command definitions
 CMD_SET_PIXEL = 0x01
@@ -424,6 +450,11 @@ class LEDController:
             ) from exc
         self.spi.bits_per_word = 8
         self._transport_lock = threading.RLock()
+        # spidev.writebytes2 splits writes larger than the kernel module's
+        # bufsiz across multiple write(2) operations. That would deassert chip
+        # select between pieces, so the fast path is permitted only when this
+        # exact capacity is readable and covers the complete wire packet.
+        self._spidev_buffer_size = _read_spidev_buffer_size()
 
         self.strip_count = strips
         self.leds_per_strip = leds_per_strip
@@ -442,6 +473,12 @@ class LEDController:
         self._transport_envelope_bytes_sent = 0
         self._transport_padding_bytes_sent = 0
         self._full_frame_transfers = 0
+        self._full_frame_status_transfers = 0
+        self._full_frame_status_samples = 0
+        self._full_frame_status_sample_misses = 0
+        self._full_frame_write_only_transfers = 0
+        self._full_frame_frames_since_status_sample = 0
+        self._full_frame_max_status_sample_gap = 0
         self._full_frame_semantic_bytes_sent = 0
         self._full_frame_wire_bytes_sent = 0
         self._crc_bytes_sent = 0
@@ -569,6 +606,10 @@ class LEDController:
         self._transport_envelope_counter_resets = 0
         self._transport_envelope_invalid_resets = 0
         self._transport_envelope_transitions = 0
+        self._writebytes2_supported = None
+        self._last_transfer_captured_response = False
+        self._last_transfer_status_sampled = False
+        self._full_frame_sequence = 0
         self._presentation_commit_context_cache = {}
         self._monotonic_ns = time.monotonic_ns
         self._frame_packet = bytearray(1 + self.total_leds * 3 + CRC_BYTES)
@@ -604,7 +645,7 @@ class LEDController:
         buf[:len(payload_view)] = payload_view
         return self._xfer_packet(buf, len(payload_view))
 
-    def _xfer_packet(self, buf, payload_length):
+    def _xfer_packet(self, buf, payload_length, *, response_required=True):
         """Finalize and transfer a packet whose CRC storage is preallocated."""
         transport_lock = getattr(self, "_transport_lock", None)
         if transport_lock is None:
@@ -661,12 +702,71 @@ class LEDController:
             self._crc_bytes_sent += CRC_BYTES
             self._spi_transfers += 1
             try:
+                if not response_required:
+                    writer = getattr(self.spi, "writebytes2", None)
+                    if self._write_only_fast_path_supported(len(wire)):
+                        try:
+                            writer(wire)
+                        except (AttributeError, NotImplementedError, TypeError):
+                            # These failures mean the binding rejected the API
+                            # before issuing an ioctl. Permanently fall back to
+                            # the full-duplex path and send this packet once.
+                            self._writebytes2_supported = False
+                        else:
+                            self._writebytes2_supported = True
+                            self._last_transfer_captured_response = False
+                            self._last_transfer_status_sampled = False
+                            return None
+                    elif not callable(writer):
+                        self._writebytes2_supported = False
                 response = self.spi.xfer2(wire)
-                self._update_receiver_status(response)
+                status_sampled = bool(self._update_receiver_status(response))
+                self._last_transfer_captured_response = True
+                self._last_transfer_status_sampled = status_sampled
                 return response
             except Exception:
                 self._errors += 1
                 raise
+
+    def _write_only_fast_path_supported(self, wire_length):
+        """Return whether one unsplit writebytes2 transfer is proven safe."""
+        capacity = getattr(self, "_spidev_buffer_size", None)
+        if type(capacity) is not int or capacity < int(wire_length):
+            return False
+        if getattr(self, "_writebytes2_supported", None) is False:
+            return False
+        return callable(getattr(self.spi, "writebytes2", None))
+
+    def _full_frame_write_only_supported(self):
+        """Report support for this receiver's selected full-frame wire size."""
+        wire_length = len(getattr(self, "_aligned_frame_packet", ()))
+        return wire_length > 0 and self._write_only_fast_path_supported(wire_length)
+
+    def _claim_full_frame_sequence(self, wall_frame_sequence):
+        """Claim a local sequence or adopt the manager's shared wall sequence."""
+        next_sequence = getattr(self, "_full_frame_sequence", 0)
+        if wall_frame_sequence is None:
+            sequence = next_sequence
+        else:
+            if type(wall_frame_sequence) is not int or wall_frame_sequence < 0:
+                raise ValueError("wall_frame_sequence must be a non-negative integer")
+            sequence = wall_frame_sequence
+        self._full_frame_sequence = max(next_sequence, sequence + 1)
+        return sequence
+
+    def _full_frame_status_response_required(self, wall_frame_sequence):
+        """Return whether one aligned SET_ALL should retain its MISO sample."""
+        wall_frame_sequence = int(wall_frame_sequence)
+        logical_id = self.logical_device_id
+        if type(logical_id) is not int or not 0 <= logical_id < (
+            FULL_FRAME_STATUS_SAMPLE_RECEIVERS
+        ):
+            logical_id = 0
+        phase = (
+            logical_id * FULL_FRAME_STATUS_SAMPLE_INTERVAL
+            // FULL_FRAME_STATUS_SAMPLE_RECEIVERS
+        )
+        return wall_frame_sequence % FULL_FRAME_STATUS_SAMPLE_INTERVAL == phase
 
     @staticmethod
     def _response_u16(response, offset):
@@ -863,7 +963,7 @@ class LEDController:
         # status structure and therefore are not telemetry misses.
         if response is None or len(response) < RECEIVER_STATUS_BYTES:
             self._reset_transport_envelope_candidate(invalid=False)
-            return
+            return False
         magic = tuple(int(response[index]) for index in range(4))
         indicated_status_bytes = {
             RECEIVER_STATUS_MAGIC_V2: RECEIVER_STATUS_BYTES_V2,
@@ -874,7 +974,7 @@ class LEDController:
         }.get(magic)
         if indicated_status_bytes is not None and len(response) < indicated_status_bytes:
             self._reset_transport_envelope_candidate(invalid=False)
-            return
+            return False
         known_status_bytes = {
             2: RECEIVER_STATUS_BYTES_V2,
             3: RECEIVER_STATUS_BYTES_V3,
@@ -887,19 +987,15 @@ class LEDController:
             # atomic status snapshot. This breaks a pending consecutive streak
             # but is neither corruption nor a telemetry miss.
             self._reset_transport_envelope_candidate(invalid=False)
-            return
+            return False
         if magic == RECEIVER_STATUS_MAGIC_V6 and len(response) >= RECEIVER_STATUS_BYTES_V6:
-            self._update_receiver_status_v6(response)
-            return
+            return bool(self._update_receiver_status_v6(response))
         if magic == RECEIVER_STATUS_MAGIC_V5 and len(response) >= RECEIVER_STATUS_BYTES_V5:
-            self._update_receiver_status_v5(response)
-            return
+            return bool(self._update_receiver_status_v5(response))
         if magic == RECEIVER_STATUS_MAGIC_V4 and len(response) >= RECEIVER_STATUS_BYTES_V4:
-            self._update_receiver_status_v4(response)
-            return
+            return bool(self._update_receiver_status_v4(response))
         if magic == RECEIVER_STATUS_MAGIC_V3 and len(response) >= RECEIVER_STATUS_BYTES_V3:
-            self._update_receiver_status_v3(response)
-            return
+            return bool(self._update_receiver_status_v3(response))
 
         if magic == RECEIVER_STATUS_MAGIC_V2 and len(response) >= RECEIVER_STATUS_BYTES_V2:
             self._receiver_status_seen = True
@@ -931,16 +1027,15 @@ class LEDController:
             self._note_legacy_snapshot(
                 self._receiver_stagger_phases == LEGACY_SNAPSHOT_SENTINEL
             )
-            self._observe_transport_envelope_capability(
+            return self._observe_transport_envelope_capability(
                 False, self._receiver_packets
             )
-            return
 
         if magic != RECEIVER_STATUS_MAGIC:
             self._reset_transport_envelope_candidate(invalid=True)
             if getattr(self, '_receiver_status_seen', False):
                 self._receiver_status_misses = getattr(self, '_receiver_status_misses', 0) + 1
-            return
+            return False
 
         self._receiver_status_seen = True
         self._receiver_status_version = 1
@@ -954,7 +1049,7 @@ class LEDController:
         self._receiver_last_show_us = self._response_u16(response, 24)
         self._receiver_active_strips = int(response[26])
         self._receiver_leds_per_strip = self._response_u16(response, 27)
-        self._observe_transport_envelope_capability(
+        return self._observe_transport_envelope_capability(
             False, self._receiver_packets
         )
 
@@ -1048,7 +1143,7 @@ class LEDController:
         self._receiver_last_displayed_sequence = self._response_u32(response, 56)
         self._receiver_display_errors = self._response_u32(response, 60)
         self._receiver_capabilities = self._response_u32(response, 64)
-        self._observe_transport_envelope_capability(
+        fresh = self._observe_transport_envelope_capability(
             self._receiver_capabilities & CAPABILITY_ALIGNED_ENVELOPE_V1,
             self._receiver_packets,
         )
@@ -1127,6 +1222,7 @@ class LEDController:
             self._clear_receiver_overlay_status()
             self._clear_receiver_profile_status()
             self._clear_receiver_native_status()
+        return fresh
 
     def _clear_receiver_overlay_status(self):
         """Drop v4-only telemetry after an actual status-v3 response."""
@@ -1152,7 +1248,7 @@ class LEDController:
 
     def _update_receiver_status_v4(self, response):
         """Parse the status-v4 sparse-overlay extension after its v3 prefix."""
-        self._update_receiver_status_v3(response)
+        fresh = self._update_receiver_status_v3(response)
         self._receiver_overlay_operation_result = int(response[320])
         self._receiver_overlay_update_kind = int(response[321])
         self._receiver_overlay_expected_patches = self._response_u16(response, 322)
@@ -1182,6 +1278,7 @@ class LEDController:
         if tuple(int(response[index]) for index in range(4)) == RECEIVER_STATUS_MAGIC_V4:
             self._clear_receiver_profile_status()
             self._clear_receiver_native_status()
+        return fresh
 
     def _clear_receiver_profile_status(self):
         """Drop status-v5-only profile telemetry after a real downgrade."""
@@ -1224,7 +1321,7 @@ class LEDController:
 
     def _update_receiver_status_v5(self, response):
         """Parse the status-v5 profile extension after its exact v4 prefix."""
-        self._update_receiver_status_v4(response)
+        fresh = self._update_receiver_status_v4(response)
         flags = int(response[419])
         self._receiver_profile_result = int(response[416])
         self._receiver_profile_transfer_state = int(response[417])
@@ -1277,6 +1374,7 @@ class LEDController:
         self._receiver_profile_restores = self._response_u16(response, 766)
         if tuple(int(response[index]) for index in range(4)) == RECEIVER_STATUS_MAGIC_V5:
             self._clear_receiver_native_status()
+        return fresh
 
     def _clear_receiver_native_status(self):
         """Drop status-v6-only module telemetry after a real downgrade."""
@@ -1309,7 +1407,7 @@ class LEDController:
 
     def _update_receiver_status_v6(self, response):
         """Parse the exact status-v6 native-module extension."""
-        self._update_receiver_status_v5(response)
+        fresh = self._update_receiver_status_v5(response)
         flags = int(response[771])
         self._receiver_native_result = int(response[768])
         self._receiver_native_transfer_state = int(response[769])
@@ -1390,14 +1488,19 @@ class LEDController:
             setattr(
                 self, f"_receiver_native_{name}", self._response_u16(response, offset)
             )
+        return fresh
 
-    def query_receiver_status(self):
-        """Clock out the newest discovered status snapshot without changing ownership."""
+    def _clock_receiver_status_snapshot(self):
+        """Transfer one status-length query and parse its returned snapshot."""
         payload = bytearray(
             getattr(self, "_receiver_status_query_bytes", RECEIVER_STATUS_BYTES_V3)
         )
         payload[0] = CMD_STATUS_QUERY
         self._xfer(payload)
+
+    def query_receiver_status(self):
+        """Clock out the newest discovered status snapshot without changing ownership."""
+        self._clock_receiver_status_snapshot()
         return self.get_stats()
 
     def _command_status(
@@ -2620,10 +2723,12 @@ class LEDController:
         if self.debug:
             print(f"✓ Configuration sent (strips={self.strip_count}, leds/strip={self.leds_per_strip})")
 
-    def set_all_pixels(self, colors):
+    def set_all_pixels(self, colors, *, wall_frame_sequence=None):
         """Send all pixels in one SPI transaction.
 
         Accepts a list of (r,g,b) tuples or a numpy uint8 array of shape (N,3).
+        Multi-receiver callers pass one shared ``wall_frame_sequence`` so
+        staggered samples remain aligned even after partial sends or failures.
         """
         self._refresh_configuration()
         start_time = time.perf_counter()
@@ -2661,10 +2766,88 @@ class LEDController:
                         buf[idx + 1] = int(g) & 0xFF
                         buf[idx + 2] = int(b) & 0xFF
                         idx += 3
-                self._xfer_packet(buf, payload_length)
+                frame_sequence = self._claim_full_frame_sequence(
+                    wall_frame_sequence
+                )
+                scheduled_status_sample = (
+                    aligned_frame
+                    and self._full_frame_status_response_required(frame_sequence)
+                )
+                status_query_bytes = int(getattr(
+                    self,
+                    "_receiver_status_query_bytes",
+                    RECEIVER_STATUS_BYTES_V3,
+                ))
+                short_wire_status_fallback = (
+                    scheduled_status_sample
+                    and len(getattr(self, "_aligned_frame_packet", ()))
+                    < status_query_bytes
+                )
+                if short_wire_status_fallback:
+                    # A one-strip aligned SET_ALL is only 424 wire bytes, too
+                    # short to clock a status-v6 snapshot. Sample first with a
+                    # status-capable query, then keep the actual frame on the
+                    # write-only fast path. The logical frame is still
+                    # classified exactly once below.
+                    transport_lock = getattr(self, "_transport_lock", None)
+                    if transport_lock is None:
+                        transport_lock = self._transport_lock = threading.RLock()
+                    with transport_lock:
+                        self._clock_receiver_status_snapshot()
+                        captured_response = True
+                        status_sampled = bool(getattr(
+                            self, "_last_transfer_status_sampled", False
+                        ))
+                        self._xfer_packet(
+                            buf,
+                            payload_length,
+                            response_required=False,
+                        )
+                else:
+                    self._xfer_packet(
+                        buf,
+                        payload_length,
+                        response_required=(
+                            not aligned_frame or scheduled_status_sample
+                        ),
+                    )
+                    captured_response = bool(getattr(
+                        self, "_last_transfer_captured_response", False
+                    ))
+                    status_sampled = bool(getattr(
+                        self, "_last_transfer_status_sampled", False
+                    ))
                 self._full_frame_transfers = (
                     getattr(self, "_full_frame_transfers", 0) + 1
                 )
+                if captured_response:
+                    self._full_frame_status_transfers = (
+                        getattr(self, "_full_frame_status_transfers", 0) + 1
+                    )
+                else:
+                    self._full_frame_write_only_transfers = (
+                        getattr(self, "_full_frame_write_only_transfers", 0) + 1
+                    )
+                if status_sampled:
+                    self._full_frame_status_samples = (
+                        getattr(self, "_full_frame_status_samples", 0) + 1
+                    )
+                    self._full_frame_frames_since_status_sample = 0
+                else:
+                    if captured_response:
+                        self._full_frame_status_sample_misses = (
+                            getattr(
+                                self, "_full_frame_status_sample_misses", 0
+                            ) + 1
+                        )
+                    gap = getattr(
+                        self, "_full_frame_frames_since_status_sample", 0
+                    ) + 1
+                    self._full_frame_frames_since_status_sample = gap
+                    self._full_frame_max_status_sample_gap = max(
+                        getattr(self, "_full_frame_max_status_sample_gap", 0),
+                        gap,
+                    )
                 self._full_frame_semantic_bytes_sent = (
                     getattr(self, "_full_frame_semantic_bytes_sent", 0)
                     + payload_length
@@ -2766,6 +2949,28 @@ class LEDController:
                 self, '_transport_padding_bytes_sent', 0
             ),
             'full_frame_transfers': getattr(self, '_full_frame_transfers', 0),
+            'full_frame_status_transfers': getattr(
+                self, '_full_frame_status_transfers', 0
+            ),
+            'full_frame_status_samples': getattr(
+                self, '_full_frame_status_samples', 0
+            ),
+            'full_frame_status_sample_misses': getattr(
+                self, '_full_frame_status_sample_misses', 0
+            ),
+            'full_frame_write_only_transfers': getattr(
+                self, '_full_frame_write_only_transfers', 0
+            ),
+            'full_frame_frames_since_status_sample': getattr(
+                self, '_full_frame_frames_since_status_sample', 0
+            ),
+            'full_frame_max_status_sample_gap': getattr(
+                self, '_full_frame_max_status_sample_gap', 0
+            ),
+            'spidev_buffer_size': getattr(self, '_spidev_buffer_size', None),
+            'full_frame_write_only_supported': (
+                self._full_frame_write_only_supported()
+            ),
             'full_frame_semantic_bytes_sent': getattr(
                 self, '_full_frame_semantic_bytes_sent', 0
             ),

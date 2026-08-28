@@ -164,7 +164,7 @@ class Device:
         self.seed = parameters["common_seed"]
         return self._result("params")
 
-    def set_all_pixels(self, colors):
+    def set_all_pixels(self, colors, *, wall_frame_sequence=None):
         self.calls.append(("set_all", len(colors)))
         if "set_all" in self.fail:
             raise OSError("set_all failed")

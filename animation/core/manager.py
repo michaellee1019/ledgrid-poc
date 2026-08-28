@@ -83,6 +83,16 @@ from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import encode_frame_data, FRAME_ENCODING_NAME
 from ipc.scene_contract import SceneProviderPolicy
 
+
+# The acceptance target is a minimum physical cadence, while an exact nominal
+# period has no room for ordinary wake-up jitter. Schedule 0.5% inside that
+# budget and use a short bounded spin at the deadline. The hard 200 FPS product
+# ceiling remains absolute.
+FRAME_SCHEDULER_HEADROOM_RATIO = 0.005
+FRAME_SCHEDULER_MAX_FPS = 200.0
+FRAME_DEADLINE_COARSE_WINDOW_SECONDS = 0.002
+FRAME_DEADLINE_SPIN_SECONDS = 0.0005
+
 # Try to import the real LED controller, fall back to mock for testing
 try:
     from drivers.multi_device import MultiDeviceLEDController as LEDController
@@ -136,7 +146,11 @@ def _plan_frame_deadline(
     """
 
     bounded_target = max(1, int(target_fps) or 1)
-    period = 1.0 / bounded_target
+    nominal_period = 1.0 / bounded_target
+    period = max(
+        1.0 / FRAME_SCHEDULER_MAX_FPS,
+        nominal_period * (1.0 - FRAME_SCHEDULER_HEADROOM_RATIO),
+    )
     if prior_deadline is None or prior_target_fps != bounded_target:
         deadline = frame_started + period
     else:
@@ -146,6 +160,30 @@ def _plan_frame_deadline(
         expired = math.floor((work_finished - deadline) / period) + 1
         deadline += expired * period
     return deadline, max(0.0, deadline - work_finished)
+
+
+def _wait_for_frame_deadline(
+    deadline: float,
+    *,
+    clock=None,
+    sleeper=None,
+    coarse_window: float = FRAME_DEADLINE_COARSE_WINDOW_SECONDS,
+    spin_window: float = FRAME_DEADLINE_SPIN_SECONDS,
+) -> float:
+    """Coarse-sleep, yield, then spin briefly to reduce deadline jitter."""
+    clock = clock or time.perf_counter
+    sleeper = sleeper or time.sleep
+    while True:
+        now = clock()
+        remaining = deadline - now
+        if remaining <= 0:
+            return now
+        if remaining > coarse_window:
+            sleeper(remaining - coarse_window)
+        elif remaining > spin_window:
+            # Release the GIL while presentation workers finish their current
+            # SPI transaction, then retain only the final bounded spin locally.
+            sleeper(0)
 
 
 class PreviewLEDController:
@@ -4717,7 +4755,7 @@ class AnimationManager:
                 actual_sleep_time = 0.0
                 if sleep_time > 0:
                     sleep_started = time.perf_counter()
-                    time.sleep(sleep_time)
+                    _wait_for_frame_deadline(next_frame_deadline)
                     actual_sleep_time = time.perf_counter() - sleep_started
                 frame_duration = time.perf_counter() - loop_start
 

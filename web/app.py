@@ -24,6 +24,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.activation_qualification import (
     QUALIFICATION_RECORD_SCHEMA,
+    QUALIFICATION_RECORD_VERSION,
     QualificationValidationError,
     activation_qualification_binding_digest,
     activation_qualification_record_digest,
@@ -2245,6 +2246,12 @@ class AnimationWebInterface:
             or re.fullmatch(r'[0-9a-f]{64}', current_identity_digest) is None
         ):
             raise RuntimeError('controller active identity is invalid')
+        if isinstance(active_identity, dict):
+            derived_identity_digest = canonical_json_sha256(active_identity)
+            if current_identity_digest != derived_identity_digest:
+                raise RuntimeError(
+                    'controller active identity digest does not match its payload'
+                )
         return session_id, state_revision, current_identity_digest
 
     def _require_activation_release_identity(
@@ -2358,6 +2365,7 @@ class AnimationWebInterface:
         settings: Dict[str, Any],
         controller_status: Dict[str, Any],
         browser_evidence: Any,
+        runtime_identity: Dict[str, Any],
     ) -> tuple[Dict[str, Any], Dict[str, Any]]:
         """Build and evaluate one exact, server-owned qualification record."""
         geometry = self._normalize_led_info({
@@ -2406,16 +2414,24 @@ class AnimationWebInterface:
         if (
             retained_envelope is not None
             and retained_envelope['binding_digest'] == binding_digest
+            and retained_envelope['runtime_identity'] == runtime_identity
         ):
-            evidence.extend(
-                dict(item)
-                for item in retained_envelope['evidence']
+            transport_digest = canonical_json_sha256(
+                retained_envelope['transport']
             )
+            for item in retained_envelope['evidence']:
+                retained_item = dict(item)
+                if retained_item['source'] == 'receiver':
+                    if retained_item['transport_digest'] != transport_digest:
+                        raise QualificationValidationError(
+                            'receiver transport digest does not match normalized proof'
+                        )
+                evidence.append(retained_item)
 
         budget = load_installation_qualification_budget()
         record = {
             'schema': QUALIFICATION_RECORD_SCHEMA,
-            'schema_version': 1,
+            'schema_version': QUALIFICATION_RECORD_VERSION,
             'revision': 1,
             'qualification_version': 'server-check-v2',
             'binding': binding,
@@ -2451,15 +2467,25 @@ class AnimationWebInterface:
             dict(status) if isinstance(status, dict)
             else dict(self.control_channel.read_status() or {})
         )
-        self._require_activation_release_identity(controller_status)
+        release_id = self._require_activation_release_identity(controller_status)
         session_id, state_revision, current_identity = (
             self._activation_controller_identity(controller_status)
         )
+        if current_identity is None:
+            raise RuntimeError(
+                'controller runtime identity is unavailable for guarded activation'
+            )
         qualification_record, qualification_result = self._activation_qualification(
             document=document,
             settings=settings,
             controller_status=controller_status,
             browser_evidence=browser_evidence,
+            runtime_identity={
+                'release_id': release_id,
+                'controller_session_id': session_id,
+                'controller_state_revision': state_revision,
+                'current_identity_digest': current_identity,
+            },
         )
         basis = build_scene_activation_basis(
             browser_scene=document,
