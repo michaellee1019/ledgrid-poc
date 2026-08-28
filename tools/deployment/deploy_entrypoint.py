@@ -115,7 +115,7 @@ RECEIVER_FIRMWARE_HEALTH_CAPABILITIES = {
     # Every current firmware image advertises the complete aligned-envelope v2
     # FEC decoder and status-v7 accounting extension. Environment-specific
     # features remain additive below that common deployment floor.
-    PRODUCTION_FIRMWARE_ENVIRONMENT: (7, 0x3C00C),
+    PRODUCTION_FIRMWARE_ENVIRONMENT: (7, 0x7C00C),
     DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (7, 0xC0FF),
     NATIVE_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT: (7, 0xFFFF),
 }

@@ -240,34 +240,35 @@ enabled count before health acceptance, preserving the firmware-first rolling
 order. The outer CRC replaces, rather than nests, the legacy command CRC;
 existing valid/invalid CRC counters retain their integrity meaning.
 
-Logical receiver 3 alone may negotiate aligned-envelope v4 after the Host has
-been explicitly configured and has observed capability `fec_envelope_v4 =
-1<<17` in three fresh, strictly counter-advancing status snapshots. The
+Logical receiver 3 alone may negotiate aligned-envelope v5 after the Host has
+been explicitly configured and has observed capability `fec_envelope_v5 =
+1<<18` in three fresh, strictly counter-advancing status snapshots. The
 maintained service configuration is `LEDGRID_FEC_RECEIVER_IDS=3`; an empty
 allowlist is off, and unlisted receivers cannot enable FEC. The v2 and v3
-decoders and capabilities `1<<15` and `1<<16` remain in firmware solely so an
-older Host can still roll back safely. The Host emits only v4:
+decoders and capabilities `1<<15` and `1<<16`, plus the v4 decoder and
+capability `1<<17`, remain in firmware solely so an older Host can still roll
+back safely. The Host emits only v5:
 
 `header || interleaved_codewords || header`
 
-Each header is `0x0b || 4 || canonical_v1_wire_length:u16`. The protected data
+Each header is `0x0b || 5 || canonical_v1_wire_length:u16`. The protected data
 contains another copy of that header plus the complete canonical v1 packet,
 including alignment and CRC. Each shortened systematic Reed-Solomon codeword
-carries 25 data and five parity symbols at distinct GF(256) evaluation points.
-Its minimum distance is six: two arbitrary byte errors per codeword are
-corrected and three are detected. All codewords are transmitted byte-
-interleaved, so a contiguous burst of at most 272 bytes changes at most two
-bytes in each of the 136 installed broad-frame codewords. The nested v1 CRC
+carries 50 data and ten parity symbols at distinct GF(256) evaluation points.
+Its minimum distance is eleven, so five arbitrary byte errors per codeword are
+corrected. All codewords are transmitted byte-interleaved, so a contiguous
+burst of at most 340 bytes changes at most five bytes in each of the 68
+installed broad-frame codewords. The nested v1 CRC
 remains the end-to-end semantic authority. Codeword count is a multiple of four
-for DMA alignment and at most 136. Either separated exact raw marker attributes
+for DMA alignment and at most 68. Either separated exact raw marker attributes
 the packet; decoded header/length, canonical v1 size/padding/CRC, and zero outer
 tail must still validate before dispatch. The limits and installed sizes are exact:
 
 | Semantic form | Inner v1 | Codewords | FEC wire | FEC data tail |
 |---|---:|---:|---:|---:|
-| receiver 3 `SET_ALL` (3,313 bytes) | 3,320 | 136 | 4,088 | 76 |
-| one-strip `SET_ALL` (415 bytes) | 424 | 20 | 608 | 72 |
-| maximum semantic (3,390 bytes) | 3,396 | 136 | 4,088 | 0 |
+| receiver 3 `SET_ALL` (3,313 bytes) | 3,320 | 68 | 4,088 | 76 |
+| one-strip `SET_ALL` (415 bytes) | 424 | 12 | 728 | 172 |
+| maximum semantic (3,390 bytes) | 3,396 | 68 | 4,088 | 0 |
 
 Status v7 is 1,248 bytes. It preserves v6 offsets and appends received,
 accepted, corrected-packet, corrected-codeword, uncorrectable, semantic-CRC,

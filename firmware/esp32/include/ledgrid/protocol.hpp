@@ -76,12 +76,26 @@ constexpr std::size_t kFecV3EnvelopeMaxSemanticBytes =
 // two arbitrary byte errors per codeword are corrected and three are detected.
 // Interleaving 136 codewords extends contiguous-burst correction to 272 bytes
 // while keeping the full receiver-3 packet within the 4,096-byte SPI limit.
-constexpr std::uint8_t kFecEnvelopeVersion = 4;
-constexpr std::size_t kFecDataBytes = 25;
-constexpr std::size_t kFecParityBytes = 5;
+constexpr std::uint8_t kFecEnvelopeVersionV4 = 4;
+constexpr std::size_t kFecV4DataBytes = 25;
+constexpr std::size_t kFecV4ParityBytes = 5;
+constexpr std::size_t kFecV4CodewordBytes =
+    kFecV4DataBytes + kFecV4ParityBytes;
+constexpr std::size_t kFecV4MaxCodewords = 136;
+constexpr std::size_t kFecV4EnvelopeMaxSemanticBytes =
+    kFecV4MaxCodewords * kFecV4DataBytes - kFecEnvelopeHeaderBytes -
+    kAlignedEnvelopeHeaderBytes - kAnimationPipelineCrcBytes;
+
+// V5 increases the shortened systematic Reed-Solomon distance to eleven.
+// Ten parity symbols correct five arbitrary byte errors in each 50-byte data
+// codeword. Interleaving 68 codewords corrects a contiguous burst through 340
+// bytes while retaining the same 4,088-byte installed broad-frame wire size.
+constexpr std::uint8_t kFecEnvelopeVersion = 5;
+constexpr std::size_t kFecDataBytes = 50;
+constexpr std::size_t kFecParityBytes = 10;
 constexpr std::size_t kFecCodewordBytes =
     kFecDataBytes + kFecParityBytes;
-constexpr std::size_t kFecMaxCodewords = 136;
+constexpr std::size_t kFecMaxCodewords = 68;
 constexpr std::size_t kFecEnvelopeMaxSemanticBytes =
     kFecMaxCodewords * kFecDataBytes - kFecEnvelopeHeaderBytes -
     kAlignedEnvelopeHeaderBytes - kAnimationPipelineCrcBytes;
@@ -164,6 +178,7 @@ enum ReceiverCapability : std::uint32_t {
   kCapabilityFecEnvelopeV2 = 1U << 15U,
   kCapabilityFecEnvelopeV3 = 1U << 16U,
   kCapabilityFecEnvelopeV4 = 1U << 17U,
+  kCapabilityFecEnvelopeV5 = 1U << 18U,
 };
 
 struct ReceiverPacketPayload {

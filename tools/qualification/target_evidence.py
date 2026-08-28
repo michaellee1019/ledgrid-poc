@@ -52,7 +52,7 @@ _ERROR_COUNTERS = (
 )
 _INSTALLED_ROUTES = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
 _INSTALLED_NATIVE_REVERSALS = (False, False, True, True, False)
-_REQUIRED_RECEIVER_CAPABILITIES = 0x3C00C
+_REQUIRED_RECEIVER_CAPABILITIES = 0x7C00C
 _TRANSPORT_COUNTERS = (
     "spi_transfers",
     "bytes_sent",
@@ -441,7 +441,7 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
         if (
             corrected_packets > fec_accepted
             or corrected_codewords < corrected_packets
-            or corrected_codewords > 136 * corrected_packets
+            or corrected_codewords > 68 * corrected_packets
         ):
             raise TargetEvidenceError(
                 f"receiver {logical_id} corrected FEC accounting is inconsistent"
@@ -465,13 +465,13 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
         fec_frames = _integer(
             device.get("fec_frames_sent"), f"receiver {logical_id} FEC frames sent"
         )
-        expected_codewords = 136 if logical_id == 3 else 0
+        expected_codewords = 68 if logical_id == 3 else 0
         if (
             (not expected_fec and fec_frames != 0)
             or _integer(device.get("fec_codewords_sent"), f"receiver {logical_id} FEC codewords")
             != expected_codewords * fec_frames
             or _integer(device.get("fec_parity_bytes_sent"), f"receiver {logical_id} FEC parity bytes")
-            != 5 * expected_codewords * fec_frames
+            != 10 * expected_codewords * fec_frames
             or _integer(device.get("fec_data_padding_bytes_sent"), f"receiver {logical_id} FEC data padding")
             != 76 * fec_frames
         ):
@@ -580,7 +580,7 @@ def _require_fec_delta(
         return
     expected_host = {
         "fec_frames_sent": full_frames,
-        "fec_codewords_sent": 136 * full_frames,
+        "fec_codewords_sent": 68 * full_frames,
         "fec_parity_bytes_sent": 680 * full_frames,
         "fec_data_padding_bytes_sent": 76 * full_frames,
     }
@@ -606,7 +606,7 @@ def _require_fec_delta(
         )
     if not 0 <= corrected_packets <= accepted:
         raise TargetEvidenceError("receiver 3 corrected-packet accounting is invalid")
-    if not corrected_packets <= corrected_codewords <= 136 * corrected_packets:
+    if not corrected_packets <= corrected_codewords <= 68 * corrected_packets:
         raise TargetEvidenceError("receiver 3 corrected-codeword accounting is invalid")
 
 

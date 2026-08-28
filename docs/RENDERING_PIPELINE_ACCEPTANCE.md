@@ -150,8 +150,8 @@ receiver-counter samples; HTTP request time before the first sample and cleanup
 time cannot dilute the measured cadence.
 
 The installed timing budget is explicit. Ordinary broad receivers use a 3,320
-byte aligned `SET_ALL`, or 1,328 us at 20 MHz. Logical receiver 3 uses 136
-byte-interleaved Reed-Solomon codewords (25 protected data bytes plus five
+byte aligned `SET_ALL`, or 1,328 us at 20 MHz. Logical receiver 3 uses 68
+byte-interleaved Reed-Solomon codewords (50 protected data bytes plus ten
 GF(256) parity bytes), totaling 4,088 bytes or 1,635.2 us. The one-strip tail
 remains 424 bytes. The five receivers clock 14,472 bytes, or 5,788.8 us when
 treated serially; the two independent SPI buses overlap, with worst raw bus

@@ -90,7 +90,7 @@ def _target_transport() -> dict:
                 "enabled_count": int(fec_enabled),
                 "deltas": {
                     "fec_frames_sent": full_frames if fec_enabled else 0,
-                    "fec_codewords_sent": 136 * full_frames if fec_enabled else 0,
+                    "fec_codewords_sent": 68 * full_frames if fec_enabled else 0,
                     "fec_parity_bytes_sent": 680 * full_frames if fec_enabled else 0,
                     "fec_data_padding_bytes_sent": 76 * full_frames if fec_enabled else 0,
                     "receiver_fec_packets_received": full_frames if fec_enabled else 0,

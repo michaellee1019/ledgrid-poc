@@ -42,11 +42,11 @@ ALIGNED_ENVELOPE_HEADER_BYTES = 4
 MAX_ALIGNED_SEMANTIC_BYTES = (
     MAX_SPI_TRANSFER - ALIGNED_ENVELOPE_HEADER_BYTES - CRC_BYTES
 )
-FEC_DATA_BYTES = 25
-FEC_PARITY_BYTES = 5
+FEC_DATA_BYTES = 50
+FEC_PARITY_BYTES = 10
 FEC_CODEWORD_BYTES = FEC_DATA_BYTES + FEC_PARITY_BYTES
-FEC_MAX_CODEWORDS = 136
-FEC_ENVELOPE_VERSION = 4
+FEC_MAX_CODEWORDS = 68
+FEC_ENVELOPE_VERSION = 5
 FEC_ENVELOPE_HEADER_BYTES = 4
 FEC_WIRE_HEADER_BYTES = 2 * FEC_ENVELOPE_HEADER_BYTES
 MAX_FEC_SEMANTIC_BYTES = (
@@ -350,7 +350,7 @@ _FEC_PACKED_PARITY_TABLES = tuple(
 
 
 def _fec_envelope_wire_size(semantic_length):
-    """Return exact DMA-safe v4 FEC wire bytes for one semantic packet."""
+    """Return exact DMA-safe v5 FEC wire bytes for one semantic packet."""
     if isinstance(semantic_length, bool) or not isinstance(semantic_length, int):
         raise TypeError("semantic_length must be an integer")
     if semantic_length < 1 or semantic_length > MAX_FEC_SEMANTIC_BYTES:
@@ -367,7 +367,7 @@ def _fec_envelope_wire_size(semantic_length):
 
 
 def _encode_fec_envelope(payload, output=None, inner_output=None):
-    """Interleave a two-symbol-correcting v4 envelope around canonical v1 bytes."""
+    """Interleave a five-symbol-correcting v5 envelope around canonical v1 bytes."""
     try:
         semantic = memoryview(payload).cast("B")
     except (TypeError, ValueError) as exc:
@@ -597,6 +597,7 @@ CAPABILITY_ALIGNED_ENVELOPE_V1 = 1 << 14
 CAPABILITY_FEC_ENVELOPE_V2 = 1 << 15
 CAPABILITY_FEC_ENVELOPE_V3 = 1 << 16
 CAPABILITY_FEC_ENVELOPE_V4 = 1 << 17
+CAPABILITY_FEC_ENVELOPE_V5 = 1 << 18
 
 ALL_LANES_MASK = 0xFF
 STAGGER_OFF = 1
@@ -1420,7 +1421,7 @@ class LEDController:
             )
 
     def _observe_fec_transport_capability(self, advertised, receiver_packets):
-        """Enable v4 only after opt-in and three fresh capability snapshots."""
+        """Enable v5 only after opt-in and three fresh capability snapshots."""
         advertised = bool(
             getattr(self, "_fec_transport_requested", False) and advertised
         )
@@ -1551,7 +1552,7 @@ class LEDController:
         )
         fec_advertised = bool(
             self._receiver_capabilities & CAPABILITY_ALIGNED_ENVELOPE_V1
-            and self._receiver_capabilities & CAPABILITY_FEC_ENVELOPE_V4
+            and self._receiver_capabilities & CAPABILITY_FEC_ENVELOPE_V5
         )
         fec_terminal_telemetry_available = bool(
             len(response) >= RECEIVER_STATUS_BYTES_V7
@@ -1628,6 +1629,7 @@ class LEDController:
             CAPABILITY_FEC_ENVELOPE_V2
             | CAPABILITY_FEC_ENVELOPE_V3
             | CAPABILITY_FEC_ENVELOPE_V4
+            | CAPABILITY_FEC_ENVELOPE_V5
         ):
             self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V7
         elif self._receiver_capabilities & CAPABILITY_STATUS_V6:

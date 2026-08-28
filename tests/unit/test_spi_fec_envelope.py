@@ -120,6 +120,7 @@ def _status_v7(receiver_packets, *, fec=True):
             protocol.CAPABILITY_FEC_ENVELOPE_V2
             | protocol.CAPABILITY_FEC_ENVELOPE_V3
             | protocol.CAPABILITY_FEC_ENVELOPE_V4
+            | protocol.CAPABILITY_FEC_ENVELOPE_V5
         )
     response[64:68] = capabilities.to_bytes(4, "big")
     response[314] = protocol.STAGGER_OFF
@@ -148,6 +149,7 @@ def _status_v3(receiver_packets, *, fec=False):
             protocol.CAPABILITY_FEC_ENVELOPE_V2
             | protocol.CAPABILITY_FEC_ENVELOPE_V3
             | protocol.CAPABILITY_FEC_ENVELOPE_V4
+            | protocol.CAPABILITY_FEC_ENVELOPE_V5
         )
     response[64:68] = capabilities.to_bytes(4, "big")
     response[314] = protocol.STAGGER_OFF
@@ -157,19 +159,19 @@ def _status_v3(receiver_packets, *, fec=False):
 class SpiFecEnvelopeTests(unittest.TestCase):
     def test_exact_fixed_codeword_layout_and_golden_digest(self):
         packet = protocol._encode_fec_envelope(bytes((protocol.CMD_SHOW,)))
-        self.assertEqual(len(packet), 128)
-        self.assertEqual(packet[:4], b"\x0b\x04\x00\x08")
+        self.assertEqual(len(packet), 248)
+        self.assertEqual(packet[:4], b"\x0b\x05\x00\x08")
         self.assertEqual(packet[-4:], packet[:4])
         self.assertEqual(
             hashlib.sha256(packet).hexdigest(),
-            "1813f2a892355a2afd775f05e74b275909cd75c8aeaf227fad6fa229209ce599",
+            "e39953f0a25df41e937e5446492545530b4c4cbe273c51733885e681c9829d92",
         )
 
     def test_full_and_tail_frames_have_exact_bounded_wire_overhead(self):
         for semantic_size, codewords, wire_size, data_padding in (
-            (3313, 136, 4088, 76),
-            (415, 20, 608, 72),
-            (protocol.MAX_FEC_SEMANTIC_BYTES, 136, 4088, 0),
+            (3313, 68, 4088, 76),
+            (415, 12, 728, 172),
+            (protocol.MAX_FEC_SEMANTIC_BYTES, 68, 4088, 0),
         ):
             with self.subTest(semantic_size=semantic_size):
                 packet = protocol._encode_fec_envelope(bytes(semantic_size))
@@ -183,7 +185,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
                     data_padding,
                 )
 
-    def test_v4_reed_solomon_parity_and_burst_distribution_are_exact(self):
+    def test_v5_reed_solomon_parity_and_burst_distribution_are_exact(self):
         packet = protocol._encode_fec_envelope(bytes(range(1, 65)))
         codewords = (
             len(packet) - protocol.FEC_WIRE_HEADER_BYTES
@@ -202,10 +204,10 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         burst_start = matrix + 7
         affected_blocks = [
             (offset - matrix) % codewords
-            for offset in range(burst_start, burst_start + 2 * codewords)
+            for offset in range(burst_start, burst_start + 5 * codewords)
         ]
         self.assertEqual(set(affected_blocks), set(range(codewords)))
-        self.assertTrue(all(affected_blocks.count(block) == 2 for block in range(codewords)))
+        self.assertTrue(all(affected_blocks.count(block) == 5 for block in range(codewords)))
 
     def test_bad_types_bounds_and_output_size_fail_closed(self):
         for value, error in (
@@ -234,7 +236,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
             protocol.RECEIVER_STATUS_BYTES_V7,
         )
 
-    def test_legacy_v2_v3_capabilities_never_enable_v4_host_frames(self):
+    def test_legacy_v2_v3_v4_capabilities_never_enable_v5_host_frames(self):
         item = _controller(requested=True)
         for counter in range(1, 5):
             response = _status_v7(counter, fec=False)
@@ -242,6 +244,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
                 protocol.CAPABILITY_ALIGNED_ENVELOPE_V1
                 | protocol.CAPABILITY_FEC_ENVELOPE_V2
                 | protocol.CAPABILITY_FEC_ENVELOPE_V3
+                | protocol.CAPABILITY_FEC_ENVELOPE_V4
             )
             response[64:68] = capabilities.to_bytes(4, "big")
             protocol.LEDController._update_receiver_status(item, response)
@@ -291,7 +294,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
             )
         self.assertFalse(item._fec_transport_enabled)
 
-    def test_selected_full_frame_uses_v4_once_and_accounts_exactly(self):
+    def test_selected_full_frame_uses_v5_once_and_accounts_exactly(self):
         item = _controller(requested=True)
         item._transport_envelope_enabled = True
         item._fec_transport_enabled = True
@@ -300,10 +303,10 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         colors = np.zeros((8 * 138, 3), dtype=np.uint8)
         item.set_all_pixels(colors, wall_frame_sequence=1)
         packet = item.spi.packets[-1]
-        self.assertEqual(packet[:2], b"\x0b\x04")
+        self.assertEqual(packet[:2], b"\x0b\x05")
         self.assertEqual(len(packet), 4088)
         self.assertEqual(item._fec_frames_sent, 1)
-        self.assertEqual(item._fec_codewords_sent, 136)
+        self.assertEqual(item._fec_codewords_sent, 68)
         self.assertEqual(item._fec_parity_bytes_sent, 680)
         self.assertEqual(item._fec_data_padding_bytes_sent, 76)
         self.assertEqual(item._full_frame_wire_bytes_sent, 4088)
@@ -330,7 +333,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         )
         self.assertEqual(len(item.spi.write_only_packets), 0)
         self.assertEqual(len(item.spi.response_packets[1]), 4088)
-        self.assertEqual(item.spi.response_packets[1][:2], b"\x0b\x04")
+        self.assertEqual(item.spi.response_packets[1][:2], b"\x0b\x05")
         self.assertEqual(item._spi_transfers, 2)
         self.assertEqual(item._fec_frames_sent, 1)
         self.assertEqual(item._full_frame_transfers, 1)

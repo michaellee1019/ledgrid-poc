@@ -792,7 +792,7 @@ def _target_fec_item(
         )
         expected_host = {
             "fec_frames_sent": expected_fec_frames,
-            "fec_codewords_sent": 136 * expected_fec_frames,
+            "fec_codewords_sent": 68 * expected_fec_frames,
             "fec_parity_bytes_sent": 680 * expected_fec_frames,
             "fec_data_padding_bytes_sent": 76 * expected_fec_frames,
         }
@@ -826,7 +826,7 @@ def _target_fec_item(
         if (
             corrected_packets > accepted
             or corrected_codewords < corrected_packets
-            or corrected_codewords > 136 * corrected_packets
+            or corrected_codewords > 68 * corrected_packets
         ):
             raise QualificationValidationError(
                 f"{label}.deltas corrected FEC accounting is inconsistent"

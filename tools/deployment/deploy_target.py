@@ -2946,7 +2946,7 @@ def _receiver_health_rejection(
         fec_frames = int(status["fec_frames_sent"])
         if (
             int(status["fec_codewords_sent"])
-            != (136 * fec_frames if expected_fec else 0)
+            != (68 * fec_frames if expected_fec else 0)
             or int(status["fec_parity_bytes_sent"])
             != (680 * fec_frames if expected_fec else 0)
             or int(status["fec_data_padding_bytes_sent"])
@@ -3037,7 +3037,7 @@ def _receiver_health_rejection(
         if (
             corrected_packets > accepted
             or corrected_codewords < corrected_packets
-            or corrected_codewords > 136 * corrected_packets
+            or corrected_codewords > 68 * corrected_packets
         ):
             return f"receiver {logical_id} corrected FEC accounting is inconsistent"
         last_decode_us = int(status["receiver_fec_last_decode_us"])
@@ -3294,7 +3294,7 @@ def _transport_accounting_delta_rejection(
             if (
                 corrected_packets > accepted
                 or corrected_codewords < corrected_packets
-                or corrected_codewords > 136 * corrected_packets
+                or corrected_codewords > 68 * corrected_packets
             ):
                 return (
                     f"receiver {logical_id} corrected FEC delta is inconsistent"

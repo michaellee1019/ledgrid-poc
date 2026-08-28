@@ -669,7 +669,8 @@ ledgrid::ReceiverStatusV7 status_snapshot() {
                         ledgrid::kCapabilityAlignedEnvelopeV1 |
                         ledgrid::kCapabilityFecEnvelopeV2 |
                         ledgrid::kCapabilityFecEnvelopeV3 |
-                        ledgrid::kCapabilityFecEnvelopeV4;
+                        ledgrid::kCapabilityFecEnvelopeV4 |
+                        ledgrid::kCapabilityFecEnvelopeV5;
   if (receiver_runtime.local_background_enabled()) {
     status.capabilities |= ledgrid::kCapabilityStaticLocalBackground |
                            ledgrid::kCapabilityPresentationContextV1 |

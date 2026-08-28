@@ -664,6 +664,10 @@ bool decode_receiver_packet_payload(
       (packet_size - kFecWireHeaderBytes) %
           (4U * kFecV3CodewordBytes) == 0U;
   const bool fec_v4_shape = packet_size >=
+          kFecWireHeaderBytes + 4U * kFecV4CodewordBytes &&
+      (packet_size - kFecWireHeaderBytes) %
+          (4U * kFecV4CodewordBytes) == 0U;
+  const bool fec_v5_shape = packet_size >=
           kFecWireHeaderBytes + 4U * kFecCodewordBytes &&
       (packet_size - kFecWireHeaderBytes) %
           (4U * kFecCodewordBytes) == 0U;
@@ -679,8 +683,11 @@ bool decode_receiver_packet_payload(
   const bool fec_v3_candidate =
       fec_v3_shape && duplicated_marker_matches(kFecEnvelopeVersionV3);
   const bool fec_v4_candidate =
-      fec_v4_shape && duplicated_marker_matches(kFecEnvelopeVersion);
-  if (!fec_v2_candidate && !fec_v3_candidate && !fec_v4_candidate) {
+      fec_v4_shape && duplicated_marker_matches(kFecEnvelopeVersionV4);
+  const bool fec_v5_candidate =
+      fec_v5_shape && duplicated_marker_matches(kFecEnvelopeVersion);
+  if (!fec_v2_candidate && !fec_v3_candidate &&
+      !fec_v4_candidate && !fec_v5_candidate) {
     if (receiver_packet_crc_valid(packet, packet_size) &&
         decode_crc_valid_receiver_packet_payload(
             packet, packet_size, payload)) {
@@ -691,26 +698,34 @@ bool decode_receiver_packet_payload(
     return false;
   }
   if (report != nullptr) report->fec_envelope_attempted = true;
-  const bool fec_v4 = fec_v4_candidate;
-  const bool fec_v3 = !fec_v4 && fec_v3_candidate;
-  const std::size_t codewords = fec_v4
+  const bool fec_v5 = fec_v5_candidate;
+  const bool fec_v4 = !fec_v5 && fec_v4_candidate;
+  const bool fec_v3 = !fec_v5 && !fec_v4 && fec_v3_candidate;
+  const std::size_t codewords = fec_v5
       ? (packet_size - kFecWireHeaderBytes) / kFecCodewordBytes
-      : fec_v3
-          ? (packet_size - kFecWireHeaderBytes) / kFecV3CodewordBytes
-          : packet_size / kFecV2CodewordBytes;
-  const std::size_t data_bytes = fec_v4
-      ? kFecDataBytes : fec_v3 ? kFecV3DataBytes : kFecV2DataBytes;
+      : fec_v4
+          ? (packet_size - kFecWireHeaderBytes) / kFecV4CodewordBytes
+          : fec_v3
+              ? (packet_size - kFecWireHeaderBytes) / kFecV3CodewordBytes
+              : packet_size / kFecV2CodewordBytes;
+  const std::size_t data_bytes = fec_v5
+      ? kFecDataBytes
+      : fec_v4
+          ? kFecV4DataBytes
+          : fec_v3 ? kFecV3DataBytes : kFecV2DataBytes;
   const std::size_t decoded_capacity = codewords * data_bytes;
   if (scratch == nullptr || scratch_size < decoded_capacity ||
-      (fec_v4 && (codewords > kFecMaxCodewords || codewords % 4U != 0U)) ||
+      (fec_v5 && (codewords > kFecMaxCodewords || codewords % 4U != 0U)) ||
+      (fec_v4 && (codewords > kFecV4MaxCodewords || codewords % 4U != 0U)) ||
       (fec_v3 && (codewords > kFecV3MaxCodewords || codewords % 4U != 0U)) ||
-      (!fec_v4 && !fec_v3 && codewords > kFecV2MaxCodewords)) {
+      (!fec_v5 && !fec_v4 && !fec_v3 && codewords > kFecV2MaxCodewords)) {
     return false;
   }
   std::uint16_t corrected_codewords = 0;
   std::uint16_t corrected_bits = 0;
-  if (fec_v4) {
+  if (fec_v5) {
     const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;
+    constexpr std::size_t kMaximumCorrections = kFecParityBytes / 2U;
     for (std::size_t block = 0; block < codewords; ++block) {
       std::uint8_t syndromes[kFecParityBytes] = {};
       for (std::size_t symbol = 0; symbol < kFecCodewordBytes; ++symbol) {
@@ -725,8 +740,200 @@ bool decode_receiver_packet_payload(
         }
       }
 
+      const bool canonical = std::all_of(
+          std::begin(syndromes), std::end(syndromes),
+          [](std::uint8_t value) { return value == 0U; });
+      std::size_t correction_symbols[kMaximumCorrections] = {};
+      std::uint8_t correction_values[kMaximumCorrections] = {};
+      std::size_t correction_count = 0;
+      if (!canonical) {
+        // Berlekamp-Massey finds the shortest recurrence for the ten
+        // syndromes. With evaluation points X, its locator is
+        // Lambda(z) = product(1 + X*z), so roots occur at inverse(X).
+        std::uint8_t locator[kFecParityBytes + 1U] = {1U};
+        std::uint8_t previous[kFecParityBytes + 1U] = {1U};
+        std::size_t locator_degree = 0;
+        std::size_t shift = 1;
+        std::uint8_t previous_discrepancy = 1U;
+        for (std::size_t index = 0; index < kFecParityBytes; ++index) {
+          std::uint8_t discrepancy = syndromes[index];
+          for (std::size_t term = 1; term <= locator_degree; ++term) {
+            discrepancy ^= fec_gf_multiply(
+                locator[term], syndromes[index - term]);
+          }
+          if (discrepancy == 0U) {
+            ++shift;
+            continue;
+          }
+          std::uint8_t saved[kFecParityBytes + 1U] = {};
+          std::copy(std::begin(locator), std::end(locator), saved);
+          const std::uint8_t scale = fec_gf_multiply(
+              discrepancy, fec_gf_inverse(previous_discrepancy));
+          for (std::size_t term = 0;
+               term + shift <= kFecParityBytes; ++term) {
+            locator[term + shift] ^=
+                fec_gf_multiply(scale, previous[term]);
+          }
+          if (2U * locator_degree <= index) {
+            locator_degree = index + 1U - locator_degree;
+            std::copy(std::begin(saved), std::end(saved), previous);
+            previous_discrepancy = discrepancy;
+            shift = 1U;
+          } else {
+            ++shift;
+          }
+        }
+
+        if (locator_degree == 0U ||
+            locator_degree > kMaximumCorrections) {
+          if (report != nullptr) {
+            report->result = ReceiverPacketDecodeResult::FecUncorrectable;
+          }
+          return false;
+        }
+        for (std::size_t symbol = 0;
+             symbol < kFecCodewordBytes; ++symbol) {
+          const std::uint8_t inverse_evaluation = fec_gf_inverse(
+              static_cast<std::uint8_t>(symbol + 1U));
+          std::uint8_t value = locator[locator_degree];
+          for (std::size_t term = locator_degree; term > 0U; --term) {
+            value = fec_gf_multiply(value, inverse_evaluation) ^
+                locator[term - 1U];
+          }
+          if (value == 0U) {
+            if (correction_count >= locator_degree) {
+              correction_count = kMaximumCorrections + 1U;
+              break;
+            }
+            correction_symbols[correction_count++] = symbol;
+          }
+        }
+        if (correction_count != locator_degree) {
+          if (report != nullptr) {
+            report->result = ReceiverPacketDecodeResult::FecUncorrectable;
+          }
+          return false;
+        }
+
+        // Solve the first L syndrome equations for the L error magnitudes.
+        std::uint8_t system[kMaximumCorrections]
+                           [kMaximumCorrections + 1U] = {};
+        for (std::size_t row = 0; row < correction_count; ++row) {
+          for (std::size_t column = 0;
+               column < correction_count; ++column) {
+            system[row][column] = fec_gf_power(
+                static_cast<std::uint8_t>(
+                    correction_symbols[column] + 1U),
+                static_cast<std::uint8_t>(row));
+          }
+          system[row][correction_count] = syndromes[row];
+        }
+        for (std::size_t pivot = 0; pivot < correction_count; ++pivot) {
+          std::size_t pivot_row = pivot;
+          while (pivot_row < correction_count &&
+                 system[pivot_row][pivot] == 0U) {
+            ++pivot_row;
+          }
+          if (pivot_row == correction_count) {
+            if (report != nullptr) {
+              report->result = ReceiverPacketDecodeResult::FecUncorrectable;
+            }
+            return false;
+          }
+          if (pivot_row != pivot) {
+            for (std::size_t column = pivot;
+                 column <= correction_count; ++column) {
+              std::swap(system[pivot][column], system[pivot_row][column]);
+            }
+          }
+          const std::uint8_t inverse_pivot =
+              fec_gf_inverse(system[pivot][pivot]);
+          for (std::size_t column = pivot;
+               column <= correction_count; ++column) {
+            system[pivot][column] =
+                fec_gf_multiply(system[pivot][column], inverse_pivot);
+          }
+          for (std::size_t row = 0; row < correction_count; ++row) {
+            if (row == pivot || system[row][pivot] == 0U) continue;
+            const std::uint8_t scale = system[row][pivot];
+            for (std::size_t column = pivot;
+                 column <= correction_count; ++column) {
+              system[row][column] ^=
+                  fec_gf_multiply(scale, system[pivot][column]);
+            }
+          }
+        }
+        for (std::size_t correction = 0;
+             correction < correction_count; ++correction) {
+          correction_values[correction] =
+              system[correction][correction_count];
+          if (correction_values[correction] == 0U) {
+            if (report != nullptr) {
+              report->result = ReceiverPacketDecodeResult::FecUncorrectable;
+            }
+            return false;
+          }
+        }
+
+        // A bounded decoder must validate every available syndrome before it
+        // mutates data. This rejects locator/magnitude solutions outside the
+        // five-symbol correction radius.
+        for (std::size_t check = 0; check < kFecParityBytes; ++check) {
+          std::uint8_t reconstructed = 0U;
+          for (std::size_t correction = 0;
+               correction < correction_count; ++correction) {
+            reconstructed ^= fec_gf_multiply(
+                correction_values[correction],
+                fec_gf_power(
+                    static_cast<std::uint8_t>(
+                        correction_symbols[correction] + 1U),
+                    static_cast<std::uint8_t>(check)));
+          }
+          if (reconstructed != syndromes[check]) {
+            if (report != nullptr) {
+              report->result = ReceiverPacketDecodeResult::FecUncorrectable;
+            }
+            return false;
+          }
+        }
+        ++corrected_codewords;
+        for (std::size_t correction = 0;
+             correction < correction_count; ++correction) {
+          corrected_bits = static_cast<std::uint16_t>(
+              corrected_bits + __builtin_popcount(static_cast<unsigned int>(
+                  correction_values[correction])));
+        }
+      }
+      for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
+        std::uint8_t value =
+            packet[matrix_offset + symbol * codewords + block];
+        for (std::size_t correction = 0;
+             correction < correction_count; ++correction) {
+          if (symbol == correction_symbols[correction]) {
+            value ^= correction_values[correction];
+          }
+        }
+        scratch[block * kFecDataBytes + symbol] = value;
+      }
+    }
+  } else if (fec_v4) {
+    const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;
+    for (std::size_t block = 0; block < codewords; ++block) {
+      std::uint8_t syndromes[kFecV4ParityBytes] = {};
+      for (std::size_t symbol = 0; symbol < kFecV4CodewordBytes; ++symbol) {
+        const std::uint8_t value =
+            packet[matrix_offset + symbol * codewords + block];
+        const std::uint8_t evaluation =
+            static_cast<std::uint8_t>(symbol + 1U);
+        std::uint8_t power = 1U;
+        for (std::size_t check = 0; check < kFecV4ParityBytes; ++check) {
+          syndromes[check] ^= fec_gf_multiply(value, power);
+          power = fec_gf_multiply(power, evaluation);
+        }
+      }
+
       std::size_t correction_symbols[2] = {
-          kFecCodewordBytes, kFecCodewordBytes};
+          kFecV4CodewordBytes, kFecV4CodewordBytes};
       std::uint8_t correction_values[2] = {};
       std::size_t correction_count = 0;
       const bool canonical = std::all_of(
@@ -734,13 +941,13 @@ bool decode_receiver_packet_payload(
           [](std::uint8_t value) { return value == 0U; });
       if (!canonical && syndromes[0] != 0U) {
         for (std::size_t symbol = 0;
-             symbol < kFecCodewordBytes; ++symbol) {
+             symbol < kFecV4CodewordBytes; ++symbol) {
           const std::uint8_t evaluation =
               static_cast<std::uint8_t>(symbol + 1U);
           std::uint8_t power = 1U;
           bool matches = true;
           for (std::size_t check = 0;
-               check < kFecParityBytes; ++check) {
+               check < kFecV4ParityBytes; ++check) {
             if (syndromes[check] !=
                 fec_gf_multiply(syndromes[0], power)) {
               matches = false;
@@ -758,12 +965,12 @@ bool decode_receiver_packet_payload(
       }
       if (!canonical && correction_count == 0U) {
         for (std::size_t first = 0;
-             first + 1U < kFecCodewordBytes && correction_count == 0U;
+             first + 1U < kFecV4CodewordBytes && correction_count == 0U;
              ++first) {
           const std::uint8_t first_evaluation =
               static_cast<std::uint8_t>(first + 1U);
           for (std::size_t second = first + 1U;
-               second < kFecCodewordBytes; ++second) {
+               second < kFecV4CodewordBytes; ++second) {
             const std::uint8_t second_evaluation =
                 static_cast<std::uint8_t>(second + 1U);
             const std::uint8_t denominator =
@@ -778,7 +985,7 @@ bool decode_receiver_packet_payload(
             std::uint8_t second_power = 1U;
             bool matches = true;
             for (std::size_t check = 0;
-                 check < kFecParityBytes; ++check) {
+                 check < kFecV4ParityBytes; ++check) {
               if (syndromes[check] !=
                   (fec_gf_multiply(first_error, first_power) ^
                    fec_gf_multiply(second_error, second_power))) {
@@ -816,7 +1023,7 @@ bool decode_receiver_packet_payload(
                   correction_values[correction])));
         }
       }
-      for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
+      for (std::size_t symbol = 0; symbol < kFecV4DataBytes; ++symbol) {
         std::uint8_t value =
             packet[matrix_offset + symbol * codewords + block];
         for (std::size_t correction = 0;
@@ -825,7 +1032,7 @@ bool decode_receiver_packet_payload(
             value ^= correction_values[correction];
           }
         }
-        scratch[block * kFecDataBytes + symbol] = value;
+        scratch[block * kFecV4DataBytes + symbol] = value;
       }
     }
   } else if (fec_v3) {
@@ -970,9 +1177,11 @@ bool decode_receiver_packet_payload(
                              kAlignedEnvelopeHeaderBytes + 1U +
                              kAnimationPipelineCrcBytes ||
       scratch[0] != static_cast<std::uint8_t>(ReceiverCommand::AlignedEnvelope) ||
-      scratch[1] != (fec_v4
+      scratch[1] != (fec_v5
           ? kFecEnvelopeVersion
-          : fec_v3 ? kFecEnvelopeVersionV3 : kFecEnvelopeVersionV2)) {
+          : fec_v4
+              ? kFecEnvelopeVersionV4
+              : fec_v3 ? kFecEnvelopeVersionV3 : kFecEnvelopeVersionV2)) {
     return false;
   }
   const std::size_t inner_wire_size =
@@ -988,11 +1197,13 @@ bool decode_receiver_packet_payload(
   }
   const std::size_t semantic_size =
       (static_cast<std::size_t>(inner[2]) << 8U) | inner[3];
-  const std::size_t maximum_semantic_size = fec_v4
+  const std::size_t maximum_semantic_size = fec_v5
       ? kFecEnvelopeMaxSemanticBytes
-      : fec_v3
-          ? kFecV3EnvelopeMaxSemanticBytes
-          : kFecV2EnvelopeMaxSemanticBytes;
+      : fec_v4
+          ? kFecV4EnvelopeMaxSemanticBytes
+          : fec_v3
+              ? kFecV3EnvelopeMaxSemanticBytes
+              : kFecV2EnvelopeMaxSemanticBytes;
   if (semantic_size == 0U || semantic_size > maximum_semantic_size) {
     return false;
   }
@@ -1006,7 +1217,7 @@ bool decode_receiver_packet_payload(
   std::size_t required_codewords =
       (kFecEnvelopeHeaderBytes + inner_wire_size + data_bytes - 1U) /
       data_bytes;
-  if (fec_v4 || fec_v3) {
+  if (fec_v5 || fec_v4 || fec_v3) {
     required_codewords += (4U - required_codewords % 4U) % 4U;
   } else if (required_codewords % 2U != 0U) {
     ++required_codewords;

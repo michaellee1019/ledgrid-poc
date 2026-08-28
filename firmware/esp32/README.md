@@ -109,19 +109,19 @@ firmware, so new-host/old-firmware traffic remains legacy and
 old-host/new-firmware traffic remains decodable. CRC-error accounting is
 unchanged for legacy and v1 traffic.
 
-Aligned-envelope v4 is the active per-receiver FEC fallback. Two separated raw
-headers identify `0x0b, 4, inner_v1_wire_bytes:u16`; the protected payload
+Aligned-envelope v5 is the active per-receiver FEC fallback. Two separated raw
+headers identify `0x0b, 5, inner_v1_wire_bytes:u16`; the protected payload
 contains another header plus the complete canonical v1 envelope, including
-alignment and CRC. Each shortened systematic Reed-Solomon codeword has 25
-data symbols and five parity symbols at distinct GF(256) evaluation points. It
-corrects two arbitrary bytes and detects three per codeword; 136-way byte
-interleaving corrects any contiguous burst through 272 bytes. The installed
-eight-strip `SET_ALL` is 136 codewords/4,088 bytes, the one-strip form is 20
-codewords/608 bytes, and the maximum is 136 codewords/4,088 bytes and 3,390
-semantic bytes. The v2 and v3 decoders/capabilities remain accepted for old-
+alignment and CRC. Each shortened systematic Reed-Solomon codeword has 50
+data symbols and ten parity symbols at distinct GF(256) evaluation points. It
+corrects five arbitrary bytes per codeword; 68-way byte interleaving corrects
+any contiguous burst through 340 bytes. The installed eight-strip `SET_ALL` is
+68 codewords/4,088 bytes, the one-strip form is 12 codewords/728 bytes, and the
+maximum is 68 codewords/4,088 bytes and 3,390 semantic bytes. The v2, v3, and
+v4 decoders/capabilities remain accepted for old-
 Host rollback compatibility. Valid legacy and v1 packets remain accepted.
 
-Capability `fec_envelope_v4 = 1<<17` and three fresh, counter-advancing status
+Capability `fec_envelope_v5 = 1<<18` and three fresh, counter-advancing status
 observations gate new-Host use. The maintained service requests it only for logical
 receiver 3 through `LEDGRID_FEC_RECEIVER_IDS=3`; every other receiver remains
 v1. Status v7 is 1,248 bytes and reports received, accepted, corrected packet
