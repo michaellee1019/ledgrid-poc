@@ -14,6 +14,7 @@ from subprocesses is captured and returned only as a bounded diagnostic tail.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import json
@@ -33,6 +34,7 @@ try:
     from tools.deployment.app_releases import AppReleaseManager
     from tools.deployment.firmware_artifacts import inspect_firmware_installation
     from tools.deployment.receiver_hybrid_config import (
+        FINALIZED_RECEIVER_COUNT,
         migrate_legacy_receiver_hybrid_config,
         resolve_receiver_hybrid_config,
     )
@@ -40,6 +42,7 @@ except ModuleNotFoundError:  # Direct execution from an uploaded snapshot.
     from app_releases import AppReleaseManager  # type: ignore[no-redef]
     from firmware_artifacts import inspect_firmware_installation  # type: ignore[no-redef]
     from receiver_hybrid_config import (  # type: ignore[no-redef]
+        FINALIZED_RECEIVER_COUNT,
         migrate_legacy_receiver_hybrid_config,
         resolve_receiver_hybrid_config,
     )
@@ -50,10 +53,33 @@ SUPPORT_METADATA = ".support-release.json"
 RELEASE_PATTERN = re.compile(r"[0-9a-f]{64}")
 DEFAULT_RECEIPT_DIR = PurePosixPath("run_state/deploy_receipts")
 DEFAULT_SYSTEMD_UNIT = "ledgrid.service"
+SYSTEMD_UNIT_ROOT = Path("/etc/systemd/system")
 DEFAULT_API_URL = "http://127.0.0.1:5000/api/status"
 STRICT_RECEIVER_HEALTH_POLL_SECONDS = 0.75
 PLATFORMIO_BUILD_CACHE = ".platformio-build-cache"
 CCACHE_DIRECTORY = ".ccache"
+PINNED_OPENOCD_VERSION = "v0.12.0-esp32-20260424"
+PINNED_OPENOCD_ARCHIVE = (
+    "openocd-esp32-linux-arm64-0.12.0-esp32-20260424.tar.gz"
+)
+PINNED_OPENOCD_URL = (
+    "https://github.com/espressif/openocd-esp32/releases/download/"
+    f"{PINNED_OPENOCD_VERSION}/{PINNED_OPENOCD_ARCHIVE}"
+)
+PINNED_OPENOCD_SHA256 = (
+    "f1b87d408adf6f2eb08a2b067ff7de38310829cc952c0f5d1d09920b0200a6e4"
+)
+PINNED_OPENOCD_MAX_BYTES = 16 * 1024 * 1024
+OPENOCD_BOARD_CONFIG = "board/esp32s3-builtin.cfg"
+PINNED_OPENOCD_INSTALL_ROOT = Path("/opt/ledgrid-openocd")
+ROOT_OWNED_FIRMWARE_INSTALL_ROOT = Path("/opt/ledgrid-receiver-firmware")
+RECEIVER_USB_STABILIZATION_SECONDS = 20.0
+RECEIVER_USB_STABILIZATION_POLL_SECONDS = 0.5
+RECEIVER_FIRMWARE_COMMIT = PurePosixPath(
+    "run_state/receiver_firmware_commit.json"
+)
+MAX_RECEIVER_FIRMWARE_COMMIT_BYTES = 64 * 1024
+MAX_RECEIVER_FIRMWARE_ARTIFACT_BYTES = 32 * 1024 * 1024
 
 # First-cutover bootstrap is deliberately narrower than a full deployment
 # manifest.  These are the source roots needed by the legacy service; target
@@ -260,6 +286,130 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _read_pinned_regular_source(
+    path: Path,
+    *,
+    expected_sha256: str,
+    maximum_bytes: int,
+    expected_size: Optional[int] = None,
+) -> bytes:
+    """Pin and verify unprivileged bytes without a privileged path re-open."""
+
+    if (
+        RELEASE_PATTERN.fullmatch(expected_sha256) is None
+        or maximum_bytes <= 0
+        or expected_size is not None
+        and (expected_size < 0 or expected_size > maximum_bytes)
+    ):
+        raise RuntimeError("pinned source constraints are malformed")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise RuntimeError(f"cannot safely open pinned source: {path}") from exc
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_size > maximum_bytes
+            or expected_size is not None
+            and before.st_size != expected_size
+        ):
+            raise RuntimeError(f"pinned source is not a bounded regular file: {path}")
+
+        def read_once() -> bytes:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            chunks: list[bytes] = []
+            received = 0
+            while True:
+                chunk = os.read(descriptor, min(1024 * 1024, maximum_bytes + 1 - received))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                received += len(chunk)
+                if received > maximum_bytes:
+                    raise RuntimeError(f"pinned source exceeds its size limit: {path}")
+            return b"".join(chunks)
+
+        payload = read_once()
+        if (
+            len(payload) != before.st_size
+            or hashlib.sha256(payload).hexdigest() != expected_sha256
+        ):
+            raise RuntimeError(f"pinned source digest or size is invalid: {path}")
+        repeated = read_once()
+        after = os.fstat(descriptor)
+        if (
+            repeated != payload
+            or hashlib.sha256(repeated).hexdigest() != expected_sha256
+            or (after.st_dev, after.st_ino, after.st_mode, after.st_size)
+            != (before.st_dev, before.st_ino, before.st_mode, before.st_size)
+        ):
+            raise RuntimeError(f"pinned source changed while being copied: {path}")
+        return payload
+    finally:
+        os.close(descriptor)
+
+
+def _validate_root_owned_regular_file(
+    path: Path,
+    *,
+    expected_sha256: str,
+    mode: str,
+) -> None:
+    metadata = path.lstat()
+    if (
+        path.is_symlink()
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != 0
+        or stat.S_IMODE(metadata.st_mode) != int(mode, 8)
+        or _sha256_file(path) != expected_sha256
+    ):
+        raise RuntimeError(f"root-owned pinned-byte destination is unsafe: {path}")
+
+
+def _write_root_owned_bytes(
+    destination: Path,
+    payload: bytes,
+    *,
+    expected_sha256: str,
+    mode: str = "0444",
+) -> None:
+    """Pipe pinned bytes to a root writer that never opens the source path."""
+
+    if mode not in {"0444", "0644"}:
+        raise RuntimeError("root-owned destination mode is not allowlisted")
+    completed = _command(
+        (
+            "sudo",
+            "dd",
+            f"of={destination}",
+            "bs=1048576",
+            "conv=fsync",
+            "status=none",
+        ),
+        input_data=payload,
+        timeout=30.0,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("root-owned pinned-byte writer failed")
+    _command(("sudo", "chown", "root:root", destination))
+    _command(("sudo", "chmod", mode, destination))
+    copied_digest = _command(
+        ("sudo", "sha256sum", destination), timeout=15.0
+    ).stdout.split()[0]
+    if copied_digest != expected_sha256:
+        raise RuntimeError("root-owned pinned-byte destination digest is invalid")
+    _validate_root_owned_regular_file(
+        destination, expected_sha256=expected_sha256, mode=mode
+    )
+
+
 def _validate_shared_firmware_marker(path: Path) -> None:
     try:
         metadata = path.lstat()
@@ -313,6 +463,132 @@ def _read_shared_firmware_marker(path: Path) -> str:
         raise RuntimeError("shared firmware marker is not UTF-8") from exc
 
 
+def _receiver_device_identities(devices: Sequence[Any]) -> list[dict[str, str]]:
+    return sorted(
+        (
+            {
+                "hardware_serial": device.hardware_serial,
+                "physical_location": device.physical_location,
+            }
+            for device in devices
+        ),
+        key=lambda item: (item["physical_location"], item["hardware_serial"]),
+    )
+
+
+def _receiver_firmware_commit_matches(
+    root: Path,
+    *,
+    devices: Sequence[Any],
+    installation_digest: str,
+    firmware_environment: str,
+    firmware_sha256: str,
+    require_current_devices: bool = True,
+) -> bool:
+    if FINALIZED_RECEIVER_COUNT != 5 or len(devices) != FINALIZED_RECEIVER_COUNT:
+        return False
+    path = root / RECEIVER_FIRMWARE_COMMIT.as_posix()
+    try:
+        metadata = path.lstat()
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_size > MAX_RECEIVER_FIRMWARE_COMMIT_BYTES
+        ):
+            return False
+        payload = _json_object(path)
+        commit_devices = payload.get("devices")
+        if (
+            payload.get("schema_version") != 1
+            or payload.get("installation_digest") != installation_digest
+            or payload.get("firmware_environment") != firmware_environment
+            or payload.get("firmware_sha256") != firmware_sha256
+            or not isinstance(commit_devices, list)
+            or len(commit_devices) != FINALIZED_RECEIVER_COUNT
+            or (
+                require_current_devices
+                and commit_devices != _receiver_device_identities(devices)
+            )
+        ):
+            return False
+        raw_evidence = payload.get("evidence_path")
+        expected_evidence_sha256 = payload.get("evidence_sha256")
+        if (
+            not isinstance(raw_evidence, str)
+            or not isinstance(expected_evidence_sha256, str)
+            or RELEASE_PATTERN.fullmatch(expected_evidence_sha256) is None
+        ):
+            return False
+        evidence_relative = _safe_relative(raw_evidence)
+        if not _is_beneath(
+            evidence_relative, PurePosixPath("run_state/receiver_flash_attempts")
+        ):
+            return False
+        evidence_path = root / evidence_relative.as_posix()
+        evidence_metadata = evidence_path.lstat()
+        if (
+            evidence_path.is_symlink()
+            or not stat.S_ISREG(evidence_metadata.st_mode)
+            or evidence_metadata.st_uid != os.geteuid()
+            or _sha256_file(evidence_path) != expected_evidence_sha256
+        ):
+            return False
+        evidence = _json_object(evidence_path)
+        boards = evidence.get("boards")
+        targets = evidence.get("targets")
+        evidence_devices = evidence.get("expected_devices")
+        board_identities = sorted(
+            (
+                (board.get("hardware_serial"), board.get("physical_location"))
+                for board in boards
+                if isinstance(board, dict)
+            ),
+            key=lambda item: (str(item[1]), str(item[0])),
+        ) if isinstance(boards, list) else []
+        target_identities = sorted(
+            (
+                (target.get("hardware_serial"), target.get("physical_location"))
+                for target in targets
+                if isinstance(target, dict)
+            ),
+            key=lambda item: (str(item[1]), str(item[0])),
+        ) if isinstance(targets, list) else []
+        return bool(
+            evidence.get("outcome") == "success"
+            and evidence.get("installation_digest") == installation_digest
+            and evidence.get("firmware_environment") == firmware_environment
+            and evidence.get("firmware_sha256") == firmware_sha256
+            and isinstance(evidence_devices, list)
+            and len(evidence_devices) == FINALIZED_RECEIVER_COUNT
+            and sorted(
+                (
+                    {
+                        "hardware_serial": item.get("hardware_serial"),
+                        "physical_location": item.get("physical_location"),
+                    }
+                    for item in evidence_devices
+                    if isinstance(item, dict)
+                ),
+                key=lambda item: (
+                    str(item["physical_location"]), str(item["hardware_serial"])
+                ),
+            )
+            == commit_devices
+            and isinstance(boards, list)
+            and isinstance(targets, list)
+            and len(boards) == len(targets)
+            and 0 < len(boards) <= FINALIZED_RECEIVER_COUNT
+            and board_identities == target_identities
+            and all(
+                isinstance(board, dict) and board.get("outcome") == "success"
+                for board in boards
+            )
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+
+
 def _json_object(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -352,15 +628,31 @@ def _command(
     env: Optional[Mapping[str, str]] = None,
     check: bool = True,
     timeout: Optional[float] = None,
+    input_data: Optional[bytes] = None,
 ) -> subprocess.CompletedProcess[str]:
-    completed = subprocess.run(
+    raw = subprocess.run(
         [os.fspath(arg) for arg in args],
         cwd=os.fspath(cwd) if cwd is not None else None,
         env=dict(env) if env is not None else None,
         capture_output=True,
-        text=True,
+        text=input_data is None,
+        input=input_data,
         check=False,
         timeout=timeout,
+    )
+    completed = subprocess.CompletedProcess(
+        raw.args,
+        raw.returncode,
+        (
+            raw.stdout.decode("utf-8", errors="replace")
+            if isinstance(raw.stdout, bytes)
+            else raw.stdout
+        ),
+        (
+            raw.stderr.decode("utf-8", errors="replace")
+            if isinstance(raw.stderr, bytes)
+            else raw.stderr
+        ),
     )
     if check and completed.returncode:
         detail = completed.stderr.strip() or completed.stdout.strip() or "no output"
@@ -832,7 +1124,7 @@ def ensure_unit(
     if not re.fullmatch(r"[A-Za-z0-9_.@-]+\.service", unit):
         raise ValueError(f"unsafe systemd unit name: {unit!r}")
     desired = _unit_text(root, user, strips=strips, receivers=receivers)
-    destination = Path("/etc/systemd/system") / unit
+    destination = SYSTEMD_UNIT_ROOT / unit
     current = ""
     try:
         current = destination.read_text(encoding="utf-8")
@@ -840,17 +1132,32 @@ def ensure_unit(
         pass
     changed = current != desired
     if changed:
-        fd, temporary_name = tempfile.mkstemp(prefix="ledgrid-unit-", suffix=".service")
-        temporary = Path(temporary_name)
+        desired_bytes = desired.encode("utf-8")
+        desired_sha256 = hashlib.sha256(desired_bytes).hexdigest()
+        staging = destination.parent / (
+            f".{unit}.install-{os.getpid()}-{time.time_ns()}"
+        )
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write(desired)
-                stream.flush()
-                os.fsync(stream.fileno())
-            _command(("sudo", "install", "-m", "0644", temporary, destination))
+            _write_root_owned_bytes(
+                staging,
+                desired_bytes,
+                expected_sha256=desired_sha256,
+                mode="0644",
+            )
+            _command(("sudo", "mv", "-T", "--", staging, destination))
+            _validate_root_owned_regular_file(
+                destination, expected_sha256=desired_sha256, mode="0644"
+            )
             _command(("sudo", "systemctl", "daemon-reload"))
         finally:
-            temporary.unlink(missing_ok=True)
+            try:
+                _command(
+                    ("sudo", "rm", "-f", "--", staging),
+                    check=False,
+                    timeout=10.0,
+                )
+            except (OSError, RuntimeError, subprocess.TimeoutExpired):
+                pass
     enabled = _command(("systemctl", "is-enabled", "--quiet", unit), check=False)
     enabled_changed = enabled.returncode != 0
     if enabled_changed:
@@ -1092,29 +1399,518 @@ def _receiver_inventory_module():
     return receiver_firmware_inventory
 
 
-def _discover_receiver_devices(*, receiver_count: int) -> tuple[Any, ...]:
+def _discover_receiver_devices(
+    *, receiver_count: int, timeout: float = 15.0
+) -> tuple[Any, ...]:
     pio = _platformio_executable()
     completed = _command(
-        (pio, "device", "list", "--json-output"), timeout=15.0
+        (pio, "device", "list", "--json-output"), timeout=timeout
     )
     return _receiver_inventory_module().parse_platformio_receiver_devices(
         completed.stdout, receiver_count=receiver_count
     )
 
 
+def _write_shared_firmware_marker(
+    path: Path, *, expected_before: str, installation_digest: str
+) -> None:
+    """Atomically advance the aggregate marker after every board verifies."""
+
+    _validate_shared_firmware_marker(path)
+    if _read_shared_firmware_marker(path) != expected_before:
+        raise RuntimeError("shared firmware marker changed during receiver flash")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(installation_digest + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _pinned_openocd_archive(root: Path) -> Path:
+    cache = root / "build" / "tools" / "downloads"
+    cache.mkdir(parents=True, exist_ok=True)
+    archive = cache / PINNED_OPENOCD_ARCHIVE
+    if archive.exists():
+        if archive.is_symlink() or not archive.is_file():
+            raise RuntimeError("pinned OpenOCD cache is not a regular file")
+        if _sha256_file(archive) != PINNED_OPENOCD_SHA256:
+            raise RuntimeError("cached pinned OpenOCD archive digest is invalid")
+        return archive
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{archive.name}.", suffix=".tmp", dir=cache
+    )
+    temporary = Path(temporary_name)
+    received = 0
+    try:
+        request = Request(PINNED_OPENOCD_URL, headers={"User-Agent": "ledgrid-deploy/1"})
+        try:
+            with urlopen(request, timeout=30.0) as response, os.fdopen(
+                descriptor, "wb"
+            ) as stream:
+                descriptor = -1
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    received += len(chunk)
+                    if received > PINNED_OPENOCD_MAX_BYTES:
+                        raise RuntimeError("pinned OpenOCD archive exceeds size limit")
+                    stream.write(chunk)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except (OSError, URLError) as exc:
+            raise RuntimeError(f"cannot download pinned OpenOCD archive: {exc}") from exc
+        if _sha256_file(temporary) != PINNED_OPENOCD_SHA256:
+            raise RuntimeError("downloaded pinned OpenOCD archive digest is invalid")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, archive)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+    return archive
+
+
+@contextmanager
+def _pinned_openocd(root: Path) -> Iterable[tuple[Path, Path]]:
+    """Yield a root-owned OpenOCD install derived from the verified archive."""
+
+    archive = _pinned_openocd_archive(root)
+    install = PINNED_OPENOCD_INSTALL_ROOT / PINNED_OPENOCD_SHA256
+    if not install.exists():
+        archive_payload = _read_pinned_regular_source(
+            archive,
+            expected_sha256=PINNED_OPENOCD_SHA256,
+            maximum_bytes=PINNED_OPENOCD_MAX_BYTES,
+        )
+        staging = PINNED_OPENOCD_INSTALL_ROOT / (
+            f".install-{PINNED_OPENOCD_SHA256}-{os.getpid()}-{time.time_ns()}"
+        )
+        root_archive = staging / PINNED_OPENOCD_ARCHIVE
+        try:
+            _command(("sudo", "mkdir", "-p", PINNED_OPENOCD_INSTALL_ROOT))
+            _command(("sudo", "mkdir", "--", staging))
+            _write_root_owned_bytes(
+                root_archive,
+                archive_payload,
+                expected_sha256=PINNED_OPENOCD_SHA256,
+            )
+            _command(("sudo", "tar", "-xzf", root_archive, "-C", staging))
+            _command(("sudo", "chown", "-R", "root:root", staging))
+            _command(("sudo", "chmod", "-R", "go-w", staging))
+            _command(("sudo", "mv", "--", staging, install))
+        except Exception:
+            _command(("sudo", "rm", "-rf", "--", staging), check=False, timeout=15.0)
+            raise
+
+    root_archive = install / PINNED_OPENOCD_ARCHIVE
+    tool_root = install / "openocd-esp32"
+    executable = tool_root / "bin" / "openocd"
+    scripts = tool_root / "share" / "openocd" / "scripts"
+    board_config = scripts / OPENOCD_BOARD_CONFIG
+    required = (
+        PINNED_OPENOCD_INSTALL_ROOT,
+        install,
+        root_archive,
+        tool_root,
+        executable,
+        scripts,
+        board_config,
+    )
+    for path in required:
+        metadata = path.lstat()
+        if path.is_symlink() or metadata.st_uid != 0 or metadata.st_mode & 0o022:
+            raise RuntimeError(
+                f"pinned OpenOCD install is not root-owned and immutable: {path}"
+            )
+    if (
+        not install.is_dir()
+        or not root_archive.is_file()
+        or not tool_root.is_dir()
+        or not executable.is_file()
+        or not scripts.is_dir()
+        or not board_config.is_file()
+        or _sha256_file(root_archive) != PINNED_OPENOCD_SHA256
+    ):
+        raise RuntimeError("pinned OpenOCD install has an invalid layout or digest")
+    for path in tool_root.rglob("*"):
+        metadata = path.lstat()
+        if (
+            path.is_symlink()
+            or metadata.st_uid != 0
+            or metadata.st_mode & 0o022
+            or not (path.is_file() or path.is_dir())
+        ):
+            raise RuntimeError(f"pinned OpenOCD install contains an unsafe path: {path}")
+    version = _command((executable, "--version"), timeout=10.0)
+    if PINNED_OPENOCD_VERSION.removeprefix("v") not in (
+        version.stdout + version.stderr
+    ):
+        raise RuntimeError("pinned OpenOCD executable reports an unexpected version")
+    yield executable, scripts
+
+
+def _receiver_identity(device: Any) -> tuple[str, str]:
+    return device.hardware_serial, device.physical_location
+
+
+def _assert_receiver_binding(
+    expected: Sequence[Any], observed: Sequence[Any], *, phase: str
+) -> None:
+    expected_identities = sorted(_receiver_identity(item) for item in expected)
+    observed_identities = sorted(_receiver_identity(item) for item in observed)
+    if observed_identities != expected_identities:
+        raise RuntimeError(
+            f"receiver hardware serial/USB path changed {phase}; "
+            f"expected={expected_identities}, observed={observed_identities}"
+        )
+
+
+def _wait_for_receiver_binding(
+    expected: Sequence[Any],
+    *,
+    receiver_count: int,
+    phase: str,
+    timeout: float = RECEIVER_USB_STABILIZATION_SECONDS,
+    poll_interval: float = RECEIVER_USB_STABILIZATION_POLL_SECONDS,
+) -> tuple[Any, ...]:
+    """Wait for the exact expected serial/path set after USB reset churn."""
+
+    deadline = time.monotonic() + timeout
+    last_error = "receiver discovery did not run"
+    while True:
+        remaining = deadline - time.monotonic()
+        try:
+            observed = _discover_receiver_devices(
+                receiver_count=receiver_count,
+                timeout=max(0.25, min(3.0, remaining)),
+            )
+            _assert_receiver_binding(expected, observed, phase=phase)
+            return observed
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            last_error = str(exc)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(
+                f"exact receiver hardware serial/USB path set did not stabilize "
+                f"{phase} within {timeout:.1f}s: {last_error}"
+            )
+        time.sleep(min(poll_interval, remaining))
+
+
+def _receiver_flash_evidence_path(
+    root: Path, *, installation_digest: str, targets: Sequence[Any]
+) -> Path:
+    nonce = {
+        "installation_digest": installation_digest,
+        "targets": [target.to_dict() for target in targets],
+        "time_ns": time.time_ns(),
+        "pid": os.getpid(),
+    }
+    attempt_id = hashlib.sha256(
+        json.dumps(nonce, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return root / "run_state" / "receiver_flash_attempts" / f"{attempt_id}.json"
+
+
+def _require_finalized_receiver_topology(hybrid_config: Any) -> int:
+    """Return the immutable installed receiver count or fail before mutation."""
+
+    receiver_count = len(hybrid_config.receiver_strip_counts)
+    if FINALIZED_RECEIVER_COUNT != 5 or receiver_count != FINALIZED_RECEIVER_COUNT:
+        raise RuntimeError(
+            "firmware flash requires the finalized topology of exactly 5 receivers; "
+            f"resolved={receiver_count}, finalized={FINALIZED_RECEIVER_COUNT}"
+        )
+    return receiver_count
+
+
+def _require_finalized_receiver_devices(devices: Sequence[Any]) -> None:
+    if FINALIZED_RECEIVER_COUNT != 5 or len(devices) != FINALIZED_RECEIVER_COUNT:
+        raise RuntimeError(
+            "firmware flash requires exactly 5 discovered receivers before mutation; "
+            f"observed={len(devices)}"
+        )
+
+
+def _validate_root_owned_firmware_bundle(
+    bundle_root: Path,
+    artifacts: Sequence[Mapping[str, Any]],
+    *,
+    installation_digest: str,
+) -> None:
+    """Validate the exact immutable files that privileged OpenOCD will open."""
+
+    expected_root = (
+        ROOT_OWNED_FIRMWARE_INSTALL_ROOT / installation_digest
+    ).resolve(strict=False)
+    if (
+        RELEASE_PATTERN.fullmatch(installation_digest) is None
+        or bundle_root.resolve(strict=False) != expected_root
+        or len(artifacts) < 1
+    ):
+        raise RuntimeError("root-owned firmware bundle identity is invalid")
+    required_paths = (ROOT_OWNED_FIRMWARE_INSTALL_ROOT, bundle_root)
+    for path in required_paths:
+        metadata = path.lstat()
+        if (
+            path.is_symlink()
+            or not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_mode & 0o022
+        ):
+            raise RuntimeError(
+                f"firmware bundle is not root-owned and immutable: {path}"
+            )
+    expected_files: set[Path] = set()
+    for index, artifact in enumerate(artifacts):
+        raw_path = artifact.get("program_path")
+        expected_sha256 = artifact.get("sha256")
+        if (
+            not isinstance(raw_path, str)
+            or not isinstance(expected_sha256, str)
+            or RELEASE_PATTERN.fullmatch(expected_sha256) is None
+        ):
+            raise RuntimeError("root-owned firmware artifact receipt is malformed")
+        path = Path(raw_path)
+        expected_path = bundle_root / f"artifact-{index:02d}.bin"
+        if path != expected_path:
+            raise RuntimeError("root-owned firmware artifact path is not canonical")
+        metadata = path.lstat()
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_mode & 0o022
+            or _sha256_file(path) != expected_sha256
+        ):
+            raise RuntimeError(
+                f"firmware artifact is not root-owned, immutable, and verified: {path}"
+            )
+        expected_files.add(path)
+    actual_files = set(bundle_root.iterdir())
+    if actual_files != expected_files:
+        raise RuntimeError("root-owned firmware bundle contains unexpected paths")
+
+
+def _root_owned_firmware_bundle(
+    firmware: Path,
+    installation: Mapping[str, Any],
+) -> tuple[Path, list[dict[str, Any]]]:
+    """Copy inspected inputs into a re-hashed root-owned immutable bundle."""
+
+    installation_digest = str(installation["installation_digest"])
+    if RELEASE_PATTERN.fullmatch(installation_digest) is None:
+        raise RuntimeError("firmware installation digest is malformed")
+    build = firmware / ".pio" / "build" / str(installation["environment"])
+    build_resolved = build.resolve(strict=True)
+    bundle_root = ROOT_OWNED_FIRMWARE_INSTALL_ROOT / installation_digest
+    source_artifacts = list(installation["flash_artifacts"])
+    artifacts: list[dict[str, Any]] = []
+    pinned_payloads: list[bytes] = []
+    for index, artifact in enumerate(source_artifacts):
+        source = build / str(artifact["build_path"])
+        resolved = source.resolve(strict=True)
+        try:
+            resolved.relative_to(build_resolved)
+        except ValueError as exc:
+            raise RuntimeError(
+                "validated flash artifact escapes its build directory"
+            ) from exc
+        payload = _read_pinned_regular_source(
+            source,
+            expected_sha256=str(artifact["sha256"]),
+            maximum_bytes=MAX_RECEIVER_FIRMWARE_ARTIFACT_BYTES,
+            expected_size=int(artifact["size"]),
+        )
+        pinned_payloads.append(payload)
+        artifacts.append({
+            **dict(artifact),
+            "program_path": os.fspath(bundle_root / f"artifact-{index:02d}.bin"),
+        })
+
+    if not bundle_root.exists():
+        staging = ROOT_OWNED_FIRMWARE_INSTALL_ROOT / (
+            f".install-{installation_digest}-{os.getpid()}-{time.time_ns()}"
+        )
+        try:
+            _command(("sudo", "mkdir", "-p", ROOT_OWNED_FIRMWARE_INSTALL_ROOT))
+            _command(("sudo", "mkdir", "--", staging))
+            for index, (artifact, payload) in enumerate(
+                zip(artifacts, pinned_payloads, strict=True)
+            ):
+                destination = staging / f"artifact-{index:02d}.bin"
+                _write_root_owned_bytes(
+                    destination,
+                    payload,
+                    expected_sha256=str(artifact["sha256"]),
+                )
+            _command(("sudo", "chown", "-R", "root:root", staging))
+            _command(("sudo", "chmod", "-R", "go-w", staging))
+            _command(("sudo", "mv", "--", staging, bundle_root))
+        except Exception:
+            _command(("sudo", "rm", "-rf", "--", staging), check=False, timeout=15.0)
+            raise
+
+    _validate_root_owned_firmware_bundle(
+        bundle_root, artifacts, installation_digest=installation_digest
+    )
+    return bundle_root, artifacts
+
+
+def _invalidate_receiver_firmware_commit(
+    root: Path,
+    *,
+    evidence_path: Path,
+    installation_digest: str,
+    devices: Sequence[Any],
+) -> Path:
+    """Durably revoke any prior authority before the first board mutation."""
+
+    commit_path = root / RECEIVER_FIRMWARE_COMMIT.as_posix()
+    previous_sha256: Optional[str] = None
+    try:
+        metadata = commit_path.lstat()
+        if (
+            not commit_path.is_symlink()
+            and stat.S_ISREG(metadata.st_mode)
+            and metadata.st_uid == os.geteuid()
+            and metadata.st_size <= MAX_RECEIVER_FIRMWARE_COMMIT_BYTES
+        ):
+            previous_sha256 = _sha256_file(commit_path)
+    except FileNotFoundError:
+        pass
+    _atomic_json(
+        commit_path,
+        {
+            "schema_version": 1,
+            "status": "invalidated",
+            "installation_digest": installation_digest,
+            "devices": _receiver_device_identities(devices),
+            "evidence_path": evidence_path.relative_to(root).as_posix(),
+            "previous_commit_sha256": previous_sha256,
+        },
+    )
+    retained = _json_object(commit_path)
+    if (
+        retained.get("status") != "invalidated"
+        or retained.get("installation_digest") != installation_digest
+        or retained.get("devices") != _receiver_device_identities(devices)
+        or retained.get("evidence_path") != evidence_path.relative_to(root).as_posix()
+    ):
+        raise RuntimeError("receiver firmware authority invalidation failed")
+    return commit_path
+
+
+def _program_receiver_openocd(
+    *,
+    executable: Path,
+    scripts: Path,
+    bundle_root: Path,
+    artifacts: Sequence[Mapping[str, Any]],
+    installation_digest: str,
+    device: Any,
+) -> dict[str, Any]:
+    _validate_root_owned_firmware_bundle(
+        bundle_root, artifacts, installation_digest=installation_digest
+    )
+    command: list[os.PathLike[str] | str] = [
+        "sudo",
+        executable,
+        "-s",
+        scripts,
+        "-f",
+        OPENOCD_BOARD_CONFIG,
+        "-c",
+        f"adapter serial {device.hardware_serial.upper()}",
+    ]
+    artifact_evidence = []
+    for artifact in artifacts:
+        artifact_argument = str(artifact["program_path"])
+        if re.fullmatch(r"/[A-Za-z0-9_./:+-]+", artifact_argument) is None:
+            raise RuntimeError(
+                "root-owned firmware artifact has an unsafe Tcl path before "
+                f"{device.hardware_serial}: {artifact_argument}"
+            )
+        command.extend(
+            (
+                "-c",
+                f"program_esp {{{artifact_argument}}} {artifact['offset']} "
+                "verify no_skip_loaded",
+            )
+        )
+        artifact_evidence.append(dict(artifact))
+    command.extend(("-c", "reset run", "-c", "shutdown"))
+    try:
+        completed = _command(command, check=False, timeout=180.0)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            **device.to_dict(),
+            "operation": "openocd_program_verify",
+            "artifacts": artifact_evidence,
+            "returncode": None,
+            "verify_count": 0,
+            "expected_verify_count": len(artifact_evidence),
+            "output": f"{type(exc).__name__}: {exc}",
+            "outcome": "failed",
+        }
+    output = completed.stdout + completed.stderr
+    verify_count = output.count("** Verify OK **")
+    result = {
+        **device.to_dict(),
+        "operation": "openocd_program_verify",
+        "artifacts": artifact_evidence,
+        "returncode": completed.returncode,
+        "verify_count": verify_count,
+        "expected_verify_count": len(artifact_evidence),
+        "output": output[-128 * 1024 :],
+    }
+    return {
+        **result,
+        "outcome": (
+            "success"
+            if completed.returncode == 0 and verify_count == len(artifact_evidence)
+            else "failed"
+        ),
+    }
+
+
+def _best_effort_stop_receiver_service() -> None:
+    try:
+        _command(
+            ("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT),
+            check=False,
+            timeout=10.0,
+        )
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        pass
+
+
 def flash_firmware(
     root: Path,
     support_id: Optional[str],
     *,
-    app_release_id: Optional[str] = None,
-    receiver_count: int,
-    debug: bool,
     expected_firmware_environment: Optional[str] = None,
     expected_config_digest: Optional[str] = None,
     expected_installation_digest: Optional[str] = None,
     force: bool = False,
 ) -> Mapping[str, Any]:
     hybrid_config = resolve_receiver_hybrid_config(root)
+    receiver_count = _require_finalized_receiver_topology(hybrid_config)
     firmware_environment = hybrid_config.firmware_environment
     if (
         expected_firmware_environment is not None
@@ -1157,6 +1953,7 @@ def flash_firmware(
             "firmware installation artifacts changed between build and flash"
         )
     devices = _discover_receiver_devices(receiver_count=receiver_count)
+    _require_finalized_receiver_devices(devices)
     ports = [device.port for device in devices]
     receiver_inventory = _receiver_inventory_module()
     # Preserve the target-owned marker path and atomic update behavior. A
@@ -1165,6 +1962,24 @@ def flash_firmware(
     shared_marker = _prepare_shared_firmware_marker(root, workspace)
     installed_marker_before = _read_shared_firmware_marker(shared_marker)
     installed_inventory = receiver_inventory.read_firmware_inventory(root)
+    commit_matches = _receiver_firmware_commit_matches(
+        root,
+        devices=devices,
+        installation_digest=installation_digest,
+        firmware_environment=firmware_environment,
+        firmware_sha256=firmware_sha256,
+    )
+    installation_commit_matches = _receiver_firmware_commit_matches(
+        root,
+        devices=devices,
+        installation_digest=installation_digest,
+        firmware_environment=firmware_environment,
+        firmware_sha256=firmware_sha256,
+        require_current_devices=False,
+    )
+    authority_repair = (
+        not commit_matches and installed_marker_before == installation_digest
+    )
     targets = receiver_inventory.plan_receiver_flashes(
         devices,
         installed_inventory,
@@ -1172,14 +1987,34 @@ def flash_firmware(
         firmware_environment=firmware_environment,
         firmware_sha256=firmware_sha256,
         force=force,
-        aggregate_marker_matches=(installed_marker_before == installation_digest),
+        aggregate_marker_matches=(
+            installed_marker_before == installation_digest
+            and installation_commit_matches
+        ),
     )
+    if not targets and not commit_matches:
+        # Marker/inventory may be ahead of the last authoritative commit after
+        # a boundary failure. Never convert that partial transaction into a
+        # skip: re-verify every exact current device and write a fresh commit.
+        targets = receiver_inventory.plan_receiver_flashes(
+            devices,
+            installed_inventory,
+            installation_digest=installation_digest,
+            firmware_environment=firmware_environment,
+            firmware_sha256=firmware_sha256,
+            force=True,
+            aggregate_marker_matches=False,
+        )
+        authority_repair = True
     target_ports = [target.device.port for target in targets]
     inventory_details = {
         "schema_version": 1,
         "path": os.fspath(root / "run_state" / "receiver_firmware_inventory.json"),
         "observed_devices": [device.to_dict() for device in devices],
         "recorded_devices_before": sorted(installed_inventory),
+        "commit_record_matches": commit_matches,
+        "installation_commit_matches": installation_commit_matches,
+        "authority_repair": authority_repair,
         "flash_targets": [target.to_dict() for target in targets],
         "forced": force,
     }
@@ -1197,96 +2032,164 @@ def flash_firmware(
             "receiver_hybrid_config_digest": hybrid_config.selection_digest,
             "output_tail": "All attached receiver hardware already has successful install evidence.\n",
         }
-    env = dict(os.environ)
-    env.update(
-        {
-            "DEPLOY_DIR": os.fspath(workspace),
-            "DEBUG": "1" if debug else "0",
-            # The coordinator has already run the pinned production build. The
-            # leaf helper must upload exactly that artifact, not start a second
-            # compile whose output could diverge from the build receipt.
-            "FIRMWARE_PREBUILT": "1",
-            "FIRMWARE_ENVIRONMENT": firmware_environment,
-            "EXPECTED_FIRMWARE_SHA256": firmware_sha256,
-            "EXPECTED_FIRMWARE_INSTALLATION_DIGEST": installation_digest,
-            "EXPECTED_FIRMWARE_HASH_FILE": os.fspath(shared_marker),
-            # The target-side inventory has selected exact hardware ports. The
-            # shell leaf must not reapply its aggregate legacy skip decision.
-            "FORCE_FIRMWARE_FLASH": "1",
-            "FIRMWARE_FLASH_PORTS": "\n".join(target_ports),
-            "EXPECTED_FIRMWARE_PORT_COUNT": str(len(target_ports)),
-            "IDF_CCACHE_ENABLE": "1",
-            "CCACHE_DIR": os.fspath(
-                root / "build" / "firmware" / CCACHE_DIRECTORY
-            ),
-            "PLATFORMIO_BUILD_CACHE_DIR": os.fspath(
-                root / "build" / "firmware" / PLATFORMIO_BUILD_CACHE
-            ),
-        }
+    evidence_path = _receiver_flash_evidence_path(
+        root, installation_digest=installation_digest, targets=targets
     )
-    # The helper serializes the selected ordinary upload targets. Each
-    # invocation may perform PlatformIO's incremental graph check, but reuses
-    # the exact build-phase SCons state without racing its signature database or
-    # the shared workspace-local .pio/build output tree.
-    # Deployment helpers are app-lane source, not support-lane source. Use the
-    # explicitly selected candidate helper while directing all build/hash state
-    # at the isolated firmware workspace. Falling back to ``current`` retains
-    # direct-call compatibility, but an authoritative coordinator always passes
-    # the candidate identity and never guesses from hash-sorted releases.
-    if app_release_id is not None:
-        helper = _release(root, app_release_id) / "tools" / "deployment" / "flash_esp32.sh"
-    else:
-        helper = root / "current" / "tools" / "deployment" / "flash_esp32.sh"
-    if not helper.is_file():
-        raise RuntimeError("selected app release has no flash helper")
-    completed = _command(("bash", helper), env=env, check=False)
-    output = completed.stdout + completed.stderr
-    artifact_error = None
+    board_results: list[dict[str, Any]] = []
+    evidence: dict[str, Any] = {
+        "schema_version": 1,
+        "outcome": "in_progress",
+        "phase": "programming",
+        "installation_digest": installation_digest,
+        "firmware_environment": firmware_environment,
+        "firmware_sha256": firmware_sha256,
+        "openocd": {
+            "version": PINNED_OPENOCD_VERSION,
+            "archive": PINNED_OPENOCD_ARCHIVE,
+            "archive_sha256": PINNED_OPENOCD_SHA256,
+        },
+        "expected_devices": [device.to_dict() for device in devices],
+        "targets": [target.to_dict() for target in targets],
+        "boards": board_results,
+    }
+    _atomic_json(evidence_path, evidence)
     try:
-        after_flash = inspect_firmware_installation(firmware, firmware_environment)
-        if after_flash["installation_digest"] != installation_digest:
-            artifact_error = "validated firmware installation changed during flash"
-    except RuntimeError:
-        artifact_error = "validated firmware installation disappeared during flash"
-    if (
-        completed.returncode
-        or "Flash FAILED" in output
-        or "hash NOT updated" in output
-        or artifact_error is not None
-    ):
-        _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
-        detail = f"; {artifact_error}" if artifact_error else ""
-        raise RuntimeError(f"receiver firmware flash failed{detail}: {output[-4000:]}")
-    if "Firmware unchanged; skipping" in output:
-        _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
-        raise RuntimeError("receiver firmware helper skipped selected hardware")
-    installed_marker = _read_shared_firmware_marker(shared_marker)
-    if not re.fullmatch(r"[0-9a-f]{64}", installed_marker):
-        _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
-        raise RuntimeError("receiver firmware helper returned no valid installed marker")
-    if installed_marker != installation_digest:
-        _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
-        raise RuntimeError(
-            "receiver firmware helper installed marker disagrees with selected artifacts"
+        with _pinned_openocd(root) as (openocd, openocd_scripts):
+            bundle_root, immutable_artifacts = _root_owned_firmware_bundle(
+                firmware, installation
+            )
+            evidence.update({
+                "phase": "authority_invalidation",
+                "firmware_bundle_root": os.fspath(bundle_root),
+                "firmware_bundle_artifacts": immutable_artifacts,
+            })
+            _atomic_json(evidence_path, evidence)
+            commit_path = _invalidate_receiver_firmware_commit(
+                root,
+                evidence_path=evidence_path,
+                installation_digest=installation_digest,
+                devices=devices,
+            )
+            evidence["phase"] = "programming"
+            _atomic_json(evidence_path, evidence)
+            for target in targets:
+                observed = _wait_for_receiver_binding(
+                    devices,
+                    receiver_count=receiver_count,
+                    phase=f"before programming {target.device.hardware_serial}",
+                )
+                current = {
+                    device.hardware_serial: device for device in observed
+                }[target.device.hardware_serial]
+                result = _program_receiver_openocd(
+                    executable=openocd,
+                    scripts=openocd_scripts,
+                    bundle_root=bundle_root,
+                    artifacts=immutable_artifacts,
+                    installation_digest=installation_digest,
+                    device=current,
+                )
+                board_results.append(result)
+                _atomic_json(evidence_path, evidence)
+                if result["outcome"] != "success":
+                    raise RuntimeError(
+                        "receiver OpenOCD program/readback verification failed for "
+                        f"serial={current.hardware_serial} "
+                        f"usb_path={current.physical_location} port={current.port} "
+                        f"returncode={result['returncode']} "
+                        f"verify_count={result['verify_count']}/"
+                        f"{result['expected_verify_count']}"
+                    )
+
+        observed_after = _wait_for_receiver_binding(
+            devices,
+            receiver_count=receiver_count,
+            phase="after programming",
         )
-    try:
+        _validate_root_owned_firmware_bundle(
+            bundle_root,
+            immutable_artifacts,
+            installation_digest=installation_digest,
+        )
+        if _read_shared_firmware_marker(shared_marker) != installed_marker_before:
+            raise RuntimeError("shared firmware marker changed during receiver flash")
+        evidence.update({
+            "outcome": "verified",
+            "phase": "evidence_commit",
+            "observed_devices_after": [
+                device.to_dict() for device in observed_after
+            ],
+        })
+        _atomic_json(evidence_path, evidence)
         inventory_path = receiver_inventory.write_firmware_inventory(
             root,
-            devices,
+            observed_after,
             installation_digest=installation_digest,
             firmware_environment=firmware_environment,
             firmware_sha256=firmware_sha256,
         )
+        _write_shared_firmware_marker(
+            shared_marker,
+            expected_before=installed_marker_before,
+            installation_digest=installation_digest,
+        )
+        installed_marker = _read_shared_firmware_marker(shared_marker)
+        if installed_marker != installation_digest:
+            raise RuntimeError(
+                "receiver firmware installed marker disagrees with selected artifacts"
+            )
+        evidence.update({
+            "outcome": "success",
+            "phase": "committed",
+            "inventory_path": os.fspath(inventory_path),
+        })
+        _atomic_json(evidence_path, evidence)
+        evidence_relative = evidence_path.relative_to(root).as_posix()
+        evidence_sha256 = _sha256_file(evidence_path)
+        _atomic_json(
+            commit_path,
+            {
+                "schema_version": 1,
+                "installation_digest": installation_digest,
+                "firmware_environment": firmware_environment,
+                "firmware_sha256": firmware_sha256,
+                "devices": _receiver_device_identities(observed_after),
+                "evidence_path": evidence_relative,
+                "evidence_sha256": evidence_sha256,
+            },
+        )
+        if not _receiver_firmware_commit_matches(
+            root,
+            devices=observed_after,
+            installation_digest=installation_digest,
+            firmware_environment=firmware_environment,
+            firmware_sha256=firmware_sha256,
+        ):
+            raise RuntimeError("receiver firmware commit record failed validation")
     except Exception as exc:
-        _command(("sudo", "systemctl", "stop", DEFAULT_SYSTEMD_UNIT), check=False)
+        evidence.update({"outcome": "failed", "phase": "failed", "error": str(exc)})
+        persistence_error = None
+        try:
+            _atomic_json(evidence_path, evidence)
+        except Exception as evidence_exc:
+            persistence_error = str(evidence_exc)
+        _best_effort_stop_receiver_service()
+        persistence_detail = (
+            f"; failure evidence write also failed: {persistence_error}"
+            if persistence_error is not None
+            else ""
+        )
         raise RuntimeError(
-            "receiver firmware was flashed but per-device evidence could not be recorded"
+            f"receiver firmware flash failed; evidence={evidence_path}: {exc}"
+            f"{persistence_detail}"
         ) from exc
     inventory_details = {
         **inventory_details,
         "path": os.fspath(inventory_path),
+        "flash_evidence_path": os.fspath(evidence_path),
+        "flash_commit_path": os.fspath(commit_path),
         "recorded_devices_after": sorted(
-            device.hardware_serial for device in devices
+            device.hardware_serial for device in observed_after
         ),
     }
     return {
@@ -1300,7 +2203,9 @@ def flash_firmware(
         "receiver_firmware_inventory": inventory_details,
         "receiver_hybrid_config": hybrid_config.to_dict(),
         "receiver_hybrid_config_digest": hybrid_config.selection_digest,
-        "output_tail": output[-2000:],
+        "output_tail": "\n".join(
+            str(result["output"])[-1000:] for result in board_results
+        )[-4000:],
     }
 
 
@@ -1948,9 +2853,6 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("support_id", nargs="?")
     flash = subparsers.add_parser("flash-firmware")
     flash.add_argument("support_id", nargs="?")
-    flash.add_argument("--app-release")
-    flash.add_argument("--receivers", type=int, default=5)
-    flash.add_argument("--debug", action="store_true")
     flash.add_argument("--expected-environment")
     flash.add_argument("--expected-config-digest")
     flash.add_argument("--expected-installation-digest")
@@ -2018,9 +2920,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = flash_firmware(
             root,
             args.support_id,
-            app_release_id=args.app_release,
-            receiver_count=args.receivers,
-            debug=args.debug,
             expected_firmware_environment=args.expected_environment,
             expected_config_digest=args.expected_config_digest,
             expected_installation_digest=args.expected_installation_digest,

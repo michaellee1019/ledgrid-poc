@@ -19,7 +19,7 @@ import sys
 import tempfile
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from types import SimpleNamespace
-from typing import Mapping
+from typing import Any, Mapping
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -1196,6 +1196,114 @@ class TargetProvisioningTests(unittest.TestCase):
                 Path("/target"), "ledgridwall", strips=0, receivers=5
             )
 
+    def test_unit_install_uses_root_adjacent_atomic_staging_and_replaces_swap(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            systemd_root = Path(temporary_dir) / "systemd"
+            systemd_root.mkdir()
+            destination = systemd_root / "ledgrid.service"
+            hostile = Path(temporary_dir) / "hostile.service"
+            hostile.write_text("hostile unit\n", encoding="utf-8")
+            destination.symlink_to(hostile)
+            written: list[tuple[Path, bytes, str, str]] = []
+            commands: list[tuple[str, ...]] = []
+
+            def write_root(path, payload, *, expected_sha256, mode="0444"):
+                written.append((path, payload, expected_sha256, mode))
+                path.write_bytes(payload)
+                # Simulate a same-UID destination swap after staging. mv -T must
+                # replace the pathname rather than follow the hostile symlink.
+                destination.unlink()
+                destination.symlink_to(hostile)
+
+            def command(args, **_kwargs):
+                values = tuple(os.fspath(item) for item in args)
+                commands.append(values)
+                if values[:4] == ("sudo", "mv", "-T", "--"):
+                    os.replace(values[4], values[5])
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if values[:4] == ("sudo", "rm", "-f", "--"):
+                    Path(values[4]).unlink(missing_ok=True)
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if values[:3] == ("systemctl", "is-enabled", "--quiet"):
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if values == ("sudo", "systemctl", "daemon-reload"):
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                self.fail(f"unexpected unit command: {values}")
+
+            with (
+                patch.object(deploy_target, "SYSTEMD_UNIT_ROOT", systemd_root),
+                patch.object(
+                    deploy_target, "_write_root_owned_bytes", side_effect=write_root
+                ),
+                patch.object(
+                    deploy_target, "_validate_root_owned_regular_file"
+                ) as validate,
+                patch.object(deploy_target, "_command", side_effect=command),
+            ):
+                result = deploy_target.ensure_unit(
+                    Path("/target"), user="ledgridwall", strips=33, receivers=5
+                )
+
+            self.assertTrue(result["changed"])
+            self.assertFalse(result["enabled_changed"])
+            self.assertFalse(destination.is_symlink())
+            self.assertIn("WorkingDirectory=/target/current", destination.read_text())
+            self.assertEqual(hostile.read_text(), "hostile unit\n")
+            self.assertEqual(len(written), 1)
+            staging, payload, expected_sha256, mode = written[0]
+            self.assertEqual(staging.parent, systemd_root)
+            self.assertTrue(staging.name.startswith(".ledgrid.service.install-"))
+            self.assertEqual(hashlib.sha256(payload).hexdigest(), expected_sha256)
+            self.assertEqual(mode, "0644")
+            self.assertFalse(any(
+                "ledgrid-unit-" in argument
+                for command_args in commands
+                for argument in command_args
+            ))
+            command_paths = {
+                Path(argument)
+                for command_args in commands
+                for argument in command_args
+                if argument.startswith(temporary_dir)
+            }
+            self.assertTrue(all(path.parent == systemd_root for path in command_paths))
+            self.assertIn(
+                ("sudo", "mv", "-T", "--", os.fspath(staging), os.fspath(destination)),
+                commands,
+            )
+            validate.assert_called_once_with(
+                destination, expected_sha256=expected_sha256, mode="0644"
+            )
+
+    def test_unit_install_failure_cleanup_is_exact_and_cannot_mask_root_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            systemd_root = Path(temporary_dir) / "systemd"
+            systemd_root.mkdir()
+            cleanup: list[tuple[str, ...]] = []
+
+            def command(args, **_kwargs):
+                values = tuple(os.fspath(item) for item in args)
+                if values[:4] == ("sudo", "rm", "-f", "--"):
+                    cleanup.append(values)
+                    raise subprocess.TimeoutExpired(values, 10)
+                return subprocess.CompletedProcess(args, 0, "", "")
+
+            with (
+                patch.object(deploy_target, "SYSTEMD_UNIT_ROOT", systemd_root),
+                patch.object(
+                    deploy_target,
+                    "_write_root_owned_bytes",
+                    side_effect=RuntimeError("injected root writer failure"),
+                ),
+                patch.object(deploy_target, "_command", side_effect=command),
+                self.assertRaisesRegex(RuntimeError, "injected root writer failure"),
+            ):
+                deploy_target.ensure_unit(Path("/target"), user="ledgridwall")
+
+            self.assertEqual(len(cleanup), 1)
+            self.assertEqual(cleanup[0][:4], ("sudo", "rm", "-f", "--"))
+            self.assertEqual(Path(cleanup[0][4]).parent, systemd_root)
+
     def test_target_topology_migration_is_receipted_and_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
@@ -1463,8 +1571,6 @@ class TargetFirmwareBuildTests(unittest.TestCase):
                 deploy_target.flash_firmware(
                     root,
                     "a" * 64,
-                    receiver_count=5,
-                    debug=False,
                     expected_firmware_environment=(
                         DEGRADED_RECEIVER_HYBRID_FIRMWARE_ENVIRONMENT
                     ),
@@ -1475,6 +1581,20 @@ class TargetFirmwareBuildTests(unittest.TestCase):
 
 
 class TargetFirmwareFailureTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.bundle = patch.object(
+            deploy_target,
+            "_root_owned_firmware_bundle",
+            side_effect=self._immutable_bundle,
+        )
+        self.validate_bundle = patch.object(
+            deploy_target, "_validate_root_owned_firmware_bundle"
+        )
+        self.bundle.start()
+        self.validate_bundle.start()
+        self.addCleanup(self.bundle.stop)
+        self.addCleanup(self.validate_bundle.stop)
+
     @staticmethod
     def _production_binary(workspace: Path, content: bytes = b"production") -> Path:
         return _write_firmware_artifacts(
@@ -1483,31 +1603,105 @@ class TargetFirmwareFailureTests(unittest.TestCase):
             application=content,
         )
 
-    def test_serial_flash_reuses_build_phase_scons_state_and_exact_binary(self) -> None:
+    @staticmethod
+    @contextmanager
+    def _verified_openocd():
+        yield Path("/verified/openocd"), Path("/verified/scripts")
+
+    @staticmethod
+    def _program_success(**kwargs):
+        device = kwargs["device"]
+        artifacts = list(kwargs["artifacts"])
+        return {
+            **device.to_dict(),
+            "operation": "openocd_program_verify",
+            "artifacts": artifacts,
+            "returncode": 0,
+            "verify_count": len(artifacts),
+            "expected_verify_count": len(artifacts),
+            "output": "** Verify OK **\n" * len(artifacts),
+            "outcome": "success",
+        }
+
+    @staticmethod
+    def _immutable_bundle(firmware: Path, installation: Mapping[str, Any]):
+        root = (
+            deploy_target.ROOT_OWNED_FIRMWARE_INSTALL_ROOT
+            / str(installation["installation_digest"])
+        )
+        artifacts = [
+            {
+                **artifact,
+                "program_path": os.fspath(root / f"artifact-{index:02d}.bin"),
+            }
+            for index, artifact in enumerate(installation["flash_artifacts"])
+        ]
+        return root, artifacts
+
+    def test_leaf_rejects_non_five_topology_before_any_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            malformed = SimpleNamespace(receiver_strip_counts=(8, 8, 8, 9))
+            with (
+                patch.object(
+                    deploy_target,
+                    "resolve_receiver_hybrid_config",
+                    return_value=malformed,
+                ),
+                patch.object(deploy_target, "_copy_support_workspace") as copy,
+                patch.object(deploy_target, "_discover_receiver_devices") as discover,
+                patch.object(deploy_target, "_command") as command,
+                self.assertRaisesRegex(RuntimeError, "exactly 5 receivers"),
+            ):
+                deploy_target.flash_firmware(root, "a" * 64)
+            copy.assert_not_called()
+            discover.assert_not_called()
+            command.assert_not_called()
+
+    def test_removed_receiver_override_is_rejected_by_cli_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir, redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                deploy_target._parser().parse_args((
+                    "--root",
+                    temporary_dir,
+                    "flash-firmware",
+                    "a" * 64,
+                    "--receivers",
+                    "4",
+                ))
+
+    def test_four_discovered_receivers_are_rejected_before_programming(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            self._production_binary(workspace)
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace",
+                    return_value=(workspace, True),
+                ),
+                patch.object(
+                    deploy_target, "_discover_receiver_devices",
+                    return_value=_receiver_devices()[:4],
+                ),
+                patch.object(deploy_target, "_prepare_shared_firmware_marker") as marker,
+                patch.object(deploy_target, "_pinned_openocd") as openocd,
+                self.assertRaisesRegex(RuntimeError, "exactly 5 discovered receivers"),
+            ):
+                deploy_target.flash_firmware(root, "a" * 64)
+            marker.assert_not_called()
+            openocd.assert_not_called()
+
+    def test_openocd_flash_binds_each_exact_device_and_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
             workspace = root / "workspace"
             workspace.mkdir()
             binary = self._production_binary(workspace)
-            helper = root / "current/tools/deployment/flash_esp32.sh"
-            helper.parent.mkdir(parents=True)
-            helper.write_text("#!/bin/bash\n", encoding="utf-8")
             devices = _receiver_devices()
 
-            def command(args, **kwargs):
-                (root / ".esp32_firmware_hash").write_text(
-                    kwargs["env"]["EXPECTED_FIRMWARE_INSTALLATION_DIGEST"] + "\n",
-                    encoding="utf-8",
-                )
-                return subprocess.CompletedProcess(
-                    args, 0, "Flashed all receivers", "",
-                )
-
             with (
-                patch.dict(
-                    os.environ,
-                    {"PLATFORMIO_BUILD_CACHE_DIR": "/inherited/shared-cache"},
-                ),
                 patch.object(
                     deploy_target, "_copy_support_workspace", return_value=(workspace, True),
                 ),
@@ -1515,59 +1709,43 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                     deploy_target, "_discover_receiver_devices", return_value=devices,
                 ),
                 patch.object(
-                    deploy_target,
-                    "_command",
-                    side_effect=command,
-                ) as command,
+                    deploy_target, "_pinned_openocd",
+                    return_value=self._verified_openocd(),
+                ),
+                patch.object(
+                    deploy_target, "_program_receiver_openocd",
+                    side_effect=self._program_success,
+                ) as program,
             ):
                 result = deploy_target.flash_firmware(
-                    root, "a" * 64, receiver_count=5, debug=False,
+                    root, "a" * 64,
                 )
 
             self.assertEqual(result["outcome"], "executed")
             self.assertEqual(result["firmware_sha256"], deploy_target._sha256_file(binary))
-            flash_env = command.call_args.kwargs["env"]
+            self.assertEqual(program.call_count, 5)
             self.assertEqual(
-                result["firmware_installation_digest"],
-                flash_env["EXPECTED_FIRMWARE_INSTALLATION_DIGEST"],
+                [call.kwargs["device"].hardware_serial for call in program.call_args_list],
+                [device.hardware_serial for device in devices],
             )
-            self.assertEqual(flash_env["FIRMWARE_PREBUILT"], "1")
-            self.assertEqual(
-                flash_env["FIRMWARE_ENVIRONMENT"],
-                PRODUCTION_FIRMWARE_ENVIRONMENT,
-            )
-            self.assertEqual(
-                flash_env["EXPECTED_FIRMWARE_SHA256"],
-                deploy_target._sha256_file(binary),
-            )
-            self.assertRegex(
-                flash_env["EXPECTED_FIRMWARE_INSTALLATION_DIGEST"],
-                r"^[0-9a-f]{64}$",
-            )
-            self.assertEqual(
-                flash_env["EXPECTED_FIRMWARE_HASH_FILE"],
-                os.fspath(root / ".esp32_firmware_hash"),
-            )
-            self.assertEqual(
-                flash_env["PLATFORMIO_BUILD_CACHE_DIR"],
-                os.fspath(root / "build/firmware/.platformio-build-cache"),
-            )
-            self.assertEqual(flash_env["IDF_CCACHE_ENABLE"], "1")
-            self.assertEqual(
-                flash_env["CCACHE_DIR"],
-                os.fspath(root / "build/firmware/.ccache"),
-            )
-            self.assertEqual(flash_env["FORCE_FIRMWARE_FLASH"], "1")
-            self.assertEqual(
-                flash_env["FIRMWARE_FLASH_PORTS"].splitlines(),
-                [device.port for device in devices],
-            )
-            self.assertEqual(flash_env["EXPECTED_FIRMWARE_PORT_COUNT"], "5")
+            for call in program.call_args_list:
+                self.assertEqual(
+                    call.kwargs["installation_digest"],
+                    result["firmware_installation_digest"],
+                )
+                self.assertEqual(len(call.kwargs["artifacts"]), 3)
             inventory = result["receiver_firmware_inventory"]
             self.assertEqual(len(inventory["observed_devices"]), 5)
             self.assertEqual(
                 {item["reason"] for item in inventory["flash_targets"]},
                 {"aggregate_marker_mismatch"},
+            )
+            evidence = json.loads(Path(inventory["flash_evidence_path"]).read_text())
+            self.assertEqual(evidence["outcome"], "success")
+            self.assertEqual(len(evidence["boards"]), 5)
+            self.assertEqual(
+                (root / ".esp32_firmware_hash").read_text().strip(),
+                result["firmware_installation_digest"],
             )
 
     def test_missing_inventory_migrates_once_then_matching_hardware_skips(self) -> None:
@@ -1576,9 +1754,6 @@ class TargetFirmwareFailureTests(unittest.TestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             self._production_binary(workspace)
-            helper = root / "current/tools/deployment/flash_esp32.sh"
-            helper.parent.mkdir(parents=True)
-            helper.write_text("#!/bin/bash\n", encoding="utf-8")
             devices = _receiver_devices()
             installation = deploy_target.inspect_firmware_installation(
                 workspace / "firmware/esp32", PRODUCTION_FIRMWARE_ENVIRONMENT
@@ -1587,13 +1762,6 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 installation["installation_digest"] + "\n", encoding="utf-8"
             )
 
-            def command(args, **kwargs):
-                (root / ".esp32_firmware_hash").write_text(
-                    kwargs["env"]["EXPECTED_FIRMWARE_INSTALLATION_DIGEST"] + "\n",
-                    encoding="utf-8",
-                )
-                return subprocess.CompletedProcess(args, 0, "All flashed\n", "")
-
             with (
                 patch.object(
                     deploy_target, "_copy_support_workspace", return_value=(workspace, True),
@@ -1601,23 +1769,30 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 patch.object(
                     deploy_target, "_discover_receiver_devices", return_value=devices,
                 ),
-                patch.object(deploy_target, "_command", side_effect=command) as runner,
+                patch.object(
+                    deploy_target, "_pinned_openocd",
+                    return_value=self._verified_openocd(),
+                ),
+                patch.object(
+                    deploy_target, "_program_receiver_openocd",
+                    side_effect=self._program_success,
+                ) as program,
             ):
                 migrated = deploy_target.flash_firmware(
-                    root, "a" * 64, receiver_count=5, debug=False,
+                    root, "a" * 64,
                 )
                 unchanged = deploy_target.flash_firmware(
-                    root, "a" * 64, receiver_count=5, debug=False,
+                    root, "a" * 64,
                 )
 
             self.assertEqual(migrated["outcome"], "executed")
             self.assertEqual(
                 {item["reason"] for item in migrated["receiver_firmware_inventory"]["flash_targets"]},
-                {"unrecorded_hardware"},
+                {"aggregate_marker_mismatch"},
             )
             self.assertEqual(unchanged["outcome"], "skipped")
             self.assertEqual(unchanged["flashed_ports"], [])
-            self.assertEqual(runner.call_count, 1)
+            self.assertEqual(program.call_count, 5)
 
     def test_replaced_hardware_selects_only_its_current_port(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -1625,9 +1800,6 @@ class TargetFirmwareFailureTests(unittest.TestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             self._production_binary(workspace)
-            helper = root / "current/tools/deployment/flash_esp32.sh"
-            helper.parent.mkdir(parents=True)
-            helper.write_text("#!/bin/bash\n", encoding="utf-8")
             original = _receiver_devices()
             replacement = ReceiverUSBDevice(
                 port=original[2].port,
@@ -1635,30 +1807,44 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 physical_location=original[2].physical_location,
             )
             replaced = (*original[:2], replacement, *original[3:])
-
-            def command(args, **kwargs):
-                (root / ".esp32_firmware_hash").write_text(
-                    kwargs["env"]["EXPECTED_FIRMWARE_INSTALLATION_DIGEST"] + "\n",
-                    encoding="utf-8",
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace", return_value=(workspace, True),
+                ),
+                patch.object(
+                    deploy_target, "_discover_receiver_devices", return_value=original,
+                ),
+                patch.object(
+                    deploy_target, "_pinned_openocd",
+                    return_value=self._verified_openocd(),
+                ),
+                patch.object(
+                    deploy_target, "_program_receiver_openocd",
+                    side_effect=self._program_success,
+                ),
+            ):
+                deploy_target.flash_firmware(
+                    root, "a" * 64,
                 )
-                return subprocess.CompletedProcess(args, 0, "All flashed\n", "")
 
             with (
                 patch.object(
                     deploy_target, "_copy_support_workspace", return_value=(workspace, True),
                 ),
                 patch.object(
-                    deploy_target,
-                    "_discover_receiver_devices",
-                    side_effect=(original, replaced),
+                    deploy_target, "_discover_receiver_devices", return_value=replaced,
                 ),
-                patch.object(deploy_target, "_command", side_effect=command) as runner,
+                patch.object(
+                    deploy_target, "_pinned_openocd",
+                    return_value=self._verified_openocd(),
+                ),
+                patch.object(
+                    deploy_target, "_program_receiver_openocd",
+                    side_effect=self._program_success,
+                ) as program,
             ):
-                deploy_target.flash_firmware(
-                    root, "a" * 64, receiver_count=5, debug=False,
-                )
                 result = deploy_target.flash_firmware(
-                    root, "a" * 64, receiver_count=5, debug=False,
+                    root, "a" * 64,
                 )
 
             self.assertEqual(result["outcome"], "executed")
@@ -1668,48 +1854,164 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 "unrecorded_hardware",
             )
             self.assertEqual(
-                runner.call_args.kwargs["env"]["FIRMWARE_FLASH_PORTS"],
-                replacement.port,
-            )
-            self.assertEqual(
-                runner.call_args.kwargs["env"]["EXPECTED_FIRMWARE_PORT_COUNT"],
-                "1",
+                program.call_args.kwargs["device"], replacement,
             )
 
-    def test_flash_failure_exit_or_failure_marker_never_becomes_success(self) -> None:
+    def test_partial_failure_retains_exact_diagnostics_and_never_advances_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
             workspace = root / "workspace"
             workspace.mkdir()
             self._production_binary(workspace)
-            helper = root / "current/tools/deployment/flash_esp32.sh"
-            helper.parent.mkdir(parents=True)
-            helper.write_text("#!/bin/bash\n", encoding="utf-8")
             devices = _receiver_devices()
-            failures = (
-                subprocess.CompletedProcess(("bash",), 1, "serial failed", ""),
-                subprocess.CompletedProcess(
-                    ("bash",), 0, "Some devices failed; hash NOT updated", "",
+            calls = 0
+
+            def program(**kwargs):
+                nonlocal calls
+                calls += 1
+                result = self._program_success(**kwargs)
+                if calls == 3:
+                    return {
+                        **result,
+                        "returncode": 1,
+                        "verify_count": 1,
+                        "output": "LIBUSB_ERROR_TIMEOUT on exact board",
+                        "outcome": "failed",
+                    }
+                return result
+
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace", return_value=(workspace, True),
                 ),
-            )
-            for completed in failures:
-                with (
-                    self.subTest(returncode=completed.returncode),
-                    patch.object(
-                        deploy_target, "_copy_support_workspace", return_value=(workspace, True),
-                    ),
-                    patch.object(
-                        deploy_target, "_discover_receiver_devices", return_value=devices,
-                    ),
-                    patch.object(deploy_target, "_command", return_value=completed),
-                    self.assertRaisesRegex(RuntimeError, "flash failed"),
-                ):
-                    deploy_target.flash_firmware(
-                        root, "a" * 64, receiver_count=5, debug=False,
-                    )
-                self.assertFalse(
-                    (root / "run_state/receiver_firmware_inventory.json").exists()
+                patch.object(
+                    deploy_target, "_discover_receiver_devices", return_value=devices,
+                ),
+                patch.object(
+                    deploy_target, "_pinned_openocd",
+                    return_value=self._verified_openocd(),
+                ),
+                patch.object(
+                    deploy_target, "_program_receiver_openocd", side_effect=program,
+                ),
+                patch.object(
+                    deploy_target,
+                    "_command",
+                    side_effect=subprocess.TimeoutExpired(("systemctl", "stop"), 10),
+                ) as stop,
+                self.assertRaisesRegex(
+                    RuntimeError,
+                    r"serial=02:00:00:00:00:02 usb_path=1-1\.3:1\.0",
+                ),
+            ):
+                deploy_target.flash_firmware(
+                    root, "a" * 64,
                 )
+            self.assertEqual(calls, 3)
+            self.assertEqual((root / ".esp32_firmware_hash").read_text(), "")
+            self.assertFalse(
+                (root / "run_state/receiver_firmware_inventory.json").exists()
+            )
+            evidence_paths = list(
+                (root / "run_state/receiver_flash_attempts").glob("*.json")
+            )
+            self.assertEqual(len(evidence_paths), 1)
+            evidence = json.loads(evidence_paths[0].read_text())
+            self.assertEqual(evidence["outcome"], "failed")
+            self.assertEqual(len(evidence["boards"]), 3)
+            self.assertEqual(evidence["boards"][-1]["hardware_serial"], devices[2].hardware_serial)
+            self.assertIn("LIBUSB_ERROR_TIMEOUT", evidence["boards"][-1]["output"])
+            stop.assert_called_with(
+                ("sudo", "systemctl", "stop", deploy_target.DEFAULT_SYSTEMD_UNIT),
+                check=False,
+                timeout=10.0,
+            )
+
+    def test_forced_partial_flash_revokes_old_authority_and_retry_cannot_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            self._production_binary(workspace)
+            devices = _receiver_devices()
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace",
+                    return_value=(workspace, True),
+                ),
+                patch.object(
+                    deploy_target, "_discover_receiver_devices", return_value=devices,
+                ),
+                patch.object(
+                    deploy_target, "_pinned_openocd",
+                    return_value=self._verified_openocd(),
+                ),
+                patch.object(
+                    deploy_target, "_program_receiver_openocd",
+                    side_effect=self._program_success,
+                ),
+            ):
+                seeded = deploy_target.flash_firmware(root, "a" * 64)
+            self.assertEqual(seeded["outcome"], "executed")
+
+            calls = 0
+
+            def fail_second(**kwargs):
+                nonlocal calls
+                calls += 1
+                result = self._program_success(**kwargs)
+                if calls == 2:
+                    return {**result, "outcome": "failed", "returncode": 1}
+                return result
+
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace",
+                    return_value=(workspace, True),
+                ),
+                patch.object(
+                    deploy_target, "_discover_receiver_devices", return_value=devices,
+                ),
+                patch.object(
+                    deploy_target, "_pinned_openocd",
+                    return_value=self._verified_openocd(),
+                ),
+                patch.object(
+                    deploy_target, "_program_receiver_openocd", side_effect=fail_second,
+                ),
+                patch.object(deploy_target, "_command"),
+                self.assertRaisesRegex(RuntimeError, "program/readback verification failed"),
+            ):
+                deploy_target.flash_firmware(root, "a" * 64, force=True)
+
+            commit_path = root / deploy_target.RECEIVER_FIRMWARE_COMMIT.as_posix()
+            self.assertEqual(
+                json.loads(commit_path.read_text())["status"], "invalidated"
+            )
+
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace",
+                    return_value=(workspace, True),
+                ),
+                patch.object(
+                    deploy_target, "_discover_receiver_devices", return_value=devices,
+                ),
+                patch.object(
+                    deploy_target, "_pinned_openocd",
+                    return_value=self._verified_openocd(),
+                ),
+                patch.object(
+                    deploy_target, "_program_receiver_openocd",
+                    side_effect=self._program_success,
+                ) as program,
+            ):
+                repaired = deploy_target.flash_firmware(root, "a" * 64)
+            self.assertEqual(repaired["outcome"], "executed")
+            self.assertEqual(program.call_count, 5)
+            self.assertTrue(
+                repaired["receiver_firmware_inventory"]["authority_repair"]
+            )
 
     def test_flash_rejects_missing_build_artifact_before_helper_or_serial_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -1725,33 +2027,30 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "run build-firmware"),
             ):
                 deploy_target.flash_firmware(
-                    root, "a" * 64, receiver_count=5, debug=False,
+                    root, "a" * 64,
                 )
             command.assert_not_called()
 
-    def test_flash_success_cannot_hide_deleted_or_changed_validated_binary(self) -> None:
-        for mutation, expected in (
-            ("delete", "installation disappeared during flash"),
-            ("change", "installation changed during flash"),
-        ):
+    def test_source_replacement_cannot_change_immutable_programming_or_evidence(self) -> None:
+        for mutation in ("delete", "change"):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary_dir:
                 root = Path(temporary_dir)
                 workspace = root / "workspace"
                 workspace.mkdir()
                 binary = self._production_binary(workspace)
-                helper = root / "current/tools/deployment/flash_esp32.sh"
-                helper.parent.mkdir(parents=True)
-                helper.write_text("#!/bin/bash\n", encoding="utf-8")
                 devices = _receiver_devices()
+                calls = 0
 
-                def command(args, **_kwargs):
-                    if tuple(args[:3]) == ("sudo", "systemctl", "stop"):
-                        return subprocess.CompletedProcess(args, 0, "", "")
-                    if mutation == "delete":
-                        binary.unlink()
-                    else:
-                        binary.write_bytes(b"different firmware")
-                    return subprocess.CompletedProcess(args, 0, "All flashed\n", "")
+                def program(**kwargs):
+                    nonlocal calls
+                    calls += 1
+                    result = self._program_success(**kwargs)
+                    if calls == len(devices):
+                        if mutation == "delete":
+                            binary.unlink()
+                        else:
+                            binary.write_bytes(b"different firmware")
+                    return result
 
                 with (
                     patch.object(
@@ -1761,12 +2060,673 @@ class TargetFirmwareFailureTests(unittest.TestCase):
                     patch.object(
                         deploy_target, "_discover_receiver_devices", return_value=devices,
                     ),
-                    patch.object(deploy_target, "_command", side_effect=command),
-                    self.assertRaisesRegex(RuntimeError, expected),
+                    patch.object(
+                        deploy_target, "_pinned_openocd",
+                        return_value=self._verified_openocd(),
+                    ),
+                    patch.object(
+                        deploy_target, "_program_receiver_openocd",
+                        side_effect=program,
+                    ) as programmer,
+                ):
+                    result = deploy_target.flash_firmware(
+                        root, "a" * 64,
+                    )
+                self.assertEqual(result["outcome"], "executed")
+                source_root = os.fspath(workspace / "firmware/esp32")
+                for call in programmer.call_args_list:
+                    self.assertTrue(all(
+                        not str(artifact["program_path"]).startswith(source_root)
+                        for artifact in call.kwargs["artifacts"]
+                    ))
+                evidence_path = Path(
+                    result["receiver_firmware_inventory"]["flash_evidence_path"]
+                )
+                evidence = json.loads(evidence_path.read_text())
+                self.assertTrue(all(
+                    str(artifact["program_path"]).startswith(
+                        os.fspath(deploy_target.ROOT_OWNED_FIRMWARE_INSTALL_ROOT)
+                    )
+                    for artifact in evidence["firmware_bundle_artifacts"]
+                ))
+
+    def test_openocd_command_uses_exact_serial_offsets_and_readback_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            workspace = Path(temporary_dir)
+            self._production_binary(workspace)
+            firmware = workspace / "firmware" / "esp32"
+            installation = deploy_target.inspect_firmware_installation(
+                firmware, PRODUCTION_FIRMWARE_ENVIRONMENT
+            )
+            device = _receiver_devices()[0]
+            bundle_root, artifacts = self._immutable_bundle(firmware, installation)
+            verified = "** Verify OK **\n" * len(installation["flash_artifacts"])
+            with patch.object(
+                deploy_target,
+                "_command",
+                return_value=subprocess.CompletedProcess(("openocd",), 0, "", verified),
+            ) as command:
+                result = deploy_target._program_receiver_openocd(
+                    executable=Path("/verified/openocd"),
+                    scripts=Path("/verified/scripts"),
+                    bundle_root=bundle_root,
+                    artifacts=artifacts,
+                    installation_digest=installation["installation_digest"],
+                    device=device,
+                )
+
+            args = [os.fspath(item) for item in command.call_args.args[0]]
+            self.assertEqual(args[:2], ["sudo", "/verified/openocd"])
+            self.assertIn(f"adapter serial {device.hardware_serial.upper()}", args)
+            program_commands = [
+                args[index + 1]
+                for index, item in enumerate(args[:-1])
+                if item == "-c" and args[index + 1].startswith("program_esp ")
+            ]
+            self.assertEqual(len(program_commands), len(installation["flash_artifacts"]))
+            for artifact in artifacts:
+                self.assertTrue(any(
+                    f" {artifact['offset']} verify no_skip_loaded" in item
+                    and artifact["program_path"] in item
+                    for item in program_commands
+                ))
+            self.assertEqual(result["outcome"], "success")
+            self.assertEqual(result["verify_count"], len(program_commands))
+
+    def test_openocd_timeout_returns_exact_board_failure_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            workspace = Path(temporary_dir)
+            self._production_binary(workspace)
+            firmware = workspace / "firmware" / "esp32"
+            installation = deploy_target.inspect_firmware_installation(
+                firmware, PRODUCTION_FIRMWARE_ENVIRONMENT
+            )
+            bundle_root, artifacts = self._immutable_bundle(firmware, installation)
+            device = _receiver_devices()[3]
+            with patch.object(
+                deploy_target,
+                "_command",
+                side_effect=subprocess.TimeoutExpired(("openocd",), 180),
+            ):
+                result = deploy_target._program_receiver_openocd(
+                    executable=Path("/verified/openocd"),
+                    scripts=Path("/verified/scripts"),
+                    bundle_root=bundle_root,
+                    artifacts=artifacts,
+                    installation_digest=installation["installation_digest"],
+                    device=device,
+                )
+
+            self.assertEqual(result["outcome"], "failed")
+            self.assertEqual(result["hardware_serial"], device.hardware_serial)
+            self.assertEqual(result["physical_location"], device.physical_location)
+            self.assertIsNone(result["returncode"])
+            self.assertIn("TimeoutExpired", result["output"])
+
+    def test_openocd_rejects_adversarial_artifact_path_before_privilege(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            workspace = Path(temporary_dir) / "workspace"
+            workspace.mkdir()
+            self._production_binary(workspace)
+            firmware = workspace / "firmware" / "esp32"
+            installation = deploy_target.inspect_firmware_installation(
+                firmware, PRODUCTION_FIRMWARE_ENVIRONMENT
+            )
+            bundle_root, artifacts = self._immutable_bundle(firmware, installation)
+            artifacts[0]["program_path"] = "/opt/unsafe;shutdown/artifact.bin"
+            with (
+                patch.object(deploy_target, "_command") as command,
+                self.assertRaisesRegex(RuntimeError, "unsafe Tcl path"),
+            ):
+                deploy_target._program_receiver_openocd(
+                    executable=Path("/verified/openocd"),
+                    scripts=Path("/verified/scripts"),
+                    bundle_root=bundle_root,
+                    artifacts=artifacts,
+                    installation_digest=installation["installation_digest"],
+                    device=_receiver_devices()[0],
+                )
+            command.assert_not_called()
+
+    def test_openocd_refuses_deploy_user_owned_install_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            install_root = root / "install"
+            install = install_root / deploy_target.PINNED_OPENOCD_SHA256
+            install.mkdir(parents=True)
+            install_root.chmod(0o777)
+            archive = root / "archive.tar.gz"
+            archive.write_bytes(b"verified archive placeholder")
+            with (
+                patch.object(
+                    deploy_target, "PINNED_OPENOCD_INSTALL_ROOT", install_root
+                ),
+                patch.object(
+                    deploy_target, "_pinned_openocd_archive", return_value=archive
+                ),
+                patch.object(deploy_target, "_command") as command,
+                self.assertRaisesRegex(RuntimeError, "root-owned and immutable"),
+            ):
+                with deploy_target._pinned_openocd(root):
+                    self.fail("deploy-user-owned OpenOCD tree was accepted")
+            command.assert_not_called()
+
+    def test_identity_drift_fails_before_programming_and_keeps_marker_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            self._production_binary(workspace)
+            devices = _receiver_devices()
+            drifted = (
+                ReceiverUSBDevice(
+                    port=devices[0].port,
+                    hardware_serial=devices[0].hardware_serial,
+                    physical_location="9-9.9:1.0",
+                ),
+                *devices[1:],
+            )
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace", return_value=(workspace, True),
+                ),
+                patch.object(
+                    deploy_target, "_discover_receiver_devices", return_value=devices,
+                ),
+                patch.object(
+                    deploy_target, "_pinned_openocd",
+                    return_value=self._verified_openocd(),
+                ),
+                patch.object(
+                    deploy_target,
+                    "_wait_for_receiver_binding",
+                    side_effect=RuntimeError(
+                        "receiver hardware serial/USB path changed before programming; "
+                        f"observed={[_receiver_devices()[0].hardware_serial, drifted[0].physical_location]}"
+                    ),
+                ),
+                patch.object(deploy_target, "_program_receiver_openocd") as program,
+                patch.object(deploy_target, "_command"),
+                self.assertRaisesRegex(RuntimeError, "serial/USB path changed"),
+            ):
+                deploy_target.flash_firmware(
+                    root, "a" * 64,
+                )
+            program.assert_not_called()
+            self.assertEqual((root / ".esp32_firmware_hash").read_text(), "")
+            self.assertFalse(
+                (root / "run_state/receiver_firmware_inventory.json").exists()
+            )
+
+    def test_usb_identity_stabilization_tolerates_temporary_disappearance(self) -> None:
+        devices = _receiver_devices()
+        with (
+            patch.object(
+                deploy_target,
+                "_discover_receiver_devices",
+                side_effect=(RuntimeError("found 4 receivers"), devices),
+            ) as discover,
+            patch.object(deploy_target.time, "sleep") as sleep,
+        ):
+            observed = deploy_target._wait_for_receiver_binding(
+                devices,
+                receiver_count=5,
+                phase="after programming board 0",
+                timeout=1.0,
+                poll_interval=0.01,
+            )
+        self.assertEqual(observed, devices)
+        self.assertEqual(discover.call_count, 2)
+        sleep.assert_called_once()
+
+    def test_usb_identity_stabilization_timeout_is_fail_closed(self) -> None:
+        devices = _receiver_devices()
+        with (
+            patch.object(
+                deploy_target,
+                "_discover_receiver_devices",
+                side_effect=RuntimeError("found 4 receivers"),
+            ),
+            patch.object(
+                deploy_target.time, "monotonic", side_effect=(0.0, 0.0, 1.1)
+            ),
+            patch.object(deploy_target.time, "sleep"),
+            self.assertRaisesRegex(
+                RuntimeError,
+                r"did not stabilize after programming board 0 within 1\.0s",
+            ),
+        ):
+            deploy_target._wait_for_receiver_binding(
+                devices,
+                receiver_count=5,
+                phase="after programming board 0",
+                timeout=1.0,
+                poll_interval=0.01,
+            )
+
+    def test_inventory_and_marker_boundary_failures_have_no_authoritative_commit(self) -> None:
+        receiver_inventory = deploy_target._receiver_inventory_module()
+        original_inventory_write = receiver_inventory.write_firmware_inventory
+        original_marker_write = deploy_target._write_shared_firmware_marker
+        for failure_stage in ("inventory", "marker"):
+            with self.subTest(failure_stage=failure_stage), tempfile.TemporaryDirectory() as temporary_dir:
+                root = Path(temporary_dir)
+                workspace = root / "workspace"
+                workspace.mkdir()
+                self._production_binary(workspace)
+                devices = _receiver_devices()
+                installation = deploy_target.inspect_firmware_installation(
+                    workspace / "firmware/esp32", PRODUCTION_FIRMWARE_ENVIRONMENT
+                )
+
+                def write_inventory(*args, **kwargs):
+                    if failure_stage == "inventory":
+                        raise OSError("injected inventory boundary failure")
+                    return original_inventory_write(*args, **kwargs)
+
+                def write_marker(*args, **kwargs):
+                    if failure_stage == "marker":
+                        raise OSError("injected marker boundary failure")
+                    return original_marker_write(*args, **kwargs)
+
+                with (
+                    patch.object(
+                        deploy_target, "_copy_support_workspace",
+                        return_value=(workspace, True),
+                    ),
+                    patch.object(
+                        deploy_target, "_discover_receiver_devices", return_value=devices,
+                    ),
+                    patch.object(
+                        deploy_target, "_pinned_openocd",
+                        return_value=self._verified_openocd(),
+                    ),
+                    patch.object(
+                        deploy_target, "_program_receiver_openocd",
+                        side_effect=self._program_success,
+                    ),
+                    patch.object(
+                        receiver_inventory, "write_firmware_inventory",
+                        side_effect=write_inventory,
+                    ),
+                    patch.object(
+                        deploy_target, "_write_shared_firmware_marker",
+                        side_effect=write_marker,
+                    ),
+                    patch.object(deploy_target, "_command"),
+                    self.assertRaisesRegex(
+                        RuntimeError, f"injected {failure_stage} boundary failure"
+                    ),
                 ):
                     deploy_target.flash_firmware(
-                        root, "a" * 64, receiver_count=5, debug=False,
+                        root, "a" * 64,
                     )
+
+                self.assertEqual((root / ".esp32_firmware_hash").read_text(), "")
+                commit_path = root / deploy_target.RECEIVER_FIRMWARE_COMMIT.as_posix()
+                self.assertEqual(
+                    json.loads(commit_path.read_text())["status"], "invalidated"
+                )
+                evidence_path = next(
+                    (root / "run_state/receiver_flash_attempts").glob("*.json")
+                )
+                self.assertEqual(
+                    json.loads(evidence_path.read_text())["outcome"], "failed"
+                )
+                self.assertFalse(deploy_target._receiver_firmware_commit_matches(
+                    root,
+                    devices=devices,
+                    installation_digest=installation["installation_digest"],
+                    firmware_environment=PRODUCTION_FIRMWARE_ENVIRONMENT,
+                    firmware_sha256=installation["firmware_sha256"],
+                ))
+
+    def test_final_evidence_and_commit_write_failures_cannot_claim_authority(self) -> None:
+        original_atomic_json = deploy_target._atomic_json
+        for failure_stage in ("success_evidence", "commit"):
+            with self.subTest(failure_stage=failure_stage), tempfile.TemporaryDirectory() as temporary_dir:
+                root = Path(temporary_dir)
+                workspace = root / "workspace"
+                workspace.mkdir()
+                self._production_binary(workspace)
+                devices = _receiver_devices()
+                installation = deploy_target.inspect_firmware_installation(
+                    workspace / "firmware/esp32", PRODUCTION_FIRMWARE_ENVIRONMENT
+                )
+
+                def atomic_json(path, payload):
+                    if (
+                        failure_stage == "success_evidence"
+                        and payload.get("outcome") == "success"
+                    ):
+                        raise OSError("injected final evidence failure")
+                    if (
+                        failure_stage == "commit"
+                        and Path(path) == root / deploy_target.RECEIVER_FIRMWARE_COMMIT.as_posix()
+                        and payload.get("status") != "invalidated"
+                    ):
+                        raise OSError("injected authoritative commit failure")
+                    return original_atomic_json(Path(path), payload)
+
+                with (
+                    patch.object(
+                        deploy_target, "_copy_support_workspace",
+                        return_value=(workspace, True),
+                    ),
+                    patch.object(
+                        deploy_target, "_discover_receiver_devices", return_value=devices,
+                    ),
+                    patch.object(
+                        deploy_target, "_pinned_openocd",
+                        return_value=self._verified_openocd(),
+                    ),
+                    patch.object(
+                        deploy_target, "_program_receiver_openocd",
+                        side_effect=self._program_success,
+                    ),
+                    patch.object(
+                        deploy_target, "_atomic_json", side_effect=atomic_json,
+                    ),
+                    patch.object(deploy_target, "_command"),
+                    self.assertRaisesRegex(RuntimeError, "injected"),
+                ):
+                    deploy_target.flash_firmware(
+                        root, "a" * 64,
+                    )
+
+                self.assertEqual(
+                    (root / ".esp32_firmware_hash").read_text().strip(),
+                    installation["installation_digest"],
+                )
+                commit_path = root / deploy_target.RECEIVER_FIRMWARE_COMMIT.as_posix()
+                self.assertEqual(
+                    json.loads(commit_path.read_text())["status"], "invalidated"
+                )
+                evidence_path = next(
+                    (root / "run_state/receiver_flash_attempts").glob("*.json")
+                )
+                self.assertEqual(
+                    json.loads(evidence_path.read_text())["outcome"], "failed"
+                )
+                self.assertFalse(deploy_target._receiver_firmware_commit_matches(
+                    root,
+                    devices=devices,
+                    installation_digest=installation["installation_digest"],
+                    firmware_environment=PRODUCTION_FIRMWARE_ENVIRONMENT,
+                    firmware_sha256=installation["firmware_sha256"],
+                ))
+
+    def test_replacement_commit_failure_cannot_become_skip_on_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            self._production_binary(workspace)
+            original = _receiver_devices()
+            replacement = ReceiverUSBDevice(
+                port=original[2].port,
+                hardware_serial="0a:0b:0c:0d:0e:0f",
+                physical_location=original[2].physical_location,
+            )
+            replaced = (*original[:2], replacement, *original[3:])
+            installation = deploy_target.inspect_firmware_installation(
+                workspace / "firmware/esp32", PRODUCTION_FIRMWARE_ENVIRONMENT
+            )
+
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace", return_value=(workspace, True),
+                ),
+                patch.object(
+                    deploy_target, "_discover_receiver_devices", return_value=original,
+                ),
+                patch.object(
+                    deploy_target, "_pinned_openocd",
+                    return_value=self._verified_openocd(),
+                ),
+                patch.object(
+                    deploy_target, "_program_receiver_openocd",
+                    side_effect=self._program_success,
+                ),
+            ):
+                deploy_target.flash_firmware(
+                    root, "a" * 64,
+                )
+
+            original_atomic_json = deploy_target._atomic_json
+
+            def fail_commit(path, payload):
+                if (
+                    Path(path) == root / deploy_target.RECEIVER_FIRMWARE_COMMIT.as_posix()
+                    and payload.get("status") != "invalidated"
+                ):
+                    raise OSError("injected replacement commit failure")
+                return original_atomic_json(Path(path), payload)
+
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace", return_value=(workspace, True),
+                ),
+                patch.object(
+                    deploy_target, "_discover_receiver_devices", return_value=replaced,
+                ),
+                patch.object(
+                    deploy_target, "_pinned_openocd",
+                    return_value=self._verified_openocd(),
+                ),
+                patch.object(
+                    deploy_target, "_program_receiver_openocd",
+                    side_effect=self._program_success,
+                ),
+                patch.object(deploy_target, "_atomic_json", side_effect=fail_commit),
+                patch.object(deploy_target, "_command"),
+                self.assertRaisesRegex(RuntimeError, "replacement commit failure"),
+            ):
+                deploy_target.flash_firmware(
+                    root, "a" * 64,
+                )
+
+            self.assertFalse(deploy_target._receiver_firmware_commit_matches(
+                root,
+                devices=replaced,
+                installation_digest=installation["installation_digest"],
+                firmware_environment=PRODUCTION_FIRMWARE_ENVIRONMENT,
+                firmware_sha256=installation["firmware_sha256"],
+                require_current_devices=False,
+            ))
+            self.assertFalse(deploy_target._receiver_firmware_commit_matches(
+                root,
+                devices=replaced,
+                installation_digest=installation["installation_digest"],
+                firmware_environment=PRODUCTION_FIRMWARE_ENVIRONMENT,
+                firmware_sha256=installation["firmware_sha256"],
+            ))
+
+            with (
+                patch.object(
+                    deploy_target, "_copy_support_workspace", return_value=(workspace, True),
+                ),
+                patch.object(
+                    deploy_target, "_discover_receiver_devices", return_value=replaced,
+                ),
+                patch.object(
+                    deploy_target, "_pinned_openocd",
+                    return_value=self._verified_openocd(),
+                ),
+                patch.object(
+                    deploy_target, "_program_receiver_openocd",
+                    side_effect=self._program_success,
+                ) as program,
+            ):
+                repaired = deploy_target.flash_firmware(
+                    root, "a" * 64,
+                )
+
+            self.assertEqual(repaired["outcome"], "executed")
+            self.assertTrue(
+                repaired["receiver_firmware_inventory"]["authority_repair"]
+            )
+            self.assertEqual(program.call_count, 5)
+            self.assertTrue(deploy_target._receiver_firmware_commit_matches(
+                root,
+                devices=replaced,
+                installation_digest=installation["installation_digest"],
+                firmware_environment=PRODUCTION_FIRMWARE_ENVIRONMENT,
+                firmware_sha256=installation["firmware_sha256"],
+            ))
+
+
+class RootOwnedFirmwareBundleTests(unittest.TestCase):
+    def test_pinned_reader_rejects_symlink_fifo_device_and_path_swap(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            digest = hashlib.sha256(b"selected").hexdigest()
+
+            symlink = root / "symlink.bin"
+            symlink.symlink_to("/dev/null")
+            fifo = root / "fifo.bin"
+            os.mkfifo(fifo)
+            for label, source in (
+                ("symlink", symlink),
+                ("fifo", fifo),
+                ("device", Path("/dev/null")),
+            ):
+                with self.subTest(label=label), self.assertRaisesRegex(
+                    RuntimeError, "safely open|bounded regular file"
+                ):
+                    deploy_target._read_pinned_regular_source(
+                        source,
+                        expected_sha256=digest,
+                        maximum_bytes=1024,
+                    )
+
+            swapped = root / "swapped.bin"
+            swapped.write_bytes(b"selected")
+            real_open = os.open
+
+            def swap_before_open(path, flags):
+                if Path(path) == swapped:
+                    swapped.unlink()
+                    swapped.symlink_to("/dev/null")
+                return real_open(path, flags)
+
+            with (
+                patch.object(deploy_target.os, "open", side_effect=swap_before_open),
+                self.assertRaisesRegex(RuntimeError, "safely open"),
+            ):
+                deploy_target._read_pinned_regular_source(
+                    swapped,
+                    expected_sha256=digest,
+                    maximum_bytes=1024,
+                )
+
+    def test_copy_is_rehashed_and_source_replacement_cannot_change_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            firmware = root / "firmware" / "esp32"
+            application = _write_firmware_artifacts(
+                firmware,
+                PRODUCTION_FIRMWARE_ENVIRONMENT,
+                application=b"selected application",
+            )
+            installation = deploy_target.inspect_firmware_installation(
+                firmware, PRODUCTION_FIRMWARE_ENVIRONMENT
+            )
+            install_root = root / "root-owned"
+            copied_application: bytes | None = None
+            commands: list[tuple[str, ...]] = []
+
+            def command(args, **kwargs):
+                nonlocal copied_application
+                values = tuple(os.fspath(item) for item in args)
+                commands.append(values)
+                if values[:3] == ("sudo", "mkdir", "-p"):
+                    Path(values[3]).mkdir(parents=True, exist_ok=True)
+                elif values[:3] == ("sudo", "mkdir", "--"):
+                    Path(values[3]).mkdir()
+                elif values[:2] == ("sudo", "dd"):
+                    destination = Path(values[2].removeprefix("of="))
+                    payload = kwargs["input_data"]
+                    destination.write_bytes(payload)
+                    if payload == b"selected application":
+                        copied_application = payload
+                        application.write_bytes(b"replaced after descriptor pinning")
+                elif values[:2] == ("sudo", "sha256sum"):
+                    path = Path(values[2])
+                    return subprocess.CompletedProcess(
+                        args, 0, deploy_target._sha256_file(path) + "  artifact\n", ""
+                    )
+                elif values[:3] == ("sudo", "mv", "--"):
+                    shutil.move(os.fspath(values[3]), os.fspath(values[4]))
+                elif values[:2] in (("sudo", "chown"), ("sudo", "chmod")):
+                    pass
+                elif values[:3] == ("sudo", "rm", "-rf"):
+                    shutil.rmtree(Path(values[-1]), ignore_errors=True)
+                else:
+                    self.fail(f"unexpected command: {values}")
+                return subprocess.CompletedProcess(args, 0, "", "")
+
+            with (
+                patch.object(
+                    deploy_target, "ROOT_OWNED_FIRMWARE_INSTALL_ROOT", install_root
+                ),
+                patch.object(deploy_target, "_command", side_effect=command),
+                patch.object(
+                    deploy_target, "_validate_root_owned_firmware_bundle"
+                ) as validate,
+                patch.object(
+                    deploy_target, "_validate_root_owned_regular_file"
+                ),
+            ):
+                bundle_root, artifacts = deploy_target._root_owned_firmware_bundle(
+                    firmware, installation
+                )
+
+            self.assertEqual(
+                copied_application,
+                b"selected application",
+                "the root writer must receive only the descriptor-pinned bytes",
+            )
+            self.assertEqual(
+                application.read_bytes(), b"replaced after descriptor pinning"
+            )
+            self.assertFalse(any(
+                os.fspath(application) in argument
+                for command_args in commands
+                for argument in command_args
+            ))
+            self.assertEqual(bundle_root, install_root / installation["installation_digest"])
+            self.assertTrue(all(
+                str(item["program_path"]).startswith(os.fspath(bundle_root))
+                for item in artifacts
+            ))
+            validate.assert_called_once_with(
+                bundle_root,
+                artifacts,
+                installation_digest=installation["installation_digest"],
+            )
+
+    def test_validator_rejects_deploy_user_owned_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            install_root = Path(temporary_dir) / "bundles"
+            digest = "a" * 64
+            bundle_root = install_root / digest
+            bundle_root.mkdir(parents=True)
+            artifact = bundle_root / "artifact-00.bin"
+            artifact.write_bytes(b"firmware")
+            artifacts = [{
+                "program_path": os.fspath(artifact),
+                "sha256": deploy_target._sha256_file(artifact),
+            }]
+            with (
+                patch.object(
+                    deploy_target, "ROOT_OWNED_FIRMWARE_INSTALL_ROOT", install_root
+                ),
+                self.assertRaisesRegex(RuntimeError, "root-owned and immutable"),
+            ):
+                deploy_target._validate_root_owned_firmware_bundle(
+                    bundle_root, artifacts, installation_digest=digest
+                )
 
 
 class FrozenSnapshotEntrypointTests(unittest.TestCase):
@@ -2132,7 +3092,7 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
         self.assertIn("restart", commands)
         self.assertIn("restore-state", commands)
 
-    def test_firmware_flash_uses_candidate_app_release_helper(self) -> None:
+    def test_firmware_flash_passes_only_strict_build_selection(self) -> None:
         deployment, context, _runner, target = self._deployment()
         context.state.update(
             {
@@ -2158,10 +3118,6 @@ class CoordinatorEntrypointIntegrationTests(unittest.TestCase):
                 "flash-firmware",
                 (
                     target.support,
-                    "--app-release",
-                    target.candidate,
-                    "--receivers",
-                    "5",
                     "--expected-environment",
                     PRODUCTION_FIRMWARE_ENVIRONMENT,
                     "--expected-config-digest",

@@ -990,10 +990,6 @@ class CoordinatorDeployment:
             args.append(support_id)
         args.extend(
             (
-                "--app-release",
-                str(self.context.state["release_id"]),
-                "--receivers",
-                str(self.config.receiver_count),
                 "--expected-environment",
                 environment,
                 "--expected-config-digest",
@@ -1004,8 +1000,6 @@ class CoordinatorDeployment:
             args.extend(("--expected-installation-digest", installation_digest))
         if self.config.force_firmware:
             args.append("--force")
-        if os.environ.get("DEBUG", "0") == "1":
-            args.append("--debug")
         result = self.target.run("flash-firmware", *args)
         if (
             result.get("firmware_environment") != environment
