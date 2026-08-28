@@ -1473,15 +1473,17 @@ class LEDController:
             == RECEIVER_STATUS_MAGIC_V7
             and int(response[4]) == 7
         )
-        if (
+        defer_fec_observation = (
             getattr(self, "_fec_transport_requested", False)
             and fec_advertised
             and not fec_terminal_telemetry_available
-        ):
+        )
+        if defer_fec_observation:
             # The v3 capability prefix can arrive several queued responses
-            # before the v7 terminal counters.  It is not enough evidence to
-            # enable FEC because no process lifetime baseline can be captured.
-            self._reset_fec_transport_candidate()
+            # before and between v7 terminal snapshots.  It neither advances
+            # nor contradicts the v7-only negotiation evidence because no
+            # process lifetime baseline can be captured from the prefix.
+            pass
         else:
             self._observe_fec_transport_capability(
                 fec_advertised,

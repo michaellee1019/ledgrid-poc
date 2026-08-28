@@ -468,7 +468,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
             self.assertFalse(item._fec_transport_enabled)
             self.assertIsNone(item._receiver_fec_terminal_baseline)
 
-        for receiver_packets in (5, 6, 7):
+        for index, receiver_packets in enumerate((5, 7, 9)):
             self.assertTrue(
                 protocol.LEDController._update_receiver_status(
                     item,
@@ -480,6 +480,14 @@ class SpiFecEnvelopeTests(unittest.TestCase):
                     ),
                 )
             )
+            if index < 2:
+                self.assertFalse(item._fec_transport_enabled)
+                self.assertTrue(
+                    protocol.LEDController._update_receiver_status(
+                        item, _status_v3(receiver_packets + 1, fec=True)
+                    )
+                )
+                self.assertFalse(item._fec_transport_enabled)
 
         self.assertTrue(item._fec_transport_enabled)
         self.assertTrue(item._receiver_fec_terminal_baseline_finalized)
