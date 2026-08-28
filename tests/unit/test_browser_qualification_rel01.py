@@ -8,6 +8,9 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 
+from animation.component_parameters import SCENE_EXTERNAL_COMPONENT_PARAMETERS
+from animation.core.activation_qualification import canonical_json_sha256
+from animation.core.presentation_contracts import resolve_vibe
 from tools.browser_qualification.evidence import (
     EVIDENCE_SCHEMA,
     aggregate_evidence,
@@ -20,6 +23,7 @@ from tools.browser_qualification.fixture_server import (
     WallMutationAttempt,
     create_fixture_server,
 )
+from tools.browser_qualification.source_identity import fixture_release_id
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -80,11 +84,15 @@ def _engine_result(engine: str, manifest: dict) -> dict:
         "journeys": journeys,
         "fixture_status": {
             "schema": "ledgrid.browser-qualification-fixture-status",
-            "schema_version": 1,
+            "schema_version": 2,
             "profile_digest": "b" * 64,
             "native_plugin_id": "aurora_curtains_native",
             "native_bundle_digest": "c" * 64,
             "native_payload_digest": "d" * 64,
+            "source_commit": "a" * 40,
+            "release_id": fixture_release_id("a" * 40),
+            "controller_release_id": fixture_release_id("a" * 40),
+            "release_consistent": True,
             "network_outage_blocks": 1 if engine == "webkit" else 0,
             "network_outage_paths": ["/composer"] if engine == "webkit" else [],
             "wall_mutation_attempts": 0,
@@ -302,6 +310,23 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
         self.assertIn("fixture_wall_consumer_attached", errors)
         self.assertIn("fixture_native_payload_digest_invalid", errors)
 
+    def test_fixture_release_identity_and_source_commit_are_required(self) -> None:
+        result = deepcopy(self.results["chromium"])
+        result["fixture_status"]["release_consistent"] = False
+        result["fixture_status"]["controller_release_id"] = "f" * 64
+        result["fixture_status"]["source_commit"] = "b" * 40
+
+        evidence = self.aggregate(
+            results={**self.results, "chromium": result}
+        )
+        errors = evidence["results"][0]["validation_errors"]
+
+        self.assertIn("fixture_release_inconsistent", errors)
+        self.assertIn("fixture_release_identity_mismatch", errors)
+        self.assertIn("fixture_release_id_not_source_bound", errors)
+        self.assertIn("fixture_source_commit_mismatch", errors)
+        self.assertEqual(evidence["outcomes"]["portable_browser_matrix"], "FAIL")
+
     def test_skipped_assertion_wrong_viewport_and_declared_pass_fail_closed(self) -> None:
         result = deepcopy(self.results["webkit"])
         journey = next(item for item in result["journeys"] if item["journey_id"] == "offline_reconnect")
@@ -375,6 +400,45 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
 
 
 class BrowserQualificationFixtureServerTests(unittest.TestCase):
+    @staticmethod
+    def _component_reference(component: dict) -> dict:
+        identity = component["browser_capabilities"]["managed_identity"]
+        parameters = {
+            name: deepcopy(contract["default"])
+            for name, contract in component["parameter_schema"].items()
+            if name not in SCENE_EXTERNAL_COMPONENT_PARAMETERS
+            and "default" in contract
+        }
+        return {
+            "provider": identity["provider"],
+            "component_id": identity["component_id"],
+            "component_digest": identity["component_digest"],
+            "runtime_digest": identity["runtime_digest"],
+            "parameter_schema_version": identity["parameter_schema_version"],
+            "parameters": parameters,
+        }
+
+    @staticmethod
+    def _global_settings() -> dict:
+        vibe = resolve_vibe("neutral").state.to_dict()
+        return {
+            "schema": "ledgrid.global-settings-state",
+            "schema_version": 1,
+            "revision": 1,
+            "vibe": {
+                "vibe_id": vibe["vibe_id"],
+                "profile_version": vibe["profile_version"],
+                "resolved_profile_digest": vibe["resolved_profile_digest"],
+            },
+            "plant_modifiers": {"version": 1, "active": [], "strengths": {}},
+            "output": {
+                "power": True,
+                "brightness": 128,
+                "animation_speed_scale": 0.3,
+                "target_fps": 30,
+            },
+        }
+
     def test_fixture_uses_managed_profile_and_rejects_every_wall_write(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             state_dir = Path(temporary)
@@ -416,6 +480,20 @@ class BrowserQualificationFixtureServerTests(unittest.TestCase):
             self.assertEqual(status["wall_mutation_attempts"], 0)
             self.assertEqual(status["native_plugin_id"], "aurora_curtains_native")
             self.assertEqual(status["network_outage_blocks"], 0)
+            self.assertRegex(status["source_commit"], r"^[0-9a-f]{40}$")
+            self.assertRegex(status["release_id"], r"^[0-9a-f]{64}$")
+            self.assertEqual(
+                status["release_id"], fixture_release_id(status["source_commit"])
+            )
+            self.assertEqual(status["controller_release_id"], status["release_id"])
+            self.assertTrue(status["release_consistent"])
+            controller_status = channel.read_status()
+            self.assertEqual(controller_status["release_id"], status["release_id"])
+            self.assertEqual(interface.release_id, status["release_id"])
+            self.assertEqual(
+                controller_status["current_identity_digest"],
+                canonical_json_sha256(controller_status["active_identity"]),
+            )
             self.assertEqual(
                 status["native_bundle_digest"],
                 native["browser_capabilities"]["managed_identity"]["bundle_digest"],
@@ -438,6 +516,61 @@ class BrowserQualificationFixtureServerTests(unittest.TestCase):
             ]
             self.assertEqual(retained[0]["operation"], "send_command")
             self.assertFalse(channel.control_path.exists())
+
+    def test_fixture_guarded_check_has_coherent_release_and_runtime_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            interface, channel, digest = create_fixture_server(Path(temporary))
+            client = interface.app.test_client()
+            bootstrap = client.get("/api/v1/composer/bootstrap").get_json()
+            components = {
+                item["plugin_id"]: item for item in bootstrap["components"]
+            }
+            background = self._component_reference(components["gradient"])
+            scene = {
+                "schema": "ledgrid.browser-scene",
+                "schema_version": 1,
+                "revision": 1,
+                "background": background,
+                "layers": [],
+                "installation_profile": {"digest": digest},
+                "fallback": deepcopy(background),
+            }
+
+            checked = client.post(
+                "/api/v1/scene/checks",
+                json={
+                    "scene": scene,
+                    "global_settings": self._global_settings(),
+                    "browser_evidence": None,
+                },
+            )
+
+            self.assertEqual(checked.status_code, 201, checked.get_json())
+            result = checked.get_json()
+            status = client.get("/__qualification__/status").get_json()
+            self.assertEqual(
+                result["basis"]["controller"]["current_identity_digest"],
+                channel.read_status()["current_identity_digest"],
+            )
+            self.assertEqual(interface.release_id, status["release_id"])
+            self.assertRegex(result["check_token"], r"^[-_A-Za-z0-9]+$")
+            self.assertEqual(channel.attempts, [])
+            self.assertEqual(channel.list_activation_commands(), [])
+
+            interface.release_id = "f" * 64
+            rejected = client.post(
+                "/api/v1/scene/checks",
+                json={
+                    "scene": scene,
+                    "global_settings": self._global_settings(),
+                    "browser_evidence": None,
+                },
+            )
+            self.assertEqual(rejected.status_code, 503)
+            self.assertEqual(
+                rejected.get_json()["code"], "controller_state_unavailable"
+            )
+            self.assertEqual(channel.attempts, [])
 
 
 if __name__ == "__main__":

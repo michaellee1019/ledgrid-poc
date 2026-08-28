@@ -80,6 +80,12 @@ guarded review available for components that declare activation readiness,
 attaches no controller consumer, and retains then rejects every attempted wall
 command. The real Aurora descriptor still fails closed if the product marks its
 host implementation unloaded; the fixture does not override that declaration.
+The fixture gives its web and synthetic controller surfaces one identical
+SHA-256 release identity derived from the checked-out Git commit, publishes a
+canonical active-state digest, and records both identities plus the source
+commit in fixture status. Retained evidence rejects inconsistent identities, an
+identity not derived from that commit, or a fixture commit different from the
+clean commit recorded after the matrix.
 Native build output is content-addressed under the ignored
 `run_state/browser_qualification_native_builds` directory; authoritative library
 state remains inside the selected fixture state directory.

@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from tools.browser_qualification.source_identity import fixture_release_id
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = Path(__file__).with_name("rel01_manifest.json")
@@ -211,6 +213,8 @@ def validate_engine_result(
     else:
         if fixture_status.get("schema") != "ledgrid.browser-qualification-fixture-status":
             errors.append("fixture_status_schema_invalid")
+        if fixture_status.get("schema_version") != 2:
+            errors.append("fixture_status_version_invalid")
         if fixture_status.get("wall_consumer_attached") is not False:
             errors.append("fixture_wall_consumer_attached")
         if fixture_status.get("wall_mutation_attempts") != 0:
@@ -231,9 +235,27 @@ def validate_engine_result(
             "profile_digest",
             "native_bundle_digest",
             "native_payload_digest",
+            "release_id",
+            "controller_release_id",
         ):
             if re.fullmatch(r"[0-9a-f]{64}", str(fixture_status.get(field) or "")) is None:
                 errors.append(f"fixture_{field}_invalid")
+        if fixture_status.get("release_consistent") is not True:
+            errors.append("fixture_release_inconsistent")
+        if fixture_status.get("release_id") != fixture_status.get(
+            "controller_release_id"
+        ):
+            errors.append("fixture_release_identity_mismatch")
+        if re.fullmatch(
+            r"[0-9a-f]{40}", str(fixture_status.get("source_commit") or "")
+        ) is None:
+            errors.append("fixture_source_commit_invalid")
+        else:
+            expected_release_id = fixture_release_id(
+                fixture_status["source_commit"]
+            )
+            if fixture_status.get("release_id") != expected_release_id:
+                errors.append("fixture_release_id_not_source_bound")
     started = _parse_timestamp(result.get("started_at"))
     completed = _parse_timestamp(result.get("completed_at"))
     if started is None or completed is None or completed < started:
@@ -348,6 +370,12 @@ def aggregate_evidence(
     for engine in manifest["required_engines"]:
         result = dict(engine_results.get(engine, {}))
         validations[engine] = validate_engine_result(result, engine, manifest)
+        fixture_status = result.get("fixture_status")
+        if (
+            isinstance(fixture_status, Mapping)
+            and fixture_status.get("source_commit") != source.get("commit")
+        ):
+            validations[engine].append("fixture_source_commit_mismatch")
         result["validation_errors"] = validations[engine]
         retained_results.append(result)
 

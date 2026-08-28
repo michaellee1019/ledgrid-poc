@@ -15,12 +15,16 @@ from flask import request
 
 from animation.core.installation_profile_authoring import InstallationProfileAuthoring
 from animation.core.installation_profile_library import InstallationProfileLibrary
+from animation.core.activation_qualification import canonical_json_sha256
 from animation.core.feature_flags import AnimationPipelineFeatureFlags
 from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.native_background_library import NativeBackgroundLibrary
 from animation.core.presentation_contracts import resolve_vibe
 from animation.native.builder import build_plugin
 from ipc.control_channel import FileControlChannel
+from tools.browser_qualification.source_identity import (
+    resolve_fixture_source_identity,
+)
 from web.app import AnimationWebInterface
 
 
@@ -125,11 +129,35 @@ def create_fixture_server(
     )
     channel = NoWallControlChannel(state_dir)
     vibe = resolve_vibe("neutral").state.to_dict()
+    source_commit, release_id = resolve_fixture_source_identity(ROOT)
+    active_identity = {
+        "scene_identity": None,
+        "component_identities": [],
+        "global_settings_identity": {
+            "revision": 1,
+            "digest": canonical_json_sha256(
+                {
+                    "vibe": vibe,
+                    "plant_modifiers": {
+                        "version": 1,
+                        "active": [],
+                        "strengths": {},
+                    },
+                    "brightness": 128,
+                    "target_fps": 30,
+                    "animation_speed_scale": 0.3,
+                }
+            ),
+        },
+        "installation_profile_digest": receipt.id,
+    }
     channel.write_status(
         {
+            "release_id": release_id,
             "controller_session_id": "a" * 32,
             "controller_state_revision": 1,
-            "active_identity": {"current_identity": "b" * 64},
+            "active_identity": active_identity,
+            "current_identity_digest": canonical_json_sha256(active_identity),
             "installation_profile_digest": receipt.id,
             "brightness": 128,
             "target_fps": 30,
@@ -151,6 +179,7 @@ def create_fixture_server(
         activation_token_store_path=state_dir / "activation-tokens.sqlite3",
         installation_profile_authoring=authoring,
         project_root=ROOT,
+        release_id=release_id,
     )
     interface.animation_presets_dir = state_dir / "presets" / "animations"
     interface.scene_presets_dir = state_dir / "presets" / "scenes"
@@ -179,11 +208,17 @@ def create_fixture_server(
     def qualification_status() -> dict[str, Any]:
         return {
             "schema": "ledgrid.browser-qualification-fixture-status",
-            "schema_version": 1,
+            "schema_version": 2,
             "profile_digest": receipt.id,
             "native_plugin_id": NATIVE_PLUGIN_ID,
             "native_bundle_digest": native_receipt.bundle_digest,
             "native_payload_digest": native_receipt.payload_digest,
+            "source_commit": source_commit,
+            "release_id": release_id,
+            "controller_release_id": channel.read_status().get("release_id"),
+            "release_consistent": (
+                channel.read_status().get("release_id") == release_id
+            ),
             "network_outage_blocks": len(network_outage_blocks),
             "network_outage_paths": sorted(
                 {item["path"] for item in network_outage_blocks}
