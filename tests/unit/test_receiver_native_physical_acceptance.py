@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 from tools.benchmarks import receiver_native_physical_acceptance as acceptance
 
@@ -17,6 +18,7 @@ PROFILE = "c" * 64
 CONTEXT = "d" * 64
 VIBE = "f" * 64
 PLANT = "1" * 64
+RECEIPT = "e" * 64
 CAPABILITIES = 0x1FF
 NATIVE_SCHEMA = {
     "layers": {"type": "int", "default": 3, "min": 1, "max": 5},
@@ -308,6 +310,21 @@ class _API:
 
 class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
     @staticmethod
+    def preactivate(api: _API, **config_kwargs):
+        provisional = acceptance.AcceptanceConfig(
+            expected_scene_digest=RECEIPT, **config_kwargs
+        )
+        acceptance.resolve_acceptance_identity(api, provisional)
+        api.mode = "native"
+        api.native_started = api.clock.monotonic()
+        scene = deepcopy(api.status()["scene_state"])
+        api.active_scene = scene
+        return acceptance.AcceptanceConfig(
+            expected_scene_digest=acceptance.canonical_scene_digest(scene),
+            **config_kwargs,
+        )
+
+    @staticmethod
     def h2_companion():
         subgates = (
             "h2.transaction-compensation",
@@ -335,19 +352,22 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
 
     def test_real_release_default_is_thirty_minutes_but_short_runs_are_valid(self):
         self.assertEqual(
-            acceptance.AcceptanceConfig().duration_seconds,
+            acceptance.AcceptanceConfig(RECEIPT).duration_seconds,
             30 * 60,
         )
         short = acceptance.AcceptanceConfig(
+            expected_scene_digest=RECEIPT,
             duration_seconds=0.05, sample_interval_seconds=0.01
         )
         self.assertEqual(short.workload, "default")
         with self.assertRaisesRegex(ValueError, "at least 1800"):
             acceptance.AcceptanceConfig(
+                expected_scene_digest=RECEIPT,
                 duration_seconds=1_799,
                 require_complete_gate=True,
             )
         complete = acceptance.AcceptanceConfig(
+            expected_scene_digest=RECEIPT,
             duration_seconds=1_800,
             require_complete_gate=True,
         )
@@ -358,7 +378,9 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
             {"timeout_seconds": True},
         ):
             with self.subTest(field=field), self.assertRaises(ValueError):
-                acceptance.AcceptanceConfig(**field)
+                acceptance.AcceptanceConfig(expected_scene_digest=RECEIPT, **field)
+        with self.assertRaisesRegex(ValueError, "guarded Composer activation receipt"):
+            acceptance.AcceptanceConfig(expected_scene_digest="not-a-digest")
 
     def test_maximum_workload_uses_schema_maxima_and_keeps_defaults(self):
         descriptor = _catalog()[0]
@@ -367,15 +389,17 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
             {"layers": 5, "motion": 1.0, "shimmer": True},
         )
 
-    def test_happy_h2_run_proves_exact_roster_deltas_skew_and_restoration(self):
+    def test_happy_h2_observation_proves_receipt_roster_deltas_and_skew(self):
         clock = _Clock()
         api = _API(clock)
-        report = acceptance.run_acceptance(
-            acceptance.AcceptanceConfig(
+        config = self.preactivate(
+            api,
                 duration_seconds=0.2,
                 sample_interval_seconds=0.1,
                 timeout_seconds=0.2,
-            ),
+        )
+        report = acceptance.run_acceptance(
+            config,
             api,
             monotonic=clock.monotonic,
             wall_time=clock.time,
@@ -393,13 +417,10 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
             report["evaluation"]["reset_detection"]["reset_delta"], 0
         )
         self.assertLess(report["evaluation"]["timing"]["maximum_skew_us"], 16_667)
-        self.assertEqual(report["restoration"]["method"], "receiver-native-recover")
-        self.assertEqual(api.mode, "python")
-        native_scene = next(
-            payload for method, path, payload in api.calls
-            if method == "PUT" and path == "/api/v1/scene"
-        )
-        self.assertEqual(native_scene["overlays"][0]["slot_id"], "clock_overlay")
+        self.assertFalse(report["restoration"]["attempted"])
+        self.assertTrue(report["observation_only"])
+        self.assertEqual(api.mode, "native")
+        self.assertTrue(all(method == "GET" for method, _path, _payload in api.calls))
         timing = report["evaluation"]["sampled_timing_percentiles"]
         self.assertIn("not receiver event histograms", timing["method"])
         self.assertEqual(timing["receivers"]["4"]["display"]["max_us"], 4_404)
@@ -411,10 +432,10 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
         api = _API(clock)
         api.mode = "native"
         api.native_started = clock.monotonic()
-        scene, identity = acceptance.resolve_acceptance_scene(
-            api, acceptance.AcceptanceConfig()
+        identity = acceptance.resolve_acceptance_identity(
+            api, acceptance.AcceptanceConfig(RECEIPT)
         )
-        api.active_scene = scene
+        api.active_scene = deepcopy(api.status()["scene_state"])
         good = acceptance.normalize_sample(
             api.status(), elapsed_seconds=0.0, sampled_at=clock.time()
         )
@@ -456,10 +477,10 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
     def test_stale_unanimous_parameters_and_missing_clock_fail_closed(self):
         clock = _Clock()
         api = _API(clock)
-        scene, identity = acceptance.resolve_acceptance_scene(
-            api, acceptance.AcceptanceConfig()
+        identity = acceptance.resolve_acceptance_identity(
+            api, acceptance.AcceptanceConfig(RECEIPT)
         )
-        api.active_scene = scene
+        api.active_scene = deepcopy(api.status()["scene_state"])
         api.mode = "native"
         api.native_started = clock.monotonic()
         good = acceptance.normalize_sample(
@@ -496,10 +517,10 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
     def test_missing_or_changed_controller_release_identity_fails_closed(self):
         clock = _Clock()
         api = _API(clock)
-        scene, identity = acceptance.resolve_acceptance_scene(
-            api, acceptance.AcceptanceConfig()
+        identity = acceptance.resolve_acceptance_identity(
+            api, acceptance.AcceptanceConfig(RECEIPT)
         )
-        api.active_scene = scene
+        api.active_scene = deepcopy(api.status()["scene_state"])
         api.mode = "native"
         api.native_started = clock.monotonic()
         first = acceptance.normalize_sample(
@@ -529,10 +550,10 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
         api = _API(clock)
         api.mode = "native"
         api.native_started = clock.monotonic()
-        scene, identity = acceptance.resolve_acceptance_scene(
-            api, acceptance.AcceptanceConfig()
+        identity = acceptance.resolve_acceptance_identity(
+            api, acceptance.AcceptanceConfig(RECEIPT)
         )
-        api.active_scene = scene
+        api.active_scene = deepcopy(api.status()["scene_state"])
         first = acceptance.normalize_sample(
             api.status(), elapsed_seconds=0.0, sampled_at=clock.time()
         )
@@ -559,10 +580,10 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
         api = _API(clock)
         api.mode = "native"
         api.native_started = clock.monotonic()
-        scene, identity = acceptance.resolve_acceptance_scene(
-            api, acceptance.AcceptanceConfig()
+        identity = acceptance.resolve_acceptance_identity(
+            api, acceptance.AcceptanceConfig(RECEIPT)
         )
-        api.active_scene = scene
+        api.active_scene = deepcopy(api.status()["scene_state"])
         first = acceptance.normalize_sample(
             api.status(), elapsed_seconds=0.0, sampled_at=clock.time()
         )
@@ -664,7 +685,8 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
     def test_full_h2_claim_requires_valid_companion_evidence(self):
         clock = _Clock()
         api = _API(clock)
-        config = acceptance.AcceptanceConfig(
+        config = self.preactivate(
+            api,
             duration_seconds=1_800,
             sample_interval_seconds=1_800,
             timeout_seconds=0.2,
@@ -683,6 +705,13 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
 
         clock = _Clock()
         api = _API(clock)
+        config = self.preactivate(
+            api,
+            duration_seconds=1_800,
+            sample_interval_seconds=1_800,
+            timeout_seconds=0.2,
+            require_complete_gate=True,
+        )
         complete = acceptance.run_acceptance(
             config,
             api,
@@ -791,11 +820,15 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
             ):
                 acceptance.load_companion_reports([linked_parent / "nested.json"])
 
-    def test_activation_failure_still_restores_python_and_direct_fallback_is_backup(self):
+    def test_receipt_mismatch_rejects_without_mutation_restoration_or_sleep(self):
         clock = _Clock()
-        api = _API(clock, fail_activate=True)
+        api = _API(clock)
+        self.preactivate(api, duration_seconds=0.1, sample_interval_seconds=0.05)
+        api.calls.clear()
+        sleep = Mock()
         report = acceptance.run_acceptance(
             acceptance.AcceptanceConfig(
+                expected_scene_digest="0" * 64,
                 duration_seconds=0.1,
                 sample_interval_seconds=0.05,
                 timeout_seconds=0.2,
@@ -803,27 +836,17 @@ class ReceiverNativePhysicalAcceptanceTests(unittest.TestCase):
             api,
             monotonic=clock.monotonic,
             wall_time=clock.time,
-            sleep=clock.sleep,
+            sleep=sleep,
         )
         self.assertFalse(report["passed"])
-        self.assertTrue(report["restoration"]["passed"])
-        self.assertEqual(api.mode, "python")
-
-        backup_api = _API(clock, fail_recover=True)
-        backup = acceptance.restore_python_fallback(
-            backup_api,
-            acceptance.AcceptanceConfig(timeout_seconds=0.2),
-            {
-                "plugin_id": acceptance.DEFAULT_FALLBACK,
-                "provider": "python",
-                "parameter_overrides": {},
-                "resolved_parameters": {"speed": 0.4},
-            },
-            monotonic=clock.monotonic,
-            sleep=clock.sleep,
+        self.assertIn("guarded activation receipt", report["failures"][0])
+        self.assertFalse(report["restoration"]["attempted"])
+        self.assertEqual(api.mode, "native")
+        self.assertTrue(
+            all(method == "GET" for method, _path, _payload in api.calls),
+            api.calls,
         )
-        self.assertTrue(backup["passed"])
-        self.assertEqual(backup["method"], "direct-python-scene")
+        sleep.assert_not_called()
 
 
 if __name__ == "__main__":

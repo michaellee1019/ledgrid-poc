@@ -23,7 +23,11 @@ from animation.core.installation_profile import (
     LEDS_PER_STRIP,
     decode_installation_profile,
 )
-from animation.core.plant_awareness import GLOBE_REGION_ORDER, PlantMaskGeometry
+from animation.core.plant_awareness import (
+    GLOBE_REGION_ORDER,
+    LEGACY_PLANT_MASK_PATH_PARAMETERS,
+    PlantMaskGeometry,
+)
 
 
 ENGINE = "python-pyodide-wasm"
@@ -141,12 +145,27 @@ def normalize_geometry(geometry: Mapping[str, Any]) -> Tuple[int, int]:
 def _validate_browser_parameters(params: Mapping[str, Any]) -> None:
     if not isinstance(params, Mapping):
         raise ValueError("params must be an object")
-    legacy = {"plant_mask_path", "plant_globe_mask_path"} & params.keys()
+    legacy = LEGACY_PLANT_MASK_PATH_PARAMETERS & params.keys()
     if legacy:
         raise ValueError(
             "browser previews reject legacy plant-mask paths; "
             "use the managed installation-profile artifact"
         )
+
+
+def _same_parameter_value(left: Any, right: Any) -> bool:
+    """Compare JSON-shaped parameter values without NumPy coercion."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _same_parameter_value(value, right[key]) for key, value in left.items()
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _same_parameter_value(a, b) for a, b in zip(left, right)
+        )
+    return bool(left == right)
 
 
 def _readonly(value: Any, dtype: np.dtype[Any]) -> np.ndarray:
@@ -227,6 +246,7 @@ class BrowserPreviewRuntime:
     def __init__(self) -> None:
         self._instances: Dict[str, _RuntimeInstance] = {}
         self._last_instance_id = DEFAULT_INSTANCE_ID
+        self._batch_frame_bytes = b""
         self._installation_profile_digest: Optional[str] = None
         self._installation_profile_geometry: Optional[PlantMaskGeometry] = None
 
@@ -303,6 +323,10 @@ class BrowserPreviewRuntime:
         if instance is None:
             raise RuntimeError(f"Python browser preview instance {resolved_id!r} is not initialized")
         return instance.frame_bytes
+
+    @property
+    def batch_frame_bytes(self) -> bytes:
+        return self._batch_frame_bytes
 
     def dispose_instance(self, instance_id: Optional[str] = None) -> Dict[str, Any]:
         """Release one animation's buffers without tearing down Pyodide."""
@@ -488,11 +512,17 @@ class BrowserPreviewRuntime:
             raise ValueError("frameIndex must be a non-negative integer")
         live_params = dict(params or {})
         _validate_browser_parameters(live_params)
+        live_updates = {
+            name: value
+            for name, value in live_params.items()
+            if name not in instance.animation.params
+            or not _same_parameter_value(instance.animation.params[name], value)
+        }
         resolved_wall_time = _validated_wall_time(wall_time)
 
         started = time.perf_counter()
-        if live_params:
-            instance.animation.update_parameters(live_params)
+        if live_updates:
+            instance.animation.update_parameters(live_updates)
         output = self._generate(
             instance, resolved_elapsed, resolved_frame_index, resolved_wall_time
         )
@@ -559,6 +589,46 @@ class BrowserPreviewRuntime:
             payload.get("wallTime"),
         )
         return json.dumps(result, separators=(",", ":"), sort_keys=True)
+
+    def render_batch_json(self, payload_json: str) -> str:
+        """Render distinct instances through one bounded JSON/bytes bridge."""
+        payload = json.loads(payload_json)
+        renders = payload.get("renders") if isinstance(payload, Mapping) else None
+        if (
+            not isinstance(renders, list)
+            or not renders
+            or len(renders) > MAX_RUNTIME_INSTANCES
+        ):
+            raise ValueError(
+                f"renders must contain 1-{MAX_RUNTIME_INSTANCES} render requests"
+            )
+        instance_ids = []
+        for request in renders:
+            if not isinstance(request, Mapping):
+                raise ValueError("each batch render request must be an object")
+            instance_ids.append(_validated_instance_id(request.get("instanceId")))
+        if len(set(instance_ids)) != len(instance_ids):
+            raise ValueError("batch renders require distinct instance IDs")
+
+        self._batch_frame_bytes = b""
+        results = []
+        frames = []
+        offset = 0
+        for request, instance_id in zip(renders, instance_ids):
+            result = self.render(
+                request.get("elapsed"),
+                request.get("frameIndex"),
+                request.get("params"),
+                instance_id,
+                request.get("wallTime"),
+            )
+            frame = self.frame_bytes_for(instance_id)
+            result.update(byteOffset=offset, byteLength=len(frame))
+            results.append(result)
+            frames.append(frame)
+            offset += len(frame)
+        self._batch_frame_bytes = b"".join(frames)
+        return json.dumps(results, separators=(",", ":"), sort_keys=True)
 
     def dispose_json(self, payload_json: str) -> str:
         payload = json.loads(payload_json)

@@ -72,9 +72,15 @@ Desktop keeps the source list and multi-column context. Phone changes the intera
 - Tablet receives the compact desktop layout until the phone drill-in breakpoint. A production pass should test orientation-specific split behavior.
 - Reduced-telemetry copy is representative and must ultimately be derived from the active receiver transport policy rather than hard-coded receiver identity.
 
-## Mapping to existing backend APIs
+## Historical backend mapping — superseded
 
-The prototype is unwired, but its interaction boundaries map to current contracts as follows:
+> This unwired prototype preserves the route map used during evaluation. The map
+> is not current integration guidance: direct animation/device takeover, bare
+> scene mutation, preset-apply, and mask-writing routes are now fail-closed. A
+> shipping implementation must hand activation to Composer Check and use the
+> managed installation-profile workflow.
+
+Its interaction boundaries mapped to the then-current contracts as follows:
 
 | Prototype responsibility | Existing API contract | Integration note |
 | --- | --- | --- |

@@ -76,7 +76,14 @@ See [PRODUCT_DECISIONS.md](PRODUCT_DECISIONS.md) for the scale, fidelity, state,
 - Scene preview vibe override is represented as feedback rather than a complete editor.
 - The prototype assumes one authenticated household/installation scope and does not model permissions.
 
-## Backend wiring map
+## Historical backend wiring map — superseded
+
+> This map records the APIs available during the design tournament. It is not
+> current integration guidance: direct animation/device takeover, bare scene
+> mutation, preset-apply, and mask-writing routes are now fail-closed. A shipping
+> implementation must use Composer Check plus guarded activation and the managed
+> installation-profile workflow. The prototype itself remains fixture-only and
+> makes no network requests.
 
 | Prototype surface | Existing API(s) to wire | Notes |
 | --- | --- | --- |

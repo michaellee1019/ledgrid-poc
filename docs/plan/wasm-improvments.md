@@ -13,8 +13,63 @@ The no-go is no longer a missing-UX or portable-transaction problem. The branch
 has a complete, streamlined authoring surface, a guarded activation transaction,
 and a managed installation-profile authoring and qualification contract.
 Production activation remains blocked on calibrated installation budgets, fresh
-controller/receiver measurements, retained cross-browser and recovery evidence,
-and explicitly authorized physical-wall canary/soak gates described below.
+controller/receiver measurements, a clean-commit retained browser qualification,
+external iPhone/VoiceOver evidence, and explicitly authorized physical-wall
+canary/soak gates described below.
+
+### Third implementation slice completed — 2026-08-27
+
+Execution-order step 7's portable browser and recovery implementation is now
+green. A real loopback `AnimationWebInterface` fixture drives seven deterministic
+journeys in installed Chromium, Firefox, and WebKit engines while refusing wall
+consumer attachment and retaining every attempted wall mutation. The journeys
+cover the core no-mutation authoring flow, offline/reconnect behavior, exact
+worker recovery, five responsive viewports, all five vibes and 14 modifiers,
+exact foliage plus seven-globe profile semantics, and Python/native backgrounds
+with Clock composition. See [REL-01 portable browser qualification](../browser-qualification-rel01.md).
+
+The cross-engine run found and closed four release-relevant defects rather than
+merely codifying the existing behavior:
+
+- browser catalog/default/import boundaries now reject retired mask-path
+  authority while host-side filesystem compatibility remains explicit;
+- Save and overwrite preserve or invalidate Check from canonical preset identity,
+  so a stale Check can no longer survive an identity-changing save;
+- the browser render bridge batches background plus Clock work and sends only
+  changed parameters, reducing Firefox Color Gradient plus Clock p95 from 68 ms
+  to 6 ms while preserving exact frame bytes and recovery snapshots;
+- verified profile artifacts can be supplied by the controlling service worker
+  during origin loss, and staged cache generation `v16` is promoted only after
+  complete digest verification.
+
+Current evidence and limits for this checkpoint:
+
+- **Passed in the raw engine runs:** Chromium 151.0.7922.34, Firefox 153.0,
+  and WebKit 26.5 each passed all 7/7 journeys with zero wall mutations and the
+  same final manifest.
+- **Retained evidence:**
+  `run_state/browser_qualification/evidence/rel01-browser-evidence-final.json`
+  has file SHA-256
+  `1df0e394a7a48e6cfab99257e3b86ec3aa8e8dfde8d7bfcbf7e618466b541753`.
+  Its portable aggregate intentionally reports `FAIL` solely because the run
+  came from a dirty working tree; a clean committed rerun is still required.
+- **WebKit limitation:** Playwright's native offline flag fails before service
+  worker dispatch in this engine, so its deterministic test uses a 503 fixture
+  origin while the verified service worker supplies cached navigation. This is
+  origin-outage coverage, not physical iOS or full device-network evidence.
+- **Still external/pending:** physical-iPhone Safari, installed standalone,
+  VoiceOver, Raspberry Pi/controller, receiver, calibrated electrical, canary,
+  and soak evidence. Production activation therefore remains **NO-GO**.
+- **Complete local regression:** 1,777 Python tests plus 3,187 subtests; 24
+  rendering tests plus 3 subtests and stress/scene benchmarks; 128 native
+  firmware tests; all three ESP32 build variants; and 238 deployment tests plus
+  157 subtests passed. No deployment, receiver write, camera workflow, or
+  physical-wall command was performed.
+- **Generated assets:** the pinned Python runtime and offline manifest rebuild
+  byte-for-byte at SHA-256
+  `2bf9937ac26526ca78ed5514ee60b5da370baae2b1e94d75c30b236ec4071047`
+  and
+  `60d63564d655ad895fb8dc31016ea70a3de89e3db838370f36ecd8618f018b42`.
 
 ### Second implementation slice completed — 2026-08-27
 
@@ -119,14 +174,15 @@ contracts remain authoritative in:
 | Plant masks | A managed 32×138 foliage/seven-globe editor with paint, erase, stroke Undo, zoom, revert, optimistic-concurrency Save, and immutable candidate Publish, presented against the 33×138 wall preview. Selection remains a separate reviewed wall transaction. |
 | Local Check | A 48-frame isolated render check plus a server-owned qualification record for schema, motion, luminance, clipping, temporal change, advisory browser current, and target-FPS render budget. Results bind to the exact scene, runtime, profile artifact, geometry, globals, and evidence provenance/freshness. |
 | Safety UX | Opening, editing, previewing, importing, exporting, saving, and checking do not mutate the wall. Activation is blocked when offline, unsupported, unchecked, stale, failing, or when global settings are dirty, applying, or not yet observed. |
-| Offline/PWA | Deterministic generated assets, a pinned browser runtime bundle, verified immutable profile artifacts, atomic cache upgrade behavior, explicit offline readiness, and current cache generation `v15`. |
+| Offline/PWA | Deterministic generated assets, a pinned browser runtime bundle, verified immutable profile artifacts, atomic cache upgrade behavior, explicit offline readiness, and current cache generation `v16`. |
 
-The current portable suite is green. The exact branch run for the second
-checkpoint is recorded above. Earlier cold mobile review at 390×844 and 375×667
-found no clipped or unreachable composer controls, no horizontal overflow, no
-sub-44-pixel action targets, and no console errors. These are portable/browser
-results, not retained REL-01, controller, receiver, electrical, or physical-wall
-acceptance.
+The current portable feature suite and raw desktop-engine matrix are green. The
+exact branch run for the third checkpoint is recorded above. Automated review at
+375×667, 390×844, 430×932, 768×1024, and 1440×1000 found no clipped or
+unreachable composer controls, horizontal overflow, sub-44-pixel primary action
+targets, or console errors. These are portable/browser results, not a clean
+retained REL-01 release pass or controller, receiver, electrical, iPhone,
+VoiceOver, or physical-wall acceptance.
 
 ## Product and safety invariants
 
@@ -317,8 +373,8 @@ physical iPhone in Safari and installed standalone mode. Cover:
 - offline preparation, offline reload/edit/Check/export, reconnect, and stale
   activation rejection;
 - worker termination and bounded recovery with exact draft restoration;
-- service-worker upgrade from the previous release cache to `v15` or its
-  successor;
+- service-worker upgrade from release cache `v15` to verified cache generation
+  `v16`;
 - keyboard-only desktop and VoiceOver iPhone journeys;
 - 390×844 and 375×667 phone layouts, 430×932, tablet, and desktop.
 
@@ -337,7 +393,7 @@ physical iPhone in Safari and installed standalone mode. Cover:
 | **CHECK-01** | **PASS** | Every Check token is bound to the full activation basis, expires, and cannot authorize another draft or state. |
 | **PERF-01** | **NO-GO — evidence absent** | Browser, controller/Pi, and receiver measurements are labeled separately and pass their declared target-FPS budgets. |
 | **POWER-01** | **NO-GO — uncalibrated** | The exact activation passes a versioned installation electrical budget; an uncalibrated browser estimate cannot satisfy this gate. |
-| **REL-01** | **PENDING** | Required journeys pass in Firefox, Chromium, WebKit, physical iPhone Safari, and installed standalone mode. |
+| **REL-01** | **PENDING EXTERNAL + CLEAN RETENTION** | All seven automated journeys pass in current Firefox, Chromium, and WebKit; a clean committed retained rerun plus physical-iPhone Safari, installed standalone, and VoiceOver evidence remain required. |
 | **WALL-01** | **PENDING AUTHORIZATION** | An explicitly authorized wall canary proves active identity, fresh telemetry, visible output, failure recovery, and rollback. |
 | **WALL-02** | **PENDING AUTHORIZATION** | The accepted build survives the required soak with no new controller, receiver, queue, display, or electrical fault. |
 
@@ -362,9 +418,10 @@ remains disabled or clearly marked unavailable in production.
 8. Run a guarded physical canary and soak only after explicit operator
    authorization and all portable gates pass.
 
-Steps 1–6 and the portable contract portion of step 7 are green. The next slice
-must retain cross-browser/recovery and target qualification evidence without
-conflating browser measurements with wall evidence. Step 8 remains forbidden
+Steps 1–7's portable implementation and raw desktop-engine journeys are green.
+The next slice must rerun and retain the matrix from this committed revision,
+capture the external iPhone/standalone/VoiceOver journeys, and record separately
+labeled target performance and electrical evidence. Step 8 remains forbidden
 until an operator explicitly authorizes physical-wall work and all portable
 release gates pass.
 
@@ -382,6 +439,9 @@ uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' \
   tests.unit.test_browser_composer_actions \
   tests.unit.test_browser_composer_runtime \
   tests.unit.test_browser_composer_pwa \
+  tests.unit.test_browser_composer_accessibility_acceptance \
+  tests.unit.test_browser_qualification_rel01 \
+  tests.unit.test_guarded_ui_legacy_debt \
   tests.unit.test_browser_composer_mobile_ux \
   tests.unit.test_browser_composer_profile_contract \
   tests.unit.test_browser_composer_profile_runtime \
@@ -421,10 +481,10 @@ outside the portable implementation loop and require explicit authorization.
 - Cross-browser, performance, electrical, controller, receiver, and physical-wall
   evidence are recorded separately and all release gates pass.
 
-The next implementation context should continue **P1 — Browser and recovery
-qualification** (execution-order step 7): retain the current Firefox, Chromium,
-WebKit, physical-iPhone Safari/standalone, accessibility, offline-upgrade, and
-worker-recovery journeys; then capture separately labeled target performance
-and calibrated electrical evidence. Do not remove the development/canary-only
-activation restriction or begin step 8 until PERF-01, POWER-01, and REL-01 pass
-and physical-wall work is explicitly authorized.
+The next implementation context should finish **P1 — Browser and recovery
+qualification** (execution-order step 7): rerun and retain the current
+Firefox/Chromium/WebKit evidence from this committed revision, capture
+physical-iPhone Safari/standalone and VoiceOver evidence, then capture separately
+labeled target performance and calibrated electrical evidence. Do not remove the
+development/canary-only activation restriction or begin step 8 until PERF-01,
+POWER-01, and REL-01 pass and physical-wall work is explicitly authorized.

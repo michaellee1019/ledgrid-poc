@@ -89,13 +89,15 @@ native-install plugin_or_digest:
 		{{python_env}} python tools/deployment/native_background_entrypoint.py \
 		install "{{plugin_or_digest}}"
 
-# Activate a published package with its authored defaults and a known Python fallback.
+# Retired compatibility entrypoint: fails before target access and points to
+# Composer Check + guarded activation.
 native-start plugin_or_digest fallback="aurora_curtains":
 	{{captured}} --phase receiver_background.activate -- \
 		{{python_env}} python tools/deployment/native_background_entrypoint.py \
 		start "{{plugin_or_digest}}" --fallback "{{fallback}}"
 
-# Convenience composition: build/publish, install idempotently, and activate.
+# Retired compatibility entrypoint: fails before build, publish, install, or
+# target access and points to Composer Check + guarded activation.
 native-run plugin_id fallback="aurora_curtains":
 	{{captured}} --phase receiver_background.run -- \
 		{{python_env}} --group firmware python tools/deployment/native_background_entrypoint.py \
@@ -215,18 +217,19 @@ preflight: test
 deploy-precheck: test
 
 # Run the receiver-side timed hardware gates against one controller.
-receiver-acceptance device="0" duration="60" min_fps="150" target_fps="160":
-	device="{{device}}"; duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
+receiver-acceptance expected_scene_digest device="0" duration="60" min_fps="150" target_fps="160":
+	expected_scene_digest="{{expected_scene_digest}}"; device="{{device}}"; duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
 	device="${device#device=}"; duration="${duration#duration=}"; \
 	min_fps="${min_fps#min_fps=}"; target_fps="${target_fps#target_fps=}"; \
-	{{python_env}} python tools/benchmarks/receiver_acceptance.py --device "$device" --duration "$duration" --min-displayed-fps "$min_fps" --target-fps "$target_fps" --animation rainbow
+	{{python_env}} python tools/benchmarks/receiver_acceptance.py --expected-scene-digest "$expected_scene_digest" --device "$device" --duration "$duration" --min-displayed-fps "$min_fps" --target-fps "$target_fps" --animation rainbow
 
 # Run the dense streamed-frame gate against the complete installed topology.
-receiver-streamed-wall-acceptance duration="60" min_fps="150" target_fps="160":
-	duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
+receiver-streamed-wall-acceptance expected_scene_digest duration="60" min_fps="150" target_fps="160":
+	expected_scene_digest="{{expected_scene_digest}}"; duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
 	duration="${duration#duration=}"; min_fps="${min_fps#min_fps=}"; \
 	target_fps="${target_fps#target_fps=}"; \
 	{{python_env}} python tools/benchmarks/receiver_acceptance.py \
+		--expected-scene-digest "$expected_scene_digest" \
 		--device 0 --device 1 --device 2 --device 3 --device 4 \
 		--duration "$duration" --min-displayed-fps "$min_fps" \
 		--target-fps "$target_fps" --animation rainbow
@@ -234,39 +237,40 @@ receiver-streamed-wall-acceptance duration="60" min_fps="150" target_fps="160":
 # Collect H2 binding/topology/skew/drift supporting evidence. Transaction
 # injection, restart/lease repair, streamed capacity, and the Python sweep remain
 # explicit companion subgates. The default is a real 30-minute evidence run.
-receiver-native-h2-evidence selector="aurora_curtains_native" duration="1800" sample_interval="5" target="ledgridwall.local":
-	selector="{{selector}}"; duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; \
+receiver-native-h2-evidence expected_scene_digest selector="aurora_curtains_native" duration="1800" sample_interval="5" target="ledgridwall.local":
+	expected_scene_digest="{{expected_scene_digest}}"; selector="{{selector}}"; duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; \
 	selector="${selector#selector=}"; duration="${duration#duration=}"; \
 	sample_interval="${sample_interval#sample_interval=}"; target="${target#target=}"; \
 	{{python_env}} python tools/benchmarks/receiver_native_physical_acceptance.py \
-		"$selector" --gate H2 --target "$target" --duration "$duration" \
+		"$selector" --expected-scene-digest "$expected_scene_digest" --gate H2 --target "$target" --duration "$duration" \
 		--sample-interval "$sample_interval"
 
 # H4 supporting soak at authored defaults; this intentionally defaults to 1800 s.
-receiver-native-h4-default-soak selector="aurora_curtains_native" duration="1800" sample_interval="5" target="ledgridwall.local":
-	selector="{{selector}}"; duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; \
+receiver-native-h4-default-soak expected_scene_digest selector="aurora_curtains_native" duration="1800" sample_interval="5" target="ledgridwall.local":
+	expected_scene_digest="{{expected_scene_digest}}"; selector="{{selector}}"; duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; \
 	selector="${selector#selector=}"; duration="${duration#duration=}"; \
 	sample_interval="${sample_interval#sample_interval=}"; target="${target#target=}"; \
 	{{python_env}} python tools/benchmarks/receiver_native_physical_acceptance.py \
-		"$selector" --gate H4-default --target "$target" --duration "$duration" \
+		"$selector" --expected-scene-digest "$expected_scene_digest" --gate H4-default --target "$target" --duration "$duration" \
 		--sample-interval "$sample_interval"
 
 # Separate H4 maximum-work supporting soak; this also defaults to 1800 s.
-receiver-native-h4-maximum-soak selector="aurora_curtains_native" duration="1800" sample_interval="5" target="ledgridwall.local":
-	selector="{{selector}}"; duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; \
+receiver-native-h4-maximum-soak expected_scene_digest selector="aurora_curtains_native" duration="1800" sample_interval="5" target="ledgridwall.local":
+	expected_scene_digest="{{expected_scene_digest}}"; selector="{{selector}}"; duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; \
 	selector="${selector#selector=}"; duration="${duration#duration=}"; \
 	sample_interval="${sample_interval#sample_interval=}"; target="${target#target=}"; \
 	{{python_env}} python tools/benchmarks/receiver_native_physical_acceptance.py \
-		"$selector" --gate H4-maximum --target "$target" --duration "$duration" \
+		"$selector" --expected-scene-digest "$expected_scene_digest" --gate H4-maximum --target "$target" --duration "$duration" \
 		--sample-interval "$sample_interval"
 
 # Temporary installed-wall exception: require full receiver telemetry on SPI0,
 # prove outbound host traffic on write-only SPI1, and require visual inspection.
-receiver-streamed-wall-acceptance-degraded-spi1 duration="60" min_fps="150" target_fps="160":
-	duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
+receiver-streamed-wall-acceptance-degraded-spi1 expected_scene_digest duration="60" min_fps="150" target_fps="160":
+	expected_scene_digest="{{expected_scene_digest}}"; duration="{{duration}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
 	duration="${duration#duration=}"; min_fps="${min_fps#min_fps=}"; \
 	target_fps="${target_fps#target_fps=}"; \
 	{{python_env}} python tools/benchmarks/receiver_acceptance.py \
+		--expected-scene-digest "$expected_scene_digest" \
 		--device 0 --device 1 --device 2 --device 3 \
 		--allow-degraded-spi1-return-path \
 		--duration "$duration" --min-displayed-fps "$min_fps" \
@@ -307,22 +311,23 @@ receiver-phase3b-degraded-showcase desired_state restore_frame challenge respons
 		--confirmation-challenge {{challenge}} --confirmation-response {{response}} \
 		--duration {{duration}}
 
-# Exercise every live plugin while checking host and receiver integrity counters.
+# Retired compatibility recipe: fails before network/wall changes and points to
+# per-scene guarded activation plus receipt-bound observation.
 live-animation-sweep seconds="2":
 	seconds="{{seconds}}"; seconds="${seconds#seconds=}"; \
 	{{python_env}} python tools/benchmarks/live_animation_sweep.py --seconds "$seconds"
 
-# Temporary installed-wall sweep with exact SPI1 write-only reporting.
+# Retired degraded compatibility recipe; also fails before network/wall changes.
 live-animation-sweep-degraded-spi1 seconds="2":
 	seconds="{{seconds}}"; seconds="${seconds#seconds=}"; \
 	{{python_env}} python tools/benchmarks/live_animation_sweep.py \
 		--allow-degraded-spi1-return-path --seconds "$seconds"
 
-# Step physical output rates; visually note flashes and retain the highest clean rate.
-output-rate-sweep seconds="15" rates="120,140,160,180,200":
-	seconds="{{seconds}}"; rates="{{rates}}"; \
-	seconds="${seconds#seconds=}"; rates="${rates#rates=}"; \
-	{{python_env}} python tools/benchmarks/output_rate_sweep.py --seconds "$seconds" --rates "$rates"
+# Observe one exact pre-activated scene/rate; never changes target FPS or scene.
+output-rate-observation expected_scene_digest seconds="15" rate="160":
+	expected_scene_digest="{{expected_scene_digest}}"; seconds="{{seconds}}"; rate="{{rate}}"; \
+	seconds="${seconds#seconds=}"; rate="${rate#rate=}"; \
+	{{python_env}} python tools/benchmarks/output_rate_sweep.py --expected-scene-digest "$expected_scene_digest" --seconds "$seconds" --rate "$rate"
 
 # Diagnose the deploy host (API + logs). Outputs to diagnostics/remote_diagnostics.out.
 diagnose-remote:

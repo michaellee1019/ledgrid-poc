@@ -11,6 +11,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+RECEIPT = "a" * 64
 
 
 class JustAcceptanceRecipeTests(unittest.TestCase):
@@ -30,12 +31,14 @@ class JustAcceptanceRecipeTests(unittest.TestCase):
     def test_documented_named_streamed_wall_invocation_is_normalized(self):
         argv = self.run_with_fake_uv(
             "receiver-streamed-wall-acceptance",
+            RECEIPT,
             "duration=60",
             "min_fps=150",
             "target_fps=160",
         )
-        self.assertEqual(argv[-20:], [
+        self.assertEqual(argv[-22:], [
             "python", "tools/benchmarks/receiver_acceptance.py",
+            "--expected-scene-digest", RECEIPT,
             "--device", "0", "--device", "1", "--device", "2", "--device", "3",
             "--device", "4",
             "--duration", "60", "--min-displayed-fps", "150",
@@ -49,11 +52,12 @@ class JustAcceptanceRecipeTests(unittest.TestCase):
             ("receiver-native-h4-maximum-soak", "H4-maximum"),
         ):
             with self.subTest(recipe=recipe):
-                argv = self.run_with_fake_uv(recipe)
-                self.assertEqual(argv[-11:], [
+                argv = self.run_with_fake_uv(recipe, RECEIPT)
+                self.assertEqual(argv[-13:], [
                     "python",
                     "tools/benchmarks/receiver_native_physical_acceptance.py",
                     "aurora_curtains_native",
+                    "--expected-scene-digest", RECEIPT,
                     "--gate", gate,
                     "--target", "ledgridwall.local",
                     "--duration", "1800",
@@ -63,14 +67,16 @@ class JustAcceptanceRecipeTests(unittest.TestCase):
     def test_native_physical_recipe_accepts_short_named_diagnostic_duration(self):
         argv = self.run_with_fake_uv(
             "receiver-native-h2-evidence",
+            RECEIPT,
             "selector=aurora_curtains_native",
             "duration=0.2",
             "sample_interval=0.05",
             "target=wall.test",
         )
-        self.assertEqual(argv[-11:], [
+        self.assertEqual(argv[-13:], [
             "python", "tools/benchmarks/receiver_native_physical_acceptance.py",
-            "aurora_curtains_native", "--gate", "H2",
+            "aurora_curtains_native", "--expected-scene-digest", RECEIPT,
+            "--gate", "H2",
             "--target", "wall.test", "--duration", "0.2",
             "--sample-interval", "0.05",
         ])
@@ -78,12 +84,14 @@ class JustAcceptanceRecipeTests(unittest.TestCase):
     def test_degraded_spi1_recipe_is_separate_explicit_and_full_wall(self):
         argv = self.run_with_fake_uv(
             "receiver-streamed-wall-acceptance-degraded-spi1",
+            RECEIPT,
             "duration=60",
             "min_fps=150",
             "target_fps=160",
         )
-        self.assertEqual(argv[-19:], [
+        self.assertEqual(argv[-21:], [
             "python", "tools/benchmarks/receiver_acceptance.py",
+            "--expected-scene-digest", RECEIPT,
             "--device", "0", "--device", "1", "--device", "2", "--device", "3",
             "--allow-degraded-spi1-return-path",
             "--duration", "60", "--min-displayed-fps", "150",
@@ -167,26 +175,28 @@ class JustAcceptanceRecipeTests(unittest.TestCase):
                     self.assertIn("usage:", result.stdout)
 
     def test_defaults_and_positional_arguments_remain_supported(self):
-        default_receiver = self.run_with_fake_uv("receiver-acceptance")
+        default_receiver = self.run_with_fake_uv("receiver-acceptance", RECEIPT)
         self.assertEqual(default_receiver[-10:-2], [
             "--device", "0", "--duration", "60", "--min-displayed-fps", "150",
             "--target-fps", "160",
         ])
 
-        default_stream = self.run_with_fake_uv("receiver-streamed-wall-acceptance")
+        default_stream = self.run_with_fake_uv(
+            "receiver-streamed-wall-acceptance", RECEIPT
+        )
         self.assertEqual(default_stream[-8:-2], [
             "--duration", "60", "--min-displayed-fps", "150", "--target-fps", "160",
         ])
 
         default_degraded = self.run_with_fake_uv(
-            "receiver-streamed-wall-acceptance-degraded-spi1"
+            "receiver-streamed-wall-acceptance-degraded-spi1", RECEIPT
         )
         self.assertEqual(default_degraded[-8:-2], [
             "--duration", "60", "--min-displayed-fps", "150", "--target-fps", "160",
         ])
 
         positional_stream = self.run_with_fake_uv(
-            "receiver-streamed-wall-acceptance", "30", "170", "190"
+            "receiver-streamed-wall-acceptance", RECEIPT, "30", "170", "190"
         )
         self.assertEqual(positional_stream[-8:-2], [
             "--duration", "30", "--min-displayed-fps", "170", "--target-fps", "190",
@@ -199,7 +209,7 @@ class JustAcceptanceRecipeTests(unittest.TestCase):
 
     def test_other_named_acceptance_recipes_are_normalized_consistently(self):
         receiver = self.run_with_fake_uv(
-            "receiver-acceptance", "device=2", "duration=30",
+            "receiver-acceptance", RECEIPT, "device=2", "duration=30",
             "min_fps=170", "target_fps=190",
         )
         self.assertEqual(receiver[-10:-2], [
@@ -208,12 +218,13 @@ class JustAcceptanceRecipeTests(unittest.TestCase):
         ])
 
         rates = self.run_with_fake_uv(
-            "output-rate-sweep", "seconds=10", "rates=120,160,180"
+            "output-rate-observation", RECEIPT, "seconds=10", "rate=160"
         )
         self.assertEqual(
-            rates[-6:],
-            ["python", "tools/benchmarks/output_rate_sweep.py", "--seconds", "10",
-             "--rates", "120,160,180"],
+            rates[-8:],
+            ["python", "tools/benchmarks/output_rate_sweep.py",
+             "--expected-scene-digest", RECEIPT, "--seconds", "10",
+             "--rate", "160"],
         )
 
 

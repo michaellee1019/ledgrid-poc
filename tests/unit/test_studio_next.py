@@ -262,9 +262,11 @@ class StudioNextBackendTests(unittest.TestCase):
             if item["key"] == "receiver_native:native_glow"
         )
         self.assertFalse(meadow["action"]["take_look_enabled"])
+        self.assertTrue(meadow["action"]["composer_check_eligible"])
         self.assertEqual(meadow["action"]["code"], "guarded_activation_required")
         self.assertIn("Composer Check", meadow["action"]["reason"])
         self.assertFalse(native["action"]["take_look_enabled"])
+        self.assertFalse(native["action"]["composer_check_eligible"])
         self.assertFalse(meadow["preview"]["live_state_mutated"])
         self.assertEqual(native["preview"]["provenance"], "receiver_host_simulation")
         self.assertFalse(native["preview"]["framebuffer_readback"])

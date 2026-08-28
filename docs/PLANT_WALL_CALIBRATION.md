@@ -48,9 +48,13 @@ Keep the webcam and exposure unchanged within a capture set. Make sure all four
 physical wall corners are in frame; otherwise automatic camera reacquisition
 must refuse to guess a clipped corner.
 
-```bash
-python3 scripts/capture_webcam_wall.py --prefix webcam-YYYYMMDD-led
-```
+The former `scripts/capture_webcam_wall.py` automation is retired and now fails
+before wall or camera access because it switched several calibration scenes
+through unguarded aliases. Use the `calibrate-led-plant-wall` workflow. For each
+wall-off, orientation, full-white, and dimension reference, activate the exact
+calibration scene through Composer Check + guarded activation, retain its scene
+digest/receipt, and capture the camera frame separately. Do not reuse one Check
+across pattern changes.
 
 Then turn normal ambient lighting on, stop the wall, and capture a separate
 wall-off still as `calibration_photos/webcam-YYYYMMDD-ambient-off.jpg`. Do not
@@ -145,9 +149,12 @@ Rerun foliage refinement after editing globes so the layers remain disjoint.
 
 ## 5. Closed-loop acceptance
 
-Deploy without firmware, start `Plant Mask Highlight` at 5–8% brightness, and
-capture ambient-lit foliage-only, globe-only, and combined frames. Then start
-`Plant Glow` near 20% brightness and capture the production result.
+Compile the candidate into an immutable managed installation-profile artifact,
+publish it, and explicitly select it without activating a scene. Through
+Composer Check + guarded activation, observe `Plant Mask Highlight` at 5–8%
+brightness and capture ambient-lit foliage-only, globe-only, and combined
+frames. Activate `Plant Glow` near 20% through a separate Check and capture the
+production result. Calibration tooling must not switch or restore either scene.
 
 Accept only when:
 
@@ -161,7 +168,9 @@ Accept only when:
 - unit tests, plugin registry tests, and render benchmark pass.
 
 Save corner, foliage, globe, and Plant Glow overlays/reports together. Images
-are calibration evidence; JSON files are the production source of truth.
+and editable JSON are authoring evidence; the validated immutable managed
+installation-profile artifact selected by digest is the production source of
+truth.
 The current `*_32x138` JSON and 2026-07-21 capture remain historical evidence,
 not sufficient H3 acceptance for the finalized 33rd column. Preserve them until
 a fresh 33-column candidate passes this loop, then version the replacement

@@ -80,7 +80,8 @@ API endpoints:
 - GET /api/animations/<animation_name>/presets
 - GET /api/animations/<animation_name>/presets/<preset_id>
 - POST /api/animations/<animation_name>/presets
-- POST /api/animations/<animation_name>/presets/<preset_id>/apply
+- `POST /api/animations/<animation_name>/presets/<preset_id>/apply` — rejected
+  with 428; load the preset as a draft and use Composer Check
 - DELETE /api/animations/<animation_name>/presets/<preset_id>
 - POST /api/reload/<animation_name>
 - POST /api/refresh

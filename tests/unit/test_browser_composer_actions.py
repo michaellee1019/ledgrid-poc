@@ -211,6 +211,91 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertFalse(self.interface.animation_presets_dir.exists())
         self.assert_no_live_effect()
 
+    def test_browser_catalog_omits_retired_mask_paths_and_explicit_inputs_fail_closed(self) -> None:
+        legacy_names = {"plant_mask_path", "plant_globe_mask_path"}
+        gradient = next(
+            item
+            for item in self.interface.preview_manager.components
+            if item["plugin_id"] == "gradient"
+        )
+        for name in legacy_names:
+            gradient["parameter_schema"][name] = {
+                "type": "str", "default": f"config/{name}.json"
+            }
+            gradient["defaults"][name] = f"config/{name}.json"
+
+        preset_dir = self.interface.animation_presets_dir / "gradient"
+        preset_dir.mkdir(parents=True)
+        (preset_dir / "legacy.json").write_text(json.dumps({
+            "version": 2,
+            "preset_id": "legacy",
+            "name": "Legacy fixture",
+            "animation": "gradient",
+            "provider": "python",
+            "params": {
+                "speed": 0.7,
+                "plant_mask_path": "config/old-foliage.json",
+                "plant_globe_mask_path": "config/old-globes.json",
+            },
+        }), encoding="utf-8")
+
+        bootstrap = self.client.get("/api/v1/composer/bootstrap").get_json()
+        component = next(
+            item for item in bootstrap["components"]
+            if item["key"] == "python:gradient"
+        )
+        self.assertTrue(legacy_names.isdisjoint(component["parameter_schema"]))
+        self.assertTrue(legacy_names.isdisjoint(component["defaults"]))
+        self.assertEqual(component["presets"][0]["params"], {"speed": 0.7})
+
+        component_upload = self.client.post(
+            "/api/v1/composer/presets/validate",
+            json={
+                "version": 2,
+                "name": "Injected",
+                "animation": "gradient",
+                "provider": "python",
+                "params": {
+                    "speed": 0.7,
+                    "plant_mask_path": "config/injected.json",
+                },
+            },
+        )
+        self.assertEqual(component_upload.status_code, 400)
+        self.assertIn("retired plant-mask path", component_upload.get_json()["error"])
+
+        save = self.client.post("/api/v1/composer/presets", json={
+            "schema": "ledgrid.browser-composer-save",
+            "schema_version": 1,
+            "component_key": "python:gradient",
+            "name": "Injected save",
+            "params": {
+                "speed": 0.7,
+                "plant_globe_mask_path": "config/injected.json",
+            },
+            "overwrite": False,
+        })
+        self.assertEqual(save.status_code, 400)
+        self.assertIn("retired plant-mask path", save.get_json()["error"])
+
+        scene = _scene()
+        for reference in (scene["background"], scene["known_python_fallback"]):
+            reference["resolved_parameters"]["plant_mask_path"] = (
+                "config/injected.json"
+            )
+        scene_upload = self.client.post(
+            "/api/v1/composer/presets/validate",
+            json={
+                "schema": "ledgrid.scene-preset",
+                "schema_version": 1,
+                "name": "Injected scene",
+                "scene": scene,
+            },
+        )
+        self.assertEqual(scene_upload.status_code, 400)
+        self.assertIn("retired plant-mask path", scene_upload.get_json()["error"])
+        self.assert_no_live_effect()
+
     def test_scene_preset_upload_validates_exact_background_clock_and_fallback(self) -> None:
         response = self.client.post(
             "/api/v1/composer/presets/validate",

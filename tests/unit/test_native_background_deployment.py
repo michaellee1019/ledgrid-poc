@@ -372,187 +372,31 @@ class NativeSourcePlanTests(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertNotIn(term, command_text)
 
-    def test_native_run_persists_all_four_exact_command_bound_steps(self) -> None:
-        bundle_path = (
-            self.root
-            / "run_state/native_background_builds/aurora_curtains_native/bundle.zip"
-        )
-        bundle_path.parent.mkdir(parents=True)
-        bundle_path.write_bytes(b"validated bundle")
-        bundle_digest = "b" * 64
-        payload_digest = "c" * 64
-        verified = SimpleNamespace(
-            bundle_digest=bundle_digest,
-            payload_digest=payload_digest,
-            manifest={"plugin_id": "aurora_curtains_native"},
-        )
-        attempt_id = "e" * 32
-        deploy_dir = "ledgrid-pod"
-        incoming = (
-            f"{deploy_dir}/receiver_library/native_backgrounds/"
-            f".incoming/{attempt_id}.zip"
-        )
-        local = _RecordingRunner()
-        remote = _RecordingRunner([
-            json.dumps({"incoming_path": incoming}),
-            json.dumps({
-                "package_id": "aurora_curtains_native",
-                "bundle_digest": bundle_digest,
-                "payload_digest": payload_digest,
-            }),
-        ])
-        receipt_dir = self.root / "native-receipts"
-        context = DeployContext(
-            target="pi@example.invalid",
-            mode="native-run",
-            source_identity={"source_digest": "a" * 64},
-            command_runner=local,
-            ssh_runner=remote,
-            receipt_sinks=(
-                native_entrypoint.AtomicJSONReceiptStore(receipt_dir),
-            ),
-            attempt_id=attempt_id,
-        )
-
-        def command_result(operation, state, command_id):
-            return {
-                "operation": "start" if operation == "activate" else operation,
-                "plugin_id": "aurora_curtains_native",
-                "bundle_digest": bundle_digest,
-                "payload_digest": payload_digest,
-                "command_id": command_id,
-                "native_background": {
-                    "state": state,
-                    "operation": operation,
-                    "bundle_digest": bundle_digest,
-                    "payload_digest": payload_digest,
-                    "error": None,
-                },
-            }
-
+    def test_native_run_rejects_before_build_publish_install_or_target_access(self) -> None:
+        callbacks = {
+            name: mock.Mock()
+            for name in ("_run_publish_receipt", "run_install", "run_start", "_api_json")
+        }
         with (
-            mock.patch.object(
-                native_entrypoint,
-                "_bundle_from_argument",
-                return_value=(context.source_identity, None, verified, bundle_path),
-            ),
-            mock.patch.object(native_entrypoint, "_context", return_value=context),
-            mock.patch.object(
-                native_entrypoint, "_inspect_bundle", return_value=verified
-            ),
-            mock.patch.object(
-                native_entrypoint,
-                "run_install",
-                return_value=command_result("install", "ready", 7),
-            ),
-            mock.patch.object(
-                native_entrypoint,
-                "run_start",
-                return_value=command_result("activate", "active", 8),
+            mock.patch.object(native_entrypoint, "_run_publish_receipt", callbacks["_run_publish_receipt"]),
+            mock.patch.object(native_entrypoint, "run_install", callbacks["run_install"]),
+            mock.patch.object(native_entrypoint, "run_start", callbacks["run_start"]),
+            mock.patch.object(native_entrypoint, "_api_json", callbacks["_api_json"]),
+            self.assertRaisesRegex(
+                native_entrypoint.NativeBackgroundWorkflowError,
+                "made no build, publication, installation, or target changes",
             ),
         ):
-            result = native_entrypoint.run_native_run(
+            native_entrypoint.run_native_run(
                 self.root,
-                os.fspath(bundle_path),
-                target=context.target,
-                deploy_dir=deploy_dir,
-                ssh_options=("-o", "BatchMode=yes"),
+                "aurora_curtains_native",
+                target="pi@example.invalid",
+                deploy_dir="ledgrid-pod",
+                ssh_options=(),
                 timeout=1,
             )
-
-        self.assertEqual(result["deployment_id"], attempt_id)
-        self.assertEqual(result["installation"]["command_id"], 7)
-        self.assertEqual(result["activation"]["command_id"], 8)
-        receipt = json.loads((receipt_dir / f"{attempt_id}.json").read_text())
-        self.assertEqual(
-            [step["id"] for step in receipt["steps"]],
-            [
-                "receiver_background.build",
-                "receiver_background.publish",
-                "receiver_background.install",
-                "receiver_background.activate",
-            ],
-        )
-        self.assertEqual(
-            [step["details"].get("command_id") for step in receipt["steps"]],
-            [None, None, 7, 8],
-        )
-        self.assertEqual(
-            [artifact["kind"] for artifact in receipt["artifacts"]],
-            [
-                "receiver_background_bundle",
-                "receiver_background_library_bundle",
-                "receiver_background_install",
-                "receiver_background_activate",
-            ],
-        )
-        self.assertTrue(all(
-            artifact["digest"] == bundle_digest
-            and artifact["target_id"] == payload_digest
-            for artifact in receipt["artifacts"]
-        ))
-
-    def test_native_run_context_persists_receipt_locally_and_on_target(self) -> None:
-        context = native_entrypoint._context(
-            root=self.root,
-            target="pi@example.invalid",
-            mode="native-run",
-            source_identity={"source_digest": "a" * 64},
-            deploy_dir="ledgrid-pod",
-            ssh_options=(),
-        )
-        self.assertEqual(len(context.receipt_sinks), 2)
-        self.assertIsInstance(
-            context.receipt_sinks[0], native_entrypoint.AtomicJSONReceiptStore
-        )
-        self.assertIsInstance(
-            context.receipt_sinks[1], native_entrypoint.SSHAtomicJSONReceiptStore
-        )
-
-    def test_command_receipt_rejects_missing_or_mismatched_identity_proof(self) -> None:
-        candidate = SimpleNamespace(
-            bundle_digest="b" * 64,
-            payload_digest="c" * 64,
-            manifest={"plugin_id": "aurora_curtains_native"},
-        )
-        proof = {
-            "plugin_id": "aurora_curtains_native",
-            "bundle_digest": candidate.bundle_digest,
-            "payload_digest": candidate.payload_digest,
-            "command_id": 7,
-            "native_background": {
-                "state": "ready",
-                "operation": "install",
-                "bundle_digest": candidate.bundle_digest,
-                "payload_digest": candidate.payload_digest,
-                "error": None,
-            },
-        }
-        mutations = (
-            lambda value: value.pop("command_id"),
-            lambda value: value.update(payload_digest="d" * 64),
-            lambda value: value["native_background"].update(
-                bundle_digest="e" * 64
-            ),
-            lambda value: value["native_background"].update(
-                operation="activate"
-            ),
-        )
-        for mutate in mutations:
-            with self.subTest(mutate=mutate):
-                altered = json.loads(json.dumps(proof))
-                mutate(altered)
-                with self.assertRaisesRegex(
-                    native_entrypoint.NativeBackgroundWorkflowError,
-                    "exact command-bound proof",
-                ):
-                    native_entrypoint._native_command_operation_result(
-                        altered,
-                        candidate,
-                        expected_operation="install",
-                        expected_state="ready",
-                    )
-
+        for callback in callbacks.values():
+            callback.assert_not_called()
 
 class NativeRuntimeCommandTests(unittest.TestCase):
     bundle = "a" * 64
@@ -681,38 +525,16 @@ class NativeRuntimeCommandTests(unittest.TestCase):
         self.assertEqual(observed[1][1]["method"], "POST")
         self.assertIn(self.bundle, observed[1][0])
 
-    def test_start_builds_digest_bound_scene_with_known_python_fallback(self):
-        observed_scene = None
-        fallback = {
-            "plugin_id": "aurora_curtains",
-            "provider": "python",
-            "role": "background",
-            "defaults": {"motion": 0.2},
-        }
-
-        def api(_target, path, **kwargs):
-            nonlocal observed_scene
-            if path.startswith("/api/v1/components?"):
-                return {"components": [self.native_descriptor()]}
-            if path == "/api/v1/components":
-                return {"components": [self.native_descriptor(), fallback]}
-            if path == "/api/v1/scene":
-                observed_scene = kwargs["payload"]
-                return {"command_id": 7}
-            status = self.native_status(state="active")
-            status["scene_state"] = observed_scene
-            return status
-
-        with mock.patch.object(native_entrypoint, "_api_json", side_effect=api):
-            result = native_entrypoint.run_start(
+    def test_start_rejects_before_any_target_request(self):
+        api = mock.Mock()
+        with mock.patch.object(native_entrypoint, "_api_json", api), self.assertRaisesRegex(
+            native_entrypoint.NativeBackgroundWorkflowError,
+            "native start is retired and made no target changes",
+        ):
+            native_entrypoint.run_start(
                 "wall@example.invalid", self.bundle, timeout=1
             )
-        self.assertEqual(observed_scene["background"]["bundle_digest"], self.bundle)
-        self.assertEqual(
-            observed_scene["known_python_fallback"]["plugin_id"],
-            "aurora_curtains",
-        )
-        self.assertEqual(result["native_background"]["state"], "active")
+        api.assert_not_called()
 
     def test_install_and_start_status_proofs_reject_stale_or_partial_state(self):
         ready = self.native_status(state="ready")

@@ -45,6 +45,9 @@
         selectedPreset: null,
         compare: 'draft',
         playing: true,
+        reducedMotion: false,
+        motionPreference: null,
+        motionPreferenceListener: null,
         elapsed: 0,
         frameIndex: 0,
         fps: 30,
@@ -117,6 +120,7 @@
             dirty: false,
             painting: false,
             lastCell: null,
+            keyboardCell: {strip: 0, led: 0},
             zoom: 6,
             stale: false,
         },
@@ -144,6 +148,67 @@
     function safeNumber(value, fallback = 0) {
         const number = Number(value);
         return Number.isFinite(number) ? number : fallback;
+    }
+
+    const modalReturnFocus = new WeakMap();
+
+    function showComposerModal(dialog, {initialFocus = null, returnFocus = document.activeElement} = {}) {
+        if (!dialog || dialog.open) return;
+        if (returnFocus instanceof HTMLElement && returnFocus.isConnected) {
+            modalReturnFocus.set(dialog, returnFocus);
+        }
+        dialog.showModal();
+        if (initialFocus instanceof HTMLElement && !initialFocus.disabled) {
+            initialFocus.focus({preventScroll: true});
+        }
+    }
+
+    function restoreModalFocus(event) {
+        const dialog = event.currentTarget;
+        const returnFocus = modalReturnFocus.get(dialog);
+        modalReturnFocus.delete(dialog);
+        if (
+            document.querySelector('dialog[open]')
+            || !(returnFocus instanceof HTMLElement)
+            || !returnFocus.isConnected
+            || returnFocus.disabled
+            || returnFocus.closest('dialog:not([open])')
+        ) return;
+        returnFocus.focus();
+    }
+
+    function applyMotionPreference(reduced, {announce = false} = {}) {
+        state.reducedMotion = Boolean(reduced);
+        document.documentElement.dataset.motion = state.reducedMotion ? 'reduced' : 'full';
+        if (state.reducedMotion) state.playing = false;
+        syncPlayButton();
+        if (announce && state.reducedMotion) toast('Reduced motion enabled; local preview paused.');
+    }
+
+    function initializeMotionPreference() {
+        const preference = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+        state.motionPreference = preference || null;
+        applyMotionPreference(Boolean(preference?.matches));
+        if (!preference) return;
+        state.motionPreferenceListener = (event) => applyMotionPreference(event.matches, {announce: true});
+        if (typeof preference.addEventListener === 'function') {
+            preference.addEventListener('change', state.motionPreferenceListener);
+        } else if (typeof preference.addListener === 'function') {
+            preference.addListener(state.motionPreferenceListener);
+        }
+    }
+
+    function disposeMotionPreference() {
+        const preference = state.motionPreference;
+        const listener = state.motionPreferenceListener;
+        if (!preference || !listener) return;
+        if (typeof preference.removeEventListener === 'function') {
+            preference.removeEventListener('change', listener);
+        } else if (typeof preference.removeListener === 'function') {
+            preference.removeListener(listener);
+        }
+        state.motionPreference = null;
+        state.motionPreferenceListener = null;
     }
 
     function formatTime(seconds) {
@@ -593,6 +658,7 @@
     }
 
     function reviewGlobalChanges() {
+        const returnFocus = document.activeElement;
         const changes = globalChangeList();
         if (!changes.length || !state.serverOnline) return;
         const summary = $('wallChangeSummary');
@@ -606,7 +672,10 @@
             row.append(term, detail);
             summary.appendChild(row);
         });
-        $('wallReviewDialog').showModal();
+        showComposerModal($('wallReviewDialog'), {
+            initialFocus: $('wallReviewDialog').querySelector('[value="cancel"]'),
+            returnFocus,
+        });
     }
 
     async function applyGlobalChanges() {
@@ -715,12 +784,14 @@
                 state.bootstrap.geometry,
                 state.globalSettings.draft,
                 state.installationProfile.desiredDigest || null,
+                currentPresetRecord(),
             )
             : {
                 draftGeneration: state.draftGeneration,
                 componentKey: state.component.key,
                 wallSettings: clone(state.globalSettings.draft),
                 installationProfileDigest: state.installationProfile.desiredDigest || null,
+                presetIdentity: componentPresetIdentity(),
             };
     }
 
@@ -1899,6 +1970,17 @@
     function syncPlayButton() {
         $('playButton').setAttribute('aria-label', state.playing ? 'Pause preview' : 'Play preview');
         $('playButton').querySelector('span').textContent = state.playing ? 'Ⅱ' : '▶';
+        const status = $('previewMotionStatus');
+        if (!status) return;
+        if (state.reducedMotion) {
+            status.textContent = state.playing
+                ? 'Reduced motion is enabled. The local preview is playing because you explicitly started it.'
+                : 'Reduced motion is enabled. The local preview starts paused; use Play to animate it.';
+        } else {
+            status.textContent = state.playing
+                ? 'The local preview is playing.'
+                : 'The local preview is paused.';
+        }
     }
 
     async function setCompare(mode) {
@@ -2006,6 +2088,9 @@
         let overlayRuntime = null;
         let overlayMode = null;
         const renderTimes = [];
+        const backgroundRendererTimes = [];
+        const clockRendererTimes = [];
+        const bridgeAndCompositorTimes = [];
         let previous = null;
         let deltaTotal = 0;
         let deltaMax = 0;
@@ -2049,26 +2134,51 @@
                 if (generation !== state.checkerGeneration) throw new Error('Check replaced.');
                 const sampleStarted = performance.now();
                 let backgroundFrame;
-                try {
-                    backgroundFrame = validatedFrame(await runtime.render(
-                        previewElapsed(state.component, index / 12),
-                        index,
-                        enforceInstallationParams(state.component, state.params),
-                    ));
-                } catch (error) {
-                    throw new Error(`Background renderer failed at frame ${index + 1}: ${error.message}`);
+                let overlayFrame = null;
+                if (overlayMode === 'shared') {
+                    try {
+                        const responses = await runtime.renderInstances([
+                            {
+                                instanceId: 'primary',
+                                elapsed: previewElapsed(state.component, index / 12),
+                                frameIndex: index,
+                                params: enforceInstallationParams(state.component, state.params),
+                            },
+                            {
+                                instanceId: 'clock_overlay',
+                                elapsed: index / 12,
+                                frameIndex: index,
+                                params: clone(state.layers.clockParams),
+                                wallTime: Date.now() / 1000,
+                            },
+                        ]);
+                        backgroundFrame = validatedFrame(responses[0]);
+                        overlayFrame = validatedFrame(responses[1]);
+                    } catch (error) {
+                        throw new Error(`Composed Python render failed at frame ${index + 1}: ${error.message}`);
+                    }
+                } else {
+                    try {
+                        backgroundFrame = validatedFrame(await runtime.render(
+                            previewElapsed(state.component, index / 12),
+                            index,
+                            enforceInstallationParams(state.component, state.params),
+                        ));
+                    } catch (error) {
+                        throw new Error(`Background renderer failed at frame ${index + 1}: ${error.message}`);
+                    }
+                    if (state.layers.clockEnabled) {
+                        try {
+                            overlayFrame = validatedFrame(await overlayRuntime.render(
+                                index / 12, index, clone(state.layers.clockParams),
+                            ));
+                        } catch (error) {
+                            throw new Error(`Clock renderer failed at frame ${index + 1}: ${error.message}`);
+                        }
+                    }
                 }
                 let frame = backgroundFrame;
                 if (state.layers.clockEnabled) {
-                    let overlayFrame;
-                    try {
-                        const response = overlayMode === 'shared'
-                            ? await runtime.renderInstance('clock_overlay', index / 12, index, clone(state.layers.clockParams), Date.now() / 1000)
-                            : await overlayRuntime.render(index / 12, index, clone(state.layers.clockParams));
-                        overlayFrame = validatedFrame(response);
-                    } catch (error) {
-                        throw new Error(`Clock renderer failed at frame ${index + 1}: ${error.message}`);
-                    }
                     try {
                         frame = composeDraftFrame(backgroundFrame, overlayFrame);
                         if (!frame) throw new Error('local compositor is unavailable');
@@ -2078,7 +2188,20 @@
                 }
                 frame = presentedFrame(frame);
                 const pixels = frame.pixels;
-                renderTimes.push(performance.now() - sampleStarted);
+                const sampleDuration = performance.now() - sampleStarted;
+                const backgroundRenderMs = Number(backgroundFrame.renderMs);
+                const clockRenderMs = Number(overlayFrame?.renderMs);
+                if (Number.isFinite(backgroundRenderMs)) {
+                    backgroundRendererTimes.push(backgroundRenderMs);
+                }
+                if (Number.isFinite(clockRenderMs)) clockRendererTimes.push(clockRenderMs);
+                bridgeAndCompositorTimes.push(Math.max(
+                    0,
+                    sampleDuration
+                        - (Number.isFinite(backgroundRenderMs) ? backgroundRenderMs : 0)
+                        - (Number.isFinite(clockRenderMs) ? clockRenderMs : 0),
+                ));
+                renderTimes.push(sampleDuration);
                 let frameLuminance = 0;
                 let frameCurrent = 0;
                 for (let offset = 0; offset < pixels.length; offset += 3) {
@@ -2118,10 +2241,18 @@
             const averageLuminance = luminanceTotal / SAMPLE_FRAMES;
             const clipping = clippingChannels / Math.max(1, channelCount);
             const sortedTimes = renderTimes.slice().sort((a, b) => a - b);
+            const percentile = (values, fraction) => {
+                if (!values.length) return null;
+                const sorted = values.slice().sort((a, b) => a - b);
+                return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
+            };
             const p95 = sortedTimes[Math.min(sortedTimes.length - 1, Math.ceil(sortedTimes.length * .95) - 1)];
             const p99 = sortedTimes[Math.min(sortedTimes.length - 1, Math.ceil(sortedTimes.length * .99) - 1)];
             const meanRenderMs = renderTimes.reduce((total, value) => total + value, 0) / renderTimes.length;
             const maxRenderMs = sortedTimes[sortedTimes.length - 1];
+            const backgroundRendererP95 = percentile(backgroundRendererTimes, .95);
+            const clockRendererP95 = percentile(clockRendererTimes, .95);
+            const bridgeAndCompositorP95 = percentile(bridgeAndCompositorTimes, .95);
             const warnings = [];
             const failures = [];
 
@@ -2151,7 +2282,10 @@
             const targetFps = Math.max(1, safeNumber(state.globalSettings.draft?.targetFps, 30));
             const frameBudgetMs = 1000 / targetFps;
             const renderStatus = p95 > frameBudgetMs ? 'fail' : p95 > frameBudgetMs * .5 ? 'warn' : 'pass';
-            updateMetric('render', `${p95.toFixed(2)} ms`, renderStatus, `${state.layers.clockEnabled ? 'Background + Clock + compositor' : runtime.engine}; ${frameBudgetMs.toFixed(2)} ms budget at ${targetFps} fps, measured on this browser rather than receiver hardware.`);
+            const rendererBreakdown = state.layers.clockEnabled && backgroundRendererP95 !== null
+                ? ` Python p95: background ${backgroundRendererP95.toFixed(2)} ms${clockRendererP95 === null ? '' : ` + Clock ${clockRendererP95.toFixed(2)} ms`}; bridge/compositor ${bridgeAndCompositorP95.toFixed(2)} ms.`
+                : '';
+            updateMetric('render', `${p95.toFixed(2)} ms`, renderStatus, `${state.layers.clockEnabled ? 'Background + Clock + compositor' : runtime.engine}; ${frameBudgetMs.toFixed(2)} ms budget at ${targetFps} fps, measured on this browser rather than receiver hardware.${rendererBreakdown}`);
             if (renderStatus === 'fail') failures.push('render time'); else if (renderStatus === 'warn') warnings.push('render time');
 
             const grade = failures.length ? 'fail' : warnings.length ? 'warn' : 'pass';
@@ -2183,6 +2317,11 @@
                         p95,
                         p99,
                         max: maxRenderMs,
+                        renderer: {
+                            backgroundP95: backgroundRendererP95,
+                            clockP95: clockRendererP95,
+                            bridgeAndCompositorP95,
+                        },
                     },
                     cadence: {
                         observedFps: meanRenderMs > 0 ? 1000 / meanRenderMs : null,
@@ -2240,6 +2379,49 @@
     function currentPresetRecord() {
         if (state.lastSavedPreset) return state.lastSavedPreset;
         return (state.component?.presets || []).find((preset, index) => presetIdentity(preset, index) === state.selectedPreset) || null;
+    }
+
+    function componentPresetIdentity(preset = currentPresetRecord()) {
+        if (ComposerState.componentPresetIdentity) {
+            return ComposerState.componentPresetIdentity(preset);
+        }
+        if (!preset || typeof preset !== 'object') return null;
+        const presetId = preset.preset_id ?? preset.presetId;
+        const presetFingerprint = preset.preset_fingerprint ?? preset.presetFingerprint;
+        return presetId && presetFingerprint
+            ? {presetId: String(presetId), presetFingerprint: String(presetFingerprint)}
+            : null;
+    }
+
+    function sameComponentPresetIdentity(left, right) {
+        const stable = ComposerState.stableJson || JSON.stringify;
+        return stable(componentPresetIdentity(left)) === stable(componentPresetIdentity(right));
+    }
+
+    function invalidateCheckerForPresetIdentityChange(previousIdentity) {
+        if (sameComponentPresetIdentity(previousIdentity, currentPresetRecord())) return false;
+        resetChecker();
+        return true;
+    }
+
+    function adoptImportedPresetIdentity(draft) {
+        const reference = draft?.browser_scene?.background || draft?.scene?.background;
+        const identity = componentPresetIdentity(reference);
+        state.selectedPreset = null;
+        state.lastSavedPreset = null;
+        if (!identity) return;
+        const matchingIndex = (state.component?.presets || []).findIndex((preset) => (
+            sameComponentPresetIdentity(preset, identity)
+        ));
+        if (matchingIndex >= 0) {
+            state.selectedPreset = presetIdentity(
+                state.component.presets[matchingIndex], matchingIndex
+            );
+        }
+        state.lastSavedPreset = {
+            preset_id: identity.presetId,
+            preset_fingerprint: identity.presetFingerprint,
+        };
     }
 
     function componentReference(component, params, preset = null) {
@@ -2315,6 +2497,7 @@
 
     async function saveToLibrary({overwrite = false} = {}) {
         if (!state.component || state.busyAction) return;
+        const returnFocus = document.activeElement;
         if (!state.serverOnline) {
             toast('Offline: the draft is saved on this device, but the library is unavailable.', 'error');
             return;
@@ -2322,6 +2505,7 @@
         setActionBusy('save', true);
         $('serverActionStatus').textContent = 'Validating and saving the component preset…';
         try {
+            const previousPresetIdentity = componentPresetIdentity();
             const url = state.bootstrap.capabilities?.server_actions?.save_component_preset_url || '/api/v1/composer/presets';
             const result = await requestJson(url, {
                 method: 'POST',
@@ -2343,9 +2527,13 @@
                 key: `${state.component.key}:${result.preset.preset_id}`,
                 component_key: state.component.key,
             };
+            if (!componentPresetIdentity(record)) {
+                throw new Error('The server returned an incomplete component preset identity.');
+            }
             if (existingIndex >= 0) state.component.presets.splice(existingIndex, 1, record);
             else state.component.presets.push(record);
             state.selectedPreset = record.key;
+            invalidateCheckerForPresetIdentityChange(previousPresetIdentity);
             renderPresets();
 
             $('serverActionStatus').textContent = 'Component saved. Saving the exact browser scene document…';
@@ -2369,7 +2557,10 @@
         } catch (error) {
             if (error.status === 409 && error.code === 'preset_exists' && !overwrite) {
                 $('overwriteCopy').textContent = `“${$('presetName').value.trim()}” already exists in the server library. Replacing it will not change the physical wall.`;
-                $('overwriteDialog').showModal();
+                showComposerModal($('overwriteDialog'), {
+                    initialFocus: $('overwriteDialog').querySelector('[value="cancel"]'),
+                    returnFocus,
+                });
                 $('serverActionStatus').textContent = 'A preset with this name already exists. Choose whether to replace it.';
             } else {
                 if (error.code === 'offline') setServerOnline(false);
@@ -2414,6 +2605,7 @@
     }
 
     async function reviewActivation() {
+        const returnFocus = document.activeElement;
         const blockReason = activationBlockReason();
         if (blockReason) {
             toast(blockReason, 'error');
@@ -2459,7 +2651,10 @@
             $('activateCheck').textContent = `${outcome}${cautions} · server-authorized until ${expires}`;
         }
         if ($('activateDestination')) $('activateDestination').textContent = 'Physical living wall';
-        $('activateDialog').showModal();
+        showComposerModal($('activateDialog'), {
+            initialFocus: $('activateDialog').querySelector('[value="cancel"]'),
+            returnFocus,
+        });
     }
 
     function clearActivationPolling() {
@@ -2899,6 +3094,7 @@
         });
         state.params = enforceInstallationParams(component, {...defaultParams(component), ...clone(draft.params || {})});
         state.originalParams = clone(state.params);
+        adoptImportedPresetIdentity(draft);
         $('presetName').value = draft.name || `${component.name} draft`;
 
         const browserScene = draft.browser_scene;
@@ -2933,6 +3129,7 @@
             if (clockProblems.length) throw new Error(`Uploaded Clock layer is invalid: ${clockProblems[0]}.`);
         }
         renderParameterControls();
+        renderPresets();
         renderLayers();
         resetChecker({preserveDocumentRevision: Boolean(browserScene)});
         commitHistory();
@@ -3162,7 +3359,11 @@
     }
 
     async function openMaskEditor() {
-        $('maskEditorDialog').showModal();
+        const returnFocus = document.activeElement;
+        showComposerModal($('maskEditorDialog'), {
+            initialFocus: $('closeMaskEditorButton'),
+            returnFocus,
+        });
         if (state.masks.loaded) {
             renderMaskCanvas();
             updateMaskControls(state.masks.dirty ? 'Unsaved mask draft restored.' : 'Calibrated masks ready. The wall is unchanged.');
@@ -3213,6 +3414,90 @@
                 context.lineTo(canvas.width, y * zoom + .5);
             }
             context.stroke();
+        }
+        const keyboardCell = state.masks.keyboardCell;
+        if (
+            document.activeElement === canvas
+            && keyboardCell
+            && keyboardCell.strip >= 0
+            && keyboardCell.strip < width
+            && keyboardCell.led >= 0
+            && keyboardCell.led < height
+        ) {
+            context.strokeStyle = '#ffffff';
+            context.lineWidth = 2;
+            context.strokeRect(
+                keyboardCell.strip * zoom + 1,
+                (height - 1 - keyboardCell.led) * zoom + 1,
+                Math.max(1, zoom - 2),
+                Math.max(1, zoom - 2),
+            );
+        }
+        updateMaskCanvasAccessibility();
+    }
+
+    function updateMaskCanvasAccessibility() {
+        const canvas = $('maskCanvas');
+        const {keyboardCell, ledInfo} = state.masks;
+        if (!canvas || !keyboardCell || !ledInfo) return;
+        canvas.setAttribute(
+            'aria-label',
+            `Editable plant mask grid. Keyboard cursor at strip ${keyboardCell.strip + 1} of ${ledInfo.strip_count}, LED ${keyboardCell.led + 1} of ${ledInfo.leds_per_strip}.`,
+        );
+    }
+
+    function paintKeyboardMaskCell(value) {
+        const {cells, ledInfo, keyboardCell} = state.masks;
+        if (!cells || !ledInfo || !keyboardCell) return;
+        state.masks.history.push(cells.slice());
+        if (state.masks.history.length > 60) state.masks.history.shift();
+        const resolvedValue = value ?? maskLayerById(state.masks.tool)?.value ?? 0;
+        cells[keyboardCell.strip * ledInfo.leds_per_strip + keyboardCell.led] = resolvedValue;
+        state.masks.dirty = !masksEqual(cells, state.masks.savedCells);
+        persistMaskDraft();
+        renderMaskCanvas();
+        const layer = maskLayerByValue(resolvedValue)?.label || 'Erase';
+        updateMaskControls(
+            `${layer} at strip ${keyboardCell.strip + 1}, LED ${keyboardCell.led + 1}. ${state.masks.dirty ? 'Draft has unsaved changes.' : 'Draft matches saved calibration.'}`,
+        );
+    }
+
+    function handleMaskCanvasKeydown(event) {
+        const {keyboardCell, ledInfo} = state.masks;
+        if (!keyboardCell || !ledInfo) return;
+        const movement = {
+            ArrowLeft: [-1, 0],
+            ArrowRight: [1, 0],
+            ArrowUp: [0, 1],
+            ArrowDown: [0, -1],
+            PageUp: [0, 10],
+            PageDown: [0, -10],
+        }[event.key];
+        if (movement) {
+            event.preventDefault();
+            event.stopPropagation();
+            keyboardCell.strip = Math.max(0, Math.min(ledInfo.strip_count - 1, keyboardCell.strip + movement[0]));
+            keyboardCell.led = Math.max(0, Math.min(ledInfo.leds_per_strip - 1, keyboardCell.led + movement[1]));
+            renderMaskCanvas();
+            $('maskEditorStatus').textContent = `Keyboard cursor: strip ${keyboardCell.strip + 1}, LED ${keyboardCell.led + 1}. Press Space to paint ${maskLayerById(state.masks.tool)?.label || 'Erase'}.`;
+            return;
+        }
+        if (event.key === 'Home' || event.key === 'End') {
+            event.preventDefault();
+            event.stopPropagation();
+            keyboardCell.strip = event.key === 'Home' ? 0 : ledInfo.strip_count - 1;
+            renderMaskCanvas();
+            $('maskEditorStatus').textContent = `Keyboard cursor: strip ${keyboardCell.strip + 1}, LED ${keyboardCell.led + 1}.`;
+            return;
+        }
+        if (event.key === ' ' || event.key === 'Enter') {
+            event.preventDefault();
+            event.stopPropagation();
+            paintKeyboardMaskCell();
+        } else if (event.key === 'Delete' || event.key === 'Backspace') {
+            event.preventDefault();
+            event.stopPropagation();
+            paintKeyboardMaskCell(0);
         }
     }
 
@@ -3391,7 +3676,10 @@
         $('profileCandidateDigest').textContent = candidate.digest;
         $('profileCandidateSelectedDigest').textContent = state.installationProfile.selectedDigest || 'Unavailable';
         if ($('maskEditorDialog').open) $('maskEditorDialog').close();
-        $('profileCandidateDialog').showModal();
+        showComposerModal($('profileCandidateDialog'), {
+            initialFocus: $('profileCandidateDialog').querySelector('[value="cancel"]'),
+            returnFocus: $('editMasksButton'),
+        });
     }
 
     function stageProfileCandidate() {
@@ -3430,6 +3718,9 @@
     }
 
     function bindEvents() {
+        document.querySelectorAll('dialog').forEach((dialog) => {
+            dialog.addEventListener('close', restoreModalFocus);
+        });
         $('componentSearch').addEventListener('input', (event) => {
             state.query = event.target.value;
             if (state.query.trim()) $('animationCatalogDisclosure').open = true;
@@ -3572,6 +3863,9 @@
         $('maskCanvas').addEventListener('pointermove', continueMaskStroke);
         $('maskCanvas').addEventListener('pointerup', endMaskStroke);
         $('maskCanvas').addEventListener('pointercancel', endMaskStroke);
+        $('maskCanvas').addEventListener('keydown', handleMaskCanvasKeydown);
+        $('maskCanvas').addEventListener('focus', renderMaskCanvas);
+        $('maskCanvas').addEventListener('blur', renderMaskCanvas);
         document.querySelectorAll('[data-mobile-target]').forEach((button) => button.addEventListener('click', () => selectMobileView(button.dataset.mobileTarget)));
         document.addEventListener('keydown', (event) => {
             const key = event.key.toLowerCase();
@@ -3585,6 +3879,7 @@
                 updateMaskControls();
                 return;
             }
+            if (document.querySelector('dialog[open]')) return;
             const target = event.target;
             const editing = target instanceof HTMLElement && (
                 target.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)
@@ -3640,6 +3935,7 @@
         window.addEventListener('beforeunload', () => {
             window.clearInterval(state.connectivityTimer);
             clearActivationPolling();
+            disposeMotionPreference();
             disposeRuntimes();
         });
         window.addEventListener('beforeunload', (event) => {
@@ -3667,7 +3963,7 @@
 
     async function initialize() {
         bindEvents();
-        syncPlayButton();
+        initializeMotionPreference();
         updateInstallStatus();
         setServerOnline(false, {checking: true, quiet: true});
         window.requestAnimationFrame(animationLoop);

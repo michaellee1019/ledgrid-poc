@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ANIMATION=${ANIMATION:-}
+if [ -n "${ANIMATION}" ]; then
+  echo "ANIMATION switching is retired; no files or remote state were changed." >&2
+  echo "Activate the exact scene through Composer Check + guarded activation, then rerun diagnostics without ANIMATION." >&2
+  exit 2
+fi
+
 OUT_FILE=${OUT_FILE:-diagnostics/remote_diagnostics.out}
 if [ -n "${OUT_FILE}" ]; then
   mkdir -p "$(dirname "${OUT_FILE}")"
@@ -10,8 +17,6 @@ fi
 REMOTE=${REMOTE:-ledgridwall@ledgridwall.local}
 REMOTE_DIR=${REMOTE_DIR:-"~/ledgrid-pod"}
 PORT=${PORT:-5000}
-ANIMATION=${ANIMATION:-}
-SLEEP_SECS=${SLEEP_SECS:-2}
 SSH_OPTS=${SSH_OPTS:-"-o BatchMode=yes -o ConnectTimeout=10"}
 KILL_PORT=${KILL_PORT:-0}
 RESTART_WEB=${RESTART_WEB:-0}
@@ -108,13 +113,6 @@ PY
 else
   echo \"run_state/status.json missing\"
 fi" || true
-
-if [ -n "${ANIMATION}" ]; then
-  section "start animation"
-  ssh ${SSH_OPTS} "${REMOTE}" "curl -s -X POST 'http://localhost:${PORT}/api/start/${ANIMATION}'" || true
-  echo
-  sleep "${SLEEP_SECS}"
-fi
 
 section "api status (remote)"
 { ssh ${SSH_OPTS} "${REMOTE}" "curl -sS -w '\nHTTP:%{http_code}\n' 'http://localhost:${PORT}/api/status' 2>&1" 2>&1 || true; } | python3 "${PARSE_SCRIPT}"

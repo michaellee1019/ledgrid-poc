@@ -111,7 +111,7 @@
       </div>
 
       <div class="transport" aria-label="Preview transport">
-        <button class="play-button" id="playButton" type="button" aria-label="Pause preview" disabled><span aria-hidden="true">Ⅱ</span></button>
+        <button class="play-button" id="playButton" type="button" aria-label="Pause preview" aria-describedby="previewMotionStatus" disabled><span aria-hidden="true">Ⅱ</span></button>
         <span class="timecode" id="timecode">0:00.0</span>
         <label class="sr-only" for="timeline">Preview time</label>
         <input id="timeline" type="range" min="0" max="20" value="0" step="0.01" disabled>
@@ -124,6 +124,7 @@
           </select>
         </label>
       </div>
+      <p class="sr-only" id="previewMotionStatus" role="status" aria-live="polite">The local preview is playing.</p>
 
       <div class="provenance-note">
         <span aria-hidden="true">◎</span>
@@ -307,7 +308,7 @@
     <button type="button" data-mobile-target="check"><span aria-hidden="true">✓</span>Check</button>
   </nav>
 
-  <dialog class="action-dialog" id="overwriteDialog" aria-labelledby="overwriteHeading">
+  <dialog class="action-dialog" id="overwriteDialog" aria-labelledby="overwriteHeading" aria-describedby="overwriteCopy" aria-modal="true">
     <form method="dialog">
       <span class="dialog-icon" aria-hidden="true">↻</span>
       <h2 id="overwriteHeading">Replace the saved preset?</h2>
@@ -319,12 +320,12 @@
     </form>
   </dialog>
 
-  <dialog class="action-dialog" id="activateDialog" aria-labelledby="activateHeading">
+  <dialog class="action-dialog" id="activateDialog" aria-labelledby="activateHeading" aria-describedby="activateDialogDescription" aria-modal="true">
     <form method="dialog">
       <span class="dialog-icon live" aria-hidden="true">◉</span>
       <p class="eyebrow">Physical wall</p>
       <h2 id="activateHeading">Activate this scene?</h2>
-      <p>This queues one server-authorized activation. Pending is not Active: the composer waits for a correlated controller observation of the exact scene, wall settings, runtime, and installation profile.</p>
+      <p id="activateDialogDescription">This queues one server-authorized activation. Pending is not Active: the composer waits for a correlated controller observation of the exact scene, wall settings, runtime, and installation profile.</p>
       <dl class="activation-summary">
         <div><dt>Background</dt><dd id="activateBackground">—</dd></div>
         <div><dt>Provider</dt><dd id="activateProvider">—</dd></div>
@@ -343,12 +344,12 @@
     </form>
   </dialog>
 
-  <dialog class="action-dialog wall-review-dialog" id="wallReviewDialog" aria-labelledby="wallReviewHeading">
+  <dialog class="action-dialog wall-review-dialog" id="wallReviewDialog" aria-labelledby="wallReviewHeading" aria-describedby="wallReviewDescription" aria-modal="true">
     <form method="dialog">
       <span class="dialog-icon live" aria-hidden="true">◫</span>
       <p class="eyebrow">Physical wall</p>
       <h2 id="wallReviewHeading">Apply wall-wide changes?</h2>
-      <p>These commands are applied in order and are not atomic. If one fails, the composer stops and refreshes observed state.</p>
+      <p id="wallReviewDescription">These commands are applied in order and are not atomic. If one fails, the composer stops and refreshes observed state.</p>
       <dl class="activation-summary" id="wallChangeSummary"></dl>
       <div class="dialog-actions">
         <button class="quiet-button" value="cancel">Cancel</button>
@@ -357,12 +358,12 @@
     </form>
   </dialog>
 
-  <dialog class="action-dialog" id="profileCandidateDialog" aria-labelledby="profileCandidateHeading">
+  <dialog class="action-dialog" id="profileCandidateDialog" aria-labelledby="profileCandidateHeading" aria-describedby="profileCandidateDescription" aria-modal="true">
     <form method="dialog">
       <span class="dialog-icon" aria-hidden="true">◇</span>
       <p class="eyebrow">Published profile candidate</p>
       <h2 id="profileCandidateHeading">Use this profile for the next Check?</h2>
-      <p>This stages the immutable candidate for local preview, Check, and the existing reviewed activation transaction. It does not select the profile on the wall.</p>
+      <p id="profileCandidateDescription">This stages the immutable candidate for local preview, Check, and the existing reviewed activation transaction. It does not select the profile on the wall.</p>
       <dl class="activation-summary">
         <div><dt>Candidate</dt><dd id="profileCandidateDigest">—</dd></div>
         <div><dt>Currently selected</dt><dd id="profileCandidateSelectedDigest">—</dd></div>
@@ -374,7 +375,7 @@
     </form>
   </dialog>
 
-  <dialog class="mask-editor-dialog" id="maskEditorDialog" aria-labelledby="maskEditorHeading">
+  <dialog class="mask-editor-dialog" id="maskEditorDialog" aria-labelledby="maskEditorHeading" aria-describedby="maskEditorStatus maskPanHint" aria-modal="true">
     <div class="mask-editor-shell">
       <header class="mask-editor-header">
         <div><p class="eyebrow">Calibration geometry</p><h2 id="maskEditorHeading">Plant mask editor</h2><p id="maskEditorStatus" role="status" aria-live="polite">Loading calibrated masks…</p></div>
@@ -382,23 +383,23 @@
       </header>
       <div class="mask-editor-toolbar" role="toolbar" aria-label="Mask painting tools">
         <div class="mask-tools" role="group" aria-label="Paint layer">
-          <button type="button" data-mask-tool="foliage" aria-pressed="true"><i class="mask-swatch foliage" aria-hidden="true"></i>Foliage <kbd>1</kbd></button>
-          <button type="button" data-mask-tool="top_left" aria-pressed="false"><i class="mask-swatch top-left" aria-hidden="true"></i>Top left <kbd>2</kbd></button>
-          <button type="button" data-mask-tool="top_right" aria-pressed="false"><i class="mask-swatch top-right" aria-hidden="true"></i>Top right <kbd>3</kbd></button>
-          <button type="button" data-mask-tool="upper_middle" aria-pressed="false"><i class="mask-swatch upper-middle" aria-hidden="true"></i>Upper middle <kbd>4</kbd></button>
-          <button type="button" data-mask-tool="middle_left" aria-pressed="false"><i class="mask-swatch middle-left" aria-hidden="true"></i>Middle left <kbd>5</kbd></button>
-          <button type="button" data-mask-tool="middle_right" aria-pressed="false"><i class="mask-swatch middle-right" aria-hidden="true"></i>Middle right <kbd>6</kbd></button>
-          <button type="button" data-mask-tool="lower_left" aria-pressed="false"><i class="mask-swatch lower-left" aria-hidden="true"></i>Lower left <kbd>7</kbd></button>
-          <button type="button" data-mask-tool="lower_right" aria-pressed="false"><i class="mask-swatch lower-right" aria-hidden="true"></i>Lower right <kbd>8</kbd></button>
-          <button type="button" data-mask-tool="erase" aria-pressed="false">Erase <kbd>E</kbd></button>
+          <button type="button" data-mask-tool="foliage" aria-pressed="true" aria-keyshortcuts="1"><i class="mask-swatch foliage" aria-hidden="true"></i>Foliage <kbd>1</kbd></button>
+          <button type="button" data-mask-tool="top_left" aria-pressed="false" aria-keyshortcuts="2"><i class="mask-swatch top-left" aria-hidden="true"></i>Top left <kbd>2</kbd></button>
+          <button type="button" data-mask-tool="top_right" aria-pressed="false" aria-keyshortcuts="3"><i class="mask-swatch top-right" aria-hidden="true"></i>Top right <kbd>3</kbd></button>
+          <button type="button" data-mask-tool="upper_middle" aria-pressed="false" aria-keyshortcuts="4"><i class="mask-swatch upper-middle" aria-hidden="true"></i>Upper middle <kbd>4</kbd></button>
+          <button type="button" data-mask-tool="middle_left" aria-pressed="false" aria-keyshortcuts="5"><i class="mask-swatch middle-left" aria-hidden="true"></i>Middle left <kbd>5</kbd></button>
+          <button type="button" data-mask-tool="middle_right" aria-pressed="false" aria-keyshortcuts="6"><i class="mask-swatch middle-right" aria-hidden="true"></i>Middle right <kbd>6</kbd></button>
+          <button type="button" data-mask-tool="lower_left" aria-pressed="false" aria-keyshortcuts="7"><i class="mask-swatch lower-left" aria-hidden="true"></i>Lower left <kbd>7</kbd></button>
+          <button type="button" data-mask-tool="lower_right" aria-pressed="false" aria-keyshortcuts="8"><i class="mask-swatch lower-right" aria-hidden="true"></i>Lower right <kbd>8</kbd></button>
+          <button type="button" data-mask-tool="erase" aria-pressed="false" aria-keyshortcuts="E">Erase <kbd>E</kbd></button>
         </div>
-        <button class="quiet-button" id="undoMaskButton" type="button" disabled>Undo</button>
+        <button class="quiet-button" id="undoMaskButton" type="button" aria-keyshortcuts="Z" disabled>Undo</button>
         <label class="mask-zoom" for="maskZoom">Zoom <input id="maskZoom" type="range" min="3" max="10" value="6" step="1"></label>
       </div>
       <div class="mask-editor-workspace">
         <div class="mask-canvas-wrap" id="maskCanvasWrap">
-          <p class="mask-pan-hint" id="maskPanHint">Drag on the grid to paint. Swipe the wide dark margin to pan.</p>
-          <canvas id="maskCanvas" aria-label="Editable plant mask grid" aria-describedby="maskPanHint"></canvas>
+          <p class="mask-pan-hint" id="maskPanHint">Drag on the grid to paint. Swipe the wide dark margin to pan. With the grid focused, use the arrow keys to move and Space to paint.</p>
+          <canvas id="maskCanvas" tabindex="0" role="region" aria-label="Editable plant mask grid" aria-describedby="maskPanHint"></canvas>
         </div>
         <aside class="mask-editor-info">
           <h3>Semantic layers</h3>

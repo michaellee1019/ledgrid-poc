@@ -41,11 +41,11 @@ Use `just` recipes rather than invoking deployment helpers directly:
 | `just native-build <plugin-id>` | Deterministically build, preview, validate, and retain one repository-owned native bundle |
 | `just native-publish <plugin-or-bundle>` | Atomically publish one validated bundle to the Pi-authoritative library without receiver mutation |
 | `just native-install <plugin-or-digest>` | Install one published binding on the exact configured receiver roster without activation |
-| `just native-start <plugin-or-digest>` | Activate one installed binding with its authored defaults and recorded Python fallback |
-| `just native-run <plugin-id>` | Explicit composition of build, publish, install, and start |
-| `just receiver-native-h2-evidence` | Collect the non-destructive H2 exact-five/skew/drift supporting slice; defaults to 1,800 seconds |
-| `just receiver-native-h4-default-soak` | Collect the H4 authored-default supporting soak; defaults to 1,800 seconds |
-| `just receiver-native-h4-maximum-soak` | Collect the separate H4 maximum-work supporting soak; defaults to 1,800 seconds |
+| `just native-start <plugin-or-digest>` | Retired compatibility command; fails before target access and directs activation to Composer Check + guarded activation |
+| `just native-run <plugin-id>` | Retired compatibility command; fails before build, publication, installation, or target access |
+| `just receiver-native-h2-evidence <scene-digest>` | Read-only, receipt-bound H2 exact-five/skew/drift supporting slice; defaults to 1,800 seconds |
+| `just receiver-native-h4-default-soak <scene-digest>` | Read-only, receipt-bound H4 authored-default supporting soak; defaults to 1,800 seconds |
+| `just receiver-native-h4-maximum-soak <scene-digest>` | Read-only, receipt-bound H4 maximum-work supporting soak; defaults to 1,800 seconds |
 | `just deploy-legacy` | Explicit clean recovery path through the retained pre-cutover full shell leaf |
 | `just deploy-python-legacy` | Explicit clean recovery path through the retained pre-cutover Python shell leaf |
 | `just fetch-presets` | Compatibility alias that refreshes wall masks/data and Pi-saved runtime presets for review |
@@ -388,15 +388,17 @@ must not be curated.
 
    ```bash
    just receiver-phase3a-status
-   just receiver-streamed-wall-acceptance duration=60 min_fps=150 target_fps=160
-   just live-animation-sweep seconds=2
-   just output-rate-sweep seconds=15 rates=120,140,160,180,200
+   just receiver-streamed-wall-acceptance "$SCENE_DIGEST" duration=60 min_fps=150 target_fps=160
+   just output-rate-observation "$SCENE_DIGEST" seconds=15 rate=160
    ```
 
-   These recipes accept the shown trailing `key=value` form as well as their
-   positional arguments and defaults. The streamed-wall recipe always names all
-   five logical receivers, neutralizes global plant modifiers for a deterministic
-   transport load, and restores the prior scene, modifier state, and cadence.
+   `SCENE_DIGEST` is the exact canonical digest from the guarded Composer
+   activation receipt. These recipes accept the shown trailing `key=value` form
+   as well as positional values. They are observation-only: the streamed-wall
+   recipe names all five logical receivers and verifies the expected active
+   Python scene and cadence without changing or restoring scene, modifiers, or
+   cadence. The old multi-animation live sweep is retired because it cannot
+   switch scenes safely without a fresh guarded activation for each scene.
    The finalized hardware has five readable return paths, so the strict recipes
    are the release gates. The old `*-degraded-spi1` recipes are recovery-only
    historical diagnostics and cannot close acceptance.
@@ -457,9 +459,8 @@ tools/deployment/stop_remote.sh stop
 The commands above are the supported deployment surface. Phase 0 of the
 [unified roadmap](plan-revamped-animation-pipeline.md) supplies the coordinated,
 immutable delivery foundation; the legacy physical leaf is recovery-only.
-Phase 4 adds separate `native-plan`, `native-build`, `native-publish`,
-`native-install`, `native-start`, and `native-run` workflows around the fail-closed
-`build -> publish -> probe -> stage -> verify -> activate/compensate` lifecycle,
+Phase 4 adds separate `native-plan`, `native-build`, `native-publish`, and
+`native-install` workflows around the fail-closed package lifecycle,
 so a background-source change does not imply an app restart, Pi reboot, or
 loader firmware flash. These actions require the explicit native-canary firmware
 selection and exact five-receiver readiness; the production firmware selection
@@ -481,10 +482,12 @@ just native-plan aurora_curtains_native
 just native-build aurora_curtains_native
 just native-publish aurora_curtains_native
 just native-install aurora_curtains_native
-just native-start aurora_curtains_native
-# Or deliberately compose build, publish, install, and start:
-just native-run aurora_curtains_native
+# Then select the managed component in Composer, run Check, and use guarded activation.
 ```
+
+`native-start` and `native-run` are retained only as safe-failing compatibility
+commands. `native-start` performs no target request. `native-run` fails before
+building, publishing, installing, or contacting the target.
 
 `native-publish` executes the Pi-side library transaction through the selected
 immutable `current` application release. On a legacy first-cutover target with
@@ -496,12 +499,10 @@ does not cross that boundary and must not be treated as activation.
 Build writes an append-only coordinator receipt under the local native-receipt
 directory. Publish writes the corresponding local receipt and a target receipt;
 the managed-library publication receipt separately binds bundle digest, payload
-digest, size, and publication metadata. Install and start do not manufacture
-deployment receipts: their JSON output is command-bound runtime evidence and
-succeeds only when current status proves the expected operation, bundle/payload,
-exact roster, capabilities, topology, parameter digest when active, and current
-context/profile agreement. Retain that output with physical-gate evidence when it
-authorizes a wall mutation.
+digest, size, and publication metadata. Install output is command-bound package
+evidence. Activation evidence comes only from the guarded Composer receipt and
+must bind the complete canonical scene, bundle/payload, exact roster,
+capabilities, topology, parameters, and current context/profile agreement.
 
 A quarantined payload is never retried automatically. After diagnosing the
 failure, clear only the exact managed binding through:
@@ -520,14 +521,15 @@ the error visible so the operator can retry recovery safely.
 The API-only physical runner covers only the subgates named in its report:
 
 ```bash
-just receiver-native-h2-evidence
-just receiver-native-h4-default-soak
-just receiver-native-h4-maximum-soak
+just receiver-native-h2-evidence "$SCENE_DIGEST"
+just receiver-native-h4-default-soak "$SCENE_DIGEST"
+just receiver-native-h4-maximum-soak "$SCENE_DIGEST"
 ```
 
-All three recipes default to a real 1,800-second observation, always execute the
-recorded Python full-scene restoration path, and fail unless host takeover is
-positively proved. Shorter durations are useful diagnostics but cannot satisfy a
+All three recipes require the exact canonical scene digest from the guarded
+activation receipt, default to a real 1,800-second observation, compare that
+identity at every sample, and never install, activate, stop, or restore. Shorter
+durations are useful diagnostics but cannot satisfy a
 complete-gate claim. `--require-complete-gate` additionally requires at least
 1,800 observed seconds and same-release/same-artifact companion evidence for the
 explicitly outstanding transaction injection, restart/lease, dense-streamed,

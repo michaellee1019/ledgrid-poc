@@ -93,25 +93,37 @@ is verified, while activation still fails closed with the catalog reason.
 - `POST /api/v1/scene/validate` accepts the browser-scene document directly and
   returns `{valid, scene, preset_diagnostics}`. `scene` is the adapted host
   payload so existing controller clients remain compatible.
-- `PUT` or `POST /api/v1/scene` accepts the browser-scene document directly,
-  independently validates it for activation, adapts it to the host scene, and
-  dispatches the existing `start_scene` command.
-
-The activation response retains `success`, `scene`, `preset_diagnostics`, and
-`command_id`, and adds a versioned `receipt` containing:
-
-- `requested_revision` and `requested_identity`
-- `command_id` and `command_accepted`
-- `accepted_live_identity`
-- `observed_status`
-- `telemetry_complete`
-- `camera_observation`
-- `rollback_available`
-
-The current web boundary can prove only command acceptance. It therefore
-returns no accepted live identity, `observed_status: "not_observed"`, incomplete
-telemetry, no camera observation, and no rollback availability. Clients must not
-upgrade those fields based on command acceptance.
+- `POST /api/v1/scene/checks` accepts an envelope containing the exact
+  browser-scene `scene`, `global_settings`, and advisory `browser_evidence`. When
+  the development/canary capability is enabled, it binds those values to the
+  current controller session, state revision, live identity, selected
+  installation profile, runtime identities, and qualification record for 120
+  seconds. The `201` response contains a single-use `check_token`, canonical
+  `basis`, `basis_digest`, expiry, and qualification result. This Check does not
+  change wall output.
+- `PUT` or `POST /api/v1/scene` is the guarded activation submission boundary.
+  It does **not** accept a bare browser-scene document as authority. The request
+  must repeat the exact checked `scene` and `global_settings`, carry the
+  `check_token` plus expected controller session and state revision, and include
+  an `Idempotency-Key` header. Missing preconditions fail with `428`; expired,
+  reused-for-different-input, or drifted checks fail closed without queueing a
+  controller command.
+- An accepted exact submission returns `202` with a durable `activation_id`,
+  current `phase`, `pending: true`, `status_url`, and exact-retry result. Queue
+  acceptance is Pending, never Active.
+- `GET /api/v1/scene/activations/<activation_id>` is the correlated status
+  boundary. Only a fresh terminal `active` observation whose complete identity
+  matches the checked basis may be presented as Active. The resource separately
+  records requested, normalized, and observed identity; controller revisions;
+  telemetry completeness/freshness; rollback availability/result; optional
+  camera observation; and any error.
+- `DELETE /api/v1/scene/activations/<activation_id>` requests correlated
+  cancellation, and
+  `POST /api/v1/scene/activations/<activation_id>/rollback` requests the retained
+  exact-snapshot rollback only when the status resource advertises it.
+- Bare `DELETE /api/v1/scene`, component PATCH, legacy start, and preset-apply
+  aliases fail closed. The separate `POST /api/stop` action remains the immediate
+  safety Stop for any output mode; it is not a scene-activation shortcut.
 
 ## Import limits
 

@@ -21,6 +21,7 @@ import numpy as np
 
 from animation.core.plant_awareness import (
     FRAMEWORK_VISUAL_MODIFIERS,
+    LEGACY_PLANT_MASK_PATH_PARAMETERS,
     PlantModifierState,
     plant_parameter_schema,
 )
@@ -164,7 +165,7 @@ class AnimationBase(ABC):
 
     def update_parameters(self, new_params: Dict[str, Any]) -> None:
         self._sync_authored_params()
-        legacy_paths = {"plant_mask_path", "plant_globe_mask_path"} & new_params.keys()
+        legacy_paths = LEGACY_PLANT_MASK_PATH_PARAMETERS & new_params.keys()
         if legacy_paths:
             raise ValueError(
                 "browser previews do not accept legacy plant-mask paths; "

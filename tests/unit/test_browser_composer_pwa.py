@@ -157,6 +157,8 @@ class BrowserComposerPWATests(unittest.TestCase):
         self.assertIn("cacheImmutableProfileArtifact", self.worker)
         self.assertIn("installation_profile_artifact_url", self.worker)
         self.assertIn("profileArtifacts", self.worker)
+        self.assertIn("INSTALLATION_PROFILE_ARTIFACT", self.worker)
+        self.assertIn("deliverInstallationProfileArtifact", self.worker)
 
     def test_connectivity_and_mutating_actions_are_never_cached(self) -> None:
         assets = _service_worker_shell_assets(self.worker)

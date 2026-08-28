@@ -83,6 +83,7 @@ Example response:
 Receiver CRC, queue, mailbox, encode, and display counters stop at the ESP32
 output peripheral. WS2812 strips do not acknowledge data, so a flash caused by
 a marginal strip data connection, ground reference, level shifter, or power
-transient is not visible in software telemetry. Use the live output-rate sweep
-to correlate visual failures with target FPS; zero receiver errors alone does
-not prove downstream signal integrity.
+transient is not visible in software telemetry. Set one target through the
+guarded operator surface and use the receipt-bound, observation-only output-rate
+tool to correlate visual failures with target FPS; zero receiver errors alone
+does not prove downstream signal integrity.

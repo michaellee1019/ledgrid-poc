@@ -386,20 +386,20 @@
 
                 <section aria-labelledby="painterPresetsHeading">
                     <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
-                        <strong id="painterPresetsHeading">Mask presets</strong>
+                        <strong id="painterPresetsHeading">Painter frame presets</strong>
                         <small class="text-muted">Draft only</small>
                     </div>
-                    <label class="form-label small fw-semibold mb-1" for="painterPresetSelect">Saved mask preset</label>
+                    <label class="form-label small fw-semibold mb-1" for="painterPresetSelect">Saved Painter draft</label>
                     <div class="input-group input-group-sm mb-2">
                         <select class="form-select" id="painterPresetSelect"><option value="">No saved presets</option></select>
                         <button class="btn btn-outline-primary" id="loadPainterPresetBtn" type="button" disabled>Load draft</button>
                     </div>
-                    <label class="form-label small fw-semibold mb-1" for="painterPresetName">New mask preset name</label>
+                    <label class="form-label small fw-semibold mb-1" for="painterPresetName">New Painter draft name</label>
                     <div class="input-group input-group-sm">
-                        <input class="form-control" id="painterPresetName" maxlength="64" placeholder="Name this mask draft">
+                        <input class="form-control" id="painterPresetName" maxlength="64" placeholder="Name this private frame draft">
                         <button class="btn btn-outline-success" id="savePainterPresetBtn" type="button" disabled>Save preset</button>
                     </div>
-                    <div class="small text-muted mt-2">Loading a preset changes only this draft. Stop mirroring before loading another preset.</div>
+                    <div class="small text-muted mt-2">Painter frame presets change only this private draft. They never publish or select a managed installation profile. Stop mirroring before loading another preset.</div>
                 </section>
 
                 <hr>
@@ -415,14 +415,14 @@
                     its extra column is outside plant-mask calibration and is not edited here.
                 </div>
 
-                <div class="status-line mt-3" id="paintStatus" role="status" aria-live="polite">Loading mask files…</div>
+                <div class="status-line mt-3" id="paintStatus" role="status" aria-live="polite">Loading the selected managed profile…</div>
 
                 <hr>
 
                 <ul class="shortcut-list">
                     <li>Drag to paint continuous strokes.</li>
                     <li><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Z</kbd> undoes a stroke.</li>
-                    <li><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>S</kbd> saves both mask files.</li>
+                    <li>Managed profile Save and Publish actions live in Composer.</li>
                     <li>Mirroring is always opt-in and stops when you leave this page.</li>
                 </ul>
             </div>

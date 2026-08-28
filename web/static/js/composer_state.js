@@ -1,7 +1,7 @@
 (function attachComposerState(global) {
     'use strict';
 
-    const CHECKER_VERSION = 'browser-checker-v2';
+    const CHECKER_VERSION = 'browser-checker-v3';
 
     function clone(value) {
         return JSON.parse(JSON.stringify(value ?? null));
@@ -68,6 +68,17 @@
             || null;
     }
 
+    function componentPresetIdentity(preset) {
+        if (!preset || typeof preset !== 'object') return null;
+        const presetId = preset.preset_id ?? preset.presetId;
+        const presetFingerprint = preset.preset_fingerprint ?? preset.presetFingerprint;
+        if (!presetId || !presetFingerprint) return null;
+        return {
+            presetId: String(presetId),
+            presetFingerprint: String(presetFingerprint),
+        };
+    }
+
     function capability(component) {
         const declared = component?.browser_capabilities || component?.activation_capability || component?.capability || {};
         const previewable = declared.previewable ?? Boolean(component?.browser_runtime?.supported);
@@ -92,6 +103,7 @@
         geometry,
         wallSettings = null,
         installationProfileDigest = null,
+        preset = null,
     ) {
         return {
             checkerVersion: CHECKER_VERSION,
@@ -105,6 +117,7 @@
             },
             wallSettings: clone(wallSettings),
             installationProfileDigest,
+            presetIdentity: componentPresetIdentity(preset),
         };
     }
 
@@ -126,6 +139,7 @@
         checkAllowsActivation,
         checkBinding,
         clone,
+        componentPresetIdentity,
         formatNumber,
         normalizeNumber,
         runtimeDigest,

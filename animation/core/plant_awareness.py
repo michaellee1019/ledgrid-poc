@@ -21,6 +21,10 @@ from animation.libraries.mask_effects import dilate_8, indices_from_payload, log
 
 DEFAULT_FOLIAGE_MASK = "config/plant_pixel_map_32x138.json"
 DEFAULT_GLOBE_MASK = "config/plant_globe_map_32x138.json"
+LEGACY_PLANT_MASK_PATH_PARAMETERS = frozenset((
+    "plant_mask_path",
+    "plant_globe_mask_path",
+))
 
 PLANT_MODIFIER_IDS = (
     "illuminate", "shadow", "refract", "hue_shift", "liquid_glass",

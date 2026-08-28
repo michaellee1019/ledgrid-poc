@@ -280,6 +280,132 @@ class BrowserPythonBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "not initialized"):
             runtime.render(0.0, 0, instance_id="missing")
 
+    def test_runtime_rejects_explicit_legacy_mask_paths_at_both_boundaries(self):
+        runtime = _browser_runtime()
+        for name in ("plant_mask_path", "plant_globe_mask_path"):
+            with self.subTest(boundary="initialize", parameter=name):
+                with self.assertRaisesRegex(ValueError, "legacy plant-mask paths"):
+                    runtime.initialize(
+                        "rainbow",
+                        "RainbowAnimation",
+                        {"width": 33, "height": 138},
+                        {name: "config/injected.json"},
+                        installation_profile_digest=PROFILE_DIGEST,
+                    )
+
+        runtime.initialize(
+            "rainbow",
+            "RainbowAnimation",
+            {"width": 33, "height": 138},
+            {"brightness": 0.5},
+            installation_profile_digest=PROFILE_DIGEST,
+        )
+        for name in ("plant_mask_path", "plant_globe_mask_path"):
+            with self.subTest(boundary="render", parameter=name):
+                with self.assertRaisesRegex(ValueError, "legacy plant-mask paths"):
+                    runtime.render(0.0, 0, {name: "config/injected.json"})
+
+    def test_composed_batch_is_byte_exact_to_two_individual_renders(self):
+        geometry = {"width": 33, "height": 138}
+        gradient_params = {
+            "direction": "diagonal",
+            "animated": True,
+            "speed": 0.65,
+            "brightness": 0.8,
+            "color1_red": 255,
+            "color1_green": 32,
+            "color1_blue": 96,
+            "color2_red": 16,
+            "color2_green": 160,
+            "color2_blue": 255,
+        }
+        clock_params = {"face": "minimal", "show_seconds": True}
+        wall_time = 1787774400.0
+
+        def configured_runtime() -> BrowserPreviewRuntime:
+            runtime = _browser_runtime()
+            runtime.initialize(
+                "gradient", "GradientAnimation", geometry, gradient_params,
+                installation_profile_digest=PROFILE_DIGEST,
+            )
+            runtime.initialize(
+                "clock_overlay", "ClockOverlayAnimation", geometry, clock_params,
+                instance_id="clock_overlay",
+                installation_profile_digest=PROFILE_DIGEST,
+            )
+            return runtime
+
+        individual = configured_runtime()
+        individual_results = [
+            individual.render(0.25, 3, gradient_params),
+            individual.render(
+                0.25, 3, clock_params,
+                instance_id="clock_overlay", wall_time=wall_time,
+            ),
+        ]
+        individual_frames = [
+            individual.frame_bytes_for("primary"),
+            individual.frame_bytes_for("clock_overlay"),
+        ]
+
+        batched = configured_runtime()
+        results = json.loads(batched.render_batch_json(json.dumps({"renders": [
+            {
+                "instanceId": "primary", "elapsed": 0.25,
+                "frameIndex": 3, "params": gradient_params,
+            },
+            {
+                "instanceId": "clock_overlay", "elapsed": 0.25,
+                "frameIndex": 3, "params": clock_params,
+                "wallTime": wall_time,
+            },
+        ]})))
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(
+            [result["instanceId"] for result in results],
+            ["primary", "clock_overlay"],
+        )
+        for result, individual_result, individual_frame in zip(
+            results, individual_results, individual_frames
+        ):
+            with self.subTest(instance=result["instanceId"]):
+                self.assertEqual(result["frameFormat"], individual_result["frameFormat"])
+                start = result["byteOffset"]
+                end = start + result["byteLength"]
+                self.assertEqual(batched.batch_frame_bytes[start:end], individual_frame)
+
+        with self.assertRaisesRegex(ValueError, "distinct instance IDs"):
+            batched.render_batch_json(json.dumps({"renders": [
+                {"instanceId": "primary", "elapsed": 0, "frameIndex": 0},
+                {"instanceId": "primary", "elapsed": 0, "frameIndex": 0},
+            ]}))
+
+    def test_identical_live_parameters_are_noop_but_real_changes_apply(self):
+        runtime = _browser_runtime()
+        params = {
+            "direction": "horizontal", "animated": False, "brightness": 1.0,
+            "color1_red": 255, "color1_green": 0, "color1_blue": 0,
+            "color2_red": 0, "color2_green": 0, "color2_blue": 255,
+        }
+        runtime.initialize(
+            "gradient", "GradientAnimation", {"width": 33, "height": 138},
+            params, installation_profile_digest=PROFILE_DIGEST,
+        )
+        self.assertTrue(runtime.render(0.0, 0)["changed"])
+        first = runtime.frame_bytes
+
+        identical = runtime.render(0.1, 1, params)
+        self.assertFalse(identical["changed"])
+        self.assertEqual(runtime.frame_bytes, first)
+
+        changed = runtime.render(0.2, 2, {**params, "color1_green": 64})
+        self.assertTrue(changed["changed"])
+        self.assertNotEqual(runtime.frame_bytes, first)
+        changed_bytes = runtime.frame_bytes
+        self.assertFalse(runtime.render(0.3, 3, {**params, "color1_green": 64})["changed"])
+        self.assertEqual(runtime.frame_bytes, changed_bytes)
+
     def test_browser_shim_matches_direct_plugin_frames(self):
         direct = _direct_fingerprints()
         with tempfile.TemporaryDirectory() as temp_dir:

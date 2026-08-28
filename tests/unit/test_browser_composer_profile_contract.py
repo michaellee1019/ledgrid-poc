@@ -74,6 +74,8 @@ class BrowserComposerProfileContractTests(unittest.TestCase):
 
     def test_every_worker_init_and_recovery_descriptor_carries_profile(self) -> None:
         self.assertIn("installationProfile: descriptor.installationProfile", self.runtime)
+        self.assertIn("installationProfileArtifact: profileArtifact", self.runtime)
+        self.assertIn("await installationProfileArtifact(", self.runtime)
         self.assertIn("installationProfile: this.installationProfile", self.runtime)
         self.assertIn("descriptor.initializedGeneration = -1", self.runtime)
         self.assertIn("installationProfileDescriptor(options.installationProfile)", self.runtime)
@@ -91,6 +93,8 @@ class BrowserComposerProfileContractTests(unittest.TestCase):
             self.assertNotIn("fallbackMask", worker)
         self.assertIn("bind_installation_profile_path", self.python_worker)
         self.assertIn("const PROFILE_DIGEST_OFFSET = 68", self.python_worker)
+        self.assertIn("message.installationProfileArtifact", self.python_worker)
+        self.assertIn("suppliedArtifact?.bytes instanceof ArrayBuffer", self.python_worker)
 
     def test_python_bundle_has_codec_but_no_calibration_json_fallbacks(self) -> None:
         self.assertIn('"animation/core/installation_profile.py"', self.builder)

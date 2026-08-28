@@ -64,7 +64,7 @@ class PainterDraftUxTests(unittest.TestCase):
         self.assertIn("33 output columns", self.html)
         self.assertNotIn("wall mirrors this canvas exactly", self.html.lower())
 
-    def test_mask_presets_load_only_into_the_private_draft(self):
+    def test_frame_presets_load_only_into_the_private_draft(self):
         for marker in (
             'id="painterPresetSelect"',
             'id="loadPainterPresetBtn"',
@@ -80,6 +80,16 @@ class PainterDraftUxTests(unittest.TestCase):
         self.assertNotIn("/api/painter/frame", load_block)
         self.assertNotIn("startMirroring", load_block)
         self.assertIn("The wall was not changed", self.script)
+
+    def test_frame_preset_copy_never_claims_managed_profile_authority(self):
+        self.assertIn("Painter frame presets", self.html)
+        self.assertIn(
+            "They never publish or select a managed installation profile", self.html
+        )
+        self.assertIn("Saving never publishes or selects a managed profile", self.script)
+        self.assertIn("selected managed profile", self.script)
+        self.assertNotIn("Mask presets", self.html)
+        self.assertNotIn("Mask presets", self.script)
 
 
 if __name__ == "__main__":

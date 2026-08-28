@@ -1271,16 +1271,13 @@ just native-plan <plugin-id>
 just native-build <plugin-id>
 just native-publish <plugin-id-or-bundle>
 just native-install <plugin-id-or-digest>
-just native-start <plugin-id-or-digest>
-just native-run <plugin-id>
 ```
 
-`native-run` is convenience composition of build, preview, validate, publish,
-probe, stage, verify, and activate. Build and publish retain append-only
-coordinator/publication receipts. Install and start instead return command-bound
-runtime evidence that must prove the requested operation, exact roster/topology/
-capabilities, bundle/payload, parameters when active, and current context/profile;
-they do not manufacture deployment receipts. These native-source commands operate
+The formerly proposed `native-start` and `native-run` surfaces are retired and
+now fail before target access or partial work. Composer Check + guarded
+activation is the only activation authority. Build and publish retain
+append-only coordinator/publication receipts; install returns command-bound
+package evidence. These native-source commands operate
 on the selected package's exact working-tree digest without requiring unrelated
 repository files to be clean. Modified tracked package source is allowed only
 through this explicit development workflow and is recorded in the receipt;
@@ -2291,9 +2288,10 @@ The strict all-four `receiver-phase3a-status` and streamed acceptance commands
 remain unchanged and deferred until repair. A separately named
 `receiver-phase3a-status-degraded-spi1` records strict SPI0 proof plus the exact
 known SPI1 no-return state. Then
-`receiver-streamed-wall-acceptance-degraded-spi1` may be used only for the
-feature-off production streamed path, followed by the separately named
-`live-animation-sweep-degraded-spi1`. They require full v3 identity, capability,
+`receiver-streamed-wall-acceptance-degraded-spi1` was used only for the
+feature-off production streamed path. The separately named multi-animation
+sweep is now retired because every change requires a guarded activation. The
+historical degraded run required full v3 identity, capability,
 integrity, timing, and accounting acceptance on readable logical receivers 0
 and 1; logical receivers 2 and 3 must both match the exact known status-v0,
 no-status, no-capability, no-identity state and show advancing host frame,
@@ -4393,14 +4391,15 @@ historical and cannot qualify the finalized five-receiver wall.
 The non-destructive API-only slices have exact recipes:
 
 ```bash
-just receiver-native-h2-evidence
-just receiver-native-h4-default-soak
-just receiver-native-h4-maximum-soak
+just receiver-native-h2-evidence "$SCENE_DIGEST"
+just receiver-native-h4-default-soak "$SCENE_DIGEST"
+just receiver-native-h4-maximum-soak "$SCENE_DIGEST"
 ```
 
-Each defaults to 1,800 seconds, always executes Python full-scene restoration,
-and fails unless host takeover is positively proved. Short runs are diagnostics
-only. These recipes report covered and
+Each command requires `"$SCENE_DIGEST"` as its first argument (including H2),
+binds the exact guarded activation receipt throughout the run, defaults to 1,800
+seconds, and performs no installation, activation, cleanup, or restoration.
+Short runs are diagnostics only. These recipes report covered and
 outstanding subgates; they do not replace H2 failure injection, clock boundary/
 lease/restart repair, dense streaming, the Python sweep, retained receiver timing
 distributions/artifacts, photographed H3 evidence, or the other H4 soak.

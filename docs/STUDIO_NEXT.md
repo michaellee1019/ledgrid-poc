@@ -6,8 +6,11 @@ Studio Next is an alternate, room-first control surface for the living LED wall.
 
 - UI: `GET /studio-next`
 - Bootstrap: `GET /api/v1/studio-next/bootstrap`
-- Reviewed direct look command: `POST /api/v1/studio-next/take-look`
-- Reviewed fixed-scene command: `POST /api/v1/studio-next/take-scene`
+- Physical activation handoff: `GET /composer`, followed by Composer's server
+  Check and guarded scene-activation transaction
+- Retired compatibility aliases: `POST /api/v1/studio-next/take-look` and
+  `POST /api/v1/studio-next/take-scene` fail closed with `428` and write no
+  controller command
 - Template: `web/templates/studio_next.html`
 - Styles: `web/static/css/studio_next.css`
 - Client: `web/static/js/studio_next.js`
@@ -23,8 +26,8 @@ Studio Next currently provides:
 - **Now** intent filters: Settle, Welcome, Focus, and Play, plus an unfiltered catalog entry.
 - **Looks** search and filters across complete names, descriptions, tags, provider, role, IDs, and server execution state. Counts reflect the live catalog (currently 53 components and 293 presets; these are not hard-coded).
 - A large exact 32:138 isolated preview using the server catalog's poster/loop assets, provider/readiness/provenance details, an explicit empty-to-three compare set with no automatic eviction, and an accessible compare dialog/sheet. Missing assets are labeled generated placeholders rather than presented as the animation.
-- Provider-qualified reviewed Look execution through `/api/v1/studio-next/take-look`. Opening and submitting a review each refetch status. A changed fingerprint blocks the command. HTTP acceptance and later controller observation are separate receipt states.
-- A fixed Scene editor: exactly one ready, loaded Host Python background and an optional `clock_overlay`. It serializes only `clip_to_wall`, `hold`, or `clear_after_lease` with a valid lease. Validation, a backend-rendered isolated frame preview, **Save layout only**, and reviewed **Take scene live** are distinct.
+- Provider-qualified Look discovery, isolated preview, and comparison. Physical activation is a **Check & activate in Composer** handoff; Studio Next has no direct Look execution path.
+- A fixed Scene draft editor: exactly one ready, loaded Host Python background and an optional `clock_overlay`. It serializes only `clip_to_wall`, `hold`, or `clear_after_lease` with a valid lease. Validation, a backend-rendered isolated frame preview, **Save layout only**, and the Composer activation handoff are distinct.
 - Independent Room drafts for Vibe, representative plant behavior, output brightness, target FPS, and operator speed. Application is a visible serial plan, never described as atomic. A failure or observation timeout stops remaining calls and leaves per-property receipts.
 - State-first Health copy, four receiver sections, evidence source/age/policy, and receiver refresh as **Accepted → newer observation**. Because status does not echo the refresh request, the client says correlation is unavailable.
 - Desktop navigation and a 390 px task hierarchy with a compact Live bar, 48 px Stop and receipt targets, five-item bottom navigation, one active workspace (`hidden` and `inert` for the rest), wrapping names, and review/compare sheets.
@@ -34,9 +37,19 @@ Studio Next currently provides:
 
 Preview and live command modules are separate. Procedural or asset previews never call a live endpoint. Receiver-native previews are labeled **Host simulation preview — not receiver framebuffer readback**.
 
-Look and Scene live requests use a conventional **Current → Proposed** review. The client stores the observed consequence-bearing fingerprint, refetches immediately before submission, and sends nothing when it changed. This is a client preflight, not compare-and-swap; the UI says it is not race-free.
+Studio Next never serializes a Look or Scene takeover. Its visible activation
+actions link to Composer, where a short-lived server Check binds the exact scene,
+globals, runtime/profile identities, and controller session/revision. Composer's
+durable activation resource keeps Pending separate from a later correlated
+Active observation. The two retired Studio Next command aliases remain only as
+fail-closed compatibility boundaries.
 
-An HTTP 2xx changes a receipt to **Accepted; awaiting observation**. It does not change the Live bar. Status must later contain a newer matching observation before a receipt says **Observed**. A newer mismatching observation becomes **Observed conflict**; a timeout remains **Accepted; outcome not observed**.
+Room-setting requests use a conventional **Current → Proposed** review. The
+client stores the observed consequence-bearing fingerprint and refetches
+immediately before its explicitly serial, non-atomic plan. A `2xx` changes the
+per-setting receipt to **Accepted; awaiting observation**; it does not change the
+Live bar. A newer matching observation is **Observed**, a mismatch is **Observed
+conflict**, and a timeout remains **Accepted; outcome not observed**.
 
 Stop is immediate because delay is the greater hazard. Acceptance and an observed stopped mode remain distinct, and Stop never claims hardware power changed.
 
@@ -46,11 +59,11 @@ Room calls run in this order: Vibe, plant behavior, brightness, target FPS, oper
 
 - **Power Off:** disabled because `/api/status` does not yet expose authoritative power distinct from stopped output.
 - **Timed routines:** runtime, persistence, cancellation, progress, and restart contracts do not exist.
-- **Arbitrary receiver-native live:** visible/previewable catalog content is not assumed executable. Direct Look action is limited to server-approved Host Python backgrounds.
+- **Arbitrary receiver-native live:** visible/previewable catalog content is not assumed executable. Studio Next offers no direct activation route; Composer enforces provider/runtime/profile readiness during Check and activation.
 - **Full parameter editor:** requires a complete provider-qualified schema and reviewed execution path.
 - **Embedded Painter, masks, and calibration:** initial slice links to existing tools or shows a disabled destination; no editor is simulated.
 - **Developer actions:** require authorization, exact targets, and receipts.
-- **Server compare-and-swap:** current client preflight cannot eliminate a race after its final status read.
+- **Room-setting compare-and-swap:** Studio Next's serial room-setting preflight cannot eliminate a race after its final status read. Scene/animation takeover is instead owned by Composer's server/controller compare-and-swap transaction.
 - **Refresh completion correlation:** newer evidence can be observed, but not attributed to a particular refresh request.
 - **Camera-visible acceptance:** transport evidence cannot prove visible LEDs, wiring, power delivery, foliage occlusion, or color accuracy.
 - **Scene rebase UI:** drift preserves and disables the draft; a complete deliberate rebase flow is still required.

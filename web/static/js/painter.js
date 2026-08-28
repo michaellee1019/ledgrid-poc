@@ -153,7 +153,7 @@
             const totalLeds = Number(info.total_leds);
             if (!Number.isInteger(stripCount) || !Number.isInteger(ledsPerStrip)
                     || totalLeds !== stripCount * ledsPerStrip) {
-                throw new Error('Mask files contain invalid wall geometry');
+                throw new Error('The selected managed profile contains invalid wall geometry');
             }
 
             this.layout = {stripCount, ledsPerStrip, totalLeds};
@@ -210,7 +210,7 @@
                     + 'and is not edited here.';
             } else {
                 surfaceExplanation.textContent =
-                    `The mask files define this ${this.layout.stripCount} × `
+                    `The selected managed profile defines this ${this.layout.stripCount} × `
                     + `${this.layout.ledsPerStrip} editable surface. The installation has 33 × 138 `
                     + 'output pixels; only pixels represented by the mask geometry are edited here.';
             }
@@ -419,7 +419,7 @@
             title.textContent = this.mirrorActive ? 'Mirroring on the wall' : 'Editing privately';
             description.textContent = this.mirrorActive
                 ? 'Every completed stroke is sent to the installation until you return to draft.'
-                : 'Changes stay in this browser until you save or choose Mirror to wall.';
+                : 'Changes stay in this browser until you save a private Painter frame preset or choose Mirror to wall. Saving never publishes or selects a managed profile.';
             mirrorButton.classList.toggle('d-none', this.mirrorActive);
             draftButton.classList.toggle('d-none', !this.mirrorActive);
             this.updateControls();
@@ -617,7 +617,7 @@
                 this.presetCatalog = Array.isArray(payload.presets) ? payload.presets : [];
                 const select = document.getElementById('painterPresetSelect');
                 select.replaceChildren(new Option(
-                    this.presetCatalog.length ? 'Choose a mask preset…' : 'No saved presets',
+                    this.presetCatalog.length ? 'Choose a Painter frame preset…' : 'No saved presets',
                     '',
                 ));
                 this.presetCatalog.forEach((preset) => {
@@ -629,7 +629,7 @@
                 this.updateControls();
             } catch (error) {
                 console.error('Failed to load painter presets', error);
-                this.setStatus('Mask presets are temporarily unavailable. Your draft is unaffected.', 'error');
+                this.setStatus('Painter frame presets are temporarily unavailable. Your draft is unaffected.', 'error');
             }
         }
 
@@ -655,7 +655,7 @@
                     && Number(info.leds_per_strip) === this.layout.ledsPerStrip
                     && Array.isArray(payload.frame_data)
                     && payload.frame_data.length === this.layout.totalLeds;
-                if (!sameGeometry) throw new Error('This preset uses different mask geometry.');
+                if (!sameGeometry) throw new Error('This Painter preset uses different frame geometry.');
                 this.history.push(this.maskState.slice());
                 if (this.history.length > this.maxHistory) this.history.shift();
                 this.maskState = Uint8Array.from(payload.frame_data, (pixel) => this.pixelMaskValue(pixel));
@@ -676,7 +676,7 @@
             if (!name || !this.initialized || this.modeChanging) return;
             const button = document.getElementById('savePainterPresetBtn');
             button.disabled = true;
-            this.setStatus('Saving this mask draft as a preset…');
+            this.setStatus('Saving this private Painter draft as a frame preset…');
             try {
                 const response = await fetch('/api/painter/presets', {
                     method: 'POST',

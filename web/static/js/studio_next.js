@@ -313,10 +313,15 @@
 
   function normalizeAction(source, component) {
     const action = source?.action || source?.execution || component?.action || component?.execution || {};
-    const allowed = action.take_look_enabled === true || action.allowed === true;
-    const reason = action.reason || action.diagnostic || component?.diagnostic
-      || (allowed ? 'Route-backed live action is allowed.' : 'Live route is unavailable for this catalog record.');
-    return {allowed, code: action.code || null, reason: String(reason)};
+    const retiredDirectClaim = action.take_look_enabled === true || action.allowed === true;
+    const code = retiredDirectClaim ? 'guarded_activation_required' : action.code || null;
+    const composerEligible = action.composer_check_eligible === true
+      || retiredDirectClaim || code === 'guarded_activation_required';
+    const reason = composerEligible
+      ? 'Physical activation requires Composer Check and guarded activation.'
+      : action.reason || action.diagnostic || component?.diagnostic
+        || 'Physical activation requires Composer Check; this catalog record exposes no direct live route.';
+    return {allowed: false, composerEligible, code, reason: String(reason)};
   }
 
   function normalizePreview(source, component) {
@@ -742,8 +747,8 @@
       if (!intentMatches(look, state.filters.intent)) return false;
       if (state.filters.provider !== 'all' && look.provider !== state.filters.provider) return false;
       if (state.filters.role !== 'all' && look.role !== state.filters.role) return false;
-      if (state.filters.readiness === 'ready' && !look.action.allowed) return false;
-      if (state.filters.readiness === 'disabled' && look.action.allowed) return false;
+      if (state.filters.readiness === 'ready' && !look.action.composerEligible) return false;
+      if (state.filters.readiness === 'disabled' && look.action.composerEligible) return false;
       return true;
     });
   }
@@ -791,7 +796,7 @@
     if (!list || !empty) return;
     if (!looks.some((look) => look.key === state.selectedLookKey)) {
       state.previewPlaying = false;
-      state.selectedLookKey = looks.find((look) => look.action.allowed)?.key || looks[0]?.key || null;
+      state.selectedLookKey = looks.find((look) => look.action.composerEligible)?.key || looks[0]?.key || null;
     }
     empty.hidden = looks.length !== 0;
     list.hidden = looks.length === 0;
@@ -800,13 +805,13 @@
         type: 'button',
         dataset: {lookKey: look.key},
         'aria-current': look.key === state.selectedLookKey ? 'true' : 'false',
-        'aria-label': `${look.name}, ${look.componentName}, ${providerLabel(look.provider)}, ${displayName(look.role)}, ${look.action.allowed ? 'ready to take live' : `not executable: ${look.action.reason}`}`
+        'aria-label': `${look.name}, ${look.componentName}, ${providerLabel(look.provider)}, ${displayName(look.role)}. Activation: ${look.action.reason}`
       }, [
         element('span', {class: 'sn-result-name', text: look.name}),
         element('span', {class: 'sn-result-component', text: look.componentName}),
-        element('span', {class: 'sn-result-meta', text: `${providerLabel(look.provider)} · ${displayName(look.role)} · ${look.action.allowed ? 'Ready' : 'Not executable'}`})
+        element('span', {class: 'sn-result-meta', text: `${providerLabel(look.provider)} · ${displayName(look.role)} · ${look.action.composerEligible ? 'Composer Check eligible' : 'Check unavailable'}`})
       ]);
-      if (!look.action.allowed) button.append(element('span', {class: 'sn-result-reason', text: look.action.reason}));
+      if (!look.action.composerEligible) button.append(element('span', {class: 'sn-result-reason', text: look.action.reason}));
       return element('li', {}, button);
     }));
     renderLookDetail();
@@ -833,7 +838,7 @@
 
   function previewSummary(look) {
     if (!look) return 'No look selected.';
-    return `${look.name}, preset ${look.presetId}, from ${look.componentName}. ${providerLabel(look.provider)} ${displayName(look.role)}. ${look.action.allowed ? 'A route-backed live action is available after review.' : `Live action disabled: ${look.action.reason}`}`;
+    return `${look.name}, preset ${look.presetId}, from ${look.componentName}. ${providerLabel(look.provider)} ${displayName(look.role)}. Activation: ${look.action.reason}`;
   }
 
   function hashNumber(value) {
@@ -910,12 +915,12 @@
     text('#lookDescription', look.description || 'No catalog description is available. Full identity remains visible below.');
     setDefinition('#lookMetadata', [
       ['Provider', providerLabel(look.provider)], ['Role', displayName(look.role)],
-      ['Readiness', look.action.allowed ? 'Ready · executable route verified by server catalog' : 'Not executable'],
+      ['Activation', 'Composer Check required'],
       ['Identity', look.key]
     ]);
     const reason = $('#lookDisabledReason');
-    reason.hidden = look.action.allowed;
-    text(reason, look.action.allowed ? '' : look.action.reason);
+    reason.hidden = look.action.composerEligible;
+    text(reason, look.action.composerEligible ? '' : look.action.reason);
     text('#lookPreviewSummary', previewSummary(look));
     const source = state.previewPlaying && look.preview.loopUrl
       ? look.preview.loopUrl
@@ -1003,7 +1008,7 @@
         element('p', {text: look.componentName}),
         element('p', {text: `${providerLabel(look.provider)} · ${displayName(look.role)} · preset ${look.presetId}`}),
         element('p', {text: previewProvenance(look)}),
-        element('p', {text: look.action.allowed ? 'Ready for reviewed live action' : `Disabled: ${look.action.reason}`}),
+        element('p', {text: look.action.composerEligible ? 'Activation: Composer Check eligible' : `Activation unavailable: ${look.action.reason}`}),
         button
       ]);
     }));
@@ -1033,7 +1038,7 @@
   function eligibleSceneBackgrounds() {
     return state.components.filter((component) => {
       if (component.provider !== 'python' || component.role !== 'background' || component.providerCollision) return false;
-      if (component.action?.allowed !== true) return false;
+      if (component.action?.composerEligible !== true) return false;
       const compatibility = component.sceneCompatibility || {};
       if (compatibility.selectable === false || compatibility.composable === false) return false;
       const readiness = [component.raw.status, component.raw.availability, component.raw.readiness]
@@ -1128,7 +1133,7 @@
     if (background.provider !== 'python' || background.role !== 'background') {
       throw new Error('Initial Studio Next scene execution requires a Host Python background.');
     }
-    if (background.action?.allowed !== true) {
+    if (background.action?.composerEligible !== true) {
       throw new Error(`This background is unavailable: ${background.action?.reason || 'server readiness gate is closed'}`);
     }
     const backgroundRef = componentRef(background);

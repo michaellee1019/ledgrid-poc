@@ -51,6 +51,7 @@ from animation.core.native_background_library import NativeBackgroundLibrary
 from animation.core.plant_awareness import (
     FIELD_MODIFIERS,
     GLOBE_REGION_ORDER,
+    LEGACY_PLANT_MASK_PATH_PARAMETERS,
     PLANT_MODIFIER_IDS,
     SURFACE_MODIFIERS,
     PlantModifierState,
@@ -2463,38 +2464,44 @@ class AnimationWebInterface:
             'activation_url': '/api/v1/scene',
         }), 428
 
-    def _studio_next_look_action(
+    def _studio_next_composer_eligibility(
         self, component: Dict[str, Any], *, provider_collision: bool = False
     ) -> Dict[str, Any]:
-        """Return the one fail-closed direct-look execution decision."""
-        if provider_collision:
+        """Return read-only Composer handoff eligibility, never activation authority."""
+
+        def decision(code: str, reason: str, *, eligible: bool = False) -> Dict[str, Any]:
             return {
+                # Retained for older Studio clients; it must never regain authority.
                 'take_look_enabled': False,
-                'code': 'provider_collision',
-                'reason': (
+                'composer_check_eligible': eligible,
+                'code': code,
+                'reason': reason,
+            }
+
+        if provider_collision:
+            return decision(
+                'provider_collision',
+                (
                     'This plugin ID occurs under multiple providers. Legacy presets '
                     'and previews cannot be assigned safely.'
                 ),
-            }
+            )
         provider = component.get('provider')
         if provider != 'python':
-            return {
-                'take_look_enabled': False,
-                'code': 'unsupported_provider',
-                'reason': 'Direct Looks support ready Host Python backgrounds only.',
-            }
+            return decision(
+                'unsupported_provider',
+                'Composer Look handoff supports ready Host Python backgrounds only.',
+            )
         if component.get('role') != 'background':
-            return {
-                'take_look_enabled': False,
-                'code': 'unsupported_role',
-                'reason': 'Direct Looks require a background component.',
-            }
+            return decision(
+                'unsupported_role',
+                'Composer Look handoff requires a background component.',
+            )
         if component.get('gallery') != 'show' or component.get('is_test') is True:
-            return {
-                'take_look_enabled': False,
-                'code': 'developer_only',
-                'reason': 'Test and developer components are available through Tools only.',
-            }
+            return decision(
+                'developer_only',
+                'Test and developer components are available through Tools only.',
+            )
 
         readiness_values = {
             str(component.get(field) or '').strip().casefold().replace('-', '_')
@@ -2505,30 +2512,25 @@ class AnimationWebInterface:
         }
         blocked = sorted(readiness_values & forbidden_readiness)
         if blocked:
-            return {
-                'take_look_enabled': False,
-                'code': blocked[0],
-                'reason': f"Component readiness is {blocked[0].replace('_', ' ')}.",
-            }
+            return decision(
+                blocked[0], f"Component readiness is {blocked[0].replace('_', ' ')}."
+            )
 
         compatibility = component.get('compatibility')
         if not isinstance(compatibility, dict):
             compatibility = {}
         if compatibility.get('composable') is not True:
-            return {
-                'take_look_enabled': False,
-                'code': 'not_composable',
-                'reason': str(
+            return decision(
+                'not_composable',
+                str(
                     compatibility.get('diagnostic')
                     or 'The component is not composable as a background.'
                 ),
-            }
+            )
         if compatibility.get('implementation_loaded') is not True:
-            return {
-                'take_look_enabled': False,
-                'code': 'build_only',
-                'reason': 'The Host Python implementation is not loaded.',
-            }
+            return decision(
+                'build_only', 'The Host Python implementation is not loaded.'
+            )
 
         getter = getattr(self.preview_manager, 'get_animation_info', None)
         try:
@@ -2536,19 +2538,18 @@ class AnimationWebInterface:
         except (KeyError, TypeError, ValueError):
             loaded = None
         if not loaded:
-            return {
-                'take_look_enabled': False,
-                'code': 'implementation_unavailable',
-                'reason': 'The preview manager has not loaded this implementation.',
-            }
-        return {
-            'take_look_enabled': False,
-            'code': 'guarded_activation_required',
-            'reason': (
+            return decision(
+                'implementation_unavailable',
+                'The preview manager has not loaded this implementation.',
+            )
+        return decision(
+            'guarded_activation_required',
+            (
                 'Preview is ready. Taking it live requires Composer Check and '
                 'guarded activation.'
             ),
-        }
+            eligible=True,
+        )
 
     @staticmethod
     def _studio_next_preview(
@@ -2639,7 +2640,7 @@ class AnimationWebInterface:
                     provider, descriptor_preview, asset_preview
                 )
             )
-            component['action'] = self._studio_next_look_action(
+            component['action'] = self._studio_next_composer_eligibility(
                 component, provider_collision=collision
             )
             component['preset_keys'] = []
@@ -2738,6 +2739,10 @@ class AnimationWebInterface:
                     if isinstance(definition, dict) and 'default' in definition
                 }
             )
+            if provider == 'python':
+                for name in LEGACY_PLANT_MASK_PATH_PARAMETERS:
+                    schema.pop(name, None)
+                    defaults.pop(name, None)
             entrypoint = str(raw.get('entrypoint') or '')
             class_name = (
                 entrypoint.rsplit(':', 1)[-1]
@@ -2840,7 +2845,9 @@ class AnimationWebInterface:
                         'component_key': f'{provider}:{plugin_id}',
                         'provider': provider,
                         'plugin_id': plugin_id,
-                        'params': json.loads(json.dumps(payload['params'])),
+                        'params': self._browser_composer_params(
+                            provider, payload['params']
+                        ),
                         'preset_fingerprint': self._component_preset_fingerprint(payload),
                     })
                     preset_records.append(preset)
@@ -3048,6 +3055,47 @@ class AnimationWebInterface:
             raise ValueError(f'Unknown component: {identity}')
         return matches[0]
 
+    @staticmethod
+    def _browser_composer_params(
+        provider: str, params: Any
+    ) -> Dict[str, Any]:
+        """Copy parameters while removing host-only mask paths from Python."""
+        result = json.loads(json.dumps(params)) if isinstance(params, dict) else {}
+        if provider == 'python':
+            for name in LEGACY_PLANT_MASK_PATH_PARAMETERS:
+                result.pop(name, None)
+        return result
+
+    @staticmethod
+    def _reject_retired_browser_composer_params(
+        provider: str, params: Any
+    ) -> None:
+        """Fail closed when a browser input injects a host filesystem path."""
+        if provider != 'python' or not isinstance(params, dict):
+            return
+        retired = sorted(LEGACY_PLANT_MASK_PATH_PARAMETERS & params.keys())
+        if retired:
+            raise ValueError(
+                'browser Composer rejects retired plant-mask path parameters '
+                f"({', '.join(retired)}); use managed installation-profile geometry"
+            )
+
+    def _reject_retired_browser_scene_params(self, scene: Dict[str, Any]) -> None:
+        components = [scene.get('background'), scene.get('known_python_fallback')]
+        components.extend(
+            overlay.get('component')
+            for overlay in scene.get('overlays', [])
+            if isinstance(overlay, dict)
+        )
+        for component in components:
+            if not isinstance(component, dict):
+                continue
+            provider = component.get('provider')
+            for field in ('parameter_overrides', 'resolved_parameters'):
+                self._reject_retired_browser_composer_params(
+                    provider, component.get(field)
+                )
+
     def _browser_scene_catalog(self) -> List[Dict[str, Any]]:
         """Return catalog records with runtime-bound browser capabilities."""
         return self._browser_composer_bootstrap()['components']
@@ -3125,6 +3173,7 @@ class AnimationWebInterface:
                 scene = self._validated_scene_request(
                     raw_scene, browser_purpose='import'
                 )
+            self._reject_retired_browser_scene_params(scene)
             background = scene['background']
             browser_catalog = self._browser_scene_catalog()
             descriptor = self._browser_composer_component(
@@ -3180,6 +3229,7 @@ class AnimationWebInterface:
             )
         plugin_id = descriptor['plugin_id']
         provider = descriptor['provider']
+        self._reject_retired_browser_composer_params(provider, params)
         error = self._validate_animation_params(plugin_id, params)
         if error:
             raise ValueError(error)
@@ -3240,6 +3290,7 @@ class AnimationWebInterface:
         params = payload.get('params')
         if not isinstance(params, dict):
             raise ValueError('preset params must be an object')
+        self._reject_retired_browser_composer_params(provider, params)
         error = self._validate_animation_params(plugin_id, params)
         if error:
             raise ValueError(error)
@@ -3345,69 +3396,6 @@ class AnimationWebInterface:
                     raise SceneValidationError(
                         f"Component preset {component_id}/{preset_id} does not exist"
                     )
-        return scene
-
-    def _validated_studio_next_scene_request(
-        self, payload: Any
-    ) -> Dict[str, Any]:
-        """Enforce Studio Next's ready Host background plus fixed-clock slice."""
-        scene = self._validated_scene_request(payload)
-        catalog = self._component_catalog()
-        descriptors = {
-            (item.get('provider'), item.get('plugin_id')): item
-            for item in catalog
-            if isinstance(item.get('provider'), str)
-            and isinstance(item.get('plugin_id'), str)
-        }
-        background = scene['background']
-        descriptor = descriptors.get(
-            (background.get('provider'), background.get('plugin_id'))
-        )
-        if descriptor is None:
-            raise SceneValidationError('Studio Next background is not in the catalog')
-        action = self._studio_next_look_action(descriptor)
-        if not action['take_look_enabled']:
-            raise SceneValidationError(
-                f"Studio Next background is unavailable: {action['reason']}"
-            )
-        fallback = scene['known_python_fallback']
-        if (
-            fallback.get('provider') != background.get('provider')
-            or fallback.get('plugin_id') != background.get('plugin_id')
-        ):
-            raise SceneValidationError(
-                'Studio Next requires the known Python fallback to match its Host background'
-            )
-        overlays = scene['overlays']
-        if len(overlays) > 1:
-            raise SceneValidationError('Studio Next supports at most one clock overlay')
-        if overlays:
-            overlay = overlays[0]
-            component = overlay['component']
-            overlay_descriptor = descriptors.get(
-                (component.get('provider'), component.get('plugin_id'))
-            )
-            readiness_values = {
-                str(overlay_descriptor.get(field) or '')
-                .strip().casefold().replace('-', '_')
-                for field in ('status', 'availability', 'readiness')
-            } if overlay_descriptor is not None else set()
-            blocked_readiness = readiness_values & {
-                'build_only', 'unavailable', 'quarantined', 'disabled', 'error',
-            }
-            if (
-                overlay.get('slot_id') != 'clock_overlay'
-                or component.get('provider') != 'python'
-                or component.get('plugin_id') != 'clock_overlay'
-                or overlay_descriptor is None
-                or overlay_descriptor.get('role') != 'overlay'
-                or overlay_descriptor.get('gallery') != 'show'
-                or overlay_descriptor.get('is_test') is True
-                or blocked_readiness
-            ):
-                raise SceneValidationError(
-                    'Studio Next supports only the ready Host Python clock_overlay slot'
-                )
         return scene
 
     def _scene_preset_diagnostics(

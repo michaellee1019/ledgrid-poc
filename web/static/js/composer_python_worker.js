@@ -55,6 +55,41 @@ function postObsolete(message, generation) {
     });
 }
 
+function batchRenders(message) {
+    const renders = message?.renders;
+    if (!Array.isArray(renders) || renders.length < 1 || renders.length > 8) {
+        throw new Error('Render batch must contain 1-8 requests.');
+    }
+    const instanceIds = renders.map((render) => render?.instanceId || 'primary');
+    if (new Set(instanceIds).size !== instanceIds.length) {
+        throw new Error('Render batch instance IDs must be distinct.');
+    }
+    renders.forEach(renderGeneration);
+    return renders;
+}
+
+function batchIsObsolete(renders) {
+    return renders.some((render) => (
+        render.generation < (
+            latestRenderGeneration.get(render.instanceId || 'primary')
+            || render.generation
+        )
+    ));
+}
+
+function postObsoleteBatch(message, renders) {
+    self.postMessage({
+        type: 'obsoleteBatch',
+        requestId: message.requestId,
+        renders: renders.map((render) => ({
+            instanceId: render.instanceId || 'primary',
+            generation: render.generation,
+            latestGeneration: latestRenderGeneration.get(render.instanceId || 'primary'),
+        })),
+        engine: ENGINE,
+    });
+}
+
 function validatedAssetUrl(value) {
     if (typeof value !== 'string' || !value) {
         throw new Error('The Python browser renderer source bundle is unavailable.');
@@ -116,7 +151,7 @@ function installationProfileDescriptor(value) {
     return {digest, url: url.href};
 }
 
-async function verifyInstallationProfile(value) {
+async function verifyInstallationProfile(value, suppliedArtifact = null) {
     const expected = installationProfileDescriptor(value);
     if (verifiedProfile) {
         if (verifiedProfile.digest !== expected.digest || verifiedProfile.url !== expected.url) {
@@ -127,18 +162,26 @@ async function verifyInstallationProfile(value) {
     if (!self.crypto?.subtle) {
         throw new Error('Cryptographic verification is unavailable; installation profile rejected.');
     }
-    const response = await fetch(expected.url, {
-        cache: 'no-store',
-        headers: {'Accept': 'application/octet-stream'},
-    });
-    if (!response.ok) {
-        throw new Error(`Could not load the selected installation profile (${response.status}).`);
+    let bytes;
+    let etag;
+    if (suppliedArtifact?.bytes instanceof ArrayBuffer) {
+        bytes = new Uint8Array(suppliedArtifact.bytes);
+        etag = typeof suppliedArtifact.etag === 'string' ? suppliedArtifact.etag : null;
+    } else {
+        const response = await fetch(expected.url, {
+            cache: 'no-store',
+            headers: {'Accept': 'application/octet-stream'},
+        });
+        if (!response.ok) {
+            throw new Error(`Could not load the selected installation profile (${response.status}).`);
+        }
+        etag = response.headers.get('ETag');
+        bytes = new Uint8Array(await response.arrayBuffer());
     }
-    const etag = response.headers.get('ETag')?.replace(/^W\//, '').replace(/^"|"$/g, '');
+    etag = etag?.replace(/^W\//, '').replace(/^"|"$/g, '');
     if (etag && etag !== expected.digest) {
         throw new Error('The installation-profile response ETag does not match the selected digest.');
     }
-    const bytes = new Uint8Array(await response.arrayBuffer());
     canonicalProfileHeader(bytes);
     const embedded = digestHex(bytes.subarray(
         PROFILE_DIGEST_OFFSET,
@@ -222,7 +265,10 @@ function copyPythonBytes(value) {
 async function initialize(message) {
     const [pyodide, profile] = await Promise.all([
         ensureRuntime(message.assetUrl),
-        verifyInstallationProfile(message.installationProfile),
+        verifyInstallationProfile(
+            message.installationProfile,
+            message.installationProfileArtifact,
+        ),
     ]);
     await ensurePluginPackages(pyodide, message.pluginId);
     pyodide.FS.writeFile(PROFILE_PATH, profile.bytes);
@@ -264,7 +310,7 @@ async function render(message) {
         params: message.params || {},
         wallTime: message.wallTime ?? null,
     }));
-    const resultJson = await pyodide.runPythonAsync(
+    const resultJson = pyodide.runPython(
         '_ledgrid_browser_runtime.render_json(_ledgrid_payload_json)'
     );
     if (generation < (latestRenderGeneration.get(instanceId) || generation)) {
@@ -290,6 +336,68 @@ async function render(message) {
         frameFormat: result.frameFormat,
         wallClockFixed: result.wallClockFixed,
         renderMs: result.renderMs,
+        engine: ENGINE,
+    }, [pixels.buffer]);
+}
+
+async function renderBatch(message) {
+    if (!runtimeReady) {
+        throw new Error('The Python browser renderer has not been initialized.');
+    }
+    const renders = batchRenders(message);
+    if (batchIsObsolete(renders)) {
+        postObsoleteBatch(message, renders);
+        return;
+    }
+    const pyodide = await ensurePyodide();
+    pyodide.globals.set('_ledgrid_payload_json', JSON.stringify({
+        renders: renders.map((render) => ({
+            instanceId: render.instanceId || 'primary',
+            elapsed: render.elapsed,
+            frameIndex: render.frameIndex,
+            params: render.params || {},
+            wallTime: render.wallTime ?? null,
+        })),
+    }));
+    const resultJson = pyodide.runPython(
+        '_ledgrid_browser_runtime.render_batch_json(_ledgrid_payload_json)'
+    );
+    if (batchIsObsolete(renders)) {
+        postObsoleteBatch(message, renders);
+        return;
+    }
+    const frames = JSON.parse(resultJson);
+    if (!Array.isArray(frames) || frames.length !== renders.length) {
+        throw new Error('The Python renderer returned an invalid frame batch.');
+    }
+    const pythonBytes = pyodide.runPython(
+        '_ledgrid_browser_runtime.batch_frame_bytes'
+    );
+    const pixels = copyPythonBytes(pythonBytes);
+    let expectedOffset = 0;
+    frames.forEach((frame, index) => {
+        const render = renders[index];
+        if (
+            frame.instanceId !== (render.instanceId || 'primary')
+            || !Number.isSafeInteger(frame.byteOffset)
+            || !Number.isSafeInteger(frame.byteLength)
+            || frame.byteOffset !== expectedOffset
+            || frame.byteLength < 1
+            || frame.byteOffset + frame.byteLength > pixels.byteLength
+        ) {
+            throw new Error('The Python renderer returned invalid frame-batch offsets.');
+        }
+        frame.generation = render.generation;
+        expectedOffset += frame.byteLength;
+    });
+    if (expectedOffset !== pixels.byteLength) {
+        throw new Error('The Python renderer returned trailing frame-batch bytes.');
+    }
+    self.postMessage({
+        type: 'frameBatch',
+        requestId: message.requestId,
+        frames,
+        pixels: pixels.buffer,
         engine: ENGINE,
     }, [pixels.buffer]);
 }
@@ -342,6 +450,7 @@ async function dispatch(message) {
     }
     if (message.type === 'init') return initialize(message);
     if (message.type === 'render') return render(message);
+    if (message.type === 'renderBatch') return renderBatch(message);
     if (message.type === 'dispose') return dispose(message);
     if (message.type === 'prepare') return prepare(message);
     throw new Error(`Unsupported Python renderer message: ${String(message.type)}`);
@@ -359,6 +468,21 @@ self.onmessage = (event) => {
             );
         } catch (error) {
             postError(message?.requestId, message?.instanceId, error);
+            return;
+        }
+    }
+    if (message?.type === 'renderBatch') {
+        try {
+            for (const render of batchRenders(message)) {
+                const generation = renderGeneration(render);
+                const instanceId = render.instanceId || 'primary';
+                latestRenderGeneration.set(
+                    instanceId,
+                    Math.max(generation, latestRenderGeneration.get(instanceId) || 0),
+                );
+            }
+        } catch (error) {
+            postError(message?.requestId, 'batch', error);
             return;
         }
     }

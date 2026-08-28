@@ -122,8 +122,8 @@ The canary passes only when:
   controller service presents a complete host frame and restores the desired
   Python scene;
 - the selected receiver is reflashed with the feature-off production image and
-  the full-wall status, dense 60-second streamed canary, and animation sweep pass
-  again before the canary is closed.
+  the full-wall status and receipt-bound dense 60-second streamed observers pass
+  again for every required Python scene before the canary is closed.
 
 The portable five-receiver compensation test must sample every receiver at one
 shared host instant and keep scene-time skew at or below 5 ms. That bound is a
@@ -136,12 +136,11 @@ receiver telemetry cannot observe downstream LED wiring.
 Run a dense, changing animation for at least 60 seconds at the installed 160 FPS
 full-frame target. This proves production pipeline capacity; it does not qualify
 the downstream physical strip links. Use
-`just receiver-acceptance device=0 duration=60 min_fps=150 target_fps=160`;
-the recipe also accepts positional arguments and defaults. The capacity gate
-temporarily neutralizes manager-global plant modifiers so operator optics cannot
-turn a transport measurement into an animation-cost measurement, then restores
-and verifies the exact prior target, modifier state, and scene after either
-success or failure.
+`just receiver-acceptance "$SCENE_DIGEST" device=0 duration=60 min_fps=150
+target_fps=160`; `SCENE_DIGEST` is the exact canonical digest from the guarded
+Composer activation receipt. The capacity gate is observation-only: it verifies
+the exact pre-activated Python scene and expected target FPS before measuring and
+again afterward. It never starts, stops, neutralizes, or restores wall state.
 The reported rate uses the monotonic interval between the first and last
 receiver-counter samples; HTTP request time before the first sample and cleanup
 time cannot dilute the measured cadence.
@@ -171,10 +170,11 @@ The capacity gate passes only when receiver telemetry shows:
 
 WS2812 lanes have no return channel. Receiver CRC and DMA telemetry therefore
 cannot detect a flash caused by a marginal data/power connection downstream of
-the ESP32. After the electronic gates pass, run `just output-rate-sweep` while
-watching the affected strips. Retain the highest target with no visible flash;
-the installed wall defaults to 160 FPS until that qualification is
-complete. A rate is not accepted merely because receiver counters are clean.
+the ESP32. After the electronic gates pass, set one target through the guarded
+operator surface, then run `just output-rate-observation "$SCENE_DIGEST"
+rate=160` while watching the affected strips. Repeat with a fresh guarded
+receipt for any state change. A rate is not accepted merely because receiver
+counters are clean.
 
 If any integrity criterion fails, do not roll out. Timing thresholds may be revised
 only with measured evidence and an updated theoretical budget.
@@ -184,8 +184,7 @@ only with measured evidence and an updated theoretical budget.
 After all five controllers are flashed:
 
 ```bash
-just receiver-streamed-wall-acceptance duration=60 min_fps=150 target_fps=160
-just live-animation-sweep seconds=2
+just receiver-streamed-wall-acceptance "$SCENE_DIGEST" duration=60 min_fps=150 target_fps=160
 ```
 
 The trailing `key=value` arguments are normalized by the Just recipes; literal
@@ -198,9 +197,8 @@ cannot qualify the finalized wall:
 
 ```bash
 just receiver-phase3a-status-degraded-spi1
-just receiver-streamed-wall-acceptance-degraded-spi1 \
+just receiver-streamed-wall-acceptance-degraded-spi1 "$SCENE_DIGEST" \
   duration=60 min_fps=150 target_fps=160
-just live-animation-sweep-degraded-spi1 seconds=2
 ```
 
 That explicit policy requires full v3 identity, capability, integrity, timing,
@@ -214,9 +212,9 @@ their receiver integrity and physical display output are unverified. A human
 must visually inspect all SPI1 lanes throughout the run; outbound host counters
 do not prove that an ESP32 received, decoded, or displayed a frame.
 
-The separately named degraded live sweep applies that same exact topology on
-every animation. Strict `live-animation-sweep` requires telemetry from all five
-receivers and never silently skips a missing return path.
+The multi-animation live sweep is retired: changing every scene requires a fresh
+Composer Check and guarded activation, so the tool now fails before network or
+wall changes. Exercise each scene separately with its receipt-bound observer.
 Because metrics can be sampled while the parallel SPI workers are presenting a
 frame, per-device host frame deltas may differ by one at a sample boundary; a
 spread greater than one fails the degraded sweep.
@@ -269,9 +267,10 @@ It proves visible continuity for the then-current installed mapping; it does not
 prove receiver acknowledgement, integrity counters, timing, or release
 acceptance on logical receivers 2/3.
 
-- run the dense canary load for 60 seconds, then the complete animation sweep;
-- the live animation sweep starts every registered plugin and observes no host
-  SPI or receiver integrity-counter increase while it runs;
+- activate each required scene with a separate Composer Check + guarded
+  activation, then run its receipt-bound dense observer for 60 seconds;
+- no per-scene observer reports a host SPI or receiver integrity-counter
+  increase;
 - host SPI errors remain zero;
 - every receiver with a connected MISO path meets the canary integrity criteria;
 - no controller visibly freezes, tears, changes brightness, or reorders lanes;
@@ -329,12 +328,14 @@ Use the API-only evidence recipes only after H0/H1 authorize the explicit native
 canary:
 
 ```bash
-just receiver-native-h2-evidence
-just receiver-native-h4-default-soak
-just receiver-native-h4-maximum-soak
+just receiver-native-h2-evidence "$SCENE_DIGEST"
+just receiver-native-h4-default-soak "$SCENE_DIGEST"
+just receiver-native-h4-maximum-soak "$SCENE_DIGEST"
 ```
 
-Each defaults to 1,800 seconds. The H2 runner slice proves exact IDs `0..4`,
+Each requires the exact canonical scene digest from the guarded Composer
+activation receipt, verifies it at every sample, performs no mutation or cleanup,
+and defaults to 1,800 seconds. The H2 runner slice proves exact IDs `0..4`,
 heterogeneous widths/offsets/directions, unanimous bundle/payload/parameter,
 context/profile/vibe/plant agreement, counter continuity, and measured start
 skew/drift. It does not perform stage/unplug compensation, boundary/lease/restart
@@ -344,17 +345,17 @@ The separate H4 runs exercise authored-default and maximum-work native parameter
 with the exact enabled Clock overlay and stale policy. They retain sampled
 render/composite/encode/display values without calling them receiver event
 histograms, plus SPI, memory/cache, reset/boot, watchdog, error, cadence, skew, and
-drift series. Each run must return to the recorded Python full scene without a
-reboot or flash. Retained timing distributions and rollback artifacts, plus the
-other H4 soak, remain explicit companion evidence.
+drift series. The runner never changes or restores the scene. An explicit
+guarded fallback/takeover exercise, retained timing distributions and rollback
+artifacts, plus the other H4 soak, remain companion evidence.
 
 Short durations are supporting diagnostics only. A complete-gate claim requires
 both requested and observed duration of at least 1,800 seconds and validates only
 same-release/same-artifact companion reports with nonempty evidence for every
 outstanding subgate. Reports enumerate covered and outstanding subgates and remain
 failed when any required status field, exact binding, Clock state, reset/cadence
-counter, or Python restoration proof is missing. No H2 or H4 gate is accepted by
-the portable runner alone.
+counter, or guarded fallback/takeover proof is missing. No H2 or H4 gate is
+accepted by the portable runner alone.
 
 ## Rollback, fallback, and quarantine
 

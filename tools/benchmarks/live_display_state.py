@@ -1,184 +1,99 @@
-"""Capture and restore live scene state around mutating hardware acceptance.
+"""Read-only binding helpers for live acceptance tools.
 
-Acceptance tools must not quietly become operator controls.  They may select a
-test scene for the duration of a measurement, but they either restore the
-previous scene (including its resolved parameters and overlays) or stop again
-when the wall was initially idle.  Restoration is verified through the public
-scene API so a queued command cannot be mistaken for a completed cleanup.
+Acceptance tools are observers, not alternate operator controls. A caller must
+name the exact canonical scene digest that Composer already activated. These
+helpers reject idle, malformed, changed, or differently parameterized scenes
+before a measurement begins and never attempt cleanup or restoration.
 """
 
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass
-import time
+import hashlib
+import json
+import re
 from typing import Any, Callable, Mapping
 
 
+DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+
+
 class DisplayStateError(RuntimeError):
-    """The live display could not be captured or restored exactly."""
+    """The exact pre-activated live display identity was not observed."""
 
 
 @dataclass(frozen=True)
-class SceneSnapshot:
-    active: bool
-    scene: dict[str, Any] | None
+class ActiveDisplayIdentity:
+    scene_digest: str
+    scene_revision: int
+    provider: str
+    plugin_id: str
 
 
-def capture_scene(base_url: str, get_json: Callable[[str], Any]) -> SceneSnapshot:
-    """Capture the canonical public scene before an acceptance mutation."""
-    payload = get_json(f"{base_url}/api/v1/scene")
-    if not isinstance(payload, Mapping) or not isinstance(payload.get("active"), bool):
-        raise DisplayStateError("live scene snapshot is unavailable or malformed")
-    active = payload["active"]
-    scene = payload.get("scene")
-    if active and not isinstance(scene, Mapping):
-        raise DisplayStateError("active live scene snapshot has no canonical scene")
-    if not active:
-        scene = None
-    return SceneSnapshot(active=active, scene=deepcopy(dict(scene)) if scene else None)
+def canonical_scene_digest(scene: Mapping[str, Any]) -> str:
+    """Return the stable identity of one complete canonical scene document."""
+
+    try:
+        encoded = json.dumps(
+            dict(scene), sort_keys=True, separators=(",", ":"),
+            ensure_ascii=True, allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise DisplayStateError("active scene is not canonical JSON") from exc
+    return hashlib.sha256(encoded).hexdigest()
 
 
-def _matches(snapshot: SceneSnapshot, payload: Any) -> bool:
-    if not isinstance(payload, Mapping) or payload.get("active") is not snapshot.active:
-        return False
-    if not snapshot.active:
-        return payload.get("scene") is None
-    return payload.get("scene") == snapshot.scene
-
-
-def restore_scene(
+def require_active_scene(
     base_url: str,
-    snapshot: SceneSnapshot,
-    *,
+    expected_scene_digest: str,
     get_json: Callable[[str], Any],
-    post_json: Callable[[str, Any], Any],
-    delete_json: Callable[[str], Any],
-    timeout: float = 5.0,
-    poll_interval: float = 0.1,
-    clock: Callable[[], float] = time.monotonic,
-    sleeper: Callable[[float], None] = time.sleep,
-) -> None:
-    """Restore and verify a prior scene, raising if cleanup is incomplete."""
-    scene_url = f"{base_url}/api/v1/scene"
-    if snapshot.active:
-        post_json(scene_url, snapshot.scene)
-    else:
-        delete_json(scene_url)
+    *,
+    expected_plugin: str | None = None,
+    expected_provider: str | None = None,
+) -> ActiveDisplayIdentity:
+    """Observe and bind the exact Composer-activated scene without mutating it."""
 
-    deadline = clock() + timeout
-    last_payload = None
-    while True:
-        last_payload = get_json(scene_url)
-        if _matches(snapshot, last_payload):
-            return
-        if clock() >= deadline:
-            break
-        sleeper(poll_interval)
-    raise DisplayStateError(
-        "live scene restoration was not observed before timeout: "
-        f"expected active={snapshot.active}, observed={last_payload!r}"
-    )
-
-
-def capture_target_fps(base_url: str, get_json: Callable[[str], Any]) -> int:
-    """Capture the live manager cadence from the public metrics payload."""
-    payload = get_json(f"{base_url}/api/metrics")
-    animation = payload.get("animation") if isinstance(payload, Mapping) else None
-    value = animation.get("target_fps") if isinstance(animation, Mapping) else None
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 200:
-        raise DisplayStateError("live target FPS snapshot is unavailable or invalid")
-    return value
-
-
-def capture_plant_modifiers(
-    base_url: str, get_json: Callable[[str], Any]
-) -> dict[str, Any]:
-    """Capture manager-global plant optics from the public status payload."""
+    if DIGEST_PATTERN.fullmatch(expected_scene_digest or "") is None:
+        raise DisplayStateError(
+            "--expected-scene-digest must be the 64-character digest from the "
+            "guarded Composer activation receipt"
+        )
     payload = get_json(f"{base_url}/api/status")
-    value = payload.get("plant_modifiers") if isinstance(payload, Mapping) else None
-    if not isinstance(value, Mapping):
+    if not isinstance(payload, Mapping):
+        raise DisplayStateError("live status is unavailable or malformed")
+    scene = payload.get("scene_state")
+    if not isinstance(scene, Mapping):
         raise DisplayStateError(
-            "live plant modifier snapshot is unavailable or malformed"
+            "no canonical active scene is observable; activate it through "
+            "Composer Check + guarded activation first"
         )
-    active = value.get("active")
-    strengths = value.get("strengths")
-    version = value.get("version")
-    if (
-        isinstance(version, bool)
-        or not isinstance(version, int)
-        or version < 1
-        or not isinstance(active, list)
-        or not all(isinstance(item, str) and item for item in active)
-        or not isinstance(strengths, Mapping)
-    ):
+    revision = scene.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+        raise DisplayStateError("active scene revision is unavailable or invalid")
+    background = scene.get("background")
+    if not isinstance(background, Mapping):
+        raise DisplayStateError("active scene background identity is unavailable")
+    provider = background.get("provider", "python")
+    plugin_id = background.get("plugin_id")
+    if not isinstance(provider, str) or not isinstance(plugin_id, str):
+        raise DisplayStateError("active scene background identity is malformed")
+    observed_digest = canonical_scene_digest(scene)
+    if observed_digest != expected_scene_digest:
         raise DisplayStateError(
-            "live plant modifier snapshot is unavailable or malformed"
+            "active scene identity does not match the guarded activation receipt: "
+            f"expected {expected_scene_digest}, observed {observed_digest}"
         )
-    return deepcopy(dict(value))
-
-
-def restore_target_fps(
-    base_url: str,
-    target_fps: int,
-    *,
-    get_json: Callable[[str], Any],
-    post_json: Callable[[str, Any], Any],
-    timeout: float = 5.0,
-    poll_interval: float = 0.1,
-    clock: Callable[[], float] = time.monotonic,
-    sleeper: Callable[[float], None] = time.sleep,
-) -> None:
-    """Restore and verify the manager cadence after an output-rate sweep."""
-    post_json(f"{base_url}/api/config/target-fps", {"target_fps": target_fps})
-    deadline = clock() + timeout
-    observed = None
-    while True:
-        payload = get_json(f"{base_url}/api/metrics")
-        animation = payload.get("animation") if isinstance(payload, Mapping) else None
-        observed = animation.get("target_fps") if isinstance(animation, Mapping) else None
-        if observed == target_fps:
-            return
-        if clock() >= deadline:
-            break
-        sleeper(poll_interval)
-    raise DisplayStateError(
-        f"target FPS restoration was not observed: expected {target_fps}, "
-        f"observed {observed!r}"
-    )
-
-
-def restore_plant_modifiers(
-    base_url: str,
-    plant_modifiers: Mapping[str, Any],
-    *,
-    get_json: Callable[[str], Any],
-    post_json: Callable[[str, Any], Any],
-    timeout: float = 5.0,
-    poll_interval: float = 0.1,
-    clock: Callable[[], float] = time.monotonic,
-    sleeper: Callable[[float], None] = time.sleep,
-) -> None:
-    """Apply and verify manager-global plant optics through the public API."""
-    expected = deepcopy(dict(plant_modifiers))
-    post_json(
-        f"{base_url}/api/config/plant-modifiers",
-        {"plant_modifiers": expected},
-    )
-    deadline = clock() + timeout
-    observed = None
-    while True:
-        payload = get_json(f"{base_url}/api/status")
-        observed = (
-            payload.get("plant_modifiers")
-            if isinstance(payload, Mapping) else None
+    if expected_plugin is not None and plugin_id != expected_plugin:
+        raise DisplayStateError(
+            f"active background is {plugin_id!r}, expected {expected_plugin!r}"
         )
-        if observed == expected:
-            return
-        if clock() >= deadline:
-            break
-        sleeper(poll_interval)
-    raise DisplayStateError(
-        "plant modifier restoration was not observed: "
-        f"expected {expected!r}, observed {observed!r}"
+    if expected_provider is not None and provider != expected_provider:
+        raise DisplayStateError(
+            f"active provider is {provider!r}, expected {expected_provider!r}"
+        )
+    return ActiveDisplayIdentity(
+        scene_digest=observed_digest,
+        scene_revision=revision,
+        provider=provider,
+        plugin_id=plugin_id,
     )

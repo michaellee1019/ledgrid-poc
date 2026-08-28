@@ -150,6 +150,18 @@ class BrowserComposerCatalogAcceptanceTests(unittest.TestCase):
         self.assertFalse(painter["browser_runtime"]["supported"])
         self.assertIn("separate compatibility editor", painter["browser_runtime"]["reason"])
 
+    def test_every_python_browser_payload_uses_managed_profile_geometry_only(self) -> None:
+        payload = self._bootstrap(AnimationPipelineFeatureFlags())
+        retired = {"plant_mask_path", "plant_globe_mask_path"}
+        for component in payload["components"]:
+            if component["provider"] != "python":
+                continue
+            with self.subTest(component=component["key"]):
+                self.assertTrue(retired.isdisjoint(component["parameter_schema"]))
+                self.assertTrue(retired.isdisjoint(component["defaults"]))
+                for preset in component["presets"]:
+                    self.assertTrue(retired.isdisjoint(preset["params"]))
+
 
 if __name__ == "__main__":
     unittest.main()

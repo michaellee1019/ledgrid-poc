@@ -10,23 +10,9 @@ import time
 from urllib import request
 
 if __package__:
-    from tools.benchmarks.live_display_state import (
-        capture_plant_modifiers,
-        capture_scene,
-        capture_target_fps,
-        restore_plant_modifiers,
-        restore_scene,
-        restore_target_fps,
-    )
+    from tools.benchmarks.live_display_state import require_active_scene
 else:  # Direct script execution from the documented Just recipes.
-    from live_display_state import (
-        capture_plant_modifiers,
-        capture_scene,
-        capture_target_fps,
-        restore_plant_modifiers,
-        restore_scene,
-        restore_target_fps,
-    )
+    from live_display_state import require_active_scene
 
 
 CAPABILITY_STATIC_LOCAL_BACKGROUND = 1 << 0
@@ -414,12 +400,6 @@ def _post_json(url, payload):
         return json.load(response)
 
 
-def _delete_json(url):
-    req = request.Request(url, method="DELETE")
-    with request.urlopen(req, timeout=5) as response:
-        return json.load(response)
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://ledgridwall.local:5000")
@@ -435,11 +415,15 @@ def main():
     parser.add_argument("--warmup", type=float, default=3.0)
     parser.add_argument("--animation", default="rainbow")
     parser.add_argument(
+        "--expected-scene-digest",
+        help="exact digest from the guarded Composer activation receipt",
+    )
+    parser.add_argument(
         "--min-displayed-fps", type=float, default=DEFAULT_MIN_DISPLAYED_FPS,
     )
     parser.add_argument(
         "--target-fps", type=int, default=DEFAULT_TARGET_FPS,
-        help="temporary streamed test cadence; the exact prior value is restored",
+        help="expected already-active cadence; this observer never changes it",
     )
     parser.add_argument(
         "--phase3a-status-only",
@@ -509,26 +493,17 @@ def main():
         )
         print(json.dumps(result, indent=2, sort_keys=True))
         raise SystemExit(0 if result["passed"] else 1)
-    snapshot = capture_scene(base_url, _get_json)
-    original_target_fps = capture_target_fps(base_url, _get_json)
-    original_plant_modifiers = capture_plant_modifiers(base_url, _get_json)
+    if not args.expected_scene_digest:
+        parser.error(
+            "--expected-scene-digest is required for observation-only acceptance"
+        )
     run_failure = None
-    target_fps_cleanup_failure = None
-    scene_cleanup_failure = None
-    plant_modifier_cleanup_failure = None
-    plant_modifiers_neutralized = False
     result = None
     try:
-        restore_target_fps(
-            base_url, args.target_fps, get_json=_get_json, post_json=_post_json,
+        identity = require_active_scene(
+            base_url, args.expected_scene_digest, _get_json,
+            expected_plugin=args.animation, expected_provider="python",
         )
-        restore_plant_modifiers(
-            base_url, NEUTRAL_PLANT_MODIFIERS,
-            get_json=_get_json, post_json=_post_json,
-        )
-        plant_modifiers_neutralized = True
-        if args.animation:
-            _post_json(f"{base_url}/api/start/{args.animation}", {})
         time.sleep(args.warmup)
 
         devices_to_check = args.devices or [0]
@@ -537,6 +512,15 @@ def main():
         while True:
             metrics = _get_json(f"{base_url}/api/metrics")
             sampled_at = time.monotonic()
+            observed_target = int(
+                metrics.get("animation", {}).get("target_fps", 0) or 0
+            )
+            if observed_target != args.target_fps:
+                raise RuntimeError(
+                    f"active target FPS is {observed_target}, expected "
+                    f"{args.target_fps}; change it through the guarded operator "
+                    "surface before measuring"
+                )
             devices = metrics.get("driver", {}).get("devices", [])
             for device in devices_to_check:
                 if device >= len(devices):
@@ -595,52 +579,22 @@ def main():
                 "host-side outbound counters; receiver integrity and physical "
                 "display output require visual verification and remain unproven"
             ] if write_only_devices else [])
+        require_active_scene(
+            base_url, args.expected_scene_digest, _get_json,
+            expected_plugin=args.animation, expected_provider="python",
+        )
+        result["observation_only"] = True
+        result["active_identity"] = identity.__dict__
     except Exception as exc:
         run_failure = str(exc)
-    finally:
-        try:
-            restore_target_fps(
-                base_url, original_target_fps, get_json=_get_json,
-                post_json=_post_json,
-            )
-        except Exception as exc:
-            target_fps_cleanup_failure = str(exc)
-        try:
-            restore_plant_modifiers(
-                base_url, original_plant_modifiers,
-                get_json=_get_json, post_json=_post_json,
-            )
-        except Exception as exc:
-            plant_modifier_cleanup_failure = str(exc)
-        try:
-            restore_scene(
-                base_url, snapshot, get_json=_get_json, post_json=_post_json,
-                delete_json=_delete_json,
-            )
-        except Exception as exc:
-            scene_cleanup_failure = str(exc)
 
     if run_failure:
-        result = {"passed": False, "failures": [run_failure]}
+        result = {
+            "passed": False,
+            "observation_only": True,
+            "failures": [run_failure],
+        }
     assert result is not None
-    result["scene_restored"] = scene_cleanup_failure is None
-    result["target_fps_restored"] = target_fps_cleanup_failure is None
-    result["plant_modifiers_neutralized"] = plant_modifiers_neutralized
-    result["plant_modifiers_restored"] = plant_modifier_cleanup_failure is None
-    cleanup_failures = []
-    if target_fps_cleanup_failure:
-        cleanup_failures.append(f"target FPS: {target_fps_cleanup_failure}")
-    if scene_cleanup_failure:
-        cleanup_failures.append(f"scene: {scene_cleanup_failure}")
-    if plant_modifier_cleanup_failure:
-        cleanup_failures.append(
-            f"plant modifiers: {plant_modifier_cleanup_failure}"
-        )
-    if cleanup_failures:
-        result["passed"] = False
-        result.setdefault("failures", []).append(
-            f"cleanup failed: {'; '.join(cleanup_failures)}"
-        )
     print(json.dumps(result, indent=2, sort_keys=True))
     raise SystemExit(0 if result["passed"] else 1)
 

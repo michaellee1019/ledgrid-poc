@@ -6,7 +6,11 @@
     const DEFAULT_INIT_TIMEOUT_MS = 90000;
     const DEFAULT_RESTART_LIMIT = 2;
     const DEFAULT_RESTART_WINDOW_MS = 60000;
+    const MAX_RESTART_LIMIT = 3;
+    const MIN_RESTART_WINDOW_MS = 1000;
+    const MAX_RESTART_WINDOW_MS = 300000;
     const sharedPythonHosts = new Map();
+    const installationProfileArtifacts = new Map();
     let runtimeSequence = 0;
 
     class ComposerRuntimeError extends Error {
@@ -22,6 +26,10 @@
         return String(error || fallback);
     }
 
+    function errorKind(error) {
+        return error?.detail?.faultKind || (error?.detail?.timeout ? 'timeout' : 'unknown');
+    }
+
     function isPythonRuntime(runtime) {
         return runtime?.kind === 'python' || runtime?.engine === PYTHON_ENGINE;
     }
@@ -29,6 +37,56 @@
     function safeInstancePart(value) {
         const part = String(value || 'primary').replace(/[^A-Za-z0-9_.-]/g, '_');
         return (part || 'primary').slice(0, 40);
+    }
+
+    function boundedInteger(value, fallback, minimum, maximum) {
+        const numeric = Number(value);
+        if (!Number.isSafeInteger(numeric)) return fallback;
+        return Math.min(maximum, Math.max(minimum, numeric));
+    }
+
+    function snapshotValue(value, seen = new Map()) {
+        if (value === null || typeof value !== 'object') return value;
+        if (seen.has(value)) {
+            throw new ComposerRuntimeError('Renderer parameters must not contain cycles.');
+        }
+        const result = Array.isArray(value) ? [] : {};
+        seen.set(value, result);
+        for (const key of Object.keys(value)) result[key] = snapshotValue(value[key], seen);
+        seen.delete(value);
+        return result;
+    }
+
+    function sameSnapshotValue(left, right) {
+        if (Object.is(left, right)) return true;
+        if (Array.isArray(left) || Array.isArray(right)) {
+            return Array.isArray(left)
+                && Array.isArray(right)
+                && left.length === right.length
+                && left.every((value, index) => sameSnapshotValue(value, right[index]));
+        }
+        if (
+            !left || !right
+            || typeof left !== 'object'
+            || typeof right !== 'object'
+        ) return false;
+        const leftKeys = Object.keys(left);
+        const rightKeys = Object.keys(right);
+        return leftKeys.length === rightKeys.length && leftKeys.every((key) => (
+            Object.prototype.hasOwnProperty.call(right, key)
+            && sameSnapshotValue(left[key], right[key])
+        ));
+    }
+
+    function parameterDelta(current, requested) {
+        const delta = {};
+        for (const key of Object.keys(requested)) {
+            if (
+                !Object.prototype.hasOwnProperty.call(current, key)
+                || !sameSnapshotValue(current[key], requested[key])
+            ) delta[key] = snapshotValue(requested[key]);
+        }
+        return delta;
     }
 
     function installationProfileDescriptor(value) {
@@ -39,13 +97,95 @@
         return Object.freeze({digest, artifactUrl: value.artifactUrl});
     }
 
+    function installationProfileArtifact(profile) {
+        const location = global.location;
+        if (!location?.href || !location?.origin) {
+            return Promise.reject(new ComposerRuntimeError(
+                'The managed installation-profile origin is unavailable.',
+            ));
+        }
+        let url;
+        try {
+            url = new URL(profile.artifactUrl, location.href);
+        } catch (_error) {
+            return Promise.reject(new ComposerRuntimeError(
+                'The managed installation-profile artifact URL is invalid.',
+            ));
+        }
+        if (url.origin !== location.origin) {
+            return Promise.reject(new ComposerRuntimeError(
+                'The managed installation-profile artifact must be same-origin.',
+            ));
+        }
+        const key = `${profile.digest}\n${url.href}`;
+        let pending = installationProfileArtifacts.get(key);
+        if (!pending) {
+            pending = (async () => {
+                const delivered = await serviceWorkerRequest({
+                    type: 'INSTALLATION_PROFILE_ARTIFACT',
+                    artifactUrl: url.href,
+                    digest: profile.digest,
+                });
+                if (delivered.type === 'INSTALLATION_PROFILE_ARTIFACT') {
+                    if (
+                        delivered.digest !== profile.digest
+                        || !(delivered.bytes instanceof ArrayBuffer)
+                    ) {
+                        throw new ComposerRuntimeError(
+                            'The offline worker returned an invalid installation-profile artifact.',
+                        );
+                    }
+                    return Object.freeze({
+                        bytes: delivered.bytes,
+                        etag: delivered.etag || null,
+                    });
+                }
+                if (delivered.type !== 'OFFLINE_STATUS') {
+                    throw new ComposerRuntimeError(
+                        delivered.reason || 'The offline worker could not provide the installation profile.',
+                    );
+                }
+                const response = await global.fetch(url.href, {
+                    cache: 'no-store',
+                    headers: {'Accept': 'application/octet-stream'},
+                });
+                if (!response.ok) {
+                    throw new ComposerRuntimeError(
+                        `Could not load the selected installation profile (${response.status}).`,
+                    );
+                }
+                if (response.url && new URL(response.url).origin !== location.origin) {
+                    throw new ComposerRuntimeError(
+                        'The managed installation-profile response must be same-origin.',
+                    );
+                }
+                return Object.freeze({
+                    bytes: await response.arrayBuffer(),
+                    etag: response.headers.get('ETag'),
+                });
+            })().catch((error) => {
+                installationProfileArtifacts.delete(key);
+                throw error;
+            });
+            installationProfileArtifacts.set(key, pending);
+        }
+        return pending;
+    }
+
     class RuntimeWorkerHost {
         constructor(workerUrl, options = {}) {
             this.workerUrl = workerUrl;
             this.name = options.name || 'ledgrid-composer-runtime';
             this.shared = Boolean(options.shared);
-            this.maxRestarts = options.maxRestarts ?? DEFAULT_RESTART_LIMIT;
-            this.restartWindowMs = options.restartWindowMs ?? DEFAULT_RESTART_WINDOW_MS;
+            this.maxRestarts = boundedInteger(
+                options.maxRestarts, DEFAULT_RESTART_LIMIT, 0, MAX_RESTART_LIMIT,
+            );
+            this.restartWindowMs = boundedInteger(
+                options.restartWindowMs,
+                DEFAULT_RESTART_WINDOW_MS,
+                MIN_RESTART_WINDOW_MS,
+                MAX_RESTART_WINDOW_MS,
+            );
             this.pending = new Map();
             this.sequence = 0;
             this.generation = 0;
@@ -54,32 +194,45 @@
             this.worker = null;
             this.fault = null;
             this.clientCount = 0;
+            this.recoveryState = 'starting';
+            this.lastFault = null;
+            this.lastFaultKind = null;
             this._start();
         }
 
         _start() {
+            let worker;
             try {
-                this.worker = new Worker(this.workerUrl, {name: this.name, type: 'module'});
+                worker = new Worker(this.workerUrl, {name: this.name, type: 'module'});
             } catch (error) {
                 this.fault = new ComposerRuntimeError(
                     `Could not start the browser renderer worker: ${errorMessage(error)}`,
-                    {workerFault: true, cause: error},
+                    {workerFault: true, faultKind: 'startup', cause: error},
                 );
+                this.recoveryState = 'faulted';
+                this.lastFault = this.fault.message;
+                this.lastFaultKind = 'startup';
                 throw this.fault;
             }
+            this.worker = worker;
             this.fault = null;
-            this.worker.addEventListener('message', (event) => this._onMessage(event.data));
-            this.worker.addEventListener('error', (event) => {
+            this.recoveryState = 'healthy';
+            worker.addEventListener('message', (event) => {
+                if (this.worker === worker) this._onMessage(event.data);
+            });
+            worker.addEventListener('error', (event) => {
+                if (this.worker !== worker) return;
                 if (typeof event.preventDefault === 'function') event.preventDefault();
                 this._fail(new ComposerRuntimeError(
                     event.message || 'The browser renderer stopped unexpectedly.',
-                    {workerFault: true},
+                    {workerFault: true, faultKind: 'worker-error'},
                 ));
             });
-            this.worker.addEventListener('messageerror', () => {
+            worker.addEventListener('messageerror', () => {
+                if (this.worker !== worker) return;
                 this._fail(new ComposerRuntimeError(
                     'The browser renderer returned an unreadable response.',
-                    {workerFault: true},
+                    {workerFault: true, faultKind: 'message-error'},
                 ));
             });
         }
@@ -100,8 +253,13 @@
             entry.resolve(message);
         }
 
-        _fail(error) {
+        _fail(error, {recordFault = true, state = null} = {}) {
             if (!this.fault) this.fault = error;
+            if (recordFault) {
+                this.lastFault = errorMessage(error);
+                this.lastFaultKind = errorKind(error);
+            }
+            this.recoveryState = state || (error?.detail?.disposed ? 'disposed' : 'faulted');
             const worker = this.worker;
             this.worker = null;
             if (worker) worker.terminate();
@@ -123,7 +281,7 @@
                 const timer = global.setTimeout(() => {
                     const error = new ComposerRuntimeError(
                         `The renderer did not answer within ${Math.round(timeoutMs / 1000)} seconds.`,
-                        {workerFault: true, timeout: true},
+                        {workerFault: true, timeout: true, faultKind: 'timeout'},
                     );
                     this._fail(error);
                     reject(error);
@@ -134,7 +292,7 @@
                 } catch (error) {
                     const wrapped = new ComposerRuntimeError(
                         `Could not send work to the browser renderer: ${errorMessage(error)}`,
-                        {workerFault: true, cause: error},
+                        {workerFault: true, faultKind: 'post-message', cause: error},
                     );
                     this._fail(wrapped);
                 }
@@ -149,15 +307,24 @@
                     (value) => now - value <= this.restartWindowMs,
                 );
                 if (this.restartTimes.length >= this.maxRestarts) {
-                    throw new ComposerRuntimeError(
-                        `The renderer stopped repeatedly; automatic recovery is limited to ${this.maxRestarts} restarts per minute.`,
+                    const restartLabel = this.maxRestarts === 1 ? 'restart' : 'restarts';
+                    const exhausted = new ComposerRuntimeError(
+                        `The renderer stopped repeatedly; automatic recovery is limited to ${this.maxRestarts} ${restartLabel} within the recovery window.`,
                         {workerFault: true, recoveryExhausted: true, cause: reason},
                     );
+                    this.fault = exhausted;
+                    this.recoveryState = 'exhausted';
+                    this.lastFault = errorMessage(reason);
+                    this.lastFaultKind = errorKind(reason);
+                    throw exhausted;
                 }
                 this.restartTimes.push(now);
+                this.lastFault = errorMessage(reason);
+                this.lastFaultKind = errorKind(reason);
+                this.recoveryState = 'recovering';
                 this._fail(new ComposerRuntimeError('Renderer restarting.', {
                     workerFault: true, cause: reason,
-                }));
+                }), {recordFault: false, state: 'recovering'});
                 this.generation += 1;
                 this._start();
                 return this.generation;
@@ -171,6 +338,22 @@
             this._fail(new ComposerRuntimeError(reason, {workerFault: true, disposed: true}));
         }
 
+        restrictRecoveryPolicy(options = {}) {
+            this.maxRestarts = Math.min(
+                this.maxRestarts,
+                boundedInteger(options.maxRestarts, DEFAULT_RESTART_LIMIT, 0, MAX_RESTART_LIMIT),
+            );
+            this.restartWindowMs = Math.max(
+                this.restartWindowMs,
+                boundedInteger(
+                    options.restartWindowMs,
+                    DEFAULT_RESTART_WINDOW_MS,
+                    MIN_RESTART_WINDOW_MS,
+                    MAX_RESTART_WINDOW_MS,
+                ),
+            );
+        }
+
         diagnostics() {
             return Object.freeze({
                 shared: this.shared,
@@ -179,6 +362,15 @@
                 pendingRequests: this.pending.size,
                 clients: this.clientCount,
                 healthy: Boolean(this.worker && !this.fault),
+                recovery: Object.freeze({
+                    state: this.recoveryState,
+                    attempts: this.restartTimes.length,
+                    limit: this.maxRestarts,
+                    windowMs: this.restartWindowMs,
+                    exhausted: this.recoveryState === 'exhausted',
+                    lastFault: this.lastFault,
+                    lastFaultKind: this.lastFaultKind,
+                }),
             });
         }
     }
@@ -195,6 +387,8 @@
                 restartWindowMs: options.restartWindowMs,
             });
             sharedPythonHosts.set(key, host);
+        } else {
+            host.restrictRecoveryPolicy(options);
         }
         host.clientCount += 1;
         return {host, key};
@@ -255,7 +449,7 @@
                 pluginId: component.plugin_id,
                 className: component.class_name,
                 assetUrl: runtime.asset_url || null,
-                params: {...(params || {})},
+                params: snapshotValue(params || {}),
                 installationProfile: this.installationProfile,
                 initializedGeneration: -1,
             };
@@ -290,6 +484,9 @@
         }
 
         async _initializeDescriptor(descriptor) {
+            const profileArtifact = await installationProfileArtifact(
+                descriptor.installationProfile,
+            );
             const response = await this.host.request({
                 type: 'init',
                 instanceId: descriptor.scopedId,
@@ -299,6 +496,7 @@
                 params: descriptor.params,
                 assetUrl: descriptor.assetUrl,
                 installationProfile: descriptor.installationProfile,
+                installationProfileArtifact: profileArtifact,
             }, this.initTimeoutMs);
             if (response.type !== 'ready') {
                 throw new ComposerRuntimeError(`Unexpected renderer response: ${String(response.type)}`);
@@ -421,17 +619,26 @@
                     `Renderer instance ${publicId} is not initialized.`,
                 ));
             }
-            descriptor.params = {...descriptor.params, ...(params || {})};
+            const requestedParams = snapshotValue(params || {});
+            const requestParams = parameterDelta(descriptor.params, requestedParams);
+            descriptor.params = snapshotValue({...descriptor.params, ...requestedParams});
             const generation = this._nextRenderGeneration(publicId);
-            const rawPromise = this._withRecovery(() => this.host.request({
-                type: 'render',
-                instanceId: descriptor.scopedId,
-                generation,
-                elapsed,
-                frameIndex,
-                params: params || {},
-                wallTime,
-            }, this.timeoutMs));
+            const rawPromise = this._withRecovery(() => {
+                if (this.renderGenerations.get(publicId) !== generation) {
+                    return Promise.resolve({
+                        type: 'obsolete', instanceId: descriptor.scopedId, generation,
+                    });
+                }
+                return this.host.request({
+                    type: 'render',
+                    instanceId: descriptor.scopedId,
+                    generation,
+                    elapsed,
+                    frameIndex,
+                    params: requestParams,
+                    wallTime,
+                }, this.timeoutMs);
+            });
             this.latestRenders.set(publicId, {generation, promise: rawPromise});
             return this._resolveLatest(publicId, generation, rawPromise);
         }
@@ -442,6 +649,129 @@
 
         renderInstance(instanceId, elapsed, frameIndex, params, wallTime = null) {
             return this._render(safeInstancePart(instanceId), elapsed, frameIndex, params, wallTime);
+        }
+
+        renderInstances(requests) {
+            if (!this.host || !this.ready) {
+                return Promise.reject(new ComposerRuntimeError('The browser renderer is not ready.'));
+            }
+            if (!isPythonRuntime(this.component?.browser_runtime)) {
+                return Promise.reject(new ComposerRuntimeError(
+                    'Batched instance rendering requires the shared Python worker.',
+                ));
+            }
+            if (!Array.isArray(requests) || requests.length < 1 || requests.length > 8) {
+                return Promise.reject(new ComposerRuntimeError(
+                    'Batched instance rendering requires 1-8 requests.',
+                ));
+            }
+            const prepared = [];
+            const publicIds = new Set();
+            try {
+                for (const request of requests) {
+                    const publicId = safeInstancePart(request?.instanceId || 'primary');
+                    if (publicIds.has(publicId)) {
+                        throw new ComposerRuntimeError(
+                            'Batched instance rendering requires distinct instance IDs.',
+                        );
+                    }
+                    publicIds.add(publicId);
+                    const descriptor = this.instances.get(publicId);
+                    if (!descriptor) {
+                        throw new ComposerRuntimeError(
+                            `Renderer instance ${publicId} is not initialized.`,
+                        );
+                    }
+                    const requestedParams = snapshotValue(request?.params || {});
+                    const requestParams = parameterDelta(descriptor.params, requestedParams);
+                    descriptor.params = snapshotValue({...descriptor.params, ...requestedParams});
+                    prepared.push({
+                        publicId,
+                        descriptor,
+                        generation: this._nextRenderGeneration(publicId),
+                        elapsed: request?.elapsed,
+                        frameIndex: request?.frameIndex,
+                        params: requestParams,
+                        wallTime: request?.wallTime ?? null,
+                    });
+                }
+            } catch (error) {
+                return Promise.reject(error);
+            }
+
+            const rawPromise = this._withRecovery(() => {
+                if (prepared.some((item) => (
+                    this.renderGenerations.get(item.publicId) !== item.generation
+                ))) {
+                    return Promise.reject(new ComposerRuntimeError(
+                        'The renderer discarded an obsolete composed frame.',
+                        {obsolete: true},
+                    ));
+                }
+                return this.host.request({
+                    type: 'renderBatch',
+                    renders: prepared.map((item) => ({
+                        instanceId: item.descriptor.scopedId,
+                        generation: item.generation,
+                        elapsed: item.elapsed,
+                        frameIndex: item.frameIndex,
+                        params: item.params,
+                        wallTime: item.wallTime,
+                    })),
+                }, this.timeoutMs);
+            });
+            const resultPromise = rawPromise.then((response) => {
+                if (response.type === 'obsoleteBatch') {
+                    throw new ComposerRuntimeError(
+                        'The renderer discarded an obsolete composed frame.',
+                        {obsolete: true, response},
+                    );
+                }
+                if (
+                    response.type !== 'frameBatch'
+                    || !Array.isArray(response.frames)
+                    || response.frames.length !== prepared.length
+                    || !(response.pixels instanceof ArrayBuffer)
+                ) {
+                    throw new ComposerRuntimeError('The renderer returned an invalid frame batch.');
+                }
+                if (response.engine) this.engine = response.engine;
+                return response.frames.map((frame, index) => {
+                    const item = prepared[index];
+                    if (
+                        frame.instanceId !== item.descriptor.scopedId
+                        || frame.generation !== item.generation
+                        || this.renderGenerations.get(item.publicId) !== item.generation
+                        || !Number.isSafeInteger(frame.byteOffset)
+                        || !Number.isSafeInteger(frame.byteLength)
+                        || frame.byteOffset < 0
+                        || frame.byteLength < 1
+                        || frame.byteOffset + frame.byteLength > response.pixels.byteLength
+                    ) {
+                        throw new ComposerRuntimeError(
+                            'The renderer discarded an obsolete or invalid composed frame.',
+                            {obsolete: true, response: frame},
+                        );
+                    }
+                    return {
+                        ...frame,
+                        type: 'frame',
+                        instanceId: item.publicId,
+                        pixels: new Uint8Array(
+                            response.pixels, frame.byteOffset, frame.byteLength,
+                        ),
+                    };
+                });
+            });
+            prepared.forEach((item, index) => {
+                const instancePromise = resultPromise.then((frames) => frames[index]);
+                instancePromise.catch(() => null);
+                this.latestRenders.set(item.publicId, {
+                    generation: item.generation,
+                    promise: instancePromise,
+                });
+            });
+            return resultPromise;
         }
 
         async disposeInstance(instanceId) {
@@ -466,7 +796,9 @@
             if (!this.host || this.disposed) {
                 throw new ComposerRuntimeError('The browser renderer is not available.');
             }
-            await this.host.restart(new ComposerRuntimeError('Recovery requested.'));
+            await this.host.restart(new ComposerRuntimeError(
+                'Recovery requested.', {workerFault: true, faultKind: 'manual'},
+            ));
             for (const descriptor of this.instances.values()) descriptor.initializedGeneration = -1;
             await this._ensureAttached();
             this.ready = true;

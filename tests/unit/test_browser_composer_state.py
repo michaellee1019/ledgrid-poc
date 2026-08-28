@@ -115,6 +115,47 @@ console.log(JSON.stringify({
             "missing": False,
         })
 
+    def test_preset_identity_is_exact_check_binding_and_idempotent_when_unchanged(self) -> None:
+        result = _run_state_script("""
+const component = {key: 'python:gradient', browser_runtime: {digest: 'runtime-1'}};
+const geometry = {strip_count: 33, leds_per_strip: 138, total_leds: 4554};
+const beforeSave = state.checkBinding(4, component, geometry, null, 'profile-a', null);
+const savedPreset = {
+  preset_id: 'browser_look',
+  preset_fingerprint: 'a'.repeat(64),
+};
+const afterSave = state.checkBinding(4, component, geometry, null, 'profile-a', savedPreset);
+const unchangedSave = state.checkBinding(4, component, geometry, null, 'profile-a', {...savedPreset});
+const overwrittenPreset = {...savedPreset, preset_fingerprint: 'b'.repeat(64)};
+const afterOverwrite = state.checkBinding(4, component, geometry, null, 'profile-a', overwrittenPreset);
+const checkedBeforeSave = {status: 'pass', binding: beforeSave};
+const checkedAfterSave = {status: 'pass', binding: afterSave};
+console.log(JSON.stringify({
+  beforeSave,
+  afterSave,
+  staleImmediatelyAfterSave: state.checkAllowsActivation(checkedBeforeSave, afterSave),
+  eligibleAfterRerun: state.checkAllowsActivation(checkedAfterSave, afterSave),
+  unchangedSaveStaysCurrent: state.sameCheckBinding(afterSave, unchangedSave),
+  overwriteIsStale: state.sameCheckBinding(afterSave, afterOverwrite),
+  snakeIdentity: state.componentPresetIdentity(savedPreset),
+  camelIdentity: state.componentPresetIdentity({presetId: 'browser_look', presetFingerprint: 'a'.repeat(64)}),
+}));
+""")
+
+        identity = {
+            "presetId": "browser_look",
+            "presetFingerprint": "a" * 64,
+        }
+        self.assertIsNone(result["beforeSave"]["presetIdentity"])
+        self.assertEqual(result["afterSave"]["checkerVersion"], "browser-checker-v3")
+        self.assertEqual(result["afterSave"]["presetIdentity"], identity)
+        self.assertFalse(result["staleImmediatelyAfterSave"])
+        self.assertTrue(result["eligibleAfterRerun"])
+        self.assertTrue(result["unchangedSaveStaysCurrent"])
+        self.assertFalse(result["overwriteIsStale"])
+        self.assertEqual(result["snakeIdentity"], identity)
+        self.assertEqual(result["camelIdentity"], identity)
+
     def test_application_invalidates_checks_and_snapshots_full_scene_history(self) -> None:
         source = COMPOSER_SOURCE.read_text(encoding="utf-8")
 
@@ -126,6 +167,8 @@ console.log(JSON.stringify({
         self.assertIn("selectedPreset: state.selectedPreset", source)
         self.assertIn("componentKey: state.component?.key", source)
         self.assertIn("resetChecker({preserveDocumentRevision: true})", source)
+        self.assertIn("invalidateCheckerForPresetIdentityChange", source)
+        self.assertIn("adoptImportedPresetIdentity", source)
         self.assertIn("currentCheckAllowsActivation()", source)
         self.assertIn("Activation requires a completed Check with no failures", source)
         self.assertIn("Apply or revert the Wall draft", source)

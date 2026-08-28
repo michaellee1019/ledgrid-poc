@@ -1,0 +1,9 @@
+{
+  "name": "ledgrid-browser-qualification",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned Playwright dependency for retained REL-01 portable-browser evidence.",
+  "dependencies": {
+    "playwright": "1.62.1"
+  }
+}

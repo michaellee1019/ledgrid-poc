@@ -1,0 +1,173 @@
+{
+  "schema": "ledgrid.rel01-browser-qualification-manifest",
+  "schema_version": 1,
+  "gate": "REL-01",
+  "evidence_class": "portable_browser_automation",
+  "playwright_version": "1.62.1",
+  "required_engines": [
+    "chromium",
+    "firefox",
+    "webkit"
+  ],
+  "offline_strategies": {
+    "chromium": "native_network_offline",
+    "firefox": "native_network_offline",
+    "webkit": "fixture_origin_outage"
+  },
+  "journeys": {
+    "core_no_mutation": {
+      "background_name": "Color Gradient",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "required_assertions": [
+        "composer_loaded",
+        "background_selected",
+        "parameter_tuned",
+        "undo_restored_prior_value",
+        "redo_restored_tuned_value",
+        "clock_enabled",
+        "local_check_completed",
+        "library_save_confirmed_without_wall_change",
+        "saved_identity_invalidated_prior_check",
+        "saved_identity_check_completed",
+        "activation_review_opened",
+        "activation_review_cancelled",
+        "browser_console_clean",
+        "forbidden_wall_requests_zero"
+      ]
+    },
+    "offline_reconnect": {
+      "background_name": "Color Gradient",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "required_assertions": [
+        "composer_loaded",
+        "previous_cache_generation_upgraded",
+        "service_worker_controls_composer",
+        "renderer_catalog_cached",
+        "offline_assets_prepared",
+        "offline_strategy_declared",
+        "offline_network_isolation_enforced",
+        "offline_reload_succeeded",
+        "cached_composer_navigation",
+        "offline_draft_edit_persisted",
+        "stale_activation_rejected_before_queue",
+        "offline_check_completed",
+        "python_runtime_cache_stable",
+        "offline_export_completed",
+        "reconnect_succeeded",
+        "browser_console_clean",
+        "forbidden_wall_requests_zero"
+      ]
+    },
+    "worker_recovery": {
+      "background_name": "Aurora Curtains (Native)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "required_assertions": [
+        "composer_loaded",
+        "nested_draft_captured",
+        "worker_fault_injected",
+        "bounded_worker_restart",
+        "exact_draft_restored",
+        "recovered_check_completed",
+        "stale_worker_overwrite_absent",
+        "browser_console_clean",
+        "forbidden_wall_requests_zero"
+      ]
+    },
+    "responsive_layouts": {
+      "viewports": [
+        {"name": "phone_small", "width": 375, "height": 667},
+        {"name": "phone_standard", "width": 390, "height": 844},
+        {"name": "phone_large", "width": 430, "height": 932},
+        {"name": "tablet", "width": 768, "height": 1024},
+        {"name": "desktop", "width": 1440, "height": 1000}
+      ],
+      "required_viewport_assertions": [
+        "no_horizontal_overflow",
+        "navigation_reachable",
+        "primary_targets_44px"
+      ],
+      "required_assertions": [
+        "all_viewports_observed",
+        "browser_console_clean",
+        "forbidden_wall_requests_zero"
+      ]
+    },
+    "global_controls": {
+      "viewport": {"width": 1440, "height": 1000},
+      "required_assertions": [
+        "composer_loaded",
+        "all_vibes_exercised",
+        "brightness_tuned",
+        "speed_tuned",
+        "target_fps_tuned",
+        "all_plant_modifier_classes_exercised",
+        "wall_review_cancelled",
+        "browser_console_clean",
+        "forbidden_wall_requests_zero"
+      ]
+    },
+    "profile_masks": {
+      "viewport": {"width": 1440, "height": 1000},
+      "engine_led_offsets": {
+        "chromium": 0,
+        "firefox": 1,
+        "webkit": 2
+      },
+      "required_assertions": [
+        "composer_loaded",
+        "foliage_and_seven_globes_edited",
+        "profile_draft_saved",
+        "immutable_candidate_published",
+        "profile_selection_review_cancelled",
+        "semantic_regions_survived_reload",
+        "browser_console_clean",
+        "forbidden_wall_requests_zero"
+      ]
+    },
+    "python_native_clock": {
+      "viewport": {"width": 1440, "height": 1000},
+      "python_background_name": "Color Gradient",
+      "managed_native_background_name": "Aurora Curtains (Native)",
+      "managed_native_ineligibility_reason": "The managed host implementation is not loaded.",
+      "required_assertions": [
+        "composer_loaded",
+        "python_background_with_clock_checked",
+        "managed_native_background_with_clock_checked",
+        "managed_native_host_ineligibility_declared",
+        "browser_console_clean",
+        "forbidden_wall_requests_zero"
+      ]
+    }
+  },
+  "service_worker_upgrade": {
+    "previous_cache": "ledgrid-composer-shell-v15",
+    "current_cache": "ledgrid-composer-shell-v16"
+  },
+  "forbidden_live_mutation_requests": [
+    "PUT|POST|DELETE /api/v1/scene",
+    "PUT|POST /api/v1/vibe",
+    "POST /api/config/plant-modifiers",
+    "POST /api/config/plant-aware",
+    "POST /api/config/brightness",
+    "POST /api/config/target-fps",
+    "POST /api/config/animation-speed",
+    "POST /api/painter/masks"
+  ],
+  "excluded_claims": [
+    "physical_iphone_safari",
+    "ios_installed_standalone",
+    "voiceover",
+    "physical_wall_output",
+    "controller_or_receiver_performance",
+    "electrical_safety"
+  ]
+}

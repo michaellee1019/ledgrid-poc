@@ -1,5 +1,14 @@
 # Studio Next UX synthesis
 
+> **Historical design record — superseded integration guidance.** This synthesis
+> preserves the design-tournament decision and the API assumptions used to build
+> the first Studio Next slice. Sections describing direct Look/device takeover,
+> bare scene mutation, preset Apply, or mask writing are not current contracts.
+> Shipping activation is owned by Composer Check plus guarded activation; mask
+> publication and selection are owned by the managed installation-profile flow.
+> The separate emergency Stop and read-only compatibility boundaries remain
+> intentional.
+
 ## Decision
 
 Build `/studio-next` as a **room-first wall control surface** with one persistent, authoritative account of the physical wall. Use Wall Conductor's operational sequence and evidence model underneath Room Tune's plain language and phone hierarchy.

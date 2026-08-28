@@ -8,8 +8,10 @@ description: Recalibrate the ledgrid-poc living plant wall from its attached web
 ## Overview
 
 Rebuild the wall's semantic plant masks as a measured closed loop. Use fresh
-webcam evidence, deploy dim feedback patterns, inspect resulting captures, and
-iterate until masks align without asking the user to estimate pixel offsets.
+webcam evidence, compile/publish/select an immutable managed profile, observe
+dim feedback scenes activated through Composer Check + guarded activation,
+inspect resulting captures, and iterate until masks align without asking the
+user to estimate pixel offsets.
 
 Read [references/workflow.md](references/workflow.md) before running commands.
 Also read the repository's `docs/PLANT_WALL_CALIBRATION.md` when present; it is
@@ -27,10 +29,15 @@ the authoritative command-level runbook.
 6. Rebuild the full-white occlusion candidate and start foliage refinement with
    `--fresh-baseline`; never union a prior final map after movement.
 7. Rebuild and verify seven globe regions as fixed 8x8 circular footprints.
-8. Deploy dim, one-layer or one-region feedback, photograph it, compute integer
-   center corrections, and iterate to acceptance thresholds.
-9. Rerun foliage after globe changes, then verify `Plant Glow` and telemetry.
-10. Run proportional unit/plugin/benchmark checks and report evidence paths.
+8. Compile, validate, publish, and explicitly select the managed profile without
+   activating a scene.
+9. Activate each dim one-layer or one-region feedback scene through a fresh
+   Composer Check + guarded activation, photograph it, compute integer center
+   corrections, and iterate to acceptance thresholds. Never use the retired
+   automatic capture script or direct start/stop aliases.
+10. Rerun foliage after globe changes, then separately activate and verify
+   `Plant Glow` and telemetry.
+11. Run proportional unit/plugin/benchmark checks and report evidence paths.
 
 ## Required judgments
 
@@ -60,6 +67,7 @@ the authoritative command-level runbook.
 ## Completion report
 
 Report logical dimensions and counts, corner confidence and edge clipping,
-mask overlap, per-globe region count and center tolerance, live animation FPS
-and errors, tests run, and paths to the final wall-off, overlays, and Plant Glow
-capture. Leave the verified animation running unless the user asks otherwise.
+mask overlap, per-globe region count and center tolerance, selected managed
+profile digest, guarded scene receipt digests, live animation FPS and errors,
+tests run, and paths to the final wall-off, overlays, and Plant Glow capture.
+Do not change or restore the active scene during cleanup.

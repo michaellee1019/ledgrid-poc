@@ -340,9 +340,10 @@ and rerun the deployment. Do not add competing SPI overlays by hand.
 ### Clean metrics but visible flashes
 
 The fault is downstream of receiver telemetry. Check the level shifter, LED data
-connector, power injection, supply transients, and shared ground. Run
-`just output-rate-sweep` while watching the affected lane and retain the highest
-visually clean target.
+connector, power injection, supply transients, and shared ground. Set one rate
+through the guarded operator surface, then run `just output-rate-observation
+"$SCENE_DIGEST" rate=160` while watching the affected lane. Repeat with a fresh
+receipt for each rate and retain the highest visually clean target.
 
 ### Wrong lane order or wall orientation
 

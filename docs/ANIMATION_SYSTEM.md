@@ -166,12 +166,14 @@ Phase 3D established deterministic planning, host/target build, validation,
 preview, and atomic publication. Use `just native-plan <plugin_id>`,
 `just native-build <plugin_id>`, and `just native-publish <plugin_id-or-bundle>`;
 none of those operations changes display ownership or flashes firmware. Phase 4
-adds explicit `just native-install`, `just native-start`, and `just native-run`
-operations plus managed scene selection, persistence, and recovery. Those
-runtime operations are available only when the target-owned schema-v3 rollout
-selects the strict managed-native canary; feature-off production continues to
-reject them and stream complete Python frames. A native component may remain
-catalog-visible and previewable while runtime selection is gated.
+adds explicit `just native-install` plus managed scene selection, persistence,
+and recovery. Activation is authorized only through Composer Check and guarded
+activation. The retired `native-start` and `native-run` compatibility commands
+fail before target access or partial build/publication/install work. Runtime
+selection remains gated by the target-owned schema-v3 rollout; feature-off
+production continues to reject it and stream complete Python frames. A native
+component may remain catalog-visible and previewable while runtime selection is
+gated.
 
 Install and activation operate on one exact managed bundle/payload binding across
 all five receivers. A callback/watchdog failure records the payload quarantine and

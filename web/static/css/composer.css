@@ -391,6 +391,10 @@ h2 { font-size: .84rem; }
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
+html[data-motion="reduced"] .engine-badge[data-state="loading"] > span,
+html[data-motion="reduced"] .server-action[data-busy="true"]::after,
+html[data-motion="reduced"] .toast { animation: none; }
+
 @media (display-mode: standalone) {
   .app-header, .mobile-tabs { background: #10110f; }
   .app-header { user-select: none; -webkit-user-select: none; }
@@ -623,7 +627,7 @@ h2 { font-size: 11px; font-weight: 650; }
   .app-header { grid-template-columns: auto minmax(180px,1fr) auto; }
   .brand-name, .document-identity span, .header-actions .quiet-button, .toolbar-separator { display: none; }
   .document-identity { grid-template-columns: minmax(150px,240px); }
-  .composer-shell { grid-template-columns: 220px minmax(350px,1fr) 270px; }
+  .composer-shell { grid-template-columns: minmax(190px,24vw) minmax(0,1fr) minmax(240px,30vw); }
 }
 
 @media (max-width: 760px) {
@@ -716,6 +720,8 @@ h2 { font-size: 11px; font-weight: 650; }
 .mask-editor-info small { display: block; margin-top: 10px; color: var(--faint); font-size: 8px; line-height: 1.55; }
 .mask-editor-actions { display: grid; grid-template-columns: auto 1fr repeat(4,auto); gap: 5px; padding: 7px 8px; border-top: 1px solid #111; background: #292929; }
 .mask-editor-actions button { min-height: 30px; }
+.primary-button, .dialog-actions button { min-height: 44px; }
+#maskCanvas:focus-visible { outline-offset: 3px; }
 
 @media (max-width: 760px) {
   :root {

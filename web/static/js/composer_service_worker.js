@@ -1,8 +1,10 @@
 'use strict';
 
 const CACHE_PREFIX = 'ledgrid-composer-shell-';
-const CACHE_VERSION = 'v15';
+const PREVIOUS_CACHE_VERSION = 'v15';
+const CACHE_VERSION = 'v16';
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
+const STAGING_CACHE_NAME = `${CACHE_NAME}-staging`;
 const RUNTIME_CACHE_NAME = `${CACHE_NAME}-python-runtime`;
 const OFFLINE_MANIFEST_URL = '/static/generated/composer/offline_assets.json';
 const OFFLINE_METADATA_URL = '/.ledgrid-composer/offline-metadata';
@@ -31,6 +33,7 @@ const SHELL_ASSETS = [
     '/static/icons/composer.svg',
 ];
 const SHELL_ASSET_SET = new Set(SHELL_ASSETS);
+const OBSERVED_SHELL_ASSETS = new Set(['/composer', OFFLINE_MANIFEST_URL]);
 let metadataUpdate = Promise.resolve();
 
 function hex(bytes) {
@@ -73,8 +76,8 @@ async function verifiedProfileArtifact(response, expectedDigest) {
     };
 }
 
-async function readMetadata() {
-    const cache = await caches.open(CACHE_NAME);
+async function readMetadata(cacheName = CACHE_NAME) {
+    const cache = await caches.open(cacheName);
     const response = await cache.match(OFFLINE_METADATA_URL);
     if (!response) return null;
     try {
@@ -84,8 +87,8 @@ async function readMetadata() {
     }
 }
 
-async function writeMetadata(value) {
-    const cache = await caches.open(CACHE_NAME);
+async function writeMetadata(value, cacheName = CACHE_NAME) {
+    const cache = await caches.open(cacheName);
     await cache.put(OFFLINE_METADATA_URL, new Response(JSON.stringify(value), {
         headers: {'Content-Type': 'application/json', 'Cache-Control': 'no-store'},
     }));
@@ -109,7 +112,88 @@ async function fetchRequired(url) {
     return response;
 }
 
+function declaredShellAssets(manifest) {
+    if (!Array.isArray(manifest.localAssets)) {
+        throw new Error('The composer offline asset manifest has no local asset list.');
+    }
+    const expected = new Map();
+    for (const asset of manifest.localAssets) {
+        if (
+            !asset
+            || typeof asset.url !== 'string'
+            || !SHELL_ASSET_SET.has(asset.url)
+            || OBSERVED_SHELL_ASSETS.has(asset.url)
+            || !Number.isSafeInteger(asset.bytes)
+            || asset.bytes <= 0
+            || !/^[0-9a-f]{64}$/.test(asset.sha256)
+            || expected.has(asset.url)
+        ) {
+            throw new Error('The composer offline asset manifest contains an invalid entry.');
+        }
+        expected.set(asset.url, asset);
+    }
+    for (const url of SHELL_ASSETS) {
+        if (!OBSERVED_SHELL_ASSETS.has(url) && !expected.has(url)) {
+            throw new Error(`Offline asset is missing a required digest: ${url}`);
+        }
+    }
+    return expected;
+}
+
+async function verifyCachedShell(cacheName, suppliedMetadata = null) {
+    const metadata = suppliedMetadata || await readMetadata(cacheName);
+    if (
+        !metadata
+        || metadata.schema !== 'ledgrid.composer-offline-cache-state'
+        || metadata.schemaVersion !== 1
+        || metadata.cacheVersion !== CACHE_VERSION
+        || !metadata.shellComplete
+    ) {
+        throw new Error(`Offline cache ${cacheName} has no complete generation marker.`);
+    }
+    const cache = await caches.open(cacheName);
+    const recordedEntries = Object.entries(metadata.verifiedShell || {});
+    if (recordedEntries.length !== SHELL_ASSETS.length) {
+        throw new Error(`Offline cache ${cacheName} has an incomplete asset inventory.`);
+    }
+    for (const url of SHELL_ASSETS) {
+        const recorded = metadata.verifiedShell?.[url];
+        const response = await cache.match(url);
+        if (!recorded || !response) {
+            throw new Error(`Offline cache ${cacheName} is missing ${url}.`);
+        }
+        if (recorded.expected !== !OBSERVED_SHELL_ASSETS.has(url)) {
+            throw new Error(`Offline cache ${cacheName} has invalid digest provenance for ${url}.`);
+        }
+        const digest = await responseDigest(response);
+        if (digest.sha256 !== recorded.sha256 || digest.bytes !== recorded.bytes) {
+            throw new Error(`Offline cache ${cacheName} failed verification for ${url}.`);
+        }
+    }
+    return metadata;
+}
+
+async function promoteVerifiedShell(metadata) {
+    await verifyCachedShell(STAGING_CACHE_NAME, metadata);
+    await caches.delete(CACHE_NAME);
+    const staging = await caches.open(STAGING_CACHE_NAME);
+    const current = await caches.open(CACHE_NAME);
+    try {
+        for (const url of SHELL_ASSETS) {
+            const response = await staging.match(url);
+            if (!response) throw new Error(`Staged offline asset disappeared: ${url}`);
+            await current.put(url, response);
+        }
+        await writeMetadata(metadata, CACHE_NAME);
+        await verifyCachedShell(CACHE_NAME, metadata);
+    } catch (error) {
+        await caches.delete(CACHE_NAME);
+        throw error;
+    }
+}
+
 async function installVersionedShell() {
+    await caches.delete(STAGING_CACHE_NAME);
     try {
         const manifestResponse = await fetchRequired(OFFLINE_MANIFEST_URL);
         const manifest = await manifestResponse.clone().json();
@@ -117,16 +201,15 @@ async function installVersionedShell() {
             manifest?.schema !== 'ledgrid.composer-offline-assets'
             || manifest.schemaVersion !== 1
             || manifest.cacheVersion !== CACHE_VERSION
+            || manifest.previousCacheVersion !== PREVIOUS_CACHE_VERSION
         ) {
             throw new Error('The composer offline asset manifest is incompatible.');
         }
         if (manifest.pythonRuntime?.version !== PYODIDE_VERSION) {
             throw new Error('The composer and offline manifest disagree on Pyodide.');
         }
-        const expected = new Map(
-            (manifest.localAssets || []).map((asset) => [asset.url, asset]),
-        );
-        const cache = await caches.open(CACHE_NAME);
+        const expected = declaredShellAssets(manifest);
+        const cache = await caches.open(STAGING_CACHE_NAME);
         const verifiedShell = {};
         for (const url of SHELL_ASSETS) {
             const response = url === OFFLINE_MANIFEST_URL
@@ -134,9 +217,12 @@ async function installVersionedShell() {
                 : await fetchRequired(url);
             const digest = await responseDigest(response);
             const declared = expected.get(url);
-            if (declared && (
-                declared.sha256 !== digest.sha256 || declared.bytes !== digest.bytes
-            )) {
+            if (
+                (!declared && !OBSERVED_SHELL_ASSETS.has(url))
+                || (declared && (
+                    declared.sha256 !== digest.sha256 || declared.bytes !== digest.bytes
+                ))
+            ) {
                 throw new Error(`Offline asset digest mismatch: ${url}`);
             }
             await cache.put(url, response.clone());
@@ -145,10 +231,11 @@ async function installVersionedShell() {
                 expected: Boolean(declared),
             };
         }
-        await writeMetadata({
+        const metadata = {
             schema: 'ledgrid.composer-offline-cache-state',
             schemaVersion: 1,
             cacheVersion: CACHE_VERSION,
+            previousCacheVersion: PREVIOUS_CACHE_VERSION,
             shellComplete: true,
             verifiedShell,
             bootstrap: null,
@@ -159,9 +246,13 @@ async function installVersionedShell() {
                 version: PYODIDE_VERSION,
             },
             pythonAssets: {},
-        });
+        };
+        await writeMetadata(metadata, STAGING_CACHE_NAME);
+        await promoteVerifiedShell(metadata);
+        await caches.delete(STAGING_CACHE_NAME);
         await self.skipWaiting();
     } catch (error) {
+        await caches.delete(STAGING_CACHE_NAME);
         await caches.delete(CACHE_NAME);
         await caches.delete(RUNTIME_CACHE_NAME);
         throw error;
@@ -174,7 +265,8 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
     event.waitUntil(
-        caches.keys()
+        verifyCachedShell(CACHE_NAME)
+            .then(() => caches.keys())
             .then((names) => Promise.all(names.filter((name) => (
                 name.startsWith(CACHE_PREFIX)
                 && name !== CACHE_NAME
@@ -229,7 +321,8 @@ async function cachePinnedPythonRuntime(request) {
 
 async function cacheImmutableProfileArtifact(request, expectedDigest) {
     const cache = await caches.open(CACHE_NAME);
-    const cached = await cache.match(request);
+    const pathname = new URL(request.url, self.location.origin).pathname;
+    const cached = await cache.match(pathname);
     if (cached) {
         await verifiedProfileArtifact(cached, expectedDigest);
         return cached;
@@ -237,7 +330,7 @@ async function cacheImmutableProfileArtifact(request, expectedDigest) {
     const response = await fetch(request, {cache: 'no-cache'});
     if (!response.ok || response.type !== 'basic') return response;
     const identity = await verifiedProfileArtifact(response, expectedDigest);
-    await cache.put(request, response.clone());
+    await cache.put(pathname, response.clone());
     await updateMetadata((metadata) => ({
         ...metadata,
         profileArtifacts: {
@@ -246,6 +339,32 @@ async function cacheImmutableProfileArtifact(request, expectedDigest) {
         },
     }));
     return response;
+}
+
+async function deliverInstallationProfileArtifact(message) {
+    const digest = String(message.digest || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(digest) || /^0+$/.test(digest)) {
+        throw new Error('The requested installation-profile digest is invalid.');
+    }
+    const url = new URL(message.artifactUrl, self.location.origin);
+    const match = PROFILE_ARTIFACT_PATH.exec(url.pathname);
+    if (url.origin !== self.location.origin || !match || match[1] !== digest) {
+        throw new Error('The requested installation-profile artifact is not the selected same-origin digest.');
+    }
+    const response = await cacheImmutableProfileArtifact(new Request(url.href, {
+        cache: 'no-store',
+        headers: {'Accept': 'application/octet-stream'},
+    }), digest);
+    if (!response.ok) {
+        throw new Error(`Could not load the selected installation profile (${response.status}).`);
+    }
+    await verifiedProfileArtifact(response, digest);
+    return {
+        type: 'INSTALLATION_PROFILE_ARTIFACT',
+        digest,
+        etag: response.headers.get('ETag'),
+        bytes: await response.arrayBuffer(),
+    };
 }
 
 async function verifiedOfflineStatus() {
@@ -392,6 +511,15 @@ self.addEventListener('message', (event) => {
     }
     if (event.data?.type === 'PYTHON_RUNTIME_READY') {
         event.waitUntil(markPythonRuntimeReady(event.data).then((status) => port?.postMessage(status)));
+        return;
+    }
+    if (event.data?.type === 'INSTALLATION_PROFILE_ARTIFACT') {
+        event.waitUntil(deliverInstallationProfileArtifact(event.data).then((artifact) => {
+            port?.postMessage(artifact, [artifact.bytes]);
+        }).catch((error) => port?.postMessage({
+            type: 'INSTALLATION_PROFILE_ARTIFACT_ERROR',
+            reason: error instanceof Error ? error.message : String(error),
+        })));
     }
 });
 

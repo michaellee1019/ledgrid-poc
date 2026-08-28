@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Collect fail-closed H2/H4 evidence for a managed receiver-native scene.
+"""Observe receipt-bound H2/H4 evidence for a pre-activated native scene.
 
-The runner uses only the public HTTP API.  It installs and starts one managed
-native background with the Python clock overlay, samples the exact five-board
-status throughout the requested window, and always returns the wall to the
-recorded Python fallback before it exits.  It never flashes firmware, restarts
-services, or edits durable receiver configuration.
+The runner uses only read-only public HTTP requests. It requires the exact
+canonical scene digest from a guarded Composer activation receipt, verifies it
+before and throughout sampling, and never installs, activates, stops, restores,
+or otherwise changes the wall.
 """
 
 from __future__ import annotations
@@ -31,6 +30,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from animation.core.native_background_operation import (  # noqa: E402
     encode_native_parameters,
+)
+from tools.benchmarks.live_display_state import (  # noqa: E402
+    canonical_scene_digest,
 )
 
 
@@ -175,7 +177,7 @@ GATE_SUBGATES = {
         ("h4.receiver-timing-distributions", "companion"),
         ("h4.streamed-spi-series", "runner"),
         ("h4.memory-cache-series", "runner"),
-        ("h4.python-fallback-restoration", "runner"),
+        ("h4.python-fallback-restoration", "companion"),
         ("h4.retained-rollback-assets", "companion"),
     ),
     "H4-maximum": (
@@ -184,7 +186,7 @@ GATE_SUBGATES = {
         ("h4.receiver-timing-distributions", "companion"),
         ("h4.streamed-spi-series", "runner"),
         ("h4.memory-cache-series", "runner"),
-        ("h4.python-fallback-restoration", "runner"),
+        ("h4.python-fallback-restoration", "companion"),
         ("h4.retained-rollback-assets", "companion"),
     ),
 }
@@ -253,20 +255,25 @@ def _utc_timestamp(value: float) -> str:
 
 @dataclass(frozen=True)
 class AcceptanceConfig:
+    expected_scene_digest: str
     target: str = DEFAULT_TARGET
     selector: str = DEFAULT_PLUGIN
     gate: str = "H2"
     duration_seconds: float = DEFAULT_SOAK_SECONDS
     sample_interval_seconds: float = DEFAULT_SAMPLE_INTERVAL_SECONDS
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
-    fallback_plugin: str = DEFAULT_FALLBACK
     clock_overlay_plugin: str = DEFAULT_CLOCK_OVERLAY
     require_complete_gate: bool = False
 
     def __post_init__(self) -> None:
+        if DIGEST_PATTERN.fullmatch(self.expected_scene_digest or "") is None:
+            raise ValueError(
+                "expected_scene_digest must be the 64-character digest from "
+                "the guarded Composer activation receipt"
+            )
         if not isinstance(self.target, str) or not self.target.strip():
             raise ValueError("target must be a non-empty host name")
-        for name in ("selector", "fallback_plugin", "clock_overlay_plugin"):
+        for name in ("selector", "clock_overlay_plugin"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value:
                 raise ValueError(f"{name} must be a non-empty component ID")
@@ -373,9 +380,9 @@ def _resolved_parameters(
     return dict(_mapping(descriptor.get("defaults")))
 
 
-def resolve_acceptance_scene(
+def resolve_acceptance_identity(
     api: Any, config: AcceptanceConfig
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> dict[str, Any]:
     catalog = api.request(
         "/api/v1/components", timeout=config.timeout_seconds
     ).get("components")
@@ -383,9 +390,6 @@ def resolve_acceptance_scene(
         raise PhysicalAcceptanceError("target returned no unified component catalog")
     native = _component(
         catalog, config.selector, provider="receiver_native", role="background"
-    )
-    fallback = _component(
-        catalog, config.fallback_plugin, provider="python", role="background"
     )
     clock = _component(
         catalog, config.clock_overlay_plugin, provider="python", role="overlay"
@@ -406,12 +410,6 @@ def resolve_acceptance_scene(
     if availability.get("selectable") is False or availability.get("state") == "gated":
         raise PhysicalAcceptanceError("native catalog entry is not selectable")
 
-    fallback_ref = {
-        "plugin_id": config.fallback_plugin,
-        "provider": "python",
-        "parameter_overrides": {},
-        "resolved_parameters": dict(_mapping(fallback.get("defaults"))),
-    }
     native_parameters = _resolved_parameters(native, workload=config.workload)
     clock_parameters = _resolved_parameters(clock, workload=config.workload)
     try:
@@ -422,40 +420,6 @@ def resolve_acceptance_scene(
         raise PhysicalAcceptanceError(
             f"native catalog parameters cannot be bound to an exact digest: {exc}"
         ) from exc
-    scene = {
-        "schema": "ledgrid.scene-state",
-        "schema_version": 1,
-        "revision": time.time_ns() & ((1 << 64) - 1),
-        "background": {
-            "plugin_id": native["plugin_id"],
-            "provider": "receiver_native",
-            "parameter_overrides": {},
-            "resolved_parameters": native_parameters,
-            "bundle_digest": bundle_digest,
-            "expected_payload_digest": payload_digest,
-        },
-        "overlays": [{
-            "slot_id": config.clock_overlay_plugin,
-            "component": {
-                "plugin_id": config.clock_overlay_plugin,
-                "provider": "python",
-                "parameter_overrides": {},
-                "resolved_parameters": clock_parameters,
-            },
-            "enabled": True,
-            "opacity": 255,
-            "placement": {
-                "strip_translation": 0,
-                "led_translation": 0,
-                "clip_policy": "clip_to_wall",
-            },
-            "stale_policy": {
-                "policy": "clear_after_lease",
-                "lease_ms": 3_000,
-            },
-        }],
-        "known_python_fallback": fallback_ref,
-    }
     identity = {
         "plugin_id": native["plugin_id"],
         "clock_plugin_id": clock["plugin_id"],
@@ -467,9 +431,8 @@ def resolve_acceptance_scene(
         "native_parameters": native_parameters,
         "parameter_digest": parameter_digest,
         "clock_parameters": clock_parameters,
-        "fallback": fallback_ref,
     }
-    return scene, identity
+    return identity
 
 
 def _native_driver(status: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1298,145 +1261,6 @@ def gate_coverage(
     }
 
 
-def _wait_for_status(
-    api: Any,
-    predicate: Callable[[Mapping[str, Any]], bool],
-    *,
-    timeout: float,
-    monotonic: Callable[[], float],
-    sleep: Callable[[float], None],
-) -> dict[str, Any]:
-    deadline = monotonic() + timeout
-    latest: dict[str, Any] = {}
-    while True:
-        latest = api.request("/api/status", timeout=min(timeout, 10.0))
-        if predicate(latest):
-            return latest
-        remaining = deadline - monotonic()
-        if remaining <= 0:
-            raise PhysicalAcceptanceError("target status did not converge before timeout")
-        sleep(min(0.1, remaining))
-
-
-def _command_processed(status: Mapping[str, Any], command_id: Any) -> bool:
-    return command_id is not None and status.get("last_command_id") == command_id
-
-
-def _native_active(
-    status: Mapping[str, Any], command_id: Any, identity: Mapping[str, Any]
-) -> bool:
-    driver = _native_driver(status)
-    sample = normalize_sample(status, elapsed_seconds=0.0, sampled_at=0.0)
-    return bool(
-        _command_processed(status, command_id)
-        and driver.get("state") == "active"
-        and driver.get("bundle_digest") == identity.get("bundle_digest")
-        and driver.get("payload_digest") == identity.get("payload_digest")
-        and driver.get("parameter_digest") == identity.get("parameter_digest")
-        and driver.get("error") is None
-        and not evaluate_sample(sample, identity)
-    )
-
-
-def _python_fallback_active(
-    status: Mapping[str, Any], fallback_plugin: str, command_id: Any = None
-) -> bool:
-    if command_id is not None and not _command_processed(status, command_id):
-        return False
-    scene_state = _mapping(status.get("scene_state"))
-    background = _mapping(scene_state.get("background"))
-    provider_mode = _mapping(status.get("scene")).get("provider_mode")
-    native = _mapping(
-        _mapping(_mapping(status.get("driver_stats")).get("aggregate")).get(
-            "native_background"
-        )
-    )
-    return bool(
-        background.get("provider") == "python"
-        and background.get("plugin_id") == fallback_plugin
-        and provider_mode == "python_host"
-        and native.get("state") in {"host_full_scene", "idle", "stopped", "compensated"}
-    )
-
-
-def restore_python_fallback(
-    api: Any,
-    config: AcceptanceConfig,
-    fallback_ref: Mapping[str, Any],
-    *,
-    monotonic: Callable[[], float] = time.monotonic,
-    sleep: Callable[[float], None] = time.sleep,
-) -> dict[str, Any]:
-    """Attempt exact native recovery, then a direct Python scene as a fallback."""
-
-    result: dict[str, Any] = {
-        "attempted": True,
-        "passed": False,
-        "method": None,
-        "failures": [],
-    }
-    try:
-        response = api.request(
-            "/api/v1/receiver-native/recover",
-            method="POST",
-            timeout=config.timeout_seconds,
-        )
-        command_id = response.get("command_id")
-        status = _wait_for_status(
-            api,
-            lambda item: _python_fallback_active(
-                item, config.fallback_plugin, command_id
-            ),
-            timeout=config.timeout_seconds,
-            monotonic=monotonic,
-            sleep=sleep,
-        )
-        result.update({
-            "passed": True,
-            "method": "receiver-native-recover",
-            "command_id": command_id,
-            "final_status_updated_at": status.get("updated_at"),
-        })
-        return result
-    except Exception as exc:
-        result["failures"].append(f"receiver-native recovery: {exc}")
-
-    fallback_scene = {
-        "schema": "ledgrid.scene-state",
-        "schema_version": 1,
-        "revision": time.time_ns() & ((1 << 64) - 1),
-        "background": dict(fallback_ref),
-        "overlays": [],
-        "known_python_fallback": dict(fallback_ref),
-    }
-    try:
-        response = api.request(
-            "/api/v1/scene",
-            method="PUT",
-            payload=fallback_scene,
-            timeout=config.timeout_seconds,
-        )
-        command_id = response.get("command_id")
-        status = _wait_for_status(
-            api,
-            lambda item: _python_fallback_active(
-                item, config.fallback_plugin, command_id
-            ),
-            timeout=config.timeout_seconds,
-            monotonic=monotonic,
-            sleep=sleep,
-        )
-        result.update({
-            "passed": True,
-            "method": "direct-python-scene",
-            "command_id": command_id,
-            "final_status_updated_at": status.get("updated_at"),
-        })
-    except Exception as exc:
-        result["failures"].append(f"direct Python fallback: {exc}")
-    return result
-
-
 def run_acceptance(
     config: AcceptanceConfig,
     api: Any,
@@ -1446,7 +1270,7 @@ def run_acceptance(
     wall_time: Callable[[], float] = time.time,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
-    """Run the physical gate and always attempt complete Python restoration."""
+    """Observe an exact pre-activated native scene without mutating the target."""
 
     started_unix = wall_time()
     report: dict[str, Any] = {
@@ -1466,16 +1290,9 @@ def run_acceptance(
         "failures": [],
     }
     identity: dict[str, Any] = {}
-    fallback_ref: dict[str, Any] = {
-        "plugin_id": config.fallback_plugin,
-        "provider": "python",
-        "parameter_overrides": {},
-        "resolved_parameters": {},
-    }
     interrupted = False
     try:
-        scene, identity = resolve_acceptance_scene(api, config)
-        fallback_ref = dict(identity["fallback"])
+        identity = resolve_acceptance_identity(api, config)
         report["artifact"] = {
             key: identity[key]
             for key in (
@@ -1483,48 +1300,24 @@ def run_acceptance(
                 "declared_cadence_hz", "native_parameters", "clock_parameters",
             )
         }
-        install_response = api.request(
-            f"/api/v1/native-backgrounds/{identity['bundle_digest']}/install",
-            method="POST",
-            timeout=config.timeout_seconds,
-        )
-        install_command = install_response.get("command_id")
-        _wait_for_status(
-            api,
-            lambda status: bool(
-                _command_processed(status, install_command)
-                and _native_driver(status).get("state") == "ready"
-                and _native_driver(status).get("bundle_digest")
-                    == identity["bundle_digest"]
-                and _native_driver(status).get("error") is None
-            ),
-            timeout=config.timeout_seconds,
-            monotonic=monotonic,
-            sleep=sleep,
-        )
-        start_response = api.request(
-            "/api/v1/scene",
-            method="PUT",
-            payload=scene,
-            timeout=config.timeout_seconds,
-        )
-        start_command = start_response.get("command_id")
-        active = _wait_for_status(
-            api,
-            lambda status: _native_active(status, start_command, identity),
-            timeout=config.timeout_seconds,
-            monotonic=monotonic,
-            sleep=sleep,
-        )
-        report["activation"] = {
-            "install_command_id": install_command,
-            "start_command_id": start_command,
-        }
         soak_started = monotonic()
+        active = api.request(
+            "/api/status", timeout=min(config.timeout_seconds, 10.0)
+        )
         first_sample = normalize_sample(
             active, elapsed_seconds=0.0, sampled_at=wall_time()
         )
         report["samples"].append(first_sample)
+        observed_scene_digest = canonical_scene_digest(
+            _mapping(first_sample.get("scene_state"))
+        )
+        if observed_scene_digest != config.expected_scene_digest:
+            raise PhysicalAcceptanceError(
+                "active scene does not match guarded activation receipt: "
+                f"expected {config.expected_scene_digest}, observed "
+                f"{observed_scene_digest}"
+            )
+        report["active_scene_digest"] = observed_scene_digest
         initial_failures = evaluate_sample(first_sample, identity)
         if initial_failures:
             raise PhysicalAcceptanceError("; ".join(initial_failures))
@@ -1545,6 +1338,15 @@ def run_acceptance(
                 sampled_at=wall_time(),
             )
             report["samples"].append(sample)
+            observed_scene_digest = canonical_scene_digest(
+                _mapping(sample.get("scene_state"))
+            )
+            if observed_scene_digest != config.expected_scene_digest:
+                raise PhysicalAcceptanceError(
+                    "active scene identity changed during observation: "
+                    f"expected {config.expected_scene_digest}, observed "
+                    f"{observed_scene_digest}"
+                )
             sample_failures = evaluate_sample(sample, identity)
             if sample_failures:
                 raise PhysicalAcceptanceError("; ".join(sample_failures))
@@ -1576,13 +1378,12 @@ def run_acceptance(
         if identity and len(report["samples"]) >= 2:
             report["evaluation"] = evaluate_series(report["samples"], identity)
     finally:
-        report["restoration"] = restore_python_fallback(
-            api,
-            config,
-            fallback_ref,
-            monotonic=monotonic,
-            sleep=sleep,
-        )
+        report["observation_only"] = True
+        report["restoration"] = {
+            "attempted": False,
+            "passed": False,
+            "reason": "observation-only runner never mutates or restores display state",
+        }
         completed_unix = wall_time()
         report["completed_at"] = _utc_timestamp(completed_unix)
         report["interrupted"] = interrupted
@@ -1591,7 +1392,6 @@ def run_acceptance(
         slice_passed = bool(
             not report["failures"]
             and evaluation.get("passed") is True
-            and restoration.get("passed") is True
         )
         controller_release_id = (
             _mapping(report["samples"][0]).get("controller_release_id")
@@ -1688,6 +1488,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--target", default=DEFAULT_TARGET)
     parser.add_argument(
+        "--expected-scene-digest",
+        required=True,
+        help="exact canonical digest from the guarded Composer activation receipt",
+    )
+    parser.add_argument(
         "--duration",
         type=float,
         default=DEFAULT_SOAK_SECONDS,
@@ -1695,7 +1500,6 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--sample-interval", type=float, default=5.0)
     parser.add_argument("--timeout", type=float, default=60.0)
-    parser.add_argument("--fallback", default=DEFAULT_FALLBACK)
     parser.add_argument("--clock-overlay", default=DEFAULT_CLOCK_OVERLAY)
     parser.add_argument("--output", type=Path)
     parser.add_argument(
@@ -1717,13 +1521,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         config = AcceptanceConfig(
+            expected_scene_digest=args.expected_scene_digest,
             target=args.target,
             selector=args.selector,
             gate=args.gate,
             duration_seconds=args.duration,
             sample_interval_seconds=args.sample_interval,
             timeout_seconds=args.timeout,
-            fallback_plugin=args.fallback,
             clock_overlay_plugin=args.clock_overlay,
             require_complete_gate=args.require_complete_gate,
         )

@@ -422,7 +422,7 @@ def _context(
     sinks: list[Any] = [
         AtomicJSONReceiptStore(root / NATIVE_RECEIPT_DIRECTORY),
     ]
-    if mode in {"native-publish", "native-run"}:
+    if mode == "native-publish":
         sinks.append(
             SSHAtomicJSONReceiptStore(
                 ssh,
@@ -1001,120 +1001,9 @@ def run_start(
     fallback_plugin: str = "aurora_curtains",
     timeout: float = 60.0,
 ) -> Mapping[str, Any]:
-    descriptor = _remote_native_descriptor(target, selector, timeout=timeout)
-    all_components = _api_json(target, "/api/v1/components", timeout=timeout).get(
-        "components", []
-    )
-    fallback = next((
-        item for item in all_components
-        if isinstance(item, dict)
-        and item.get("plugin_id") == fallback_plugin
-        and item.get("provider", "python") == "python"
-        and item.get("role") == "background"
-    ), None)
-    if fallback is None:
-        raise NativeBackgroundWorkflowError(
-            f"target has no Python fallback background {fallback_plugin!r}"
-        )
-    build = descriptor["build"]
-    try:
-        from animation.core.native_background_operation import (
-            encode_native_parameters,
-        )
-
-        expected_parameter_digest = encode_native_parameters(
-            descriptor.get("parameter_schema") or {},
-            descriptor.get("defaults") or {},
-        ).digest
-    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
-        raise NativeBackgroundWorkflowError(
-            f"target native catalog has no exact parameter binding: {exc}"
-        ) from exc
-    fallback_ref = {
-        "plugin_id": fallback_plugin,
-        "provider": "python",
-        "parameter_overrides": {},
-        "resolved_parameters": dict(fallback.get("defaults") or {}),
-    }
-    scene = {
-        "schema": "ledgrid.scene-state",
-        "schema_version": 1,
-        "revision": time.time_ns() & ((1 << 64) - 1),
-        "background": {
-            "plugin_id": descriptor["plugin_id"],
-            "provider": "receiver_native",
-            "parameter_overrides": {},
-            "resolved_parameters": dict(descriptor.get("defaults") or {}),
-            "bundle_digest": build["bundle_digest"],
-            "expected_payload_digest": build["expected_payload_digest"],
-        },
-        "overlays": [],
-        "known_python_fallback": fallback_ref,
-    }
-    response = _api_json(
-        target, "/api/v1/scene", method="PUT", payload=scene, timeout=timeout
-    )
-    status = _wait_native_command(
-        target,
-        response.get("command_id"),
-        bundle_digest=build["bundle_digest"],
-        payload_digest=build["expected_payload_digest"],
-        expected_state="active",
-        expected_operation="activate",
-        expected_parameter_digest=expected_parameter_digest,
-        expected_scene=scene,
-        timeout=timeout,
-    )
-    return {
-        "operation": "start",
-        "plugin_id": descriptor["plugin_id"],
-        "bundle_digest": build["bundle_digest"],
-        "payload_digest": build["expected_payload_digest"],
-        "command_id": response.get("command_id"),
-        "scene": status.get("scene_state"),
-        "native_background": status["receiver_hybrid"]["driver"],
-    }
-
-
-def _native_command_operation_result(
-    result: Mapping[str, Any],
-    candidate: Any,
-    *,
-    expected_operation: str,
-    expected_state: str,
-) -> OperationResult:
-    """Bind one API command proof to the exact locally validated artifact."""
-
-    command_id = result.get("command_id")
-    driver = result.get("native_background")
-    if (
-        isinstance(command_id, bool)
-        or not isinstance(command_id, (int, str))
-        or command_id == ""
-        or result.get("plugin_id") != candidate.manifest.get("plugin_id")
-        or result.get("bundle_digest") != candidate.bundle_digest
-        or result.get("payload_digest") != candidate.payload_digest
-        or not isinstance(driver, Mapping)
-        or driver.get("state") != expected_state
-        or driver.get("operation") != expected_operation
-        or driver.get("bundle_digest") != candidate.bundle_digest
-        or driver.get("payload_digest") != candidate.payload_digest
-        or driver.get("error") is not None
-    ):
-        raise NativeBackgroundWorkflowError(
-            f"native {expected_operation} returned no exact command-bound proof"
-        )
-    return OperationResult(
-        details=_json_safe(result),
-        artifacts=(
-            Artifact(
-                f"receiver_background_{expected_operation}",
-                str(candidate.manifest["plugin_id"]),
-                candidate.bundle_digest,
-                "1",
-                target_id=candidate.payload_digest,
-            ),
-        ),
+    raise NativeBackgroundWorkflowError(
+        "native start is retired and made no target changes; select the managed "
+        "native component in Composer, run Check, and use guarded activation"
     )
 
 
@@ -1128,79 +1017,13 @@ def run_native_run(
     fallback_plugin: str = "aurora_curtains",
     timeout: float = 60.0,
 ) -> Mapping[str, Any]:
-    """Build through activation under one append-only local/target receipt."""
+    """Reject before building, publishing, installing, or contacting a target."""
 
-    def install(context: DeployContext) -> OperationResult:
-        candidate = context.state["verified"]
-        result = run_install(
-            target, candidate.bundle_digest, timeout=timeout
-        )
-        context.state["installation_result"] = result
-        return _native_command_operation_result(
-            result,
-            candidate,
-            expected_operation="install",
-            expected_state="ready",
-        )
-
-    def activate(context: DeployContext) -> OperationResult:
-        candidate = context.state["verified"]
-        result = run_start(
-            target,
-            candidate.bundle_digest,
-            fallback_plugin=fallback_plugin,
-            timeout=timeout,
-        )
-        context.state["activation_result"] = result
-        return _native_command_operation_result(
-            result,
-            candidate,
-            expected_operation="activate",
-            expected_state="active",
-        )
-
-    receipt, context = _run_publish_receipt(
-        root,
-        plugin_id,
-        target=target,
-        deploy_dir=deploy_dir,
-        ssh_options=ssh_options,
-        mode="native-run",
-        extra_steps=(
-            Step(
-                "receiver_background.install",
-                True,
-                install,
-                "probe, stage, and verify the exact payload on every receiver",
-            ),
-            Step(
-                "receiver_background.activate",
-                True,
-                activate,
-                "activate the exact command-bound artifact with a Python fallback",
-            ),
-        ),
+    raise NativeBackgroundWorkflowError(
+        "native run is retired and made no build, publication, installation, or "
+        "target changes; build/publish/install explicitly if needed, then select "
+        "the managed component in Composer and use Check + guarded activation"
     )
-    publication_artifacts = [
-        artifact.to_dict()
-        for artifact in receipt.artifacts
-        if artifact.kind in {
-            "receiver_background_bundle",
-            "receiver_background_library_bundle",
-        }
-    ]
-    return {
-        "deployment_id": receipt.deployment_id,
-        "outcome": receipt.outcome,
-        "artifacts": [artifact.to_dict() for artifact in receipt.artifacts],
-        "publication": {
-            "deployment_id": receipt.deployment_id,
-            "outcome": receipt.outcome,
-            "artifacts": publication_artifacts,
-        },
-        "installation": context.state["installation_result"],
-        "activation": context.state["activation_result"],
-    }
 
 
 def _parser() -> argparse.ArgumentParser:
