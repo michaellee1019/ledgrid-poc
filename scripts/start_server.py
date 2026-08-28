@@ -916,19 +916,47 @@ def process_activation_commands(channel, activation_coordinator) -> int:
                     )
                     continue
                 if isinstance(durable_status, dict):
-                    # Never replay a command left applying/observing by a dead
-                    # controller process. The in-memory compensation snapshot
-                    # died with that process, so close it as a correlated
-                    # historical failure under the original session.
-                    activation_status = (
-                        activation_coordinator.reconcile_durable_nonterminal(
-                            activation_command, durable_status
+                    if durable_status.get("phase") == "queued":
+                        # The web process publishes the exact initial queued
+                        # receipt before atomically enqueuing its command.  That
+                        # is a current-controller handoff, not restart evidence.
+                        # The coordinator compares the complete normalized
+                        # receipt and current state before it may be adopted.
+                        try:
+                            activation_status = (
+                                activation_coordinator.queue_durable_handoff(
+                                    activation_command, durable_status
+                                )
+                            )
+                        except ControllerActivationConflictError as exc:
+                            activation_status = (
+                                activation_coordinator.reject_durable_queued(
+                                    activation_command,
+                                    durable_status,
+                                    error=(
+                                        "durable queued activation rejected before "
+                                        f"mutation: {exc}"
+                                    ),
+                                )
+                            )
+                            _settle_terminal_activation_requests(
+                                channel, activation_id, activation_status
+                            )
+                            continue
+                    if activation_status is None:
+                        # Never replay a command left applying/observing by a
+                        # dead controller process. The in-memory compensation
+                        # snapshot died with that process, so close it as a
+                        # correlated historical failure under the old session.
+                        activation_status = (
+                            activation_coordinator.reconcile_durable_nonterminal(
+                                activation_command, durable_status
+                            )
                         )
-                    )
-                    _settle_terminal_activation_requests(
-                        channel, activation_id, activation_status
-                    )
-                    continue
+                        _settle_terminal_activation_requests(
+                            channel, activation_id, activation_status
+                        )
+                        continue
                 activation_status = activation_coordinator.queue(
                     activation_command
                 )

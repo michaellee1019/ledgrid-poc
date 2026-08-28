@@ -1204,6 +1204,155 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
         self.assertEqual(manager.mutation_count, 0)
         self.assertIsNone(coordinator.get(channel.command["activation_id"]))
 
+    def test_current_session_web_queued_receipt_executes_once(self) -> None:
+        """The web-owned queued receipt is a handoff, not restart evidence."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            channel = FileControlChannel(
+                str(root / "control.json"),
+                str(root / "status.json"),
+                str(root / "activations"),
+            )
+            manager, coordinator = self.coordinator(
+                status_sink=channel.write_activation_status
+            )
+            command = self.command(coordinator)
+            channel.write_activation_status(coordinator._new_status(command))
+            channel.enqueue_activation(command)
+
+            self.assertEqual(process_activation_commands(channel, coordinator), 1)
+            terminal = channel.read_activation_status(command["activation_id"])
+            self.assertEqual(terminal["phase"], "active")
+            self.assertEqual(terminal["controller"]["state_revision_after"], 1)
+            mutations_after_first = manager.mutation_count
+            self.assertGreater(mutations_after_first, 0)
+            self.assertEqual(process_activation_commands(channel, coordinator), 0)
+            self.assertEqual(manager.mutation_count, mutations_after_first)
+
+    def test_prior_session_web_queued_receipt_is_never_replayed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            channel = FileControlChannel(
+                str(root / "control.json"),
+                str(root / "status.json"),
+                str(root / "activations"),
+            )
+            manager, prior = self.coordinator(
+                status_sink=channel.write_activation_status
+            )
+            command = self.command(prior)
+            channel.write_activation_status(prior._new_status(command))
+            channel.enqueue_activation(command)
+            restarted = ControllerActivationCoordinator(
+                manager, status_sink=channel.write_activation_status
+            )
+
+            self.assertEqual(process_activation_commands(channel, restarted), 0)
+            terminal = channel.read_activation_status(command["activation_id"])
+            self.assertEqual(terminal["phase"], "failed")
+            self.assertIn("current controller state", terminal["error"])
+            self.assertEqual(manager.mutation_count, 0)
+
+    def test_queued_handoff_rejects_drift_and_any_mutation_evidence(self) -> None:
+        cases = (
+            "basis_mismatch",
+            "state_revision_after",
+            "observed_identity",
+            "telemetry",
+            "rollback_authority",
+            "prior_error",
+            "controller_revision_drift",
+            "controller_identity_drift",
+        )
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                channel = FileControlChannel(
+                    str(root / "control.json"),
+                    str(root / "status.json"),
+                    str(root / "activations"),
+                )
+                manager, coordinator = self.coordinator(
+                    status_sink=channel.write_activation_status
+                )
+                command = self.command(coordinator)
+                queued = coordinator._new_status(command)
+                if case == "basis_mismatch":
+                    queued["basis_digest"] = "f" * 64
+                elif case == "state_revision_after":
+                    queued["controller"]["state_revision_after"] = 1
+                elif case == "observed_identity":
+                    queued["observed_identity"] = deepcopy(
+                        queued["normalized_identity"]
+                    )
+                elif case == "telemetry":
+                    queued["telemetry"]["complete"] = True
+                elif case == "rollback_authority":
+                    queued["rollback"].update(
+                        available=True, snapshot_id="unexpected-snapshot"
+                    )
+                elif case == "prior_error":
+                    queued["error"] = "unexpected prior work"
+                channel.write_activation_status(queued)
+                channel.enqueue_activation(command)
+                if case == "controller_revision_drift":
+                    coordinator._state_revision += 1
+                elif case == "controller_identity_drift":
+                    coordinator._active_identity[
+                        "installation_profile_digest"
+                    ] = "f" * 64
+
+                self.assertEqual(
+                    process_activation_commands(channel, coordinator), 0
+                )
+                terminal = channel.read_activation_status(
+                    command["activation_id"]
+                )
+                self.assertEqual(terminal["phase"], "failed")
+                self.assertIn("rejected before mutation", terminal["error"])
+                self.assertFalse(terminal["rollback"]["available"])
+                self.assertEqual(
+                    terminal["rollback"]["error"],
+                    "no rollback authority was acquired before rejection",
+                )
+                self.assertEqual(manager.mutation_count, 0)
+
+    def test_advanced_durable_phase_is_restart_closed_not_handed_off(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            channel = FileControlChannel(
+                str(root / "control.json"),
+                str(root / "status.json"),
+                str(root / "activations"),
+            )
+            manager, coordinator = self.coordinator(
+                status_sink=channel.write_activation_status
+            )
+            command = self.command(coordinator)
+            advanced = coordinator._new_status(command)
+            advanced["phase"] = "preflighting"
+            channel.write_activation_status(advanced)
+            channel.enqueue_activation(command)
+
+            self.assertEqual(process_activation_commands(channel, coordinator), 0)
+            terminal = channel.read_activation_status(command["activation_id"])
+            self.assertEqual(terminal["phase"], "failed")
+            self.assertIn("controller restarted", terminal["error"])
+            self.assertFalse(terminal["rollback"]["available"])
+            self.assertEqual(manager.mutation_count, 0)
+
+    def test_missing_queued_session_is_invalid_and_never_mutates(self) -> None:
+        manager, coordinator = self.coordinator()
+        command = self.command(coordinator)
+        queued = coordinator._new_status(command)
+        del queued["controller"]["session_id"]
+
+        with self.assertRaisesRegex(ValueError, "session_id"):
+            coordinator.queue_durable_handoff(command, queued)
+        self.assertEqual(manager.mutation_count, 0)
+        self.assertIsNone(coordinator.get(command["activation_id"]))
+
     def test_stale_session_replay_fails_once_then_new_restart_skips_it(self) -> None:
         class Channel:
             def __init__(self, command: dict) -> None:

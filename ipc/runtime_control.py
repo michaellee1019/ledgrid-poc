@@ -820,6 +820,88 @@ class ControllerActivationCoordinator:
             self._trim_records()
             return self._publish(record)
 
+    def queue_durable_handoff(
+        self, command_payload: Any, durable_status_payload: Any
+    ) -> dict[str, Any]:
+        """Adopt only the web process's exact, unmutated queued receipt."""
+
+        from ipc.scene_contract import normalize_scene_activation_status
+
+        command = _normalize_activation_command(
+            command_payload,
+            catalog=manager_component_catalog(self.manager) or None,
+            provider_policy=manager_scene_provider_policy(self.manager),
+        )
+        durable = normalize_scene_activation_status(durable_status_payload)
+        with self._lock:
+            basis_controller = command["basis"]["controller"]
+            current_basis = {
+                "session_id": self.session_id,
+                "state_revision": self._state_revision,
+                "current_identity_digest": _canonical_json_sha256(
+                    self._active_identity
+                ),
+            }
+            if basis_controller != current_basis:
+                raise ControllerActivationConflictError(
+                    "durable queued activation no longer matches current "
+                    "controller state"
+                )
+            expected = self._new_status(command)
+            if durable != expected:
+                raise ControllerActivationConflictError(
+                    "durable queued activation contains non-handoff evidence"
+                )
+            return self.queue(command)
+
+    def reject_durable_queued(
+        self,
+        command_payload: Any,
+        durable_status_payload: Any,
+        *,
+        error: str,
+    ) -> dict[str, Any]:
+        """Close a valid but non-adoptable queued receipt without mutation."""
+
+        from ipc.scene_contract import (
+            normalize_scene_activation_status,
+            validate_scene_activation_status_transition,
+        )
+
+        command = _normalize_activation_command(
+            command_payload,
+            catalog=manager_component_catalog(self.manager) or None,
+            provider_policy=manager_scene_provider_policy(self.manager),
+        )
+        durable = normalize_scene_activation_status(durable_status_payload)
+        if durable["activation_id"] != command["activation_id"]:
+            raise ControllerActivationConflictError(
+                "durable queued receipt activation_id does not match its command"
+            )
+        if durable["phase"] != "queued":
+            raise ControllerActivationConflictError(
+                "only a queued durable receipt can use queued-handoff rejection"
+            )
+        terminal = _copy_json(durable)
+        terminal["phase"] = "failed"
+        terminal["error"] = error
+        terminal["rollback"].update(
+            available=False,
+            result=None,
+            error="no rollback authority was acquired before rejection",
+        )
+        terminal = validate_scene_activation_status_transition(durable, terminal)
+        record = _ActivationRecord(
+            command=_copy_json(command),
+            status=terminal,
+            snapshot=None,
+            historical=True,
+        )
+        with self._lock:
+            self._records[command["activation_id"]] = record
+            self._trim_records()
+        return self._publish(record, required=False)
+
     def get(self, activation_id: str) -> dict[str, Any] | None:
         with self._lock:
             record = self._records.get(activation_id)
