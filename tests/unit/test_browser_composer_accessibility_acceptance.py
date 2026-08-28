@@ -107,9 +107,23 @@ class BrowserComposerAccessibilityAcceptanceTests(unittest.TestCase):
         self.assertEqual(self.script.count(".showModal()"), 1)
         self.assertIn("function showComposerModal(", self.script)
         self.assertIn("function restoreModalFocus(", self.script)
+        self.assertIn("function trapModalFocus(", self.script)
+        self.assertIn("event.key !== 'Tab'", self.script)
+        self.assertIn("active === first || !dialog.contains(active)", self.script)
+        self.assertIn("active === last || !dialog.contains(active)", self.script)
+        self.assertIn("last.focus({preventScroll: true})", self.script)
+        self.assertIn("first.focus({preventScroll: true})", self.script)
         self.assertIn("dialog.addEventListener('close', restoreModalFocus)", self.script)
+        self.assertIn("dialog.addEventListener('keydown', trapModalFocus)", self.script)
         self.assertIn("initialFocus.focus({preventScroll: true})", self.script)
-        self.assertIn("if (document.querySelector('dialog[open]')) return;", self.script)
+        self.assertIn("window.setTimeout(() => {", self.script)
+        self.assertIn("returnFocus.focus({preventScroll: true})", self.script)
+
+    def test_browser_electrical_evidence_preserves_mean_peak_order(self) -> None:
+        self.assertIn(
+            "meanCurrentAmps: Math.min(peakCurrent, currentTotal / SAMPLE_FRAMES)",
+            self.script,
+        )
 
     def test_keyboard_navigation_covers_tabs_catalog_and_mask_grid(self) -> None:
         for tab_id in ("controlsTab", "layersTab", "wallTab", "checkerTab"):

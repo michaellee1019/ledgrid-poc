@@ -4893,6 +4893,7 @@ class AnimationManager:
                 for label, ratio in (('p50', 0.50), ('p95', 0.95), ('p99', 0.99)):
                     index = min(count - 1, max(0, int(round((count - 1) * ratio))))
                     summary[f'{label}_{key}_ms'] = ordered[index] * 1000.0
+                summary[f'max_{key}_ms'] = ordered[-1] * 1000.0
 
             deadline_misses = sum(
                 sample.get('process', 0.0) > (target_frame_ms / 1000.0)

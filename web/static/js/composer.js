@@ -151,6 +151,43 @@
     }
 
     const modalReturnFocus = new WeakMap();
+    const MODAL_FOCUSABLE_SELECTOR = [
+        'a[href]',
+        'button:not([disabled])',
+        'input:not([disabled]):not([type="hidden"])',
+        'select:not([disabled])',
+        'textarea:not([disabled])',
+        '[tabindex]:not([tabindex="-1"])',
+    ].join(',');
+
+    function modalFocusableElements(dialog) {
+        return [...dialog.querySelectorAll(MODAL_FOCUSABLE_SELECTOR)].filter((element) => (
+            element instanceof HTMLElement
+            && !element.hidden
+            && !element.closest('[hidden]')
+            && element.tabIndex >= 0
+        ));
+    }
+
+    function trapModalFocus(event) {
+        const dialog = event.currentTarget;
+        if (!(dialog instanceof HTMLDialogElement) || !dialog.open || event.key !== 'Tab') return;
+        const focusable = modalFocusableElements(dialog);
+        if (!focusable.length) {
+            event.preventDefault();
+            return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        if (event.shiftKey && (active === first || !dialog.contains(active))) {
+            event.preventDefault();
+            last.focus({preventScroll: true});
+        } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+            event.preventDefault();
+            first.focus({preventScroll: true});
+        }
+    }
 
     function showComposerModal(dialog, {initialFocus = null, returnFocus = document.activeElement} = {}) {
         if (!dialog || dialog.open) return;
@@ -167,14 +204,19 @@
         const dialog = event.currentTarget;
         const returnFocus = modalReturnFocus.get(dialog);
         modalReturnFocus.delete(dialog);
-        if (
-            document.querySelector('dialog[open]')
-            || !(returnFocus instanceof HTMLElement)
-            || !returnFocus.isConnected
-            || returnFocus.disabled
-            || returnFocus.closest('dialog:not([open])')
-        ) return;
-        returnFocus.focus();
+        if (!(returnFocus instanceof HTMLElement)) return;
+        // Native Escape handling may complete its own focus step after the
+        // dialog's close event. Restore on the next task so the control that
+        // opened the dialog wins consistently in every browser engine.
+        window.setTimeout(() => {
+            if (
+                document.querySelector('dialog[open]')
+                || !returnFocus.isConnected
+                || returnFocus.disabled
+                || returnFocus.closest('dialog:not([open])')
+            ) return;
+            returnFocus.focus({preventScroll: true});
+        }, 0);
     }
 
     function applyMotionPreference(reduced, {announce = false} = {}) {
@@ -2333,7 +2375,11 @@
                         kind: 'uncalibrated_estimate',
                         brightness: state.globalSettings.draft?.brightness,
                         peakCurrentAmps: peakCurrent,
-                        meanCurrentAmps: currentTotal / SAMPLE_FRAMES,
+                        // Floating-point accumulation can put the arithmetic
+                        // mean a few ulps above an identical sampled maximum.
+                        // Preserve the mathematical mean <= peak invariant
+                        // required by the server evidence contract.
+                        meanCurrentAmps: Math.min(peakCurrent, currentTotal / SAMPLE_FRAMES),
                         nominalVoltageVolts: 5,
                     },
                 };
@@ -3720,6 +3766,7 @@
     function bindEvents() {
         document.querySelectorAll('dialog').forEach((dialog) => {
             dialog.addEventListener('close', restoreModalFocus);
+            dialog.addEventListener('keydown', trapModalFocus);
         });
         $('componentSearch').addEventListener('input', (event) => {
             state.query = event.target.value;

@@ -216,6 +216,76 @@ class SceneActivationApiTests(unittest.TestCase):
             second["qualification"]["blockers"],
         )
 
+    def test_check_loads_only_exact_target_owned_qualification_envelope(self) -> None:
+        evidence = self._numeric_browser_evidence()
+        first = self.client.post("/api/v1/scene/checks", json={
+            "scene": self.scene,
+            "global_settings": self.globals,
+            "browser_evidence": evidence,
+        }).get_json()
+        binding_digest = first["qualification"]["binding_digest"]
+        captured_at = int(time.time() * 1000)
+        target_evidence = {
+            "schema": "ledgrid.target-qualification-evidence",
+            "schema_version": 1,
+            "revision": 1,
+            "binding_digest": binding_digest,
+            "captured_at": captured_at,
+            "environment": "exact Raspberry Pi and five-receiver test capture",
+            "evidence": [],
+        }
+        for source in ("controller_pi", "receiver"):
+            target_evidence["evidence"].append({
+                "source": source,
+                "binding_digest": binding_digest,
+                "captured_at": captured_at,
+                "environment": f"{source} exact 33x138 target",
+                "sample_count": 300,
+                "frame_time_ms": {
+                    "mean": 2.0, "p95": 3.0, "p99": 4.0, "max": 5.0,
+                },
+                "cadence": {
+                    "observed_fps": 30.0,
+                    "missed_frame_ratio": 0.0,
+                    "changed_frame_ratio": None if source == "receiver" else 1.0,
+                },
+                "electrical": None,
+            })
+        legacy_status = self.channel.read_status()
+        legacy_status["activation_qualification_evidence"] = deepcopy(
+            target_evidence["evidence"]
+        )
+        self.channel.write_status(legacy_status)
+        ignored_legacy = self.client.post("/api/v1/scene/checks", json={
+            "scene": self.scene,
+            "global_settings": self.globals,
+            "browser_evidence": evidence,
+        }).get_json()
+        self.assertIn(
+            "missing_controller_pi_evidence",
+            ignored_legacy["qualification"]["blockers"],
+        )
+        self.assertIn(
+            "missing_receiver_evidence",
+            ignored_legacy["qualification"]["blockers"],
+        )
+        target_path = Path(self.temporary.name) / "target-evidence.json"
+        target_path.write_text(json.dumps(target_evidence), encoding="utf-8")
+        self.interface.target_qualification_evidence_path = target_path
+
+        checked = self.client.post("/api/v1/scene/checks", json={
+            "scene": self.scene,
+            "global_settings": self.globals,
+            "browser_evidence": evidence,
+        }).get_json()
+
+        blockers = checked["qualification"]["blockers"]
+        self.assertNotIn("missing_controller_pi_evidence", blockers)
+        self.assertNotIn("missing_receiver_evidence", blockers)
+        self.assertNotIn("stale_controller_pi_evidence", blockers)
+        self.assertTrue(checked["qualification"]["gates"]["performance"]["passed"])
+        self.assertFalse(checked["qualification"]["gates"]["power"]["passed"])
+
     def test_check_rejects_unrestorable_live_legacy_and_painter_before_token(self) -> None:
         token_path = Path(self.temporary.name) / "tokens.sqlite3"
         for label, live_fields in (

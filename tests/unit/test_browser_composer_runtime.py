@@ -672,7 +672,9 @@ async function message(harness, data) {
     def test_service_worker_readiness_requires_verified_shell_catalog_and_python(self) -> None:
         source = SERVICE_WORKER_JS.read_text(encoding="utf-8")
         self.assertIn(f"const CACHE_VERSION = '{CACHE_VERSION}'", source)
-        self.assertIn("const PREVIOUS_CACHE_VERSION = 'v15'", source)
+        self.assertIn(
+            f"const PREVIOUS_CACHE_VERSION = '{PREVIOUS_CACHE_VERSION}'", source
+        )
         self.assertIn("const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`", source)
         self.assertIn("const STAGING_CACHE_NAME = `${CACHE_NAME}-staging`", source)
         self.assertIn("installVersionedShell", source)

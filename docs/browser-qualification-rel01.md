@@ -9,7 +9,7 @@ separate evidence records and remain required before REL-01 can be closed.
 ## Acceptance contract
 
 [`tools/browser_qualification/rel01_manifest.json`](../tools/browser_qualification/rel01_manifest.json)
-is the versioned source of truth. Every required engine must execute all seven
+is the versioned source of truth. Every required engine must execute all eight
 journeys and retain its reported engine identity and version, Playwright
 version, timestamps, viewport observations, and individual assertion outcomes.
 
@@ -17,8 +17,8 @@ version, timestamps, viewport observations, and individual assertion outcomes.
   proves Undo/Redo and the Clock toggle, runs a local Check, saves to the
   authoring library, proves the assigned preset identity invalidates that Check,
   reruns Check for the saved identity, and cancels guarded activation review.
-- `offline_reconnect` seeds a real `v15` cache on the fixture origin, proves the
-  verified `v16` promotion removes it, intentionally exercises a Python
+- `offline_reconnect` seeds a real `v16` cache on the fixture origin, proves the
+  verified `v17` promotion removes it, intentionally exercises a Python
   background and pinned offline-runtime preparation, proves the active worker
   controls the Composer and retains its renderer catalog, reloads and edits
   while offline, proves a stale Check cannot enable review, runs a new Check,
@@ -41,6 +41,12 @@ version, timestamps, viewport observations, and individual assertion outcomes.
 - `responsive_layouts` observes 375×667, 390×844, 430×932, 768×1024, and
   1440×1000. Each viewport must have no horizontal overflow, reachable
   navigation and actions, and at least 44×44 primary targets.
+- `keyboard_only_desktop` uses only Tab, Shift+Tab, Enter, Space, arrow,
+  Home/End, and declared keyboard shortcuts after navigation. It follows the
+  skip link, filters and chooses Color Gradient, tunes with Undo/Redo, operates
+  the inspector tablist and Clock switch, completes Check and library Save,
+  then proves native dialog focus containment, Escape cancellation, exact
+  focus return, and zero wall mutation.
 - `global_controls` exercises all five vibes, brightness, speed, FPS, and all
   fourteen plant-modifier classes, then opens and cancels review.
 - `profile_masks` uses the managed profile draft to paint foliage plus all

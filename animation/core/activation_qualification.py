@@ -23,6 +23,8 @@ QUALIFICATION_RESULT_SCHEMA = "ledgrid.activation-qualification-result"
 QUALIFICATION_RESULT_VERSION = 1
 INSTALLATION_BUDGET_SCHEMA = "ledgrid.installation-qualification-budget"
 INSTALLATION_BUDGET_VERSION = 1
+TARGET_EVIDENCE_SCHEMA = "ledgrid.target-qualification-evidence"
+TARGET_EVIDENCE_VERSION = 1
 EVIDENCE_SOURCES = ("browser", "controller_pi", "receiver")
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -711,6 +713,106 @@ def activation_qualification_record_digest(value: Any) -> str:
     return canonical_json_sha256(normalize_activation_qualification_record(value))
 
 
+def normalize_target_qualification_evidence(value: Any) -> dict[str, Any]:
+    """Normalize one atomically retained controller/receiver capture.
+
+    The envelope deliberately contains target evidence only. Browser evidence
+    is produced by the browser Check and electrical evidence remains absent
+    unless an actual calibrated instrument supplied it during capture.
+    """
+
+    payload = _object(value, "target qualification evidence")
+    _only(
+        payload,
+        {
+            "schema",
+            "schema_version",
+            "revision",
+            "binding_digest",
+            "captured_at",
+            "environment",
+            "evidence",
+        },
+        "target qualification evidence",
+    )
+    if payload.get("schema") != TARGET_EVIDENCE_SCHEMA:
+        raise QualificationValidationError(
+            "target qualification evidence.schema must be "
+            f"{TARGET_EVIDENCE_SCHEMA!r}"
+        )
+    if payload.get("schema_version") != TARGET_EVIDENCE_VERSION:
+        raise QualificationValidationError(
+            "target qualification evidence.schema_version must be "
+            f"{TARGET_EVIDENCE_VERSION}"
+        )
+    binding_digest = _digest(
+        payload.get("binding_digest"),
+        "target qualification evidence.binding_digest",
+    )
+    captured_at = _integer(
+        payload.get("captured_at"),
+        "target qualification evidence.captured_at",
+        minimum=1,
+    )
+    raw_evidence = payload.get("evidence")
+    if not isinstance(raw_evidence, list):
+        raise QualificationValidationError(
+            "target qualification evidence.evidence must be an array"
+        )
+    evidence = [_evidence(item, index) for index, item in enumerate(raw_evidence)]
+    sources = [item["source"] for item in evidence]
+    if sorted(sources) != ["controller_pi", "receiver"]:
+        raise QualificationValidationError(
+            "target qualification evidence must contain exactly one "
+            "controller_pi and one receiver item"
+        )
+    for item in evidence:
+        if item["binding_digest"] != binding_digest:
+            raise QualificationValidationError(
+                f"{item['source']} evidence does not match the envelope binding"
+            )
+        if item["captured_at"] != captured_at:
+            raise QualificationValidationError(
+                f"{item['source']} evidence does not match the envelope capture time"
+            )
+    evidence.sort(key=lambda item: EVIDENCE_SOURCES.index(item["source"]))
+    return {
+        "schema": TARGET_EVIDENCE_SCHEMA,
+        "schema_version": TARGET_EVIDENCE_VERSION,
+        "revision": _integer(
+            payload.get("revision"),
+            "target qualification evidence.revision",
+            minimum=1,
+        ),
+        "binding_digest": binding_digest,
+        "captured_at": captured_at,
+        "environment": _text(
+            payload.get("environment"),
+            "target qualification evidence.environment",
+        ),
+        "evidence": evidence,
+    }
+
+
+def load_target_qualification_evidence(path: str | Path) -> dict[str, Any]:
+    """Load one strict retained capture without contacting the target."""
+
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+        value = json.loads(
+            raw,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except QualificationValidationError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise QualificationValidationError(
+            f"could not load target qualification evidence: {exc}"
+        ) from exc
+    return normalize_target_qualification_evidence(value)
+
+
 def _gate(reasons: list[str]) -> dict[str, Any]:
     return {"passed": not reasons, "reasons": sorted(reasons)}
 
@@ -843,12 +945,16 @@ __all__ = [
     "INSTALLATION_BUDGET_VERSION",
     "QUALIFICATION_RECORD_SCHEMA",
     "QUALIFICATION_RECORD_VERSION",
+    "TARGET_EVIDENCE_SCHEMA",
+    "TARGET_EVIDENCE_VERSION",
     "QualificationValidationError",
     "activation_qualification_binding_digest",
     "activation_qualification_record_digest",
     "evaluate_activation_qualification",
     "installation_qualification_budget_digest",
     "load_installation_qualification_budget",
+    "load_target_qualification_evidence",
     "normalize_activation_qualification_record",
     "normalize_installation_qualification_budget",
+    "normalize_target_qualification_evidence",
 ]

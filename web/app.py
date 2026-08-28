@@ -24,11 +24,13 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from animation.core.activation_qualification import (
     QUALIFICATION_RECORD_SCHEMA,
+    QualificationValidationError,
     activation_qualification_binding_digest,
     activation_qualification_record_digest,
     evaluate_activation_qualification,
     installation_qualification_budget_digest,
     load_installation_qualification_budget,
+    load_target_qualification_evidence,
 )
 from animation.core.feature_flags import AnimationPipelineFeatureFlags
 from animation.core.installation_profile_authoring import (
@@ -173,6 +175,11 @@ class AnimationWebInterface:
         self.animation_presets_dir = self.project_root / "presets" / "animations"
         self.scene_presets_dir = self.project_root / "presets" / "scenes"
         self.deployment_status_path = self.project_root / "run_state" / "deployment.json"
+        self.target_qualification_evidence_path = (
+            self.project_root
+            / "run_state"
+            / "activation_qualification_evidence.json"
+        )
         profile_library = getattr(
             self.preview_manager, '_installation_profile_library', None
         )
@@ -2377,13 +2384,21 @@ class AnimationWebInterface:
         )
         if browser is not None:
             evidence.append(browser)
-        retained = controller_status.get('activation_qualification_evidence')
-        if isinstance(retained, list):
+        try:
+            retained_envelope = load_target_qualification_evidence(
+                self.target_qualification_evidence_path
+            )
+        except QualificationValidationError:
+            # Missing, malformed, stale-binding, and partial evidence all fail
+            # closed as missing target evidence in the qualification result.
+            retained_envelope = None
+        if (
+            retained_envelope is not None
+            and retained_envelope['binding_digest'] == binding_digest
+        ):
             evidence.extend(
                 dict(item)
-                for item in retained
-                if isinstance(item, dict)
-                and item.get('source') in {'controller_pi', 'receiver'}
+                for item in retained_envelope['evidence']
             )
 
         budget = load_installation_qualification_budget()

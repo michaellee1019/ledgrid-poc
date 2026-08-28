@@ -55,6 +55,39 @@ class FrameContractTests(unittest.TestCase):
         self.assertEqual(manager.set_target_fps(999), 200)
         self.assertEqual(manager.set_target_fps(0), 1)
 
+    def test_performance_summary_retains_maximum_for_qualification(self):
+        manager = AnimationManager.__new__(AnimationManager)
+        manager.target_fps = 100
+        manager.controller = type("Controller", (), {"inline_show": True})()
+        manager.frames_presented = 3
+        manager.unchanged_frames_skipped = 1
+        manager.perf_lock = threading.Lock()
+        manager.perf_samples = deque((
+            {
+                "generate": 0.001,
+                "send": 0.002,
+                "show": 0.003,
+                "process": 0.004,
+                "sleep": 0.005,
+                "frame": 0.006,
+            },
+            {
+                "generate": 0.002,
+                "send": 0.003,
+                "show": 0.004,
+                "process": 0.005,
+                "sleep": 0.006,
+                "frame": 0.007,
+            },
+        ))
+        manager._last_perf_sample = manager.perf_samples[-1]
+
+        summary = manager._get_perf_summary()
+
+        self.assertEqual(summary["max_generate_ms"], 2.0)
+        self.assertEqual(summary["max_frame_ms"], 7.0)
+        self.assertGreaterEqual(summary["max_frame_ms"], summary["p99_frame_ms"])
+
     def test_base_rotates_two_canonical_buffers(self):
         animation = _Animation(_Controller())
         first = animation.generate_frame(0.0, 0)

@@ -234,6 +234,20 @@ receiver-streamed-wall-acceptance expected_scene_digest duration="60" min_fps="1
 		--duration "$duration" --min-displayed-fps "$min_fps" \
 		--target-fps "$target_fps" --animation rainbow
 
+# Observe the exact guarded activation and immutable release for the complete
+# WALL-02 soak. This never activates, restores, restarts, or otherwise mutates.
+guarded-wall-soak activation_id expected_scene_digest expected_release_id expected_basis_digest duration="1800" sample_interval="5" target="ledgridwall.local" min_fps="150" target_fps="150":
+	activation_id="{{activation_id}}"; expected_scene_digest="{{expected_scene_digest}}"; expected_release_id="{{expected_release_id}}"; expected_basis_digest="{{expected_basis_digest}}"; \
+	duration="{{duration}}"; sample_interval="{{sample_interval}}"; target="{{target}}"; min_fps="{{min_fps}}"; target_fps="{{target_fps}}"; \
+	duration="${duration#duration=}"; sample_interval="${sample_interval#sample_interval=}"; target="${target#target=}"; \
+	min_fps="${min_fps#min_fps=}"; target_fps="${target_fps#target_fps=}"; \
+	{{python_env}} python tools/benchmarks/guarded_wall_soak.py \
+		"$activation_id" --expected-scene-digest "$expected_scene_digest" \
+		--expected-release-id "$expected_release_id" \
+		--expected-basis-digest "$expected_basis_digest" --target "$target" \
+		--duration "$duration" --sample-interval "$sample_interval" \
+		--min-displayed-fps "$min_fps" --target-fps "$target_fps"
+
 # Collect H2 binding/topology/skew/drift supporting evidence. Transaction
 # injection, restart/lease repair, streamed capacity, and the Python sweep remain
 # explicit companion subgates. The default is a real 30-minute evidence run.

@@ -101,6 +101,23 @@
         "forbidden_wall_requests_zero"
       ]
     },
+    "keyboard_only_desktop": {
+      "background_name": "Color Gradient",
+      "viewport": {"width": 1440, "height": 1000},
+      "required_assertions": [
+        "skip_link_reached_composer",
+        "renderer_selected_by_keyboard",
+        "parameter_keyboard_edit_undo_redo",
+        "tablist_arrow_home_end_navigation",
+        "clock_toggle_keyboard_operable",
+        "local_check_keyboard_completed",
+        "library_save_keyboard_completed_without_wall_change",
+        "activation_dialog_keyboard_focus_contained",
+        "activation_review_cancelled_by_keyboard",
+        "browser_console_clean",
+        "forbidden_wall_requests_zero"
+      ]
+    },
     "global_controls": {
       "viewport": {"width": 1440, "height": 1000},
       "required_assertions": [
@@ -149,8 +166,8 @@
     }
   },
   "service_worker_upgrade": {
-    "previous_cache": "ledgrid-composer-shell-v15",
-    "current_cache": "ledgrid-composer-shell-v16"
+    "previous_cache": "ledgrid-composer-shell-v16",
+    "current_cache": "ledgrid-composer-shell-v17"
   },
   "forbidden_live_mutation_requests": [
     "PUT|POST|DELETE /api/v1/scene",

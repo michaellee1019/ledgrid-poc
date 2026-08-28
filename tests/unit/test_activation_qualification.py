@@ -15,6 +15,7 @@ from animation.core.activation_qualification import (
     load_installation_qualification_budget,
     normalize_activation_qualification_record,
     normalize_installation_qualification_budget,
+    normalize_target_qualification_evidence,
 )
 
 
@@ -329,6 +330,7 @@ class ActivationQualificationTests(unittest.TestCase):
     def test_checked_in_unknown_budget_loads_but_power_fails_closed(self) -> None:
         budget = load_installation_qualification_budget()
         self.assertEqual(budget["calibration"]["status"], "unqualified")
+        self.assertEqual(budget["maximum_evidence_age_ms"], 14_400_000)
         self.assertIsNone(budget["budgets"]["current"]["maximum_a"])
 
         record = _record()
@@ -345,6 +347,50 @@ class ActivationQualificationTests(unittest.TestCase):
         self.assertTrue(result["gates"]["identity"]["passed"])
         self.assertFalse(result["gates"]["power"]["passed"])
         self.assertIn("installation_budget_uncalibrated", result["reasons"])
+
+    def test_target_evidence_envelope_requires_one_exact_simultaneous_pair(self) -> None:
+        binding_digest = activation_qualification_binding_digest(_binding())
+        captured_at = NOW_MS - 1_000
+        envelope = {
+            "schema": "ledgrid.target-qualification-evidence",
+            "schema_version": 1,
+            "revision": 1,
+            "binding_digest": binding_digest,
+            "captured_at": captured_at,
+            "environment": "Raspberry Pi and exact installed five-receiver wall",
+            "evidence": [
+                _evidence(
+                    "controller_pi", binding_digest, captured_at=captured_at,
+                ),
+                _evidence("receiver", binding_digest, captured_at=captured_at),
+            ],
+        }
+        normalized = normalize_target_qualification_evidence(envelope)
+        self.assertEqual(
+            [item["source"] for item in normalized["evidence"]],
+            ["controller_pi", "receiver"],
+        )
+
+        for label, mutate in (
+            ("missing receiver", lambda value: value["evidence"].pop()),
+            (
+                "wrong binding",
+                lambda value: value["evidence"][1].__setitem__(
+                    "binding_digest", "9" * 64
+                ),
+            ),
+            (
+                "different window",
+                lambda value: value["evidence"][0].__setitem__(
+                    "captured_at", captured_at - 1
+                ),
+            ),
+        ):
+            with self.subTest(label=label):
+                changed = deepcopy(envelope)
+                mutate(changed)
+                with self.assertRaises(QualificationValidationError):
+                    normalize_target_qualification_evidence(changed)
 
 
 if __name__ == "__main__":

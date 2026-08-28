@@ -298,7 +298,7 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
     if (!markerResponse?.ok()) throw new Error(`Could not establish the fixture origin: ${markerResponse?.status() || 'no response'}`);
     await page.evaluate(async ({previousCache}) => {
       const cache = await caches.open(previousCache);
-      await cache.put('/__rel01_previous_generation__', new Response('v15-marker', {
+      await cache.put('/__rel01_previous_generation__', new Response('v16-marker', {
         headers: {'Content-Type': 'text/plain'},
       }));
     }, {previousCache: manifestContract.service_worker_upgrade.previous_cache});
@@ -653,6 +653,225 @@ async function runResponsiveLayouts(browser, contract, composerUrl) {
   return journey;
 }
 
+async function focusWithKeyboard(page, selector, {reverse = false, maxSteps = 400} = {}) {
+  for (let step = 0; step <= maxSteps; step += 1) {
+    const focused = await page.evaluate((target) => document.activeElement?.matches(target) === true, selector);
+    if (focused) {
+      return page.evaluate(() => {
+        const element = document.activeElement;
+        return {
+          id: element?.id || null,
+          tag: element?.tagName || null,
+          text: element?.textContent?.replace(/\s+/g, ' ').trim().slice(0, 120) || null,
+        };
+      });
+    }
+    const keys = [];
+    if (args.engine === 'webkit') keys.push('Alt');
+    if (reverse) keys.push('Shift');
+    keys.push('Tab');
+    await page.keyboard.press(keys.join('+'));
+  }
+  throw new Error(`Keyboard focus did not reach ${selector} within ${maxSteps} Tab steps`);
+}
+
+async function completeLocalCheckWithKeyboard(page) {
+  const button = page.locator('#runCheckerButton');
+  await page.waitForFunction(() => {
+    const target = document.querySelector('#runCheckerButton');
+    const badge = document.querySelector('#engineBadge');
+    if (target instanceof HTMLButtonElement && !target.disabled) return 'ready';
+    if (badge?.getAttribute('data-state') === 'error') return 'renderer_error';
+    return null;
+  }, null, {timeout: timeoutMs});
+  await focusWithKeyboard(page, '#runCheckerButton');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => {
+    const headline = document.querySelector('#checkHeadline')?.textContent || '';
+    return headline !== 'Not checked yet' && headline !== '';
+  }, null, {timeout: timeoutMs});
+  const grade = await page.locator('#checkSummary').getAttribute('data-grade');
+  const headline = (await page.locator('#checkHeadline').textContent()) || '';
+  const summary = (await page.locator('#checkSummaryCopy').textContent()) || '';
+  if (!['pass', 'warn'].includes(grade || '')) {
+    throw new Error(`Keyboard Check did not pass: ${grade || 'unknown'} ${headline}; ${summary}`);
+  }
+  return `${grade}: ${headline}; ${summary}`;
+}
+
+async function runKeyboardOnlyDesktop(browser, contract, composerUrl) {
+  const context = await browser.newContext({viewport: contract.viewport, serviceWorkers: 'allow'});
+  const page = await context.newPage();
+  page.setDefaultTimeout(timeoutMs);
+  const assertions = [];
+  const consoleErrors = [];
+  const forbidden = [];
+  attachObservability(page, 'keyboard_only_desktop', consoleErrors, forbidden);
+  try {
+    const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
+    if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
+    await page.waitForFunction(() => document.querySelector('#componentList')?.getAttribute('aria-busy') === 'false');
+
+    await page.keyboard.press(args.engine === 'webkit' ? 'Alt+Tab' : 'Tab');
+    const skipFocused = await page.evaluate(() => document.activeElement?.matches('.skip-link') === true);
+    await page.keyboard.press('Enter');
+    const workspaceFocused = await page.evaluate(() => document.activeElement?.id === 'composerWorkspace');
+    assertions.push(observation(
+      'skip_link_reached_composer',
+      skipFocused && workspaceFocused,
+      `skip_focused=${skipFocused} workspace_focused=${workspaceFocused}`,
+    ));
+
+    await focusWithKeyboard(page, '#componentSearch');
+    await page.keyboard.type(contract.background_name);
+    await page.waitForFunction(() => document.querySelectorAll('#componentList .component-card:not([disabled])').length === 1);
+    await focusWithKeyboard(page, '#componentList .component-card:not([disabled])');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction((name) => (
+      document.querySelector('#stageHeading')?.textContent?.trim() === name
+      && document.querySelector('#runCheckerButton') instanceof HTMLButtonElement
+      && !document.querySelector('#runCheckerButton').disabled
+    ), contract.background_name, {timeout: timeoutMs});
+    assertions.push(observation(
+      'renderer_selected_by_keyboard',
+      true,
+      (await page.locator('#stageHeading').textContent()) || contract.background_name,
+    ));
+
+    await focusWithKeyboard(page, '#parameterList input:not([type="hidden"])');
+    const priorParameter = await page.evaluate(() => document.activeElement?.value || null);
+    await page.keyboard.press('ArrowRight');
+    await page.waitForFunction((prior) => document.activeElement?.value !== prior, priorParameter);
+    const tunedParameter = await page.evaluate(() => document.activeElement?.value || null);
+    await focusWithKeyboard(page, '#controlsTab', {reverse: true});
+    await page.keyboard.press('ControlOrMeta+Z');
+    await page.waitForFunction((prior) => document.querySelector('#parameterList input:not([type="hidden"])')?.value === prior, priorParameter);
+    await page.keyboard.press('ControlOrMeta+Shift+Z');
+    await page.waitForFunction((tuned) => document.querySelector('#parameterList input:not([type="hidden"])')?.value === tuned, tunedParameter);
+    assertions.push(observation(
+      'parameter_keyboard_edit_undo_redo',
+      priorParameter !== tunedParameter,
+      `${priorParameter} -> ${tunedParameter} -> ${priorParameter} -> ${tunedParameter}`,
+    ));
+
+    await page.keyboard.press('End');
+    const endState = await page.evaluate(() => ({
+      active: document.activeElement?.id,
+      selected: document.querySelector('#checkerTab')?.getAttribute('aria-selected'),
+      panelHidden: document.querySelector('#checkerPanel')?.hidden,
+    }));
+    await page.keyboard.press('Home');
+    const homeState = await page.evaluate(() => ({
+      active: document.activeElement?.id,
+      selected: document.querySelector('#controlsTab')?.getAttribute('aria-selected'),
+      panelHidden: document.querySelector('#controlsPanel')?.hidden,
+    }));
+    await page.keyboard.press('ArrowRight');
+    const arrowState = await page.evaluate(() => ({
+      active: document.activeElement?.id,
+      selected: document.querySelector('#layersTab')?.getAttribute('aria-selected'),
+      panelHidden: document.querySelector('#layersPanel')?.hidden,
+    }));
+    const tablistOperable = endState.active === 'checkerTab'
+      && endState.selected === 'true'
+      && endState.panelHidden === false
+      && homeState.active === 'controlsTab'
+      && homeState.selected === 'true'
+      && homeState.panelHidden === false
+      && arrowState.active === 'layersTab'
+      && arrowState.selected === 'true'
+      && arrowState.panelHidden === false;
+    assertions.push(observation(
+      'tablist_arrow_home_end_navigation',
+      tablistOperable,
+      JSON.stringify({endState, homeState, arrowState}),
+    ));
+
+    await focusWithKeyboard(page, '#clockEnabled');
+    await page.keyboard.press('Space');
+    const clockEnabled = await page.locator('#clockEnabled').isChecked();
+    assertions.push(observation(
+      'clock_toggle_keyboard_operable',
+      clockEnabled,
+      `clock_enabled=${clockEnabled}`,
+    ));
+
+    const name = `REL-01 keyboard ${args.engine} ${Date.now()}`;
+    await focusWithKeyboard(page, '#presetName', {reverse: true});
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.type(name);
+    await focusWithKeyboard(page, '#importButton');
+    await page.keyboard.press('c');
+    const firstCheck = await completeLocalCheckWithKeyboard(page);
+    assertions.push(observation('local_check_keyboard_completed', true, firstCheck));
+
+    await page.keyboard.press('ControlOrMeta+S');
+    await page.waitForFunction(() => (
+      /physical wall was not changed/i.test(document.querySelector('#serverActionStatus')?.textContent || '')
+      && document.querySelector('#saveLibraryButton')?.getAttribute('data-busy') !== 'true'
+    ), null, {timeout: timeoutMs});
+    const saveStatus = (await page.locator('#serverActionStatus').textContent()) || '';
+    assertions.push(observation(
+      'library_save_keyboard_completed_without_wall_change',
+      /saved/i.test(saveStatus) && await page.locator('#activateButton').isDisabled(),
+      saveStatus,
+    ));
+
+    await focusWithKeyboard(page, '#importButton', {reverse: true});
+    await page.keyboard.press('c');
+    await completeLocalCheckWithKeyboard(page);
+    await page.waitForFunction(() => !document.querySelector('#activateButton')?.disabled, null, {timeout: timeoutMs});
+    await focusWithKeyboard(page, '#activateButton', {reverse: true});
+    await page.keyboard.press('Enter');
+    const activationReviewOutcome = await page.waitForFunction(() => {
+      if (document.querySelector('#activateDialog')?.hasAttribute('open')) return 'dialog_open';
+      const status = document.querySelector('#serverActionStatus')?.textContent || '';
+      if (/Server Check failed:/i.test(status)) return status;
+      return null;
+    }, null, {timeout: timeoutMs});
+    const activationReviewStatus = await activationReviewOutcome.jsonValue();
+    if (activationReviewStatus !== 'dialog_open') {
+      throw new Error(`Activation review did not open: ${activationReviewStatus}`);
+    }
+    const dialogFocus = [];
+    const forwardTab = args.engine === 'webkit' ? 'Alt+Tab' : 'Tab';
+    const backwardTab = args.engine === 'webkit' ? 'Alt+Shift+Tab' : 'Shift+Tab';
+    for (const key of [backwardTab, forwardTab, forwardTab]) {
+      dialogFocus.push(await page.evaluate(() => ({
+        active: document.activeElement?.id || document.activeElement?.textContent?.trim() || null,
+        dialog: document.activeElement?.closest('dialog')?.id || null,
+      })));
+      await page.keyboard.press(key);
+    }
+    dialogFocus.push(await page.evaluate(() => ({
+      active: document.activeElement?.id || document.activeElement?.textContent?.trim() || null,
+      dialog: document.activeElement?.closest('dialog')?.id || null,
+    })));
+    const focusContained = dialogFocus.every((item) => item.dialog === 'activateDialog');
+    assertions.push(observation(
+      'activation_dialog_keyboard_focus_contained',
+      focusContained,
+      JSON.stringify(dialogFocus),
+    ));
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('#activateDialog')?.hasAttribute('open'));
+    await page.waitForFunction(() => document.activeElement?.id === 'activateButton');
+    const returnFocus = await page.evaluate(() => document.activeElement?.id || null);
+    assertions.push(observation(
+      'activation_review_cancelled_by_keyboard',
+      returnFocus === 'activateButton',
+      `dialog_closed=true return_focus=${returnFocus || 'none'}`,
+    ));
+  } catch (error) {
+    assertions.push(observation('journey_error', false, error?.stack || error));
+  } finally {
+    assertions.push(observation('browser_console_clean', consoleErrors.length === 0, consoleErrors.join('\n') || 'No console errors'));
+    assertions.push(observation('forbidden_wall_requests_zero', forbidden.length === 0, forbidden.join(', ') || 'No wall mutation request observed'));
+    await context.close();
+  }
+  return finishJourney('keyboard_only_desktop', contract, assertions);
+}
+
 function attachObservability(page, label, consoleErrors, forbidden) {
   page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(`${label}: ${message.text()}`); });
   page.on('pageerror', (error) => consoleErrors.push(`${label}: ${error.message}`));
@@ -927,6 +1146,7 @@ try {
     ['offline_reconnect', () => runOffline(browser, manifest.journeys.offline_reconnect, composerUrl, baseUrl)],
     ['worker_recovery', () => runWorkerRecovery(browser, manifest.journeys.worker_recovery, composerUrl)],
     ['responsive_layouts', () => runResponsiveLayouts(browser, manifest.journeys.responsive_layouts, composerUrl)],
+    ['keyboard_only_desktop', () => runKeyboardOnlyDesktop(browser, manifest.journeys.keyboard_only_desktop, composerUrl)],
     ['global_controls', () => runGlobalControls(browser, manifest.journeys.global_controls, composerUrl)],
     ['profile_masks', () => runProfileMasks(browser, manifest.journeys.profile_masks, composerUrl)],
     ['python_native_clock', () => runPythonNativeClock(browser, manifest.journeys.python_native_clock, composerUrl)],

@@ -190,6 +190,28 @@ just receiver-streamed-wall-acceptance "$SCENE_DIGEST" duration=60 min_fps=150 t
 The trailing `key=value` arguments are normalized by the Just recipes; literal
 strings such as `duration=60` are never forwarded to the Python parsers.
 
+After the guarded canary is Active, its exact rollback/recovery exercises have
+passed, and a fresh guarded receipt names the final recovered scene, retain the
+complete WALL-02 soak with the receipt's exact Check `basis_digest`:
+
+```bash
+just guarded-wall-soak "$ACTIVATION_ID" "$SCENE_DIGEST" "$RELEASE_ID" "$BASIS_DIGEST"
+```
+
+The observer performs no mutation and defaults to a real 1,800-second run.
+It binds the activation receipt and exact Check basis digest, canonical Python
+scene digest, immutable web and controller release, controller
+session/revision/current identity, exact
+33×138 five-receiver topology, and 150 FPS target. Every receiver must sustain
+at least 150 displayed FPS with complete mailbox accounting. The receipt's full
+requested, normalized, and observed scene/component/global/profile identities
+must be unanimous and must equal the controller's full active identity. Any
+controller status staleness, activation identity or telemetry drift, counter
+reset, or new host/SPI/CRC/publish/display/status-response fault fails
+immediately. Shorter
+runs are diagnostics and are retained as failed WALL-02 evidence, never as a
+release soak.
+
 The strict commands above remain the release gates. The following historical
 temporary diagnostics were used while the installed SPI1 MISO net was physically
 shorted to MOSI; after the reported repair they are recovery tools only and

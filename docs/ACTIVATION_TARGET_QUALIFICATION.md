@@ -1,0 +1,80 @@
+# Activation target qualification
+
+PERF-01 and POWER-01 are separate gates for one exact guarded activation.
+Browser, controller/Pi, receiver, and electrical claims must remain separately
+labeled. A browser estimate is never target or electrical evidence.
+
+## Exact PERF-01 canary basis
+
+The installed-wall canary uses the browser-managed Python `rainbow` background,
+no Clock layer, the selected empty installation profile, neutral vibe, no plant
+modifiers, operator speed `1.0`, controller brightness `50`, target `150 FPS`,
+and the installed `33 x 138` geometry. The retained binding digest, guarded
+basis digest, host-scene digest, global-settings digest, and activation ID come
+from the same Check and activation receipt. They are values to capture, not
+constants to copy from this document.
+
+PERF-01 passes only when all of the following hold in one observation window:
+
+- the guarded receipt stays `active` with identical requested and observed
+  scene, globals, and installation-profile identities;
+- the live plugin, brightness, profile, and target FPS match the checked basis;
+- a fresh status drain reports exactly five status-v3 receivers with logical
+  identities `0..4`, routes `0.0, 0.1, 1.1, 1.0, 1.2`, widths
+  `8, 8, 8, 8, 1`, offsets `0, 8, 16, 24, 32`, and installed direction maps;
+- every sampled Raspberry Pi rolling window reports ordered mean, p95, p99, and
+  maximum latency; the retained values are the worst seen anywhere in the
+  capture, p95 does not exceed the `6.67 ms` frame period, and the minimum
+  observed cadence is at least `150 FPS`;
+- all five receivers advance displayed-frame counters at at least `150 FPS`;
+  their measured p95 critical-stage latency fits `6.67 ms` and CRC, publish-drop,
+  SPI-queue, display, and status-miss counters have zero delta;
+- the complete pair is retained atomically at
+  `run_state/activation_qualification_evidence.json` and remains no older than
+  the checked-in four-hour evidence-freshness policy.
+
+After the exact canary is active, run the deployed helper from the selected
+release. Replace every placeholder with values from that activation's Check and
+receipt:
+
+```bash
+cd /home/ledgridwall/ledgrid-pod/current
+venv/bin/python tools/qualification/target_evidence.py \
+  --binding-digest <check-qualification-binding-digest> \
+  --basis-digest <check-basis-digest> \
+  --expected-scene-digest <active-host-scene-digest> \
+  --expected-global-settings-digest <check-global-settings-digest> \
+  --expected-profile-digest <selected-profile-digest> \
+  --activation-id <activation-id> \
+  --plugin rainbow --target-fps 150 --brightness 50 --duration 60
+```
+
+The helper is observation-only apart from a receiver status query and the
+atomic evidence-file replacement. It never starts, stops, or reconfigures the
+wall. A failed capture leaves the previous evidence file untouched. A fresh
+Composer Check loads the strict envelope only when its binding digest matches.
+
+## POWER-01 status: OPERATOR_WAIVED
+
+The operator explicitly waived electrical measurement for this release work.
+POWER-01 therefore remains fail-closed and does not pass.
+
+The 2026-08-27 inventory found no calibrated measurement source:
+
+- the controller is a Raspberry Pi 4 Model B Rev 1.5 with no `hwmon` device, no
+  I2C device node, and no attached USB measurement instrument; its USB inventory
+  contains only the five ESP32-S3 receiver debug interfaces and hubs;
+- the Home Assistant wall relay is a GE `14288 / ZW1002` in-wall outlet and
+  exposes switch, node-status, scene, ping, and firmware entities only—no power,
+  current, voltage, or energy channel;
+- receiver status exposes digital timing and integrity counters, not supply
+  voltage or installed-wall current;
+- the repository has no verified power-supply rating, fuse allocation, branch
+  current limit, calibrated shunt, or instrument calibration record.
+
+Accordingly, `config/installation_qualification_budget.json` intentionally
+keeps calibration status `unqualified` and every physical limit `null`. Target
+evidence carries `electrical: null`. Do not derive voltage/current from pixel
+values, LED-count estimates, relay state, or nominal supply assumptions. A later
+POWER-01 run requires a calibrated instrument, an as-built supply/fuse budget,
+and measurements bound to this same brightness and activation identity.

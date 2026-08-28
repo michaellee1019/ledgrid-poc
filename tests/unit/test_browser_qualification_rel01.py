@@ -132,12 +132,20 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             },
         )
         self.assertEqual(
+            self.manifest["service_worker_upgrade"],
+            {
+                "previous_cache": "ledgrid-composer-shell-v16",
+                "current_cache": "ledgrid-composer-shell-v17",
+            },
+        )
+        self.assertEqual(
             set(self.manifest["journeys"]),
             {
                 "core_no_mutation",
                 "offline_reconnect",
                 "worker_recovery",
                 "responsive_layouts",
+                "keyboard_only_desktop",
                 "global_controls",
                 "profile_masks",
                 "python_native_clock",
@@ -189,6 +197,27 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
                 for item in self.manifest["journeys"]["responsive_layouts"]["viewports"]
             ],
             [(375, 667), (390, 844), (430, 932), (768, 1024), (1440, 1000)],
+        )
+        self.assertEqual(
+            self.manifest["journeys"]["keyboard_only_desktop"]["viewport"],
+            {"width": 1440, "height": 1000},
+        )
+        self.assertEqual(
+            self.manifest["journeys"]["keyboard_only_desktop"]["background_name"],
+            "Color Gradient",
+        )
+        self.assertTrue(
+            {
+                "skip_link_reached_composer",
+                "parameter_keyboard_edit_undo_redo",
+                "tablist_arrow_home_end_navigation",
+                "activation_dialog_keyboard_focus_contained",
+                "activation_review_cancelled_by_keyboard",
+            }.issubset(
+                self.manifest["journeys"]["keyboard_only_desktop"][
+                    "required_assertions"
+                ]
+            )
         )
         self.assertEqual(
             self.manifest["journeys"]["profile_masks"]["engine_led_offsets"],

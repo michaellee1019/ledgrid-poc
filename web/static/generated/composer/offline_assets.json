@@ -1,5 +1,5 @@
 {
-  "cacheVersion": "v16",
+  "cacheVersion": "v17",
   "capturedAssets": [
     "/composer",
     "/api/v1/composer/bootstrap"
@@ -7,7 +7,7 @@
   "localAssets": [
     {
       "bytes": 21729,
-      "sha256": "c4890c922404065ca4fe07863cc88207c9ed42a519f9a36a50f7f7c41bdd6da4",
+      "sha256": "286a5fcf62349db179c8e656d75ef555fdc2cc8bdcf50e0a392aff41dd6b6a5a",
       "url": "/composer-service-worker.js"
     },
     {
@@ -51,8 +51,8 @@
       "url": "/static/icons/composer.svg"
     },
     {
-      "bytes": 203173,
-      "sha256": "977f2e18921e4090e7825b16b4d30e92422109d1a9607507073f0f5c8d34d58d",
+      "bytes": 205305,
+      "sha256": "ddf0b2d15bebc4b139b53af395d65b45359cb5cbe2a58ce5ff401bbc32cc74c9",
       "url": "/static/js/composer.js"
     },
     {
@@ -81,7 +81,7 @@
       "url": "/static/js/composer_state.js"
     }
   ],
-  "previousCacheVersion": "v15",
+  "previousCacheVersion": "v16",
   "pythonRuntime": {
     "baseUrl": "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/",
     "delivery": "pinned-cross-origin-cache",

@@ -63,6 +63,7 @@ def load_manifest(path: Path = DEFAULT_MANIFEST) -> dict[str, Any]:
         "offline_reconnect",
         "worker_recovery",
         "responsive_layouts",
+        "keyboard_only_desktop",
         "global_controls",
         "profile_masks",
         "python_native_clock",

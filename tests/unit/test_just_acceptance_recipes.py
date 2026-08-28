@@ -64,6 +64,26 @@ class JustAcceptanceRecipeTests(unittest.TestCase):
                     "--sample-interval", "5",
                 ])
 
+    def test_guarded_wall_soak_binds_receipt_release_and_real_duration(self):
+        activation_id = "activation-1"
+        release_id = "b" * 64
+        basis_digest = "c" * 64
+        argv = self.run_with_fake_uv(
+            "guarded-wall-soak", activation_id, RECEIPT, release_id, basis_digest
+        )
+        self.assertEqual(argv[-19:], [
+            "python", "tools/benchmarks/guarded_wall_soak.py",
+            activation_id,
+            "--expected-scene-digest", RECEIPT,
+            "--expected-release-id", release_id,
+            "--expected-basis-digest", basis_digest,
+            "--target", "ledgridwall.local",
+            "--duration", "1800",
+            "--sample-interval", "5",
+            "--min-displayed-fps", "150",
+            "--target-fps", "150",
+        ])
+
     def test_native_physical_recipe_accepts_short_named_diagnostic_duration(self):
         argv = self.run_with_fake_uv(
             "receiver-native-h2-evidence",

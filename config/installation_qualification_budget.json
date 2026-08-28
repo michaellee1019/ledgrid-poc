@@ -1,7 +1,7 @@
 {
   "schema": "ledgrid.installation-qualification-budget",
   "schema_version": 1,
-  "revision": 1,
+  "revision": 2,
   "installation_id": "living-plant-wall",
   "geometry": {
     "strip_count": 33,
@@ -12,7 +12,7 @@
     "captured_at": null,
     "environment": null
   },
-  "maximum_evidence_age_ms": null,
+  "maximum_evidence_age_ms": 14400000,
   "budgets": {
     "voltage": {
       "minimum_mean_v": null,

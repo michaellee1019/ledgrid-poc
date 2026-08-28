@@ -46,6 +46,7 @@ Use `just` recipes rather than invoking deployment helpers directly:
 | `just receiver-native-h2-evidence <scene-digest>` | Read-only, receipt-bound H2 exact-five/skew/drift supporting slice; defaults to 1,800 seconds |
 | `just receiver-native-h4-default-soak <scene-digest>` | Read-only, receipt-bound H4 authored-default supporting soak; defaults to 1,800 seconds |
 | `just receiver-native-h4-maximum-soak <scene-digest>` | Read-only, receipt-bound H4 maximum-work supporting soak; defaults to 1,800 seconds |
+| `just guarded-wall-soak <activation-id> <scene-digest> <release-id> <basis-digest>` | Read-only WALL-02 exact-activation, exact-Check-basis, exact-release, five-receiver soak; defaults to 1,800 seconds at target/minimum displayed 150 FPS |
 | `just deploy-legacy` | Explicit clean recovery path through the retained pre-cutover full shell leaf |
 | `just deploy-python-legacy` | Explicit clean recovery path through the retained pre-cutover Python shell leaf |
 | `just fetch-presets` | Compatibility alias that refreshes wall masks/data and Pi-saved runtime presets for review |
@@ -388,8 +389,8 @@ must not be curated.
 
    ```bash
    just receiver-phase3a-status
-   just receiver-streamed-wall-acceptance "$SCENE_DIGEST" duration=60 min_fps=150 target_fps=160
-   just output-rate-observation "$SCENE_DIGEST" seconds=15 rate=160
+   just receiver-streamed-wall-acceptance "$SCENE_DIGEST" duration=60 min_fps=150 target_fps=150
+   just output-rate-observation "$SCENE_DIGEST" seconds=15 rate=150
    ```
 
    `SCENE_DIGEST` is the exact canonical digest from the guarded Composer

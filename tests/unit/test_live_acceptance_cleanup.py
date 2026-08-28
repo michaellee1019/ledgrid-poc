@@ -143,7 +143,12 @@ class RetiredMutationCommandTests(unittest.TestCase):
 
 class MaintainedToolDebtScanTests(unittest.TestCase):
     def test_no_retired_scene_mutation_alias_remains_in_maintained_tools(self):
-        forbidden = re.compile(r"/api/start/|/api/stop|/api/v1/scene")
+        # Receipt-bound observers may read one correlated activation resource.
+        # Direct scene/check/activation submission and the retired start/stop
+        # aliases remain forbidden in maintained command-line tooling.
+        forbidden = re.compile(
+            r"/api/start/|/api/stop\b|/api/v1/scene(?!/activations/)"
+        )
         maintained = sorted(
             path
             for root in (ROOT / "scripts", ROOT / "tools")
