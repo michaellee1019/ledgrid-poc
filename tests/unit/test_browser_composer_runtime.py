@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -26,31 +27,40 @@ OFFLINE_MANIFEST = (
 class BrowserComposerRuntimeTests(unittest.TestCase):
     def test_python_runtime_bounds_instances_and_releases_replacements(self) -> None:
         runtime = BrowserPreviewRuntime()
-        geometry = {"width": 1, "height": 2}
-        for index in range(MAX_RUNTIME_INSTANCES):
+        artifact = (ROOT / "tests/fixtures/installation_profile_v1.bin").read_bytes()
+        digest = artifact[68:100].hex()
+        geometry = {"width": 33, "height": 138}
+        with tempfile.TemporaryDirectory() as temporary:
+            profile_path = Path(temporary) / "profile.bin"
+            profile_path.write_bytes(artifact)
+            runtime.bind_installation_profile_path(str(profile_path), digest)
+            for index in range(MAX_RUNTIME_INSTANCES):
+                ready = runtime.initialize(
+                    "rainbow",
+                    "RainbowAnimation",
+                    geometry,
+                    {"brightness": 0.5},
+                    instance_id=f"instance-{index}",
+                    installation_profile_digest=digest,
+                )
+                self.assertEqual(ready["instanceCount"], index + 1)
+                self.assertEqual(ready["maxInstances"], MAX_RUNTIME_INSTANCES)
+
+            with self.assertRaisesRegex(RuntimeError, "instance limit reached"):
+                runtime.initialize(
+                    "rainbow", "RainbowAnimation", geometry,
+                    instance_id="one-too-many",
+                    installation_profile_digest=digest,
+                )
+
+            disposed = runtime.dispose_instance("instance-3")
+            self.assertTrue(disposed["disposed"])
+            self.assertEqual(disposed["maxInstances"], MAX_RUNTIME_INSTANCES)
             ready = runtime.initialize(
-                "rainbow",
-                "RainbowAnimation",
-                geometry,
-                {"brightness": 0.5},
-                instance_id=f"instance-{index}",
+                "wave", "WaveAnimation", geometry, instance_id="replacement",
+                installation_profile_digest=digest,
             )
-            self.assertEqual(ready["instanceCount"], index + 1)
-            self.assertEqual(ready["maxInstances"], MAX_RUNTIME_INSTANCES)
-
-        with self.assertRaisesRegex(RuntimeError, "instance limit reached"):
-            runtime.initialize(
-                "rainbow", "RainbowAnimation", geometry,
-                instance_id="one-too-many",
-            )
-
-        disposed = runtime.dispose_instance("instance-3")
-        self.assertTrue(disposed["disposed"])
-        self.assertEqual(disposed["maxInstances"], MAX_RUNTIME_INSTANCES)
-        ready = runtime.initialize(
-            "wave", "WaveAnimation", geometry, instance_id="replacement"
-        )
-        self.assertEqual(ready["instanceCount"], MAX_RUNTIME_INSTANCES)
+            self.assertEqual(ready["instanceCount"], MAX_RUNTIME_INSTANCES)
 
     def test_browser_wrapper_reuses_one_worker_drops_stale_frames_and_recovers_once(self) -> None:
         script = r"""
@@ -116,10 +126,11 @@ const component = {
     worker_url: '/python-worker.js', asset_url: '/runtime.zip',
   },
 };
+const profile = {digest: '1'.repeat(64), artifactUrl: '/api/v1/installation-profiles/' + '1'.repeat(64) + '/artifact'};
 
 (async () => {
-  const first = new ComposerRuntime(component, {width: 2, height: 3}, {maxRestarts: 1});
-  const second = new ComposerRuntime(component, {width: 2, height: 3});
+  const first = new ComposerRuntime(component, {width: 2, height: 3}, {maxRestarts: 1, installationProfile: profile});
+  const second = new ComposerRuntime(component, {width: 2, height: 3}, {installationProfile: profile});
   await first.init({brightness: 0.5});
   await second.init({brightness: 0.7});
   assert.strictEqual(workers.length, 1, 'Python clients must share one warm worker');

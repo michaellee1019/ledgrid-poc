@@ -21,7 +21,6 @@ import numpy as np
 
 from animation.core.plant_awareness import (
     FRAMEWORK_VISUAL_MODIFIERS,
-    PlantMaskCache,
     PlantModifierState,
     plant_parameter_schema,
 )
@@ -39,6 +38,23 @@ class RenderedFrame:
 
 
 FrameOutput = Union[np.ndarray, RenderedFrame]
+
+_BROWSER_INSTALLATION_PROFILE_DIGEST = None
+_BROWSER_INSTALLATION_PROFILE_GEOMETRY = None
+
+
+def bind_browser_installation_profile(digest: str, geometry: Any) -> None:
+    """Bind one verified immutable LGIP view before animation construction."""
+    global _BROWSER_INSTALLATION_PROFILE_DIGEST
+    global _BROWSER_INSTALLATION_PROFILE_GEOMETRY
+    if not isinstance(digest, str) or len(digest) != 64 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
+        raise ValueError("browser installation-profile digest is invalid")
+    if geometry is None:
+        raise ValueError("browser installation-profile geometry is unavailable")
+    _BROWSER_INSTALLATION_PROFILE_DIGEST = digest
+    _BROWSER_INSTALLATION_PROFILE_GEOMETRY = geometry
 
 
 class AnimationBase(ABC):
@@ -63,7 +79,23 @@ class AnimationBase(ABC):
         self._hsv_scratch: Dict[str, np.ndarray] = {}
         self._presentation_context = None
         self._presentation_lock = threading.RLock()
-        self._plant_mask_cache = PlantMaskCache(self)
+        # The browser runtime binds one cryptographically verified immutable
+        # installation-profile view before constructing any animation.  There
+        # is deliberately no filesystem-backed mask cache or legacy fallback.
+        self._browser_installation_profile_geometry = (
+            _BROWSER_INSTALLATION_PROFILE_GEOMETRY
+        )
+        self._browser_installation_profile_digest = (
+            _BROWSER_INSTALLATION_PROFILE_DIGEST
+        )
+        if (
+            self._browser_installation_profile_geometry is None
+            or self._browser_installation_profile_digest is None
+        ):
+            raise RuntimeError(
+                "managed installation-profile geometry must be bound before "
+                "browser animation construction"
+            )
         self._framework_modifier_buffers: List[np.ndarray] = []
         self._framework_modifier_buffer_index = 0
         self._framework_modifier_geometry = None
@@ -80,8 +112,6 @@ class AnimationBase(ABC):
             "plant_aware": False,
             "plant_modifiers": PlantModifierState.empty().to_dict(),
             "plant_clearance": 1,
-            "plant_mask_path": "config/plant_pixel_map_32x138.json",
-            "plant_globe_mask_path": "config/plant_globe_map_32x138.json",
         }
         self._authored_params = {**self.default_params, **self.config}
         self.params = self._authored_params
@@ -134,6 +164,12 @@ class AnimationBase(ABC):
 
     def update_parameters(self, new_params: Dict[str, Any]) -> None:
         self._sync_authored_params()
+        legacy_paths = {"plant_mask_path", "plant_globe_mask_path"} & new_params.keys()
+        if legacy_paths:
+            raise ValueError(
+                "browser previews do not accept legacy plant-mask paths; "
+                "a managed installation-profile artifact is required"
+            )
         if "plant_modifiers" in new_params:
             new_params = dict(new_params)
             new_params["plant_modifiers"] = PlantModifierState.from_payload(
@@ -145,10 +181,6 @@ class AnimationBase(ABC):
         if {"plant_aware", "plant_modifiers"} & new_params.keys():
             self._plant_modifier_state = self._resolve_plant_modifier_state()
             self._framework_modifier_cached_frame = None
-        if {
-            "plant_clearance", "plant_mask_path", "plant_globe_mask_path"
-        } & new_params.keys():
-            self._plant_mask_cache.invalidate()
 
     def plant_aware_enabled(self) -> bool:
         return bool(self.params.get("plant_aware", False)) or bool(
@@ -270,7 +302,18 @@ class AnimationBase(ABC):
         return output
 
     def get_plant_masks(self, clearance: Optional[int] = None) -> Any:
-        return self._plant_mask_cache.get(clearance)
+        geometry = self._browser_installation_profile_geometry
+        digest = self._browser_installation_profile_digest
+        if geometry is None or digest is None:
+            raise RuntimeError(
+                "managed installation-profile geometry is unavailable; "
+                "browser rendering fails closed"
+            )
+        # Clearance is compiled into LGIP and is therefore part of its content
+        # identity.  A plugin may request its normal clearance view, but cannot
+        # make the browser silently derive geometry from a legacy mask file.
+        del clearance
+        return geometry
 
     def get_info(self) -> Dict[str, Any]:
         state = self.plant_modifier_state()

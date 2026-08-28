@@ -150,6 +150,14 @@ class BrowserComposerPWATests(unittest.TestCase):
         self.assertIn("readyOffline: true", self.worker)
         self.assertIn("readyOffline: false", self.worker)
 
+    def test_selected_profile_artifact_is_verified_and_available_offline(self) -> None:
+        self.assertIn("PROFILE_ARTIFACT_PATH", self.worker)
+        self.assertIn("verifiedProfileArtifact", self.worker)
+        self.assertIn("canonical.fill(0, 68, 100)", self.worker)
+        self.assertIn("cacheImmutableProfileArtifact", self.worker)
+        self.assertIn("installation_profile_artifact_url", self.worker)
+        self.assertIn("profileArtifacts", self.worker)
+
     def test_connectivity_and_mutating_actions_are_never_cached(self) -> None:
         assets = _service_worker_shell_assets(self.worker)
         forbidden = {

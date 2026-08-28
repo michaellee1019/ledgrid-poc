@@ -22,8 +22,25 @@ from typing import Any, Dict, List, Optional
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
+from animation.core.activation_qualification import (
+    QUALIFICATION_RECORD_SCHEMA,
+    activation_qualification_binding_digest,
+    activation_qualification_record_digest,
+    evaluate_activation_qualification,
+    installation_qualification_budget_digest,
+    load_installation_qualification_budget,
+)
 from animation.core.feature_flags import AnimationPipelineFeatureFlags
-from animation.core.installation_profile_library import InstallationProfileLibrary
+from animation.core.installation_profile_authoring import (
+    InstallationProfileAuthoring,
+    InstallationProfileAuthoringError,
+    InstallationProfileDraftConflict,
+)
+from animation.core.installation_profile_library import (
+    InstallationProfileLibrary,
+    InstallationProfileLibraryError,
+    InstallationProfileNotFoundError,
+)
 from animation.core.installation_profile_runtime import EMPTY_INSTALLATION_PROFILE_DIGEST
 from animation.core.installation_profile_topology import (
     IDENTITY_INSTALLATION_PROFILE_TOPOLOGY,
@@ -33,6 +50,7 @@ from animation.core.manager import AnimationManager, PreviewLEDController
 from animation.core.native_background_library import NativeBackgroundLibrary
 from animation.core.plant_awareness import (
     FIELD_MODIFIERS,
+    GLOBE_REGION_ORDER,
     PLANT_MODIFIER_IDS,
     SURFACE_MODIFIERS,
     PlantModifierState,
@@ -116,7 +134,11 @@ class AnimationWebInterface:
                  local_mode: bool = False,
                  release_id: Optional[str] = None,
                  activation_token_store_path: Optional[Path] = None,
-                 activation_enabled: Optional[bool] = None):
+                 activation_enabled: Optional[bool] = None,
+                 installation_profile_authoring: Optional[
+                     InstallationProfileAuthoring
+                 ] = None,
+                 project_root: Optional[Path] = None):
         """
         Initialize web interface
 
@@ -141,13 +163,26 @@ class AnimationWebInterface:
             'development_canary' if self.activation_enabled else 'disabled'
         )
         self._scene_preview_lock = threading.RLock()
-        self.project_root = Path(__file__).resolve().parents[1]
+        self.project_root = (
+            Path(project_root)
+            if project_root is not None
+            else Path(__file__).resolve().parents[1]
+        )
         self.painter_presets_dir = self.project_root / "presets" / "frame_painter"
         self.animation_presets_dir = self.project_root / "presets" / "animations"
         self.scene_presets_dir = self.project_root / "presets" / "scenes"
-        self.foliage_mask_path = self.project_root / "config" / "plant_pixel_map_32x138.json"
-        self.planter_mask_path = self.project_root / "config" / "plant_globe_map_32x138.json"
         self.deployment_status_path = self.project_root / "run_state" / "deployment.json"
+        profile_library = getattr(
+            self.preview_manager, '_installation_profile_library', None
+        )
+        self.installation_profile_authoring = installation_profile_authoring
+        if self.installation_profile_authoring is None and isinstance(
+            profile_library, InstallationProfileLibrary
+        ):
+            self.installation_profile_authoring = InstallationProfileAuthoring(
+                profile_library,
+                self.project_root / 'run_state' / 'installation_profile_authoring',
+            )
         self.activation_token_store_path = (
             Path(activation_token_store_path)
             if activation_token_store_path is not None
@@ -175,6 +210,9 @@ class AnimationWebInterface:
         # Create Flask app
         self.app = Flask(__name__)
         self.app.secret_key = 'led-grid-secret-key-change-in-production'
+        # Installation-profile globe regions have a frozen user-facing order.
+        # Flask's default key sorting would destroy it in the JSON response.
+        self.app.json.sort_keys = False
 
         self.painter_presets_dir.mkdir(parents=True, exist_ok=True)
         self.animation_presets_dir.mkdir(parents=True, exist_ok=True)
@@ -481,11 +519,14 @@ class AnimationWebInterface:
                     })
                     response.headers['Cache-Control'] = 'no-store'
                     return response, 409
-                basis, _scene, settings = self._activation_basis_for_request(
-                    browser_scene=payload.get('scene'),
-                    global_settings=payload.get('global_settings'),
-                    expires_at_ms=expires_at_ms,
-                    status=controller_status,
+                basis, _scene, settings, qualification_record, qualification_result = (
+                    self._activation_basis_for_request(
+                        browser_scene=payload.get('scene'),
+                        global_settings=payload.get('global_settings'),
+                        browser_evidence=payload.get('browser_evidence'),
+                        expires_at_ms=expires_at_ms,
+                        status=controller_status,
+                    )
                 )
                 issued = self._activation_tokens().issue(basis)
             except RuntimeError as exc:
@@ -516,7 +557,19 @@ class AnimationWebInterface:
                 'expires_at': issued.expires_at,
                 'qualification': {
                     'version': basis['qualification']['version'],
-                    'status': 'passed',
+                    'status': (
+                        'passed'
+                        if qualification_result['qualified']
+                        else 'development_canary'
+                    ),
+                    'production_qualified': qualification_result['qualified'],
+                    'record_digest': activation_qualification_record_digest(
+                        qualification_record
+                    ),
+                    'binding_digest': qualification_result['binding_digest'],
+                    'budget_digest': qualification_result['budget_digest'],
+                    'gates': qualification_result['gates'],
+                    'blockers': qualification_result['reasons'],
                     'browser_evidence': 'advisory',
                     'global_settings_digest': canonical_json_sha256(settings),
                 },
@@ -1597,25 +1650,165 @@ class AnimationWebInterface:
             self.control_channel.send_command('painter_clear')
             return jsonify({'success': True})
 
-        @self.app.route('/api/painter/masks')
-        def api_painter_get_masks():
-            """API: Load the two editable semantic plant-mask layers."""
+        @self.app.route(
+            '/api/v1/installation-profiles/<digest>/draft',
+            methods=['GET'],
+        )
+        def api_installation_profile_get_draft(digest: str):
+            """Load a revisioned draft derived from this exact immutable artifact."""
             try:
-                return jsonify(self._load_painter_masks())
-            except ValueError as exc:
+                draft = self._installation_profile_authoring().load(digest)
+            except InstallationProfileNotFoundError as exc:
+                return jsonify({'error': str(exc)}), 404
+            except InstallationProfileAuthoringError as exc:
+                return jsonify({'error': str(exc)}), 400
+            except InstallationProfileLibraryError as exc:
+                return jsonify({'error': str(exc)}), 500
+            response = jsonify(draft)
+            response.headers['ETag'] = f'"{draft["revision"]}"'
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+
+        @self.app.route(
+            '/api/v1/installation-profiles/<digest>/draft',
+            methods=['PUT'],
+        )
+        def api_installation_profile_update_draft(digest: str):
+            """Replace a draft using restart-safe optimistic concurrency."""
+            expected_revision = self._installation_profile_if_match()
+            if expected_revision is None:
+                return jsonify({
+                    'error': 'If-Match is required for installation-profile draft updates',
+                    'code': 'precondition_required',
+                }), 428
+            payload = request.get_json(silent=True)
+            if payload is None:
+                return jsonify({'error': 'A complete JSON draft is required'}), 400
+            try:
+                draft = self._installation_profile_authoring().update(
+                    digest,
+                    expected_revision=expected_revision,
+                    draft=payload,
+                )
+            except InstallationProfileDraftConflict as exc:
+                response = jsonify({
+                    'error': str(exc),
+                    'code': 'revision_conflict',
+                    'current_revision': exc.current_revision,
+                })
+                response.status_code = 409
+                response.headers['ETag'] = f'"{exc.current_revision}"'
+                return response
+            except InstallationProfileNotFoundError as exc:
+                return jsonify({'error': str(exc)}), 404
+            except InstallationProfileAuthoringError as exc:
+                return jsonify({'error': str(exc)}), 400
+            except InstallationProfileLibraryError as exc:
+                return jsonify({'error': str(exc)}), 500
+            response = jsonify(draft)
+            response.headers['ETag'] = f'"{draft["revision"]}"'
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+
+        @self.app.route(
+            '/api/v1/installation-profiles/<digest>/publish',
+            methods=['POST'],
+        )
+        def api_installation_profile_publish(digest: str):
+            """Compile and publish a candidate without selecting the live profile."""
+            expected_revision = self._installation_profile_if_match()
+            if expected_revision is None:
+                return jsonify({
+                    'error': 'If-Match is required for installation-profile publication',
+                    'code': 'precondition_required',
+                }), 428
+            try:
+                receipt, draft = self._installation_profile_authoring().publish(
+                    digest,
+                    expected_revision=expected_revision,
+                )
+            except InstallationProfileDraftConflict as exc:
+                response = jsonify({
+                    'error': str(exc),
+                    'code': 'revision_conflict',
+                    'current_revision': exc.current_revision,
+                })
+                response.status_code = 409
+                response.headers['ETag'] = f'"{exc.current_revision}"'
+                return response
+            except InstallationProfileNotFoundError as exc:
+                return jsonify({'error': str(exc)}), 404
+            except InstallationProfileAuthoringError as exc:
+                return jsonify({'error': str(exc)}), 400
+            except InstallationProfileLibraryError as exc:
+                return jsonify({'error': str(exc)}), 500
+            response = jsonify({
+                'published_digest': receipt.content_digest,
+                'artifact_url': (
+                    f'/api/v1/installation-profiles/{receipt.content_digest}/artifact'
+                ),
+                'selected': False,
+                'revision': draft['revision'],
+                'receipt': receipt.to_dict(),
+            })
+            response.headers['ETag'] = f'"{draft["revision"]}"'
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+
+        @self.app.route(
+            '/api/v1/installation-profiles/<digest>/artifact',
+            methods=['GET'],
+        )
+        def api_installation_profile_artifact(digest: str):
+            """Serve one validated content-addressed LGIP artifact read-only."""
+            try:
+                resolved = self._installation_profile_authoring().library.resolve(digest)
+            except InstallationProfileNotFoundError as exc:
+                return jsonify({'error': str(exc)}), 404
+            except InstallationProfileAuthoringError as exc:
+                return jsonify({'error': str(exc)}), 400
+            except InstallationProfileLibraryError as exc:
+                return jsonify({'error': str(exc)}), 500
+            if request.if_none_match.contains(resolved.content_digest):
+                response = self.app.response_class(status=304)
+            else:
+                response = self.app.response_class(
+                    resolved.encoded,
+                    status=200,
+                    mimetype='application/octet-stream',
+                )
+            response.headers['ETag'] = f'"{resolved.content_digest}"'
+            response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+            response.headers['X-Installation-Profile-Digest'] = resolved.content_digest
+            response.headers['X-Content-Type-Options'] = 'nosniff'
+            return response
+
+        @self.app.route('/api/painter/masks', methods=['GET'])
+        def api_painter_get_masks():
+            """Read-only compatibility view backed by one managed profile draft."""
+            digest = request.args.get('profile_digest')
+            try:
+                return jsonify(self._load_painter_masks(digest))
+            except InstallationProfileNotFoundError as exc:
+                return jsonify({'error': str(exc)}), 404
+            except InstallationProfileAuthoringError as exc:
+                return jsonify({'error': str(exc)}), 400
+            except InstallationProfileLibraryError as exc:
                 return jsonify({'error': str(exc)}), 500
 
         @self.app.route('/api/painter/masks', methods=['POST'])
         def api_painter_save_masks():
-            """API: Validate and atomically update the calibrated plant masks."""
-            payload = request.get_json(silent=True) or {}
-            try:
-                saved = self._save_painter_masks(payload)
-            except ValueError as exc:
-                return jsonify({'error': str(exc)}), 400
-            except OSError as exc:
-                return jsonify({'error': f'Failed to save masks: {exc}'}), 500
-            return jsonify({'success': True, **saved})
+            """Fail closed: legacy mask files are no longer an update authority."""
+            response = jsonify({
+                'error': (
+                    'Direct mask saves are retired; use the revisioned managed '
+                    'installation-profile draft and publish workflow'
+                ),
+                'code': 'managed_profile_required',
+            })
+            response.status_code = 405
+            response.headers['Allow'] = 'GET'
+            return response
 
         @self.app.route('/api/painter/presets')
         def api_painter_list_presets():
@@ -1744,7 +1937,7 @@ class AnimationWebInterface:
             except ValueError as exc:
                 return jsonify({'error': str(exc)}), 400
             return jsonify({'success': True, 'accepted': bool(accepted)})
-        
+
         @self.app.route('/api/parameters', methods=['POST'])
         def api_update_parameters():
             """API: Update animation parameters"""
@@ -1776,14 +1969,14 @@ class AnimationWebInterface:
             if success:
                 self.control_channel.send_command('refresh_plugins', animation=animation_name)
             return jsonify({'success': success})
-        
+
         @self.app.route('/api/refresh', methods=['POST'])
         def api_refresh_plugins():
             """API: Refresh all plugins"""
             plugins = self.preview_manager.refresh_plugins()
             self.control_channel.send_command('refresh_plugins')
             return jsonify({'success': True, 'plugins': plugins})
-        
+
         @self.app.route('/control')
         def control_page():
             """Animation control page"""
@@ -2073,14 +2266,155 @@ class AnimationWebInterface:
         })
         return settings
 
+    @staticmethod
+    def _browser_activation_evidence(
+        value: Any, *, binding_digest: str
+    ) -> Optional[Dict[str, Any]]:
+        """Adapt one completed local Check into advisory browser evidence."""
+        if not isinstance(value, dict) or value.get('source') != 'browser':
+            return None
+        frame_time = value.get('frameTimeMs')
+        cadence = value.get('cadence')
+        electrical = value.get('electrical')
+        if not all(isinstance(item, dict) for item in (
+            frame_time, cadence, electrical,
+        )):
+            return None
+        environment = value.get('environment')
+        user_agent = (
+            environment.get('userAgent')
+            if isinstance(environment, dict)
+            else None
+        )
+        if not isinstance(user_agent, str) or not user_agent.strip():
+            user_agent = 'browser environment not reported'
+        current_mean = electrical.get('meanCurrentAmps')
+        current_peak = electrical.get('peakCurrentAmps')
+        nominal_voltage = electrical.get('nominalVoltageVolts')
+        if any(
+            isinstance(item, bool) or not isinstance(item, (int, float))
+            for item in (current_mean, current_peak, nominal_voltage)
+        ):
+            return None
+        return {
+            'source': 'browser',
+            'binding_digest': binding_digest,
+            'captured_at': value.get('capturedAt'),
+            'environment': f'Browser local Check: {user_agent}',
+            'sample_count': value.get('sampleCount'),
+            'frame_time_ms': {
+                'mean': frame_time.get('mean'),
+                'p95': frame_time.get('p95'),
+                'p99': frame_time.get('p99'),
+                'max': frame_time.get('max'),
+            },
+            'cadence': {
+                'observed_fps': cadence.get('observedFps'),
+                'missed_frame_ratio': cadence.get('missedFrameRatio'),
+                'changed_frame_ratio': cadence.get('changedFrameRatio'),
+            },
+            'electrical': {
+                'kind': 'uncalibrated_estimate',
+                'budget_digest': None,
+                'brightness': electrical.get('brightness'),
+                'voltage_v': {
+                    'mean': nominal_voltage,
+                    'p95': nominal_voltage,
+                    'p99': nominal_voltage,
+                    'max': nominal_voltage,
+                },
+                'current_a': {
+                    'mean': current_mean,
+                    'p95': current_peak,
+                    'p99': current_peak,
+                    'max': current_peak,
+                },
+            },
+        }
+
+    def _activation_qualification(
+        self,
+        *,
+        document: Dict[str, Any],
+        settings: Dict[str, Any],
+        controller_status: Dict[str, Any],
+        browser_evidence: Any,
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        """Build and evaluate one exact, server-owned qualification record."""
+        geometry = self._normalize_led_info({
+            'strip_count': self.preview_manager.controller.strip_count,
+            'leds_per_strip': self.preview_manager.controller.leds_per_strip,
+            'total_leds': self.preview_manager.controller.total_leds,
+        })
+        if geometry is None:
+            raise SceneValidationError('qualification geometry is unavailable')
+        binding = {
+            'browser_scene': {
+                'revision': document['revision'],
+                'digest': canonical_json_sha256(document),
+            },
+            'installation_profile_digest': document[
+                'installation_profile'
+            ]['digest'],
+            'global_settings': {
+                'revision': settings['revision'],
+                'digest': canonical_json_sha256(settings),
+            },
+            'geometry': {
+                'strip_count': geometry['strip_count'],
+                'leds_per_strip': geometry['leds_per_strip'],
+            },
+            'brightness': settings['output']['brightness'],
+            'vibe': settings['vibe'],
+            'plant_modifiers': settings['plant_modifiers'],
+            'target_fps': settings['output']['target_fps'],
+        }
+        binding_digest = activation_qualification_binding_digest(binding)
+        evidence = []
+        browser = self._browser_activation_evidence(
+            browser_evidence, binding_digest=binding_digest
+        )
+        if browser is not None:
+            evidence.append(browser)
+        retained = controller_status.get('activation_qualification_evidence')
+        if isinstance(retained, list):
+            evidence.extend(
+                dict(item)
+                for item in retained
+                if isinstance(item, dict)
+                and item.get('source') in {'controller_pi', 'receiver'}
+            )
+
+        budget = load_installation_qualification_budget()
+        record = {
+            'schema': QUALIFICATION_RECORD_SCHEMA,
+            'schema_version': 1,
+            'revision': 1,
+            'qualification_version': 'server-check-v2',
+            'binding': binding,
+            'budget': {
+                'revision': budget['revision'],
+                'digest': installation_qualification_budget_digest(budget),
+            },
+            'evidence': evidence,
+        }
+        result = evaluate_activation_qualification(
+            record, budget, now_ms=int(time.time() * 1000)
+        )
+        return record, result
+
     def _activation_basis_for_request(
         self,
         *,
         browser_scene: Any,
         global_settings: Any,
+        browser_evidence: Any = None,
         expires_at_ms: int,
         status: Optional[Dict[str, Any]] = None,
-    ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    ) -> tuple[
+        Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any],
+        Dict[str, Any],
+    ]:
         catalog = self._browser_scene_catalog()
         document, host_scene = self._validated_browser_scene_document(
             browser_scene, purpose='activation'
@@ -2093,6 +2427,12 @@ class AnimationWebInterface:
         session_id, state_revision, current_identity = (
             self._activation_controller_identity(controller_status)
         )
+        qualification_record, qualification_result = self._activation_qualification(
+            document=document,
+            settings=settings,
+            controller_status=controller_status,
+            browser_evidence=browser_evidence,
+        )
         basis = build_scene_activation_basis(
             browser_scene=document,
             catalog=catalog,
@@ -2101,12 +2441,18 @@ class AnimationWebInterface:
             controller_session_id=session_id,
             controller_state_revision=state_revision,
             current_identity_digest=current_identity,
-            qualification_version='server-check-v1',
+            qualification_version=qualification_record['qualification_version'],
+            qualification_record_digest=activation_qualification_record_digest(
+                qualification_record
+            ),
             expires_at=expires_at_ms,
             host_scene=host_scene,
             provider_policy=self._scene_provider_policy(),
         )
-        return basis, host_scene, settings
+        return (
+            basis, host_scene, settings, qualification_record,
+            qualification_result,
+        )
 
     @staticmethod
     def _guarded_scene_error(message: str) -> tuple[Any, int]:
@@ -2568,6 +2914,24 @@ class AnimationWebInterface:
         profile_digest = profile_status.get(
             'selected_digest', EMPTY_INSTALLATION_PROFILE_DIGEST
         )
+        managed_profile_selected = (
+            isinstance(profile_digest, str)
+            and profile_digest != EMPTY_INSTALLATION_PROFILE_DIGEST
+            and re.fullmatch(r'[0-9a-f]{64}', profile_digest) is not None
+            and self.installation_profile_authoring is not None
+        )
+        profile_draft_url = (
+            f'/api/v1/installation-profiles/{profile_digest}/draft'
+            if managed_profile_selected else None
+        )
+        profile_publish_url = (
+            f'/api/v1/installation-profiles/{profile_digest}/publish'
+            if managed_profile_selected else None
+        )
+        profile_artifact_url = (
+            f'/api/v1/installation-profiles/{profile_digest}/artifact'
+            if managed_profile_selected else None
+        )
         plant_state = getattr(self.preview_manager, 'plant_modifier_state', None)
         plant_modifiers = (
             plant_state.to_dict()
@@ -2587,6 +2951,9 @@ class AnimationWebInterface:
                 'digest': profile_digest,
                 'authority': 'host',
                 'plant_modifiers': plant_modifiers,
+                'draft_url': profile_draft_url,
+                'publish_url': profile_publish_url,
+                'artifact_url': profile_artifact_url,
             },
             'vibe_profiles': self._vibe_profile_catalog(),
             'global_control_contract': {
@@ -2621,7 +2988,13 @@ class AnimationWebInterface:
                     'brightness_url': '/api/config/brightness',
                     'target_fps_url': '/api/config/target-fps',
                     'operator_speed_url': '/api/config/animation-speed',
+                    # Retained only as a read-only adapter for older Painter
+                    # clients; it resolves the managed selected draft and is
+                    # never a legacy-file authority.
                     'masks_url': '/api/painter/masks',
+                    'installation_profile_draft_url': profile_draft_url,
+                    'installation_profile_publish_url': profile_publish_url,
+                    'installation_profile_artifact_url': profile_artifact_url,
                     'online_required': True,
                 },
             },
@@ -3565,129 +3938,72 @@ class AnimationWebInterface:
         tmp_path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
         tmp_path.replace(path)
 
-    @staticmethod
-    def _mask_geometry(payload: Dict[str, Any]) -> Optional[Dict[str, int]]:
-        """Read a complete, internally consistent strip geometry."""
-        geometry = payload.get('geometry') if isinstance(payload, dict) else None
-        if not isinstance(geometry, dict):
-            return None
-        try:
-            strip_count = int(geometry.get('strip_count'))
-            leds_per_strip = int(geometry.get('leds_per_strip'))
-            total_leds = int(geometry.get('total_leds'))
-        except (TypeError, ValueError):
-            return None
-        if strip_count <= 0 or leds_per_strip <= 0 or total_leds != strip_count * leds_per_strip:
-            return None
-        return {
-            'strip_count': strip_count,
-            'leds_per_strip': leds_per_strip,
-            'total_leds': total_leds,
-        }
-
-    @staticmethod
-    def _mask_indices(payload: Dict[str, Any], keys: tuple, total_leds: int) -> List[int]:
-        """Return sorted, unique in-range indices from the first supported key."""
-        values: Any = []
-        for key in keys:
-            if isinstance(payload.get(key), list):
-                values = payload[key]
-                break
-        indices = set()
-        for value in values:
-            if isinstance(value, bool):
-                continue
-            try:
-                index = int(value)
-            except (TypeError, ValueError):
-                continue
-            if 0 <= index < total_leds:
-                indices.add(index)
-        return sorted(indices)
-
-    def _load_painter_masks(self) -> Dict[str, Any]:
-        """Load mask files as the painter's compact semantic state."""
-        foliage_payload = self._read_json_file(self.foliage_mask_path)
-        planter_payload = self._read_json_file(self.planter_mask_path)
-        if foliage_payload is None:
-            raise ValueError(f'Unable to read {self.foliage_mask_path.name}')
-        if planter_payload is None:
-            raise ValueError(f'Unable to read {self.planter_mask_path.name}')
-
-        foliage_geometry = self._mask_geometry(foliage_payload)
-        planter_geometry = self._mask_geometry(planter_payload)
-        if foliage_geometry is None or planter_geometry is None:
-            raise ValueError('Mask files must contain valid geometry')
-        if foliage_geometry != planter_geometry:
-            raise ValueError('Foliage and planter mask geometry do not match')
-
-        total_leds = foliage_geometry['total_leds']
-        planter = self._mask_indices(
-            planter_payload, ('globe_indices', 'covered_indices'), total_leds
-        )
-        planter_set = set(planter)
-        foliage = [
-            index for index in self._mask_indices(
-                foliage_payload, ('covered_indices', 'occluded_indices'), total_leds
+    def _installation_profile_authoring(self) -> InstallationProfileAuthoring:
+        service = self.installation_profile_authoring
+        if not isinstance(service, InstallationProfileAuthoring):
+            raise InstallationProfileAuthoringError(
+                'Managed installation-profile authoring is unavailable'
             )
-            if index not in planter_set
-        ]
-        updated_at = max(
-            self.foliage_mask_path.stat().st_mtime,
-            self.planter_mask_path.stat().st_mtime,
+        return service
+
+    @staticmethod
+    def _installation_profile_if_match() -> Optional[str]:
+        raw = request.headers.get('If-Match')
+        if raw is None or not raw.strip():
+            return None
+        value = raw.strip()
+        if value.startswith('"') and value.endswith('"') and len(value) >= 2:
+            value = value[1:-1]
+        return value
+
+    def _selected_installation_profile_digest(self) -> str:
+        getter = getattr(
+            self.preview_manager, 'get_installation_profile_status', None
+        )
+        status = getter() if callable(getter) else {}
+        digest = status.get('selected_digest') if isinstance(status, dict) else None
+        if (
+            not isinstance(digest, str)
+            or digest == EMPTY_INSTALLATION_PROFILE_DIGEST
+        ):
+            raise InstallationProfileAuthoringError(
+                'No managed installation profile is selected'
+            )
+        return digest
+
+    def _load_painter_masks(
+        self, digest: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Adapt one managed draft to the retired painter's read-only shape."""
+        selected_digest = digest or self._selected_installation_profile_digest()
+        draft = self._installation_profile_authoring().load(selected_digest)
+        masks = draft['masks']
+        assert isinstance(masks, dict)
+        globe_regions = masks['globes']
+        assert isinstance(globe_regions, dict)
+        planter = sorted(
+            index
+            for name in GLOBE_REGION_ORDER
+            for index in globe_regions[name]
         )
         return {
             'version': 1,
-            'led_info': foliage_geometry,
+            'profile_digest': selected_digest,
+            'revision': draft['revision'],
+            'read_only': True,
+            'draft_url': (
+                f'/api/v1/installation-profiles/{selected_digest}/draft'
+            ),
+            'publish_url': (
+                f'/api/v1/installation-profiles/{selected_digest}/publish'
+            ),
+            'led_info': draft['led_info'],
             'mask_types': [dict(mask_type) for mask_type in PAINTER_MASK_TYPES],
             'masks': {
-                'foliage': foliage,
+                'foliage': list(masks['foliage']),
                 'planter_bowls': planter,
             },
-            'updated_at': updated_at,
         }
-
-    @staticmethod
-    def _validated_submitted_indices(
-        values: Any, label: str, total_leds: int
-    ) -> List[int]:
-        if not isinstance(values, list):
-            raise ValueError(f'masks.{label} must be an array')
-        indices = set()
-        for value in values:
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError(f'masks.{label} must contain integer pixel indices')
-            if value < 0 or value >= total_leds:
-                raise ValueError(f'masks.{label} contains out-of-range pixel {value}')
-            indices.add(value)
-        return sorted(indices)
-
-    @staticmethod
-    def _nearest_planter_region(
-        index: int, regions: List[Dict[str, Any]], leds_per_strip: int
-    ) -> Optional[str]:
-        """Assign newly painted bowl pixels to the nearest configured globe."""
-        strip = index // leds_per_strip
-        led = index % leds_per_strip
-        candidates = []
-        for position, region in enumerate(regions):
-            try:
-                name = str(region['id'])
-                strip_start = int(region['strip_start'])
-                led_start = int(region['led_start'])
-                width = int(region['width'])
-                height = int(region['height'])
-            except (KeyError, TypeError, ValueError):
-                continue
-            inside = (
-                strip_start <= strip < strip_start + width
-                and led_start <= led < led_start + height
-            )
-            center_strip = strip_start + (width - 1) / 2.0
-            center_led = led_start + (height - 1) / 2.0
-            distance = (strip - center_strip) ** 2 + (led - center_led) ** 2
-            candidates.append((0 if inside else 1, distance, position, name))
-        return min(candidates)[3] if candidates else None
 
     @staticmethod
     def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
@@ -3707,102 +4023,6 @@ class AnimationWebInterface:
         finally:
             if temporary_path.exists():
                 temporary_path.unlink()
-
-    def _save_painter_masks(self, submitted: Dict[str, Any]) -> Dict[str, Any]:
-        """Update mask indices while preserving useful calibration metadata."""
-        current = self._load_painter_masks()
-        expected_geometry = current['led_info']
-        submitted_geometry = self._normalize_led_info(submitted.get('led_info'))
-        if submitted_geometry != expected_geometry:
-            raise ValueError('Submitted geometry does not match the calibrated mask files')
-
-        masks = submitted.get('masks')
-        if not isinstance(masks, dict):
-            raise ValueError('masks must be an object')
-        total_leds = expected_geometry['total_leds']
-        foliage = self._validated_submitted_indices(
-            masks.get('foliage'), 'foliage', total_leds
-        )
-        planter = self._validated_submitted_indices(
-            masks.get('planter_bowls'), 'planter_bowls', total_leds
-        )
-        overlap = set(foliage) & set(planter)
-        if overlap:
-            raise ValueError(f'Mask layers overlap at pixel {min(overlap)}')
-
-        foliage_payload = self._read_json_file(self.foliage_mask_path)
-        planter_payload = self._read_json_file(self.planter_mask_path)
-        if foliage_payload is None or planter_payload is None:
-            raise ValueError('Mask files changed or became unreadable before save')
-
-        foliage_set = set(foliage)
-        foliage_payload['covered_indices'] = foliage
-        foliage_payload['occluded_indices'] = foliage
-        foliage_payload['covered_count'] = len(foliage)
-        foliage_payload['occluded_count'] = len(foliage)
-        if isinstance(foliage_payload.get('pixels'), list):
-            for pixel in foliage_payload['pixels']:
-                if not isinstance(pixel, dict):
-                    continue
-                try:
-                    pixel_index = int(pixel.get('index'))
-                except (TypeError, ValueError):
-                    continue
-                pixel['occluded'] = pixel_index in foliage_set
-
-        old_planter_pixels = {
-            pixel.get('index'): pixel
-            for pixel in planter_payload.get('pixels', [])
-            if isinstance(pixel, dict) and isinstance(pixel.get('index'), int)
-        }
-        regions = planter_payload.get('regions')
-        if not isinstance(regions, list):
-            regions = []
-        leds_per_strip = expected_geometry['leds_per_strip']
-        rebuilt_pixels = []
-        region_counts = {
-            str(region.get('id')): 0
-            for region in regions
-            if isinstance(region, dict) and region.get('id')
-        }
-        for index in planter:
-            old_pixel = old_planter_pixels.get(index)
-            pixel = dict(old_pixel) if old_pixel is not None else {
-                'index': index,
-                'strip': index // leds_per_strip,
-                'led': index % leds_per_strip,
-            }
-            region = pixel.get('region')
-            if region not in region_counts:
-                region = self._nearest_planter_region(index, regions, leds_per_strip)
-                if region is not None:
-                    pixel['region'] = region
-            if region in region_counts:
-                region_counts[region] += 1
-            rebuilt_pixels.append(pixel)
-
-        planter_payload['globe_indices'] = planter
-        planter_payload['covered_indices'] = planter
-        planter_payload['globe_count'] = len(planter)
-        planter_payload['covered_count'] = len(planter)
-        planter_payload['pixels'] = rebuilt_pixels
-        planter_payload['region_count'] = len(regions)
-        planter_payload['region_pixel_counts'] = region_counts
-
-        edited_at = time.time()
-        edit_metadata = {'tool': 'mask_painter', 'updated_at': edited_at}
-        foliage_payload['manual_edit'] = edit_metadata
-        planter_payload['manual_edit'] = edit_metadata
-
-        self._atomic_write_json(self.foliage_mask_path, foliage_payload)
-        self._atomic_write_json(self.planter_mask_path, planter_payload)
-        return {
-            'counts': {
-                'foliage': len(foliage),
-                'planter_bowls': len(planter),
-            },
-            'updated_at': edited_at,
-        }
 
     def _animation_preset_dir(self, animation_name: str) -> Optional[Path]:
         """Resolve the writable runtime-preset directory for an animation."""
@@ -4179,6 +4399,7 @@ def create_app(control_channel: FileControlChannel = None,
         host=host,
         port=port,
         release_id=release_id,
+        project_root=preview_project_root,
     )
 
     return web_interface

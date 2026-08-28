@@ -44,4 +44,3 @@ node checks/check-structure.mjs
 ## Fixture scale
 
 The catalog generates exactly 52 components and 292 presets: 32 components have six presets and 20 have five. Categories contain 15 ambient, 8 clock/information, 8 interactive/game, 7 GIF/pixel-art, 7 diagnostic/calibration, and 7 developer/test components. Eleven components use the receiver-native fixture provider. Forty-three are show-ready; unsupported states remain catalog-visible.
-

@@ -31,3 +31,14 @@ Camera movement does not change the logical mask indices, but it invalidates the
 stored homography for new photographic measurements. Reacquire camera geometry
 before rectifying or comparing pixels from a moved view. Preserve prior evidence
 and label rejected/superseded captures rather than overwriting them.
+
+## Activation qualification budget
+
+`installation_qualification_budget.json` is the versioned source for the
+installed voltage, current, brightness, safety, and evidence-freshness limits
+used by portable activation qualification. Its checked-in physical limits are
+intentionally `null` and its calibration state is `unqualified`: the repository
+does not contain enough as-built electrical evidence to choose those values.
+Qualification therefore fails closed until measured, reviewed limits replace
+the unknowns in a new revision. Never infer these fields from nominal component
+ratings or software defaults.

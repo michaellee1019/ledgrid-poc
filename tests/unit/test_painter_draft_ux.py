@@ -36,19 +36,24 @@ class PainterDraftUxTests(unittest.TestCase):
         self.assertIn("click', () => this.returnToDraft()", self.script)
         self.assertIn("fetch('/api/stop', {method: 'POST'}", self.script)
 
-    def test_draft_edits_and_save_do_not_synchronize_the_wall(self):
+    def test_draft_edits_never_call_the_retired_mask_writer(self):
         schedule = self.script.split("schedulePreview(delay = 70) {", 1)[1].split(
             "async pushPreview(", 1
         )[0]
-        save = self.method_body("save", "setStatus")
 
         self.assertIn("if (!this.mirrorActive)", schedule)
-        self.assertNotIn("pushPreview", save)
-        self.assertIn("fetch('/api/painter/masks'", save)
+        self.assertNotIn("async save()", self.script)
+        self.assertNotIn("saveMasksBtn", self.script)
+        self.assertNotIn(
+            "fetch('/api/painter/masks', {\n                    method: 'POST'",
+            self.script,
+        )
+        self.assertIn('id="manageProfileBtn"', self.html)
+        self.assertIn("Manage profile in Composer", self.html)
 
     def test_leave_cleanup_is_limited_to_an_active_mirror_session(self):
         cleanup = self.script.split("cleanupLiveOutputOnLeave() {", 1)[1].split(
-            "async save(", 1
+            "async loadPresetCatalog(", 1
         )[0]
 
         self.assertIn("if (!this.liveSessionEntered || this.leaveCleanupSent)", cleanup)

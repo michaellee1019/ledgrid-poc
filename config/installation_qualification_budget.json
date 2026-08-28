@@ -1,0 +1,32 @@
+{
+  "schema": "ledgrid.installation-qualification-budget",
+  "schema_version": 1,
+  "revision": 1,
+  "installation_id": "living-plant-wall",
+  "geometry": {
+    "strip_count": 33,
+    "leds_per_strip": 138
+  },
+  "calibration": {
+    "status": "unqualified",
+    "captured_at": null,
+    "environment": null
+  },
+  "maximum_evidence_age_ms": null,
+  "budgets": {
+    "voltage": {
+      "minimum_mean_v": null,
+      "maximum_p99_v": null
+    },
+    "current": {
+      "maximum_a": null
+    },
+    "brightness": {
+      "maximum_controller_value": null
+    },
+    "safety": {
+      "required_current_headroom_ratio": null,
+      "maximum_p99_power_w": null
+    }
+  }
+}

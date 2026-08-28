@@ -48,4 +48,3 @@ The checker uses only Python’s standard library (and runs `node --check` when 
 ## Safety and scope
 
 This directory is a self-contained simulation. It does not import live frontend assets, call repository APIs, start the controller, touch run state, or operate the physical wall.
-

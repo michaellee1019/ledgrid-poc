@@ -553,15 +553,21 @@ class WebPreviewProfileTests(unittest.TestCase):
         )
         self.assertFalse((root / "installation_profile_library").exists())
 
-    def test_web_has_no_installation_profile_mutator_route(self):
+    def test_web_profile_routes_cannot_select_or_directly_mutate_live_state(self):
         preview = _PreviewManager()
         interface = AnimationWebInterface(_StatusChannel({}), preview)
         routes = {rule.rule for rule in interface.app.url_map.iter_rules()}
 
-        self.assertFalse(any(
-            "installation-profile" in route or "installation_profile" in route
-            for route in routes
-        ))
+        self.assertIn(
+            "/api/v1/installation-profiles/<digest>/draft", routes
+        )
+        self.assertIn(
+            "/api/v1/installation-profiles/<digest>/publish", routes
+        )
+        self.assertIn(
+            "/api/v1/installation-profiles/<digest>/artifact", routes
+        )
+        self.assertFalse(any("select" in route for route in routes))
         response = interface.app.test_client().post(
             "/api/v1/installation-profile", json={"digest": PROFILE_A}
         )

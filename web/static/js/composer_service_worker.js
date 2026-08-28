@@ -1,12 +1,13 @@
 'use strict';
 
 const CACHE_PREFIX = 'ledgrid-composer-shell-';
-const CACHE_VERSION = 'v14';
+const CACHE_VERSION = 'v15';
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 const RUNTIME_CACHE_NAME = `${CACHE_NAME}-python-runtime`;
 const OFFLINE_MANIFEST_URL = '/static/generated/composer/offline_assets.json';
 const OFFLINE_METADATA_URL = '/.ledgrid-composer/offline-metadata';
 const BOOTSTRAP_URL = '/api/v1/composer/bootstrap';
+const PROFILE_ARTIFACT_PATH = /^\/api\/v1\/installation-profiles\/([0-9a-f]{64})\/artifact$/;
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_BASE_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const REQUIRED_PYTHON_PACKAGES = Object.freeze(['numpy', 'pillow']);
@@ -41,6 +42,34 @@ async function responseDigest(response) {
     return {
         bytes: payload.byteLength,
         sha256: hex(await crypto.subtle.digest('SHA-256', payload)),
+    };
+}
+
+async function verifiedProfileArtifact(response, expectedDigest) {
+    const payload = new Uint8Array(await response.clone().arrayBuffer());
+    if (
+        payload.byteLength < 100
+        || payload[0] !== 0x4c
+        || payload[1] !== 0x47
+        || payload[2] !== 0x49
+        || payload[3] !== 0x50
+    ) {
+        throw new Error('The installation-profile artifact is not a complete LGIP document.');
+    }
+    const embedded = hex(payload.slice(68, 100));
+    if (embedded !== expectedDigest) {
+        throw new Error('The installation-profile artifact identity does not match its URL.');
+    }
+    const canonical = payload.slice();
+    canonical.fill(0, 68, 100);
+    const calculated = hex(await crypto.subtle.digest('SHA-256', canonical));
+    if (calculated !== expectedDigest) {
+        throw new Error('The installation-profile artifact failed its embedded digest check.');
+    }
+    return {
+        bytes: payload.byteLength,
+        sha256: hex(await crypto.subtle.digest('SHA-256', payload)),
+        contentDigest: expectedDigest,
     };
 }
 
@@ -198,6 +227,27 @@ async function cachePinnedPythonRuntime(request) {
     return response;
 }
 
+async function cacheImmutableProfileArtifact(request, expectedDigest) {
+    const cache = await caches.open(CACHE_NAME);
+    const cached = await cache.match(request);
+    if (cached) {
+        await verifiedProfileArtifact(cached, expectedDigest);
+        return cached;
+    }
+    const response = await fetch(request, {cache: 'no-cache'});
+    if (!response.ok || response.type !== 'basic') return response;
+    const identity = await verifiedProfileArtifact(response, expectedDigest);
+    await cache.put(request, response.clone());
+    await updateMetadata((metadata) => ({
+        ...metadata,
+        profileArtifacts: {
+            ...(metadata.profileArtifacts || {}),
+            [new URL(request.url).pathname]: identity,
+        },
+    }));
+    return response;
+}
+
 async function verifiedOfflineStatus() {
     const metadata = await readMetadata();
     if (!metadata || metadata.cacheVersion !== CACHE_VERSION || !metadata.shellComplete) {
@@ -230,6 +280,44 @@ async function verifiedOfflineStatus() {
         || bootstrapDigest.bytes !== metadata.bootstrap.bytes
     ) {
         return {type: 'OFFLINE_STATUS', readyOffline: false, reason: 'The cached renderer catalog could not be verified.'};
+    }
+    let bootstrapPayload;
+    try {
+        bootstrapPayload = await bootstrap.clone().json();
+    } catch (_error) {
+        return {type: 'OFFLINE_STATUS', readyOffline: false, reason: 'The cached renderer catalog is unreadable.'};
+    }
+    const profileArtifactUrl = bootstrapPayload?.capabilities?.server_actions
+        ?.installation_profile_artifact_url;
+    let profilePath;
+    try {
+        profilePath = new URL(profileArtifactUrl, self.location.origin).pathname;
+    } catch (_error) {
+        profilePath = '';
+    }
+    const profileMatch = PROFILE_ARTIFACT_PATH.exec(profilePath);
+    const recordedProfile = metadata.profileArtifacts?.[profilePath];
+    const cachedProfile = profileMatch ? await shell.match(profilePath) : null;
+    if (!profileMatch || !recordedProfile || !cachedProfile) {
+        return {
+            type: 'OFFLINE_STATUS', readyOffline: false,
+            reason: 'Open a managed installation profile online before working offline.',
+        };
+    }
+    try {
+        const actualProfile = await verifiedProfileArtifact(cachedProfile, profileMatch[1]);
+        if (
+            actualProfile.sha256 !== recordedProfile.sha256
+            || actualProfile.bytes !== recordedProfile.bytes
+            || actualProfile.contentDigest !== recordedProfile.contentDigest
+        ) {
+            throw new Error('recorded profile identity changed');
+        }
+    } catch (_error) {
+        return {
+            type: 'OFFLINE_STATUS', readyOffline: false,
+            reason: 'The cached installation profile could not be verified.',
+        };
     }
     const prepared = metadata.pythonRuntime || {};
     if (
@@ -317,8 +405,15 @@ self.addEventListener('fetch', (event) => {
     }
     if (url.origin !== self.location.origin) return;
 
-    // Bootstrap is the only API read stored for an offline catalog. Reachability,
-    // status, save, validation, and activation requests always go to the network.
+    const profileMatch = PROFILE_ARTIFACT_PATH.exec(url.pathname);
+    if (profileMatch) {
+        event.respondWith(cacheImmutableProfileArtifact(event.request, profileMatch[1]));
+        return;
+    }
+
+    // Bootstrap and content-addressed installation profiles are the only API
+    // reads stored for offline work. Reachability, status, save, validation,
+    // and activation requests always go to the network.
     if (url.pathname.startsWith('/api/') && url.pathname !== BOOTSTRAP_URL) return;
 
     if (url.pathname === BOOTSTRAP_URL) {

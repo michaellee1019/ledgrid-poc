@@ -42,4 +42,3 @@ node check.mjs
 ```
 
 The prototype performs no backend mutation. All “live” actions update only in-memory demo state and are clearly described as prototype behavior where relevant.
-

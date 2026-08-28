@@ -115,20 +115,15 @@ class PainterMaskTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_dir.cleanup()
 
-    def test_get_masks_exposes_semantic_layers_with_planters_taking_priority(self):
+    def test_get_masks_fails_closed_without_a_managed_selected_profile(self):
         response = self.client.get("/api/painter/masks")
 
-        self.assertEqual(response.status_code, 200)
-        payload = response.get_json()
-        self.assertEqual(payload["led_info"]["total_leds"], 6)
-        self.assertEqual(payload["masks"]["foliage"], [1, 4])
-        self.assertEqual(payload["masks"]["planter_bowls"], [2, 3])
-        self.assertEqual(
-            [item["id"] for item in payload["mask_types"]],
-            ["foliage", "planter_bowls"],
-        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("managed installation profile", response.get_json()["error"])
 
-    def test_save_updates_both_mask_formats_and_preserves_calibration_metadata(self):
+    def test_legacy_save_is_retired_and_never_updates_mask_files(self):
+        original_foliage = self.foliage_path.read_bytes()
+        original_planter = self.planter_path.read_bytes()
         response = self.client.post(
             "/api/painter/masks",
             json={
@@ -141,30 +136,11 @@ class PainterMaskTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.get_json()["counts"], {"foliage": 2, "planter_bowls": 2}
-        )
-        foliage = json.loads(self.foliage_path.read_text(encoding="utf-8"))
-        planter = json.loads(self.planter_path.read_text(encoding="utf-8"))
-        self.assertEqual(foliage["source_image"], "keep-me.jpg")
-        self.assertEqual(foliage["covered_indices"], [0, 4])
-        self.assertEqual(foliage["occluded_indices"], [0, 4])
-        self.assertEqual(foliage["covered_count"], 2)
-        self.assertEqual(
-            [pixel["index"] for pixel in foliage["pixels"] if pixel["occluded"]],
-            [0, 4],
-        )
-        self.assertEqual(planter["source_image"], "keep-planters.jpg")
-        self.assertEqual(planter["globe_indices"], [2, 5])
-        self.assertEqual(planter["covered_indices"], [2, 5])
-        self.assertEqual(planter["region_pixel_counts"], {"left": 1, "right": 1})
-        self.assertEqual(
-            {pixel["index"]: pixel["region"] for pixel in planter["pixels"]},
-            {2: "left", 5: "right"},
-        )
-        self.assertEqual(foliage["manual_edit"]["tool"], "mask_painter")
-        self.assertEqual(planter["manual_edit"]["tool"], "mask_painter")
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(response.headers["Allow"], "GET")
+        self.assertEqual(response.get_json()["code"], "managed_profile_required")
+        self.assertEqual(self.foliage_path.read_bytes(), original_foliage)
+        self.assertEqual(self.planter_path.read_bytes(), original_planter)
 
     def test_save_rejects_overlap_and_geometry_mismatch_without_writing(self):
         original_foliage = self.foliage_path.read_text(encoding="utf-8")
@@ -183,10 +159,8 @@ class PainterMaskTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(overlap.status_code, 400)
-        self.assertIn("overlap", overlap.get_json()["error"])
-        self.assertEqual(mismatch.status_code, 400)
-        self.assertIn("geometry", mismatch.get_json()["error"])
+        self.assertEqual(overlap.status_code, 405)
+        self.assertEqual(mismatch.status_code, 405)
         self.assertEqual(self.foliage_path.read_text(encoding="utf-8"), original_foliage)
 
     def test_full_preview_endpoint_queues_the_exact_submitted_frame(self):
@@ -204,7 +178,7 @@ class PainterMaskTests(unittest.TestCase):
         self.assertEqual(action, "painter_set_frame")
         self.assertEqual(decode_frame_data(command["frame_data_encoded"]), frame)
 
-    def test_rewritten_ui_uses_mask_tools_undo_save_and_full_frame_sync(self):
+    def test_compatibility_ui_has_no_dead_mask_writer_and_links_to_composer(self):
         html = self.client.get("/painter").get_data(as_text=True)
         script = (ROOT / "web" / "static" / "js" / "painter.js").read_text(
             encoding="utf-8"
@@ -212,12 +186,19 @@ class PainterMaskTests(unittest.TestCase):
 
         self.assertIn("Plant Mask Painter", html)
         self.assertIn('id="undoBtn"', html)
-        self.assertIn('id="saveMasksBtn"', html)
+        self.assertIn('id="manageProfileBtn"', html)
+        self.assertIn('href="/composer"', html)
+        self.assertNotIn('id="saveMasksBtn"', html)
         self.assertIn('data-tool="foliage"', html)
         self.assertIn('data-tool="planter_bowls"', html)
         self.assertNotIn('type="color"', html)
         self.assertNotIn("cursor: none", html)
         self.assertIn("fetch('/api/painter/masks'", script)
+        self.assertNotIn(
+            "fetch('/api/painter/masks', {\n                    method: 'POST'",
+            script,
+        )
+        self.assertNotIn("Saving both mask files", script)
         self.assertIn("fetch('/api/painter/frame'", script)
         self.assertNotIn("fetch('/api/frame'", script)
         self.assertIn("this.cellHeight = this.cellWidth", script)

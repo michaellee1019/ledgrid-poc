@@ -27,6 +27,8 @@ from animation.plugins.clock_overlay import ClockOverlayAnimation
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSITOR = ROOT / "web/static/js/composer_compositor.js"
 NATIVE_WASM = ROOT / "web/static/generated/composer/aurora_curtains_native.wasm"
+PROFILE_PATH = ROOT / "tests/fixtures/installation_profile_v1.bin"
+PROFILE_DIGEST = PROFILE_PATH.read_bytes()[68:100].hex()
 WIDTH = 33
 HEIGHT = 138
 PIXELS = WIDTH * HEIGHT
@@ -146,6 +148,7 @@ process.stdout.write(JSON.stringify({
 
     def test_python_background_and_overlay_match_host_reference_fixture(self) -> None:
         runtime = BrowserPreviewRuntime()
+        runtime.bind_installation_profile_path(str(PROFILE_PATH), PROFILE_DIGEST)
         runtime.initialize(
             "gradient",
             "GradientAnimation",
@@ -161,6 +164,7 @@ process.stdout.write(JSON.stringify({
                 "color2_green": 40,
                 "color2_blue": 120,
             },
+            installation_profile_digest=PROFILE_DIGEST,
         )
         runtime.render(0.0, 0)
         base = runtime.frame_bytes

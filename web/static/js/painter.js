@@ -52,7 +52,6 @@
                 button.addEventListener('click', () => this.selectTool(button.dataset.tool));
             });
             document.getElementById('undoBtn').addEventListener('click', () => this.undo());
-            document.getElementById('saveMasksBtn').addEventListener('click', () => this.save());
             document.getElementById('mirrorWallBtn').addEventListener(
                 'click', () => this.startMirroring(),
             );
@@ -86,9 +85,6 @@
                 if (modifier && event.key.toLowerCase() === 'z') {
                     event.preventDefault();
                     this.undo();
-                } else if (modifier && event.key.toLowerCase() === 's') {
-                    event.preventDefault();
-                    this.save();
                 } else if (!modifier && event.key === '1') {
                     this.selectTool('foliage');
                 } else if (!modifier && event.key === '2') {
@@ -398,7 +394,6 @@
 
         updateControls() {
             document.getElementById('undoBtn').disabled = this.history.length === 0;
-            document.getElementById('saveMasksBtn').disabled = !this.dirty;
             document.getElementById('mirrorWallBtn').disabled =
                 !this.initialized || this.mirrorActive || this.modeChanging;
             document.getElementById('returnToDraftBtn').disabled = this.modeChanging;
@@ -615,16 +610,6 @@
             fetch('/api/stop', {method: 'POST', keepalive: true}).catch(() => {});
         }
 
-        maskIndices(value) {
-            const indices = [];
-            for (let index = 0; index < this.maskState.length; index += 1) {
-                if (this.maskState[index] === value) {
-                    indices.push(index);
-                }
-            }
-            return indices;
-        }
-
         async loadPresetCatalog(selectedId = '') {
             try {
                 const response = await fetch('/api/painter/presets', {cache: 'no-store'});
@@ -713,45 +698,6 @@
             } catch (error) {
                 console.error('Failed to save painter preset', error);
                 this.setStatus(error.message || 'Failed to save preset', 'error');
-                this.updateControls();
-            }
-        }
-
-        async save() {
-            if (!this.dirty) {
-                return;
-            }
-            const button = document.getElementById('saveMasksBtn');
-            button.disabled = true;
-            this.setStatus('Saving both mask files…');
-            try {
-                const response = await fetch('/api/painter/masks', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        led_info: {
-                            strip_count: this.layout.stripCount,
-                            leds_per_strip: this.layout.ledsPerStrip,
-                            total_leds: this.layout.totalLeds,
-                        },
-                        masks: {
-                            foliage: this.maskIndices(FOLIAGE),
-                            planter_bowls: this.maskIndices(PLANTER),
-                        },
-                    }),
-                });
-                const payload = await this.responseJson(response);
-                this.savedSignature = this.previewSignature();
-                this.dirty = false;
-                this.updateControls();
-                this.setStatus(
-                    `Saved ${payload.counts.foliage.toLocaleString()} foliage and `
-                    + `${payload.counts.planter_bowls.toLocaleString()} bowl pixels.`,
-                    'success',
-                );
-            } catch (error) {
-                console.error('Failed to save masks', error);
-                this.setStatus(error.message || 'Failed to save masks', 'error');
                 this.updateControls();
             }
         }

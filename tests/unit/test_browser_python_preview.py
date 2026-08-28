@@ -37,6 +37,8 @@ from tools.build_browser_python_bundle import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUNDLE_PATH = REPO_ROOT / "web/static/generated/composer/ledgrid_python_runtime.zip"
 WORKER_PATH = REPO_ROOT / "web/static/js/composer_python_worker.js"
+PROFILE_PATH = REPO_ROOT / "tests/fixtures/installation_profile_v1.bin"
+PROFILE_DIGEST = PROFILE_PATH.read_bytes()[68:100].hex()
 
 
 class _Controller:
@@ -102,11 +104,17 @@ def _fingerprint(output) -> dict:
     }
 
 
+def _browser_runtime() -> BrowserPreviewRuntime:
+    runtime = BrowserPreviewRuntime()
+    runtime.bind_installation_profile_path(str(PROFILE_PATH), PROFILE_DIGEST)
+    return runtime
+
+
 def _direct_fingerprints() -> dict:
     result = {}
     for case in PARITY_CASES:
         np.random.seed(case["seed"])
-        animation = DIRECT_CLASSES[case["plugin"]](_Controller(9, 17), case["params"])
+        animation = DIRECT_CLASSES[case["plugin"]](_Controller(33, 138), case["params"])
         result[case["plugin"]] = [
             _fingerprint(animation.generate_frame(elapsed, frame_index))
             for frame_index, elapsed in enumerate(case["times"])
@@ -190,7 +198,7 @@ class BrowserPythonBundleTests(unittest.TestCase):
         self.assertNotIn("/api/preview", worker)
 
     def test_runtime_reuses_identity_and_keeps_instances_independent(self):
-        runtime = BrowserPreviewRuntime()
+        runtime = _browser_runtime()
         params = {
             "direction": "horizontal", "animated": False, "brightness": 1.0,
             "color1_red": 255, "color1_green": 0, "color1_blue": 0,
@@ -198,7 +206,7 @@ class BrowserPythonBundleTests(unittest.TestCase):
         }
         ready = runtime.initialize(
             "gradient", "GradientAnimation", {"stripCount": 2, "ledsPerStrip": 3},
-            params,
+            params, installation_profile_digest=PROFILE_DIGEST,
         )
         identity = id(runtime.animation)
         self.assertTrue(ready["reset"])
@@ -218,6 +226,7 @@ class BrowserPythonBundleTests(unittest.TestCase):
         overlay = runtime.initialize(
             "clock_overlay", "ClockOverlayAnimation", {"width": 2, "height": 3},
             {"face": "minimal", "show_seconds": True}, instance_id="overlay",
+            installation_profile_digest=PROFILE_DIGEST,
         )
         self.assertTrue(overlay["reset"])
         self.assertEqual(overlay["frameFormat"], "premultiplied-rgba")
@@ -238,17 +247,18 @@ class BrowserPythonBundleTests(unittest.TestCase):
 
         same = runtime.initialize(
             "gradient", "GradientAnimation", {"strip_count": 2, "leds_per_strip": 3},
-            {"brightness": 0.5},
+            {"brightness": 0.5}, installation_profile_digest=PROFILE_DIGEST,
         )
         self.assertFalse(same["reset"])
         self.assertEqual(id(runtime.animation), identity)
         self.assertTrue(runtime.render(2.0, 2)["changed"])
 
     def test_overlay_fixed_wall_clock_is_deterministic_and_preserves_changed(self):
-        runtime = BrowserPreviewRuntime()
+        runtime = _browser_runtime()
         ready = runtime.initialize(
             "clock_overlay", "ClockOverlayAnimation", {"width": 33, "height": 138},
             {"face": "digital", "show_seconds": True},
+            installation_profile_digest=PROFILE_DIGEST,
         )
         self.assertEqual(ready["role"], "overlay")
         first = runtime.render(0.0, 0, wall_time=1787774400.0)
@@ -289,9 +299,11 @@ result = {}
 for case in cases:
     np.random.seed(case["seed"])
     runtime = BrowserPreviewRuntime()
+    runtime.bind_installation_profile_path(sys.argv[3], sys.argv[4])
     runtime.initialize(
         case["plugin"], case["class"],
-        {"stripCount": 9, "ledsPerStrip": 17}, case["params"],
+        {"stripCount": 33, "ledsPerStrip": 138}, case["params"],
+        installation_profile_digest=sys.argv[4],
     )
     frames = []
     for frame_index, elapsed in enumerate(case["times"]):
@@ -299,14 +311,17 @@ for case in cases:
         frames.append({
             "changed": metadata["changed"],
             "dtype": "uint8",
-            "shape": [9 * 17, 3],
+            "shape": [33 * 138, 3],
             "sha256": hashlib.sha256(runtime.frame_bytes).hexdigest(),
         })
     result[case["plugin"]] = frames
 print(json.dumps(result, sort_keys=True))
 '''
             completed = subprocess.run(
-                [sys.executable, "-c", script, temp_dir, json.dumps(PARITY_CASES)],
+                [
+                    sys.executable, "-c", script, temp_dir,
+                    json.dumps(PARITY_CASES), str(PROFILE_PATH), PROFILE_DIGEST,
+                ],
                 cwd=temp_dir, check=True, text=True, capture_output=True,
             )
         self.assertEqual(json.loads(completed.stdout), direct)
@@ -343,15 +358,20 @@ import sys
 sys.path.insert(0, sys.argv[1])
 from ledgrid_browser_runtime import BrowserPreviewRuntime
 runtime = BrowserPreviewRuntime()
+runtime.bind_installation_profile_path(sys.argv[3], sys.argv[4])
 runtime.initialize(
     "rainbow", "RainbowAnimation", {"width": 33, "height": 138},
     json.loads(sys.argv[2]),
+    installation_profile_digest=sys.argv[4],
 )
 runtime.render(0.25, 1)
 print(hashlib.sha256(runtime.frame_bytes).hexdigest())
 '''
             completed = subprocess.run(
-                [sys.executable, "-c", script, temp_dir, json.dumps(params)],
+                [
+                    sys.executable, "-c", script, temp_dir, json.dumps(params),
+                    str(PROFILE_PATH), PROFILE_DIGEST,
+                ],
                 cwd=temp_dir, check=True, text=True, capture_output=True,
             )
         self.assertEqual(completed.stdout.strip(), direct_digest)

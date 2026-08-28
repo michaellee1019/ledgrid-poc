@@ -680,7 +680,13 @@ h2 { font-size: 11px; font-weight: 650; }
 .mask-counts p + p { border-left: 1px solid var(--line); }
 .mask-swatch { display: inline-block; width: 9px; height: 9px; border: 1px solid rgba(255,255,255,.42); }
 .mask-swatch.foliage { background: #35c86f; }
-.mask-swatch.bowls { background: #ff9f43; }
+.mask-swatch.globes, .mask-swatch.top-left { background: #ff9f43; }
+.mask-swatch.top-right { background: #ff7043; }
+.mask-swatch.upper-middle { background: #f7c843; }
+.mask-swatch.middle-left { background: #58b7ff; }
+.mask-swatch.middle-right { background: #9c7cff; }
+.mask-swatch.lower-left { background: #e66fd0; }
+.mask-swatch.lower-right { background: #64d8cb; }
 .wall-apply-bar { position: sticky; bottom: -24px; z-index: 2; margin: 0 -9px -24px; padding: 8px 9px 10px; border-top: 1px solid #111; background: #252525; }
 .wall-apply-bar p { min-height: 13px; margin: 0 0 6px; color: var(--faint); font-size: 9px; }
 .wall-apply-bar > div { display: grid; grid-template-columns: 1fr 1.5fr; gap: 4px; }
@@ -694,8 +700,8 @@ h2 { font-size: 11px; font-weight: 650; }
 .mask-editor-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px; border-bottom: 1px solid #111; background: #292929; }
 .mask-editor-header h2 { margin: 0 0 3px; font-size: 13px; }
 .mask-editor-header p:last-child { margin: 0; color: var(--faint); font-size: 9px; }
-.mask-editor-toolbar { display: flex; align-items: center; gap: 5px; padding: 6px 8px; border-bottom: 1px solid #111; background: #202020; }
-.mask-tools { display: flex; align-items: center; gap: 2px; }
+.mask-editor-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 6px 8px; border-bottom: 1px solid #111; background: #202020; }
+.mask-tools { flex: 1 1 100%; display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); align-items: center; gap: 2px; }
 .mask-tools button { min-height: 30px; padding: 3px 8px; border: 1px solid var(--line); background: #292929; color: var(--muted); font-size: 9px; }
 .mask-tools button[aria-pressed="true"] { border-color: #2d7cb6; background: #244962; color: white; }
 .mask-tools kbd { margin-left: 5px; color: var(--faint); font-size: 8px; }
@@ -708,7 +714,7 @@ h2 { font-size: 11px; font-weight: 650; }
 .mask-editor-info h3 { margin: 0 0 7px; font-size: 10px; }
 .mask-editor-info p { padding: 7px 0; border-bottom: 1px solid var(--line); }
 .mask-editor-info small { display: block; margin-top: 10px; color: var(--faint); font-size: 8px; line-height: 1.55; }
-.mask-editor-actions { display: grid; grid-template-columns: auto 1fr auto auto; gap: 5px; padding: 7px 8px; border-top: 1px solid #111; background: #292929; }
+.mask-editor-actions { display: grid; grid-template-columns: auto 1fr repeat(4,auto); gap: 5px; padding: 7px 8px; border-top: 1px solid #111; background: #292929; }
 .mask-editor-actions button { min-height: 30px; }
 
 @media (max-width: 760px) {
@@ -790,12 +796,13 @@ h2 { font-size: 11px; font-weight: 650; }
   .mask-editor-workspace { grid-template-columns: 1fr; }
   .mask-editor-info { display: none; }
   .mask-editor-toolbar { align-items: stretch; flex-wrap: wrap; }
-  .mask-tools { flex: 1 1 100%; display: grid; grid-template-columns: repeat(3,1fr); }
+  .mask-tools { grid-template-columns: repeat(3,1fr); }
   .mask-tools button, .mask-editor-toolbar > button { min-height: 44px; }
   .mask-zoom { flex: 1 1 auto; min-height: 44px; }
   .mask-canvas-wrap { overflow: auto; overscroll-behavior: auto; padding: 18px calc(48px + env(safe-area-inset-right)) 48px calc(48px + env(safe-area-inset-left)); touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable both-edges; }
   .mask-pan-hint { display: block; position: sticky; z-index: 1; top: -18px; margin: -18px -48px 18px; padding: 8px 10px; background: rgba(32,32,32,.94); color: var(--muted); font-size: 11px; line-height: 1.4; text-align: center; pointer-events: none; }
   #maskCanvas { touch-action: none; }
-  .mask-editor-actions { padding-right: calc(8px + env(safe-area-inset-right)); padding-bottom: calc(7px + env(safe-area-inset-bottom)); padding-left: calc(8px + env(safe-area-inset-left)); }
+  .mask-editor-actions { grid-template-columns: repeat(2,minmax(0,1fr)); padding-right: calc(8px + env(safe-area-inset-right)); padding-bottom: calc(7px + env(safe-area-inset-bottom)); padding-left: calc(8px + env(safe-area-inset-left)); }
+  .mask-editor-actions > span { display: none; }
   .mask-editor-actions button { min-height: 44px; }
 }

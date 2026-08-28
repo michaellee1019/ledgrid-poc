@@ -113,4 +113,3 @@ Phone stacks those roles in the same decision order, makes the live line a full-
 ## What is intentionally lower fidelity
 
 Painter, emoji arrangement, and plant-mask editing are reachable and lightly interactive, but labeled as lower-fidelity concepts. Developer ledger rows are also navigational concepts rather than implemented tools. Camera calibration, photographed acceptance, actual native bundle validation, and hardware telemetry are not simulated beyond their product states.
-

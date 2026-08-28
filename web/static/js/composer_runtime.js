@@ -31,6 +31,14 @@
         return (part || 'primary').slice(0, 40);
     }
 
+    function installationProfileDescriptor(value) {
+        if (!value || typeof value !== 'object') return null;
+        const digest = String(value.digest || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(digest) || /^0+$/.test(digest)) return null;
+        if (typeof value.artifactUrl !== 'string' || !value.artifactUrl) return null;
+        return Object.freeze({digest, artifactUrl: value.artifactUrl});
+    }
+
     class RuntimeWorkerHost {
         constructor(workerUrl, options = {}) {
             this.workerUrl = workerUrl;
@@ -176,7 +184,8 @@
     }
 
     function sharedPythonHost(runtime, options) {
-        const key = `${runtime.worker_url}\n${runtime.asset_url || ''}`;
+        const profile = installationProfileDescriptor(options.installationProfile);
+        const key = `${runtime.worker_url}\n${runtime.asset_url || ''}\n${profile?.digest || ''}\n${profile?.artifactUrl || ''}`;
         let host = sharedPythonHosts.get(key);
         if (!host) {
             host = new RuntimeWorkerHost(runtime.worker_url, {
@@ -220,6 +229,7 @@
             this.timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
             this.initTimeoutMs = options.initTimeoutMs || DEFAULT_INIT_TIMEOUT_MS;
             this.options = options;
+            this.installationProfile = installationProfileDescriptor(options.installationProfile);
             this.host = null;
             this.hostKey = null;
             this.hostShared = false;
@@ -246,12 +256,18 @@
                 className: component.class_name,
                 assetUrl: runtime.asset_url || null,
                 params: {...(params || {})},
+                installationProfile: this.installationProfile,
                 initializedGeneration: -1,
             };
         }
 
         _acquireHost() {
             const runtime = this.component?.browser_runtime || {};
+            if (!this.installationProfile) {
+                throw new ComposerRuntimeError(
+                    'The browser renderer requires an exact managed installation-profile artifact.',
+                );
+            }
             if (!runtime.supported || !runtime.worker_url) {
                 throw new ComposerRuntimeError(
                     runtime.reason || 'This component has no browser renderer.',
@@ -282,6 +298,7 @@
                 geometry: this.geometry,
                 params: descriptor.params,
                 assetUrl: descriptor.assetUrl,
+                installationProfile: descriptor.installationProfile,
             }, this.initTimeoutMs);
             if (response.type !== 'ready') {
                 throw new ComposerRuntimeError(`Unexpected renderer response: ${String(response.type)}`);
@@ -485,6 +502,7 @@
                 ready: this.ready,
                 disposed: this.disposed,
                 rendererInstances: this.instances.size,
+                installationProfileDigest: this.installationProfile?.digest || null,
                 worker: this.host?.diagnostics() || null,
             });
         }

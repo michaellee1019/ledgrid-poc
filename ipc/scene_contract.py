@@ -41,7 +41,7 @@ SUPPORTED_ROLES = frozenset(("background", "overlay", "full_scene"))
 GLOBAL_SETTINGS_SCHEMA = "ledgrid.global-settings-state"
 GLOBAL_SETTINGS_VERSION = 1
 SCENE_ACTIVATION_BASIS_SCHEMA = "ledgrid.scene-activation-basis"
-SCENE_ACTIVATION_BASIS_VERSION = 1
+SCENE_ACTIVATION_BASIS_VERSION = 2
 SCENE_ACTIVATION_COMMAND_SCHEMA = "ledgrid.scene-activation-command"
 SCENE_ACTIVATION_COMMAND_VERSION = 1
 SCENE_ACTIVATION_STATUS_SCHEMA = "ledgrid.scene-activation-status"
@@ -1577,12 +1577,12 @@ def normalize_activation_controller_identity(value: Any) -> dict[str, Any]:
 
 
 def normalize_activation_qualification(value: Any) -> dict[str, Any]:
-    """Normalize the checker version and absolute Unix-millisecond expiry."""
+    """Normalize the retained qualification identity and absolute expiry."""
 
     qualification = _object(value, "activation qualification")
     _only(
         qualification,
-        {"version", "expires_at"},
+        {"version", "record_digest", "expires_at"},
         "activation qualification",
     )
     version = _identifier(
@@ -1595,7 +1595,15 @@ def normalize_activation_qualification(value: Any) -> dict[str, Any]:
         raise SceneValidationError(
             "activation qualification.expires_at must be positive"
         )
-    return {"version": version, "expires_at": expires_at}
+    record_digest = _sha256_digest(
+        qualification.get("record_digest"),
+        "activation qualification.record_digest",
+    )
+    return {
+        "version": version,
+        "record_digest": record_digest,
+        "expires_at": expires_at,
+    }
 
 
 def normalize_scene_activation_basis(value: Any) -> dict[str, Any]:
@@ -1688,6 +1696,7 @@ def build_scene_activation_basis(
     controller_state_revision: int,
     current_identity_digest: Optional[str],
     qualification_version: str,
+    qualification_record_digest: str,
     expires_at: int,
     host_scene: Optional[Mapping[str, Any]] = None,
     provider_policy: SceneProviderPolicy = DEFAULT_SCENE_PROVIDER_POLICY,
@@ -1786,6 +1795,7 @@ def build_scene_activation_basis(
         },
         "qualification": {
             "version": qualification_version,
+            "record_digest": qualification_record_digest,
             "expires_at": expires_at,
         },
     })

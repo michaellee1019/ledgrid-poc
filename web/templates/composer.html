@@ -258,7 +258,7 @@
           <div class="wall-section-heading"><h2 id="maskHeading">Plant masks</h2><span id="maskGeometry">32 × 138</span></div>
           <div class="mask-counts" aria-label="Calibrated mask counts">
             <p><i class="mask-swatch foliage" aria-hidden="true"></i><span>Foliage</span><strong id="foliageMaskCount">—</strong></p>
-            <p><i class="mask-swatch bowls" aria-hidden="true"></i><span>Planter bowls</span><strong id="bowlMaskCount">—</strong></p>
+            <p><i class="mask-swatch globes" aria-hidden="true"></i><span>Seven globe regions</span><strong id="globeMaskCount">—</strong></p>
           </div>
           <button class="quiet-button full-button" id="editMasksButton" type="button">Edit calibrated masks…</button>
         </section>
@@ -329,6 +329,7 @@
         <div><dt>Background</dt><dd id="activateBackground">—</dd></div>
         <div><dt>Provider</dt><dd id="activateProvider">—</dd></div>
         <div><dt>Runtime digest</dt><dd id="activateRuntimeDigest">—</dd></div>
+        <div><dt>Installation profile</dt><dd id="activateProfileDigest">—</dd></div>
         <div><dt>Revision</dt><dd id="activateRevision">—</dd></div>
         <div><dt>Check</dt><dd id="activateCheck">—</dd></div>
         <div><dt>Overlay</dt><dd id="activateOverlay">Off</dd></div>
@@ -356,6 +357,23 @@
     </form>
   </dialog>
 
+  <dialog class="action-dialog" id="profileCandidateDialog" aria-labelledby="profileCandidateHeading">
+    <form method="dialog">
+      <span class="dialog-icon" aria-hidden="true">◇</span>
+      <p class="eyebrow">Published profile candidate</p>
+      <h2 id="profileCandidateHeading">Use this profile for the next Check?</h2>
+      <p>This stages the immutable candidate for local preview, Check, and the existing reviewed activation transaction. It does not select the profile on the wall.</p>
+      <dl class="activation-summary">
+        <div><dt>Candidate</dt><dd id="profileCandidateDigest">—</dd></div>
+        <div><dt>Currently selected</dt><dd id="profileCandidateSelectedDigest">—</dd></div>
+      </dl>
+      <div class="dialog-actions">
+        <button class="quiet-button" value="cancel">Keep current profile</button>
+        <button class="primary-button" id="confirmProfileCandidateButton" value="confirm">Stage for next Check</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog class="mask-editor-dialog" id="maskEditorDialog" aria-labelledby="maskEditorHeading">
     <div class="mask-editor-shell">
       <header class="mask-editor-header">
@@ -364,9 +382,15 @@
       </header>
       <div class="mask-editor-toolbar" role="toolbar" aria-label="Mask painting tools">
         <div class="mask-tools" role="group" aria-label="Paint layer">
-          <button type="button" data-mask-tool="1" aria-pressed="true"><i class="mask-swatch foliage" aria-hidden="true"></i>Foliage <kbd>1</kbd></button>
-          <button type="button" data-mask-tool="2" aria-pressed="false"><i class="mask-swatch bowls" aria-hidden="true"></i>Bowls <kbd>2</kbd></button>
-          <button type="button" data-mask-tool="0" aria-pressed="false">Erase <kbd>E</kbd></button>
+          <button type="button" data-mask-tool="foliage" aria-pressed="true"><i class="mask-swatch foliage" aria-hidden="true"></i>Foliage <kbd>1</kbd></button>
+          <button type="button" data-mask-tool="top_left" aria-pressed="false"><i class="mask-swatch top-left" aria-hidden="true"></i>Top left <kbd>2</kbd></button>
+          <button type="button" data-mask-tool="top_right" aria-pressed="false"><i class="mask-swatch top-right" aria-hidden="true"></i>Top right <kbd>3</kbd></button>
+          <button type="button" data-mask-tool="upper_middle" aria-pressed="false"><i class="mask-swatch upper-middle" aria-hidden="true"></i>Upper middle <kbd>4</kbd></button>
+          <button type="button" data-mask-tool="middle_left" aria-pressed="false"><i class="mask-swatch middle-left" aria-hidden="true"></i>Middle left <kbd>5</kbd></button>
+          <button type="button" data-mask-tool="middle_right" aria-pressed="false"><i class="mask-swatch middle-right" aria-hidden="true"></i>Middle right <kbd>6</kbd></button>
+          <button type="button" data-mask-tool="lower_left" aria-pressed="false"><i class="mask-swatch lower-left" aria-hidden="true"></i>Lower left <kbd>7</kbd></button>
+          <button type="button" data-mask-tool="lower_right" aria-pressed="false"><i class="mask-swatch lower-right" aria-hidden="true"></i>Lower right <kbd>8</kbd></button>
+          <button type="button" data-mask-tool="erase" aria-pressed="false">Erase <kbd>E</kbd></button>
         </div>
         <button class="quiet-button" id="undoMaskButton" type="button" disabled>Undo</button>
         <label class="mask-zoom" for="maskZoom">Zoom <input id="maskZoom" type="range" min="3" max="10" value="6" step="1"></label>
@@ -379,15 +403,23 @@
         <aside class="mask-editor-info">
           <h3>Semantic layers</h3>
           <p><i class="mask-swatch foliage" aria-hidden="true"></i><span>Foliage occlusion</span><strong id="editorFoliageCount">0</strong></p>
-          <p><i class="mask-swatch bowls" aria-hidden="true"></i><span>Planter bowls</span><strong id="editorBowlCount">0</strong></p>
-          <small>Drag to paint. The two layers cannot overlap. Saving updates host calibration files; it does not mirror pixels to the wall.</small>
+          <p><i class="mask-swatch top-left" aria-hidden="true"></i><span>Top left globe</span><strong id="editor-top-left-count">0</strong></p>
+          <p><i class="mask-swatch top-right" aria-hidden="true"></i><span>Top right globe</span><strong id="editor-top-right-count">0</strong></p>
+          <p><i class="mask-swatch upper-middle" aria-hidden="true"></i><span>Upper middle globe</span><strong id="editor-upper-middle-count">0</strong></p>
+          <p><i class="mask-swatch middle-left" aria-hidden="true"></i><span>Middle left globe</span><strong id="editor-middle-left-count">0</strong></p>
+          <p><i class="mask-swatch middle-right" aria-hidden="true"></i><span>Middle right globe</span><strong id="editor-middle-right-count">0</strong></p>
+          <p><i class="mask-swatch lower-left" aria-hidden="true"></i><span>Lower left globe</span><strong id="editor-lower-left-count">0</strong></p>
+          <p><i class="mask-swatch lower-right" aria-hidden="true"></i><span>Lower right globe</span><strong id="editor-lower-right-count">0</strong></p>
+          <small>Each globe keeps its stable identity. Save updates only the managed draft; Publish creates a candidate; wall selection requires a separate reviewed activation.</small>
         </aside>
       </div>
       <footer class="mask-editor-actions">
         <button class="quiet-button" id="revertMasksButton" type="button" disabled>Revert saved</button>
         <span></span>
         <button class="quiet-button" id="doneMaskEditorButton" type="button">Done</button>
-        <button class="primary-button" id="saveMasksButton" type="button" disabled>Save calibration</button>
+        <button class="quiet-button" id="reviewProfileCandidateButton" type="button" hidden disabled>Review candidate…</button>
+        <button class="quiet-button" id="publishProfileButton" type="button" disabled>Publish candidate</button>
+        <button class="primary-button" id="saveMasksButton" type="button" disabled>Save draft</button>
       </footer>
     </div>
   </dialog>

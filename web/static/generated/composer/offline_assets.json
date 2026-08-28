@@ -1,13 +1,13 @@
 {
-  "cacheVersion": "v14",
+  "cacheVersion": "v15",
   "capturedAssets": [
     "/composer",
     "/api/v1/composer/bootstrap"
   ],
   "localAssets": [
     {
-      "bytes": 12447,
-      "sha256": "92bb5d78022cff9823404fecada5d75e1a6eb65790a17b4caf60d11e54196e4a",
+      "bytes": 16217,
+      "sha256": "bc6ce4d73073dc1d7ada0bb7a91ae12ae3c1b4386b4f146008bbb982610d506e",
       "url": "/composer-service-worker.js"
     },
     {
@@ -16,8 +16,8 @@
       "url": "/static/composer.webmanifest"
     },
     {
-      "bytes": 66363,
-      "sha256": "ae7e49d5430ca45f9f425a215439ca79acd3e35ca4cee6e1da3abbf444f63ee1",
+      "bytes": 66838,
+      "sha256": "e0360e3726aa6c6e24cbdad8eef4ef3de3e9c2b6a20be79d7b3a3109830ed63c",
       "url": "/static/css/composer.css"
     },
     {
@@ -31,8 +31,8 @@
       "url": "/static/generated/composer/compiled_rainbow.wasm"
     },
     {
-      "bytes": 2475263,
-      "sha256": "3329dd5bd295e75c6a9fbac5b16ed783986cf040dc153458903075a83283b17d",
+      "bytes": 2369913,
+      "sha256": "901b4d0cb1d4aa836461fc52ed457c43280dac190746496acfa9f0635bffa5e0",
       "url": "/static/generated/composer/ledgrid_python_runtime.zip"
     },
     {
@@ -51,28 +51,28 @@
       "url": "/static/icons/composer.svg"
     },
     {
-      "bytes": 171039,
-      "sha256": "1fc6b9ec08d83a0d4f0aa0dcb9ed92975be287a7839a21963c72ab5bf8b892ea",
+      "bytes": 189241,
+      "sha256": "3b74509990f3f592cbdba0a8d735b777df618872e494ba0ee8379166c8540d58",
       "url": "/static/js/composer.js"
     },
     {
-      "bytes": 9973,
-      "sha256": "84392bc7d3fef11493c6729fd0b5c8a22715220478c204455774a2c5d813f67d",
+      "bytes": 9972,
+      "sha256": "65c35e7a8d2ab9f02289ea790d179e2e7d8bcef7438a12e844a1c4ee8d6bfb1d",
       "url": "/static/js/composer_compositor.js"
     },
     {
-      "bytes": 8651,
-      "sha256": "d4493adc4de251e80837e296c72c0fc015b2ef249cc2eef8b288d688289fcc94",
+      "bytes": 12192,
+      "sha256": "3a42c01e766e40b271c0349282f974da4806733a0a1f653981be4f89cc50b5ec",
       "url": "/static/js/composer_native_worker.js"
     },
     {
-      "bytes": 9305,
-      "sha256": "3b17f8c0980bf6769b1b096a5cffe229242d504ef60e433498d276759aa205f8",
+      "bytes": 14172,
+      "sha256": "077660b55501aaee1a9528733e2aba9e5e112501e32b7b0872bf55360b65ab3c",
       "url": "/static/js/composer_python_worker.js"
     },
     {
-      "bytes": 22218,
-      "sha256": "655191590fdf648e7c5874d1977e1372baf61517c70d729cc3fb63342fede5d2",
+      "bytes": 23326,
+      "sha256": "14d03eab8761e1bfe48809467b281f9af8fe1d184646a4494459f36a644d903e",
       "url": "/static/js/composer_runtime.js"
     },
     {

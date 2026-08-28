@@ -151,6 +151,7 @@ class SceneActivationContractTests(unittest.TestCase):
             controller_state_revision=40,
             current_identity_digest="f" * 64,
             qualification_version="server-check-v1",
+            qualification_record_digest="8" * 64,
             expires_at=2_000_000,
         )
         document = normalize_browser_scene_document(
@@ -222,6 +223,7 @@ class SceneActivationContractTests(unittest.TestCase):
             controller_state_revision=40,
             current_identity_digest="f" * 64,
             qualification_version="server-check-v1",
+            qualification_record_digest="8" * 64,
             expires_at=2_000_000,
             host_scene=deepcopy(self.host_scene),
         )
@@ -264,6 +266,7 @@ class SceneActivationContractTests(unittest.TestCase):
             (("controller", "state_revision"), 41),
             (("controller", "current_identity_digest"), "0" * 64),
             (("qualification", "version"), "server-check-v2"),
+            (("qualification", "record_digest"), "7" * 64),
             (("qualification", "expires_at"), 2_000_001),
         )
         for path, replacement in mutations:

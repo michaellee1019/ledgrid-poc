@@ -9,12 +9,62 @@
 - **Plan owner:** `/composer`, its browser workers and generated assets, the
   browser-scene boundary, and the server/controller activation transaction
 
-The no-go is no longer a missing-UX problem. The branch has a complete,
-streamlined authoring surface, and the first portable activation-transaction
-slice is now implemented. Production activation remains blocked on the managed
-profile/mask workflow, installation-aware qualification, retained cross-browser
-and recovery evidence, and explicitly authorized physical-wall canary/soak
-gates described below.
+The no-go is no longer a missing-UX or portable-transaction problem. The branch
+has a complete, streamlined authoring surface, a guarded activation transaction,
+and a managed installation-profile authoring and qualification contract.
+Production activation remains blocked on calibrated installation budgets, fresh
+controller/receiver measurements, retained cross-browser and recovery evidence,
+and explicitly authorized physical-wall canary/soak gates described below.
+
+### Second implementation slice completed — 2026-08-27
+
+Execution-order step 6 and the portable qualification portion of step 7 are
+implemented and green. The host now owns restart-safe, optimistic-concurrency
+profile drafts; authoring preserves exact 32x138 foliage and seven ordered globe
+regions; publishing validates, compiles, and atomically stores one immutable
+33x138 LGIP artifact without selecting it. Composer Save and Publish are
+separate from wall selection, stale writes preserve the local draft, and Check
+is invalidated by draft or selected-profile changes. Browser Python and native
+workers verify the exact content-addressed artifact before use. Python no longer
+falls back to bundled legacy mask JSON.
+
+Qualification records now bind the exact scene, profile, global settings,
+geometry, brightness, vibe, modifiers, and requested FPS. Browser, controller,
+and receiver evidence are labeled separately. Missing or stale target and
+electrical evidence fails closed; the browser current estimate remains advisory.
+The checked qualification-record digest is carried in the guarded activation
+basis. The installation budget file is intentionally unqualified rather than
+inventing physical limits.
+
+Portable evidence for this checkpoint:
+
+- **Passed:** ACT-01 through ACT-06, PROFILE-01, MASK-01, and CHECK-01.
+- **Implemented but release-blocked on evidence:** PERF-01 and POWER-01 have
+  deterministic, fail-closed contracts, but lack fresh Raspberry Pi/controller,
+  receiver, and calibrated installed-wall electrical evidence.
+- **Not yet complete:** REL-01 requires retained current Firefox, Chromium,
+  WebKit, physical-iPhone Safari/standalone, and VoiceOver journeys. WALL-01 and
+  WALL-02 were not run because deployment, receiver writes, camera workflows,
+  and physical-wall commands require separate operator authorization.
+- **Local regression:** 1,749 Python tests plus 3,117 subtests; 24 rendering
+  tests plus 3 subtests and stress/scene benchmarks; 128 native firmware tests;
+  all three ESP32 build variants; and 238 deployment tests plus 157 subtests
+  passed. The focused profile/qualification/browser matrix passed 232 tests, and
+  the final legacy-writer cleanup passed 22 focused tests.
+- **Browser smoke:** the local Composer loaded without console errors, exposed
+  foliage plus seven named globe layers, and failed closed by disabling profile
+  Save/Publish and rendering when no managed artifact was selected. This is
+  portable UI evidence, not retained cross-browser or wall acceptance.
+- **Generated assets:** the pinned Python runtime and offline manifest rebuild
+  byte-for-byte at SHA-256
+  `901b4d0cb1d4aa836461fc52ed457c43280dac190746496acfa9f0635bffa5e0`
+  and
+  `187abffdd46af7bacabf8f870dffc183cae5261f8a20882a7e3cb1051d8db755`.
+
+The legacy Painter is now read-only for mask compatibility. Its dead direct
+mask writer, Save action, and keyboard shortcut were removed; profile authority
+and all publication actions live in Composer. Production activation remains
+**NO-GO** until every remaining evidence gate passes.
 
 ### First implementation slice completed — 2026-08-27
 
@@ -63,16 +113,17 @@ in:
 | Authoring | Schema-generated controls, exact numeric entry, curated starting points, local autosave, bounded Undo/Redo, import, download, copy, and server-library save. |
 | Comparison | Draft, split, and original views with local playback and an explicit statement that preview is not wall or camera feedback. |
 | Wall settings | Five vibes, master brightness, 0.25×–3× operator speed, 1–200 target FPS, and all 14 plant modifiers with strengths and field/surface exclusivity. These remain global installation state, separate from presets. |
-| Plant masks | A 32×138 foliage/planter editor with paint, erase, stroke Undo, zoom, revert, and save, presented against the 33×138 wall preview. |
-| Local Check | A 48-frame isolated render check for schema, motion, luminance, clipping, temporal change, estimated current, and target-FPS render budget. Results bind to the draft generation, component/runtime identity, geometry, wall settings, and installation-profile digest. |
+| Plant masks | A managed 32×138 foliage/seven-globe editor with paint, erase, stroke Undo, zoom, revert, optimistic-concurrency Save, and immutable candidate Publish, presented against the 33×138 wall preview. Selection remains a separate reviewed wall transaction. |
+| Local Check | A 48-frame isolated render check plus a server-owned qualification record for schema, motion, luminance, clipping, temporal change, advisory browser current, and target-FPS render budget. Results bind to the exact scene, runtime, profile artifact, geometry, globals, and evidence provenance/freshness. |
 | Safety UX | Opening, editing, previewing, importing, exporting, saving, and checking do not mutate the wall. Activation is blocked when offline, unsupported, unchecked, stale, failing, or when global settings are dirty, applying, or not yet observed. |
-| Offline/PWA | Deterministic generated assets, a pinned browser runtime bundle, atomic cache upgrade behavior, explicit offline readiness, and current cache generation `v14`. |
+| Offline/PWA | Deterministic generated assets, a pinned browser runtime bundle, verified immutable profile artifacts, atomic cache upgrade behavior, explicit offline readiness, and current cache generation `v15`. |
 
-The current portable suite is green. The last exact branch run before this plan
-refresh passed 1,635 tests and 3,015 subtests. Cold mobile review at 390×844 and
-375×667 found no clipped or unreachable composer controls, no horizontal
-overflow, no sub-44-pixel action targets, and no console errors. These are
-portable/browser results, not controller or physical-wall acceptance.
+The current portable suite is green. The exact branch run for the second
+checkpoint is recorded above. Earlier cold mobile review at 390×844 and 375×667
+found no clipped or unreachable composer controls, no horizontal overflow, no
+sub-44-pixel action targets, and no console errors. These are portable/browser
+results, not retained REL-01, controller, receiver, electrical, or physical-wall
+acceptance.
 
 ## Product and safety invariants
 
@@ -96,9 +147,11 @@ The remaining work must preserve these boundaries:
 
 ## Why production activation is still no-go
 
-Items 1–3 below record the original first-slice blockers and are now closed by
-the implementation checkpoint above. Items 4–5, plus the retained P1 and
-physical acceptance gates, continue to block production activation.
+Items 1–3 below record the original first-slice blockers and were closed by the
+first checkpoint. Item 4 was closed by the second checkpoint. Item 5 now has a
+fail-closed implementation, but calibrated target evidence is still absent.
+REL-01 and the physical acceptance gates also continue to block production
+activation.
 
 ### 1. Activation authority is client-side — closed in first slice
 
@@ -122,20 +175,22 @@ The activation route queues `start_scene` and immediately returns
 this honestly, but there is no correlated completion status or activation
 rollback.
 
-### 4. Mask editing is not a managed profile publication flow
+### 4. Mask editing is not a managed profile publication flow — closed in second slice
 
-The editor aggregates planter bowls for editing and writes the two legacy mask
-files separately. It has no optimistic-concurrency token, and its UI does not
-preserve the seven globe-region identities as first-class authored data. Saving
-a calibration must create a new immutable profile candidate; selecting it for
-the wall must be a separate reviewed transaction.
+The prior editor aggregated planter bowls and wrote two legacy mask files
+separately. Composer now preserves the seven globe-region identities, uses an
+opaque restart-safe revision for optimistic concurrency, and publishes one
+validated immutable profile candidate. Publishing never selects or activates
+the candidate. The compatibility Painter no longer exposes a writer.
 
-### 5. Browser Check is not production qualification
+### 5. Browser Check is not production qualification — contract complete, evidence pending
 
-The current estimate explicitly uses an uncalibrated current model, and its p95
-render time measures the browser. Production needs an installation electrical
-budget plus controller/target performance evidence for the exact scene,
-profile, globals, and target FPS.
+The browser estimate still explicitly uses an uncalibrated current model, and
+its p95 render time still measures only the browser. The server now produces a
+deterministic qualification record that separates those measurements and fails
+closed when calibrated installation electrical limits or fresh
+controller/receiver performance evidence are absent. Production still needs
+that real evidence for the exact scene, profile, globals, and target FPS.
 
 ## Required implementation
 
@@ -259,29 +314,29 @@ physical iPhone in Safari and installed standalone mode. Cover:
 - offline preparation, offline reload/edit/Check/export, reconnect, and stale
   activation rejection;
 - worker termination and bounded recovery with exact draft restoration;
-- service-worker upgrade from the previous release cache to `v14` or its
+- service-worker upgrade from the previous release cache to `v15` or its
   successor;
 - keyboard-only desktop and VoiceOver iPhone journeys;
 - 390×844 and 375×667 phone layouts, 430×932, tablet, and desktop.
 
 ## Acceptance gates
 
-| Gate | Release-blocking result |
-|---|---|
-| **ACT-01** | An otherwise valid crafted activation without a current server Check token is rejected with no command queued. |
-| **ACT-02** | Changing scene, runtime, globals, profile, or controller revision after Check returns a conflict with zero mutation. |
-| **ACT-03** | The controller receives and observes the same scene, globals, runtime, and profile identities that the server checked. |
-| **ACT-04** | Queue acknowledgement remains `pending`; only correlated fresh observation can produce `active`. |
-| **ACT-05** | Failure injection at every apply boundary restores the exact prior complete state and reports the rollback result. |
-| **ACT-06** | Cancel, timeout, duplicate submission, reconnect, and retry are idempotent and cannot create an untracked activation. |
-| **PROFILE-01** | Browser worker, server, controller, and receiver-facing transaction resolve the same immutable profile digest. |
-| **MASK-01** | Stale mask saves are rejected; publish is atomic; all seven globe identities survive edit/publish/reload exactly. |
-| **CHECK-01** | Every Check token is bound to the full activation basis, expires, and cannot authorize another draft or state. |
-| **PERF-01** | Browser, controller/Pi, and receiver measurements are labeled separately and pass their declared target-FPS budgets. |
-| **POWER-01** | The exact activation passes a versioned installation electrical budget; an uncalibrated browser estimate cannot satisfy this gate. |
-| **REL-01** | Required journeys pass in Firefox, Chromium, WebKit, physical iPhone Safari, and installed standalone mode. |
-| **WALL-01** | An explicitly authorized wall canary proves active identity, fresh telemetry, visible output, failure recovery, and rollback. |
-| **WALL-02** | The accepted build survives the required soak with no new controller, receiver, queue, display, or electrical fault. |
+| Gate | Status at 2026-08-27 | Release-blocking result |
+|---|---|---|
+| **ACT-01** | **PASS** | An otherwise valid crafted activation without a current server Check token is rejected with no command queued. |
+| **ACT-02** | **PASS** | Changing scene, runtime, globals, profile, or controller revision after Check returns a conflict with zero mutation. |
+| **ACT-03** | **PASS** | The controller receives and observes the same scene, globals, runtime, and profile identities that the server checked. |
+| **ACT-04** | **PASS** | Queue acknowledgement remains `pending`; only correlated fresh observation can produce `active`. |
+| **ACT-05** | **PASS** | Failure injection at every apply boundary restores the exact prior complete state and reports the rollback result. |
+| **ACT-06** | **PASS** | Cancel, timeout, duplicate submission, reconnect, and retry are idempotent and cannot create an untracked activation. |
+| **PROFILE-01** | **PASS (portable)** | Browser worker, server, controller, and receiver-facing transaction resolve the same immutable profile digest. |
+| **MASK-01** | **PASS (portable)** | Stale mask saves are rejected; publish is atomic; all seven globe identities survive edit/publish/reload exactly. |
+| **CHECK-01** | **PASS** | Every Check token is bound to the full activation basis, expires, and cannot authorize another draft or state. |
+| **PERF-01** | **NO-GO — evidence absent** | Browser, controller/Pi, and receiver measurements are labeled separately and pass their declared target-FPS budgets. |
+| **POWER-01** | **NO-GO — uncalibrated** | The exact activation passes a versioned installation electrical budget; an uncalibrated browser estimate cannot satisfy this gate. |
+| **REL-01** | **PENDING** | Required journeys pass in Firefox, Chromium, WebKit, physical iPhone Safari, and installed standalone mode. |
+| **WALL-01** | **PENDING AUTHORIZATION** | An explicitly authorized wall canary proves active identity, fresh telemetry, visible output, failure recovery, and rollback. |
+| **WALL-02** | **PENDING AUTHORIZATION** | The accepted build survives the required soak with no new controller, receiver, queue, display, or electrical fault. |
 
 Production activation becomes **GO** only when every gate above passes. Portable
 authoring stays **GO** while hardware gates are pending, provided activation
@@ -304,10 +359,11 @@ remains disabled or clearly marked unavailable in production.
 8. Run a guarded physical canary and soak only after explicit operator
    authorization and all portable gates pass.
 
-The first implementation slice should stop after steps 1–4 are green. It should
-not combine activation authority with further visual redesign; the current UX is
-already accepted and should change only where the new transaction states require
-clearer controls or language.
+Steps 1–6 and the portable contract portion of step 7 are green. The next slice
+must retain cross-browser/recovery and target qualification evidence without
+conflating browser measurements with wall evidence. Step 8 remains forbidden
+until an operator explicitly authorizes physical-wall work and all portable
+release gates pass.
 
 ## Verification
 
@@ -324,6 +380,11 @@ uv run --with numpy --with pillow --with flask --with 'werkzeug>=2.0.0' \
   tests.unit.test_browser_composer_runtime \
   tests.unit.test_browser_composer_pwa \
   tests.unit.test_browser_composer_mobile_ux \
+  tests.unit.test_browser_composer_profile_contract \
+  tests.unit.test_browser_composer_profile_runtime \
+  tests.unit.test_activation_qualification \
+  tests.unit.test_installation_profile_authoring \
+  tests.unit.test_installation_profile_authoring_api \
   tests.unit.test_installation_profile_library \
   tests.unit.test_installation_profile_transaction -v
 
@@ -357,7 +418,10 @@ outside the portable implementation loop and require explicit authorization.
 - Cross-browser, performance, electrical, controller, receiver, and physical-wall
   evidence are recorded separately and all release gates pass.
 
-The next implementation context should begin with **P0 — Immutable profile and
-mask workflow** (execution-order step 6), using failing artifact, worker-digest,
-optimistic-concurrency, and seven-region round-trip tests before removing the
-development/canary-only activation restriction.
+The next implementation context should continue **P1 — Browser and recovery
+qualification** (execution-order step 7): retain the current Firefox, Chromium,
+WebKit, physical-iPhone Safari/standalone, accessibility, offline-upgrade, and
+worker-recovery journeys; then capture separately labeled target performance
+and calibrated electrical evidence. Do not remove the development/canary-only
+activation restriction or begin step 8 until PERF-01, POWER-01, and REL-01 pass
+and physical-wall work is explicitly authorized.

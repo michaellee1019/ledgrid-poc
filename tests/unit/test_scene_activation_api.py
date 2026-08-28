@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
+import time
 import unittest
 
 from animation.core.presentation_contracts import resolve_vibe
@@ -89,6 +90,29 @@ class SceneActivationApiTests(unittest.TestCase):
             "browser_evidence": {"status": "pass", "checkerVersion": "browser-v2"},
         })
 
+    def _numeric_browser_evidence(self) -> dict:
+        return {
+            "status": "pass",
+            "source": "browser",
+            "capturedAt": int(time.time() * 1000),
+            "environment": {"userAgent": "qualification-test-browser"},
+            "sampleCount": 48,
+            "frameTimeMs": {"mean": 2.0, "p95": 3.0, "p99": 4.0, "max": 5.0},
+            "cadence": {
+                "observedFps": 30.0,
+                "targetFps": 30,
+                "missedFrameRatio": 0.0,
+                "changedFrameRatio": 0.5,
+            },
+            "electrical": {
+                "kind": "uncalibrated_estimate",
+                "brightness": 128,
+                "meanCurrentAmps": 3.0,
+                "peakCurrentAmps": 4.0,
+                "nominalVoltageVolts": 5.0,
+            },
+        }
+
     def _activation_body(self, checked: dict, *, scene=None, globals_=None) -> dict:
         return {
             "check_token": checked["check_token"],
@@ -148,7 +172,49 @@ class SceneActivationApiTests(unittest.TestCase):
         self.assertGreaterEqual(len(payload["check_token"]), 43)
         self.assertRegex(payload["basis_digest"], r"^[0-9a-f]{64}$")
         self.assertEqual(payload["basis"]["controller"]["state_revision"], 7)
+        self.assertEqual(
+            payload["basis"]["qualification"]["record_digest"],
+            payload["qualification"]["record_digest"],
+        )
+        self.assertEqual(payload["qualification"]["status"], "development_canary")
+        self.assertFalse(payload["qualification"]["production_qualified"])
+        self.assertIn(
+            "installation_budget_uncalibrated",
+            payload["qualification"]["blockers"],
+        )
+        self.assertIn(
+            "missing_receiver_evidence",
+            payload["qualification"]["blockers"],
+        )
         self.assertEqual(self.channel.list_activation_commands(), [])
+
+    def test_numeric_browser_evidence_is_advisory_and_bound_into_check(self) -> None:
+        evidence = self._numeric_browser_evidence()
+        first = self.client.post("/api/v1/scene/checks", json={
+            "scene": self.scene,
+            "global_settings": self.globals,
+            "browser_evidence": evidence,
+        }).get_json()
+        self.assertNotIn("missing_browser_evidence", first["qualification"]["blockers"])
+        self.assertIn("missing_receiver_evidence", first["qualification"]["blockers"])
+
+        slower = deepcopy(evidence)
+        slower["frameTimeMs"] = {
+            "mean": 20.0, "p95": 34.0, "p99": 35.0, "max": 36.0,
+        }
+        second = self.client.post("/api/v1/scene/checks", json={
+            "scene": self.scene,
+            "global_settings": self.globals,
+            "browser_evidence": slower,
+        }).get_json()
+        self.assertNotEqual(
+            first["qualification"]["record_digest"],
+            second["qualification"]["record_digest"],
+        )
+        self.assertIn(
+            "browser_p95_exceeds_frame_budget",
+            second["qualification"]["blockers"],
+        )
 
     def test_check_rejects_unrestorable_live_legacy_and_painter_before_token(self) -> None:
         token_path = Path(self.temporary.name) / "tokens.sqlite3"

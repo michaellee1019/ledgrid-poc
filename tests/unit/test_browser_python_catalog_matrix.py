@@ -26,6 +26,8 @@ import traceback
 
 bundle_root = pathlib.Path(sys.argv[1])
 repo_root = pathlib.Path(sys.argv[2])
+profile_path = pathlib.Path(sys.argv[3])
+profile_digest = sys.argv[4]
 sys.path.insert(0, str(bundle_root))
 from ledgrid_browser_runtime import BrowserPreviewRuntime, PLUGIN_SPECS
 
@@ -39,8 +41,10 @@ def render_case(label, plugin_id, class_name, params):
     global defaults_rendered, presets_rendered, fixed_wall_clock_frames
     try:
         runtime = BrowserPreviewRuntime()
+        runtime.bind_installation_profile_path(str(profile_path), profile_digest)
         ready = runtime.initialize(
-            plugin_id, class_name, {"width": 33, "height": 138}, params
+            plugin_id, class_name, {"width": 33, "height": 138}, params,
+            installation_profile_digest=profile_digest,
         )
         spec = PLUGIN_SPECS[plugin_id]
         assert ready["role"] == spec.role
@@ -128,7 +132,12 @@ class BrowserPythonCatalogMatrixTests(unittest.TestCase):
             with zipfile.ZipFile(BUNDLE_PATH, "r") as archive:
                 archive.extractall(temp_dir)
             completed = subprocess.run(
-                [sys.executable, "-c", MATRIX_SCRIPT, temp_dir, str(REPO_ROOT)],
+                [
+                    sys.executable, "-c", MATRIX_SCRIPT, temp_dir, str(REPO_ROOT),
+                    str(REPO_ROOT / "tests/fixtures/installation_profile_v1.bin"),
+                    (REPO_ROOT / "tests/fixtures/installation_profile_v1.bin")
+                    .read_bytes()[68:100].hex(),
+                ],
                 cwd=temp_dir,
                 text=True,
                 capture_output=True,

@@ -308,16 +308,17 @@
         <div>
             <h1><i class="fas fa-seedling"></i> Plant Mask Painter</h1>
             <p class="text-muted mb-0">
-                Edit the foliage and planter-bowl masks safely in a private draft.
+                Preview aggregate foliage and planter masks in a private compatibility draft.
+                Managed profile editing and publication live in Composer.
             </p>
         </div>
         <div class="painter-actions">
             <button class="btn btn-outline-secondary" id="undoBtn" type="button" disabled>
                 <i class="fas fa-rotate-left" aria-hidden="true"></i> Undo
             </button>
-            <button class="btn btn-primary" id="saveMasksBtn" type="button" disabled>
-                <i class="fas fa-floppy-disk" aria-hidden="true"></i> Save masks
-            </button>
+            <a class="btn btn-primary" id="manageProfileBtn" href="{{ url_for('browser_composer') }}">
+                <i class="fas fa-wand-magic-sparkles" aria-hidden="true"></i> Manage profile in Composer
+            </a>
         </div>
     </div>
 
@@ -326,7 +327,7 @@
             <span class="output-state-badge" id="outputStateBadge">Draft</span>
             <span class="output-state-detail">
                 <strong id="outputStateTitle">Editing privately</strong>
-                <span id="outputStateDescription">Changes stay in this browser until you save or choose Mirror to wall.</span>
+                <span id="outputStateDescription">Changes stay in this browser. Save a private preset below, or use Composer to publish a managed profile.</span>
             </span>
         </div>
         <div class="output-state-actions">

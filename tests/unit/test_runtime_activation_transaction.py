@@ -443,6 +443,7 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
             controller_state_revision=coordinator.state_revision,
             current_identity_digest=coordinator.current_identity_digest,
             qualification_version="server-check-v1",
+            qualification_record_digest="8" * 64,
             expires_at=(
                 int((time.time() + 120) * 1000)
                 if expires_at is None

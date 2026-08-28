@@ -127,6 +127,9 @@ def source_mapping(repo_root: Path) -> Dict[str, Path]:
     members: Dict[str, Path] = {
         "animation/__init__.py": browser_sources / "shim_animation.py",
         "animation/core/__init__.py": browser_sources / "shim_core.py",
+        "animation/core/installation_profile.py": (
+            repo_root / "animation/core/installation_profile.py"
+        ),
         "animation/core/plant_awareness.py": repo_root / "animation/core/plant_awareness.py",
         "animation/core/receiver_optics.py": repo_root / "animation/core/receiver_optics.py",
         "animation/core/presentation_contracts.py": (
@@ -135,8 +138,6 @@ def source_mapping(repo_root: Path) -> Dict[str, Path]:
         "animation/plugins/__init__.py": repo_root / "animation/plugins/__init__.py",
         "drivers/__init__.py": repo_root / "drivers/__init__.py",
         "drivers/led_layout.py": repo_root / "drivers/led_layout.py",
-        "config/plant_globe_map_32x138.json": repo_root / "config/plant_globe_map_32x138.json",
-        "config/plant_pixel_map_32x138.json": repo_root / "config/plant_pixel_map_32x138.json",
         "config/webcam_pixel_map.json": repo_root / "config/webcam_pixel_map.json",
         "ledgrid_browser_runtime.py": browser_sources / "runtime.py",
     }
@@ -172,6 +173,7 @@ def build_members(repo_root: Path) -> Dict[str, bytes]:
         "orientation": "strip-major; index = strip * ledsPerStrip + led",
         "pyodideVersion": PYODIDE_VERSION,
         "supportsCalibratedPlantMasks": True,
+        "requiresManagedInstallationProfile": True,
         "supportsPlantModifiers": True,
         "supportsMultipleInstances": True,
         "maxInstances": MAX_RUNTIME_INSTANCES,

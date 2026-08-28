@@ -24,6 +24,82 @@ const PLUGINS = Object.freeze({
 let wasm = null;
 let activePluginId = null;
 let activeParams = {};
+let verifiedProfile = null;
+
+function digestHex(bytes) {
+    return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+function profileDescriptor(value) {
+    const digest = String(value?.digest || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(digest) || /^0+$/.test(digest)) {
+        throw new Error('Native preview requires a selected managed installation-profile digest');
+    }
+    if (typeof value?.artifactUrl !== 'string' || !value.artifactUrl) {
+        throw new Error('Native preview requires the selected installation-profile artifact URL');
+    }
+    const url = new URL(value.artifactUrl, self.location.href);
+    if (url.origin !== self.location.origin) {
+        throw new Error('Installation-profile artifact must be same-origin');
+    }
+    return {digest, url: url.href};
+}
+
+async function verifyInstallationProfile(value) {
+    const expected = profileDescriptor(value);
+    if (verifiedProfile) {
+        if (verifiedProfile.digest !== expected.digest || verifiedProfile.url !== expected.url) {
+            throw new Error('Native preview worker is already bound to a different installation profile');
+        }
+        return verifiedProfile;
+    }
+    if (!self.crypto?.subtle) {
+        throw new Error('Cryptographic installation-profile verification is unavailable');
+    }
+    const response = await fetch(expected.url, {
+        cache: 'no-store',
+        headers: {'Accept': 'application/octet-stream'},
+    });
+    if (!response.ok) {
+        throw new Error(`Unable to load selected installation profile (${response.status})`);
+    }
+    const etag = response.headers.get('ETag')?.replace(/^W\//, '').replace(/^"|"$/g, '');
+    if (etag && etag !== expected.digest) {
+        throw new Error('Installation-profile ETag does not match selected digest');
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength < 328 || bytes.byteLength > 65535 || String.fromCharCode(...bytes.subarray(0, 4)) !== 'LGIP') {
+        throw new Error('Selected installation profile is not a bounded LGIP artifact');
+    }
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (
+        view.getUint16(4, false) !== 1
+        || view.getUint16(6, false) !== 112
+        || view.getUint32(8, false) !== 0
+        || view.getUint16(12, false) !== 33
+        || view.getUint16(14, false) !== 138
+        || view.getUint16(16, false) !== 0
+        || view.getUint16(18, false) !== 33
+        || view.getUint32(20, false) !== 4554
+        || bytes[25] !== 7
+        || view.getUint16(26, false) !== 9
+        || view.getUint16(28, false) !== 24
+        || view.getUint16(30, false) !== 0
+        || view.getUint32(32, false) !== bytes.byteLength
+        || bytes.subarray(100, 112).some((item) => item !== 0)
+    ) {
+        throw new Error('Selected installation profile has a noncanonical LGIP header');
+    }
+    const embedded = digestHex(bytes.subarray(68, 100));
+    const digestInput = bytes.slice();
+    digestInput.fill(0, 68, 100);
+    const computed = digestHex(new Uint8Array(await self.crypto.subtle.digest('SHA-256', digestInput)));
+    if (embedded !== expected.digest || computed !== expected.digest) {
+        throw new Error('Selected LGIP artifact failed content-digest verification');
+    }
+    verifiedProfile = Object.freeze({...expected, bytes});
+    return verifiedProfile;
+}
 
 function exported(name) {
     const value = wasm?.exports?.[name] || wasm?.exports?.[`_${name}`];
@@ -126,6 +202,7 @@ async function initialize(message) {
     activePluginId = message.pluginId;
     activeParams = {...pluginConfig().defaults};
     const geometry = resolvedGeometry(message.geometry, activePluginId);
+    const profile = await verifyInstallationProfile(message.installationProfile);
     const assetUrl = new URL(message.assetUrl, self.location.href);
     const response = await fetch(assetUrl);
     if (!response.ok) {
@@ -157,6 +234,7 @@ async function initialize(message) {
         width: geometry.width,
         height: geometry.height,
         engine: ENGINE,
+        installationProfileDigest: profile.digest,
     });
 }
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import gc
+import hashlib
 import json
 import math
 import re
@@ -16,11 +17,20 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 import numpy as np
 
+from animation.core.installation_profile import (
+    FORMAT_VERSION as INSTALLATION_PROFILE_FORMAT_VERSION,
+    GLOBAL_STRIP_COUNT,
+    LEDS_PER_STRIP,
+    decode_installation_profile,
+)
+from animation.core.plant_awareness import GLOBE_REGION_ORDER, PlantMaskGeometry
+
 
 ENGINE = "python-pyodide-wasm"
 DEFAULT_INSTANCE_ID = "primary"
 MAX_RUNTIME_INSTANCES = 8
 _INSTANCE_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MISSING = object()
 
 
@@ -96,7 +106,7 @@ class PreviewController:
 
 @dataclass
 class _RuntimeInstance:
-    identity: Tuple[str, str, int, int]
+    identity: Tuple[str, str, int, int, str]
     animation: Any
     controller: PreviewController
     spec: PluginSpec
@@ -131,6 +141,64 @@ def normalize_geometry(geometry: Mapping[str, Any]) -> Tuple[int, int]:
 def _validate_browser_parameters(params: Mapping[str, Any]) -> None:
     if not isinstance(params, Mapping):
         raise ValueError("params must be an object")
+    legacy = {"plant_mask_path", "plant_globe_mask_path"} & params.keys()
+    if legacy:
+        raise ValueError(
+            "browser previews reject legacy plant-mask paths; "
+            "use the managed installation-profile artifact"
+        )
+
+
+def _readonly(value: Any, dtype: np.dtype[Any]) -> np.ndarray:
+    result = np.array(value, dtype=dtype, order="C", copy=True)
+    result.setflags(write=False)
+    return result
+
+
+def _profile_geometry(profile: Any) -> PlantMaskGeometry:
+    """Convert one fully decoded LGIP into the browser's immutable mask view."""
+    boolean = np.dtype(np.bool_)
+    foliage = _readonly(profile.category == 1, boolean)
+    globes = _readonly(profile.category == 2, boolean)
+    obstacle = _readonly(profile.category != 0, boolean)
+    clearance = _readonly(profile.clearance != 0, boolean)
+    foliage_edge = _readonly(profile.foliage_edge != 0, boolean)
+    globe_edge = _readonly(profile.globe_edge != 0, boolean)
+    obstacle_edge = _readonly(profile.obstacle_edge != 0, boolean)
+    distance = _readonly(profile.distance, np.dtype(np.float32))
+    normal_x = _readonly(
+        profile.normal_x.astype(np.float32) / np.float32(127.0),
+        np.dtype(np.float32),
+    )
+    normal_y = _readonly(
+        profile.normal_y.astype(np.float32) / np.float32(127.0),
+        np.dtype(np.float32),
+    )
+    region_masks = MappingProxyType({
+        name: _readonly(profile.globe_region == region_id, boolean)
+        for region_id, name in enumerate(GLOBE_REGION_ORDER, start=1)
+    })
+    return PlantMaskGeometry(
+        foliage=foliage,
+        globes=globes,
+        obstacle=obstacle,
+        clearance=clearance,
+        foliage_flat=foliage.reshape(-1),
+        globes_flat=globes.reshape(-1),
+        obstacle_flat=obstacle.reshape(-1),
+        clearance_flat=clearance.reshape(-1),
+        foliage_count=int(np.count_nonzero(foliage)),
+        globe_count=int(np.count_nonzero(globes)),
+        globe_regions=len(GLOBE_REGION_ORDER),
+        foliage_edge=foliage_edge,
+        globe_edge=globe_edge,
+        obstacle_edge=obstacle_edge,
+        distance=distance,
+        normal_x=normal_x,
+        normal_y=normal_y,
+        globe_region_masks=region_masks,
+        error="",
+    )
 
 
 def _validated_instance_id(value: Any) -> str:
@@ -159,6 +227,60 @@ class BrowserPreviewRuntime:
     def __init__(self) -> None:
         self._instances: Dict[str, _RuntimeInstance] = {}
         self._last_instance_id = DEFAULT_INSTANCE_ID
+        self._installation_profile_digest: Optional[str] = None
+        self._installation_profile_geometry: Optional[PlantMaskGeometry] = None
+
+    def bind_installation_profile_path(
+        self, artifact_path: str, expected_digest: str
+    ) -> Dict[str, Any]:
+        """Decode and bind the exact worker-verified LGIP artifact."""
+        if not isinstance(expected_digest, str) or _SHA256.fullmatch(expected_digest) is None:
+            raise ValueError("expected installation-profile digest is invalid")
+        if expected_digest == "0" * 64:
+            raise ValueError("an empty installation profile cannot render in the browser")
+        if not isinstance(artifact_path, str) or not artifact_path:
+            raise ValueError("installation-profile artifact path is unavailable")
+        encoded = Path(artifact_path).read_bytes()
+        if len(encoded) < 100:
+            raise ValueError("installation-profile artifact is truncated")
+        embedded_digest = encoded[68:100].hex()
+        digest_input = bytearray(encoded)
+        digest_input[68:100] = bytes(32)
+        computed_digest = hashlib.sha256(digest_input).hexdigest()
+        if embedded_digest != expected_digest or computed_digest != expected_digest:
+            raise ValueError(
+                "installation-profile artifact does not match its selected content digest"
+            )
+        if self._instances and self._installation_profile_digest != expected_digest:
+            raise RuntimeError(
+                "cannot replace the installation profile while browser instances are active"
+            )
+        profile = decode_installation_profile(encoded)
+        if (
+            profile.global_strip_count != GLOBAL_STRIP_COUNT
+            or profile.leds_per_strip != LEDS_PER_STRIP
+            or profile.strip_origin != 0
+            or profile.strip_count != GLOBAL_STRIP_COUNT
+        ):
+            raise ValueError(
+                f"browser installation profile must cover {GLOBAL_STRIP_COUNT}x{LEDS_PER_STRIP}"
+            )
+        geometry = _profile_geometry(profile)
+        self._installation_profile_digest = expected_digest
+        self._installation_profile_geometry = geometry
+        animation_module = importlib.import_module("animation")
+        bind = getattr(animation_module, "bind_browser_installation_profile", None)
+        if callable(bind):
+            bind(expected_digest, geometry)
+        return {
+            "digest": expected_digest,
+            "formatVersion": INSTALLATION_PROFILE_FORMAT_VERSION,
+            "width": GLOBAL_STRIP_COUNT,
+            "height": LEDS_PER_STRIP,
+            "foliagePixels": geometry.foliage_count,
+            "globePixels": geometry.globe_count,
+            "globeRegions": list(geometry.globe_region_masks),
+        }
 
     @property
     def animation(self) -> Any:
@@ -218,6 +340,7 @@ class BrowserPreviewRuntime:
         geometry: Mapping[str, Any],
         params: Optional[Mapping[str, Any]] = None,
         instance_id: Optional[str] = None,
+        installation_profile_digest: Optional[str] = None,
     ) -> Dict[str, Any]:
         resolved_instance_id = _validated_instance_id(instance_id)
         spec = PLUGIN_SPECS.get(plugin_id)
@@ -232,9 +355,24 @@ class BrowserPreviewRuntime:
                 f"not {class_name!r}"
             )
         strip_count, leds_per_strip = normalize_geometry(geometry)
+        if (
+            installation_profile_digest is None
+            or installation_profile_digest != self._installation_profile_digest
+            or self._installation_profile_geometry is None
+        ):
+            raise RuntimeError(
+                "the exact managed installation-profile artifact must be verified "
+                "and bound before browser renderer initialization"
+            )
         resolved_params = dict(params or {})
         _validate_browser_parameters(resolved_params)
-        identity = (plugin_id, class_name, strip_count, leds_per_strip)
+        identity = (
+            plugin_id,
+            class_name,
+            strip_count,
+            leds_per_strip,
+            installation_profile_digest,
+        )
         instance = self._instances.get(resolved_instance_id)
         reset = instance is None or identity != instance.identity
         if reset:
@@ -247,6 +385,23 @@ class BrowserPreviewRuntime:
             animation_class = getattr(module, class_name)
             controller = PreviewController(strip_count, leds_per_strip)
             animation = animation_class(controller, resolved_params)
+            animation._browser_installation_profile_geometry = (
+                self._installation_profile_geometry
+            )
+            animation._browser_installation_profile_digest = (
+                self._installation_profile_digest
+            )
+            exact_geometry = self._installation_profile_geometry
+
+            def exact_profile_masks(_owner: Any, clearance: Any = None) -> PlantMaskGeometry:
+                del clearance
+                if exact_geometry is None:
+                    raise RuntimeError(
+                        "managed installation-profile geometry is unavailable"
+                    )
+                return exact_geometry
+
+            animation.get_plant_masks = MethodType(exact_profile_masks, animation)
             replacement = _RuntimeInstance(identity, animation, controller, spec)
             if instance is not None:
                 self._release_instance(instance)
@@ -273,6 +428,7 @@ class BrowserPreviewRuntime:
             "instanceCount": len(self._instances),
             "maxInstances": MAX_RUNTIME_INSTANCES,
             "supportsFixedWallTime": True,
+            "installationProfileDigest": self._installation_profile_digest,
             "requiredPackages": list(spec.required_packages),
         }
 
@@ -389,6 +545,7 @@ class BrowserPreviewRuntime:
             payload.get("geometry"),
             payload.get("params"),
             payload.get("instanceId"),
+            payload.get("installationProfileDigest"),
         )
         return json.dumps(result, separators=(",", ":"), sort_keys=True)
 

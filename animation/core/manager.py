@@ -2563,7 +2563,7 @@ class AnimationManager:
             with self._presentation_io_guard():
                 self.controller.clear()
         return not takeover_failed
-    
+
     def update_animation_parameters(self, params: Dict[str, Any]) -> bool:
         """Update current animation parameters in real-time"""
         if self._scene_mode:

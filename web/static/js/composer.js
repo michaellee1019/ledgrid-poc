@@ -6,6 +6,26 @@
     const $ = (id) => document.getElementById(id);
     const STORAGE_PREFIX = 'ledgrid.browser-composer.v1';
     const SAMPLE_FRAMES = 48;
+    const EMPTY_PROFILE_DIGEST = '0'.repeat(64);
+    const GLOBE_REGION_ORDER = Object.freeze([
+        'top_left',
+        'top_right',
+        'upper_middle',
+        'middle_left',
+        'middle_right',
+        'lower_left',
+        'lower_right',
+    ]);
+    const MASK_LAYERS = Object.freeze([
+        Object.freeze({id: 'foliage', value: 1, label: 'Foliage', color: '#35c86f', key: '1'}),
+        ...GLOBE_REGION_ORDER.map((id, index) => Object.freeze({
+            id,
+            value: index + 2,
+            label: humanizeMaskLayer(id),
+            color: ['#ff9f43', '#ff7043', '#f7c843', '#58b7ff', '#9c7cff', '#e66fd0', '#64d8cb'][index],
+            key: String(index + 2),
+        })),
+    ]);
     const PLANT_MODIFIER_GROUPS = Object.freeze([
         {id: 'visual', name: 'Light & material', mode: 'multiple', modifiers: ['illuminate', 'shadow', 'refract', 'hue_shift', 'liquid_glass']},
         {id: 'field', name: 'Field · choose one', mode: 'exclusive', modifiers: ['attractor', 'repulsor', 'slow_zone']},
@@ -78,17 +98,27 @@
             pendingObservation: false,
             pendingSince: 0,
         },
+        installationProfile: {
+            selectedDigest: null,
+            selectedArtifactUrl: null,
+            desiredDigest: null,
+            desiredArtifactUrl: null,
+            candidate: null,
+        },
         masks: {
             loaded: false,
+            digest: null,
+            revision: null,
             ledInfo: null,
             cells: null,
             savedCells: null,
             history: [],
-            tool: 1,
+            tool: 'foliage',
             dirty: false,
             painting: false,
             lastCell: null,
             zoom: 6,
+            stale: false,
         },
         layers: {
             clockEnabled: false,
@@ -101,6 +131,10 @@
 
     function clone(value) {
         return ComposerState.clone ? ComposerState.clone(value) : JSON.parse(JSON.stringify(value ?? null));
+    }
+
+    function humanizeMaskLayer(value) {
+        return String(value || '').replaceAll('_', ' ').replace(/\b\w/g, (match) => match.toUpperCase());
     }
 
     function humanize(value) {
@@ -155,8 +189,99 @@
         return payload;
     }
 
+    async function requestJsonResource(url, options = {}) {
+        let response;
+        try {
+            response = await fetch(url, {
+                ...options,
+                headers: {
+                    'Accept': 'application/json',
+                    ...(options.body ? {'Content-Type': 'application/json'} : {}),
+                    ...(options.headers || {}),
+                },
+                cache: 'no-store',
+            });
+        } catch (_error) {
+            const error = new Error('The wall server is unreachable. Your local draft is still safe.');
+            error.code = 'offline';
+            throw error;
+        }
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const error = new Error(payload.error || `Server request failed (${response.status}).`);
+            error.status = response.status;
+            error.code = payload.code;
+            error.payload = payload;
+            error.etag = response.headers.get('ETag');
+            throw error;
+        }
+        return {payload, etag: response.headers.get('ETag')};
+    }
+
     function globalActions() {
         return state.bootstrap?.capabilities?.server_actions || {};
+    }
+
+    function profileUrlForDigest(url, priorDigest, nextDigest) {
+        if (typeof url !== 'string' || !url) return null;
+        if (url.includes('{digest}')) return url.replace('{digest}', nextDigest);
+        if (url.includes(':digest')) return url.replace(':digest', nextDigest);
+        if (priorDigest && url.includes(priorDigest)) return url.replace(priorDigest, nextDigest);
+        return url;
+    }
+
+    function initializeInstallationProfileState() {
+        const digest = state.bootstrap?.installation_profile?.digest || null;
+        const artifactUrl = globalActions().installation_profile_artifact_url || null;
+        state.installationProfile.selectedDigest = digest;
+        state.installationProfile.selectedArtifactUrl = artifactUrl;
+        state.installationProfile.desiredDigest = digest;
+        state.installationProfile.desiredArtifactUrl = artifactUrl;
+        state.installationProfile.candidate = null;
+    }
+
+    function desiredInstallationProfile() {
+        const profile = state.installationProfile;
+        if (
+            !/^[0-9a-f]{64}$/.test(profile.desiredDigest || '')
+            || profile.desiredDigest === EMPTY_PROFILE_DIGEST
+            || typeof profile.desiredArtifactUrl !== 'string'
+            || !profile.desiredArtifactUrl
+        ) return null;
+        return {
+            digest: profile.desiredDigest,
+            artifactUrl: profile.desiredArtifactUrl,
+        };
+    }
+
+    function composerRuntimeOptions(overrides = {}) {
+        return {...overrides, installationProfile: desiredInstallationProfile()};
+    }
+
+    function updateSelectedInstallationProfile(nextDigest) {
+        const profile = state.installationProfile;
+        if (!/^[0-9a-f]{64}$/.test(nextDigest || '') || nextDigest === EMPTY_PROFILE_DIGEST) return;
+        const priorDigest = profile.selectedDigest;
+        if (nextDigest === priorDigest) return;
+        const actions = globalActions();
+        for (const name of (
+            ['installation_profile_draft_url', 'installation_profile_publish_url', 'installation_profile_artifact_url']
+        )) {
+            actions[name] = profileUrlForDigest(actions[name], priorDigest, nextDigest);
+        }
+        const followsSelected = !profile.desiredDigest || profile.desiredDigest === priorDigest;
+        profile.selectedDigest = nextDigest;
+        profile.selectedArtifactUrl = actions.installation_profile_artifact_url || null;
+        if (followsSelected) {
+            profile.desiredDigest = nextDigest;
+            profile.desiredArtifactUrl = profile.selectedArtifactUrl;
+            restartRuntimesAtCurrentState();
+        }
+        if (state.bootstrap?.installation_profile) {
+            state.bootstrap.installation_profile.digest = nextDigest;
+        }
+        resetChecker({preserveDocumentRevision: true});
+        renderLayers();
     }
 
     function vibeProfiles() {
@@ -417,7 +542,7 @@
             const payload = await requestJson(globalActions().status_url || '/api/status');
             const observed = normalizedGlobalSettings(payload);
             const priorObserved = clone(state.globalSettings.observed);
-            const priorProfileDigest = state.bootstrap?.installation_profile?.digest || null;
+            const priorProfileDigest = state.installationProfile.selectedDigest;
             const nextControllerObservation = {
                 sessionId: payload.controller_session_id || null,
                 stateRevision: payload.controller_state_revision,
@@ -447,18 +572,13 @@
                 }
             } else if (!preserveDraft || !hadDirtyDraft) state.globalSettings.draft = clone(observed);
             const observedProfileDigest = payload.installation_profile_digest;
-            if (
-                /^[0-9a-f]{64}$/.test(observedProfileDigest || '')
-                && state.bootstrap?.installation_profile
-            ) {
-                state.bootstrap.installation_profile.digest = observedProfileDigest;
-            }
+            updateSelectedInstallationProfile(observedProfileDigest);
             state.globalSettings.dirty = !globalSettingsEqual(state.globalSettings.draft, observed);
             if (
                 state.checkResult
                 && (
                     !globalSettingsEqual(priorObserved, observed)
-                    || priorProfileDigest !== state.bootstrap?.installation_profile?.digest
+                    || priorProfileDigest !== state.installationProfile.selectedDigest
                 )
             ) resetChecker({preserveDocumentRevision: true});
             persistGlobalDraft();
@@ -594,13 +714,13 @@
                 state.component,
                 state.bootstrap.geometry,
                 state.globalSettings.draft,
-                state.bootstrap.installation_profile?.digest || null,
+                state.installationProfile.desiredDigest || null,
             )
             : {
                 draftGeneration: state.draftGeneration,
                 componentKey: state.component.key,
                 wallSettings: clone(state.globalSettings.draft),
-                installationProfileDigest: state.bootstrap.installation_profile?.digest || null,
+                installationProfileDigest: state.installationProfile.desiredDigest || null,
             };
     }
 
@@ -722,7 +842,7 @@
                     item.provider === 'python' && item.role === 'background' && item.browser_runtime?.supported
                 ));
                 if (!component) throw new Error('No browser-ready Python animation is available for offline preparation.');
-                temporary = new ComposerRuntime(component, state.bootstrap.geometry, {initTimeoutMs: 90000});
+                temporary = new ComposerRuntime(component, state.bootstrap.geometry, composerRuntimeOptions({initTimeoutMs: 90000}));
                 await temporary.init(defaultParams(component));
                 runtime = temporary;
             }
@@ -760,6 +880,11 @@
         if (!/^[0-9a-f]{64}$/.test(payload.installation_profile?.digest || '')) {
             throw new Error('The composer catalog has no managed installation-profile identity.');
         }
+        const selectedDigest = payload.installation_profile.digest;
+        const artifactUrl = payload.capabilities?.server_actions?.installation_profile_artifact_url;
+        if (selectedDigest !== EMPTY_PROFILE_DIGEST && (typeof artifactUrl !== 'string' || !artifactUrl)) {
+            throw new Error('The composer catalog has no immutable selected-profile artifact URL.');
+        }
         payload.components.forEach((component) => {
             const capabilities = component.browser_capabilities;
             if (!capabilities || ['previewable', 'saveable', 'activation_ready'].some((key) => typeof capabilities[key] !== 'boolean')) {
@@ -773,6 +898,7 @@
         const response = await fetch('/api/v1/composer/bootstrap', {headers: {'Accept': 'application/json'}});
         if (!response.ok) throw new Error(`Catalog request failed (${response.status}).`);
         state.bootstrap = assertBootstrap(await response.json());
+        initializeInstallationProfileState();
         initializeGlobalSettings();
         configureCanvas();
         renderCatalog();
@@ -1004,8 +1130,11 @@
         const component = state.component;
         if (!component) return;
         if ($('installationProfileStatus')) {
-            const digest = state.bootstrap.installation_profile?.digest || '';
-            $('installationProfileStatus').textContent = `Plant geometry is authoritative host state · profile ${digest.slice(0, 12)}… · presets cannot override it.`;
+            const selected = state.installationProfile.selectedDigest || '';
+            const desired = state.installationProfile.desiredDigest || selected;
+            $('installationProfileStatus').textContent = desired !== selected
+                ? `Published profile ${desired.slice(0, 12)}… is staged for the next Check and reviewed activation · wall remains ${selected.slice(0, 12)}….`
+                : `Plant geometry is authoritative host state · selected profile ${selected.slice(0, 12)}… · presets cannot override it.`;
         }
         $('backgroundLayerIcon').textContent = component.icon || '✦';
         $('backgroundLayerName').textContent = component.name || humanize(component.plugin_id);
@@ -1196,7 +1325,7 @@
         setEngineState('loading', 'Loading locally', state.component.browser_runtime.kind === 'native' ? 'Preparing WebAssembly' : 'Preparing Python');
         try {
             const geometry = state.bootstrap.geometry;
-            const draft = new ComposerRuntime(state.component, geometry);
+            const draft = new ComposerRuntime(state.component, geometry, composerRuntimeOptions());
             state.runtimes = {draft, original: null, overlay: null};
             await draft.init(state.params);
             if (state.compare !== 'draft') await ensureOriginalRuntime();
@@ -1271,7 +1400,7 @@
                     return state.runtimes.draft;
                 });
         } else if (runtimeKind(state.component) === 'native') {
-            const runtime = new ComposerRuntime(clock, state.bootstrap.geometry, {initTimeoutMs: 90000});
+            const runtime = new ComposerRuntime(clock, state.bootstrap.geometry, composerRuntimeOptions({initTimeoutMs: 90000}));
             state.runtimes.overlay = runtime;
             state.overlayRuntimePromise = runtime.init(clone(state.layers.clockParams)).then(() => {
                 if (generation !== state.runtimeGeneration || !state.layers.clockEnabled) {
@@ -1307,7 +1436,7 @@
         if (state.runtimes.original?.ready) return Promise.resolve(state.runtimes.original);
         if (state.originalRuntimePromise) return state.originalRuntimePromise;
         const generation = state.runtimeGeneration;
-        const runtime = new ComposerRuntime(state.component, state.bootstrap.geometry);
+        const runtime = new ComposerRuntime(state.component, state.bootstrap.geometry, composerRuntimeOptions());
         state.runtimes.original = runtime;
         state.originalRuntimePromise = runtime.init(state.originalParams).then(() => {
             if (generation !== state.runtimeGeneration) {
@@ -1873,7 +2002,7 @@
             ? schemaCheck(clock, state.layers.clockParams).map((problem) => `Clock: ${problem}`)
             : state.layers.clockEnabled ? ['Clock: component is unavailable'] : [];
         const schemaProblems = [...backgroundSchemaProblems, ...clockSchemaProblems];
-        const runtime = new ComposerRuntime(state.component, state.bootstrap.geometry, {timeoutMs: 30000});
+        const runtime = new ComposerRuntime(state.component, state.bootstrap.geometry, composerRuntimeOptions({timeoutMs: 30000}));
         let overlayRuntime = null;
         let overlayMode = null;
         const renderTimes = [];
@@ -1886,6 +2015,7 @@
         let clippingChannels = 0;
         let channelCount = 0;
         let peakCurrent = 0;
+        let currentTotal = 0;
         try {
             try {
                 await runtime.init(clone(state.params));
@@ -1906,7 +2036,7 @@
                         throw new Error(`Clock renderer failed to initialize: ${error.message}`);
                     }
                 } else {
-                    overlayRuntime = new ComposerRuntime(clock, state.bootstrap.geometry, {timeoutMs: 30000, initTimeoutMs: 90000});
+                    overlayRuntime = new ComposerRuntime(clock, state.bootstrap.geometry, composerRuntimeOptions({timeoutMs: 30000, initTimeoutMs: 90000}));
                     try {
                         await overlayRuntime.init(clone(state.layers.clockParams));
                         overlayMode = 'separate';
@@ -1966,6 +2096,7 @@
                 }
                 luminanceTotal += frameLuminance / (pixels.length / 3);
                 peakCurrent = Math.max(peakCurrent, frameCurrent);
+                currentTotal += frameCurrent;
                 if (previous) {
                     let difference = 0;
                     for (let offset = 0; offset < pixels.length; offset += 1) difference += Math.abs(pixels[offset] - previous[offset]);
@@ -1988,6 +2119,9 @@
             const clipping = clippingChannels / Math.max(1, channelCount);
             const sortedTimes = renderTimes.slice().sort((a, b) => a - b);
             const p95 = sortedTimes[Math.min(sortedTimes.length - 1, Math.ceil(sortedTimes.length * .95) - 1)];
+            const p99 = sortedTimes[Math.min(sortedTimes.length - 1, Math.ceil(sortedTimes.length * .99) - 1)];
+            const meanRenderMs = renderTimes.reduce((total, value) => total + value, 0) / renderTimes.length;
+            const maxRenderMs = sortedTimes[sortedTimes.length - 1];
             const warnings = [];
             const failures = [];
 
@@ -2032,10 +2166,37 @@
             if (generation === state.checkerGeneration) {
                 state.checkResult = {
                     status: grade,
+                    source: 'browser',
                     binding,
                     warnings: warnings.slice(),
                     failures: failures.slice(),
+                    capturedAt: Date.now(),
                     completedAt: new Date().toISOString(),
+                    environment: {
+                        userAgent: navigator.userAgent || null,
+                        platform: navigator.platform || null,
+                        hardwareConcurrency: navigator.hardwareConcurrency || null,
+                    },
+                    sampleCount: SAMPLE_FRAMES,
+                    frameTimeMs: {
+                        mean: meanRenderMs,
+                        p95,
+                        p99,
+                        max: maxRenderMs,
+                    },
+                    cadence: {
+                        observedFps: meanRenderMs > 0 ? 1000 / meanRenderMs : null,
+                        targetFps,
+                        missedFrameRatio: renderTimes.filter((value) => value > frameBudgetMs).length / SAMPLE_FRAMES,
+                        changedFrameRatio: changedPairs / deltas,
+                    },
+                    electrical: {
+                        kind: 'uncalibrated_estimate',
+                        brightness: state.globalSettings.draft?.brightness,
+                        peakCurrentAmps: peakCurrent,
+                        meanCurrentAmps: currentTotal / SAMPLE_FRAMES,
+                        nominalVoltageVolts: 5,
+                    },
                 };
                 updateServerActionButtons();
             }
@@ -2047,7 +2208,16 @@
                 $('checkHeadline').textContent = 'Checker could not finish';
                 $('checkSummaryCopy').textContent = error.message;
                 $('checkerDot').dataset.state = 'fail';
-                state.checkResult = {status: 'fail', binding, completedAt: new Date().toISOString(), error: error.message};
+                state.checkResult = {
+                    status: 'fail',
+                    source: 'browser',
+                    binding,
+                    capturedAt: Date.now(),
+                    completedAt: new Date().toISOString(),
+                    environment: {userAgent: navigator.userAgent || null},
+                    sampleCount: renderTimes.length,
+                    error: error.message,
+                };
                 updateServerActionButtons();
             }
         } finally {
@@ -2112,7 +2282,7 @@
                 blend_mode: 'source_over',
             });
         }
-        const profileDigest = state.bootstrap.installation_profile?.digest;
+        const profileDigest = state.installationProfile.desiredDigest;
         if (!/^[0-9a-f]{64}$/.test(profileDigest || '')) {
             throw new Error('The host did not provide a managed installation-profile identity.');
         }
@@ -2276,6 +2446,7 @@
         $('activateFallback').textContent = fallback?.name || 'Unavailable';
         if ($('activateProvider')) $('activateProvider').textContent = state.component.provider;
         if ($('activateRuntimeDigest')) $('activateRuntimeDigest').textContent = ComposerState.runtimeDigest?.(state.component) || 'Catalog identity';
+        if ($('activateProfileDigest')) $('activateProfileDigest').textContent = state.installationProfile.desiredDigest || 'Unavailable';
         if ($('activateRevision')) $('activateRevision').textContent = String(state.documentRevision);
         if ($('activateCheck')) {
             const outcome = state.checkResult?.status === 'warn' ? 'Passed with cautions' : 'Passed';
@@ -2803,12 +2974,20 @@
         }
     }
 
+    function maskLayerById(id) {
+        return MASK_LAYERS.find((layer) => layer.id === id) || null;
+    }
+
+    function maskLayerByValue(value) {
+        return MASK_LAYERS.find((layer) => layer.value === value) || null;
+    }
+
     function maskCounts(cells = state.masks.cells) {
-        const counts = {foliage: 0, planter_bowls: 0};
+        const counts = Object.fromEntries(MASK_LAYERS.map((layer) => [layer.id, 0]));
         if (!cells) return counts;
         for (const value of cells) {
-            if (value === 1) counts.foliage += 1;
-            else if (value === 2) counts.planter_bowls += 1;
+            const layer = maskLayerByValue(value);
+            if (layer) counts[layer.id] += 1;
         }
         return counts;
     }
@@ -2821,6 +3000,56 @@
         return true;
     }
 
+    function maskDraftStorageKey(digest = state.masks.digest) {
+        return digest ? `${STORAGE_PREFIX}.profile-draft.${digest}` : null;
+    }
+
+    function persistMaskDraft() {
+        const key = maskDraftStorageKey();
+        if (!key || !state.masks.cells || !state.masks.savedCells) return;
+        try {
+            localStorage.setItem(key, JSON.stringify({
+                schema: 'ledgrid.browser-installation-profile-draft',
+                schema_version: 1,
+                digest: state.masks.digest,
+                revision: state.masks.revision,
+                led_info: state.masks.ledInfo,
+                cells: Array.from(state.masks.cells),
+                saved_cells: Array.from(state.masks.savedCells),
+                dirty: state.masks.dirty,
+                saved_at: new Date().toISOString(),
+            }));
+        } catch (_error) {
+            // The in-memory draft remains authoritative for this session.
+        }
+    }
+
+    function restoredMaskDraft(digest, totalLeds) {
+        try {
+            const stored = JSON.parse(localStorage.getItem(maskDraftStorageKey(digest)));
+            if (
+                stored?.schema !== 'ledgrid.browser-installation-profile-draft'
+                || stored.schema_version !== 1
+                || stored.digest !== digest
+                || typeof stored.revision !== 'string'
+                || !Array.isArray(stored.cells)
+                || !Array.isArray(stored.saved_cells)
+                || stored.cells.length !== totalLeds
+                || stored.saved_cells.length !== totalLeds
+            ) return null;
+            const valid = (value) => Number.isInteger(value) && value >= 0 && value <= MASK_LAYERS.length;
+            if (!stored.cells.every(valid) || !stored.saved_cells.every(valid)) return null;
+            return {
+                revision: stored.revision,
+                cells: Uint8Array.from(stored.cells),
+                savedCells: Uint8Array.from(stored.saved_cells),
+                dirty: Boolean(stored.dirty),
+            };
+        } catch (_error) {
+            return null;
+        }
+    }
+
     function updateMaskControls(message = null, kind = '') {
         const masks = state.masks;
         const counts = maskCounts();
@@ -2828,14 +3057,22 @@
             $('maskGeometry').textContent = `${masks.ledInfo.strip_count} × ${masks.ledInfo.leds_per_strip}`;
         }
         $('foliageMaskCount').textContent = masks.loaded ? counts.foliage.toLocaleString() : '—';
-        $('bowlMaskCount').textContent = masks.loaded ? counts.planter_bowls.toLocaleString() : '—';
+        const globeTotal = GLOBE_REGION_ORDER.reduce((total, name) => total + counts[name], 0);
+        $('globeMaskCount').textContent = masks.loaded ? globeTotal.toLocaleString() : '—';
         $('editorFoliageCount').textContent = counts.foliage.toLocaleString();
-        $('editorBowlCount').textContent = counts.planter_bowls.toLocaleString();
+        for (const name of GLOBE_REGION_ORDER) {
+            const output = $(`editor-${name.replaceAll('_', '-')}-count`);
+            if (output) output.textContent = counts[name].toLocaleString();
+        }
         $('undoMaskButton').disabled = !masks.history.length;
         $('revertMasksButton').disabled = !masks.dirty;
         $('saveMasksButton').disabled = !masks.dirty || !state.serverOnline;
+        $('publishProfileButton').disabled = masks.dirty || masks.stale || !state.serverOnline || !masks.loaded;
+        const candidate = state.installationProfile.candidate;
+        $('reviewProfileCandidateButton').hidden = !candidate;
+        $('reviewProfileCandidateButton').disabled = !candidate || candidate.digest === state.installationProfile.desiredDigest;
         document.querySelectorAll('[data-mask-tool]').forEach((button) => {
-            button.setAttribute('aria-pressed', String(Number(button.dataset.maskTool) === masks.tool));
+            button.setAttribute('aria-pressed', String(button.dataset.maskTool === masks.tool));
         });
         if (message) {
             $('maskEditorStatus').textContent = message;
@@ -2843,36 +3080,81 @@
         }
     }
 
-    function loadMaskPayload(payload) {
+    function validatedMaskIndices(value, label, totalLeds) {
+        if (!Array.isArray(value)) throw new Error(`${label} must be an array.`);
+        let prior = -1;
+        return value.map((index) => {
+            if (!Number.isInteger(index) || index < 0 || index >= totalLeds || index <= prior) {
+                throw new Error(`${label} must contain sorted, unique in-bounds indices.`);
+            }
+            prior = index;
+            return index;
+        });
+    }
+
+    function loadMaskPayload(payload, {etag = null, restoreLocal = true} = {}) {
+        if (payload?.schema !== 'ledgrid.installation-profile-draft' || payload.schema_version !== 1) {
+            throw new Error('Installation-profile draft uses an unsupported schema.');
+        }
+        if (!/^[0-9a-f]{64}$/.test(payload.digest || '') || payload.digest === EMPTY_PROFILE_DIGEST) {
+            throw new Error('Installation-profile draft has no managed source digest.');
+        }
+        if (typeof payload.revision !== 'string' || !payload.revision) {
+            throw new Error('Installation-profile draft has no optimistic-concurrency revision.');
+        }
+        const normalizedEtag = etag?.replace(/^W\//, '').replace(/^"|"$/g, '');
+        if (normalizedEtag && normalizedEtag !== payload.revision) {
+            throw new Error('Installation-profile draft ETag does not match its revision.');
+        }
         const info = payload?.led_info || {};
         const stripCount = Number(info.strip_count);
         const ledsPerStrip = Number(info.leds_per_strip);
         const totalLeds = Number(info.total_leds);
-        if (!Number.isInteger(stripCount) || !Number.isInteger(ledsPerStrip) || totalLeds !== stripCount * ledsPerStrip) {
-            throw new Error('Mask calibration contains invalid geometry.');
+        if ((stripCount !== 32) || (ledsPerStrip !== 138) || totalLeds !== 4416) {
+            throw new Error('Installation-profile draft must use the calibrated 32 × 138 geometry.');
+        }
+        const globes = payload.masks?.globes;
+        if (!globes || typeof globes !== 'object' || Array.isArray(globes)) {
+            throw new Error('Installation-profile draft has no named globe regions.');
+        }
+        if (Object.keys(globes).join(',') !== GLOBE_REGION_ORDER.join(',')) {
+            throw new Error('Installation-profile draft must preserve the stable seven globe-region order.');
         }
         const cells = new Uint8Array(totalLeds);
-        for (const index of payload.masks?.foliage || []) {
-            if (Number.isInteger(index) && index >= 0 && index < totalLeds) cells[index] = 1;
+        for (const index of validatedMaskIndices(payload.masks?.foliage, 'masks.foliage', totalLeds)) {
+            cells[index] = 1;
         }
-        for (const index of payload.masks?.planter_bowls || []) {
-            if (!Number.isInteger(index) || index < 0 || index >= totalLeds) continue;
-            if (cells[index] === 1) throw new Error(`Calibrated mask layers overlap at pixel ${index}.`);
-            cells[index] = 2;
+        for (const [position, name] of GLOBE_REGION_ORDER.entries()) {
+            for (const index of validatedMaskIndices(globes[name], `masks.globes.${name}`, totalLeds)) {
+                if (cells[index] !== 0) throw new Error(`Installation-profile layers overlap at pixel ${index}.`);
+                cells[index] = position + 2;
+            }
         }
+        const restored = restoreLocal ? restoredMaskDraft(payload.digest, totalLeds) : null;
+        state.masks.digest = payload.digest;
+        state.masks.revision = restored?.revision || payload.revision;
         state.masks.ledInfo = {strip_count: stripCount, leds_per_strip: ledsPerStrip, total_leds: totalLeds};
-        state.masks.cells = cells;
-        state.masks.savedCells = cells.slice();
+        state.masks.cells = restored?.cells || cells;
+        state.masks.savedCells = restored?.savedCells || cells.slice();
         state.masks.history = [];
-        state.masks.dirty = false;
+        state.masks.dirty = restored ? !masksEqual(restored.cells, restored.savedCells) : false;
+        state.masks.stale = Boolean(restored && restored.revision !== payload.revision);
         state.masks.loaded = true;
+        persistMaskDraft();
+    }
+
+    async function fetchProfileDraft({restoreLocal = true} = {}) {
+        const url = globalActions().installation_profile_draft_url;
+        if (!url) throw new Error('No managed installation-profile draft is available.');
+        const result = await requestJsonResource(url);
+        loadMaskPayload(result.payload, {etag: result.etag, restoreLocal});
+        return result.payload;
     }
 
     async function preloadMasks() {
         if (state.masks.loaded) return;
         try {
-            const payload = await requestJson(globalActions().masks_url || '/api/painter/masks');
-            loadMaskPayload(payload);
+            await fetchProfileDraft();
             updateMaskControls();
         } catch (_error) {
             // Mask editing remains an explicit, retryable action when unavailable.
@@ -2888,10 +3170,12 @@
         }
         updateMaskControls('Loading calibrated masks…');
         try {
-            const payload = await requestJson(globalActions().masks_url || '/api/painter/masks');
-            loadMaskPayload(payload);
+            await fetchProfileDraft();
             renderMaskCanvas();
-            updateMaskControls('Calibrated masks ready. The wall is unchanged.', 'success');
+            const suffix = state.masks.stale
+                ? ' A locally restored draft is based on an older revision; it will be preserved on conflict.'
+                : '';
+            updateMaskControls(`Managed profile draft ready. The wall is unchanged.${suffix}`, 'success');
         } catch (error) {
             updateMaskControls(error.message, 'error');
         }
@@ -2912,7 +3196,7 @@
             for (let led = 0; led < height; led += 1) {
                 const value = cells[strip * height + led];
                 if (!value) continue;
-                context.fillStyle = value === 1 ? '#35c86f' : '#ff9f43';
+                context.fillStyle = maskLayerByValue(value)?.color || '#ffffff';
                 context.fillRect(strip * zoom, (height - 1 - led) * zoom, zoom, zoom);
             }
         }
@@ -2953,13 +3237,15 @@
         const sy = y0 < y1 ? 1 : -1;
         let error = dx + dy;
         while (true) {
-            state.masks.cells[x0 * state.masks.ledInfo.leds_per_strip + y0] = state.masks.tool;
+            state.masks.cells[x0 * state.masks.ledInfo.leds_per_strip + y0] = maskLayerById(state.masks.tool)?.value || 0;
             if (x0 === x1 && y0 === y1) break;
             const doubled = 2 * error;
             if (doubled >= dy) { error += dy; x0 += sx; }
             if (doubled <= dx) { error += dx; y0 += sy; }
         }
         state.masks.dirty = !masksEqual(state.masks.cells, state.masks.savedCells);
+        persistMaskDraft();
+        resetChecker({preserveDocumentRevision: true});
         renderMaskCanvas();
         updateMaskControls(state.masks.dirty ? 'Unsaved mask calibration draft.' : 'Draft matches saved calibration.');
     }
@@ -2994,6 +3280,8 @@
         if (!previous) return;
         state.masks.cells = previous;
         state.masks.dirty = !masksEqual(previous, state.masks.savedCells);
+        persistMaskDraft();
+        resetChecker({preserveDocumentRevision: true});
         renderMaskCanvas();
         updateMaskControls('Last mask stroke undone.');
     }
@@ -3003,6 +3291,8 @@
         state.masks.history.push(state.masks.cells.slice());
         state.masks.cells = state.masks.savedCells.slice();
         state.masks.dirty = false;
+        persistMaskDraft();
+        resetChecker({preserveDocumentRevision: true});
         renderMaskCanvas();
         updateMaskControls('Returned to saved calibration.');
     }
@@ -3013,30 +3303,107 @@
         return indices;
     }
 
+    function currentProfileDraftDocument() {
+        const globes = {};
+        GLOBE_REGION_ORDER.forEach((name, index) => { globes[name] = maskIndices(index + 2); });
+        return {
+            schema: 'ledgrid.installation-profile-draft',
+            schema_version: 1,
+            digest: state.masks.digest,
+            revision: state.masks.revision,
+            led_info: clone(state.masks.ledInfo),
+            masks: {foliage: maskIndices(1), globes},
+        };
+    }
+
     async function saveMasks() {
         if (!state.masks.dirty || !state.serverOnline) return;
         const button = $('saveMasksButton');
         button.disabled = true;
-        updateMaskControls('Saving both calibrated mask layers…');
+        const submittedRevision = state.masks.revision;
+        updateMaskControls('Saving the managed profile draft…');
         try {
-            const payload = await requestJson(globalActions().masks_url || '/api/painter/masks', {
-                method: 'POST',
-                body: JSON.stringify({
-                    led_info: state.masks.ledInfo,
-                    masks: {foliage: maskIndices(1), planter_bowls: maskIndices(2)},
-                }),
+            const result = await requestJsonResource(globalActions().installation_profile_draft_url, {
+                method: 'PUT',
+                headers: {'If-Match': `"${submittedRevision}"`},
+                body: JSON.stringify(currentProfileDraftDocument()),
             });
-            state.masks.savedCells = state.masks.cells.slice();
-            state.masks.history = [];
-            state.masks.dirty = false;
-            updateMaskControls(`Saved ${payload.counts.foliage.toLocaleString()} foliage and ${payload.counts.planter_bowls.toLocaleString()} bowl pixels.`, 'success');
-            toast('Plant mask calibration saved. The wall output was not changed.', 'success');
+            loadMaskPayload(result.payload, {etag: result.etag, restoreLocal: false});
+            renderMaskCanvas();
+            updateMaskControls('Managed profile draft saved. Publish remains separate; the wall was not changed.', 'success');
+            toast('Profile draft saved. The selected wall profile is unchanged.', 'success');
         } catch (error) {
-            updateMaskControls(error.message, 'error');
+            if (error.status === 409) {
+                state.masks.stale = true;
+                persistMaskDraft();
+                const currentRevision = error.payload?.current_revision || error.payload?.revision;
+                const current = currentRevision ? ` Server revision is ${currentRevision}.` : '';
+                updateMaskControls(`Stale draft rejected.${current} Your exact local draft is preserved.`, 'error');
+                toast('Stale profile draft rejected; local edits were preserved.', 'error');
+            } else {
+                updateMaskControls(error.message, 'error');
+                toast(error.message, 'error');
+            }
+        } finally {
+            updateMaskControls();
+        }
+    }
+
+    async function publishProfileDraft() {
+        if (state.masks.dirty || state.masks.stale || !state.serverOnline || !state.masks.loaded) return;
+        updateMaskControls('Publishing one immutable profile candidate…');
+        try {
+            const result = await requestJsonResource(globalActions().installation_profile_publish_url, {
+                method: 'POST',
+                headers: {'If-Match': `"${state.masks.revision}"`},
+            });
+            const payload = result.payload;
+            if (
+                !/^[0-9a-f]{64}$/.test(payload.published_digest || '')
+                || typeof payload.artifact_url !== 'string'
+                || payload.selected !== false
+            ) throw new Error('Profile publish returned an incomplete immutable candidate.');
+            state.installationProfile.candidate = {
+                digest: payload.published_digest,
+                artifactUrl: payload.artifact_url,
+                revision: payload.revision,
+                receipt: clone(payload.receipt || null),
+            };
+            updateMaskControls(`Published ${payload.published_digest.slice(0, 12)}… as a candidate. The selected wall profile is unchanged.`, 'success');
+            toast('Immutable profile candidate published; wall selection unchanged.', 'success');
+        } catch (error) {
+            if (error.status === 409) {
+                state.masks.stale = true;
+                persistMaskDraft();
+                const currentRevision = error.payload?.current_revision || error.payload?.revision;
+                const current = currentRevision ? ` Server revision is ${currentRevision}.` : '';
+                updateMaskControls(`Publish rejected because the draft revision is stale.${current} Your local draft is preserved.`, 'error');
+            } else updateMaskControls(error.message, 'error');
             toast(error.message, 'error');
         } finally {
             updateMaskControls();
         }
+    }
+
+    function reviewProfileCandidate() {
+        const candidate = state.installationProfile.candidate;
+        if (!candidate) return;
+        $('profileCandidateDigest').textContent = candidate.digest;
+        $('profileCandidateSelectedDigest').textContent = state.installationProfile.selectedDigest || 'Unavailable';
+        if ($('maskEditorDialog').open) $('maskEditorDialog').close();
+        $('profileCandidateDialog').showModal();
+    }
+
+    function stageProfileCandidate() {
+        const candidate = state.installationProfile.candidate;
+        if (!candidate) return;
+        state.installationProfile.desiredDigest = candidate.digest;
+        state.installationProfile.desiredArtifactUrl = candidate.artifactUrl;
+        resetChecker({preserveDocumentRevision: true});
+        renderLayers();
+        updateMaskControls('Candidate staged for local preview and the next Check. The wall remains unchanged.', 'success');
+        restartRuntimesAtCurrentState();
+        toast('Profile candidate staged. Run Check before reviewed activation.');
     }
 
     function selectInspectorTab(name) {
@@ -3186,12 +3553,19 @@
         $('undoMaskButton').addEventListener('click', undoMaskStroke);
         $('revertMasksButton').addEventListener('click', revertMasks);
         $('saveMasksButton').addEventListener('click', saveMasks);
+        $('publishProfileButton').addEventListener('click', publishProfileDraft);
+        $('reviewProfileCandidateButton').addEventListener('click', reviewProfileCandidate);
+        $('confirmProfileCandidateButton').addEventListener('click', (event) => {
+            event.preventDefault();
+            $('profileCandidateDialog').close();
+            stageProfileCandidate();
+        });
         $('maskZoom').addEventListener('input', (event) => {
             state.masks.zoom = Math.round(safeNumber(event.target.value, 6));
             renderMaskCanvas();
         });
         document.querySelectorAll('[data-mask-tool]').forEach((button) => button.addEventListener('click', () => {
-            state.masks.tool = Number(button.dataset.maskTool);
+            state.masks.tool = button.dataset.maskTool;
             updateMaskControls();
         }));
         $('maskCanvas').addEventListener('pointerdown', beginMaskStroke);
@@ -3202,9 +3576,9 @@
         document.addEventListener('keydown', (event) => {
             const key = event.key.toLowerCase();
             if ($('maskEditorDialog').open && !event.metaKey && !event.ctrlKey && !event.altKey) {
-                if (key === '1') state.masks.tool = 1;
-                else if (key === '2') state.masks.tool = 2;
-                else if (key === 'e') state.masks.tool = 0;
+                const layer = MASK_LAYERS.find((item) => item.key === key);
+                if (layer) state.masks.tool = layer.id;
+                else if (key === 'e') state.masks.tool = 'erase';
                 else if (key === 'z') undoMaskStroke();
                 else return;
                 event.preventDefault();

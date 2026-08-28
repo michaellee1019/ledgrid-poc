@@ -6,13 +6,18 @@ const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_BASE_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const ENGINE = 'python-pyodide-wasm';
 const RUNTIME_ROOT = '/ledgrid_python_runtime';
+const PROFILE_PATH = `${RUNTIME_ROOT}/selected_installation_profile.bin`;
 const PREPARED_PACKAGES = Object.freeze(['numpy', 'pillow']);
+const PROFILE_DIGEST_OFFSET = 68;
+const PROFILE_DIGEST_BYTES = 32;
+const PROFILE_MIN_BYTES = 328;
 
 let pyodidePromise = null;
 let runtimeAssetUrl = null;
 let runtimeReady = false;
 let messageQueue = Promise.resolve();
 let pillowPromise = null;
+let verifiedProfile = null;
 const latestRenderGeneration = new Map();
 
 function errorMessage(error) {
@@ -59,6 +64,94 @@ function validatedAssetUrl(value) {
         throw new Error('The Python browser renderer source bundle must be same-origin.');
     }
     return url.href;
+}
+
+function digestHex(bytes) {
+    return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+function canonicalProfileHeader(bytes) {
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength < PROFILE_MIN_BYTES || bytes.byteLength > 65535) {
+        throw new Error('The selected installation-profile artifact has an invalid byte count.');
+    }
+    if (String.fromCharCode(...bytes.subarray(0, 4)) !== 'LGIP') {
+        throw new Error('The selected installation-profile artifact is not LGIP.');
+    }
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const exact = [
+        [view.getUint16(4, false), 1, 'format version'],
+        [view.getUint16(6, false), 112, 'fixed header size'],
+        [view.getUint32(8, false), 0, 'flags'],
+        [view.getUint16(12, false), 33, 'global strip count'],
+        [view.getUint16(14, false), 138, 'LED height'],
+        [view.getUint16(16, false), 0, 'strip origin'],
+        [view.getUint16(18, false), 33, 'represented strip count'],
+        [view.getUint32(20, false), 4554, 'pixel count'],
+        [bytes[25], 7, 'globe-region count'],
+        [view.getUint16(26, false), 9, 'section count'],
+        [view.getUint16(28, false), 24, 'section entry size'],
+        [view.getUint16(30, false), 0, 'reserved header'],
+        [view.getUint32(32, false), bytes.byteLength, 'declared byte count'],
+    ];
+    for (const [actual, expected, label] of exact) {
+        if (actual !== expected) throw new Error(`LGIP ${label} is invalid.`);
+    }
+    if (bytes.subarray(100, 112).some((value) => value !== 0)) {
+        throw new Error('LGIP reserved header bytes are nonzero.');
+    }
+}
+
+function installationProfileDescriptor(value) {
+    const digest = String(value?.digest || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(digest) || /^0+$/.test(digest)) {
+        throw new Error('The browser renderer requires a selected managed installation-profile digest.');
+    }
+    if (typeof value?.artifactUrl !== 'string' || !value.artifactUrl) {
+        throw new Error('The selected installation-profile artifact URL is unavailable.');
+    }
+    const url = new URL(value.artifactUrl, self.location.href);
+    if (url.origin !== self.location.origin) {
+        throw new Error('The selected installation-profile artifact must be same-origin.');
+    }
+    return {digest, url: url.href};
+}
+
+async function verifyInstallationProfile(value) {
+    const expected = installationProfileDescriptor(value);
+    if (verifiedProfile) {
+        if (verifiedProfile.digest !== expected.digest || verifiedProfile.url !== expected.url) {
+            throw new Error('This Python worker is already bound to a different installation profile.');
+        }
+        return verifiedProfile;
+    }
+    if (!self.crypto?.subtle) {
+        throw new Error('Cryptographic verification is unavailable; installation profile rejected.');
+    }
+    const response = await fetch(expected.url, {
+        cache: 'no-store',
+        headers: {'Accept': 'application/octet-stream'},
+    });
+    if (!response.ok) {
+        throw new Error(`Could not load the selected installation profile (${response.status}).`);
+    }
+    const etag = response.headers.get('ETag')?.replace(/^W\//, '').replace(/^"|"$/g, '');
+    if (etag && etag !== expected.digest) {
+        throw new Error('The installation-profile response ETag does not match the selected digest.');
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    canonicalProfileHeader(bytes);
+    const embedded = digestHex(bytes.subarray(
+        PROFILE_DIGEST_OFFSET,
+        PROFILE_DIGEST_OFFSET + PROFILE_DIGEST_BYTES,
+    ));
+    const digestInput = bytes.slice();
+    digestInput.fill(0, PROFILE_DIGEST_OFFSET, PROFILE_DIGEST_OFFSET + PROFILE_DIGEST_BYTES);
+    const computed = digestHex(new Uint8Array(await self.crypto.subtle.digest('SHA-256', digestInput)));
+    if (embedded !== expected.digest || computed !== expected.digest) {
+        throw new Error('The selected LGIP artifact failed content-digest verification.');
+    }
+    verifiedProfile = Object.freeze({...expected, bytes});
+    return verifiedProfile;
 }
 
 async function ensurePyodide() {
@@ -127,14 +220,24 @@ function copyPythonBytes(value) {
 }
 
 async function initialize(message) {
-    const pyodide = await ensureRuntime(message.assetUrl);
+    const [pyodide, profile] = await Promise.all([
+        ensureRuntime(message.assetUrl),
+        verifyInstallationProfile(message.installationProfile),
+    ]);
     await ensurePluginPackages(pyodide, message.pluginId);
+    pyodide.FS.writeFile(PROFILE_PATH, profile.bytes);
+    pyodide.globals.set('_ledgrid_profile_path', PROFILE_PATH);
+    pyodide.globals.set('_ledgrid_profile_digest', profile.digest);
+    await pyodide.runPythonAsync(
+        '_ledgrid_browser_runtime.bind_installation_profile_path(_ledgrid_profile_path, _ledgrid_profile_digest)'
+    );
     pyodide.globals.set('_ledgrid_payload_json', JSON.stringify({
         instanceId: message.instanceId || 'primary',
         pluginId: message.pluginId,
         className: message.className,
         geometry: message.geometry,
         params: message.params || {},
+        installationProfileDigest: profile.digest,
     }));
     const resultJson = await pyodide.runPythonAsync(
         '_ledgrid_browser_runtime.initialize_json(_ledgrid_payload_json)'
