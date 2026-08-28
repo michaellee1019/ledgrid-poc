@@ -150,18 +150,18 @@ receiver-counter samples; HTTP request time before the first sample and cleanup
 time cannot dilute the measured cadence.
 
 The installed timing budget is explicit. Ordinary broad receivers use a 3,320
-byte aligned `SET_ALL`, or 1,328 us at 20 MHz. Logical receiver 3 uses 208
-byte-interleaved FEC codewords (16 protected data bytes plus three GF(256)
-parity bytes), totaling 3,960 bytes or 1,584 us. The one-strip tail remains 424
-bytes. The five receivers clock 14,344 bytes, or 5,737.6 us when treated
-serially; the two independent SPI buses overlap, with worst raw bus load 7,704
-bytes/3,081.6 us on SPI1.
+byte aligned `SET_ALL`, or 1,328 us at 20 MHz. Logical receiver 3 uses 136
+byte-interleaved Reed-Solomon codewords (25 protected data bytes plus five
+GF(256) parity bytes), totaling 4,088 bytes or 1,635.2 us. The one-strip tail
+remains 424 bytes. The five receivers clock 14,472 bytes, or 5,788.8 us when
+treated serially; the two independent SPI buses overlap, with worst raw bus
+load 7,832 bytes/3,132.8 us on SPI1.
 For aligned streaming the Host avoids allocating an unused multi-kilobyte MISO
 list on most `SET_ALL` transactions. It retains one staggered fresh sample per
 receiver every 128 shared wall-frame sequences and never schedules more than one
 receiver sample on a wall frame. Receivers 0-2 capture that sample in-band on
 their 3,320-byte frame. Receiver 3 first uses the explicit query and then keeps
-its 3,960-byte v3 frame on one full-duplex ioctl whose unrelated MISO bytes are
+its 4,088-byte v4 frame on one full-duplex ioctl whose unrelated MISO bytes are
 discarded. Receiver 4's
 424-byte frame cannot clock the 1,248-byte status-v7 snapshot, so its scheduled
 phase adds one 1,256-byte aligned status query before the write-only tail frame:
@@ -266,7 +266,7 @@ reconcile exactly with aggregate wire bytes, transfers, and CRC bytes; the
 aggregate enabled count must remain exactly five. Dedicated successful
 `SET_ALL` counters must advance at at least 150 FPS on every receiver and prove
 exact 3,313→3,320 semantic-to-wire bytes per frame for logical receivers 0-2,
-3,313→3,960 for FEC receiver 3, and 415→424 for logical receiver 4; status
+3,313→4,088 for FEC receiver 3, and 415→424 for logical receiver 4; status
 queries, SHOW/CLEAR, and partial
 updates cannot satisfy this full-frame requirement. The receipt's full
 requested, normalized, and observed scene/component/global/profile identities

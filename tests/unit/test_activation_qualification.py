@@ -130,7 +130,7 @@ def _target_transport() -> dict:
         devices.append({
             "logical_device": logical_device,
             "expected_wire_bytes": (
-                3960 if logical_device == 3 else 3320 if logical_device < 4 else 424
+                4088 if logical_device == 3 else 3320 if logical_device < 4 else 424
             ),
             "deltas": {
                 "full_frame_transfers": 1500,
@@ -152,9 +152,9 @@ def _target_transport() -> dict:
                 "enabled_count": int(fec_enabled),
                 "deltas": {
                     "fec_frames_sent": full_frames if fec_enabled else 0,
-                    "fec_codewords_sent": 208 * full_frames if fec_enabled else 0,
-                    "fec_parity_bytes_sent": 624 * full_frames if fec_enabled else 0,
-                    "fec_data_padding_bytes_sent": 4 * full_frames if fec_enabled else 0,
+                    "fec_codewords_sent": 136 * full_frames if fec_enabled else 0,
+                    "fec_parity_bytes_sent": 680 * full_frames if fec_enabled else 0,
+                    "fec_data_padding_bytes_sent": 76 * full_frames if fec_enabled else 0,
                     "receiver_fec_packets_received": full_frames if fec_enabled else 0,
                     "receiver_fec_packets_accepted": full_frames if fec_enabled else 0,
                     "receiver_fec_corrected_packets": 2 if fec_enabled else 0,
@@ -171,7 +171,7 @@ def _target_transport() -> dict:
         })
     return {
         "aggregate": {
-            "expected_wire_bytes": 3960,
+            "expected_wire_bytes": 4088,
             "deltas": {
                 field: sum(device["deltas"][field] for device in devices)
                 for field in devices[0]["deltas"]
@@ -595,7 +595,7 @@ class ActivationQualificationTests(unittest.TestCase):
             (
                 "wrong wire size",
                 lambda value: value["transport"]["devices"][4].__setitem__(
-                    "expected_wire_bytes", 3960
+                    "expected_wire_bytes", 4088
                 ),
             ),
             (

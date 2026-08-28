@@ -42,11 +42,11 @@ ALIGNED_ENVELOPE_HEADER_BYTES = 4
 MAX_ALIGNED_SEMANTIC_BYTES = (
     MAX_SPI_TRANSFER - ALIGNED_ENVELOPE_HEADER_BYTES - CRC_BYTES
 )
-FEC_DATA_BYTES = 16
-FEC_PARITY_BYTES = 3
+FEC_DATA_BYTES = 25
+FEC_PARITY_BYTES = 5
 FEC_CODEWORD_BYTES = FEC_DATA_BYTES + FEC_PARITY_BYTES
-FEC_MAX_CODEWORDS = 212
-FEC_ENVELOPE_VERSION = 3
+FEC_MAX_CODEWORDS = 136
+FEC_ENVELOPE_VERSION = 4
 FEC_ENVELOPE_HEADER_BYTES = 4
 FEC_WIRE_HEADER_BYTES = 2 * FEC_ENVELOPE_HEADER_BYTES
 MAX_FEC_SEMANTIC_BYTES = (
@@ -259,22 +259,98 @@ def _fec_gf_multiply(left, right):
     return result
 
 
-_FEC_SYMBOL_COEFFICIENTS = tuple(range(1, FEC_DATA_BYTES + 1))
-_FEC_SYMBOL_SQUARES = tuple(
-    _fec_gf_multiply(value, value) for value in _FEC_SYMBOL_COEFFICIENTS
+def _fec_gf_power(value, exponent):
+    result = 1
+    while exponent:
+        if exponent & 1:
+            result = _fec_gf_multiply(result, value)
+        value = _fec_gf_multiply(value, value)
+        exponent >>= 1
+    return result
+
+
+def _fec_gf_inverse(value):
+    if value == 0:
+        raise ValueError("zero has no GF(256) inverse")
+    return _fec_gf_power(value, 254)
+
+
+def _fec_matrix_inverse(matrix):
+    size = len(matrix)
+    augmented = [
+        list(row) + [int(row_index == column) for column in range(size)]
+        for row_index, row in enumerate(matrix)
+    ]
+    for column in range(size):
+        pivot = next(
+            (row for row in range(column, size) if augmented[row][column]),
+            None,
+        )
+        if pivot is None:
+            raise ValueError("singular GF(256) matrix")
+        augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
+        inverse = _fec_gf_inverse(augmented[column][column])
+        augmented[column] = [
+            _fec_gf_multiply(value, inverse) for value in augmented[column]
+        ]
+        for row in range(size):
+            if row == column:
+                continue
+            factor = augmented[row][column]
+            if factor:
+                augmented[row] = [
+                    value ^ _fec_gf_multiply(factor, pivot_value)
+                    for value, pivot_value in zip(
+                        augmented[row], augmented[column], strict=True
+                    )
+                ]
+    return tuple(tuple(row[size:]) for row in augmented)
+
+
+def _fec_gf_dot(left, right):
+    result = 0
+    for left_value, right_value in zip(left, right, strict=True):
+        result ^= _fec_gf_multiply(left_value, right_value)
+    return result
+
+
+_FEC_SYMBOL_EVALUATIONS = tuple(range(1, FEC_CODEWORD_BYTES + 1))
+_FEC_PARITY_MATRIX = tuple(
+    tuple(
+        _fec_gf_power(evaluation, power)
+        for evaluation in _FEC_SYMBOL_EVALUATIONS[FEC_DATA_BYTES:]
+    )
+    for power in range(FEC_PARITY_BYTES)
 )
-_FEC_P1_TABLES = tuple(
-    tuple(_fec_gf_multiply(value, coefficient) for value in range(256))
-    for coefficient in _FEC_SYMBOL_COEFFICIENTS
+_FEC_PARITY_MATRIX_INVERSE = _fec_matrix_inverse(_FEC_PARITY_MATRIX)
+_FEC_DATA_TO_PARITY_COEFFICIENTS = tuple(
+    tuple(
+        _fec_gf_dot(
+            _FEC_PARITY_MATRIX_INVERSE[parity],
+            tuple(
+                _fec_gf_power(evaluation, power)
+                for power in range(FEC_PARITY_BYTES)
+            ),
+        )
+        for parity in range(FEC_PARITY_BYTES)
+    )
+    for evaluation in _FEC_SYMBOL_EVALUATIONS[:FEC_DATA_BYTES]
 )
-_FEC_P2_TABLES = tuple(
-    tuple(_fec_gf_multiply(value, coefficient) for value in range(256))
-    for coefficient in _FEC_SYMBOL_SQUARES
+_FEC_PACKED_PARITY_TABLES = tuple(
+    tuple(
+        sum(
+            _fec_gf_multiply(value, coefficient)
+            << (8 * (FEC_PARITY_BYTES - parity - 1))
+            for parity, coefficient in enumerate(coefficients)
+        )
+        for value in range(256)
+    )
+    for coefficients in _FEC_DATA_TO_PARITY_COEFFICIENTS
 )
 
 
 def _fec_envelope_wire_size(semantic_length):
-    """Return exact DMA-safe v3 FEC wire bytes for one semantic packet."""
+    """Return exact DMA-safe v4 FEC wire bytes for one semantic packet."""
     if isinstance(semantic_length, bool) or not isinstance(semantic_length, int):
         raise TypeError("semantic_length must be an integer")
     if semantic_length < 1 or semantic_length > MAX_FEC_SEMANTIC_BYTES:
@@ -291,7 +367,7 @@ def _fec_envelope_wire_size(semantic_length):
 
 
 def _encode_fec_envelope(payload, output=None, inner_output=None):
-    """Interleave a burst-tolerant v3 envelope around canonical v1 bytes."""
+    """Interleave a two-symbol-correcting v4 envelope around canonical v1 bytes."""
     try:
         semantic = memoryview(payload).cast("B")
     except (TypeError, ValueError) as exc:
@@ -321,9 +397,7 @@ def _encode_fec_envelope(payload, output=None, inner_output=None):
     codewords = (wire_size - FEC_WIRE_HEADER_BYTES) // FEC_CODEWORD_BYTES
     matrix_offset = FEC_ENVELOPE_HEADER_BYTES
     for block in range(codewords):
-        parity0 = 0
-        parity1 = 0
-        parity2 = 0
+        packed_parity = 0
         for symbol in range(FEC_DATA_BYTES):
             protected_offset = block * FEC_DATA_BYTES + symbol
             if protected_offset < FEC_ENVELOPE_HEADER_BYTES:
@@ -333,12 +407,12 @@ def _encode_fec_envelope(payload, output=None, inner_output=None):
             else:
                 value = 0
             wire[matrix_offset + symbol * codewords + block] = value
-            parity0 ^= value
-            parity1 ^= _FEC_P1_TABLES[symbol][value]
-            parity2 ^= _FEC_P2_TABLES[symbol][value]
-        wire[matrix_offset + FEC_DATA_BYTES * codewords + block] = parity0
-        wire[matrix_offset + (FEC_DATA_BYTES + 1) * codewords + block] = parity1
-        wire[matrix_offset + (FEC_DATA_BYTES + 2) * codewords + block] = parity2
+            packed_parity ^= _FEC_PACKED_PARITY_TABLES[symbol][value]
+        for parity in range(FEC_PARITY_BYTES):
+            shift = 8 * (FEC_PARITY_BYTES - parity - 1)
+            wire[
+                matrix_offset + (FEC_DATA_BYTES + parity) * codewords + block
+            ] = (packed_parity >> shift) & 0xFF
     return wire
 
 LOCAL_BACKGROUND_RAINBOW = 1
@@ -522,6 +596,7 @@ CAPABILITY_NATIVE_GUARDED_LOADER_V1 = 1 << 13
 CAPABILITY_ALIGNED_ENVELOPE_V1 = 1 << 14
 CAPABILITY_FEC_ENVELOPE_V2 = 1 << 15
 CAPABILITY_FEC_ENVELOPE_V3 = 1 << 16
+CAPABILITY_FEC_ENVELOPE_V4 = 1 << 17
 
 ALL_LANES_MASK = 0xFF
 STAGGER_OFF = 1
@@ -1345,7 +1420,7 @@ class LEDController:
             )
 
     def _observe_fec_transport_capability(self, advertised, receiver_packets):
-        """Enable v3 only after opt-in and three fresh capability snapshots."""
+        """Enable v4 only after opt-in and three fresh capability snapshots."""
         advertised = bool(
             getattr(self, "_fec_transport_requested", False) and advertised
         )
@@ -1476,7 +1551,7 @@ class LEDController:
         )
         fec_advertised = bool(
             self._receiver_capabilities & CAPABILITY_ALIGNED_ENVELOPE_V1
-            and self._receiver_capabilities & CAPABILITY_FEC_ENVELOPE_V3
+            and self._receiver_capabilities & CAPABILITY_FEC_ENVELOPE_V4
         )
         fec_terminal_telemetry_available = bool(
             len(response) >= RECEIVER_STATUS_BYTES_V7
@@ -1490,7 +1565,7 @@ class LEDController:
             and not fec_terminal_telemetry_available
         )
         if defer_fec_observation:
-            # The v3 capability prefix can arrive several queued responses
+            # The legacy status-v3 capability prefix can arrive several queued responses
             # before and between v7 terminal snapshots.  It neither advances
             # nor contradicts the v7-only negotiation evidence because no
             # process lifetime baseline can be captured from the prefix.
@@ -1550,7 +1625,9 @@ class LEDController:
         )
         self._receiver_operation_sequence = self._response_u32(response, 316)
         if self._receiver_capabilities & (
-            CAPABILITY_FEC_ENVELOPE_V2 | CAPABILITY_FEC_ENVELOPE_V3
+            CAPABILITY_FEC_ENVELOPE_V2
+            | CAPABILITY_FEC_ENVELOPE_V3
+            | CAPABILITY_FEC_ENVELOPE_V4
         ):
             self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V7
         elif self._receiver_capabilities & CAPABILITY_STATUS_V6:
@@ -3241,7 +3318,7 @@ class LEDController:
                     # enough, but the protected host-to-receiver envelope does
                     # not define a corresponding receiver-to-host FEC payload;
                     # treating the raw MISO prefix of that transfer as a status
-                    # sample made the proof depend on an unrelated 3960-byte
+                    # sample made the proof depend on an unrelated 4088-byte
                     # full-duplex path. Sample first with the established
                     # status-query transaction, then keep the actual frame on
                     # the write-only path. The logical frame is still

@@ -240,34 +240,34 @@ enabled count before health acceptance, preserving the firmware-first rolling
 order. The outer CRC replaces, rather than nests, the legacy command CRC;
 existing valid/invalid CRC counters retain their integrity meaning.
 
-Logical receiver 3 alone may negotiate aligned-envelope v3 after the Host has
-been explicitly configured and has observed capability `fec_envelope_v3 =
-1<<16` in three fresh, strictly counter-advancing status snapshots. The
+Logical receiver 3 alone may negotiate aligned-envelope v4 after the Host has
+been explicitly configured and has observed capability `fec_envelope_v4 =
+1<<17` in three fresh, strictly counter-advancing status snapshots. The
 maintained service configuration is `LEDGRID_FEC_RECEIVER_IDS=3`; an empty
-allowlist is off, and unlisted receivers cannot enable FEC. The v2 protected
-decoder and capability `1<<15` remain in firmware solely so an older Host can
-still roll back safely. The Host emits only v3:
+allowlist is off, and unlisted receivers cannot enable FEC. The v2 and v3
+decoders and capabilities `1<<15` and `1<<16` remain in firmware solely so an
+older Host can still roll back safely. The Host emits only v4:
 
 `header || interleaved_codewords || header`
 
-Each header is `0x0b || 3 || canonical_v1_wire_length:u16`. The protected data
+Each header is `0x0b || 4 || canonical_v1_wire_length:u16`. The protected data
 contains another copy of that header plus the complete canonical v1 packet,
-including alignment and CRC. Each codeword carries 16 systematic GF(256) data
-symbols and three independent parity symbols. All codewords are transmitted
-byte-interleaved, so any contiguous burst no longer than the codeword count
-changes at most one byte per codeword. One arbitrary byte per codeword is
-corrected, two are detected and terminal, and the nested v1 CRC remains the
-end-to-end semantic authority. Codeword count is a multiple of four for DMA
-alignment and at most 212. Either separated exact raw marker attributes the
-packet; decoded header/length, canonical v1 size/padding/CRC, and zero outer
-tail must still validate before dispatch. The limits and installed sizes are
-exact:
+including alignment and CRC. Each shortened systematic Reed-Solomon codeword
+carries 25 data and five parity symbols at distinct GF(256) evaluation points.
+Its minimum distance is six: two arbitrary byte errors per codeword are
+corrected and three are detected. All codewords are transmitted byte-
+interleaved, so a contiguous burst of at most 272 bytes changes at most two
+bytes in each of the 136 installed broad-frame codewords. The nested v1 CRC
+remains the end-to-end semantic authority. Codeword count is a multiple of four
+for DMA alignment and at most 136. Either separated exact raw marker attributes
+the packet; decoded header/length, canonical v1 size/padding/CRC, and zero outer
+tail must still validate before dispatch. The limits and installed sizes are exact:
 
 | Semantic form | Inner v1 | Codewords | FEC wire | FEC data tail |
 |---|---:|---:|---:|---:|
-| receiver 3 `SET_ALL` (3,313 bytes) | 3,320 | 208 | 3,960 | 4 |
-| one-strip `SET_ALL` (415 bytes) | 424 | 28 | 540 | 20 |
-| maximum semantic (3,382 bytes) | 3,388 | 212 | 4,036 | 0 |
+| receiver 3 `SET_ALL` (3,313 bytes) | 3,320 | 136 | 4,088 | 76 |
+| one-strip `SET_ALL` (415 bytes) | 424 | 20 | 608 | 72 |
+| maximum semantic (3,390 bytes) | 3,396 | 136 | 4,088 | 0 |
 
 Status v7 is 1,248 bytes. It preserves v6 offsets and appends received,
 accepted, corrected-packet, corrected-codeword, uncorrectable, semantic-CRC,
@@ -291,7 +291,7 @@ at distinct phases of one shared 128-wall-frame sequence, so no wall frame
 schedules more than one ordinary sample and each receiver is scheduled every
 0.853 seconds at 150 FPS. Receivers 0-2 capture the status snapshot in-band on
 their 3,320-byte SET_ALL transfer. Receivers 3 and 4 first clock one
-status-capable query, then send their 3,960-byte FEC and 424-byte tail frames
+status-capable query, then send their 4,088-byte FEC and 424-byte tail frames
 without accepting those frames' raw MISO bytes as status. Truncation is never
 counted as a successful sample. A receiver without proven write-only support may
 fall back to full duplex on an otherwise unsampled frame. Explicit acceptance

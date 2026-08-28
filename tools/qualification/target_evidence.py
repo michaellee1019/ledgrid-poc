@@ -52,7 +52,7 @@ _ERROR_COUNTERS = (
 )
 _INSTALLED_ROUTES = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
 _INSTALLED_NATIVE_REVERSALS = (False, False, True, True, False)
-_REQUIRED_RECEIVER_CAPABILITIES = 0x1C00C
+_REQUIRED_RECEIVER_CAPABILITIES = 0x3C00C
 _TRANSPORT_COUNTERS = (
     "spi_transfers",
     "bytes_sent",
@@ -87,7 +87,7 @@ _FEC_DELTA_COUNTERS = (
     "receiver_fec_semantic_crc_errors",
     "receiver_fec_framing_errors",
 )
-_EXPECTED_FULL_FRAME_WIRE_BYTES = (3320, 3320, 3320, 3960, 424)
+_EXPECTED_FULL_FRAME_WIRE_BYTES = (3320, 3320, 3320, 4088, 424)
 _MAX_FULL_FRAME_STATUS_SAMPLE_GAP = 256
 
 
@@ -441,7 +441,7 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
         if (
             corrected_packets > fec_accepted
             or corrected_codewords < corrected_packets
-            or corrected_codewords > 208 * corrected_packets
+            or corrected_codewords > 136 * corrected_packets
         ):
             raise TargetEvidenceError(
                 f"receiver {logical_id} corrected FEC accounting is inconsistent"
@@ -465,15 +465,15 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
         fec_frames = _integer(
             device.get("fec_frames_sent"), f"receiver {logical_id} FEC frames sent"
         )
-        expected_codewords = 208 if logical_id == 3 else 0
+        expected_codewords = 136 if logical_id == 3 else 0
         if (
             (not expected_fec and fec_frames != 0)
             or _integer(device.get("fec_codewords_sent"), f"receiver {logical_id} FEC codewords")
             != expected_codewords * fec_frames
             or _integer(device.get("fec_parity_bytes_sent"), f"receiver {logical_id} FEC parity bytes")
-            != 3 * expected_codewords * fec_frames
+            != 5 * expected_codewords * fec_frames
             or _integer(device.get("fec_data_padding_bytes_sent"), f"receiver {logical_id} FEC data padding")
-            != 4 * fec_frames
+            != 76 * fec_frames
         ):
             raise TargetEvidenceError(
                 f"receiver {logical_id} host FEC accounting is inconsistent"
@@ -489,7 +489,7 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
                 f"aggregate {field} drifted from per-receiver total"
             )
     _require_full_frame_sampling_snapshot(
-        aggregate, "aggregate", minimum_buffer_size=3960
+        aggregate, "aggregate", minimum_buffer_size=4088
     )
     expected_gauges = {
         "receiver_status_version": min(
@@ -580,9 +580,9 @@ def _require_fec_delta(
         return
     expected_host = {
         "fec_frames_sent": full_frames,
-        "fec_codewords_sent": 208 * full_frames,
-        "fec_parity_bytes_sent": 624 * full_frames,
-        "fec_data_padding_bytes_sent": 4 * full_frames,
+        "fec_codewords_sent": 136 * full_frames,
+        "fec_parity_bytes_sent": 680 * full_frames,
+        "fec_data_padding_bytes_sent": 76 * full_frames,
     }
     for field, expected in expected_host.items():
         if deltas[field] != expected:
@@ -606,7 +606,7 @@ def _require_fec_delta(
         )
     if not 0 <= corrected_packets <= accepted:
         raise TargetEvidenceError("receiver 3 corrected-packet accounting is invalid")
-    if not corrected_packets <= corrected_codewords <= 208 * corrected_packets:
+    if not corrected_packets <= corrected_codewords <= 136 * corrected_packets:
         raise TargetEvidenceError("receiver 3 corrected-codeword accounting is invalid")
 
 
@@ -1094,7 +1094,7 @@ def build_target_evidence(
         "aggregate": _full_frame_transport_evidence_item(
             first["driver"]["aggregate"],
             last["driver"]["aggregate"],
-            expected_wire_bytes=3960,
+            expected_wire_bytes=4088,
         ),
         "devices": [
             _full_frame_transport_evidence_item(

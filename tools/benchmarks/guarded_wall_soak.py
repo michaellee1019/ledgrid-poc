@@ -44,8 +44,8 @@ DEFAULT_SAMPLE_INTERVAL_SECONDS = 5.0
 DEFAULT_TIMEOUT_SECONDS = 15.0
 DEFAULT_TARGET_FPS = 150
 DEFAULT_MIN_DISPLAYED_FPS = 150.0
-REQUIRED_RECEIVER_CAPABILITIES = 0x1C00C
-EXPECTED_FULL_FRAME_WIRE_BYTES = (3320, 3320, 3320, 3960, 424)
+REQUIRED_RECEIVER_CAPABILITIES = 0x3C00C
+EXPECTED_FULL_FRAME_WIRE_BYTES = (3320, 3320, 3320, 4088, 424)
 EXPECTED_GEOMETRY = {"strip_count": 33, "leds_per_strip": 138, "total_leds": 4554}
 EXPECTED_TOPOLOGY = (
     {
@@ -574,13 +574,13 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
         fec_codewords = _integer(item.get("fec_codewords_sent"))
         fec_parity = _integer(item.get("fec_parity_bytes_sent"))
         fec_padding = _integer(item.get("fec_data_padding_bytes_sent"))
-        expected_codewords = 208 if expected_fec else 0
+        expected_codewords = 136 if expected_fec else 0
         if (
             None in (fec_frames, fec_codewords, fec_parity, fec_padding)
             or (not expected_fec and fec_frames != 0)
             or fec_codewords != expected_codewords * fec_frames
-            or fec_parity != 3 * expected_codewords * fec_frames
-            or fec_padding != 4 * fec_frames
+            or fec_parity != 5 * expected_codewords * fec_frames
+            or fec_padding != 76 * fec_frames
         ):
             failures.append(f"receiver {logical_id} host FEC accounting is inconsistent")
         corrected_packets = _integer(item.get("receiver_fec_corrected_packets"))
@@ -589,7 +589,7 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
             None in (corrected_packets, corrected_codewords, fec_accepted)
             or corrected_packets > fec_accepted
             or corrected_codewords < corrected_packets
-            or corrected_codewords > 208 * corrected_packets
+            or corrected_codewords > 136 * corrected_packets
         ):
             failures.append(f"receiver {logical_id} corrected FEC accounting is inconsistent")
         last_decode = _integer(item.get("receiver_fec_last_decode_us"))
@@ -625,7 +625,7 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
                 f"aggregate {field} drifted from per-receiver total"
             )
     failures.extend(_sampling_snapshot_failures(
-        aggregate, "aggregate", minimum_buffer_size=3960
+        aggregate, "aggregate", minimum_buffer_size=4088
     ))
     if devices:
         gauge_expectations = {
@@ -951,9 +951,9 @@ def _fec_delta_failures(
     if expected_frames is not None and frames != expected_frames:
         failures.append(f"{label} FEC sent frames do not match full-frame transfers")
     if (
-        deltas["fec_codewords_sent"] != 208 * frames
-        or deltas["fec_parity_bytes_sent"] != 624 * frames
-        or deltas["fec_data_padding_bytes_sent"] != 4 * frames
+        deltas["fec_codewords_sent"] != 136 * frames
+        or deltas["fec_parity_bytes_sent"] != 680 * frames
+        or deltas["fec_data_padding_bytes_sent"] != 76 * frames
     ):
         failures.append(f"{label} host FEC accounting is inconsistent")
     received = deltas["receiver_fec_packets_received"]
@@ -973,7 +973,7 @@ def _fec_delta_failures(
     corrected_codewords = deltas["receiver_fec_corrected_codewords"]
     if not (
         0 <= corrected_packets <= accepted
-        and corrected_packets <= corrected_codewords <= 208 * corrected_packets
+        and corrected_packets <= corrected_codewords <= 136 * corrected_packets
     ):
         failures.append(f"{label} corrected FEC accounting is inconsistent")
     return failures

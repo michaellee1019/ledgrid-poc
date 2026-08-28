@@ -133,6 +133,72 @@ std::uint8_t fec_gf_multiply(std::uint8_t left, std::uint8_t right) {
   return result;
 }
 
+std::vector<std::uint8_t> fec_v3_packet(
+    const std::vector<std::uint8_t>& semantic) {
+  const auto inner = aligned_packet(semantic);
+  std::vector<std::uint8_t> protected_bytes(
+      ledgrid::kFecEnvelopeHeaderBytes + inner.size(), 0);
+  protected_bytes[0] = static_cast<std::uint8_t>(
+      ledgrid::ReceiverCommand::AlignedEnvelope);
+  protected_bytes[1] = ledgrid::kFecEnvelopeVersionV3;
+  protected_bytes[2] = static_cast<std::uint8_t>(inner.size() >> 8U);
+  protected_bytes[3] = static_cast<std::uint8_t>(inner.size());
+  std::copy(inner.begin(), inner.end(),
+            protected_bytes.begin() + ledgrid::kFecEnvelopeHeaderBytes);
+  std::size_t codewords =
+      (protected_bytes.size() + ledgrid::kFecV3DataBytes - 1U) /
+      ledgrid::kFecV3DataBytes;
+  codewords += (4U - codewords % 4U) % 4U;
+  std::vector<std::uint8_t> packet(
+      ledgrid::kFecWireHeaderBytes +
+          codewords * ledgrid::kFecV3CodewordBytes,
+      0);
+  std::copy_n(protected_bytes.begin(), ledgrid::kFecEnvelopeHeaderBytes,
+              packet.begin());
+  std::copy_n(protected_bytes.begin(), ledgrid::kFecEnvelopeHeaderBytes,
+              packet.end() - ledgrid::kFecEnvelopeHeaderBytes);
+  const std::size_t matrix_offset = ledgrid::kFecEnvelopeHeaderBytes;
+  for (std::size_t block = 0; block < codewords; ++block) {
+    std::uint8_t parity0 = 0;
+    std::uint8_t parity1 = 0;
+    std::uint8_t parity2 = 0;
+    for (std::size_t symbol = 0; symbol < ledgrid::kFecV3DataBytes; ++symbol) {
+      const std::size_t protected_offset =
+          block * ledgrid::kFecV3DataBytes + symbol;
+      const std::uint8_t value = protected_offset < protected_bytes.size()
+          ? protected_bytes[protected_offset] : 0U;
+      packet[matrix_offset + symbol * codewords + block] = value;
+      const std::uint8_t coefficient =
+          static_cast<std::uint8_t>(symbol + 1U);
+      parity0 ^= value;
+      parity1 ^= fec_gf_multiply(value, coefficient);
+      parity2 ^= fec_gf_multiply(
+          value, fec_gf_multiply(coefficient, coefficient));
+    }
+    packet[matrix_offset + ledgrid::kFecV3DataBytes * codewords + block] =
+        parity0;
+    packet[matrix_offset + (ledgrid::kFecV3DataBytes + 1U) * codewords + block] =
+        parity1;
+    packet[matrix_offset + (ledgrid::kFecV3DataBytes + 2U) * codewords + block] =
+        parity2;
+  }
+  return packet;
+}
+
+std::uint8_t fec_gf_power(std::uint8_t value, std::uint8_t exponent) {
+  std::uint8_t result = 1U;
+  while (exponent != 0U) {
+    if ((exponent & 1U) != 0U) result = fec_gf_multiply(result, value);
+    value = fec_gf_multiply(value, value);
+    exponent >>= 1U;
+  }
+  return result;
+}
+
+std::uint8_t fec_gf_inverse(std::uint8_t value) {
+  return fec_gf_power(value, 254U);
+}
+
 std::vector<std::uint8_t> fec_packet(
     const std::vector<std::uint8_t>& semantic) {
   const auto inner = aligned_packet(semantic);
@@ -159,28 +225,67 @@ std::vector<std::uint8_t> fec_packet(
               packet.end() - ledgrid::kFecEnvelopeHeaderBytes);
   const std::size_t matrix_offset = ledgrid::kFecEnvelopeHeaderBytes;
   for (std::size_t block = 0; block < codewords; ++block) {
-    std::uint8_t parity0 = 0;
-    std::uint8_t parity1 = 0;
-    std::uint8_t parity2 = 0;
+    std::uint8_t equations[ledgrid::kFecParityBytes]
+                          [ledgrid::kFecParityBytes + 1U] = {};
     for (std::size_t symbol = 0; symbol < ledgrid::kFecDataBytes; ++symbol) {
       const std::size_t protected_offset =
           block * ledgrid::kFecDataBytes + symbol;
       const std::uint8_t value = protected_offset < protected_bytes.size()
           ? protected_bytes[protected_offset] : 0U;
       packet[matrix_offset + symbol * codewords + block] = value;
-      const std::uint8_t coefficient =
+      const std::uint8_t evaluation =
           static_cast<std::uint8_t>(symbol + 1U);
-      parity0 ^= value;
-      parity1 ^= fec_gf_multiply(value, coefficient);
-      parity2 ^= fec_gf_multiply(
-          value, fec_gf_multiply(coefficient, coefficient));
+      std::uint8_t power = 1U;
+      for (std::size_t check = 0;
+           check < ledgrid::kFecParityBytes; ++check) {
+        equations[check][ledgrid::kFecParityBytes] ^=
+            fec_gf_multiply(value, power);
+        power = fec_gf_multiply(power, evaluation);
+      }
     }
-    packet[matrix_offset + ledgrid::kFecDataBytes * codewords + block] =
-        parity0;
-    packet[matrix_offset + (ledgrid::kFecDataBytes + 1U) * codewords + block] =
-        parity1;
-    packet[matrix_offset + (ledgrid::kFecDataBytes + 2U) * codewords + block] =
-        parity2;
+    for (std::size_t check = 0;
+         check < ledgrid::kFecParityBytes; ++check) {
+      for (std::size_t parity = 0;
+           parity < ledgrid::kFecParityBytes; ++parity) {
+        const std::uint8_t evaluation = static_cast<std::uint8_t>(
+            ledgrid::kFecDataBytes + parity + 1U);
+        equations[check][parity] = fec_gf_power(
+            evaluation, static_cast<std::uint8_t>(check));
+      }
+    }
+    for (std::size_t column = 0;
+         column < ledgrid::kFecParityBytes; ++column) {
+      std::size_t pivot = column;
+      while (equations[pivot][column] == 0U) ++pivot;
+      for (std::size_t value = column;
+           value <= ledgrid::kFecParityBytes; ++value) {
+        std::swap(equations[column][value], equations[pivot][value]);
+      }
+      const std::uint8_t inverse =
+          fec_gf_inverse(equations[column][column]);
+      for (std::size_t value = column;
+           value <= ledgrid::kFecParityBytes; ++value) {
+        equations[column][value] =
+            fec_gf_multiply(equations[column][value], inverse);
+      }
+      for (std::size_t row = 0;
+           row < ledgrid::kFecParityBytes; ++row) {
+        if (row == column) continue;
+        const std::uint8_t factor = equations[row][column];
+        for (std::size_t value = column;
+             value <= ledgrid::kFecParityBytes; ++value) {
+          equations[row][value] ^=
+              fec_gf_multiply(factor, equations[column][value]);
+        }
+      }
+    }
+    for (std::size_t parity = 0;
+         parity < ledgrid::kFecParityBytes; ++parity) {
+      packet[
+          matrix_offset +
+          (ledgrid::kFecDataBytes + parity) * codewords + block] =
+              equations[parity][ledgrid::kFecParityBytes];
+    }
   }
   return packet;
 }
@@ -964,17 +1069,13 @@ void test_fec_envelope_golden_layout_and_exact_installed_sizes() {
   const std::vector<std::uint8_t> show = {
       static_cast<std::uint8_t>(ledgrid::ReceiverCommand::Show)};
   const auto golden = fec_packet(show);
-  TEST_ASSERT_EQUAL_UINT32(84, golden.size());
+  TEST_ASSERT_EQUAL_UINT32(128, golden.size());
   const std::uint8_t expected_prefix[] = {
-      0x0B, 0x03, 0x00, 0x08};
+      0x0B, 0x04, 0x00, 0x08};
   TEST_ASSERT_EQUAL_MEMORY(expected_prefix, golden.data(), sizeof(expected_prefix));
   TEST_ASSERT_EQUAL_MEMORY(
       expected_prefix, golden.data() + golden.size() - sizeof(expected_prefix),
       sizeof(expected_prefix));
-  TEST_ASSERT_EQUAL_HEX8(0x8D, golden[68]);
-  TEST_ASSERT_EQUAL_HEX8(0x76, golden[72]);
-  TEST_ASSERT_EQUAL_HEX8(0x88, golden[76]);
-
   const auto legacy_v2 = fec_v2_packet(show);
   std::array<std::uint8_t, ledgrid::kFecScratchBytes> legacy_scratch{};
   ledgrid::ReceiverPacketPayload legacy_decoded{};
@@ -985,19 +1086,26 @@ void test_fec_envelope_golden_layout_and_exact_installed_sizes() {
   TEST_ASSERT_TRUE(legacy_report.fec_envelope_attempted);
   TEST_ASSERT_EQUAL_MEMORY(show.data(), legacy_decoded.data, show.size());
 
+  const auto legacy_v3 = fec_v3_packet(show);
+  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
+      legacy_v3.data(), legacy_v3.size(), &legacy_decoded, &legacy_report,
+      legacy_scratch.data(), legacy_scratch.size()));
+  TEST_ASSERT_TRUE(legacy_report.fec_envelope_attempted);
+  TEST_ASSERT_EQUAL_MEMORY(show.data(), legacy_decoded.data, show.size());
+
   std::vector<std::uint8_t> broad(1U + 8U * 138U * 3U, 0x5A);
   broad[0] = static_cast<std::uint8_t>(ledgrid::ReceiverCommand::SetAll);
-  TEST_ASSERT_EQUAL_UINT32(3960, fec_packet(broad).size());
+  TEST_ASSERT_EQUAL_UINT32(4088, fec_packet(broad).size());
   std::vector<std::uint8_t> tail(1U + 138U * 3U, 0xA5);
   tail[0] = static_cast<std::uint8_t>(ledgrid::ReceiverCommand::SetAll);
-  TEST_ASSERT_EQUAL_UINT32(540, fec_packet(tail).size());
+  TEST_ASSERT_EQUAL_UINT32(608, fec_packet(tail).size());
 
   std::vector<std::uint8_t> maximum(
       ledgrid::kFecEnvelopeMaxSemanticBytes, 0x33);
   maximum[0] = static_cast<std::uint8_t>(
       ledgrid::ReceiverCommand::NativeModuleChunk);
   const auto maximum_packet = fec_packet(maximum);
-  TEST_ASSERT_EQUAL_UINT32(4036, maximum_packet.size());
+  TEST_ASSERT_EQUAL_UINT32(4088, maximum_packet.size());
   TEST_ASSERT_LESS_OR_EQUAL_UINT32(
       ledgrid::kAnimationPipelineMaxTransactionBytes,
       maximum_packet.size());
@@ -1066,7 +1174,8 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
   TEST_ASSERT_EQUAL_MEMORY(semantic.data(), two_decoded.data, semantic.size());
 
   // Every parity-symbol class is independently correctable.
-  for (std::size_t parity_symbol = 0; parity_symbol < 3U; ++parity_symbol) {
+  for (std::size_t parity_symbol = 0;
+       parity_symbol < ledgrid::kFecParityBytes; ++parity_symbol) {
     auto parity_damaged = canonical;
     parity_damaged[
         matrix + (ledgrid::kFecDataBytes + parity_symbol) * codewords + 3U] ^=
@@ -1081,11 +1190,11 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
         semantic.data(), parity_decoded.data, semantic.size());
   }
 
-  // A contiguous burst no longer than the codeword count maps to one byte in
-  // every affected codeword and is fully corrected.
+  // A contiguous burst spanning two complete interleave columns maps to two
+  // bytes in every codeword and is fully corrected.
   auto burst = canonical;
   const std::size_t burst_start = matrix + 7U;
-  for (std::size_t offset = 0; offset < codewords; ++offset) {
+  for (std::size_t offset = 0; offset < 2U * codewords; ++offset) {
     burst[burst_start + offset] ^= 0xA5U;
   }
   ledgrid::ReceiverPacketPayload burst_decoded{};
@@ -1094,7 +1203,7 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
       burst.data(), burst.size(), &burst_decoded, &burst_report,
       scratch.data(), scratch.size()));
   TEST_ASSERT_EQUAL_UINT16(codewords, burst_report.corrected_codewords);
-  TEST_ASSERT_EQUAL_UINT16(codewords * 4U, burst_report.corrected_bits);
+  TEST_ASSERT_EQUAL_UINT16(codewords * 8U, burst_report.corrected_bits);
   TEST_ASSERT_EQUAL_MEMORY(semantic.data(), burst_decoded.data, semantic.size());
 
   // Either separated raw discriminator can carry attribution by itself.
@@ -1114,7 +1223,7 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
   }
 }
 
-void test_fec_double_bit_is_terminal_and_runtime_frame_stays_unchanged() {
+void test_fec_three_symbols_are_terminal_and_runtime_frame_stays_unchanged() {
   std::vector<std::uint8_t> semantic(1U + 128U * 3U, 0x5A);
   semantic[0] = static_cast<std::uint8_t>(ledgrid::ReceiverCommand::SetAll);
   const auto canonical = fec_packet(semantic);
@@ -1143,11 +1252,12 @@ void test_fec_double_bit_is_terminal_and_runtime_frame_stays_unchanged() {
   TEST_ASSERT_EQUAL_MEMORY(semantic.data() + 1U, working.data(), working.size());
 
   working = prior;
-  auto doubled = canonical;
-  doubled[matrix] ^= 0xA5U;
-  doubled[matrix + codewords] ^= 0x3CU;
+  auto tripled = canonical;
+  tripled[matrix] ^= 0xA5U;
+  tripled[matrix + codewords] ^= 0x3CU;
+  tripled[matrix + 2U * codewords] ^= 0x81U;
   TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
-      doubled.data(), doubled.size(), &decoded, &report,
+      tripled.data(), tripled.size(), &decoded, &report,
       scratch.data(), scratch.size()));
   TEST_ASSERT_TRUE(report.fec_envelope_attempted);
   TEST_ASSERT_EQUAL_UINT8(
@@ -1169,11 +1279,12 @@ void test_fec_malformed_multisymbol_crc_padding_and_shape_fail_closed() {
       ledgrid::kFecCodewordBytes;
   const std::size_t matrix = ledgrid::kFecEnvelopeHeaderBytes;
 
-  auto doubled = canonical;
-  doubled[matrix] ^= 0xA5U;
-  doubled[matrix + codewords] ^= 0x3CU;
+  auto tripled = canonical;
+  tripled[matrix] ^= 0xA5U;
+  tripled[matrix + codewords] ^= 0x3CU;
+  tripled[matrix + 2U * codewords] ^= 0x81U;
   TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
-      doubled.data(), doubled.size(), &decoded, &report,
+      tripled.data(), tripled.size(), &decoded, &report,
       scratch.data(), scratch.size()));
   TEST_ASSERT_TRUE(report.fec_envelope_attempted);
   TEST_ASSERT_EQUAL_UINT8(
@@ -1181,22 +1292,18 @@ void test_fec_malformed_multisymbol_crc_padding_and_shape_fail_closed() {
           ledgrid::ReceiverPacketDecodeResult::FecUncorrectable),
       static_cast<std::uint8_t>(report.result));
 
-  // A coordinated four-symbol mutation can form another valid codeword, but
+  // A coordinated six-symbol mutation can form another valid codeword, but
   // the canonical inner CRC remains the end-to-end semantic authority.
   auto crc_corrupt = canonical;
   const std::size_t block = 1U;
-  const std::size_t symbol = 5U;
-  const std::uint8_t error = 0x7BU;
-  const std::uint8_t coefficient = static_cast<std::uint8_t>(symbol + 1U);
-  crc_corrupt[matrix + symbol * codewords + block] ^= error;
-  crc_corrupt[
-      matrix + ledgrid::kFecDataBytes * codewords + block] ^= error;
-  crc_corrupt[
-      matrix + (ledgrid::kFecDataBytes + 1U) * codewords + block] ^=
-      fec_gf_multiply(error, coefficient);
-  crc_corrupt[
-      matrix + (ledgrid::kFecDataBytes + 2U) * codewords + block] ^=
-      fec_gf_multiply(error, fec_gf_multiply(coefficient, coefficient));
+  auto alternate_semantic = semantic;
+  alternate_semantic[21] ^= 0x7BU;
+  const auto alternate_packet = fec_packet(alternate_semantic);
+  for (std::size_t symbol = 0;
+       symbol < ledgrid::kFecCodewordBytes; ++symbol) {
+    crc_corrupt[matrix + symbol * codewords + block] =
+        alternate_packet[matrix + symbol * codewords + block];
+  }
   TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
       crc_corrupt.data(), crc_corrupt.size(), &decoded, &report,
       scratch.data(), scratch.size()));
@@ -1209,24 +1316,16 @@ void test_fec_malformed_multisymbol_crc_padding_and_shape_fail_closed() {
   // The same internally consistent mutation in canonical zero padding is a
   // framing failure and never reaches the inner command decoder.
   auto padding_corrupt = canonical;
-  const std::size_t padding_offset = codewords * ledgrid::kFecDataBytes - 1U;
-  const std::size_t padding_block =
-      padding_offset / ledgrid::kFecDataBytes;
-  const std::size_t padding_symbol =
-      padding_offset % ledgrid::kFecDataBytes;
-  const std::uint8_t padding_coefficient =
-      static_cast<std::uint8_t>(padding_symbol + 1U);
-  padding_corrupt[
-      matrix + padding_symbol * codewords + padding_block] ^= error;
-  padding_corrupt[
-      matrix + ledgrid::kFecDataBytes * codewords + padding_block] ^= error;
-  padding_corrupt[
-      matrix + (ledgrid::kFecDataBytes + 1U) * codewords + padding_block] ^=
-      fec_gf_multiply(error, padding_coefficient);
-  padding_corrupt[
-      matrix + (ledgrid::kFecDataBytes + 2U) * codewords + padding_block] ^=
-      fec_gf_multiply(
-          error, fec_gf_multiply(padding_coefficient, padding_coefficient));
+  std::vector<std::uint8_t> padding_semantic(270U, 0x7BU);
+  padding_semantic[0] = static_cast<std::uint8_t>(
+      ledgrid::ReceiverCommand::SetAll);
+  const auto padding_source = fec_packet(padding_semantic);
+  const std::size_t padding_block = codewords - 1U;
+  for (std::size_t symbol = 0;
+       symbol < ledgrid::kFecCodewordBytes; ++symbol) {
+    padding_corrupt[matrix + symbol * codewords + padding_block] =
+        padding_source[matrix + symbol * codewords + padding_block];
+  }
   TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
       padding_corrupt.data(), padding_corrupt.size(), &decoded, &report,
       scratch.data(), scratch.size()));
@@ -1259,7 +1358,8 @@ void test_status_v7_preserves_v6_and_encodes_exact_fec_counters() {
   ledgrid::ReceiverStatusV7 status{};
   status.capabilities = ledgrid::kCapabilityAlignedEnvelopeV1 |
                         ledgrid::kCapabilityFecEnvelopeV2 |
-                        ledgrid::kCapabilityFecEnvelopeV3;
+                        ledgrid::kCapabilityFecEnvelopeV3 |
+                        ledgrid::kCapabilityFecEnvelopeV4;
   status.fec_packets_received = 11;
   status.fec_packets_accepted = 7;
   status.fec_corrected_packets = 3;
@@ -1337,7 +1437,7 @@ void test_fec_native_decode_benchmark_installed_frame() {
       std::chrono::steady_clock::now() - started).count();
   const double mean_us = static_cast<double>(elapsed) /
       static_cast<double>(kIterations) / 1000.0;
-  std::printf("[FEC_BENCH] native 3960-byte decode %.3f us/frame (%zu frames)\n",
+  std::printf("[FEC_BENCH] native 4088-byte decode %.3f us/frame (%zu frames)\n",
               mean_us, kIterations);
   TEST_ASSERT_TRUE(all_decoded);
   TEST_ASSERT_EQUAL_UINT32(semantic.size() * kIterations, checksum);
@@ -1375,7 +1475,7 @@ int main(int, char**) {
   RUN_TEST(test_aligned_envelope_rejects_bad_crc_version_length_padding_and_alignment);
   RUN_TEST(test_fec_envelope_golden_layout_and_exact_installed_sizes);
   RUN_TEST(test_fec_corrects_header_payload_crc_and_distinct_codeword_bits);
-  RUN_TEST(test_fec_double_bit_is_terminal_and_runtime_frame_stays_unchanged);
+  RUN_TEST(test_fec_three_symbols_are_terminal_and_runtime_frame_stays_unchanged);
   RUN_TEST(test_fec_malformed_multisymbol_crc_padding_and_shape_fail_closed);
   RUN_TEST(test_status_v7_preserves_v6_and_encodes_exact_fec_counters);
   RUN_TEST(test_fec_runtime_outcome_partition_is_total_and_exclusive);

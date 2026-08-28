@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 
 namespace ledgrid {
 namespace {
@@ -59,6 +60,20 @@ std::uint8_t fec_gf_multiply(std::uint8_t left, std::uint8_t right) {
     if (carry) left ^= 0x1DU;
   }
   return result;
+}
+
+std::uint8_t fec_gf_power(std::uint8_t value, std::uint8_t exponent) {
+  std::uint8_t result = 1U;
+  while (exponent != 0U) {
+    if ((exponent & 1U) != 0U) result = fec_gf_multiply(result, value);
+    value = fec_gf_multiply(value, value);
+    exponent >>= 1U;
+  }
+  return result;
+}
+
+std::uint8_t fec_gf_inverse(std::uint8_t value) {
+  return value == 0U ? 0U : fec_gf_power(value, 254U);
 }
 
 std::uint8_t parity8(std::uint8_t value) {
@@ -645,29 +660,27 @@ bool decode_receiver_packet_payload(
   const bool fec_v2_candidate =
       fec_v2_shape && fec_v2_marker_distance <= 1U;
   const bool fec_v3_shape = packet_size >=
+          kFecWireHeaderBytes + 4U * kFecV3CodewordBytes &&
+      (packet_size - kFecWireHeaderBytes) %
+          (4U * kFecV3CodewordBytes) == 0U;
+  const bool fec_v4_shape = packet_size >=
           kFecWireHeaderBytes + 4U * kFecCodewordBytes &&
       (packet_size - kFecWireHeaderBytes) %
           (4U * kFecCodewordBytes) == 0U;
-  std::uint8_t fec_v3_prefix_distance = 0xFFU;
-  std::uint8_t fec_v3_suffix_distance = 0xFFU;
-  if (fec_v3_shape) {
-    fec_v3_prefix_distance = static_cast<std::uint8_t>(
-        __builtin_popcount(static_cast<unsigned int>(
-            packet[0] ^ static_cast<std::uint8_t>(
-                            ReceiverCommand::AlignedEnvelope))) +
-        __builtin_popcount(static_cast<unsigned int>(
-            packet[1] ^ kFecEnvelopeVersion)));
+  const auto duplicated_marker_matches = [&](std::uint8_t version) {
     const std::size_t suffix = packet_size - kFecEnvelopeHeaderBytes;
-    fec_v3_suffix_distance = static_cast<std::uint8_t>(
-        __builtin_popcount(static_cast<unsigned int>(
-            packet[suffix] ^ static_cast<std::uint8_t>(
-                                 ReceiverCommand::AlignedEnvelope))) +
-        __builtin_popcount(static_cast<unsigned int>(
-            packet[suffix + 1U] ^ kFecEnvelopeVersion)));
-  }
-  const bool fec_v3_candidate = fec_v3_shape &&
-      (fec_v3_prefix_distance == 0U || fec_v3_suffix_distance == 0U);
-  if (!fec_v2_candidate && !fec_v3_candidate) {
+    return (packet[0] == static_cast<std::uint8_t>(
+                ReceiverCommand::AlignedEnvelope) &&
+            packet[1] == version) ||
+           (packet[suffix] == static_cast<std::uint8_t>(
+                ReceiverCommand::AlignedEnvelope) &&
+            packet[suffix + 1U] == version);
+  };
+  const bool fec_v3_candidate =
+      fec_v3_shape && duplicated_marker_matches(kFecEnvelopeVersionV3);
+  const bool fec_v4_candidate =
+      fec_v4_shape && duplicated_marker_matches(kFecEnvelopeVersion);
+  if (!fec_v2_candidate && !fec_v3_candidate && !fec_v4_candidate) {
     if (receiver_packet_crc_valid(packet, packet_size) &&
         decode_crc_valid_receiver_packet_payload(
             packet, packet_size, payload)) {
@@ -678,26 +691,150 @@ bool decode_receiver_packet_payload(
     return false;
   }
   if (report != nullptr) report->fec_envelope_attempted = true;
-  const bool fec_v3 = fec_v3_candidate;
-  const std::size_t codewords = fec_v3
+  const bool fec_v4 = fec_v4_candidate;
+  const bool fec_v3 = !fec_v4 && fec_v3_candidate;
+  const std::size_t codewords = fec_v4
       ? (packet_size - kFecWireHeaderBytes) / kFecCodewordBytes
-      : packet_size / kFecV2CodewordBytes;
-  const std::size_t data_bytes = fec_v3 ? kFecDataBytes : kFecV2DataBytes;
+      : fec_v3
+          ? (packet_size - kFecWireHeaderBytes) / kFecV3CodewordBytes
+          : packet_size / kFecV2CodewordBytes;
+  const std::size_t data_bytes = fec_v4
+      ? kFecDataBytes : fec_v3 ? kFecV3DataBytes : kFecV2DataBytes;
   const std::size_t decoded_capacity = codewords * data_bytes;
   if (scratch == nullptr || scratch_size < decoded_capacity ||
-      (fec_v3 && (codewords > kFecMaxCodewords || codewords % 4U != 0U)) ||
-      (!fec_v3 && codewords > kFecV2MaxCodewords)) {
+      (fec_v4 && (codewords > kFecMaxCodewords || codewords % 4U != 0U)) ||
+      (fec_v3 && (codewords > kFecV3MaxCodewords || codewords % 4U != 0U)) ||
+      (!fec_v4 && !fec_v3 && codewords > kFecV2MaxCodewords)) {
     return false;
   }
   std::uint16_t corrected_codewords = 0;
   std::uint16_t corrected_bits = 0;
-  if (fec_v3) {
+  if (fec_v4) {
+    const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;
+    for (std::size_t block = 0; block < codewords; ++block) {
+      std::uint8_t syndromes[kFecParityBytes] = {};
+      for (std::size_t symbol = 0; symbol < kFecCodewordBytes; ++symbol) {
+        const std::uint8_t value =
+            packet[matrix_offset + symbol * codewords + block];
+        const std::uint8_t evaluation =
+            static_cast<std::uint8_t>(symbol + 1U);
+        std::uint8_t power = 1U;
+        for (std::size_t check = 0; check < kFecParityBytes; ++check) {
+          syndromes[check] ^= fec_gf_multiply(value, power);
+          power = fec_gf_multiply(power, evaluation);
+        }
+      }
+
+      std::size_t correction_symbols[2] = {
+          kFecCodewordBytes, kFecCodewordBytes};
+      std::uint8_t correction_values[2] = {};
+      std::size_t correction_count = 0;
+      const bool canonical = std::all_of(
+          std::begin(syndromes), std::end(syndromes),
+          [](std::uint8_t value) { return value == 0U; });
+      if (!canonical && syndromes[0] != 0U) {
+        for (std::size_t symbol = 0;
+             symbol < kFecCodewordBytes; ++symbol) {
+          const std::uint8_t evaluation =
+              static_cast<std::uint8_t>(symbol + 1U);
+          std::uint8_t power = 1U;
+          bool matches = true;
+          for (std::size_t check = 0;
+               check < kFecParityBytes; ++check) {
+            if (syndromes[check] !=
+                fec_gf_multiply(syndromes[0], power)) {
+              matches = false;
+              break;
+            }
+            power = fec_gf_multiply(power, evaluation);
+          }
+          if (matches) {
+            correction_symbols[0] = symbol;
+            correction_values[0] = syndromes[0];
+            correction_count = 1U;
+            break;
+          }
+        }
+      }
+      if (!canonical && correction_count == 0U) {
+        for (std::size_t first = 0;
+             first + 1U < kFecCodewordBytes && correction_count == 0U;
+             ++first) {
+          const std::uint8_t first_evaluation =
+              static_cast<std::uint8_t>(first + 1U);
+          for (std::size_t second = first + 1U;
+               second < kFecCodewordBytes; ++second) {
+            const std::uint8_t second_evaluation =
+                static_cast<std::uint8_t>(second + 1U);
+            const std::uint8_t denominator =
+                first_evaluation ^ second_evaluation;
+            const std::uint8_t first_error = fec_gf_multiply(
+                syndromes[1] ^
+                    fec_gf_multiply(second_evaluation, syndromes[0]),
+                fec_gf_inverse(denominator));
+            const std::uint8_t second_error = syndromes[0] ^ first_error;
+            if (first_error == 0U || second_error == 0U) continue;
+            std::uint8_t first_power = 1U;
+            std::uint8_t second_power = 1U;
+            bool matches = true;
+            for (std::size_t check = 0;
+                 check < kFecParityBytes; ++check) {
+              if (syndromes[check] !=
+                  (fec_gf_multiply(first_error, first_power) ^
+                   fec_gf_multiply(second_error, second_power))) {
+                matches = false;
+                break;
+              }
+              first_power =
+                  fec_gf_multiply(first_power, first_evaluation);
+              second_power =
+                  fec_gf_multiply(second_power, second_evaluation);
+            }
+            if (matches) {
+              correction_symbols[0] = first;
+              correction_symbols[1] = second;
+              correction_values[0] = first_error;
+              correction_values[1] = second_error;
+              correction_count = 2U;
+              break;
+            }
+          }
+        }
+      }
+      if (!canonical && correction_count == 0U) {
+        if (report != nullptr) {
+          report->result = ReceiverPacketDecodeResult::FecUncorrectable;
+        }
+        return false;
+      }
+      if (correction_count != 0U) {
+        ++corrected_codewords;
+        for (std::size_t correction = 0;
+             correction < correction_count; ++correction) {
+          corrected_bits = static_cast<std::uint16_t>(
+              corrected_bits + __builtin_popcount(static_cast<unsigned int>(
+                  correction_values[correction])));
+        }
+      }
+      for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
+        std::uint8_t value =
+            packet[matrix_offset + symbol * codewords + block];
+        for (std::size_t correction = 0;
+             correction < correction_count; ++correction) {
+          if (symbol == correction_symbols[correction]) {
+            value ^= correction_values[correction];
+          }
+        }
+        scratch[block * kFecDataBytes + symbol] = value;
+      }
+    }
+  } else if (fec_v3) {
     const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;
     for (std::size_t block = 0; block < codewords; ++block) {
       std::uint8_t syndrome0 = 0;
       std::uint8_t syndrome1 = 0;
       std::uint8_t syndrome2 = 0;
-      for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
+      for (std::size_t symbol = 0; symbol < kFecV3DataBytes; ++symbol) {
         const std::uint8_t value =
             packet[matrix_offset + symbol * codewords + block];
         const std::uint8_t coefficient =
@@ -708,13 +845,13 @@ bool decode_receiver_packet_payload(
             value, fec_gf_multiply(coefficient, coefficient));
       }
       syndrome0 ^= packet[
-          matrix_offset + kFecDataBytes * codewords + block];
+          matrix_offset + kFecV3DataBytes * codewords + block];
       syndrome1 ^= packet[
-          matrix_offset + (kFecDataBytes + 1U) * codewords + block];
+          matrix_offset + (kFecV3DataBytes + 1U) * codewords + block];
       syndrome2 ^= packet[
-          matrix_offset + (kFecDataBytes + 2U) * codewords + block];
+          matrix_offset + (kFecV3DataBytes + 2U) * codewords + block];
 
-      std::size_t corrected_symbol = kFecDataBytes;
+      std::size_t corrected_symbol = kFecV3DataBytes;
       std::uint8_t corrected_value = 0;
       bool corrected = false;
       if (syndrome0 == 0U && syndrome1 == 0U && syndrome2 == 0U) {
@@ -729,7 +866,7 @@ bool decode_receiver_packet_payload(
         corrected = true;  // Third parity symbol only.
         corrected_value = syndrome2;
       } else if (syndrome0 != 0U) {
-        for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
+        for (std::size_t symbol = 0; symbol < kFecV3DataBytes; ++symbol) {
           const std::uint8_t coefficient =
               static_cast<std::uint8_t>(symbol + 1U);
           if (syndrome1 == fec_gf_multiply(syndrome0, coefficient) &&
@@ -756,11 +893,11 @@ bool decode_receiver_packet_payload(
             corrected_bits + __builtin_popcount(
                 static_cast<unsigned int>(corrected_value)));
       }
-      for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
+      for (std::size_t symbol = 0; symbol < kFecV3DataBytes; ++symbol) {
         std::uint8_t value =
             packet[matrix_offset + symbol * codewords + block];
         if (symbol == corrected_symbol) value ^= corrected_value;
-        scratch[block * kFecDataBytes + symbol] = value;
+        scratch[block * kFecV3DataBytes + symbol] = value;
       }
     }
   } else {
@@ -833,7 +970,9 @@ bool decode_receiver_packet_payload(
                              kAlignedEnvelopeHeaderBytes + 1U +
                              kAnimationPipelineCrcBytes ||
       scratch[0] != static_cast<std::uint8_t>(ReceiverCommand::AlignedEnvelope) ||
-      scratch[1] != (fec_v3 ? kFecEnvelopeVersion : kFecEnvelopeVersionV2)) {
+      scratch[1] != (fec_v4
+          ? kFecEnvelopeVersion
+          : fec_v3 ? kFecEnvelopeVersionV3 : kFecEnvelopeVersionV2)) {
     return false;
   }
   const std::size_t inner_wire_size =
@@ -849,8 +988,11 @@ bool decode_receiver_packet_payload(
   }
   const std::size_t semantic_size =
       (static_cast<std::size_t>(inner[2]) << 8U) | inner[3];
-  const std::size_t maximum_semantic_size = fec_v3
-      ? kFecEnvelopeMaxSemanticBytes : kFecV2EnvelopeMaxSemanticBytes;
+  const std::size_t maximum_semantic_size = fec_v4
+      ? kFecEnvelopeMaxSemanticBytes
+      : fec_v3
+          ? kFecV3EnvelopeMaxSemanticBytes
+          : kFecV2EnvelopeMaxSemanticBytes;
   if (semantic_size == 0U || semantic_size > maximum_semantic_size) {
     return false;
   }
@@ -864,7 +1006,7 @@ bool decode_receiver_packet_payload(
   std::size_t required_codewords =
       (kFecEnvelopeHeaderBytes + inner_wire_size + data_bytes - 1U) /
       data_bytes;
-  if (fec_v3) {
+  if (fec_v4 || fec_v3) {
     required_codewords += (4U - required_codewords % 4U) % 4U;
   } else if (required_codewords % 2U != 0U) {
     ++required_codewords;

@@ -60,13 +60,28 @@ constexpr std::size_t kFecV2EnvelopeMaxSemanticBytes =
 // one symbol per codeword. Three independent syndromes correct one arbitrary
 // byte and detect two; separated prefix/suffix discriminators keep framing
 // attributable when one end of the transaction is damaged.
-constexpr std::uint8_t kFecEnvelopeVersion = 3;
-constexpr std::size_t kFecDataBytes = 16;
-constexpr std::size_t kFecParityBytes = 3;
+constexpr std::uint8_t kFecEnvelopeVersionV3 = 3;
+constexpr std::size_t kFecV3DataBytes = 16;
+constexpr std::size_t kFecV3ParityBytes = 3;
+constexpr std::size_t kFecV3CodewordBytes =
+    kFecV3DataBytes + kFecV3ParityBytes;
+constexpr std::size_t kFecWireHeaderBytes = 2U * kFecEnvelopeHeaderBytes;
+constexpr std::size_t kFecV3MaxCodewords = 212;
+constexpr std::size_t kFecV3EnvelopeMaxSemanticBytes =
+    kFecV3MaxCodewords * kFecV3DataBytes - kFecEnvelopeHeaderBytes -
+    kAlignedEnvelopeHeaderBytes - kAnimationPipelineCrcBytes;
+
+// V4 is a shortened systematic Reed-Solomon code. Its 25 data and five parity
+// symbols have distinct GF(256) evaluation points, giving minimum distance six:
+// two arbitrary byte errors per codeword are corrected and three are detected.
+// Interleaving 136 codewords extends contiguous-burst correction to 272 bytes
+// while keeping the full receiver-3 packet within the 4,096-byte SPI limit.
+constexpr std::uint8_t kFecEnvelopeVersion = 4;
+constexpr std::size_t kFecDataBytes = 25;
+constexpr std::size_t kFecParityBytes = 5;
 constexpr std::size_t kFecCodewordBytes =
     kFecDataBytes + kFecParityBytes;
-constexpr std::size_t kFecWireHeaderBytes = 2U * kFecEnvelopeHeaderBytes;
-constexpr std::size_t kFecMaxCodewords = 212;
+constexpr std::size_t kFecMaxCodewords = 136;
 constexpr std::size_t kFecEnvelopeMaxSemanticBytes =
     kFecMaxCodewords * kFecDataBytes - kFecEnvelopeHeaderBytes -
     kAlignedEnvelopeHeaderBytes - kAnimationPipelineCrcBytes;
@@ -148,6 +163,7 @@ enum ReceiverCapability : std::uint32_t {
   kCapabilityAlignedEnvelopeV1 = 1U << 14U,
   kCapabilityFecEnvelopeV2 = 1U << 15U,
   kCapabilityFecEnvelopeV3 = 1U << 16U,
+  kCapabilityFecEnvelopeV4 = 1U << 17U,
 };
 
 struct ReceiverPacketPayload {

@@ -39,19 +39,19 @@ def _device(logical_id: int, displayed: int) -> dict:
     envelope_bytes = transfers * (16 if logical_id == 3 else 4)
     aligned_padding = (-(full_frame_semantic + 6)) % 4
     fec_enabled = logical_id == 3
-    fec_data_padding = 4 * transfers if fec_enabled else 0
+    fec_data_padding = 76 * transfers if fec_enabled else 0
     padding_bytes = transfers * aligned_padding + fec_data_padding
     crc_bytes = transfers * 2
-    fec_parity = 624 * transfers if fec_enabled else 0
+    fec_parity = 680 * transfers if fec_enabled else 0
     full_frame_wire = (
-        3960 if fec_enabled else ((full_frame_semantic + 9) // 4) * 4
+        4088 if fec_enabled else ((full_frame_semantic + 9) // 4) * 4
     )
     status_transfers = transfers // 16
     return {
         "receiver_logical_device": logical_id,
         "receiver_status_version": 7,
         "receiver_status_max_version_seen": 7,
-        "receiver_capabilities": 0x1C00C,
+        "receiver_capabilities": 0x3C00C,
         "transport_envelope_enabled": True,
         "transport_envelope_negotiation_candidate": None,
         "transport_envelope_negotiation_streak": 0,
@@ -67,7 +67,7 @@ def _device(logical_id: int, displayed: int) -> dict:
         "transport_padding_bytes_sent": padding_bytes,
         "crc_bytes_sent": crc_bytes,
         "fec_frames_sent": transfers if fec_enabled else 0,
-        "fec_codewords_sent": 208 * transfers if fec_enabled else 0,
+        "fec_codewords_sent": 136 * transfers if fec_enabled else 0,
         "fec_parity_bytes_sent": fec_parity,
         "fec_data_padding_bytes_sent": fec_data_padding,
         "bytes_sent": (
