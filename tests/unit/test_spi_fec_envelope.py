@@ -248,6 +248,8 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         item = _controller(requested=True)
         item._transport_envelope_enabled = True
         item._fec_transport_enabled = True
+        status_update = mock.Mock(return_value=True)
+        item._update_receiver_status = status_update
         colors = np.zeros((8 * 138, 3), dtype=np.uint8)
         item.set_all_pixels(colors, wall_frame_sequence=1)
         packet = item.spi.packets[-1]
@@ -258,8 +260,11 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         self.assertEqual(item._fec_parity_bytes_sent, 52)
         self.assertEqual(item._fec_data_padding_bytes_sent, 4)
         self.assertEqual(item._full_frame_wire_bytes_sent, 3380)
+        status_update.assert_not_called()
+        self.assertFalse(item._last_transfer_captured_response)
+        self.assertFalse(item._last_transfer_status_sampled)
 
-    def test_scheduled_fec_sample_uses_query_then_write_only_frame(self):
+    def test_scheduled_fec_sample_uses_query_then_full_duplex_fec_frame(self):
         item = _controller(requested=True)
         item._transport_envelope_enabled = True
         item._fec_transport_enabled = True
@@ -269,16 +274,16 @@ class SpiFecEnvelopeTests(unittest.TestCase):
 
         item.set_all_pixels(colors, wall_frame_sequence=76)
 
-        self.assertEqual(len(item.spi.response_packets), 1)
+        self.assertEqual(len(item.spi.response_packets), 2)
         self.assertEqual(
             len(item.spi.response_packets[0]),
             protocol._aligned_envelope_wire_size(
                 protocol.RECEIVER_STATUS_BYTES_V7
             ),
         )
-        self.assertEqual(len(item.spi.write_only_packets), 1)
-        self.assertEqual(len(item.spi.write_only_packets[0]), 3380)
-        self.assertEqual(item.spi.write_only_packets[0][:2], b"\x0b\x02")
+        self.assertEqual(len(item.spi.write_only_packets), 0)
+        self.assertEqual(len(item.spi.response_packets[1]), 3380)
+        self.assertEqual(item.spi.response_packets[1][:2], b"\x0b\x02")
         self.assertEqual(item._spi_transfers, 2)
         self.assertEqual(item._fec_frames_sent, 1)
         self.assertEqual(item._full_frame_transfers, 1)
@@ -297,7 +302,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         def fail(_packet):
             raise OSError("injected transfer failure")
 
-        item.spi.writebytes2 = fail
+        item.spi.xfer2 = fail
         colors = np.zeros((8 * 138, 3), dtype=np.uint8)
         with self.assertRaisesRegex(OSError, "injected transfer failure"):
             item.set_all_pixels(colors, wall_frame_sequence=1)

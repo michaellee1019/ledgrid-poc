@@ -920,6 +920,18 @@ class LEDController:
                     + fec_data_padding_bytes
                 )
             try:
+                if not response_required and fec_enabled:
+                    # Keep protected full frames on the SPI_IOC_MESSAGE path.
+                    # The spidev write(2) path used by writebytes2 has shown
+                    # repeatable, speed-independent multi-bit corruption on
+                    # the installed receiver-3 route.  xfer2 still clocks one
+                    # exact transaction; its unrelated raw MISO bytes are
+                    # intentionally discarded rather than treated as status.
+                    self.spi.xfer2(wire)
+                    record_successful_fec_transfer()
+                    self._last_transfer_captured_response = False
+                    self._last_transfer_status_sampled = False
+                    return None
                 if not response_required:
                     writer = getattr(self.spi, "writebytes2", None)
                     if self._write_only_fast_path_supported(len(wire)):
