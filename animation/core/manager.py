@@ -85,10 +85,10 @@ from ipc.scene_contract import SceneProviderPolicy
 
 
 # The acceptance target is a minimum physical cadence, while an exact nominal
-# period has no room for ordinary wake-up jitter. Schedule 0.5% inside that
+# period has no room for ordinary wake-up jitter. Schedule 5% inside that
 # budget and use a short bounded spin at the deadline. The hard 200 FPS product
 # ceiling remains absolute.
-FRAME_SCHEDULER_HEADROOM_RATIO = 0.005
+FRAME_SCHEDULER_HEADROOM_RATIO = 0.05
 FRAME_SCHEDULER_MAX_FPS = 200.0
 FRAME_DEADLINE_COARSE_WINDOW_SECONDS = 0.002
 FRAME_DEADLINE_SPIN_SECONDS = 0.0005

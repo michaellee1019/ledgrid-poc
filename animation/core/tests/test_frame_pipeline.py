@@ -79,7 +79,7 @@ class FrameContractTests(unittest.TestCase):
             now = work_finished + sleep_for + (overshoot if sleep_for else 0.0)
 
         elapsed = frame_starts[-1] - frame_starts[0]
-        self.assertGreaterEqual(150 / elapsed, 149.9)
+        self.assertGreaterEqual(150 / elapsed, 157.0)
         relative_elapsed = 150 * ((1.0 / target_fps) + overshoot)
         self.assertLess(150 / relative_elapsed, 142.0)
 
@@ -96,6 +96,19 @@ class FrameContractTests(unittest.TestCase):
         self.assertAlmostEqual(deadline, expected)
         self.assertAlmostEqual(sleep_for, expected - 0.002)
         self.assertLess(deadline, 1.0 / 150)
+
+    def test_internal_headroom_requests_reliable_150_fps_cadence(self):
+        deadline, _ = _plan_frame_deadline(
+            None,
+            None,
+            frame_started=0.0,
+            work_finished=0.0,
+            target_fps=150,
+        )
+
+        self.assertAlmostEqual(FRAME_SCHEDULER_HEADROOM_RATIO, 0.05)
+        self.assertAlmostEqual(1.0 / deadline, 150 / 0.95)
+        self.assertGreaterEqual(1.0 / deadline, 157.0)
 
     def test_internal_headroom_never_exceeds_200_fps_ceiling(self):
         deadline, sleep_for = _plan_frame_deadline(

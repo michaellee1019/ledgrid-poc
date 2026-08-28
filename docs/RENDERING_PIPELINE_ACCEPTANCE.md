@@ -171,11 +171,14 @@ remain visible per receiver and in the aggregate. This scheduling optimization
 does not relax any CRC, status-refresh, display-rate, or mailbox acceptance
 threshold.
 
-The Host scheduler also keeps 0.5% cadence headroom below 200 FPS, wakes 2 ms
+The Host scheduler also keeps 5% cadence headroom below 200 FPS, wakes 2 ms
 before an absolute deadline, yields the GIL while presentation workers finish,
 and bounds busy spinning to the final 0.5 ms. This makes 150 FPS a minimum
 cadence despite coarse timer wakes without allowing unbounded catch-up or
-changing the configured target and p95 budget.
+changing the configured target and p95 budget. At a configured 150 FPS this
+requests a 157.89 FPS pacing cadence, leaving enough request margin for the
+installed wall's measured 155.31 FPS output ceiling rather than asking the
+scheduler for only 150.75 FPS and falling below the 150 FPS gate.
 
 The nominal 138-pixel WS2812 transaction is 4,440 us including the 300 us reset.
 The installed target-200 run measured 490 us encode p95, 4,442 us display p95,
