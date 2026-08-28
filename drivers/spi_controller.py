@@ -625,6 +625,12 @@ class LEDController:
         self._receiver_fec_uncorrectable_packets = 0
         self._receiver_fec_semantic_crc_errors = 0
         self._receiver_fec_framing_errors = 0
+        self._receiver_fec_terminal_baseline = None
+        self._receiver_fec_terminal_baseline_invalid = False
+        self._receiver_fec_terminal_counter_resets = 0
+        self._receiver_fec_uncorrectable_packets_process_delta = 0
+        self._receiver_fec_semantic_crc_errors_process_delta = 0
+        self._receiver_fec_framing_errors_process_delta = 0
         self._receiver_fec_last_decode_us = 0
         self._receiver_fec_max_decode_us = 0
         self._receiver_frames_rendered = 0
@@ -1810,7 +1816,11 @@ class LEDController:
 
     def _update_receiver_status_v7(self, response):
         """Parse exact FEC transport outcomes after the complete v6 prefix."""
+        fec_enabled_before_observation = bool(
+            getattr(self, "_fec_transport_enabled", False)
+        )
         fresh = self._update_receiver_status_v6(response)
+        values = {}
         for name, offset in (
             ("packets_received", 1216),
             ("packets_accepted", 1220),
@@ -1820,10 +1830,34 @@ class LEDController:
             ("semantic_crc_errors", 1236),
             ("framing_errors", 1240),
         ):
+            value = self._response_u32(response, offset)
+            values[name] = value
+            setattr(self, f"_receiver_fec_{name}", value)
+        terminal_names = (
+            "uncorrectable_packets",
+            "semantic_crc_errors",
+            "framing_errors",
+        )
+        baseline = getattr(self, "_receiver_fec_terminal_baseline", None)
+        current = {name: values[name] for name in terminal_names}
+        if baseline is None:
+            if fec_enabled_before_observation:
+                self._receiver_fec_terminal_baseline_invalid = True
+            else:
+                baseline = current
+                self._receiver_fec_terminal_baseline = dict(current)
+        elif any(current[name] < baseline[name] for name in terminal_names):
+            self._receiver_fec_terminal_counter_resets = (
+                getattr(self, "_receiver_fec_terminal_counter_resets", 0) + 1
+            )
+        for name in terminal_names:
             setattr(
                 self,
-                f"_receiver_fec_{name}",
-                self._response_u32(response, offset),
+                f"_receiver_fec_{name}_process_delta",
+                (
+                    max(0, current[name] - baseline[name])
+                    if baseline is not None else 0
+                ),
             )
         self._receiver_fec_last_decode_us = self._response_u16(response, 1244)
         self._receiver_fec_max_decode_us = self._response_u16(response, 1246)
@@ -3412,6 +3446,36 @@ class LEDController:
             ),
             'receiver_fec_framing_errors': getattr(
                 self, '_receiver_fec_framing_errors', 0
+            ),
+            'receiver_fec_uncorrectable_packets_process_delta': getattr(
+                self, '_receiver_fec_uncorrectable_packets_process_delta', 0
+            ),
+            'receiver_fec_semantic_crc_errors_process_delta': getattr(
+                self, '_receiver_fec_semantic_crc_errors_process_delta', 0
+            ),
+            'receiver_fec_framing_errors_process_delta': getattr(
+                self, '_receiver_fec_framing_errors_process_delta', 0
+            ),
+            'receiver_fec_uncorrectable_packets_process_baseline': (
+                (getattr(self, '_receiver_fec_terminal_baseline', None) or {})
+                .get('uncorrectable_packets', 0)
+            ),
+            'receiver_fec_semantic_crc_errors_process_baseline': (
+                (getattr(self, '_receiver_fec_terminal_baseline', None) or {})
+                .get('semantic_crc_errors', 0)
+            ),
+            'receiver_fec_framing_errors_process_baseline': (
+                (getattr(self, '_receiver_fec_terminal_baseline', None) or {})
+                .get('framing_errors', 0)
+            ),
+            'receiver_fec_terminal_baseline_established': (
+                getattr(self, '_receiver_fec_terminal_baseline', None) is not None
+            ),
+            'receiver_fec_terminal_baseline_invalid': getattr(
+                self, '_receiver_fec_terminal_baseline_invalid', False
+            ),
+            'receiver_fec_terminal_counter_resets': getattr(
+                self, '_receiver_fec_terminal_counter_resets', 0
             ),
             'receiver_fec_last_decode_us': getattr(
                 self, '_receiver_fec_last_decode_us', 0

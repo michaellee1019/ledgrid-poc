@@ -3260,6 +3260,15 @@ class MultiDeviceLEDController:
         receiver_fec_uncorrectable_packets = 0
         receiver_fec_semantic_crc_errors = 0
         receiver_fec_framing_errors = 0
+        receiver_fec_uncorrectable_packets_process_delta = 0
+        receiver_fec_semantic_crc_errors_process_delta = 0
+        receiver_fec_framing_errors_process_delta = 0
+        receiver_fec_uncorrectable_packets_process_baseline = 0
+        receiver_fec_semantic_crc_errors_process_baseline = 0
+        receiver_fec_framing_errors_process_baseline = 0
+        receiver_fec_terminal_baselines_established = 0
+        receiver_fec_terminal_invalid_baselines = 0
+        receiver_fec_terminal_counter_resets = 0
         receiver_fec_last_decode_us = 0
         receiver_fec_max_decode_us = 0
         receiver_frames_rendered = 0
@@ -3385,6 +3394,40 @@ class MultiDeviceLEDController:
             )
             receiver_fec_framing_errors += int(
                 stats.get('receiver_fec_framing_errors', 0) or 0
+            )
+            receiver_fec_uncorrectable_packets_process_delta += int(
+                stats.get(
+                    'receiver_fec_uncorrectable_packets_process_delta', 0
+                ) or 0
+            )
+            receiver_fec_semantic_crc_errors_process_delta += int(
+                stats.get(
+                    'receiver_fec_semantic_crc_errors_process_delta', 0
+                ) or 0
+            )
+            receiver_fec_framing_errors_process_delta += int(
+                stats.get('receiver_fec_framing_errors_process_delta', 0) or 0
+            )
+            receiver_fec_uncorrectable_packets_process_baseline += int(
+                stats.get(
+                    'receiver_fec_uncorrectable_packets_process_baseline', 0
+                ) or 0
+            )
+            receiver_fec_semantic_crc_errors_process_baseline += int(
+                stats.get(
+                    'receiver_fec_semantic_crc_errors_process_baseline', 0
+                ) or 0
+            )
+            receiver_fec_framing_errors_process_baseline += int(
+                stats.get('receiver_fec_framing_errors_process_baseline', 0)
+                or 0
+            )
+            if stats.get('receiver_fec_terminal_baseline_established') is True:
+                receiver_fec_terminal_baselines_established += 1
+            if stats.get('receiver_fec_terminal_baseline_invalid') is True:
+                receiver_fec_terminal_invalid_baselines += 1
+            receiver_fec_terminal_counter_resets += int(
+                stats.get('receiver_fec_terminal_counter_resets', 0) or 0
             )
             receiver_fec_last_decode_us = max(
                 receiver_fec_last_decode_us,
@@ -3547,6 +3590,33 @@ class MultiDeviceLEDController:
                     receiver_fec_semantic_crc_errors
                 ),
                 'receiver_fec_framing_errors': receiver_fec_framing_errors,
+                'receiver_fec_uncorrectable_packets_process_delta': (
+                    receiver_fec_uncorrectable_packets_process_delta
+                ),
+                'receiver_fec_semantic_crc_errors_process_delta': (
+                    receiver_fec_semantic_crc_errors_process_delta
+                ),
+                'receiver_fec_framing_errors_process_delta': (
+                    receiver_fec_framing_errors_process_delta
+                ),
+                'receiver_fec_uncorrectable_packets_process_baseline': (
+                    receiver_fec_uncorrectable_packets_process_baseline
+                ),
+                'receiver_fec_semantic_crc_errors_process_baseline': (
+                    receiver_fec_semantic_crc_errors_process_baseline
+                ),
+                'receiver_fec_framing_errors_process_baseline': (
+                    receiver_fec_framing_errors_process_baseline
+                ),
+                'receiver_fec_terminal_baselines_established': (
+                    receiver_fec_terminal_baselines_established
+                ),
+                'receiver_fec_terminal_invalid_baselines': (
+                    receiver_fec_terminal_invalid_baselines
+                ),
+                'receiver_fec_terminal_counter_resets': (
+                    receiver_fec_terminal_counter_resets
+                ),
                 'receiver_fec_last_decode_us': receiver_fec_last_decode_us,
                 'receiver_fec_max_decode_us': receiver_fec_max_decode_us,
                 'receiver_frames_rendered': receiver_frames_rendered,

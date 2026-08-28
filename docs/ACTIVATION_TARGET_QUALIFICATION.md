@@ -100,6 +100,12 @@ controller restart, state mutation, runtime-identity change, missing identity
 field, or digest mismatch invalidates the retained target evidence and requires
 a fresh capture; evidence from release A can never qualify release B.
 
+Deployment readiness uses the Host-process terminal baselines because receiver
+counters survive Host restarts. Target capture and the guarded soak retain their
+own explicit before/after counter windows and continue requiring zero terminal
+growth in those windows; they do not substitute the process baseline for their
+stronger capture-local delta proof.
+
 The aligned/FEC transport is necessary but not itself PERF-01 integrity evidence.
 [Espressif's ESP32-S3 SPI-slave DMA contract](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/spi_slave.html)
 requires DMA RX buffers and transaction lengths to be word-aligned/four-byte

@@ -2845,6 +2845,13 @@ def _receiver_health_rejection(
             "receiver_fec_corrected_packets", "receiver_fec_corrected_codewords",
             "receiver_fec_uncorrectable_packets",
             "receiver_fec_semantic_crc_errors", "receiver_fec_framing_errors",
+            "receiver_fec_uncorrectable_packets_process_delta",
+            "receiver_fec_semantic_crc_errors_process_delta",
+            "receiver_fec_framing_errors_process_delta",
+            "receiver_fec_uncorrectable_packets_process_baseline",
+            "receiver_fec_semantic_crc_errors_process_baseline",
+            "receiver_fec_framing_errors_process_baseline",
+            "receiver_fec_terminal_counter_resets",
             "receiver_fec_last_decode_us", "receiver_fec_max_decode_us",
         )
         if any(
@@ -2867,15 +2874,82 @@ def _receiver_health_rejection(
         accepted = int(status["receiver_fec_packets_accepted"])
         corrected_packets = int(status["receiver_fec_corrected_packets"])
         corrected_codewords = int(status["receiver_fec_corrected_codewords"])
-        terminal = sum(int(status[field]) for field in (
+        terminal_fields = (
             "receiver_fec_uncorrectable_packets",
             "receiver_fec_semantic_crc_errors",
             "receiver_fec_framing_errors",
-        ))
+        )
+        lifetime_terminal = {
+            field: int(status[field]) for field in terminal_fields
+        }
+        terminal = sum(lifetime_terminal.values())
         if received != accepted + terminal:
             return f"receiver {logical_id} FEC outcome accounting is inconsistent"
-        if terminal != 0:
-            return f"receiver {logical_id} has terminal FEC transport errors"
+        process_terminal_fields = tuple(
+            f"{field}_process_delta" for field in terminal_fields
+        )
+        baseline_terminal_fields = tuple(
+            f"{field}_process_baseline" for field in terminal_fields
+        )
+        process_terminal = {
+            field: int(status[field]) for field in process_terminal_fields
+        }
+        baseline_terminal = {
+            field: int(status[field]) for field in baseline_terminal_fields
+        }
+        baseline_established = status.get(
+            "receiver_fec_terminal_baseline_established"
+        )
+        baseline_invalid = status.get("receiver_fec_terminal_baseline_invalid")
+        terminal_resets = int(status["receiver_fec_terminal_counter_resets"])
+        baseline_accounting_invalid = any(
+            baseline_terminal[f"{field}_process_baseline"]
+            > lifetime_terminal[field]
+            or process_terminal[f"{field}_process_delta"]
+            != lifetime_terminal[field]
+            - baseline_terminal[f"{field}_process_baseline"]
+            for field in terminal_fields
+        )
+        if baseline_accounting_invalid:
+            lifetime_detail = ", ".join(
+                f"{field}={value}" for field, value in lifetime_terminal.items()
+            )
+            baseline_detail = ", ".join(
+                f"{field}={value}" for field, value in baseline_terminal.items()
+            )
+            process_detail = ", ".join(
+                f"{field}={value}" for field, value in process_terminal.items()
+            )
+            return (
+                f"receiver {logical_id} FEC terminal baseline accounting is "
+                f"inconsistent: lifetime({lifetime_detail}), "
+                f"baseline({baseline_detail}), process_delta({process_detail}), "
+                f"counter_resets={terminal_resets}"
+            )
+        terminal_observation_invalid = (
+            baseline_established is not True
+            or baseline_invalid is not False
+            or terminal_resets != 0
+            or any(process_terminal.values())
+        )
+        if terminal_observation_invalid:
+            lifetime_detail = ", ".join(
+                f"{field}={value}" for field, value in lifetime_terminal.items()
+            )
+            baseline_detail = ", ".join(
+                f"{field}={value}" for field, value in baseline_terminal.items()
+            )
+            process_detail = ", ".join(
+                f"{field}={value}" for field, value in process_terminal.items()
+            )
+            return (
+                f"receiver {logical_id} has terminal FEC transport errors "
+                f"since Host start: lifetime({lifetime_detail}), "
+                f"baseline(established={baseline_established!r}, "
+                f"invalid={baseline_invalid!r}, {baseline_detail}), "
+                f"process_delta({process_detail}), "
+                f"counter_resets={terminal_resets}"
+            )
         if (
             corrected_packets > accepted
             or corrected_codewords < corrected_packets
@@ -2886,7 +2960,15 @@ def _receiver_health_rejection(
         max_decode_us = int(status["receiver_fec_max_decode_us"])
         if (
             last_decode_us > max_decode_us
-            or (not expected_fec and (received != 0 or last_decode_us != 0 or max_decode_us != 0))
+            or (
+                not expected_fec
+                and (
+                    received != 0
+                    or any(baseline_terminal.values())
+                    or last_decode_us != 0
+                    or max_decode_us != 0
+                )
+            )
         ):
             return f"receiver {logical_id} FEC receive accounting is inconsistent"
         for expected_name, observed_name in field_mapping.items():
@@ -2921,6 +3003,13 @@ def _receiver_health_rejection(
         "receiver_fec_packets_accepted", "receiver_fec_corrected_packets",
         "receiver_fec_corrected_codewords", "receiver_fec_uncorrectable_packets",
         "receiver_fec_semantic_crc_errors", "receiver_fec_framing_errors",
+        "receiver_fec_uncorrectable_packets_process_delta",
+        "receiver_fec_semantic_crc_errors_process_delta",
+        "receiver_fec_framing_errors_process_delta",
+        "receiver_fec_uncorrectable_packets_process_baseline",
+        "receiver_fec_semantic_crc_errors_process_baseline",
+        "receiver_fec_framing_errors_process_baseline",
+        "receiver_fec_terminal_counter_resets",
         *FULL_FRAME_SAMPLING_COUNTERS,
     )
     for counter_name in transport_fields:
@@ -3164,6 +3253,18 @@ def _transport_accounting_evidence(
         "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
         "crc_bytes_sent", "full_frame_transfers",
         "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
+        "fec_frames_sent", "fec_codewords_sent", "fec_parity_bytes_sent",
+        "fec_data_padding_bytes_sent", "receiver_fec_packets_received",
+        "receiver_fec_packets_accepted", "receiver_fec_corrected_packets",
+        "receiver_fec_corrected_codewords", "receiver_fec_uncorrectable_packets",
+        "receiver_fec_semantic_crc_errors", "receiver_fec_framing_errors",
+        "receiver_fec_uncorrectable_packets_process_delta",
+        "receiver_fec_semantic_crc_errors_process_delta",
+        "receiver_fec_framing_errors_process_delta",
+        "receiver_fec_uncorrectable_packets_process_baseline",
+        "receiver_fec_semantic_crc_errors_process_baseline",
+        "receiver_fec_framing_errors_process_baseline",
+        "receiver_fec_terminal_counter_resets",
         *FULL_FRAME_SAMPLING_COUNTERS,
     )
 
@@ -3182,6 +3283,16 @@ def _transport_accounting_evidence(
     def sampling_state(item: Mapping[str, Any]) -> Mapping[str, Any]:
         return {
             field: item[field] for field in FULL_FRAME_SAMPLING_STATE_FIELDS
+        }
+
+    def fec_terminal_state(item: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {
+            "baseline_established": item[
+                "receiver_fec_terminal_baseline_established"
+            ],
+            "baseline_invalid": item[
+                "receiver_fec_terminal_baseline_invalid"
+            ],
         }
 
     before_by_id = {
@@ -3285,6 +3396,12 @@ def _transport_accounting_evidence(
                 ),
                 "state_before": sampling_state(before_by_id[logical_id]),
                 "state_after": sampling_state(after_by_id[logical_id]),
+                "fec_terminal_state_before": fec_terminal_state(
+                    before_by_id[logical_id]
+                ),
+                "fec_terminal_state_after": fec_terminal_state(
+                    after_by_id[logical_id]
+                ),
             }
             for logical_id in sorted(after_by_id)
         ],

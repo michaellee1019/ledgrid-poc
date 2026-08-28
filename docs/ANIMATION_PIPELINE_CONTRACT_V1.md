@@ -354,6 +354,15 @@ updates both fields. Production readiness requires a fresh response and an
 actual maximum of v7; a normal scheduled v3 response after v7 may change only
 the latest field and cannot erase the v7 proof.
 
+Receiver FEC outcome counters are lifetime-since-receiver-boot values. On the
+first magic/version-consistent v7 response, before FEC is enabled, each Host
+process records the three terminal-counter baselines and exposes the lifetime,
+baseline, process-delta, baseline-validity, and counter-reset fields separately.
+Deployment readiness permits a nonzero historical lifetime partition, but only
+when the baseline is valid and established; every terminal process delta and
+reset count must remain zero. This prevents a previous failed canary from
+permanently poisoning a healthy process without hiding a new terminal outcome.
+
 | Offset | Bytes | Field |
 | ---: | ---: | --- |
 | 0 | 4 | magic `LGS3` |

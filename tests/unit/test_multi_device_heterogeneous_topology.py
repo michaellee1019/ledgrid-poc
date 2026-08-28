@@ -285,6 +285,13 @@ class HeterogeneousTopologyTests(unittest.TestCase):
                     "full_frame_write_only_transfers": 98 - logical_id,
                     "receiver_status_version": 3 + logical_id,
                     "receiver_status_max_version_seen": 7,
+                    "receiver_fec_uncorrectable_packets_process_delta": logical_id,
+                    "receiver_fec_uncorrectable_packets_process_baseline": (
+                        10 + logical_id
+                    ),
+                    "receiver_fec_terminal_baseline_established": True,
+                    "receiver_fec_terminal_baseline_invalid": logical_id == 4,
+                    "receiver_fec_terminal_counter_resets": int(logical_id == 2),
                     "full_frame_frames_since_status_sample": 4 + logical_id,
                     "full_frame_max_status_sample_gap": 120 + logical_id,
                     "spidev_buffer_size": 4096 - logical_id,
@@ -301,6 +308,15 @@ class HeterogeneousTopologyTests(unittest.TestCase):
         self.assertEqual(aggregate["full_frame_write_only_transfers"], 480)
         self.assertEqual(aggregate["receiver_status_version"], 3)
         self.assertEqual(aggregate["receiver_status_max_version_seen"], 7)
+        self.assertEqual(
+            aggregate["receiver_fec_uncorrectable_packets_process_delta"], 10
+        )
+        self.assertEqual(
+            aggregate["receiver_fec_uncorrectable_packets_process_baseline"], 60
+        )
+        self.assertEqual(aggregate["receiver_fec_terminal_baselines_established"], 5)
+        self.assertEqual(aggregate["receiver_fec_terminal_invalid_baselines"], 1)
+        self.assertEqual(aggregate["receiver_fec_terminal_counter_resets"], 1)
         self.assertEqual(aggregate["full_frame_frames_since_status_sample"], 8)
         self.assertEqual(aggregate["full_frame_max_status_sample_gap"], 124)
         self.assertEqual(aggregate["spidev_buffer_size"], 4092)

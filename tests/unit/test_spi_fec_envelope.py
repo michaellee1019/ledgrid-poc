@@ -65,6 +65,9 @@ def _controller(*, requested):
     item._fec_codewords_sent = 0
     item._fec_parity_bytes_sent = 0
     item._fec_data_padding_bytes_sent = 0
+    item._receiver_fec_terminal_baseline = None
+    item._receiver_fec_terminal_baseline_invalid = False
+    item._receiver_fec_terminal_counter_resets = 0
     item._writebytes2_supported = None
     item._spidev_buffer_size = protocol.MAX_SPI_TRANSFER
     item._last_transfer_captured_response = False
@@ -333,6 +336,46 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         self.assertEqual(11, 7 + 1 + 2 + 1)
         self.assertEqual(item._receiver_fec_last_decode_us, 83)
         self.assertEqual(item._receiver_fec_max_decode_us, 109)
+        self.assertEqual(item._receiver_fec_uncorrectable_packets_process_delta, 0)
+        self.assertEqual(item._receiver_fec_semantic_crc_errors_process_delta, 0)
+        self.assertEqual(item._receiver_fec_framing_errors_process_delta, 0)
+        self.assertEqual(
+            item._receiver_fec_terminal_baseline,
+            {
+                "uncorrectable_packets": 1,
+                "semantic_crc_errors": 2,
+                "framing_errors": 1,
+            },
+        )
+        self.assertFalse(item._receiver_fec_terminal_baseline_invalid)
+
+        later = _status_v7(10)
+        later_values = (15, 8, 4, 5, 2, 4, 4)
+        for offset, value in zip(range(1216, 1244, 4), later_values):
+            later[offset:offset + 4] = value.to_bytes(4, "big")
+        self.assertTrue(
+            protocol.LEDController._update_receiver_status(item, later)
+        )
+        self.assertEqual(item._receiver_fec_uncorrectable_packets_process_delta, 1)
+        self.assertEqual(item._receiver_fec_semantic_crc_errors_process_delta, 2)
+        self.assertEqual(item._receiver_fec_framing_errors_process_delta, 3)
+
+        reset = _status_v7(1)
+        self.assertTrue(
+            protocol.LEDController._update_receiver_status(item, reset)
+        )
+        self.assertEqual(item._receiver_fec_terminal_counter_resets, 1)
+        self.assertEqual(
+            item._receiver_fec_terminal_baseline,
+            {
+                "uncorrectable_packets": 1,
+                "semantic_crc_errors": 2,
+                "framing_errors": 1,
+            },
+        )
+        self.assertEqual(item._receiver_fec_uncorrectable_packets_process_delta, 0)
+        self.assertEqual(item._receiver_fec_semantic_crc_errors_process_delta, 0)
+        self.assertEqual(item._receiver_fec_framing_errors_process_delta, 0)
 
     def test_latest_status_version_can_return_to_v3_after_v7_without_losing_proof(self):
         item = _controller(requested=True)
@@ -366,6 +409,20 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         )
         self.assertEqual(item._receiver_status_version, 3)
         self.assertEqual(item._receiver_status_max_version_seen, 3)
+        self.assertIsNone(
+            getattr(item, "_receiver_fec_terminal_baseline", None)
+        )
+
+    def test_status_v7_baseline_cannot_start_after_fec_is_already_enabled(self):
+        item = _controller(requested=True)
+        item._fec_transport_enabled = True
+
+        self.assertTrue(
+            protocol.LEDController._update_receiver_status(item, _status_v7(1))
+        )
+
+        self.assertIsNone(item._receiver_fec_terminal_baseline)
+        self.assertTrue(item._receiver_fec_terminal_baseline_invalid)
 
 
 if __name__ == "__main__":

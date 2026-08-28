@@ -710,6 +710,15 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 "receiver_fec_uncorrectable_packets": 0,
                 "receiver_fec_semantic_crc_errors": 0,
                 "receiver_fec_framing_errors": 0,
+                "receiver_fec_uncorrectable_packets_process_delta": 0,
+                "receiver_fec_semantic_crc_errors_process_delta": 0,
+                "receiver_fec_framing_errors_process_delta": 0,
+                "receiver_fec_uncorrectable_packets_process_baseline": 0,
+                "receiver_fec_semantic_crc_errors_process_baseline": 0,
+                "receiver_fec_framing_errors_process_baseline": 0,
+                "receiver_fec_terminal_baseline_established": True,
+                "receiver_fec_terminal_baseline_invalid": False,
+                "receiver_fec_terminal_counter_resets": 0,
                 "receiver_fec_last_decode_us": 80 if logical_id == 3 else 0,
                 "receiver_fec_max_decode_us": 100 if logical_id == 3 else 0,
             }
@@ -733,6 +742,13 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             "receiver_fec_corrected_codewords",
             "receiver_fec_uncorrectable_packets",
             "receiver_fec_semantic_crc_errors", "receiver_fec_framing_errors",
+            "receiver_fec_uncorrectable_packets_process_delta",
+            "receiver_fec_semantic_crc_errors_process_delta",
+            "receiver_fec_framing_errors_process_delta",
+            "receiver_fec_uncorrectable_packets_process_baseline",
+            "receiver_fec_semantic_crc_errors_process_baseline",
+            "receiver_fec_framing_errors_process_baseline",
+            "receiver_fec_terminal_counter_resets",
         )
         aggregate = {
             field: sum(int(item[field]) for item in statuses)
@@ -1277,6 +1293,113 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             rejection(tuple(downgraded)),
         )
 
+        historical_terminal = [dict(item) for item in valid]
+        historical_terminal[3]["receiver_fec_packets_received"] += 4
+        historical_terminal[3]["receiver_fec_uncorrectable_packets"] = 1
+        historical_terminal[3]["receiver_fec_semantic_crc_errors"] = 2
+        historical_terminal[3]["receiver_fec_framing_errors"] = 1
+        historical_terminal[3][
+            "receiver_fec_uncorrectable_packets_process_baseline"
+        ] = 1
+        historical_terminal[3][
+            "receiver_fec_semantic_crc_errors_process_baseline"
+        ] = 2
+        historical_terminal[3][
+            "receiver_fec_framing_errors_process_baseline"
+        ] = 1
+        self.assertIsNone(rejection(tuple(historical_terminal)))
+        bad_terminal_aggregate = dict(
+            self._receiver_aggregate(tuple(historical_terminal))
+        )
+        bad_terminal_aggregate[
+            "receiver_fec_uncorrectable_packets_process_baseline"
+        ] = 0
+        self.assertIn(
+            "aggregate receiver_fec_uncorrectable_packets_process_baseline "
+            "drifted from per-receiver total",
+            rejection(tuple(historical_terminal), bad_terminal_aggregate),
+        )
+
+        for terminal_field, process_field in (
+            (
+                "receiver_fec_uncorrectable_packets",
+                "receiver_fec_uncorrectable_packets_process_delta",
+            ),
+            (
+                "receiver_fec_semantic_crc_errors",
+                "receiver_fec_semantic_crc_errors_process_delta",
+            ),
+            (
+                "receiver_fec_framing_errors",
+                "receiver_fec_framing_errors_process_delta",
+            ),
+        ):
+            with self.subTest(process_field=process_field):
+                current_terminal = [dict(item) for item in historical_terminal]
+                current_terminal[3][terminal_field] += 1
+                current_terminal[3]["receiver_fec_packets_received"] += 1
+                current_terminal[3][process_field] = 1
+                reason = rejection(tuple(current_terminal))
+                self.assertIn("since Host start", reason)
+                self.assertIn(f"{process_field}=1", reason)
+                self.assertIn("baseline(established=True, invalid=False", reason)
+
+        forged_zero_delta = [dict(item) for item in historical_terminal]
+        forged_zero_delta[3]["receiver_fec_uncorrectable_packets"] += 1
+        forged_zero_delta[3]["receiver_fec_packets_received"] += 1
+        reason = rejection(tuple(forged_zero_delta))
+        self.assertIn("terminal baseline accounting is inconsistent", reason)
+        self.assertIn("receiver_fec_uncorrectable_packets=2", reason)
+        self.assertIn(
+            "receiver_fec_uncorrectable_packets_process_baseline=1", reason
+        )
+        self.assertIn(
+            "receiver_fec_uncorrectable_packets_process_delta=0", reason
+        )
+
+        baseline_above_lifetime = [dict(item) for item in valid]
+        baseline_above_lifetime[3][
+            "receiver_fec_uncorrectable_packets_process_baseline"
+        ] = 1
+        reason = rejection(tuple(baseline_above_lifetime))
+        self.assertIn("terminal baseline accounting is inconsistent", reason)
+        self.assertIn("receiver_fec_uncorrectable_packets=0", reason)
+        self.assertIn(
+            "receiver_fec_uncorrectable_packets_process_baseline=1", reason
+        )
+
+        reset_terminal = [dict(item) for item in historical_terminal]
+        reset_terminal[3]["receiver_fec_terminal_counter_resets"] = 1
+        self.assertIn(
+            "counter_resets=1",
+            rejection(tuple(reset_terminal)),
+        )
+
+        missing_baseline = [dict(item) for item in valid]
+        missing_baseline[3]["receiver_fec_terminal_baseline_established"] = False
+        self.assertIn(
+            "baseline(established=False",
+            rejection(tuple(missing_baseline)),
+        )
+
+        invalid_baseline = [dict(item) for item in valid]
+        invalid_baseline[3]["receiver_fec_terminal_baseline_invalid"] = True
+        self.assertIn(
+            "invalid=True",
+            rejection(tuple(invalid_baseline)),
+        )
+
+        non_fec_history = [dict(item) for item in valid]
+        non_fec_history[0]["receiver_fec_packets_received"] = 1
+        non_fec_history[0]["receiver_fec_uncorrectable_packets"] = 1
+        non_fec_history[0][
+            "receiver_fec_uncorrectable_packets_process_baseline"
+        ] = 1
+        self.assertIn(
+            "FEC receive accounting is inconsistent",
+            rejection(tuple(non_fec_history)),
+        )
+
         cases = []
         missing_capability = [dict(item) for item in valid]
         missing_capability[0]["receiver_capabilities"] = 0x400C
@@ -1395,6 +1518,101 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 before, sample(tuple(non_fec))
             ),
         )
+
+    def test_fresh_health_accepts_historical_terminal_baseline_with_zero_growth(self) -> None:
+        contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
+
+        def historical_statuses(responses: int):
+            statuses = [dict(item) for item in self._receiver_statuses(
+                version=7, capabilities=0xC00C, responses=responses,
+            )]
+            statuses[3]["receiver_fec_packets_received"] += 4
+            for field, value in (
+                ("receiver_fec_uncorrectable_packets", 1),
+                ("receiver_fec_semantic_crc_errors", 2),
+                ("receiver_fec_framing_errors", 1),
+            ):
+                statuses[3][field] = value
+                statuses[3][f"{field}_process_baseline"] = value
+            return tuple(statuses)
+
+        samples = tuple(
+            self._health_sample(
+                responses=responses,
+                statuses=(statuses := historical_statuses(responses)),
+                receiver_aggregate=self._receiver_aggregate(statuses),
+            )
+            for responses in (2, 3)
+        )
+        with (
+            patch.object(
+                deploy_target,
+                "_request_receiver_status_refresh",
+                return_value="health-request",
+            ),
+            patch.object(deploy_target, "_sample_health", side_effect=samples),
+            patch.object(
+                deploy_target.time, "monotonic", side_effect=(0.0, 0.0, 0.0)
+            ),
+            patch.object(deploy_target.time, "sleep"),
+        ):
+            result = deploy_target.fresh_health(
+                Path("/target"),
+                "a" * 64,
+                restart_started_at=100.0,
+                strips=33,
+                leds_per_strip=138,
+                receivers=5,
+                stable_samples=2,
+                timeout=1.0,
+                unit="ledgrid.service",
+                api_url="http://local/status",
+                receiver_contract=contract,
+            )
+
+        evidence = result["receiver_contract"]["aligned_transport_evidence"]
+        receiver_3 = evidence["devices"][3]
+        terminal = receiver_3["counters"][
+            "receiver_fec_uncorrectable_packets"
+        ]
+        self.assertEqual(terminal, {"before": 1, "after": 1, "delta": 0})
+        self.assertEqual(
+            receiver_3["fec_terminal_state_before"],
+            {"baseline_established": True, "baseline_invalid": False},
+        )
+        for terminal_field, value in (
+            ("receiver_fec_uncorrectable_packets", 1),
+            ("receiver_fec_semantic_crc_errors", 2),
+            ("receiver_fec_framing_errors", 1),
+        ):
+            for field, expected_value in (
+                (terminal_field, value),
+                (f"{terminal_field}_process_baseline", value),
+                (f"{terminal_field}_process_delta", 0),
+            ):
+                aggregate = evidence["aggregate"][field]
+                self.assertEqual(
+                    aggregate,
+                    {
+                        "before": expected_value,
+                        "after": expected_value,
+                        "delta": 0,
+                    },
+                )
+                self.assertEqual(
+                    aggregate["before"],
+                    sum(
+                        device["counters"][field]["before"]
+                        for device in evidence["devices"]
+                    ),
+                )
+                self.assertEqual(
+                    aggregate["after"],
+                    sum(
+                        device["counters"][field]["after"]
+                        for device in evidence["devices"]
+                    ),
+                )
 
     def test_production_health_rejects_firmware_without_aligned_transport(self) -> None:
         contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
