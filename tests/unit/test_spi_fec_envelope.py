@@ -118,6 +118,15 @@ def _status_v7(receiver_packets, *, fec=True):
     return response
 
 
+def _status_v3(receiver_packets):
+    response = bytearray(protocol.RECEIVER_STATUS_BYTES_V3)
+    response[:5] = b"LGS3\x03"
+    response[12:16] = receiver_packets.to_bytes(4, "big")
+    response[64:68] = protocol.CAPABILITY_ALIGNED_ENVELOPE_V1.to_bytes(4, "big")
+    response[314] = protocol.STAGGER_OFF
+    return response
+
+
 class SpiFecEnvelopeTests(unittest.TestCase):
     def test_exact_fixed_codeword_layout_and_golden_digest(self):
         packet = protocol._encode_fec_envelope(bytes((protocol.CMD_SHOW,)))
@@ -324,6 +333,39 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         self.assertEqual(11, 7 + 1 + 2 + 1)
         self.assertEqual(item._receiver_fec_last_decode_us, 83)
         self.assertEqual(item._receiver_fec_max_decode_us, 109)
+
+    def test_latest_status_version_can_return_to_v3_after_v7_without_losing_proof(self):
+        item = _controller(requested=True)
+
+        self.assertTrue(
+            protocol.LEDController._update_receiver_status(item, _status_v7(9))
+        )
+        self.assertEqual(item._receiver_status_version, 7)
+        self.assertEqual(item._receiver_status_max_version_seen, 7)
+
+        self.assertTrue(
+            protocol.LEDController._update_receiver_status(item, _status_v3(10))
+        )
+        self.assertEqual(item._receiver_status_version, 3)
+        self.assertEqual(item._receiver_status_max_version_seen, 7)
+
+    def test_status_max_version_seen_is_actual_and_starts_at_observed_v3(self):
+        item = _controller(requested=True)
+
+        self.assertTrue(
+            protocol.LEDController._update_receiver_status(item, _status_v3(1))
+        )
+
+        self.assertEqual(item._receiver_status_version, 3)
+        self.assertEqual(item._receiver_status_max_version_seen, 3)
+
+        mismatched = _status_v7(2)
+        mismatched[4] = 3
+        self.assertFalse(
+            protocol.LEDController._update_receiver_status(item, mismatched)
+        )
+        self.assertEqual(item._receiver_status_version, 3)
+        self.assertEqual(item._receiver_status_max_version_seen, 3)
 
 
 if __name__ == "__main__":

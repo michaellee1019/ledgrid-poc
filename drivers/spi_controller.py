@@ -610,6 +610,7 @@ class LEDController:
         self._total_frame_duration = 0.0
         self._receiver_status_seen = False
         self._receiver_status_version = 0
+        self._receiver_status_max_version_seen = 0
         self._receiver_status_legacy = False
         self._legacy_snapshot_warned = False
         self._receiver_status_responses = 0
@@ -1193,18 +1194,24 @@ class LEDController:
             self._reset_fec_transport_candidate(invalid=False)
             return False
         magic = tuple(int(response[index]) for index in range(4))
-        indicated_status_bytes = {
-            RECEIVER_STATUS_MAGIC_V2: RECEIVER_STATUS_BYTES_V2,
-            RECEIVER_STATUS_MAGIC_V3: RECEIVER_STATUS_BYTES_V3,
-            RECEIVER_STATUS_MAGIC_V4: RECEIVER_STATUS_BYTES_V4,
-            RECEIVER_STATUS_MAGIC_V5: RECEIVER_STATUS_BYTES_V5,
-            RECEIVER_STATUS_MAGIC_V6: RECEIVER_STATUS_BYTES_V6,
-            RECEIVER_STATUS_MAGIC_V7: RECEIVER_STATUS_BYTES_V7,
+        indicated_status = {
+            RECEIVER_STATUS_MAGIC_V2: (2, RECEIVER_STATUS_BYTES_V2),
+            RECEIVER_STATUS_MAGIC_V3: (3, RECEIVER_STATUS_BYTES_V3),
+            RECEIVER_STATUS_MAGIC_V4: (4, RECEIVER_STATUS_BYTES_V4),
+            RECEIVER_STATUS_MAGIC_V5: (5, RECEIVER_STATUS_BYTES_V5),
+            RECEIVER_STATUS_MAGIC_V6: (6, RECEIVER_STATUS_BYTES_V6),
+            RECEIVER_STATUS_MAGIC_V7: (7, RECEIVER_STATUS_BYTES_V7),
         }.get(magic)
-        if indicated_status_bytes is not None and len(response) < indicated_status_bytes:
-            self._reset_transport_envelope_candidate(invalid=False)
-            self._reset_fec_transport_candidate(invalid=False)
-            return False
+        indicated_status_bytes = None
+        if indicated_status is not None:
+            indicated_status_version, indicated_status_bytes = indicated_status
+            if (
+                len(response) < indicated_status_bytes
+                or int(response[4]) != indicated_status_version
+            ):
+                self._reset_transport_envelope_candidate(invalid=False)
+                self._reset_fec_transport_candidate(invalid=False)
+                return False
         known_status_bytes = {
             2: RECEIVER_STATUS_BYTES_V2,
             3: RECEIVER_STATUS_BYTES_V3,
@@ -1233,7 +1240,7 @@ class LEDController:
 
         if magic == RECEIVER_STATUS_MAGIC_V2 and len(response) >= RECEIVER_STATUS_BYTES_V2:
             self._receiver_status_seen = True
-            self._receiver_status_version = int(response[4])
+            self._note_receiver_status_version(int(response[4]))
             self._receiver_status_responses = getattr(self, '_receiver_status_responses', 0) + 1
             self._receiver_active_strips = int(response[6])
             self._receiver_lane_mask = int(response[7])
@@ -1275,7 +1282,7 @@ class LEDController:
             return False
 
         self._receiver_status_seen = True
-        self._receiver_status_version = 1
+        self._note_receiver_status_version(1)
         self._receiver_status_responses = getattr(self, '_receiver_status_responses', 0) + 1
         self._receiver_packets = self._response_u32(response, 4)
         self._receiver_crc_errors = self._response_u32(response, 8)
@@ -1291,6 +1298,15 @@ class LEDController:
         )
         self._observe_fec_transport_capability(False, self._receiver_packets)
         return fresh
+
+    def _note_receiver_status_version(self, version):
+        """Record the actual latest response and sticky per-process maximum."""
+        version = int(version)
+        self._receiver_status_version = version
+        self._receiver_status_max_version_seen = max(
+            getattr(self, "_receiver_status_max_version_seen", 0),
+            version,
+        )
 
     def _reset_transport_envelope_candidate(self, *, invalid=False):
         """Discard an unproven transition without changing active framing."""
@@ -1413,7 +1429,7 @@ class LEDController:
         # enabled. The extension offsets below are synchronized with
         # firmware/esp32/include/ledgrid/protocol.hpp.
         self._receiver_status_seen = True
-        self._receiver_status_version = int(response[4])
+        self._note_receiver_status_version(int(response[4]))
         self._receiver_status_responses = getattr(self, '_receiver_status_responses', 0) + 1
         self._receiver_active_strips = int(response[6])
         self._receiver_lane_mask = int(response[7])
@@ -3367,6 +3383,9 @@ class LEDController:
             'errors': self._errors,
             'receiver_status_seen': self._receiver_status_seen,
             'receiver_status_version': self._receiver_status_version,
+            'receiver_status_max_version_seen': getattr(
+                self, '_receiver_status_max_version_seen', 0
+            ),
             'receiver_status_legacy': getattr(self, '_receiver_status_legacy', False),
             'receiver_status_responses': self._receiver_status_responses,
             'receiver_status_misses': self._receiver_status_misses,

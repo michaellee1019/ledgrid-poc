@@ -24,7 +24,7 @@ QUALIFICATION_RESULT_VERSION = 1
 INSTALLATION_BUDGET_SCHEMA = "ledgrid.installation-qualification-budget"
 INSTALLATION_BUDGET_VERSION = 1
 TARGET_EVIDENCE_SCHEMA = "ledgrid.target-qualification-evidence"
-TARGET_EVIDENCE_VERSION = 2
+TARGET_EVIDENCE_VERSION = 3
 EVIDENCE_SOURCES = ("browser", "controller_pi", "receiver")
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -738,6 +738,8 @@ _TARGET_TRANSPORT_DELTA_FIELDS = (
     "full_frame_write_only_transfers",
 )
 _TARGET_TRANSPORT_FINAL_FIELDS = (
+    "receiver_status_version",
+    "receiver_status_max_version_seen",
     "full_frame_frames_since_status_sample",
     "full_frame_max_status_sample_gap",
     "spidev_buffer_size",
@@ -938,6 +940,20 @@ def _target_transport_item(
 
     raw_final = _object(payload.get("final"), f"{label}.final")
     _only(raw_final, set(_TARGET_TRANSPORT_FINAL_FIELDS), f"{label}.final")
+    latest_status_version = _integer(
+        raw_final.get("receiver_status_version"),
+        f"{label}.final.receiver_status_version",
+        minimum=3,
+    )
+    max_status_version_seen = _integer(
+        raw_final.get("receiver_status_max_version_seen"),
+        f"{label}.final.receiver_status_max_version_seen",
+        minimum=7,
+    )
+    if latest_status_version > max_status_version_seen:
+        raise QualificationValidationError(
+            f"{label}.final latest status version exceeds observed maximum"
+        )
     current_gap = _integer(
         raw_final.get("full_frame_frames_since_status_sample"),
         f"{label}.final.full_frame_frames_since_status_sample",
@@ -965,6 +981,8 @@ def _target_transport_item(
         "expected_wire_bytes": observed_wire_bytes,
         "deltas": deltas,
         "final": {
+            "receiver_status_version": latest_status_version,
+            "receiver_status_max_version_seen": max_status_version_seen,
             "full_frame_frames_since_status_sample": current_gap,
             "full_frame_max_status_sample_gap": maximum_gap,
             "spidev_buffer_size": buffer_size,
@@ -1061,6 +1079,13 @@ def _target_transport_evidence(value: Any) -> dict[str, Any]:
             f"{label}.aggregate.fec.final drifted from receiver values"
         )
     expected_final = {
+        "receiver_status_version": min(
+            device["final"]["receiver_status_version"] for device in devices
+        ),
+        "receiver_status_max_version_seen": min(
+            device["final"]["receiver_status_max_version_seen"]
+            for device in devices
+        ),
         "full_frame_frames_since_status_sample": max(
             device["final"]["full_frame_frames_since_status_sample"]
             for device in devices

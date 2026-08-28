@@ -645,6 +645,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 "receiver_status_seen": True,
                 "receiver_status_responses": responses,
                 "receiver_status_version": version,
+                "receiver_status_max_version_seen": version,
                 "receiver_capabilities": capabilities,
                 "transport_envelope_enabled": True,
                 "transport_envelope_negotiation_candidate": None,
@@ -764,6 +765,13 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             ),
             "receiver_fec_max_decode_us": max(
                 int(item["receiver_fec_max_decode_us"]) for item in statuses
+            ),
+            "receiver_status_version": min(
+                int(item["receiver_status_version"]) for item in statuses
+            ),
+            "receiver_status_max_version_seen": min(
+                int(item["receiver_status_max_version_seen"])
+                for item in statuses
             ),
         })
         return aggregate
@@ -1256,6 +1264,19 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         valid = self._receiver_statuses(version=7, capabilities=0xC00C)
         self.assertIsNone(rejection(valid))
 
+        raced = [dict(item) for item in valid]
+        for item in raced:
+            item["receiver_status_version"] = 3
+            item["receiver_status_max_version_seen"] = 7
+        self.assertIsNone(rejection(tuple(raced)))
+
+        downgraded = [dict(item) for item in raced]
+        downgraded[0]["receiver_capabilities"] = 0x400C
+        self.assertIn(
+            "lacks required firmware capabilities",
+            rejection(tuple(downgraded)),
+        )
+
         cases = []
         missing_capability = [dict(item) for item in valid]
         missing_capability[0]["receiver_capabilities"] = 0x400C
@@ -1263,7 +1284,13 @@ class TargetHealthIntegrationTests(unittest.TestCase):
 
         old_status = [dict(item) for item in valid]
         old_status[0]["receiver_status_version"] = 6
-        cases.append((old_status, "below required v7"))
+        old_status[0]["receiver_status_max_version_seen"] = 6
+        cases.append((old_status, "required latest>=v3 and observed>=v7"))
+
+        no_extended_observation = [dict(item) for item in valid]
+        no_extended_observation[0]["receiver_status_version"] = 3
+        no_extended_observation[0]["receiver_status_max_version_seen"] = 0
+        cases.append((no_extended_observation, "max_seen=v0"))
 
         wrong_selection = [dict(item) for item in valid]
         wrong_selection[2]["fec_transport_requested"] = True
@@ -1945,7 +1972,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         contract = self._receiver_contract(PRODUCTION_FIRMWARE_ENVIRONMENT)
         cases = []
         legacy = list(self._receiver_statuses(version=2, capabilities=0))
-        cases.append((tuple(legacy), "below required v7"))
+        cases.append((tuple(legacy), "required latest>=v3 and observed>=v7"))
         wrong_fifth = [dict(item) for item in self._receiver_statuses(
             version=7, capabilities=0xC00C
         )]

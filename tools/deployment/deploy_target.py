@@ -2785,16 +2785,24 @@ def _receiver_health_rejection(
         logical_id = expected["logical_device"]
         status = by_id[logical_id]
         version = status.get("receiver_status_version")
+        max_version_seen = status.get("receiver_status_max_version_seen")
         capabilities = status.get("receiver_capabilities")
         responses = status.get("receiver_status_responses")
         if status.get("receiver_status_seen") is not True:
             return f"receiver {logical_id} has no fresh status response"
         if type(responses) is not int or responses <= 0:
             return f"receiver {logical_id} status response evidence is not fresh"
-        if type(version) is not int or version < minimum_version:
+        if (
+            type(version) is not int
+            or type(max_version_seen) is not int
+            or version < 3
+            or max_version_seen < minimum_version
+            or version > max_version_seen
+        ):
             return (
-                f"receiver {logical_id} status v{version!r} is below required "
-                f"v{minimum_version}"
+                f"receiver {logical_id} status observation is insufficient: "
+                f"latest=v{version!r}, max_seen=v{max_version_seen!r}, "
+                f"required latest>=v3 and observed>=v{minimum_version}"
             )
         if (
             type(capabilities) is not int
@@ -2954,6 +2962,14 @@ def _receiver_health_rejection(
         ),
         "full_frame_write_only_supported": all(
             status.get("full_frame_write_only_supported") is True
+            for status in sample.receiver_statuses
+        ),
+        "receiver_status_version": min(
+            int(status["receiver_status_version"])
+            for status in sample.receiver_statuses
+        ),
+        "receiver_status_max_version_seen": min(
+            int(status["receiver_status_max_version_seen"])
             for status in sample.receiver_statuses
         ),
         "receiver_fec_last_decode_us": max(

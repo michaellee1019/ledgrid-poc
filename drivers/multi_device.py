@@ -3270,6 +3270,8 @@ class MultiDeviceLEDController:
         receiver_spi_queue_errors = 0
         receiver_display_errors = 0
         receiver_status_misses = 0
+        receiver_status_versions = []
+        receiver_status_max_versions_seen = []
         receiver_last_encode_us = 0
         receiver_last_show_us = 0
         receiver_capabilities_all = None
@@ -3400,6 +3402,12 @@ class MultiDeviceLEDController:
             receiver_spi_queue_errors += int(stats.get('receiver_spi_queue_errors', 0) or 0)
             receiver_display_errors += int(stats.get('receiver_display_errors', 0) or 0)
             receiver_status_misses += int(stats.get('receiver_status_misses', 0) or 0)
+            receiver_status_versions.append(
+                int(stats.get('receiver_status_version', 0) or 0)
+            )
+            receiver_status_max_versions_seen.append(
+                int(stats.get('receiver_status_max_version_seen', 0) or 0)
+            )
             receiver_last_encode_us = max(
                 receiver_last_encode_us,
                 int(stats.get('receiver_last_encode_us', 0) or 0),
@@ -3549,6 +3557,14 @@ class MultiDeviceLEDController:
                 'receiver_spi_queue_errors': receiver_spi_queue_errors,
                 'receiver_display_errors': receiver_display_errors,
                 'receiver_status_misses': receiver_status_misses,
+                'receiver_status_version': (
+                    min(receiver_status_versions)
+                    if receiver_status_versions else 0
+                ),
+                'receiver_status_max_version_seen': (
+                    min(receiver_status_max_versions_seen)
+                    if receiver_status_max_versions_seen else 0
+                ),
                 'receiver_last_encode_us': receiver_last_encode_us,
                 'receiver_last_show_us': receiver_last_show_us,
                 'receiver_capabilities_all': receiver_capabilities_all or 0,

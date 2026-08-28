@@ -264,6 +264,14 @@ def _full_frame_transport_evidence_item(
             for field in _FULL_FRAME_EVIDENCE_COUNTERS
         },
         "final": {
+            "receiver_status_version": _integer(
+                after.get("receiver_status_version"),
+                "final receiver_status_version",
+            ),
+            "receiver_status_max_version_seen": _integer(
+                after.get("receiver_status_max_version_seen"),
+                "final receiver_status_max_version_seen",
+            ),
             "full_frame_frames_since_status_sample": _integer(
                 after.get("full_frame_frames_since_status_sample"),
                 "final full_frame_frames_since_status_sample",
@@ -343,13 +351,25 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
                 f"receiver {logical_id} host aligned transport is not enabled"
             )
         expected_fec = logical_id == 3
-        status_version = _integer(
+        latest_status_version = _integer(
             device.get("receiver_status_version"),
-            f"receiver {logical_id} status version",
+            f"receiver {logical_id} latest status version",
         )
-        if status_version < (7 if expected_fec else 3):
+        max_status_version = _integer(
+            device.get("receiver_status_max_version_seen"),
+            f"receiver {logical_id} maximum status version seen",
+        )
+        required_observed_version = 7
+        if (
+            latest_status_version < 3
+            or latest_status_version > max_status_version
+            or max_status_version < required_observed_version
+        ):
             raise TargetEvidenceError(
-                f"receiver {logical_id} status version is below the required contract"
+                f"receiver {logical_id} status observation is below the required "
+                f"contract: latest=v{latest_status_version}, "
+                f"max_seen=v{max_status_version}, "
+                f"required observed>=v{required_observed_version}"
             )
         if (
             device.get("fec_transport_requested") is not expected_fec
@@ -472,6 +492,12 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
         aggregate, "aggregate", minimum_buffer_size=3380
     )
     expected_gauges = {
+        "receiver_status_version": min(
+            int(device["receiver_status_version"]) for device in devices
+        ),
+        "receiver_status_max_version_seen": min(
+            int(device["receiver_status_max_version_seen"]) for device in devices
+        ),
         "full_frame_frames_since_status_sample": max(current_gaps),
         "full_frame_max_status_sample_gap": max(maximum_gaps),
         "spidev_buffer_size": min(buffer_sizes),
@@ -970,12 +996,25 @@ def build_target_evidence(
                 raise TargetEvidenceError(f"receiver {logical_id} metrics are malformed")
             if device.get("receiver_logical_device") != logical_id:
                 raise TargetEvidenceError(f"receiver {logical_id} identity does not match")
-            if _integer(
+            latest_status_version = _integer(
                 device.get("receiver_status_version"),
-                f"receiver {logical_id} status version",
-            ) < (7 if logical_id == 3 else 3):
+                f"receiver {logical_id} latest status version",
+            )
+            max_status_version = _integer(
+                device.get("receiver_status_max_version_seen"),
+                f"receiver {logical_id} maximum status version seen",
+            )
+            required_observed_version = 7
+            if (
+                latest_status_version < 3
+                or latest_status_version > max_status_version
+                or max_status_version < required_observed_version
+            ):
                 raise TargetEvidenceError(
-                    f"receiver {logical_id} status version is below the required contract"
+                    f"receiver {logical_id} status observation is below the required "
+                    f"contract: latest=v{latest_status_version}, "
+                    f"max_seen=v{max_status_version}, "
+                    f"required observed>=v{required_observed_version}"
                 )
             encode_ms = _number(
                 device.get("receiver_last_encode_us"),

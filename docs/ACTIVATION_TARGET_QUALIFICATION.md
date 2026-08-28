@@ -19,8 +19,11 @@ PERF-01 passes only when all of the following hold in one observation window:
 - the guarded receipt stays `active` with identical requested and observed
   scene, globals, and installation-profile identities;
 - the live plugin, brightness, profile, and target FPS match the checked basis;
-- a fresh status drain reports exactly five status-v3 receivers with logical
-  identities `0..4`, routes `0.0, 0.1, 1.1, 1.0, 1.2`, widths
+- a fresh status drain reports exactly five receivers with actual latest
+  status v3+ responses and per-process `receiver_status_max_version_seen=7`
+  proof (a later ordinary v3 response does not erase an earlier v7
+  observation), with logical identities `0..4`, routes
+  `0.0, 0.1, 1.1, 1.0, 1.2`, widths
   `8, 8, 8, 8, 1`, offsets `0, 8, 16, 24, 32`, installed direction maps, and
   aligned-envelope capability `1<<14` and FEC capability `1<<15`; every Host receiver reports
   `transport_envelope_enabled=true`, the aggregate enabled count is exactly
@@ -47,7 +50,8 @@ PERF-01 passes only when all of the following hold in one observation window:
 - all five receivers advance displayed-frame counters at at least `150 FPS`;
   their measured p95 critical-stage latency fits `6.67 ms` and CRC, publish-drop,
   SPI-queue, display, and status-miss counters have zero delta;
-- receiver 3 reports status v7, and its received and accepted FEC deltas equal
+- all receivers have actually produced status v7 in the current Host process;
+  receiver 3's received and accepted FEC deltas equal
   Host FEC-sent/full-frame deltas exactly; uncorrectable, semantic-CRC, and
   framing deltas are zero, while corrected packet/codeword deltas may be
   nonzero and must remain internally consistent;
@@ -75,12 +79,13 @@ The helper is observation-only apart from a receiver status query and the
 atomic evidence-file replacement. It never starts, stops, or reconfigures the
 wall. A failed capture leaves the previous evidence file untouched. A fresh
 Composer Check loads the strict envelope only when its binding digest matches.
-The retained target-evidence envelope is schema v2 and includes a strict
+The retained target-evidence envelope is schema v3 and includes a strict
 `transport` proof: exact aggregate and logical-device `0..4` full-frame/FEC deltas,
-the 3,320/3,380/424-byte expected wire sizes, final sample-gap/FEC-decode gauges, selected spidev
+the 3,320/3,380/424-byte expected wire sizes, separate latest and sticky maximum
+status-version fields, final sample-gap/FEC-decode gauges, selected spidev
 buffer capacities, and write-only fast-path support. Aggregate additive values
 must equal the receiver sums, while gap, capacity, and support aggregates must
-equal the receiver maximum, minimum, and conjunction respectively. Schema-v1,
+equal the receiver maximum, minimum, and conjunction respectively. Schema-v1/v2,
 omitted, malformed, unknown, reset, or internally drifted transport evidence is
 rejected rather than treated as a compatible receipt.
 

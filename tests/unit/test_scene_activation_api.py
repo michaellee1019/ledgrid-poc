@@ -78,6 +78,8 @@ def _target_transport() -> dict:
                 "full_frame_write_only_transfers": 298,
             },
             "final": {
+                "receiver_status_version": 7,
+                "receiver_status_max_version_seen": 7,
                 "full_frame_frames_since_status_sample": logical_device,
                 "full_frame_max_status_sample_gap": 255,
                 "spidev_buffer_size": 4096,
@@ -113,6 +115,8 @@ def _target_transport() -> dict:
                 for field in devices[0]["deltas"]
             },
             "final": {
+                "receiver_status_version": 7,
+                "receiver_status_max_version_seen": 7,
                 "full_frame_frames_since_status_sample": 4,
                 "full_frame_max_status_sample_gap": 255,
                 "spidev_buffer_size": 4096,
@@ -442,7 +446,7 @@ class SceneActivationApiTests(unittest.TestCase):
         captured_at = int(time.time() * 1000)
         target_evidence = {
             "schema": "ledgrid.target-qualification-evidence",
-            "schema_version": 2,
+            "schema_version": 3,
             "revision": 1,
             "binding_digest": binding_digest,
             "captured_at": captured_at,

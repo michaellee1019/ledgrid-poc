@@ -177,6 +177,7 @@ AGGREGATE_CONTINUITY_COUNTERS = (
 )
 DEVICE_SAMPLE_FIELDS = (
     "receiver_status_version",
+    "receiver_status_max_version_seen",
     "receiver_status_seen",
     "receiver_capabilities",
     "transport_envelope_enabled",
@@ -483,11 +484,20 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
         seen.add(logical_id)
         if item.get("receiver_status_seen") is not True:
             failures.append(f"receiver {logical_id} has no readable status")
-        version = _integer(item.get("receiver_status_version"))
-        required_version = 7 if logical_id == 3 else 3
-        if version is None or version < required_version:
+        latest_version = _integer(item.get("receiver_status_version"))
+        max_version_seen = _integer(item.get("receiver_status_max_version_seen"))
+        required_observed_version = 7
+        if (
+            latest_version is None
+            or max_version_seen is None
+            or latest_version < 3
+            or latest_version > max_version_seen
+            or max_version_seen < required_observed_version
+        ):
             failures.append(
-                f"receiver {logical_id} does not report status v{required_version}+"
+                f"receiver {logical_id} status observation is insufficient: "
+                f"latest=v{latest_version!r}, max_seen=v{max_version_seen!r}, "
+                f"required observed>=v{required_observed_version}"
             )
         capabilities = _integer(item.get("receiver_capabilities"))
         if (
@@ -619,6 +629,19 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
     ))
     if devices:
         gauge_expectations = {
+            "receiver_status_version": min(
+                (_integer(_mapping(raw).get("receiver_status_version")) or 0)
+                for raw in devices
+            ),
+            "receiver_status_max_version_seen": min(
+                (
+                    _integer(
+                        _mapping(raw).get("receiver_status_max_version_seen")
+                    )
+                    or 0
+                )
+                for raw in devices
+            ),
             "full_frame_frames_since_status_sample": max(
                 (_integer(_mapping(raw).get("full_frame_frames_since_status_sample")) or 0)
                 for raw in devices
@@ -804,6 +827,12 @@ def normalize_sample(
             ),
             "fec_transport_enabled_devices": aggregate.get(
                 "fec_transport_enabled_devices"
+            ),
+            "receiver_status_version": aggregate.get(
+                "receiver_status_version"
+            ),
+            "receiver_status_max_version_seen": aggregate.get(
+                "receiver_status_max_version_seen"
             ),
             "full_frame_frames_since_status_sample": aggregate.get(
                 "full_frame_frames_since_status_sample"

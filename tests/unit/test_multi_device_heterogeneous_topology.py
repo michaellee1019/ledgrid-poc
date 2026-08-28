@@ -283,6 +283,8 @@ class HeterogeneousTopologyTests(unittest.TestCase):
                     "full_frame_status_samples": 2 + logical_id,
                     "full_frame_status_sample_misses": logical_id,
                     "full_frame_write_only_transfers": 98 - logical_id,
+                    "receiver_status_version": 3 + logical_id,
+                    "receiver_status_max_version_seen": 7,
                     "full_frame_frames_since_status_sample": 4 + logical_id,
                     "full_frame_max_status_sample_gap": 120 + logical_id,
                     "spidev_buffer_size": 4096 - logical_id,
@@ -297,6 +299,8 @@ class HeterogeneousTopologyTests(unittest.TestCase):
         self.assertEqual(aggregate["full_frame_status_samples"], 20)
         self.assertEqual(aggregate["full_frame_status_sample_misses"], 10)
         self.assertEqual(aggregate["full_frame_write_only_transfers"], 480)
+        self.assertEqual(aggregate["receiver_status_version"], 3)
+        self.assertEqual(aggregate["receiver_status_max_version_seen"], 7)
         self.assertEqual(aggregate["full_frame_frames_since_status_sample"], 8)
         self.assertEqual(aggregate["full_frame_max_status_sample_gap"], 124)
         self.assertEqual(aggregate["spidev_buffer_size"], 4092)

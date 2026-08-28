@@ -204,6 +204,9 @@ gate can establish that this fallback is sufficient on the installed link.
 The capacity gate passes only when receiver telemetry shows:
 
 - no reset, panic, watchdog, or service failure;
+- every receiver has an actual status-v7 observation in the current Host
+  process; a later scheduled v3 response may remain the latest response without
+  erasing that sticky proof;
 - CRC-error delta of zero after warm-up;
 - exactly one requested/enabled FEC receiver, logical receiver 3;
 - receiver-3 received and accepted FEC packets match Host-sent full frames,

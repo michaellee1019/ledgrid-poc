@@ -140,6 +140,8 @@ def _target_transport() -> dict:
                 "full_frame_write_only_transfers": 1494,
             },
             "final": {
+                "receiver_status_version": 7,
+                "receiver_status_max_version_seen": 7,
                 "full_frame_frames_since_status_sample": logical_device,
                 "full_frame_max_status_sample_gap": 15,
                 "spidev_buffer_size": 4096,
@@ -175,6 +177,8 @@ def _target_transport() -> dict:
                 for field in devices[0]["deltas"]
             },
             "final": {
+                "receiver_status_version": 7,
+                "receiver_status_max_version_seen": 7,
                 "full_frame_frames_since_status_sample": 4,
                 "full_frame_max_status_sample_gap": 15,
                 "spidev_buffer_size": 4096,
@@ -447,7 +451,7 @@ class ActivationQualificationTests(unittest.TestCase):
         transport = _target_transport()
         envelope = {
             "schema": "ledgrid.target-qualification-evidence",
-            "schema_version": 2,
+            "schema_version": 3,
             "revision": 1,
             "binding_digest": binding_digest,
             "captured_at": captured_at,
@@ -494,13 +498,13 @@ class ActivationQualificationTests(unittest.TestCase):
                 with self.assertRaises(QualificationValidationError):
                     normalize_target_qualification_evidence(changed)
 
-    def test_target_evidence_v2_transport_is_strict_and_self_consistent(self) -> None:
+    def test_target_evidence_v3_transport_is_strict_and_self_consistent(self) -> None:
         binding_digest = activation_qualification_binding_digest(_binding())
         captured_at = NOW_MS - 1_000
         transport = _target_transport()
         envelope = {
             "schema": "ledgrid.target-qualification-evidence",
-            "schema_version": 2,
+            "schema_version": 3,
             "revision": 1,
             "binding_digest": binding_digest,
             "captured_at": captured_at,
@@ -528,6 +532,36 @@ class ActivationQualificationTests(unittest.TestCase):
             ],
             list(range(5)),
         )
+
+        raced = deepcopy(envelope)
+        for device in raced["transport"]["devices"]:
+            device["final"]["receiver_status_version"] = 3
+        raced["transport"]["aggregate"]["final"]["receiver_status_version"] = 3
+        raced["evidence"][1]["transport_digest"] = canonical_json_sha256(
+            raced["transport"]
+        )
+        normalized_raced = normalize_target_qualification_evidence(raced)
+        self.assertEqual(
+            normalized_raced["transport"]["aggregate"]["final"],
+            {
+                **transport["aggregate"]["final"],
+                "receiver_status_version": 3,
+            },
+        )
+
+        never_v7 = deepcopy(raced)
+        for device in never_v7["transport"]["devices"]:
+            device["final"]["receiver_status_max_version_seen"] = 6
+        never_v7["transport"]["aggregate"]["final"][
+            "receiver_status_max_version_seen"
+        ] = 6
+        never_v7["evidence"][1]["transport_digest"] = canonical_json_sha256(
+            never_v7["transport"]
+        )
+        with self.assertRaisesRegex(
+            QualificationValidationError, "must be an integer from 7 through"
+        ):
+            normalize_target_qualification_evidence(never_v7)
 
         mutations = (
             ("v1", lambda value: value.__setitem__("schema_version", 1)),
@@ -658,7 +692,7 @@ class ActivationQualificationTests(unittest.TestCase):
         transport = _target_transport()
         envelope = {
             "schema": "ledgrid.target-qualification-evidence",
-            "schema_version": 2,
+            "schema_version": 3,
             "revision": 1,
             "binding_digest": binding_digest,
             "captured_at": captured_at,
@@ -727,9 +761,6 @@ class ActivationQualificationTests(unittest.TestCase):
 
     def test_receiver_transport_digest_is_bound_into_record_digest(self) -> None:
         record = _record()
-        receiver = next(
-            item for item in record["evidence"] if item["source"] == "receiver"
-        )
         first = activation_qualification_record_digest(record)
 
         changed = deepcopy(record)

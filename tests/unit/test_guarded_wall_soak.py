@@ -75,7 +75,8 @@ def _device(receiver_id: int, elapsed: float) -> dict:
     full_frame_total = base + frames
     status_transfers = full_frame_total // 16
     return {
-        "receiver_status_version": 7 if fec_enabled else 3,
+        "receiver_status_version": 7,
+        "receiver_status_max_version_seen": 7,
         "receiver_status_seen": True,
         "receiver_capabilities": 0xC00C,
         "transport_envelope_enabled": True,
@@ -171,6 +172,12 @@ def _status(elapsed: float) -> dict:
                 "transport_envelope_devices": 5,
                 "fec_transport_requested_devices": 1,
                 "fec_transport_enabled_devices": 1,
+                "receiver_status_version": min(
+                    item["receiver_status_version"] for item in devices
+                ),
+                "receiver_status_max_version_seen": min(
+                    item["receiver_status_max_version_seen"] for item in devices
+                ),
                 "errors": 0,
                 "frames_sent": 5000 + frames,
                 "logical_frames_sent": 5000 + frames,
@@ -358,6 +365,46 @@ class GuardedWallSoakTests(unittest.TestCase):
                 "receiver_fec_corrected_packets"
             ],
             0,
+        )
+
+    def test_status_v7_observation_survives_later_v3_samples(self) -> None:
+        def scheduled_v3(status, _activation_status, _elapsed):
+            if status is None:
+                return
+            for device in status["driver_stats"]["devices"]:
+                device["receiver_status_version"] = 3
+            status["driver_stats"]["aggregate"]["receiver_status_version"] = 3
+
+        clock = _Clock()
+        report = _run(_config(), _API(clock, scheduled_v3), clock)
+        self.assertTrue(report["passed"], report["failures"])
+        self.assertTrue(
+            all(
+                device["receiver_status_version"] == 3
+                and device["receiver_status_max_version_seen"] == 7
+                for device in report["samples"][-1]["devices"]
+            )
+        )
+
+    def test_soak_fails_when_current_process_never_observed_status_v7(self) -> None:
+        def never_v7(status, _activation_status, _elapsed):
+            if status is None:
+                return
+            status["driver_stats"]["devices"][0].update({
+                "receiver_status_version": 3,
+                "receiver_status_max_version_seen": 6,
+            })
+            status["driver_stats"]["aggregate"].update({
+                "receiver_status_version": 3,
+                "receiver_status_max_version_seen": 6,
+            })
+
+        clock = _Clock()
+        report = _run(_config(), _API(clock, never_v7), clock)
+        self.assertFalse(report["passed"])
+        self.assertTrue(
+            any("required observed>=v7" in failure for failure in report["failures"]),
+            report["failures"],
         )
 
     def test_fec_terminal_faults_each_fail_while_corrections_are_allowed(self) -> None:

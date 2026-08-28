@@ -50,6 +50,7 @@ def _device(logical_id: int, displayed: int) -> dict:
     return {
         "receiver_logical_device": logical_id,
         "receiver_status_version": 7,
+        "receiver_status_max_version_seen": 7,
         "receiver_capabilities": 0xC00C,
         "transport_envelope_enabled": True,
         "transport_envelope_negotiation_candidate": None,
@@ -149,6 +150,13 @@ def _metrics(*, final: bool) -> dict:
                 "transport_envelope_devices": 5,
                 "fec_transport_requested_devices": 1,
                 "fec_transport_enabled_devices": 1,
+                "receiver_status_version": min(
+                    device["receiver_status_version"] for device in devices
+                ),
+                "receiver_status_max_version_seen": min(
+                    device["receiver_status_max_version_seen"]
+                    for device in devices
+                ),
                 **{
                     field: sum(device[field] for device in devices)
                     for field in transport_fields
@@ -270,7 +278,7 @@ class TargetQualificationCaptureTests(unittest.TestCase):
         self.assertEqual(by_source["receiver"]["cadence"]["observed_fps"], 150.0)
         self.assertLess(by_source["receiver"]["frame_time_ms"]["max"], 4.5)
         self.assertIsNone(by_source["receiver"]["electrical"])
-        self.assertEqual(result["schema_version"], 2)
+        self.assertEqual(result["schema_version"], 3)
         transport = result["transport"]
         self.assertEqual(
             [item["logical_device"] for item in transport["devices"]],
@@ -471,6 +479,23 @@ class TargetQualificationCaptureTests(unittest.TestCase):
                 )
                 with self.assertRaisesRegex(TargetEvidenceError, expected_error):
                     validate_installed_topology(changed)
+
+    def test_status_v7_observation_is_sticky_across_later_v3_samples(self) -> None:
+        raced = _metrics(final=False)
+        for device in raced["driver"]["devices"]:
+            device["receiver_status_version"] = 3
+        raced["driver"]["aggregate"]["receiver_status_version"] = 3
+        validate_installed_topology(raced)
+
+        never_v7 = deepcopy(raced)
+        never_v7["driver"]["devices"][0][
+            "receiver_status_max_version_seen"
+        ] = 6
+        never_v7["driver"]["aggregate"][
+            "receiver_status_max_version_seen"
+        ] = 6
+        with self.assertRaisesRegex(TargetEvidenceError, "required observed>=v7"):
+            validate_installed_topology(never_v7)
 
     def test_perf_rejects_missing_stalled_and_drifted_transport_accounting(self) -> None:
         cases = []

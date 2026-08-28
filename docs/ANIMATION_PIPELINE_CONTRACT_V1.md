@@ -347,6 +347,13 @@ observed may the host negotiate a 416-byte `LGS4`, 768-byte `LGS5`, 1,216-byte
 exact transfer size. The v7 record preserves the complete v6 prefix apart from
 magic/version and appends the FEC counters described above.
 
+The Host exposes the latest actual response version as
+`receiver_status_version` and a separate, process-local sticky maximum as
+`receiver_status_max_version_seen`. Every successfully parsed v1-v7 response
+updates both fields. Production readiness requires a fresh response and an
+actual maximum of v7; a normal scheduled v3 response after v7 may change only
+the latest field and cannot erase the v7 proof.
+
 | Offset | Bytes | Field |
 | ---: | ---: | --- |
 | 0 | 4 | magic `LGS3` |
