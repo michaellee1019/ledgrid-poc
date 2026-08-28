@@ -41,6 +41,7 @@ class _Device:
         self.spi_speed_hz = kwargs["speed"]
         self.spi_mode = kwargs["mode"]
         self.reverse_native_strip_order = kwargs["reverse_native_strip_order"]
+        self.fec_transport = kwargs["fec_transport"]
         self.frames = []
         self.wall_frame_sequences = []
         self.pixels = []
@@ -237,6 +238,39 @@ def _controller():
 
 
 class HeterogeneousTopologyTests(unittest.TestCase):
+    def test_fec_allowlist_reaches_only_configured_logical_receiver(self):
+        with (
+            mock.patch("drivers.multi_device.LEDController", _Device),
+            mock.patch.object(
+                MultiDeviceLEDController,
+                "_initialize_receiver_identity_observability",
+                lambda _self: None,
+            ),
+        ):
+            controller = MultiDeviceLEDController(
+                num_devices=5,
+                device_map=ROUTES,
+                receiver_strip_counts=WIDTHS,
+                receiver_global_strip_offsets=OFFSETS,
+                fec_receiver_ids=(3,),
+                parallel=False,
+            )
+        self.assertEqual(controller.fec_receiver_ids, (3,))
+        self.assertEqual(
+            [device.fec_transport for device in controller.devices],
+            [False, False, False, True, False],
+        )
+        for invalid in ([3], (3, 3), (5,), (True,)):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                MultiDeviceLEDController(
+                    num_devices=5,
+                    device_map=ROUTES,
+                    receiver_strip_counts=WIDTHS,
+                    receiver_global_strip_offsets=OFFSETS,
+                    fec_receiver_ids=invalid,
+                    parallel=False,
+                )
+
     def test_status_sample_and_write_only_counters_aggregate_exactly(self):
         controller = _controller()
         for logical_id, device in enumerate(controller.devices):

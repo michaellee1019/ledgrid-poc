@@ -42,18 +42,35 @@ ALIGNED_ENVELOPE_HEADER_BYTES = 4
 MAX_ALIGNED_SEMANTIC_BYTES = (
     MAX_SPI_TRANSFER - ALIGNED_ENVELOPE_HEADER_BYTES - CRC_BYTES
 )
+FEC_DATA_BYTES = 128
+FEC_PARITY_BYTES = 2
+FEC_CODEWORD_BYTES = FEC_DATA_BYTES + FEC_PARITY_BYTES
+FEC_PARITY_BITS = 11
+FEC_PARITY_MASK = (1 << FEC_PARITY_BITS) - 1
+FEC_OVERALL_PARITY_MASK = 1 << FEC_PARITY_BITS
+FEC_MAX_CODEWORDS = 30
+FEC_ENVELOPE_VERSION = 2
+FEC_ENVELOPE_HEADER_BYTES = 4
+MAX_FEC_SEMANTIC_BYTES = (
+    FEC_MAX_CODEWORDS * FEC_DATA_BYTES
+    - FEC_ENVELOPE_HEADER_BYTES
+    - ALIGNED_ENVELOPE_HEADER_BYTES
+    - CRC_BYTES
+)
 RECEIVER_STATUS_MAGIC = (ord('L'), ord('G'), ord('S'), ord('1'))
 RECEIVER_STATUS_MAGIC_V2 = (ord('L'), ord('G'), ord('S'), ord('2'))
 RECEIVER_STATUS_MAGIC_V3 = (ord('L'), ord('G'), ord('S'), ord('3'))
 RECEIVER_STATUS_MAGIC_V4 = (ord('L'), ord('G'), ord('S'), ord('4'))
 RECEIVER_STATUS_MAGIC_V5 = (ord('L'), ord('G'), ord('S'), ord('5'))
 RECEIVER_STATUS_MAGIC_V6 = (ord('L'), ord('G'), ord('S'), ord('6'))
+RECEIVER_STATUS_MAGIC_V7 = (ord('L'), ord('G'), ord('S'), ord('7'))
 RECEIVER_STATUS_BYTES = 29
 RECEIVER_STATUS_BYTES_V2 = 68
 RECEIVER_STATUS_BYTES_V3 = 320
 RECEIVER_STATUS_BYTES_V4 = 416
 RECEIVER_STATUS_BYTES_V5 = 768
 RECEIVER_STATUS_BYTES_V6 = 1216
+RECEIVER_STATUS_BYTES_V7 = 1248
 # The ESP32 slave keeps two response buffers queued. A command's result is
 # therefore observable after two complete status-query transfers.
 SPI_RESPONSE_QUEUE_DEPTH = 2
@@ -226,6 +243,108 @@ def _encode_aligned_envelope(payload, output=None):
     crc = _crc16_ccitt(memoryview(wire)[:-CRC_BYTES])
     wire[-2] = (crc >> 8) & 0xFF
     wire[-1] = crc & 0xFF
+    return wire
+
+
+def _fec_data_positions():
+    positions = []
+    position = 1
+    while len(positions) < FEC_DATA_BYTES * 8:
+        if position & (position - 1):
+            positions.append(position)
+        position += 1
+    return tuple(positions)
+
+
+_FEC_DATA_BIT_POSITIONS = _fec_data_positions()
+
+
+def _fec_byte_syndromes():
+    rows = []
+    for byte_index in range(FEC_DATA_BYTES):
+        positions = _FEC_DATA_BIT_POSITIONS[byte_index * 8:(byte_index + 1) * 8]
+        row = []
+        for value in range(256):
+            syndrome = 0
+            for bit, position in enumerate(positions):
+                if value & (1 << bit):
+                    syndrome ^= position
+            row.append(syndrome)
+        rows.append(tuple(row))
+    return tuple(rows)
+
+
+_FEC_BYTE_SYNDROMES = _fec_byte_syndromes()
+
+
+def _fec_envelope_wire_size(semantic_length):
+    """Return exact DMA-safe v2 FEC wire bytes for one semantic packet."""
+    if isinstance(semantic_length, bool) or not isinstance(semantic_length, int):
+        raise TypeError("semantic_length must be an integer")
+    if semantic_length < 1 or semantic_length > MAX_FEC_SEMANTIC_BYTES:
+        raise ValueError(
+            f"FEC semantic packet must contain 1..{MAX_FEC_SEMANTIC_BYTES} bytes"
+        )
+    inner_size = _aligned_envelope_wire_size(semantic_length)
+    protected_size = FEC_ENVELOPE_HEADER_BYTES + inner_size
+    codewords = (protected_size + FEC_DATA_BYTES - 1) // FEC_DATA_BYTES
+    if codewords % 2:
+        codewords += 1
+    if codewords > FEC_MAX_CODEWORDS:
+        raise ValueError("FEC packet exceeds the 4096-byte SPI transfer limit")
+    return codewords * FEC_CODEWORD_BYTES
+
+
+def _encode_fec_envelope(payload, output=None, inner_output=None):
+    """SECDED-protect a v2 discriminator plus the complete canonical v1 packet."""
+    try:
+        semantic = memoryview(payload).cast("B")
+    except (TypeError, ValueError) as exc:
+        raise TypeError("payload must be a contiguous bytes-like object") from exc
+    semantic_length = len(semantic)
+    wire_size = _fec_envelope_wire_size(semantic_length)
+    inner_size = _aligned_envelope_wire_size(semantic_length)
+    if inner_output is not None and (
+        not isinstance(inner_output, bytearray) or len(inner_output) != inner_size
+    ):
+        raise ValueError("inner_output must be a bytearray of the exact v1 wire size")
+    inner = _encode_aligned_envelope(semantic, output=inner_output)
+    if output is None:
+        wire = bytearray(wire_size)
+    else:
+        if not isinstance(output, bytearray) or len(output) != wire_size:
+            raise ValueError("output must be a bytearray of the exact FEC wire size")
+        wire = output
+    wire[0] = CMD_ALIGNED_ENVELOPE
+    wire[1] = FEC_ENVELOPE_VERSION
+    wire[2] = (inner_size >> 8) & 0xFF
+    wire[3] = inner_size & 0xFF
+    inner_offset = 0
+    codewords = wire_size // FEC_CODEWORD_BYTES
+    for block in range(codewords):
+        wire_offset = block * FEC_CODEWORD_BYTES
+        data_end = wire_offset + FEC_DATA_BYTES
+        data_offset = wire_offset
+        if block == 0:
+            data_offset += FEC_ENVELOPE_HEADER_BYTES
+        block_length = min(data_end - data_offset, inner_size - inner_offset)
+        if block_length:
+            wire[data_offset:data_offset + block_length] = inner[
+                inner_offset:inner_offset + block_length
+            ]
+        wire[data_offset + block_length:data_end] = b"\x00" * (
+            data_end - data_offset - block_length
+        )
+        syndrome = 0
+        data_parity = 0
+        for byte_index, value in enumerate(wire[wire_offset:data_end]):
+            syndrome ^= _FEC_BYTE_SYNDROMES[byte_index][value]
+            data_parity ^= value.bit_count() & 1
+        overall_parity = data_parity ^ (syndrome.bit_count() & 1)
+        stored = syndrome | (overall_parity << FEC_PARITY_BITS)
+        wire[data_end] = (stored >> 8) & 0xFF
+        wire[data_end + 1] = stored & 0xFF
+        inner_offset += block_length
     return wire
 
 LOCAL_BACKGROUND_RAINBOW = 1
@@ -407,6 +526,7 @@ CAPABILITY_NATIVE_TYPED_PARAMETERS_V1 = 1 << 11
 CAPABILITY_NATIVE_QUARANTINE_V1 = 1 << 12
 CAPABILITY_NATIVE_GUARDED_LOADER_V1 = 1 << 13
 CAPABILITY_ALIGNED_ENVELOPE_V1 = 1 << 14
+CAPABILITY_FEC_ENVELOPE_V2 = 1 << 15
 
 ALL_LANES_MASK = 0xFF
 STAGGER_OFF = 1
@@ -427,9 +547,11 @@ class LEDController:
                  strips=DEFAULT_NUM_STRIPS, leds_per_strip=DEFAULT_LED_PER_STRIP,
                  debug=False, logical_device_id=None,
                  reverse_native_strip_order=False,
-                 global_strip_offset=None):
+                 global_strip_offset=None, fec_transport=False):
         if type(reverse_native_strip_order) is not bool:
             raise TypeError("reverse_native_strip_order must be a boolean")
+        if type(fec_transport) is not bool:
+            raise TypeError("fec_transport must be a boolean")
         self.debug = debug
         self.bus = bus
         self.device = device
@@ -438,6 +560,7 @@ class LEDController:
         self.global_strip_offset = self._optional_global_strip_offset(
             global_strip_offset
         )
+        self._fec_transport_requested = fec_transport
         self.spi = spidev.SpiDev()
         self.spi.open(bus, device)
         self.spi.max_speed_hz = speed
@@ -494,6 +617,15 @@ class LEDController:
         self._receiver_packets = 0
         self._receiver_crc_errors = 0
         self._receiver_crc_ok_packets = 0
+        self._receiver_fec_packets_received = 0
+        self._receiver_fec_packets_accepted = 0
+        self._receiver_fec_corrected_packets = 0
+        self._receiver_fec_corrected_codewords = 0
+        self._receiver_fec_uncorrectable_packets = 0
+        self._receiver_fec_semantic_crc_errors = 0
+        self._receiver_fec_framing_errors = 0
+        self._receiver_fec_last_decode_us = 0
+        self._receiver_fec_max_decode_us = 0
         self._receiver_frames_rendered = 0
         self._receiver_last_crc_us = 0
         self._receiver_last_copy_us = 0
@@ -606,6 +738,19 @@ class LEDController:
         self._transport_envelope_counter_resets = 0
         self._transport_envelope_invalid_resets = 0
         self._transport_envelope_transitions = 0
+        self._fec_transport_enabled = False
+        self._fec_transport_candidate = None
+        self._fec_transport_candidate_streak = 0
+        self._fec_transport_last_receiver_packets = None
+        self._fec_transport_fresh_observations = 0
+        self._fec_transport_stale_observations = 0
+        self._fec_transport_counter_resets = 0
+        self._fec_transport_invalid_resets = 0
+        self._fec_transport_transitions = 0
+        self._fec_frames_sent = 0
+        self._fec_codewords_sent = 0
+        self._fec_parity_bytes_sent = 0
+        self._fec_data_padding_bytes_sent = 0
         self._writebytes2_supported = None
         self._last_transfer_captured_response = False
         self._last_transfer_status_sampled = False
@@ -615,6 +760,13 @@ class LEDController:
         self._frame_packet = bytearray(1 + self.total_leds * 3 + CRC_BYTES)
         self._aligned_frame_packet = bytearray(
             _aligned_envelope_wire_size(1 + self.total_leds * 3)
+        )
+        fec_semantic_size = 1 + self.total_leds * 3
+        self._fec_frame_packet = (
+            bytearray(_fec_envelope_wire_size(fec_semantic_size))
+            if self._fec_transport_requested
+            and fec_semantic_size <= MAX_FEC_SEMANTIC_BYTES
+            else None
         )
         
         if self.debug:
@@ -654,6 +806,12 @@ class LEDController:
             envelope_enabled = bool(
                 getattr(self, "_transport_envelope_enabled", False)
             )
+            fec_enabled = bool(
+                envelope_enabled
+                and getattr(self, "_fec_transport_requested", False)
+                and getattr(self, "_fec_transport_enabled", False)
+                and buf is getattr(self, "_frame_packet", None)
+            )
             maximum_payload = (
                 MAX_ALIGNED_SEMANTIC_BYTES
                 if envelope_enabled
@@ -665,7 +823,34 @@ class LEDController:
                 )
             if len(buf) != payload_length + CRC_BYTES:
                 raise ValueError("packet buffer must contain exactly payload plus CRC storage")
-            if envelope_enabled:
+            if fec_enabled:
+                reusable = getattr(self, "_fec_frame_packet", None)
+                expected = _fec_envelope_wire_size(payload_length)
+                if not isinstance(reusable, bytearray) or len(reusable) != expected:
+                    reusable = None
+                wire = _encode_fec_envelope(
+                    memoryview(buf)[:payload_length], output=reusable,
+                    inner_output=getattr(self, "_aligned_frame_packet", None),
+                )
+                codewords = len(wire) // FEC_CODEWORD_BYTES
+                inner_size = _aligned_envelope_wire_size(payload_length)
+                fec_parity_bytes = codewords * FEC_PARITY_BYTES
+                fec_data_padding_bytes = (
+                    codewords * FEC_DATA_BYTES
+                    - FEC_ENVELOPE_HEADER_BYTES
+                    - inner_size
+                )
+                envelope_bytes = (
+                    ALIGNED_ENVELOPE_HEADER_BYTES + FEC_ENVELOPE_HEADER_BYTES
+                )
+                inner_padding_bytes = (
+                    inner_size
+                    - ALIGNED_ENVELOPE_HEADER_BYTES
+                    - payload_length
+                    - CRC_BYTES
+                )
+                padding_bytes = fec_data_padding_bytes + inner_padding_bytes
+            elif envelope_enabled:
                 reusable = None
                 aligned_frame = getattr(self, "_aligned_frame_packet", None)
                 if buf is getattr(self, "_frame_packet", None):
@@ -689,18 +874,43 @@ class LEDController:
                 wire = buf
                 envelope_bytes = 0
                 padding_bytes = 0
+            # Preserve the established transport-counter contract: these
+            # counters describe the one kernel transfer attempt, including an
+            # ambiguous ioctl failure that must never be retried.  FEC's
+            # narrower ``*_sent`` counters are committed separately only once
+            # that attempt returns successfully.
             self._bytes_sent += len(wire)
             self._semantic_bytes_sent = (
                 getattr(self, "_semantic_bytes_sent", 0) + payload_length
             )
             self._transport_envelope_bytes_sent = (
-                getattr(self, "_transport_envelope_bytes_sent", 0) + envelope_bytes
+                getattr(self, "_transport_envelope_bytes_sent", 0)
+                + envelope_bytes
             )
             self._transport_padding_bytes_sent = (
-                getattr(self, "_transport_padding_bytes_sent", 0) + padding_bytes
+                getattr(self, "_transport_padding_bytes_sent", 0)
+                + padding_bytes
             )
             self._crc_bytes_sent += CRC_BYTES
             self._spi_transfers += 1
+
+            def record_successful_fec_transfer():
+                if not fec_enabled:
+                    return
+                self._fec_frames_sent = (
+                    getattr(self, "_fec_frames_sent", 0) + 1
+                )
+                self._fec_codewords_sent = (
+                    getattr(self, "_fec_codewords_sent", 0) + codewords
+                )
+                self._fec_parity_bytes_sent = (
+                    getattr(self, "_fec_parity_bytes_sent", 0)
+                    + fec_parity_bytes
+                )
+                self._fec_data_padding_bytes_sent = (
+                    getattr(self, "_fec_data_padding_bytes_sent", 0)
+                    + fec_data_padding_bytes
+                )
             try:
                 if not response_required:
                     writer = getattr(self.spi, "writebytes2", None)
@@ -714,12 +924,14 @@ class LEDController:
                             self._writebytes2_supported = False
                         else:
                             self._writebytes2_supported = True
+                            record_successful_fec_transfer()
                             self._last_transfer_captured_response = False
                             self._last_transfer_status_sampled = False
                             return None
                     elif not callable(writer):
                         self._writebytes2_supported = False
                 response = self.spi.xfer2(wire)
+                record_successful_fec_transfer()
                 status_sampled = bool(self._update_receiver_status(response))
                 self._last_transfer_captured_response = True
                 self._last_transfer_status_sampled = status_sampled
@@ -739,8 +951,23 @@ class LEDController:
 
     def _full_frame_write_only_supported(self):
         """Report support for this receiver's selected full-frame wire size."""
-        wire_length = len(getattr(self, "_aligned_frame_packet", ()))
+        wire_length = self._selected_full_frame_wire_size()
         return wire_length > 0 and self._write_only_fast_path_supported(wire_length)
+
+    def _fec_full_frame_enabled(self):
+        return bool(
+            getattr(self, "_transport_envelope_enabled", False)
+            and getattr(self, "_fec_transport_requested", False)
+            and getattr(self, "_fec_transport_enabled", False)
+        )
+
+    def _selected_full_frame_wire_size(self):
+        packet = (
+            getattr(self, "_fec_frame_packet", ())
+            if self._fec_full_frame_enabled()
+            else getattr(self, "_aligned_frame_packet", ())
+        )
+        return len(packet) if packet is not None else 0
 
     def _claim_full_frame_sequence(self, wall_frame_sequence):
         """Claim a local sequence or adopt the manager's shared wall sequence."""
@@ -963,6 +1190,7 @@ class LEDController:
         # status structure and therefore are not telemetry misses.
         if response is None or len(response) < RECEIVER_STATUS_BYTES:
             self._reset_transport_envelope_candidate(invalid=False)
+            self._reset_fec_transport_candidate(invalid=False)
             return False
         magic = tuple(int(response[index]) for index in range(4))
         indicated_status_bytes = {
@@ -971,9 +1199,11 @@ class LEDController:
             RECEIVER_STATUS_MAGIC_V4: RECEIVER_STATUS_BYTES_V4,
             RECEIVER_STATUS_MAGIC_V5: RECEIVER_STATUS_BYTES_V5,
             RECEIVER_STATUS_MAGIC_V6: RECEIVER_STATUS_BYTES_V6,
+            RECEIVER_STATUS_MAGIC_V7: RECEIVER_STATUS_BYTES_V7,
         }.get(magic)
         if indicated_status_bytes is not None and len(response) < indicated_status_bytes:
             self._reset_transport_envelope_candidate(invalid=False)
+            self._reset_fec_transport_candidate(invalid=False)
             return False
         known_status_bytes = {
             2: RECEIVER_STATUS_BYTES_V2,
@@ -981,13 +1211,17 @@ class LEDController:
             4: RECEIVER_STATUS_BYTES_V4,
             5: RECEIVER_STATUS_BYTES_V5,
             6: RECEIVER_STATUS_BYTES_V6,
+            7: RECEIVER_STATUS_BYTES_V7,
         }.get(getattr(self, '_receiver_status_version', 0), RECEIVER_STATUS_BYTES)
         if indicated_status_bytes is None and len(response) < known_status_bytes:
             # The Host clocked an ordinary command shorter than the known
             # atomic status snapshot. This breaks a pending consecutive streak
             # but is neither corruption nor a telemetry miss.
             self._reset_transport_envelope_candidate(invalid=False)
+            self._reset_fec_transport_candidate(invalid=False)
             return False
+        if magic == RECEIVER_STATUS_MAGIC_V7 and len(response) >= RECEIVER_STATUS_BYTES_V7:
+            return bool(self._update_receiver_status_v7(response))
         if magic == RECEIVER_STATUS_MAGIC_V6 and len(response) >= RECEIVER_STATUS_BYTES_V6:
             return bool(self._update_receiver_status_v6(response))
         if magic == RECEIVER_STATUS_MAGIC_V5 and len(response) >= RECEIVER_STATUS_BYTES_V5:
@@ -1027,12 +1261,15 @@ class LEDController:
             self._note_legacy_snapshot(
                 self._receiver_stagger_phases == LEGACY_SNAPSHOT_SENTINEL
             )
-            return self._observe_transport_envelope_capability(
+            fresh = self._observe_transport_envelope_capability(
                 False, self._receiver_packets
             )
+            self._observe_fec_transport_capability(False, self._receiver_packets)
+            return fresh
 
         if magic != RECEIVER_STATUS_MAGIC:
             self._reset_transport_envelope_candidate(invalid=True)
+            self._reset_fec_transport_candidate(invalid=True)
             if getattr(self, '_receiver_status_seen', False):
                 self._receiver_status_misses = getattr(self, '_receiver_status_misses', 0) + 1
             return False
@@ -1049,9 +1286,11 @@ class LEDController:
         self._receiver_last_show_us = self._response_u16(response, 24)
         self._receiver_active_strips = int(response[26])
         self._receiver_leds_per_strip = self._response_u16(response, 27)
-        return self._observe_transport_envelope_capability(
+        fresh = self._observe_transport_envelope_capability(
             False, self._receiver_packets
         )
+        self._observe_fec_transport_capability(False, self._receiver_packets)
+        return fresh
 
     def _reset_transport_envelope_candidate(self, *, invalid=False):
         """Discard an unproven transition without changing active framing."""
@@ -1061,6 +1300,60 @@ class LEDController:
             self._transport_envelope_invalid_resets = (
                 getattr(self, "_transport_envelope_invalid_resets", 0) + 1
             )
+
+    def _reset_fec_transport_candidate(self, *, invalid=False):
+        """Discard an unproven FEC transition without changing active framing."""
+        self._fec_transport_candidate = None
+        self._fec_transport_candidate_streak = 0
+        if invalid:
+            self._fec_transport_invalid_resets = (
+                getattr(self, "_fec_transport_invalid_resets", 0) + 1
+            )
+
+    def _observe_fec_transport_capability(self, advertised, receiver_packets):
+        """Enable v2 only after opt-in and three fresh capability snapshots."""
+        advertised = bool(
+            getattr(self, "_fec_transport_requested", False) and advertised
+        )
+        receiver_packets = int(receiver_packets)
+        last_packets = getattr(self, "_fec_transport_last_receiver_packets", None)
+        if last_packets is not None and receiver_packets == last_packets:
+            self._fec_transport_stale_observations = (
+                getattr(self, "_fec_transport_stale_observations", 0) + 1
+            )
+            self._reset_fec_transport_candidate()
+            return False
+        if last_packets is not None and receiver_packets < last_packets:
+            self._fec_transport_counter_resets = (
+                getattr(self, "_fec_transport_counter_resets", 0) + 1
+            )
+            self._reset_fec_transport_candidate()
+        self._fec_transport_last_receiver_packets = receiver_packets
+        self._fec_transport_fresh_observations = (
+            getattr(self, "_fec_transport_fresh_observations", 0) + 1
+        )
+        active = bool(getattr(self, "_fec_transport_enabled", False))
+        if advertised == active:
+            self._reset_fec_transport_candidate()
+            return True
+        candidate = getattr(self, "_fec_transport_candidate", None)
+        if candidate is advertised:
+            self._fec_transport_candidate_streak = (
+                getattr(self, "_fec_transport_candidate_streak", 0) + 1
+            )
+        else:
+            self._fec_transport_candidate = advertised
+            self._fec_transport_candidate_streak = 1
+        if (
+            self._fec_transport_candidate_streak
+            >= TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
+        ):
+            self._fec_transport_enabled = advertised
+            self._fec_transport_transitions = (
+                getattr(self, "_fec_transport_transitions", 0) + 1
+            )
+            self._reset_fec_transport_candidate()
+        return True
 
     def _observe_transport_envelope_capability(
         self, advertised, receiver_packets
@@ -1147,6 +1440,13 @@ class LEDController:
             self._receiver_capabilities & CAPABILITY_ALIGNED_ENVELOPE_V1,
             self._receiver_packets,
         )
+        self._observe_fec_transport_capability(
+            (
+                self._receiver_capabilities & CAPABILITY_ALIGNED_ENVELOPE_V1
+                and self._receiver_capabilities & CAPABILITY_FEC_ENVELOPE_V2
+            ),
+            self._receiver_packets,
+        )
         self._receiver_base_mode = int(response[68])
         self._receiver_foreground_state = int(response[69])
         self._receiver_maintenance_state = int(response[70])
@@ -1196,7 +1496,9 @@ class LEDController:
             self._receiver_stagger_phases == LEGACY_SNAPSHOT_SENTINEL
         )
         self._receiver_operation_sequence = self._response_u32(response, 316)
-        if self._receiver_capabilities & CAPABILITY_STATUS_V6:
+        if self._receiver_capabilities & CAPABILITY_FEC_ENVELOPE_V2:
+            self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V7
+        elif self._receiver_capabilities & CAPABILITY_STATUS_V6:
             self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V6
         elif (
             self._receiver_capabilities & CAPABILITY_INSTALLATION_PROFILE_V1
@@ -1488,6 +1790,27 @@ class LEDController:
             setattr(
                 self, f"_receiver_native_{name}", self._response_u16(response, offset)
             )
+        return fresh
+
+    def _update_receiver_status_v7(self, response):
+        """Parse exact FEC transport outcomes after the complete v6 prefix."""
+        fresh = self._update_receiver_status_v6(response)
+        for name, offset in (
+            ("packets_received", 1216),
+            ("packets_accepted", 1220),
+            ("corrected_packets", 1224),
+            ("corrected_codewords", 1228),
+            ("uncorrectable_packets", 1232),
+            ("semantic_crc_errors", 1236),
+            ("framing_errors", 1240),
+        ):
+            setattr(
+                self,
+                f"_receiver_fec_{name}",
+                self._response_u32(response, offset),
+            )
+        self._receiver_fec_last_decode_us = self._response_u16(response, 1244)
+        self._receiver_fec_max_decode_us = self._response_u16(response, 1246)
         return fresh
 
     def _clock_receiver_status_snapshot(self):
@@ -2713,12 +3036,29 @@ class LEDController:
 
     def configure(self):
         self.total_leds = self.strip_count * self.leds_per_strip
+        fec_semantic_size = 1 + self.total_leds * 3
+        if (
+            getattr(self, "_fec_transport_requested", False)
+            and fec_semantic_size > MAX_FEC_SEMANTIC_BYTES
+        ):
+            raise ValueError(
+                "configured SET_ALL exceeds the negotiated FEC semantic limit"
+            )
         expected_packet_size = 1 + self.total_leds * 3 + CRC_BYTES
         if len(self._frame_packet) != expected_packet_size:
             self._frame_packet = bytearray(expected_packet_size)
         expected_aligned_size = _aligned_envelope_wire_size(1 + self.total_leds * 3)
         if len(getattr(self, "_aligned_frame_packet", ())) != expected_aligned_size:
             self._aligned_frame_packet = bytearray(expected_aligned_size)
+        if (
+            getattr(self, "_fec_transport_requested", False)
+            and fec_semantic_size <= MAX_FEC_SEMANTIC_BYTES
+        ):
+            expected_fec_size = _fec_envelope_wire_size(fec_semantic_size)
+            if len(getattr(self, "_fec_frame_packet", ())) != expected_fec_size:
+                self._fec_frame_packet = bytearray(expected_fec_size)
+        else:
+            self._fec_frame_packet = None
         self._refresh_configuration(force=True)
         if self.debug:
             print(f"✓ Configuration sent (strips={self.strip_count}, leds/strip={self.leds_per_strip})")
@@ -2780,8 +3120,7 @@ class LEDController:
                 ))
                 short_wire_status_fallback = (
                     scheduled_status_sample
-                    and len(getattr(self, "_aligned_frame_packet", ()))
-                    < status_query_bytes
+                    and self._selected_full_frame_wire_size() < status_query_bytes
                 )
                 if short_wire_status_fallback:
                     # A one-strip aligned SET_ALL is only 424 wire bytes, too
@@ -2855,7 +3194,9 @@ class LEDController:
                 self._full_frame_wire_bytes_sent = (
                     getattr(self, "_full_frame_wire_bytes_sent", 0)
                     + (
-                        _aligned_envelope_wire_size(payload_length)
+                        _fec_envelope_wire_size(payload_length)
+                        if self._fec_full_frame_enabled()
+                        else _aligned_envelope_wire_size(payload_length)
                         if aligned_frame
                         else payload_length + CRC_BYTES
                     )
@@ -2948,6 +3289,42 @@ class LEDController:
             'transport_padding_bytes_sent': getattr(
                 self, '_transport_padding_bytes_sent', 0
             ),
+            'fec_transport_requested': bool(
+                getattr(self, '_fec_transport_requested', False)
+            ),
+            'fec_transport_enabled': self._fec_full_frame_enabled(),
+            'fec_transport_negotiation_candidate': getattr(
+                self, '_fec_transport_candidate', None
+            ),
+            'fec_transport_negotiation_streak': getattr(
+                self, '_fec_transport_candidate_streak', 0
+            ),
+            'fec_transport_negotiation_required': (
+                TRANSPORT_ENVELOPE_NEGOTIATION_OBSERVATIONS
+            ),
+            'fec_transport_fresh_observations': getattr(
+                self, '_fec_transport_fresh_observations', 0
+            ),
+            'fec_transport_stale_observations': getattr(
+                self, '_fec_transport_stale_observations', 0
+            ),
+            'fec_transport_counter_resets': getattr(
+                self, '_fec_transport_counter_resets', 0
+            ),
+            'fec_transport_invalid_resets': getattr(
+                self, '_fec_transport_invalid_resets', 0
+            ),
+            'fec_transport_transitions': getattr(
+                self, '_fec_transport_transitions', 0
+            ),
+            'fec_frames_sent': getattr(self, '_fec_frames_sent', 0),
+            'fec_codewords_sent': getattr(self, '_fec_codewords_sent', 0),
+            'fec_parity_bytes_sent': getattr(
+                self, '_fec_parity_bytes_sent', 0
+            ),
+            'fec_data_padding_bytes_sent': getattr(
+                self, '_fec_data_padding_bytes_sent', 0
+            ),
             'full_frame_transfers': getattr(self, '_full_frame_transfers', 0),
             'full_frame_status_transfers': getattr(
                 self, '_full_frame_status_transfers', 0
@@ -2987,6 +3364,33 @@ class LEDController:
             'receiver_packets': self._receiver_packets,
             'receiver_crc_errors': self._receiver_crc_errors,
             'receiver_crc_ok_packets': self._receiver_crc_ok_packets,
+            'receiver_fec_packets_received': getattr(
+                self, '_receiver_fec_packets_received', 0
+            ),
+            'receiver_fec_packets_accepted': getattr(
+                self, '_receiver_fec_packets_accepted', 0
+            ),
+            'receiver_fec_corrected_packets': getattr(
+                self, '_receiver_fec_corrected_packets', 0
+            ),
+            'receiver_fec_corrected_codewords': getattr(
+                self, '_receiver_fec_corrected_codewords', 0
+            ),
+            'receiver_fec_uncorrectable_packets': getattr(
+                self, '_receiver_fec_uncorrectable_packets', 0
+            ),
+            'receiver_fec_semantic_crc_errors': getattr(
+                self, '_receiver_fec_semantic_crc_errors', 0
+            ),
+            'receiver_fec_framing_errors': getattr(
+                self, '_receiver_fec_framing_errors', 0
+            ),
+            'receiver_fec_last_decode_us': getattr(
+                self, '_receiver_fec_last_decode_us', 0
+            ),
+            'receiver_fec_max_decode_us': getattr(
+                self, '_receiver_fec_max_decode_us', 0
+            ),
             'receiver_frames_rendered': self._receiver_frames_rendered,
             'receiver_frames_accepted': self._receiver_frames_accepted,
             'receiver_frames_displayed': self._receiver_frames_displayed,

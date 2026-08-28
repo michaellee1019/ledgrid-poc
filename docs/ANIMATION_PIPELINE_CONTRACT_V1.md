@@ -240,6 +240,39 @@ enabled count before health acceptance, preserving the firmware-first rolling
 order. The outer CRC replaces, rather than nests, the legacy command CRC;
 existing valid/invalid CRC counters retain their integrity meaning.
 
+Logical receiver 3 alone may negotiate aligned-envelope v2 after the Host has
+been explicitly configured and has observed capability `fec_envelope_v2 =
+1<<15` in three fresh, strictly counter-advancing status snapshots. The
+maintained service configuration is `LEDGRID_FEC_RECEIVER_IDS=3`; an empty
+allowlist is off, and unlisted receivers cannot enable FEC. The v2 protected
+data is:
+
+`0x0b || 2 || canonical_v1_wire_length:u16 || canonical_v1_wire`
+
+The complete v2 header and complete v1 packet, including its CRC, are SECDED
+protected in fixed systematic codewords of 128 data bytes plus two parity bytes.
+The parity field contains 11 shortened-Hamming check bits and one overall even
+parity bit; its upper four bits are reserved zero. Codeword count is even for
+DMA alignment and at most 30. A receiver recognizes the v2 marker only for a
+valid even-codeword transaction when the total Hamming distance across raw
+`0x0b02` is at most one, then corrects each codeword before validating the exact
+v2 marker/length, canonical v1 size/padding/CRC, and zero outer tail. One bad bit
+per codeword is corrected; two in one codeword are terminal and never dispatch.
+The limits and installed sizes are exact:
+
+| Semantic form | Inner v1 | Codewords | FEC wire | FEC data tail |
+|---|---:|---:|---:|---:|
+| receiver 3 `SET_ALL` (3,313 bytes) | 3,320 | 26 | 3,380 | 4 |
+| one-strip `SET_ALL` (415 bytes) | 424 | 4 | 520 | 84 |
+| maximum semantic (3,830 bytes) | 3,836 | 30 | 3,900 | 0 |
+
+Status v7 is 1,248 bytes. It preserves v6 offsets and appends received,
+accepted, corrected-packet, corrected-codeword, uncorrectable, semantic-CRC,
+framing, and last/maximum decode-time fields. Received equals accepted plus the
+three mutually exclusive terminal outcomes. Corrected packets are accepted and
+may be nonzero; uncorrectable, semantic-CRC, and framing packets are rejected.
+Host FEC sent/codeword/parity/tail counters advance only after successful I/O.
+
 After envelope negotiation settles, ordinary full-frame streaming may use the
 buffer-protocol `writebytes2` path because `SET_ALL` has no same-transaction
 acknowledgement to consume. The Host must first read a positive kernel
@@ -250,10 +283,11 @@ pieces. Every explicit status query and every control command remains full
 duplex. The five installed receivers retain staggered full-frame status samples
 at distinct phases of one shared 128-wall-frame sequence, so no wall frame
 schedules more than one ordinary sample and each receiver is scheduled every
-0.853 seconds at 150 FPS. Receivers 0-3 capture the status snapshot in-band on
-their 3,320-byte SET_ALL transfer. Receiver 4's 424-byte wire frame cannot hold
-the 1,216-byte status-v6 snapshot, so its scheduled phase first clocks one
-status-capable query and then keeps the SET_ALL write-only; truncation is never
+0.853 seconds at 150 FPS. Receivers 0-2 capture the status snapshot in-band on
+their 3,320-byte SET_ALL transfer and receiver 3 on its 3,380-byte FEC transfer.
+Receiver 4's 424-byte wire frame cannot hold the 1,248-byte status-v7 snapshot,
+so its scheduled phase first clocks one status-capable query and then keeps the
+SET_ALL write-only; truncation is never
 counted as a successful sample. A receiver without proven write-only support may
 fall back to full duplex on an otherwise unsampled frame. Explicit acceptance
 status refreshes remain authoritative and continue to observe the receiver-owned
@@ -308,9 +342,10 @@ the eight-byte form because the legacy six-byte identity range ends at 3.
 
 Status discovery uses ID `0x08` followed by 319 zero bytes and returns the exact
 320-byte, big-endian `LGS3` snapshot below. Only after its capability bits are
-observed may the host negotiate a 416-byte `LGS4`, 768-byte `LGS5`, or 1,216-byte
-`LGS6` query by padding the same command with zeros to that exact transfer size.
-The v6 record preserves the complete 768-byte v5 prefix apart from magic/version.
+observed may the host negotiate a 416-byte `LGS4`, 768-byte `LGS5`, 1,216-byte
+`LGS6`, or 1,248-byte `LGS7` query by padding the same command with zeros to that
+exact transfer size. The v7 record preserves the complete v6 prefix apart from
+magic/version and appends the FEC counters described above.
 
 | Offset | Bytes | Field |
 | ---: | ---: | --- |

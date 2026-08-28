@@ -19,6 +19,7 @@ from scripts.start_server import (
     device_count_for_strips,
     handle_command,
     receiver_hybrid_feature_flags,
+    receiver_fec_ids_for_runtime,
     receiver_geometry_for_runtime,
     receiver_native_modules_for_runtime,
     receiver_wiring_for_runtime,
@@ -148,6 +149,18 @@ class _StaggerController:
 
 
 class StartServerTests(unittest.TestCase):
+    def test_fec_receiver_env_is_explicit_canonical_and_defaults_off(self):
+        self.assertEqual(receiver_fec_ids_for_runtime(""), ())
+        self.assertEqual(receiver_fec_ids_for_runtime("3"), (3,))
+        self.assertEqual(receiver_fec_ids_for_runtime("1,3"), (1, 3))
+        for invalid in ("03", "3,3", " 3", "3 ", "3,", ",3", "-1"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                receiver_fec_ids_for_runtime(invalid)
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(receiver_fec_ids_for_runtime(), ())
+        with patch.dict("os.environ", {"LEDGRID_FEC_RECEIVER_IDS": "3"}):
+            self.assertEqual(receiver_fec_ids_for_runtime(), (3,))
+
     def test_production_stagger_is_three_phases(self):
         self.assertEqual(PRODUCTION_STAGGER_PHASES, 3)
         controller = _StaggerController()

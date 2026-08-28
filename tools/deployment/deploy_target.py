@@ -1104,6 +1104,7 @@ def _unit_text(
             "Environment=PYTHONUNBUFFERED=1",
             "Environment=LEDGRID_SPI1_MODE=0",
             "Environment=LEDGRID_HAT=0",
+            "Environment=LEDGRID_FEC_RECEIVER_IDS=3",
             f"Environment=STRIPS={strips}",
             f"Environment=EXPECTED_ESP32_DEVICES={receivers}",
             "",

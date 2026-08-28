@@ -70,17 +70,23 @@ def _device(receiver_id: int, elapsed: float) -> dict:
     frames = int(elapsed * 155)
     base = 1000 + receiver_id * 100
     full_frame_semantic = 1 + expected["local_strip_count"] * 138 * 3
-    full_frame_wire = ((full_frame_semantic + 9) // 4) * 4
+    fec_enabled = receiver_id == 3
+    full_frame_wire = soak.EXPECTED_FULL_FRAME_WIRE_BYTES[receiver_id]
     full_frame_total = base + frames
     status_transfers = full_frame_total // 16
     return {
-        "receiver_status_version": 3,
+        "receiver_status_version": 7 if fec_enabled else 3,
         "receiver_status_seen": True,
-        "receiver_capabilities": 0x400C,
+        "receiver_capabilities": 0xC00C,
         "transport_envelope_enabled": True,
         "transport_envelope_negotiation_candidate": None,
         "transport_envelope_negotiation_streak": 0,
         "transport_envelope_negotiation_required": 3,
+        "fec_transport_requested": fec_enabled,
+        "fec_transport_enabled": fec_enabled,
+        "fec_transport_negotiation_candidate": None,
+        "fec_transport_negotiation_streak": 0,
+        "fec_transport_negotiation_required": 3,
         "receiver_logical_device": receiver_id,
         "receiver_active_strips": expected["local_strip_count"],
         "receiver_global_strip_offset": expected["global_strip_offset"],
@@ -92,10 +98,12 @@ def _device(receiver_id: int, elapsed: float) -> dict:
         "errors": 0,
         "frames_sent": base + frames,
         "spi_transfers": base + frames,
-        "bytes_sent": base + frames * 3320,
-        "semantic_bytes_sent": base + frames * 3313,
-        "transport_envelope_bytes_sent": base + frames * 4,
-        "transport_padding_bytes_sent": base + frames,
+        "bytes_sent": base + frames * full_frame_wire,
+        "semantic_bytes_sent": base + frames * full_frame_semantic,
+        "transport_envelope_bytes_sent": base + frames * (8 if fec_enabled else 4),
+        "transport_padding_bytes_sent": base + frames * (
+            5 if fec_enabled else (-(full_frame_semantic + 6)) % 4
+        ),
         "full_frame_transfers": full_frame_total,
         "full_frame_semantic_bytes_sent": base + frames * full_frame_semantic,
         "full_frame_wire_bytes_sent": base + frames * full_frame_wire,
@@ -108,6 +116,10 @@ def _device(receiver_id: int, elapsed: float) -> dict:
         "spidev_buffer_size": 4096,
         "full_frame_write_only_supported": True,
         "crc_bytes_sent": base + frames * 2,
+        "fec_frames_sent": full_frame_total if fec_enabled else 0,
+        "fec_codewords_sent": 26 * full_frame_total if fec_enabled else 0,
+        "fec_parity_bytes_sent": 52 * full_frame_total if fec_enabled else 0,
+        "fec_data_padding_bytes_sent": 4 * full_frame_total if fec_enabled else 0,
         "receiver_operation_sequence": base + frames,
         "receiver_packets": base + frames,
         "receiver_crc_ok_packets": base + frames,
@@ -115,6 +127,15 @@ def _device(receiver_id: int, elapsed: float) -> dict:
         "receiver_frames_displayed": base + frames - 1,
         "receiver_frames_superseded": 0,
         "receiver_status_responses": base + frames,
+        "receiver_fec_packets_received": full_frame_total if fec_enabled else 0,
+        "receiver_fec_packets_accepted": full_frame_total if fec_enabled else 0,
+        "receiver_fec_corrected_packets": frames // 1000 if fec_enabled else 0,
+        "receiver_fec_corrected_codewords": frames // 1000 if fec_enabled else 0,
+        "receiver_fec_uncorrectable_packets": 0,
+        "receiver_fec_semantic_crc_errors": 0,
+        "receiver_fec_framing_errors": 0,
+        "receiver_fec_last_decode_us": 80 if fec_enabled else 0,
+        "receiver_fec_max_decode_us": 100 if fec_enabled else 0,
         "receiver_crc_errors": receiver_id,
         "receiver_publish_drops": 0,
         "receiver_spi_queue_errors": 0,
@@ -148,6 +169,8 @@ def _status(elapsed: float) -> dict:
             "aggregate": {
                 "device_map": [deepcopy(item) for item in soak.EXPECTED_TOPOLOGY],
                 "transport_envelope_devices": 5,
+                "fec_transport_requested_devices": 1,
+                "fec_transport_enabled_devices": 1,
                 "errors": 0,
                 "frames_sent": 5000 + frames,
                 "logical_frames_sent": 5000 + frames,
@@ -162,6 +185,10 @@ def _status(elapsed: float) -> dict:
                 "transport_padding_bytes_sent": sum(
                     item["transport_padding_bytes_sent"] for item in devices
                 ),
+                "fec_frames_sent": sum(item["fec_frames_sent"] for item in devices),
+                "fec_codewords_sent": sum(item["fec_codewords_sent"] for item in devices),
+                "fec_parity_bytes_sent": sum(item["fec_parity_bytes_sent"] for item in devices),
+                "fec_data_padding_bytes_sent": sum(item["fec_data_padding_bytes_sent"] for item in devices),
                 "full_frame_transfers": sum(
                     item["full_frame_transfers"] for item in devices
                 ),
@@ -197,6 +224,15 @@ def _status(elapsed: float) -> dict:
                 ),
                 "crc_bytes_sent": sum(item["crc_bytes_sent"] for item in devices),
                 "receiver_crc_errors": sum(range(5)),
+                "receiver_fec_packets_received": sum(item["receiver_fec_packets_received"] for item in devices),
+                "receiver_fec_packets_accepted": sum(item["receiver_fec_packets_accepted"] for item in devices),
+                "receiver_fec_corrected_packets": sum(item["receiver_fec_corrected_packets"] for item in devices),
+                "receiver_fec_corrected_codewords": sum(item["receiver_fec_corrected_codewords"] for item in devices),
+                "receiver_fec_uncorrectable_packets": 0,
+                "receiver_fec_semantic_crc_errors": 0,
+                "receiver_fec_framing_errors": 0,
+                "receiver_fec_last_decode_us": max(item["receiver_fec_last_decode_us"] for item in devices),
+                "receiver_fec_max_decode_us": max(item["receiver_fec_max_decode_us"] for item in devices),
                 "receiver_packets": sum(
                     item["receiver_packets"] for item in devices
                 ),
@@ -317,6 +353,37 @@ class GuardedWallSoakTests(unittest.TestCase):
         self.assertTrue(report["observation_only"])
         self.assertEqual(report["activation_basis_digest"], BASIS)
         self.assertEqual(report["activation_identity"], _identity())
+        self.assertGreater(
+            report["evaluation"]["receivers"]["3"]["deltas"][
+                "receiver_fec_corrected_packets"
+            ],
+            0,
+        )
+
+    def test_fec_terminal_faults_each_fail_while_corrections_are_allowed(self) -> None:
+        for field in (
+            "receiver_fec_uncorrectable_packets",
+            "receiver_fec_semantic_crc_errors",
+            "receiver_fec_framing_errors",
+        ):
+            with self.subTest(field=field):
+                def terminal(status, _activation_status, elapsed, field=field):
+                    if status is None or elapsed < 900:
+                        return
+                    device = status["driver_stats"]["devices"][3]
+                    aggregate = status["driver_stats"]["aggregate"]
+                    device[field] += 1
+                    device["receiver_fec_packets_received"] += 1
+                    aggregate[field] += 1
+                    aggregate["receiver_fec_packets_received"] += 1
+
+                clock = _Clock()
+                report = _run(_config(), _API(clock, terminal), clock)
+                self.assertFalse(report["passed"])
+                self.assertTrue(
+                    any("terminal faults" in failure for failure in report["failures"]),
+                    report["failures"],
+                )
 
     def test_identity_drift_fails_at_the_first_changed_sample(self) -> None:
         def drift(status, _activation_status, elapsed):

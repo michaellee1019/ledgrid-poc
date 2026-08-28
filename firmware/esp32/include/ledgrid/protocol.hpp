@@ -21,6 +21,8 @@ constexpr std::uint8_t kStatusProtocolVersionV5 = 5;
 constexpr std::size_t kStatusBytesV5 = 768;
 constexpr std::uint8_t kStatusProtocolVersionV6 = 6;
 constexpr std::size_t kStatusBytesV6 = 1216;
+constexpr std::uint8_t kStatusProtocolVersionV7 = 7;
+constexpr std::size_t kStatusBytesV7 = 1248;
 // ESP32-S3 SPI slave DMA requires every Host write to be a multiple of one
 // 32-bit word.  The transport envelope carries an exact semantic length and
 // CRC-covered zero padding so command parsers never mistake DMA padding for
@@ -32,6 +34,25 @@ constexpr std::size_t kSpiDmaAlignmentBytes = 4;
 constexpr std::size_t kAlignedEnvelopeMaxSemanticBytes =
     kAnimationPipelineMaxTransactionBytes - kAlignedEnvelopeHeaderBytes -
     kAnimationPipelineCrcBytes;
+// Aligned-envelope v2 protects its four-byte discriminator/inner-length header
+// and the complete canonical v1 wire packet (header, semantic payload, zero
+// alignment, and CRC) in fixed 128-byte systematic data codewords. Eleven
+// Hamming check bits plus one overall even-parity bit make each codeword 130
+// wire bytes. The codeword count is rounded up to an even number so the
+// complete SPI transaction remains 32-bit DMA aligned.
+constexpr std::uint8_t kFecEnvelopeVersion = 2;
+constexpr std::size_t kFecEnvelopeHeaderBytes = 4;
+constexpr std::size_t kFecDataBytes = 128;
+constexpr std::size_t kFecParityBytes = 2;
+constexpr std::size_t kFecCodewordBytes =
+    kFecDataBytes + kFecParityBytes;
+constexpr std::size_t kFecParityBits = 11;
+constexpr std::uint16_t kFecParityMask = (1U << kFecParityBits) - 1U;
+constexpr std::uint16_t kFecOverallParityMask = 1U << kFecParityBits;
+constexpr std::size_t kFecMaxCodewords = 30;
+constexpr std::size_t kFecEnvelopeMaxSemanticBytes =
+    kFecMaxCodewords * kFecDataBytes - kFecEnvelopeHeaderBytes -
+    kAlignedEnvelopeHeaderBytes - kAnimationPipelineCrcBytes;
 constexpr std::size_t kInstallationProfilePreflightBytes = 69;
 constexpr std::size_t kInstallationProfileBeginBytes = 81;
 constexpr std::size_t kInstallationProfileChunkHeaderBytes = 5;
@@ -106,13 +127,41 @@ enum ReceiverCapability : std::uint32_t {
   kCapabilityNativeQuarantineV1 = 1U << 12U,
   kCapabilityNativeGuardedLoaderV1 = 1U << 13U,
   kCapabilityAlignedEnvelopeV1 = 1U << 14U,
+  kCapabilityFecEnvelopeV2 = 1U << 15U,
 };
 
 struct ReceiverPacketPayload {
   const std::uint8_t* data = nullptr;
   std::size_t size = 0;
   bool aligned_envelope = false;
+  bool fec_envelope = false;
 };
+
+enum class ReceiverPacketDecodeResult : std::uint8_t {
+  Ok = 0,
+  InvalidFraming = 1,
+  CrcError = 2,
+  FecUncorrectable = 3,
+  FecSemanticCrcError = 4,
+};
+
+struct ReceiverPacketDecodeReport {
+  ReceiverPacketDecodeResult result = ReceiverPacketDecodeResult::InvalidFraming;
+  bool fec_envelope_attempted = false;
+  std::uint16_t corrected_codewords = 0;
+  std::uint16_t corrected_bits = 0;
+};
+
+enum class ReceiverFecPacketOutcome : std::uint8_t {
+  NotFec = 0,
+  Accepted = 1,
+  Uncorrectable = 2,
+  SemanticCrcError = 3,
+  FramingError = 4,
+};
+
+ReceiverFecPacketOutcome receiver_fec_packet_outcome(
+    bool decoded_ok, const ReceiverPacketDecodeReport& report);
 
 enum class ReceiverOperationResult : std::uint8_t {
   None = 0,
@@ -328,6 +377,22 @@ struct ReceiverStatusV6 : ReceiverStatusV5 {
   NativeModuleStatusV1 native_module{};
 };
 
+// Status v7 is always available with aligned-envelope v2 capability.  It
+// preserves the complete v6 prefix and gives exact FEC outcome accounting:
+// packets_received == packets_accepted + uncorrectable_packets +
+// semantic_crc_errors + framing_errors.
+struct ReceiverStatusV7 : ReceiverStatusV6 {
+  std::uint32_t fec_packets_received = 0;
+  std::uint32_t fec_packets_accepted = 0;
+  std::uint32_t fec_corrected_packets = 0;
+  std::uint32_t fec_corrected_codewords = 0;
+  std::uint32_t fec_uncorrectable_packets = 0;
+  std::uint32_t fec_semantic_crc_errors = 0;
+  std::uint32_t fec_framing_errors = 0;
+  std::uint16_t fec_last_decode_us = 0;
+  std::uint16_t fec_max_decode_us = 0;
+};
+
 bool encode_receiver_status_v2(
     const ReceiverStatusV2& status,
     std::uint8_t* output,
@@ -349,6 +414,10 @@ bool encode_receiver_status_v6(
     const ReceiverStatusV6& status,
     std::uint8_t* output,
     std::size_t output_size);
+bool encode_receiver_status_v7(
+    const ReceiverStatusV7& status,
+    std::uint8_t* output,
+    std::size_t output_size);
 
 bool command_may_claim_base(ReceiverCommand command);
 ReceiverDispatchDecision classify_receiver_dispatch(
@@ -366,7 +435,10 @@ bool receiver_packet_crc_valid(
 bool decode_receiver_packet_payload(
     const std::uint8_t* packet,
     std::size_t packet_size,
-    ReceiverPacketPayload* payload);
+    ReceiverPacketPayload* payload,
+    ReceiverPacketDecodeReport* report = nullptr,
+    std::uint8_t* scratch = nullptr,
+    std::size_t scratch_size = 0);
 // Decode framing after receiver_packet_crc_valid() has already accepted this
 // exact packet.  Keeping this separate avoids hashing every live frame twice.
 bool decode_crc_valid_receiver_packet_payload(

@@ -34,27 +34,44 @@ def _device(logical_id: int, displayed: int) -> dict:
     widths = (8, 8, 8, 8, 1)
     offsets = (0, 8, 16, 24, 32)
     transfers = displayed
-    semantic_bytes = transfers * 3313
-    envelope_bytes = transfers * 4
-    padding_bytes = transfers
-    crc_bytes = transfers * 2
     full_frame_semantic = 1 + widths[logical_id] * 138 * 3
-    full_frame_wire = ((full_frame_semantic + 9) // 4) * 4
+    semantic_bytes = transfers * full_frame_semantic
+    envelope_bytes = transfers * (8 if logical_id == 3 else 4)
+    aligned_padding = (-(full_frame_semantic + 6)) % 4
+    fec_enabled = logical_id == 3
+    fec_data_padding = 4 * transfers if fec_enabled else 0
+    padding_bytes = transfers * aligned_padding + fec_data_padding
+    crc_bytes = transfers * 2
+    fec_parity = 52 * transfers if fec_enabled else 0
+    full_frame_wire = (
+        3380 if fec_enabled else ((full_frame_semantic + 9) // 4) * 4
+    )
     status_transfers = transfers // 16
     return {
         "receiver_logical_device": logical_id,
-        "receiver_status_version": 3,
-        "receiver_capabilities": 0x400C,
+        "receiver_status_version": 7,
+        "receiver_capabilities": 0xC00C,
         "transport_envelope_enabled": True,
         "transport_envelope_negotiation_candidate": None,
         "transport_envelope_negotiation_streak": 0,
         "transport_envelope_negotiation_required": 3,
+        "fec_transport_negotiation_candidate": None,
+        "fec_transport_negotiation_streak": 0,
+        "fec_transport_negotiation_required": 3,
+        "fec_transport_requested": fec_enabled,
+        "fec_transport_enabled": fec_enabled,
         "spi_transfers": transfers,
         "semantic_bytes_sent": semantic_bytes,
         "transport_envelope_bytes_sent": envelope_bytes,
         "transport_padding_bytes_sent": padding_bytes,
         "crc_bytes_sent": crc_bytes,
-        "bytes_sent": semantic_bytes + envelope_bytes + padding_bytes + crc_bytes,
+        "fec_frames_sent": transfers if fec_enabled else 0,
+        "fec_codewords_sent": 26 * transfers if fec_enabled else 0,
+        "fec_parity_bytes_sent": fec_parity,
+        "fec_data_padding_bytes_sent": fec_data_padding,
+        "bytes_sent": (
+            semantic_bytes + envelope_bytes + padding_bytes + crc_bytes + fec_parity
+        ),
         "full_frame_transfers": transfers,
         "full_frame_semantic_bytes_sent": transfers * full_frame_semantic,
         "full_frame_wire_bytes_sent": transfers * full_frame_wire,
@@ -75,6 +92,15 @@ def _device(logical_id: int, displayed: int) -> dict:
         "receiver_last_encode_us": 900 + logical_id,
         "receiver_last_show_us": 4400 + logical_id,
         "receiver_frames_displayed": displayed,
+        "receiver_fec_packets_received": transfers if fec_enabled else 0,
+        "receiver_fec_packets_accepted": transfers if fec_enabled else 0,
+        "receiver_fec_corrected_packets": transfers // 100 if fec_enabled else 0,
+        "receiver_fec_corrected_codewords": transfers // 100 if fec_enabled else 0,
+        "receiver_fec_uncorrectable_packets": 0,
+        "receiver_fec_semantic_crc_errors": 0,
+        "receiver_fec_framing_errors": 0,
+        "receiver_fec_last_decode_us": 80 if fec_enabled else 0,
+        "receiver_fec_max_decode_us": 100 if fec_enabled else 0,
         "receiver_crc_errors": 10 if logical_id == 3 else 0,
         "receiver_publish_drops": 0,
         "receiver_spi_queue_errors": 0,
@@ -97,6 +123,11 @@ def _metrics(*, final: bool) -> dict:
         "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
         "full_frame_status_transfers", "full_frame_status_samples",
         "full_frame_status_sample_misses", "full_frame_write_only_transfers",
+        "fec_frames_sent", "fec_codewords_sent", "fec_parity_bytes_sent",
+        "fec_data_padding_bytes_sent", "receiver_fec_packets_received",
+        "receiver_fec_packets_accepted", "receiver_fec_corrected_packets",
+        "receiver_fec_corrected_codewords", "receiver_fec_uncorrectable_packets",
+        "receiver_fec_semantic_crc_errors", "receiver_fec_framing_errors",
     )
     return {
         "animation": {"target_fps": 150, "actual_fps": 150.4},
@@ -116,6 +147,8 @@ def _metrics(*, final: bool) -> dict:
                 "strip_count": 33,
                 "total_leds": 4554,
                 "transport_envelope_devices": 5,
+                "fec_transport_requested_devices": 1,
+                "fec_transport_enabled_devices": 1,
                 **{
                     field: sum(device[field] for device in devices)
                     for field in transport_fields
@@ -134,6 +167,12 @@ def _metrics(*, final: bool) -> dict:
                 "full_frame_write_only_supported": all(
                     device["full_frame_write_only_supported"]
                     for device in devices
+                ),
+                "receiver_fec_last_decode_us": max(
+                    device["receiver_fec_last_decode_us"] for device in devices
+                ),
+                "receiver_fec_max_decode_us": max(
+                    device["receiver_fec_max_decode_us"] for device in devices
                 ),
                 "device_map": [
                     {
@@ -502,11 +541,54 @@ class TargetQualificationCaptureTests(unittest.TestCase):
             "transport_envelope_negotiation_required"
         ] = 2
         cases.append(("wrong required", wrong_required))
+        fec_pending = _metrics(final=False)
+        fec_pending["driver"]["devices"][3].update({
+            "fec_transport_negotiation_candidate": True,
+            "fec_transport_negotiation_streak": 2,
+        })
+        cases.append(("FEC pending", fec_pending))
         for label, metrics in cases:
             with self.subTest(label=label), self.assertRaisesRegex(
                 TargetEvidenceError, "negotiation is not settled"
             ):
                 validate_installed_topology(metrics)
+
+    def test_fec_capture_requires_exact_send_receive_accept_and_zero_terminal_faults(self) -> None:
+        initial = _metrics(final=False)
+        cases = []
+        missing = _metrics(final=True)
+        for field in (
+            "receiver_fec_packets_received",
+            "receiver_fec_packets_accepted",
+        ):
+            missing["driver"]["devices"][3][field] -= 1
+            missing["driver"]["aggregate"][field] -= 1
+        cases.append(("missing", missing, "exactly match sent"))
+        for field in (
+            "receiver_fec_uncorrectable_packets",
+            "receiver_fec_semantic_crc_errors",
+            "receiver_fec_framing_errors",
+        ):
+            terminal = _metrics(final=True)
+            terminal["driver"]["devices"][3][field] += 1
+            terminal["driver"]["devices"][3]["receiver_fec_packets_received"] += 1
+            terminal["driver"]["aggregate"][field] += 1
+            terminal["driver"]["aggregate"]["receiver_fec_packets_received"] += 1
+            cases.append((field, terminal, field))
+        for label, final, expected in cases:
+            with self.subTest(label=label), self.assertRaisesRegex(
+                TargetEvidenceError, expected
+            ):
+                build_target_evidence(
+                    [initial, final],
+                    elapsed_seconds=1.0,
+                    binding_digest=BINDING,
+                    captured_at=2_000_000,
+                    target_fps=150,
+                    brightness=50,
+                    environment="Raspberry Pi 4 test",
+                    runtime_identity=RUNTIME_IDENTITY,
+                )
 
     def test_perf_rejects_invalid_full_frame_status_sampling_telemetry(self) -> None:
         def sum_field(metrics, field):

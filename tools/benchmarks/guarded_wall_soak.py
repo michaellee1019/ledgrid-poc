@@ -44,7 +44,8 @@ DEFAULT_SAMPLE_INTERVAL_SECONDS = 5.0
 DEFAULT_TIMEOUT_SECONDS = 15.0
 DEFAULT_TARGET_FPS = 150
 DEFAULT_MIN_DISPLAYED_FPS = 150.0
-REQUIRED_RECEIVER_CAPABILITIES = 0x400C
+REQUIRED_RECEIVER_CAPABILITIES = 0xC00C
+EXPECTED_FULL_FRAME_WIRE_BYTES = (3320, 3320, 3320, 3380, 424)
 EXPECTED_GEOMETRY = {"strip_count": 33, "leds_per_strip": 138, "total_leds": 4554}
 EXPECTED_TOPOLOGY = (
     {
@@ -112,6 +113,19 @@ ERROR_COUNTERS = (
     "receiver_display_errors",
     "receiver_status_misses",
 )
+FEC_COUNTERS = (
+    "fec_frames_sent",
+    "fec_codewords_sent",
+    "fec_parity_bytes_sent",
+    "fec_data_padding_bytes_sent",
+    "receiver_fec_packets_received",
+    "receiver_fec_packets_accepted",
+    "receiver_fec_corrected_packets",
+    "receiver_fec_corrected_codewords",
+    "receiver_fec_uncorrectable_packets",
+    "receiver_fec_semantic_crc_errors",
+    "receiver_fec_framing_errors",
+)
 CONTINUITY_COUNTERS = (
     "frames_sent",
     "spi_transfers",
@@ -134,6 +148,7 @@ CONTINUITY_COUNTERS = (
     "receiver_frames_displayed",
     "receiver_frames_superseded",
     "receiver_status_responses",
+    *FEC_COUNTERS,
     *ERROR_COUNTERS,
 )
 AGGREGATE_CONTINUITY_COUNTERS = (
@@ -157,6 +172,7 @@ AGGREGATE_CONTINUITY_COUNTERS = (
     "receiver_frames_accepted",
     "receiver_frames_displayed",
     "receiver_frames_superseded",
+    *FEC_COUNTERS,
     *ERROR_COUNTERS,
 )
 DEVICE_SAMPLE_FIELDS = (
@@ -167,6 +183,11 @@ DEVICE_SAMPLE_FIELDS = (
     "transport_envelope_negotiation_candidate",
     "transport_envelope_negotiation_streak",
     "transport_envelope_negotiation_required",
+    "fec_transport_requested",
+    "fec_transport_enabled",
+    "fec_transport_negotiation_candidate",
+    "fec_transport_negotiation_streak",
+    "fec_transport_negotiation_required",
     "receiver_logical_device",
     "receiver_active_strips",
     "receiver_global_strip_offset",
@@ -179,6 +200,8 @@ DEVICE_SAMPLE_FIELDS = (
     "full_frame_max_status_sample_gap",
     "spidev_buffer_size",
     "full_frame_write_only_supported",
+    "receiver_fec_last_decode_us",
+    "receiver_fec_max_decode_us",
     *CONTINUITY_COUNTERS,
 )
 
@@ -412,6 +435,11 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
     aggregate = _mapping(driver.get("aggregate"))
     if aggregate.get("transport_envelope_devices") != len(EXPECTED_TOPOLOGY):
         failures.append("aligned transport is not enabled on exactly 5 receivers")
+    if (
+        aggregate.get("fec_transport_requested_devices") != 1
+        or aggregate.get("fec_transport_enabled_devices") != 1
+    ):
+        failures.append("FEC transport is not requested and enabled on exactly one receiver")
     device_map = _sequence(aggregate.get("device_map"))
     if len(device_map) != len(EXPECTED_TOPOLOGY):
         failures.append(
@@ -452,8 +480,11 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
         if item.get("receiver_status_seen") is not True:
             failures.append(f"receiver {logical_id} has no readable status")
         version = _integer(item.get("receiver_status_version"))
-        if version is None or version < 3:
-            failures.append(f"receiver {logical_id} does not report status v3+")
+        required_version = 7 if logical_id == 3 else 3
+        if version is None or version < required_version:
+            failures.append(
+                f"receiver {logical_id} does not report status v{required_version}+"
+            )
         capabilities = _integer(item.get("receiver_capabilities"))
         if (
             capabilities is None
@@ -467,6 +498,14 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
             failures.append(
                 f"receiver {logical_id} host aligned transport is not enabled"
             )
+        expected_fec = logical_id == 3
+        if (
+            item.get("fec_transport_requested") is not expected_fec
+            or item.get("fec_transport_enabled") is not expected_fec
+        ):
+            failures.append(
+                f"receiver {logical_id} FEC selection differs from receiver-3 policy"
+            )
         if (
             "transport_envelope_negotiation_candidate" not in item
             or item.get("transport_envelope_negotiation_candidate") is not None
@@ -477,6 +516,17 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
         ):
             failures.append(
                 f"receiver {logical_id} aligned transport negotiation is not settled"
+            )
+        if (
+            "fec_transport_negotiation_candidate" not in item
+            or item.get("fec_transport_negotiation_candidate") is not None
+            or type(item.get("fec_transport_negotiation_streak")) is not int
+            or item.get("fec_transport_negotiation_streak") != 0
+            or type(item.get("fec_transport_negotiation_required")) is not int
+            or item.get("fec_transport_negotiation_required") != 3
+        ):
+            failures.append(
+                f"receiver {logical_id} FEC transport negotiation is not settled"
             )
         checks = {
             "receiver_active_strips": expected["local_strip_count"],
@@ -492,8 +542,49 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
         failures.extend(_sampling_snapshot_failures(
             item,
             f"receiver {logical_id}",
-            minimum_buffer_size=3320 if logical_id < 4 else 424,
+            minimum_buffer_size=EXPECTED_FULL_FRAME_WIRE_BYTES[logical_id],
         ))
+        fec_received = _integer(item.get("receiver_fec_packets_received"))
+        fec_accepted = _integer(item.get("receiver_fec_packets_accepted"))
+        fec_uncorrectable = _integer(item.get("receiver_fec_uncorrectable_packets"))
+        fec_semantic_crc = _integer(item.get("receiver_fec_semantic_crc_errors"))
+        fec_framing = _integer(item.get("receiver_fec_framing_errors"))
+        if None in (
+            fec_received, fec_accepted, fec_uncorrectable,
+            fec_semantic_crc, fec_framing,
+        ) or fec_received != (
+            fec_accepted + fec_uncorrectable + fec_semantic_crc + fec_framing
+        ):
+            failures.append(f"receiver {logical_id} FEC outcome accounting is inconsistent")
+        fec_frames = _integer(item.get("fec_frames_sent"))
+        fec_codewords = _integer(item.get("fec_codewords_sent"))
+        fec_parity = _integer(item.get("fec_parity_bytes_sent"))
+        fec_padding = _integer(item.get("fec_data_padding_bytes_sent"))
+        expected_codewords = 26 if expected_fec else 0
+        if (
+            None in (fec_frames, fec_codewords, fec_parity, fec_padding)
+            or (not expected_fec and fec_frames != 0)
+            or fec_codewords != expected_codewords * fec_frames
+            or fec_parity != 2 * expected_codewords * fec_frames
+            or fec_padding != 4 * fec_frames
+        ):
+            failures.append(f"receiver {logical_id} host FEC accounting is inconsistent")
+        corrected_packets = _integer(item.get("receiver_fec_corrected_packets"))
+        corrected_codewords = _integer(item.get("receiver_fec_corrected_codewords"))
+        if (
+            None in (corrected_packets, corrected_codewords, fec_accepted)
+            or corrected_packets > fec_accepted
+            or corrected_codewords < corrected_packets
+            or corrected_codewords > 26 * corrected_packets
+        ):
+            failures.append(f"receiver {logical_id} corrected FEC accounting is inconsistent")
+        last_decode = _integer(item.get("receiver_fec_last_decode_us"))
+        max_decode = _integer(item.get("receiver_fec_max_decode_us"))
+        if (
+            last_decode is None or max_decode is None or last_decode > max_decode
+            or (not expected_fec and (last_decode != 0 or max_decode != 0))
+        ):
+            failures.append(f"receiver {logical_id} FEC decode timing is inconsistent")
     transport_fields = (
         "spi_transfers", "bytes_sent", "semantic_bytes_sent",
         "transport_envelope_bytes_sent", "transport_padding_bytes_sent",
@@ -501,6 +592,7 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
         "full_frame_semantic_bytes_sent", "full_frame_wire_bytes_sent",
         "full_frame_status_transfers", "full_frame_status_samples",
         "full_frame_status_sample_misses", "full_frame_write_only_transfers",
+        *FEC_COUNTERS,
     )
     for field in transport_fields:
         total = 0
@@ -519,7 +611,7 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
                 f"aggregate {field} drifted from per-receiver total"
             )
     failures.extend(_sampling_snapshot_failures(
-        aggregate, "aggregate", minimum_buffer_size=3320
+        aggregate, "aggregate", minimum_buffer_size=3380
     ))
     if devices:
         gauge_expectations = {
@@ -537,6 +629,14 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
             ),
             "full_frame_write_only_supported": all(
                 _mapping(raw).get("full_frame_write_only_supported") is True
+                for raw in devices
+            ),
+            "receiver_fec_last_decode_us": max(
+                (_integer(_mapping(raw).get("receiver_fec_last_decode_us")) or 0)
+                for raw in devices
+            ),
+            "receiver_fec_max_decode_us": max(
+                (_integer(_mapping(raw).get("receiver_fec_max_decode_us")) or 0)
                 for raw in devices
             ),
         }
@@ -695,6 +795,12 @@ def normalize_sample(
             "transport_envelope_devices": aggregate.get(
                 "transport_envelope_devices"
             ),
+            "fec_transport_requested_devices": aggregate.get(
+                "fec_transport_requested_devices"
+            ),
+            "fec_transport_enabled_devices": aggregate.get(
+                "fec_transport_enabled_devices"
+            ),
             "full_frame_frames_since_status_sample": aggregate.get(
                 "full_frame_frames_since_status_sample"
             ),
@@ -704,6 +810,12 @@ def normalize_sample(
             "spidev_buffer_size": aggregate.get("spidev_buffer_size"),
             "full_frame_write_only_supported": aggregate.get(
                 "full_frame_write_only_supported"
+            ),
+            "receiver_fec_last_decode_us": aggregate.get(
+                "receiver_fec_last_decode_us"
+            ),
+            "receiver_fec_max_decode_us": aggregate.get(
+                "receiver_fec_max_decode_us"
             ),
         },
         "devices": devices,
@@ -730,6 +842,7 @@ def normalize_sample(
 def _transport_delta_failures(
     before: Mapping[str, Any], after: Mapping[str, Any], label: str,
     *, expected_full_semantic_bytes: int | None = None,
+    expected_full_wire_bytes: int | None = None,
 ) -> list[str]:
     fields = (
         "spi_transfers", "bytes_sent", "semantic_bytes_sent",
@@ -747,7 +860,12 @@ def _transport_delta_failures(
     if failures:
         return failures
     transfers = deltas["spi_transfers"] or 0
-    if deltas["transport_envelope_bytes_sent"] != 4 * transfers:
+    fec_frames = _counter_delta(before, after, "fec_frames_sent")
+    fec_parity = _counter_delta(before, after, "fec_parity_bytes_sent")
+    if fec_frames is None or fec_parity is None or fec_frames < 0 or fec_parity < 0:
+        failures.append(f"{label} FEC wire accounting is unavailable")
+        return failures
+    if deltas["transport_envelope_bytes_sent"] != 4 * transfers + 4 * fec_frames:
         failures.append(f"{label} envelope accounting is inconsistent")
     if deltas["crc_bytes_sent"] != 2 * transfers:
         failures.append(f"{label} CRC accounting is inconsistent")
@@ -756,12 +874,15 @@ def _transport_delta_failures(
         + (deltas["transport_envelope_bytes_sent"] or 0)
         + (deltas["transport_padding_bytes_sent"] or 0)
         + (deltas["crc_bytes_sent"] or 0)
+        + fec_parity
     )
     if deltas["bytes_sent"] != expected_wire:
         failures.append(f"{label} wire-byte accounting is inconsistent")
     if expected_full_semantic_bytes is not None:
         full_transfers = deltas["full_frame_transfers"] or 0
-        expected_full_wire_bytes = ((expected_full_semantic_bytes + 9) // 4) * 4
+        if expected_full_wire_bytes is None:
+            failures.append(f"{label} expected full-frame wire size is unavailable")
+            return failures
         if (
             deltas["full_frame_semantic_bytes_sent"]
             != expected_full_semantic_bytes * full_transfers
@@ -771,6 +892,57 @@ def _transport_delta_failures(
             failures.append(
                 f"{label} full-frame SET_ALL accounting is inconsistent"
             )
+    return failures
+
+
+def _fec_delta_failures(
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+    label: str,
+    *,
+    logical_device: int | None,
+    expected_frames: int | None,
+) -> list[str]:
+    deltas = {
+        field: _counter_delta(before, after, field) for field in FEC_COUNTERS
+    }
+    if any(value is None or value < 0 for value in deltas.values()):
+        return [f"{label} FEC counters are unavailable or reset"]
+    failures: list[str] = []
+    selected = logical_device is None or logical_device == 3
+    if not selected:
+        if any(deltas.values()):
+            failures.append(f"{label} emitted or received unconfigured FEC traffic")
+        return failures
+    frames = deltas["fec_frames_sent"]
+    if expected_frames is not None and frames != expected_frames:
+        failures.append(f"{label} FEC sent frames do not match full-frame transfers")
+    if (
+        deltas["fec_codewords_sent"] != 26 * frames
+        or deltas["fec_parity_bytes_sent"] != 52 * frames
+        or deltas["fec_data_padding_bytes_sent"] != 4 * frames
+    ):
+        failures.append(f"{label} host FEC accounting is inconsistent")
+    received = deltas["receiver_fec_packets_received"]
+    accepted = deltas["receiver_fec_packets_accepted"]
+    terminal = (
+        deltas["receiver_fec_uncorrectable_packets"]
+        + deltas["receiver_fec_semantic_crc_errors"]
+        + deltas["receiver_fec_framing_errors"]
+    )
+    if received != accepted + terminal:
+        failures.append(f"{label} receiver FEC outcomes do not partition received packets")
+    if received <= 0 or received != accepted or terminal != 0:
+        failures.append(
+            f"{label} receiver FEC traffic was not accepted without terminal faults"
+        )
+    corrected_packets = deltas["receiver_fec_corrected_packets"]
+    corrected_codewords = deltas["receiver_fec_corrected_codewords"]
+    if not (
+        0 <= corrected_packets <= accepted
+        and corrected_packets <= corrected_codewords <= 26 * corrected_packets
+    ):
+        failures.append(f"{label} corrected FEC accounting is inconsistent")
     return failures
 
 
@@ -801,6 +973,13 @@ def evaluate_transition(
             failures.append(f"aggregate error counter {field} increased by {delta}")
     failures.extend(_transport_delta_failures(
         before_aggregate, after_aggregate, "aggregate aligned transport"
+    ))
+    failures.extend(_fec_delta_failures(
+        before_aggregate,
+        after_aggregate,
+        "aggregate",
+        logical_device=None,
+        expected_frames=None,
     ))
     failures.extend(_sampling_delta_failures(
         before_aggregate, after_aggregate, "aggregate aligned transport"
@@ -838,6 +1017,15 @@ def evaluate_transition(
                 + EXPECTED_TOPOLOGY_BY_ID[receiver_id]["local_strip_count"]
                 * EXPECTED_GEOMETRY["leds_per_strip"] * 3
             ),
+            expected_full_wire_bytes=EXPECTED_FULL_FRAME_WIRE_BYTES[receiver_id],
+        ))
+        full_frames = _counter_delta(first, last, "full_frame_transfers")
+        failures.extend(_fec_delta_failures(
+            first,
+            last,
+            f"receiver {receiver_id}",
+            logical_device=receiver_id,
+            expected_frames=full_frames,
         ))
         failures.extend(_sampling_delta_failures(
             first, last, f"receiver {receiver_id} aligned transport"
@@ -879,6 +1067,13 @@ def evaluate_series(samples: Sequence[Mapping[str, Any]], config: WallSoakConfig
     failures.extend(_transport_delta_failures(
         first_aggregate, last_aggregate, "aggregate aligned transport"
     ))
+    failures.extend(_fec_delta_failures(
+        first_aggregate,
+        last_aggregate,
+        "aggregate",
+        logical_device=None,
+        expected_frames=None,
+    ))
     failures.extend(_sampling_delta_failures(
         first_aggregate, last_aggregate, "aggregate aligned transport"
     ))
@@ -918,6 +1113,14 @@ def evaluate_series(samples: Sequence[Mapping[str, Any]], config: WallSoakConfig
                 + EXPECTED_TOPOLOGY_BY_ID[receiver_id]["local_strip_count"]
                 * EXPECTED_GEOMETRY["leds_per_strip"] * 3
             ),
+            expected_full_wire_bytes=EXPECTED_FULL_FRAME_WIRE_BYTES[receiver_id],
+        ))
+        receiver_failures.extend(_fec_delta_failures(
+            before,
+            after,
+            f"receiver {receiver_id}",
+            logical_device=receiver_id,
+            expected_frames=deltas.get("full_frame_transfers"),
         ))
         receiver_failures.extend(_sampling_delta_failures(
             before, after, f"receiver {receiver_id} aligned transport"

@@ -153,6 +153,7 @@ RestartSec=2
 Environment=PYTHONUNBUFFERED=1
 Environment=LEDGRID_SPI1_MODE=0
 Environment=LEDGRID_HAT=0
+Environment=LEDGRID_FEC_RECEIVER_IDS=3
 Environment=STRIPS=33
 Environment=EXPECTED_ESP32_DEVICES=5
 

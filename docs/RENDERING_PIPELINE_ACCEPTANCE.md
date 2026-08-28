@@ -149,18 +149,20 @@ The reported rate uses the monotonic interval between the first and last
 receiver-counter samples; HTTP request time before the first sample and cleanup
 time cannot dilute the measured cadence.
 
-The installed timing budget is explicit. One receiver aligned SET_ALL is 3,320
-wire bytes (a 3,313-byte semantic command plus the versioned length header, one
-zero pad byte, and two CRC bytes), or 1,328 us at 20 MHz. The four full receivers
-plus the one-strip tail clock 13,704 bytes, or 5,481.6 us of aggregate bus time
-when treated serially; the two independent SPI buses overlap in the live host.
+The installed timing budget is explicit. Ordinary broad receivers use a 3,320
+byte aligned `SET_ALL`, or 1,328 us at 20 MHz. Logical receiver 3 uses 26 fixed
+FEC codewords (128 protected data bytes plus two SECDED bytes), totaling 3,380
+bytes or 1,352 us. The one-strip tail remains 424 bytes. The five receivers
+clock 13,764 bytes, or 5,505.6 us when treated serially; the two independent SPI
+buses overlap, with worst raw bus load 7,124 bytes/2,849.6 us on SPI1.
 For aligned streaming the Host avoids allocating an unused multi-kilobyte MISO
 list on most `SET_ALL` transactions. It retains one staggered fresh sample per
 receiver every 128 shared wall-frame sequences and never schedules more than one
-receiver sample on a wall frame. Receivers 0-3 capture that sample in-band on
-their 3,320-byte frame. Receiver 4's 424-byte frame cannot clock the 1,216-byte
-status-v6 snapshot, so its scheduled phase adds one 1,224-byte aligned status
-query before the write-only tail frame: 489.6 us at 20 MHz, once per 128 wall
+receiver sample on a wall frame. Receivers 0-2 capture that sample in-band on
+their 3,320-byte frame and receiver 3 on its 3,380-byte v2 frame. Receiver 4's
+424-byte frame cannot clock the 1,248-byte status-v7 snapshot, so its scheduled
+phase adds one 1,256-byte aligned status query before the write-only tail frame:
+502.4 us at 20 MHz, once per 128 wall
 frames. Explicit status refreshes and all control commands also remain full
 duplex. Before using `writebytes2`, the Host proves the entire selected wire
 packet fits the positive kernel spidev buffer capacity; otherwise the frame
@@ -188,19 +190,25 @@ SPI-plus-encode-plus-display budget and does not support a 180 FPS release gate.
 Target 200 remains an output-rate saturation characterization, not production
 capacity acceptance.
 
-The aligned envelope is a standards-compliance prerequisite, not yet a claim of
-live integrity resolution. [Espressif's ESP32-S3 SPI-slave documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/spi_slave.html)
+The aligned/FEC implementation is not itself a claim of live integrity
+resolution. [Espressif's ESP32-S3 SPI-slave documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/spi_slave.html)
 requires DMA RX buffers and transaction lengths to be word-aligned/four-byte
 multiples and warns that inappropriate Host write lengths may be discarded.
-Retained live data also contains rare CRC failures on an aligned 420-byte data
-transfer, so only a new full-size aligned SET_ALL stress gate can establish
-whether this repair is sufficient. Every failed outer CRC remains visible and
-rejected; no acceptance result may reinterpret alignment as correction.
+Retained live data contains 26 CRC failures on logical receiver 3 during a
+60-second 20 MHz run while the other receivers stayed clean. Receiver 3 must
+therefore use capability-negotiated v2. A corrected single-bit codeword remains
+accepted and visible in correction counters; uncorrectable, semantic-CRC, and
+framing outcomes remain rejected and visible. Only a new full-size v2 stress
+gate can establish that this fallback is sufficient on the installed link.
 
 The capacity gate passes only when receiver telemetry shows:
 
 - no reset, panic, watchdog, or service failure;
 - CRC-error delta of zero after warm-up;
+- exactly one requested/enabled FEC receiver, logical receiver 3;
+- receiver-3 received and accepted FEC packets match Host-sent full frames,
+  uncorrectable/semantic-CRC/framing deltas stay zero, and correction counters
+  remain internally consistent (nonzero corrections are allowed);
 - SPI queue-overrun delta of zero;
 - receiver display DMA p95 at or below 4.8 ms;
 - receiver frame-encode p95 at or below 1.0 ms;
@@ -251,8 +259,9 @@ enablement, and contribute positive semantic/header/padding byte deltas that
 reconcile exactly with aggregate wire bytes, transfers, and CRC bytes; the
 aggregate enabled count must remain exactly five. Dedicated successful
 `SET_ALL` counters must advance at at least 150 FPS on every receiver and prove
-exact 3,313→3,320 semantic-to-wire bytes per frame for logical receivers 0-3
-and 415→424 for logical receiver 4; status queries, SHOW/CLEAR, and partial
+exact 3,313→3,320 semantic-to-wire bytes per frame for logical receivers 0-2,
+3,313→3,380 for FEC receiver 3, and 415→424 for logical receiver 4; status
+queries, SHOW/CLEAR, and partial
 updates cannot satisfy this full-frame requirement. The receipt's full
 requested, normalized, and observed scene/component/global/profile identities
 must be unanimous and must equal the controller's full active identity. Any

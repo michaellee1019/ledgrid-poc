@@ -52,7 +52,7 @@ _ERROR_COUNTERS = (
 )
 _INSTALLED_ROUTES = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
 _INSTALLED_NATIVE_REVERSALS = (False, False, True, True, False)
-_REQUIRED_RECEIVER_CAPABILITIES = 0x400C
+_REQUIRED_RECEIVER_CAPABILITIES = 0xC00C
 _TRANSPORT_COUNTERS = (
     "spi_transfers",
     "bytes_sent",
@@ -74,6 +74,20 @@ _FULL_FRAME_EVIDENCE_COUNTERS = (
     "full_frame_transfers",
     *_FULL_FRAME_SAMPLING_COUNTERS,
 )
+_FEC_DELTA_COUNTERS = (
+    "fec_frames_sent",
+    "fec_codewords_sent",
+    "fec_parity_bytes_sent",
+    "fec_data_padding_bytes_sent",
+    "receiver_fec_packets_received",
+    "receiver_fec_packets_accepted",
+    "receiver_fec_corrected_packets",
+    "receiver_fec_corrected_codewords",
+    "receiver_fec_uncorrectable_packets",
+    "receiver_fec_semantic_crc_errors",
+    "receiver_fec_framing_errors",
+)
+_EXPECTED_FULL_FRAME_WIRE_BYTES = (3320, 3320, 3320, 3380, 424)
 _MAX_FULL_FRAME_STATUS_SAMPLE_GAP = 256
 
 
@@ -263,6 +277,33 @@ def _full_frame_transport_evidence_item(
                 after.get("full_frame_write_only_supported") is True
             ),
         },
+        "fec": {
+            "requested_count": (
+                _integer(after.get("fec_transport_requested_devices"), "final FEC requested devices")
+                if logical_device is None
+                else int(after.get("fec_transport_requested") is True)
+            ),
+            "enabled_count": (
+                _integer(after.get("fec_transport_enabled_devices"), "final FEC enabled devices")
+                if logical_device is None
+                else int(after.get("fec_transport_enabled") is True)
+            ),
+            "deltas": {
+                field: _integer(after.get(field), f"final {field}")
+                - _integer(before.get(field), f"initial {field}")
+                for field in _FEC_DELTA_COUNTERS
+            },
+            "final": {
+                "receiver_fec_last_decode_us": _integer(
+                    after.get("receiver_fec_last_decode_us"),
+                    "final receiver_fec_last_decode_us",
+                ),
+                "receiver_fec_max_decode_us": _integer(
+                    after.get("receiver_fec_max_decode_us"),
+                    "final receiver_fec_max_decode_us",
+                ),
+            },
+        },
     }
     if logical_device is not None:
         item["logical_device"] = logical_device
@@ -276,17 +317,42 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
         raise TargetEvidenceError("aligned transport metrics are unavailable")
     if aggregate.get("transport_envelope_devices") != INSTALLED_RECEIVER_COUNT:
         raise TargetEvidenceError("aligned transport is not enabled on exactly five receivers")
-    additive_fields = _TRANSPORT_COUNTERS + _FULL_FRAME_SAMPLING_COUNTERS
+    if (
+        aggregate.get("fec_transport_requested_devices") != 1
+        or aggregate.get("fec_transport_enabled_devices") != 1
+    ):
+        raise TargetEvidenceError("FEC transport must be requested and enabled on exactly one receiver")
+    additive_fields = (
+        _TRANSPORT_COUNTERS + _FULL_FRAME_SAMPLING_COUNTERS + _FEC_DELTA_COUNTERS
+    )
     totals = {field: 0 for field in additive_fields}
     current_gaps: list[int] = []
     maximum_gaps: list[int] = []
     buffer_sizes: list[int] = []
+    fec_last_decode_times: list[int] = []
+    fec_max_decode_times: list[int] = []
     for logical_id, device in enumerate(devices):
         if not isinstance(device, Mapping):
             raise TargetEvidenceError(f"receiver {logical_id} metrics are malformed")
         if device.get("transport_envelope_enabled") is not True:
             raise TargetEvidenceError(
                 f"receiver {logical_id} host aligned transport is not enabled"
+            )
+        expected_fec = logical_id == 3
+        status_version = _integer(
+            device.get("receiver_status_version"),
+            f"receiver {logical_id} status version",
+        )
+        if status_version < (7 if expected_fec else 3):
+            raise TargetEvidenceError(
+                f"receiver {logical_id} status version is below the required contract"
+            )
+        if (
+            device.get("fec_transport_requested") is not expected_fec
+            or device.get("fec_transport_enabled") is not expected_fec
+        ):
+            raise TargetEvidenceError(
+                f"receiver {logical_id} FEC selection does not match the receiver-3 policy"
             )
         if (
             "transport_envelope_negotiation_candidate" not in device
@@ -299,7 +365,18 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
             raise TargetEvidenceError(
                 f"receiver {logical_id} aligned transport negotiation is not settled"
             )
-        minimum_wire_size = 3320 if logical_id < 4 else 424
+        if (
+            "fec_transport_negotiation_candidate" not in device
+            or device.get("fec_transport_negotiation_candidate") is not None
+            or type(device.get("fec_transport_negotiation_streak")) is not int
+            or device.get("fec_transport_negotiation_streak") != 0
+            or type(device.get("fec_transport_negotiation_required")) is not int
+            or device.get("fec_transport_negotiation_required") != 3
+        ):
+            raise TargetEvidenceError(
+                f"receiver {logical_id} FEC transport negotiation is not settled"
+            )
+        minimum_wire_size = _EXPECTED_FULL_FRAME_WIRE_BYTES[logical_id]
         _require_full_frame_sampling_snapshot(
             device,
             f"receiver {logical_id}",
@@ -308,6 +385,75 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
         current_gaps.append(int(device["full_frame_frames_since_status_sample"]))
         maximum_gaps.append(int(device["full_frame_max_status_sample_gap"]))
         buffer_sizes.append(int(device["spidev_buffer_size"]))
+        fec_received = _integer(
+            device.get("receiver_fec_packets_received"),
+            f"receiver {logical_id} FEC packets received",
+        )
+        fec_outcomes = sum(
+            _integer(device.get(field), f"receiver {logical_id} {field}")
+            for field in (
+                "receiver_fec_packets_accepted",
+                "receiver_fec_uncorrectable_packets",
+                "receiver_fec_semantic_crc_errors",
+                "receiver_fec_framing_errors",
+            )
+        )
+        if fec_received != fec_outcomes:
+            raise TargetEvidenceError(
+                f"receiver {logical_id} FEC outcome accounting is inconsistent"
+            )
+        corrected_packets = _integer(
+            device.get("receiver_fec_corrected_packets"),
+            f"receiver {logical_id} corrected FEC packets",
+        )
+        corrected_codewords = _integer(
+            device.get("receiver_fec_corrected_codewords"),
+            f"receiver {logical_id} corrected FEC codewords",
+        )
+        fec_accepted = _integer(
+            device.get("receiver_fec_packets_accepted"),
+            f"receiver {logical_id} accepted FEC packets",
+        )
+        if (
+            corrected_packets > fec_accepted
+            or corrected_codewords < corrected_packets
+            or corrected_codewords > 26 * corrected_packets
+        ):
+            raise TargetEvidenceError(
+                f"receiver {logical_id} corrected FEC accounting is inconsistent"
+            )
+        last_decode = _integer(
+            device.get("receiver_fec_last_decode_us"),
+            f"receiver {logical_id} last FEC decode time",
+        )
+        max_decode = _integer(
+            device.get("receiver_fec_max_decode_us"),
+            f"receiver {logical_id} maximum FEC decode time",
+        )
+        if last_decode > max_decode or (
+            not expected_fec and (last_decode != 0 or max_decode != 0)
+        ):
+            raise TargetEvidenceError(
+                f"receiver {logical_id} FEC decode timing is inconsistent"
+            )
+        fec_last_decode_times.append(last_decode)
+        fec_max_decode_times.append(max_decode)
+        fec_frames = _integer(
+            device.get("fec_frames_sent"), f"receiver {logical_id} FEC frames sent"
+        )
+        expected_codewords = 26 if logical_id == 3 else 0
+        if (
+            (not expected_fec and fec_frames != 0)
+            or _integer(device.get("fec_codewords_sent"), f"receiver {logical_id} FEC codewords")
+            != expected_codewords * fec_frames
+            or _integer(device.get("fec_parity_bytes_sent"), f"receiver {logical_id} FEC parity bytes")
+            != 2 * expected_codewords * fec_frames
+            or _integer(device.get("fec_data_padding_bytes_sent"), f"receiver {logical_id} FEC data padding")
+            != 4 * fec_frames
+        ):
+            raise TargetEvidenceError(
+                f"receiver {logical_id} host FEC accounting is inconsistent"
+            )
         for field in additive_fields:
             totals[field] += _integer(
                 device.get(field), f"receiver {logical_id} {field}"
@@ -319,13 +465,15 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
                 f"aggregate {field} drifted from per-receiver total"
             )
     _require_full_frame_sampling_snapshot(
-        aggregate, "aggregate", minimum_buffer_size=3320
+        aggregate, "aggregate", minimum_buffer_size=3380
     )
     expected_gauges = {
         "full_frame_frames_since_status_sample": max(current_gaps),
         "full_frame_max_status_sample_gap": max(maximum_gaps),
         "spidev_buffer_size": min(buffer_sizes),
         "full_frame_write_only_supported": True,
+        "receiver_fec_last_decode_us": max(fec_last_decode_times),
+        "receiver_fec_max_decode_us": max(fec_max_decode_times),
     }
     for field, expected in expected_gauges.items():
         if aggregate.get(field) != expected:
@@ -337,6 +485,7 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
 def _require_transport_accounting_delta(
     before: Mapping[str, Any], after: Mapping[str, Any], label: str,
     *, expected_full_semantic_bytes: int | None = None,
+    expected_full_wire_bytes: int | None = None,
 ) -> None:
     deltas = {
         field: _integer(after.get(field), f"{label} final {field}")
@@ -347,7 +496,11 @@ def _require_transport_accounting_delta(
         if delta <= 0:
             raise TargetEvidenceError(f"{label} {field} did not advance")
     transfers = deltas["spi_transfers"]
-    if deltas["transport_envelope_bytes_sent"] != 4 * transfers:
+    fec_frames = (
+        _integer(after.get("fec_frames_sent"), f"{label} final FEC frames")
+        - _integer(before.get("fec_frames_sent"), f"{label} initial FEC frames")
+    )
+    if deltas["transport_envelope_bytes_sent"] != 4 * transfers + 4 * fec_frames:
         raise TargetEvidenceError(f"{label} envelope accounting is inconsistent")
     if deltas["crc_bytes_sent"] != 2 * transfers:
         raise TargetEvidenceError(f"{label} CRC accounting is inconsistent")
@@ -356,14 +509,17 @@ def _require_transport_accounting_delta(
         + deltas["transport_envelope_bytes_sent"]
         + deltas["transport_padding_bytes_sent"]
         + deltas["crc_bytes_sent"]
+        + (
+            _integer(after.get("fec_parity_bytes_sent"), f"{label} final FEC parity bytes")
+            - _integer(before.get("fec_parity_bytes_sent"), f"{label} initial FEC parity bytes")
+        )
     )
     if deltas["bytes_sent"] != expected_wire:
         raise TargetEvidenceError(f"{label} wire-byte accounting is inconsistent")
     if expected_full_semantic_bytes is not None:
         full_transfers = deltas["full_frame_transfers"]
-        expected_full_wire_bytes = (
-            (expected_full_semantic_bytes + 6 + 3) // 4
-        ) * 4
+        if expected_full_wire_bytes is None:
+            raise TargetEvidenceError(f"{label} expected full-frame wire size is unavailable")
         if (
             deltas["full_frame_semantic_bytes_sent"]
             != expected_full_semantic_bytes * full_transfers
@@ -373,6 +529,55 @@ def _require_transport_accounting_delta(
             raise TargetEvidenceError(
                 f"{label} full-frame SET_ALL accounting is inconsistent"
             )
+
+
+def _require_fec_delta(
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+    logical_id: int,
+    full_frames: int,
+) -> None:
+    deltas = {
+        field: _integer(after.get(field), f"receiver {logical_id} final {field}")
+        - _integer(before.get(field), f"receiver {logical_id} initial {field}")
+        for field in _FEC_DELTA_COUNTERS
+    }
+    if logical_id != 3:
+        if any(deltas.values()):
+            raise TargetEvidenceError(
+                f"receiver {logical_id} emitted or received unconfigured FEC traffic"
+            )
+        return
+    expected_host = {
+        "fec_frames_sent": full_frames,
+        "fec_codewords_sent": 26 * full_frames,
+        "fec_parity_bytes_sent": 52 * full_frames,
+        "fec_data_padding_bytes_sent": 4 * full_frames,
+    }
+    for field, expected in expected_host.items():
+        if deltas[field] != expected:
+            raise TargetEvidenceError(
+                f"receiver 3 {field} is {deltas[field]}; expected {expected}"
+            )
+    for field in (
+        "receiver_fec_uncorrectable_packets",
+        "receiver_fec_semantic_crc_errors",
+        "receiver_fec_framing_errors",
+    ):
+        if deltas[field] != 0:
+            raise TargetEvidenceError(f"receiver 3 {field} increased")
+    received = deltas["receiver_fec_packets_received"]
+    accepted = deltas["receiver_fec_packets_accepted"]
+    corrected_packets = deltas["receiver_fec_corrected_packets"]
+    corrected_codewords = deltas["receiver_fec_corrected_codewords"]
+    if received != full_frames or accepted != full_frames:
+        raise TargetEvidenceError(
+            "receiver 3 FEC receive/accept deltas do not exactly match sent full frames"
+        )
+    if not 0 <= corrected_packets <= accepted:
+        raise TargetEvidenceError("receiver 3 corrected-packet accounting is invalid")
+    if not corrected_packets <= corrected_codewords <= 26 * corrected_packets:
+        raise TargetEvidenceError("receiver 3 corrected-codeword accounting is invalid")
 
 
 def _percentile(values: Sequence[float], ratio: float) -> float:
@@ -764,8 +969,10 @@ def build_target_evidence(
             if _integer(
                 device.get("receiver_status_version"),
                 f"receiver {logical_id} status version",
-            ) < 3:
-                raise TargetEvidenceError(f"receiver {logical_id} status v3 is required")
+            ) < (7 if logical_id == 3 else 3):
+                raise TargetEvidenceError(
+                    f"receiver {logical_id} status version is below the required contract"
+                )
             encode_ms = _number(
                 device.get("receiver_last_encode_us"),
                 f"receiver {logical_id} encode time",
@@ -797,6 +1004,7 @@ def build_target_evidence(
                 1 + INSTALLED_RECEIVER_STRIP_COUNTS[logical_id]
                 * INSTALLED_LEDS_PER_STRIP * 3
             ),
+            expected_full_wire_bytes=_EXPECTED_FULL_FRAME_WIRE_BYTES[logical_id],
         )
         _require_full_frame_sampling_delta(
             before, after, f"receiver {logical_id} aligned transport"
@@ -808,6 +1016,7 @@ def build_target_evidence(
             before.get("full_frame_transfers"),
             f"receiver {logical_id} initial full-frame transfers",
         )
+        _require_fec_delta(before, after, logical_id, full_frames)
         if full_frames / elapsed_seconds < target_fps:
             raise TargetEvidenceError(
                 f"receiver {logical_id} full-frame SET_ALL rate is below {target_fps} FPS"
@@ -842,13 +1051,13 @@ def build_target_evidence(
         "aggregate": _full_frame_transport_evidence_item(
             first["driver"]["aggregate"],
             last["driver"]["aggregate"],
-            expected_wire_bytes=3320,
+            expected_wire_bytes=3380,
         ),
         "devices": [
             _full_frame_transport_evidence_item(
                 before,
                 after,
-                expected_wire_bytes=(3320 if logical_id < 4 else 424),
+                expected_wire_bytes=_EXPECTED_FULL_FRAME_WIRE_BYTES[logical_id],
                 logical_device=logical_id,
             )
             for logical_id, (before, after) in enumerate(
@@ -923,6 +1132,36 @@ def atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:
             pass
 
 
+def _refresh_receiver_metrics(
+    base: str,
+    *,
+    get_json: Callable[[str], Any],
+    post_json: Callable[[str, Mapping[str, Any]], Any],
+    monotonic: Callable[[], float],
+    sleep: Callable[[float], None],
+) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+    """Return metrics only after an explicit five-receiver status drain."""
+
+    refresh = post_json(f"{base}/api/v1/receivers/status/refresh", {})
+    request_id = refresh.get("request_id") if isinstance(refresh, Mapping) else None
+    if not isinstance(request_id, str) or not request_id:
+        raise TargetEvidenceError("receiver status refresh was not accepted")
+    deadline = monotonic() + 10.0
+    while monotonic() < deadline:
+        metrics = get_json(f"{base}/api/metrics")
+        proof = (
+            metrics.get("driver", {}).get("aggregate", {}).get(
+                "receiver_status_refresh"
+            )
+            if isinstance(metrics, Mapping)
+            else None
+        )
+        if isinstance(proof, Mapping) and proof.get("request_id") == request_id:
+            return metrics, proof
+        sleep(0.1)
+    raise TargetEvidenceError("receiver status refresh did not complete")
+
+
 def capture(
     *,
     base_url: str,
@@ -970,24 +1209,14 @@ def capture(
         plugin=plugin,
     )
     runtime_identity = validate_runtime_identity(initial_status, initial_receipt)
-    refresh = post_json(f"{base}/api/v1/receivers/status/refresh", {})
-    request_id = refresh.get("request_id") if isinstance(refresh, Mapping) else None
-    if not isinstance(request_id, str) or not request_id:
-        raise TargetEvidenceError("receiver status refresh was not accepted")
-    refresh_deadline = monotonic() + 10.0
-    refreshed_metrics = None
-    while monotonic() < refresh_deadline:
-        refreshed_metrics = get_json(f"{base}/api/metrics")
-        proof = (
-            refreshed_metrics.get("driver", {})
-            .get("aggregate", {})
-            .get("receiver_status_refresh")
-        )
-        if isinstance(proof, Mapping) and proof.get("request_id") == request_id:
-            break
-        sleep(0.1)
-    else:
-        raise TargetEvidenceError("receiver status refresh did not complete")
+    refreshed_metrics, proof = _refresh_receiver_metrics(
+        base,
+        get_json=get_json,
+        post_json=post_json,
+        monotonic=monotonic,
+        sleep=sleep,
+    )
+    request_id = proof["request_id"]
     devices = refreshed_metrics.get("driver", {}).get("devices", [])
     phase3a = evaluate_phase3a_status(
         devices,
@@ -1000,7 +1229,14 @@ def capture(
         )
 
     sleep(warmup)
-    samples: list[Mapping[str, Any]] = []
+    baseline_metrics, _ = _refresh_receiver_metrics(
+        base,
+        get_json=get_json,
+        post_json=post_json,
+        monotonic=monotonic,
+        sleep=sleep,
+    )
+    samples: list[Mapping[str, Any]] = [baseline_metrics]
     started = monotonic()
     while True:
         sample = get_json(f"{base}/api/metrics")
@@ -1008,11 +1244,19 @@ def capture(
             raise TargetEvidenceError("metrics sample is malformed")
         if sample.get("animation", {}).get("target_fps") != target_fps:
             raise TargetEvidenceError("target FPS changed during capture")
-        samples.append(sample)
         if monotonic() - started >= duration:
             break
+        samples.append(sample)
         sleep(interval)
     elapsed = monotonic() - started
+    final_metrics, _ = _refresh_receiver_metrics(
+        base,
+        get_json=get_json,
+        post_json=post_json,
+        monotonic=monotonic,
+        sleep=sleep,
+    )
+    samples.append(final_metrics)
 
     require_active_scene(
         base,

@@ -96,6 +96,7 @@ except ImportError:  # Compatibility with an older deployed helper lane.
 
 RELEASE_METADATA = ".release.json"
 RELEASE_ID_PATTERN = re.compile(r"[0-9a-f]{64}")
+FEC_RECEIVER_IDS_ENV = "LEDGRID_FEC_RECEIVER_IDS"
 
 
 def resolve_active_release_id(project_root: Path) -> str | None:
@@ -403,6 +404,25 @@ def receiver_native_modules_for_runtime(config) -> bool:
     return durable
 
 
+def receiver_fec_ids_for_runtime(value: str | None = None) -> tuple[int, ...]:
+    """Parse an explicit, fail-closed logical-receiver FEC allowlist."""
+    if value is None:
+        value = os.environ.get(FEC_RECEIVER_IDS_ENV, "")
+    if not isinstance(value, str):
+        raise TypeError(f"{FEC_RECEIVER_IDS_ENV} must be text")
+    if value == "":
+        return ()
+    tokens = value.split(",")
+    if any(not token.isdecimal() or str(int(token)) != token for token in tokens):
+        raise ValueError(
+            f"{FEC_RECEIVER_IDS_ENV} must be canonical comma-separated logical IDs"
+        )
+    receiver_ids = tuple(int(token) for token in tokens)
+    if len(set(receiver_ids)) != len(receiver_ids):
+        raise ValueError(f"{FEC_RECEIVER_IDS_ENV} cannot contain duplicate IDs")
+    return receiver_ids
+
+
 def resolve_receiver_hybrid_runtime_config(
     project_root: Path, *, explicit_enabled=None
 ):
@@ -648,6 +668,7 @@ def run_controller_mode(args):
                 controller_topology
                 .reverse_native_strips_by_logical_receiver[:num_devices]
             ),
+            fec_receiver_ids=receiver_fec_ids_for_runtime(),
         )
         controller = select_receiver_hybrid_controller(
             controller, receiver_hybrid_config

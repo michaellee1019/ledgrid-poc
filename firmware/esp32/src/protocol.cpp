@@ -29,6 +29,38 @@ std::uint16_t read_u16(const std::uint8_t* input) {
       (static_cast<std::uint16_t>(input[0]) << 8U) | input[1]);
 }
 
+bool is_power_of_two(std::uint16_t value) {
+  return value != 0U && (value & (value - 1U)) == 0U;
+}
+
+bool fec_data_bit_index(std::uint16_t position, std::size_t* data_bit) {
+  if (data_bit == nullptr || position == 0U || is_power_of_two(position)) {
+    return false;
+  }
+  std::size_t index = 0;
+  for (std::uint16_t candidate = 1; candidate <= position; ++candidate) {
+    if (is_power_of_two(candidate)) continue;
+    if (candidate == position) {
+      *data_bit = index;
+      return index < kFecDataBytes * 8U;
+    }
+    ++index;
+  }
+  return false;
+}
+
+std::uint8_t parity8(std::uint8_t value) {
+  value ^= static_cast<std::uint8_t>(value >> 4U);
+  value ^= static_cast<std::uint8_t>(value >> 2U);
+  value ^= static_cast<std::uint8_t>(value >> 1U);
+  return value & 1U;
+}
+
+std::uint8_t parity16(std::uint16_t value) {
+  return parity8(static_cast<std::uint8_t>(value)) ^
+         parity8(static_cast<std::uint8_t>(value >> 8U));
+}
+
 void encode_v2_fields(
     const ReceiverStatusV2& status, std::uint8_t* output) {
   output[5] = status.flags;
@@ -250,6 +282,26 @@ bool encode_receiver_status_v6(
   return true;
 }
 
+bool encode_receiver_status_v7(
+    const ReceiverStatusV7& status,
+    std::uint8_t* output,
+    std::size_t output_size) {
+  if (output == nullptr || output_size < kStatusBytesV7) return false;
+  if (!encode_receiver_status_v6(status, output, output_size)) return false;
+  std::memcpy(output, "LGS7", 4);
+  output[4] = kStatusProtocolVersionV7;
+  write_u32(output + 1216, status.fec_packets_received);
+  write_u32(output + 1220, status.fec_packets_accepted);
+  write_u32(output + 1224, status.fec_corrected_packets);
+  write_u32(output + 1228, status.fec_corrected_codewords);
+  write_u32(output + 1232, status.fec_uncorrectable_packets);
+  write_u32(output + 1236, status.fec_semantic_crc_errors);
+  write_u32(output + 1240, status.fec_framing_errors);
+  write_u16(output + 1244, status.fec_last_decode_us);
+  write_u16(output + 1246, status.fec_max_decode_us);
+  return true;
+}
+
 bool command_may_claim_base(ReceiverCommand command) {
   return command == ReceiverCommand::SetAll ||
          command == ReceiverCommand::LocalBackgroundStart;
@@ -318,7 +370,7 @@ ReceiverDispatchDecision classify_receiver_dispatch(
                                       ReceiverOperationResult::None, false,
                                       false};
     case ReceiverCommand::StatusQuery:
-      if (size == kStatusBytesV3 ||
+      if (size == kStatusBytesV3 || size == kStatusBytesV7 ||
           (local_background_enabled && size == kStatusBytesV4) ||
           (installation_profiles_enabled && size == kStatusBytesV5) ||
           (receiver_native_modules_enabled && size == kStatusBytesV6)) {
@@ -540,15 +592,187 @@ bool receiver_packet_crc_valid(
   return received == calculated;
 }
 
+ReceiverFecPacketOutcome receiver_fec_packet_outcome(
+    bool decoded_ok, const ReceiverPacketDecodeReport& report) {
+  if (!report.fec_envelope_attempted) {
+    return ReceiverFecPacketOutcome::NotFec;
+  }
+  if (decoded_ok) return ReceiverFecPacketOutcome::Accepted;
+  switch (report.result) {
+    case ReceiverPacketDecodeResult::FecUncorrectable:
+      return ReceiverFecPacketOutcome::Uncorrectable;
+    case ReceiverPacketDecodeResult::FecSemanticCrcError:
+      return ReceiverFecPacketOutcome::SemanticCrcError;
+    default:
+      return ReceiverFecPacketOutcome::FramingError;
+  }
+}
+
 bool decode_receiver_packet_payload(
     const std::uint8_t* packet,
     std::size_t packet_size,
-    ReceiverPacketPayload* payload) {
-  if (!receiver_packet_crc_valid(packet, packet_size)) {
-    if (payload != nullptr) *payload = {};
+    ReceiverPacketPayload* payload,
+    ReceiverPacketDecodeReport* report,
+    std::uint8_t* scratch,
+    std::size_t scratch_size) {
+  if (payload != nullptr) *payload = {};
+  if (report != nullptr) *report = {};
+  if (packet == nullptr || payload == nullptr ||
+      packet_size < 1U + kAnimationPipelineCrcBytes ||
+      packet_size > kAnimationPipelineMaxTransactionBytes) {
     return false;
   }
-  return decode_crc_valid_receiver_packet_payload(packet, packet_size, payload);
+
+  const bool fec_shape = packet_size >= 2U * kFecCodewordBytes &&
+      packet_size % (2U * kFecCodewordBytes) == 0U;
+  const std::uint8_t marker_distance = static_cast<std::uint8_t>(
+      __builtin_popcount(static_cast<unsigned int>(
+          packet[0] ^ static_cast<std::uint8_t>(ReceiverCommand::AlignedEnvelope))) +
+      __builtin_popcount(static_cast<unsigned int>(
+          packet[1] ^ kFecEnvelopeVersion)));
+  const bool fec_candidate = fec_shape && marker_distance <= 1U;
+  if (!fec_candidate) {
+    if (receiver_packet_crc_valid(packet, packet_size) &&
+        decode_crc_valid_receiver_packet_payload(
+            packet, packet_size, payload)) {
+      if (report != nullptr) report->result = ReceiverPacketDecodeResult::Ok;
+      return true;
+    }
+    if (report != nullptr) report->result = ReceiverPacketDecodeResult::CrcError;
+    return false;
+  }
+  if (report != nullptr) report->fec_envelope_attempted = true;
+  const std::size_t codewords = packet_size / kFecCodewordBytes;
+  const std::size_t decoded_capacity = codewords * kFecDataBytes;
+  if (codewords > kFecMaxCodewords || scratch == nullptr ||
+      scratch_size < decoded_capacity) {
+    return false;
+  }
+
+  std::uint16_t corrected_codewords = 0;
+  std::uint16_t corrected_bits = 0;
+  for (std::size_t block = 0; block < codewords; ++block) {
+    const std::size_t wire_offset = block * kFecCodewordBytes;
+    const std::uint8_t* data = packet + wire_offset;
+    const std::uint16_t stored = static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(data[kFecDataBytes]) << 8U) |
+        data[kFecDataBytes + 1U]);
+    if ((stored & ~(kFecParityMask | kFecOverallParityMask)) != 0U) {
+      return false;
+    }
+    const std::uint16_t stored_hamming = stored & kFecParityMask;
+    std::uint16_t data_syndrome = 0;
+    std::uint8_t data_parity = 0;
+    std::uint16_t codeword_position = 1;
+    for (std::size_t byte_index = 0; byte_index < kFecDataBytes; ++byte_index) {
+      const std::uint8_t value = data[byte_index];
+      data_parity ^= parity8(value);
+      for (std::uint8_t bit = 0; bit < 8U; ++bit) {
+        while (is_power_of_two(codeword_position)) ++codeword_position;
+        if ((value & (1U << bit)) != 0U) {
+          data_syndrome ^= codeword_position;
+        }
+        ++codeword_position;
+      }
+    }
+    const std::uint16_t syndrome = data_syndrome ^ stored_hamming;
+    const bool overall_mismatch =
+        (data_parity ^ parity16(stored_hamming) ^
+         ((stored & kFecOverallParityMask) != 0U)) != 0U;
+    std::size_t corrected_data_bit = kFecDataBytes * 8U;
+    bool corrected = false;
+    if (syndrome != 0U && !overall_mismatch) {
+      if (report != nullptr) {
+        report->result = ReceiverPacketDecodeResult::FecUncorrectable;
+      }
+      return false;
+    }
+    if (syndrome != 0U && overall_mismatch) {
+      if (!is_power_of_two(syndrome) &&
+          !fec_data_bit_index(syndrome, &corrected_data_bit)) {
+        if (report != nullptr) {
+          report->result = ReceiverPacketDecodeResult::FecUncorrectable;
+        }
+        return false;
+      }
+      corrected = true;
+    } else if (overall_mismatch) {
+      // The overall parity bit itself is the single erroneous bit.
+      corrected = true;
+    }
+    if (corrected) {
+      ++corrected_codewords;
+      ++corrected_bits;
+    }
+
+    for (std::size_t byte_index = 0; byte_index < kFecDataBytes; ++byte_index) {
+      std::uint8_t value = data[byte_index];
+      if (corrected_data_bit / 8U == byte_index) {
+        value ^= static_cast<std::uint8_t>(
+            1U << (corrected_data_bit % 8U));
+      }
+      scratch[block * kFecDataBytes + byte_index] = value;
+    }
+  }
+
+  if (decoded_capacity < kFecEnvelopeHeaderBytes +
+                             kAlignedEnvelopeHeaderBytes + 1U +
+                             kAnimationPipelineCrcBytes ||
+      scratch[0] != static_cast<std::uint8_t>(ReceiverCommand::AlignedEnvelope) ||
+      scratch[1] != kFecEnvelopeVersion) {
+    return false;
+  }
+  const std::size_t inner_wire_size =
+      (static_cast<std::size_t>(scratch[2]) << 8U) | scratch[3];
+  const std::uint8_t* inner = scratch + kFecEnvelopeHeaderBytes;
+  if (inner_wire_size < kAlignedEnvelopeHeaderBytes + 1U +
+                            kAnimationPipelineCrcBytes ||
+      inner_wire_size > decoded_capacity - kFecEnvelopeHeaderBytes ||
+      inner_wire_size % kSpiDmaAlignmentBytes != 0U ||
+      inner[0] != static_cast<std::uint8_t>(ReceiverCommand::AlignedEnvelope) ||
+      inner[1] != kAlignedEnvelopeVersion) {
+    return false;
+  }
+  const std::size_t semantic_size =
+      (static_cast<std::size_t>(inner[2]) << 8U) | inner[3];
+  if (semantic_size == 0U || semantic_size > kFecEnvelopeMaxSemanticBytes) {
+    return false;
+  }
+  const std::size_t inner_unpadded = kAlignedEnvelopeHeaderBytes +
+      semantic_size + kAnimationPipelineCrcBytes;
+  const std::size_t inner_padding =
+      (kSpiDmaAlignmentBytes - inner_unpadded % kSpiDmaAlignmentBytes) %
+      kSpiDmaAlignmentBytes;
+  const std::size_t canonical_inner_wire_size = inner_unpadded + inner_padding;
+  if (inner_wire_size != canonical_inner_wire_size) return false;
+  std::size_t required_codewords =
+      (kFecEnvelopeHeaderBytes + inner_wire_size + kFecDataBytes - 1U) /
+      kFecDataBytes;
+  if (required_codewords % 2U != 0U) ++required_codewords;
+  if (required_codewords != codewords) {
+    return false;
+  }
+  for (std::size_t index = kFecEnvelopeHeaderBytes + inner_wire_size;
+       index < decoded_capacity; ++index) {
+    if (scratch[index] != 0U) return false;
+  }
+  if (!receiver_packet_crc_valid(inner, inner_wire_size)) {
+    if (report != nullptr) {
+      report->result = ReceiverPacketDecodeResult::FecSemanticCrcError;
+    }
+    return false;
+  }
+  if (!decode_crc_valid_receiver_packet_payload(
+          inner, inner_wire_size, payload)) {
+    return false;
+  }
+  payload->fec_envelope = true;
+  if (report != nullptr) {
+    report->result = ReceiverPacketDecodeResult::Ok;
+    report->corrected_codewords = corrected_codewords;
+    report->corrected_bits = corrected_bits;
+  }
+  return true;
 }
 
 bool decode_crc_valid_receiver_packet_payload(
@@ -629,7 +853,7 @@ bool valid_status_query(
     bool installation_profiles_enabled,
     bool receiver_native_modules_enabled) {
   if (command == nullptr ||
-      (size != kStatusBytesV3 &&
+      (size != kStatusBytesV3 && size != kStatusBytesV7 &&
        !(sparse_overlay_enabled && size == kStatusBytesV4) &&
        !(installation_profiles_enabled && size == kStatusBytesV5) &&
        !(receiver_native_modules_enabled && size == kStatusBytesV6)) ||

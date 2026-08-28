@@ -125,9 +125,13 @@ def _target_runtime_identity() -> dict:
 def _target_transport() -> dict:
     devices = []
     for logical_device in range(5):
+        fec_enabled = logical_device == 3
+        full_frames = 1500
         devices.append({
             "logical_device": logical_device,
-            "expected_wire_bytes": 3320 if logical_device < 4 else 424,
+            "expected_wire_bytes": (
+                3380 if logical_device == 3 else 3320 if logical_device < 4 else 424
+            ),
             "deltas": {
                 "full_frame_transfers": 1500,
                 "full_frame_status_transfers": 6,
@@ -141,10 +145,31 @@ def _target_transport() -> dict:
                 "spidev_buffer_size": 4096,
                 "full_frame_write_only_supported": True,
             },
+            "fec": {
+                "requested_count": int(fec_enabled),
+                "enabled_count": int(fec_enabled),
+                "deltas": {
+                    "fec_frames_sent": full_frames if fec_enabled else 0,
+                    "fec_codewords_sent": 26 * full_frames if fec_enabled else 0,
+                    "fec_parity_bytes_sent": 52 * full_frames if fec_enabled else 0,
+                    "fec_data_padding_bytes_sent": 4 * full_frames if fec_enabled else 0,
+                    "receiver_fec_packets_received": full_frames if fec_enabled else 0,
+                    "receiver_fec_packets_accepted": full_frames if fec_enabled else 0,
+                    "receiver_fec_corrected_packets": 2 if fec_enabled else 0,
+                    "receiver_fec_corrected_codewords": 2 if fec_enabled else 0,
+                    "receiver_fec_uncorrectable_packets": 0,
+                    "receiver_fec_semantic_crc_errors": 0,
+                    "receiver_fec_framing_errors": 0,
+                },
+                "final": {
+                    "receiver_fec_last_decode_us": 80 if fec_enabled else 0,
+                    "receiver_fec_max_decode_us": 100 if fec_enabled else 0,
+                },
+            },
         })
     return {
         "aggregate": {
-            "expected_wire_bytes": 3320,
+            "expected_wire_bytes": 3380,
             "deltas": {
                 field: sum(device["deltas"][field] for device in devices)
                 for field in devices[0]["deltas"]
@@ -154,6 +179,18 @@ def _target_transport() -> dict:
                 "full_frame_max_status_sample_gap": 15,
                 "spidev_buffer_size": 4096,
                 "full_frame_write_only_supported": True,
+            },
+            "fec": {
+                "requested_count": 1,
+                "enabled_count": 1,
+                "deltas": {
+                    field: sum(device["fec"]["deltas"][field] for device in devices)
+                    for field in devices[0]["fec"]["deltas"]
+                },
+                "final": {
+                    "receiver_fec_last_decode_us": 80,
+                    "receiver_fec_max_decode_us": 100,
+                },
             },
         },
         "devices": devices,
@@ -524,7 +561,7 @@ class ActivationQualificationTests(unittest.TestCase):
             (
                 "wrong wire size",
                 lambda value: value["transport"]["devices"][4].__setitem__(
-                    "expected_wire_bytes", 3320
+                    "expected_wire_bytes", 3380
                 ),
             ),
             (

@@ -228,7 +228,8 @@ class MultiDeviceLEDController:
                  reverse_native_strips_by_logical_receiver: tuple[bool, ...] | None = None,
                  receiver_lane_masks: tuple[int, ...] | None = None,
                  receiver_strip_counts: tuple[int, ...] | None = None,
-                 receiver_global_strip_offsets: tuple[int, ...] | None = None):
+                 receiver_global_strip_offsets: tuple[int, ...] | None = None,
+                 fec_receiver_ids: tuple[int, ...] = ()):
         """
         Initialize multi-device LED controller
         
@@ -264,6 +265,9 @@ class MultiDeviceLEDController:
                 receiver. Defaults to the lowest ``local_strip_count`` lanes;
                 installed callers pass an explicit all-lane broadcast mask for
                 the dedicated one-strip tail receiver.
+            fec_receiver_ids: Explicit logical receivers allowed to negotiate
+                aligned-envelope v2 for complete SET_ALL frames. Empty keeps
+                every receiver on aligned-envelope v1.
         """
         if type(receiver_geometry_profile) is not bool:
             raise TypeError("receiver_geometry_profile must be a boolean")
@@ -271,6 +275,15 @@ class MultiDeviceLEDController:
             raise TypeError("receiver_native_modules must be a boolean")
         if type(num_devices) is not int or not 1 <= num_devices <= 0xFF:
             raise ValueError("num_devices must be an integer from 1 through 255")
+        if (
+            type(fec_receiver_ids) is not tuple
+            or any(type(value) is not int for value in fec_receiver_ids)
+            or len(set(fec_receiver_ids)) != len(fec_receiver_ids)
+            or any(not 0 <= value < num_devices for value in fec_receiver_ids)
+        ):
+            raise ValueError(
+                "fec_receiver_ids must be a tuple of unique configured logical IDs"
+            )
         if receiver_strip_counts is None:
             visible_strips = logical_strip_count(
                 num_devices, strips_per_device, strip_count
@@ -375,6 +388,7 @@ class MultiDeviceLEDController:
                 "the receiver's logical strip width"
             )
         self.num_devices = num_devices
+        self.fec_receiver_ids = fec_receiver_ids
         self.strips_per_device = strips_per_device
         self.receiver_strip_counts = receiver_strip_counts
         self.receiver_global_strip_offsets = receiver_global_strip_offsets
@@ -532,6 +546,7 @@ class MultiDeviceLEDController:
                 global_strip_offset=(
                     self.receiver_global_strip_offsets[device_index]
                 ),
+                fec_transport=device_index in self.fec_receiver_ids,
             )
             self.devices.append(device)
 
@@ -3225,6 +3240,12 @@ class MultiDeviceLEDController:
         full_frame_semantic_bytes_sent = 0
         full_frame_wire_bytes_sent = 0
         transport_envelope_devices = 0
+        fec_transport_requested_devices = 0
+        fec_transport_enabled_devices = 0
+        fec_frames_sent = 0
+        fec_codewords_sent = 0
+        fec_parity_bytes_sent = 0
+        fec_data_padding_bytes_sent = 0
         crc_bytes_sent = 0
         errors = 0
         receiver_status_devices = 0
@@ -3232,6 +3253,15 @@ class MultiDeviceLEDController:
         receiver_crc_errors = 0
         receiver_packets = 0
         receiver_crc_ok_packets = 0
+        receiver_fec_packets_received = 0
+        receiver_fec_packets_accepted = 0
+        receiver_fec_corrected_packets = 0
+        receiver_fec_corrected_codewords = 0
+        receiver_fec_uncorrectable_packets = 0
+        receiver_fec_semantic_crc_errors = 0
+        receiver_fec_framing_errors = 0
+        receiver_fec_last_decode_us = 0
+        receiver_fec_max_decode_us = 0
         receiver_frames_rendered = 0
         receiver_frames_accepted = 0
         receiver_frames_displayed = 0
@@ -3310,6 +3340,18 @@ class MultiDeviceLEDController:
             )
             if stats.get('transport_envelope_enabled'):
                 transport_envelope_devices += 1
+            if stats.get('fec_transport_requested'):
+                fec_transport_requested_devices += 1
+            if stats.get('fec_transport_enabled'):
+                fec_transport_enabled_devices += 1
+            fec_frames_sent += int(stats.get('fec_frames_sent', 0) or 0)
+            fec_codewords_sent += int(stats.get('fec_codewords_sent', 0) or 0)
+            fec_parity_bytes_sent += int(
+                stats.get('fec_parity_bytes_sent', 0) or 0
+            )
+            fec_data_padding_bytes_sent += int(
+                stats.get('fec_data_padding_bytes_sent', 0) or 0
+            )
             crc_bytes_sent += int(stats.get('crc_bytes_sent', 0) or 0)
             errors += int(stats.get('errors', 0) or 0)
             if stats.get('receiver_status_seen'):
@@ -3321,6 +3363,35 @@ class MultiDeviceLEDController:
             receiver_crc_errors += int(stats.get('receiver_crc_errors', 0) or 0)
             receiver_packets += int(stats.get('receiver_packets', 0) or 0)
             receiver_crc_ok_packets += int(stats.get('receiver_crc_ok_packets', 0) or 0)
+            receiver_fec_packets_received += int(
+                stats.get('receiver_fec_packets_received', 0) or 0
+            )
+            receiver_fec_packets_accepted += int(
+                stats.get('receiver_fec_packets_accepted', 0) or 0
+            )
+            receiver_fec_corrected_packets += int(
+                stats.get('receiver_fec_corrected_packets', 0) or 0
+            )
+            receiver_fec_corrected_codewords += int(
+                stats.get('receiver_fec_corrected_codewords', 0) or 0
+            )
+            receiver_fec_uncorrectable_packets += int(
+                stats.get('receiver_fec_uncorrectable_packets', 0) or 0
+            )
+            receiver_fec_semantic_crc_errors += int(
+                stats.get('receiver_fec_semantic_crc_errors', 0) or 0
+            )
+            receiver_fec_framing_errors += int(
+                stats.get('receiver_fec_framing_errors', 0) or 0
+            )
+            receiver_fec_last_decode_us = max(
+                receiver_fec_last_decode_us,
+                int(stats.get('receiver_fec_last_decode_us', 0) or 0),
+            )
+            receiver_fec_max_decode_us = max(
+                receiver_fec_max_decode_us,
+                int(stats.get('receiver_fec_max_decode_us', 0) or 0),
+            )
             receiver_frames_rendered += int(stats.get('receiver_frames_rendered', 0) or 0)
             receiver_frames_accepted += int(stats.get('receiver_frames_accepted', 0) or 0)
             receiver_frames_displayed += int(stats.get('receiver_frames_displayed', 0) or 0)
@@ -3438,6 +3509,14 @@ class MultiDeviceLEDController:
                 'full_frame_semantic_bytes_sent': full_frame_semantic_bytes_sent,
                 'full_frame_wire_bytes_sent': full_frame_wire_bytes_sent,
                 'transport_envelope_devices': transport_envelope_devices,
+                'fec_transport_requested_devices': (
+                    fec_transport_requested_devices
+                ),
+                'fec_transport_enabled_devices': fec_transport_enabled_devices,
+                'fec_frames_sent': fec_frames_sent,
+                'fec_codewords_sent': fec_codewords_sent,
+                'fec_parity_bytes_sent': fec_parity_bytes_sent,
+                'fec_data_padding_bytes_sent': fec_data_padding_bytes_sent,
                 'crc_bytes_sent': crc_bytes_sent,
                 'errors': errors,
                 'receiver_status_devices': receiver_status_devices,
@@ -3447,6 +3526,21 @@ class MultiDeviceLEDController:
                 'receiver_crc_errors': receiver_crc_errors,
                 'receiver_packets': receiver_packets,
                 'receiver_crc_ok_packets': receiver_crc_ok_packets,
+                'receiver_fec_packets_received': receiver_fec_packets_received,
+                'receiver_fec_packets_accepted': receiver_fec_packets_accepted,
+                'receiver_fec_corrected_packets': receiver_fec_corrected_packets,
+                'receiver_fec_corrected_codewords': (
+                    receiver_fec_corrected_codewords
+                ),
+                'receiver_fec_uncorrectable_packets': (
+                    receiver_fec_uncorrectable_packets
+                ),
+                'receiver_fec_semantic_crc_errors': (
+                    receiver_fec_semantic_crc_errors
+                ),
+                'receiver_fec_framing_errors': receiver_fec_framing_errors,
+                'receiver_fec_last_decode_us': receiver_fec_last_decode_us,
+                'receiver_fec_max_decode_us': receiver_fec_max_decode_us,
                 'receiver_frames_rendered': receiver_frames_rendered,
                 'receiver_frames_accepted': receiver_frames_accepted,
                 'receiver_frames_displayed': receiver_frames_displayed,

@@ -1686,6 +1686,7 @@ class TargetProvisioningTests(unittest.TestCase):
         )
         self.assertIn("Environment=STRIPS=33", text)
         self.assertIn("Environment=EXPECTED_ESP32_DEVICES=5", text)
+        self.assertIn("Environment=LEDGRID_FEC_RECEIVER_IDS=3", text)
         self.assertIn("WorkingDirectory=/target/current", text)
         with self.assertRaisesRegex(ValueError, "strips"):
             deploy_target._unit_text(

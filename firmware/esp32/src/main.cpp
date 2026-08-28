@@ -62,6 +62,8 @@ static_assert(kSpiFrameBytes <= kSpiBufferSize,
 static_assert(1U + kMaxRgbBytes <=
                   ledgrid::kAlignedEnvelopeMaxSemanticBytes,
               "maximum RGB frame exceeds aligned semantic bound");
+static_assert(1U + kMaxRgbBytes <= ledgrid::kFecEnvelopeMaxSemanticBytes,
+              "maximum RGB frame exceeds FEC semantic bound");
 static_assert(ledgrid::kStatusBytesV3 + kCrcBytes <= kSpiBufferSize,
               "status query plus CRC exceeds transport buffer");
 static_assert(ledgrid::kStatusBytesV5 + kCrcBytes <= kSpiBufferSize,
@@ -71,12 +73,17 @@ static_assert(ledgrid::kStatusBytesV6 + kCrcBytes <= kSpiBufferSize,
 static_assert(ledgrid::kStatusBytesV6 <=
                   ledgrid::kAlignedEnvelopeMaxSemanticBytes,
               "status-v6 query exceeds aligned semantic bound");
+static_assert(ledgrid::kStatusBytesV7 <=
+                  ledgrid::kAlignedEnvelopeMaxSemanticBytes,
+              "status-v7 query exceeds aligned semantic bound");
 
 DMA_ATTR std::uint8_t spi_rx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
 DMA_ATTR std::uint8_t spi_tx_buffers[kSpiQueueDepth][kSpiBufferSize] = {};
 spi_slave_transaction_t spi_transactions[kSpiQueueDepth] = {};
 
 std::uint8_t working_frame[kMaxRgbBytes] = {};
+std::uint8_t fec_semantic_buffer[
+    ledgrid::kFecMaxCodewords * ledgrid::kFecDataBytes] = {};
 std::uint8_t startup_frame[kMaxRgbBytes] = {};
 #if LEDGRID_ENABLE_LOCAL_BACKGROUND
 std::uint8_t composite_frame[kMaxRgbBytes] = {};
@@ -128,6 +135,15 @@ std::atomic<bool> explicit_receiver_topology{false};
 std::atomic<std::uint32_t> packets_received{0};
 std::atomic<std::uint32_t> crc_errors{0};
 std::atomic<std::uint32_t> crc_ok_packets{0};
+std::atomic<std::uint32_t> fec_packets_received{0};
+std::atomic<std::uint32_t> fec_packets_accepted{0};
+std::atomic<std::uint32_t> fec_corrected_packets{0};
+std::atomic<std::uint32_t> fec_corrected_codewords{0};
+std::atomic<std::uint32_t> fec_uncorrectable_packets{0};
+std::atomic<std::uint32_t> fec_semantic_crc_errors{0};
+std::atomic<std::uint32_t> fec_framing_errors{0};
+std::atomic<std::uint16_t> fec_last_decode_us{0};
+std::atomic<std::uint16_t> fec_max_decode_us{0};
 std::atomic<std::uint32_t> spi_queue_errors{0};
 std::atomic<std::uint32_t> display_errors{0};
 std::atomic<std::uint16_t> queued_transactions{0};
@@ -621,9 +637,9 @@ void display_task(void*) {
   }
 }
 
-ledgrid::ReceiverStatusV6 status_snapshot() {
+ledgrid::ReceiverStatusV7 status_snapshot() {
   const auto counters = mailbox_counters();
-  ledgrid::ReceiverStatusV6 status{};
+  ledgrid::ReceiverStatusV7 status{};
   status.flags = 0x01U | (led_driver.in_flight() ? 0x02U : 0U);
   status.queued_transactions = queued_transactions.load(std::memory_order_relaxed);
   status.packets = packets_received.load(std::memory_order_relaxed);
@@ -650,7 +666,8 @@ ledgrid::ReceiverStatusV6 status_snapshot() {
   status.leds_per_strip = output.leds_per_strip;
   status.capabilities = ledgrid::kCapabilityStatusV3 |
                         ledgrid::kCapabilityExplicitBaseOwnership |
-                        ledgrid::kCapabilityAlignedEnvelopeV1;
+                        ledgrid::kCapabilityAlignedEnvelopeV1 |
+                        ledgrid::kCapabilityFecEnvelopeV2;
   if (receiver_runtime.local_background_enabled()) {
     status.capabilities |= ledgrid::kCapabilityStaticLocalBackground |
                            ledgrid::kCapabilityPresentationContextV1 |
@@ -756,14 +773,35 @@ ledgrid::ReceiverStatusV6 status_snapshot() {
   status.logical_receiver_id = logical_receiver_id.load(std::memory_order_relaxed);
   status.stagger_phases =
       applied_stagger_phases.load(std::memory_order_relaxed);
+  status.fec_packets_received =
+      fec_packets_received.load(std::memory_order_relaxed);
+  status.fec_packets_accepted =
+      fec_packets_accepted.load(std::memory_order_relaxed);
+  status.fec_corrected_packets =
+      fec_corrected_packets.load(std::memory_order_relaxed);
+  status.fec_corrected_codewords =
+      fec_corrected_codewords.load(std::memory_order_relaxed);
+  status.fec_uncorrectable_packets =
+      fec_uncorrectable_packets.load(std::memory_order_relaxed);
+  status.fec_semantic_crc_errors =
+      fec_semantic_crc_errors.load(std::memory_order_relaxed);
+  status.fec_framing_errors =
+      fec_framing_errors.load(std::memory_order_relaxed);
+  status.fec_last_decode_us =
+      fec_last_decode_us.load(std::memory_order_relaxed);
+  status.fec_max_decode_us =
+      fec_max_decode_us.load(std::memory_order_relaxed);
   return status;
 }
 
 bool queue_spi_transaction(
     std::size_t index, bool status_v4 = false, bool status_v5 = false,
-    bool status_v6 = false) {
+    bool status_v6 = false, bool status_v7 = false) {
   const auto status = status_snapshot();
-  if (status_v6 && LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES != 0) {
+  if (status_v7) {
+    ledgrid::encode_receiver_status_v7(
+        status, spi_tx_buffers[index], kSpiBufferSize);
+  } else if (status_v6 && LEDGRID_ENABLE_RECEIVER_NATIVE_MODULES != 0) {
     ledgrid::encode_receiver_status_v6(
         status, spi_tx_buffers[index], kSpiBufferSize);
   } else if (status_v5 && LEDGRID_ENABLE_INSTALLATION_PROFILES != 0) {
@@ -1283,29 +1321,59 @@ extern "C" void app_main() {
     bool request_v4 = false;
     bool request_v5 = false;
     bool request_v6 = false;
+    bool request_v7 = false;
 
     if (bytes < 1U + kCrcBytes) {
       ++crc_errors;
     } else {
-      const std::uint32_t crc_started =
+      const std::uint32_t decode_started =
           static_cast<std::uint32_t>(esp_timer_get_time());
-      const bool crc_valid =
-          ledgrid::receiver_packet_crc_valid(packet, bytes);
-      last_crc_us = duration_u16(
-          static_cast<std::uint32_t>(esp_timer_get_time()) - crc_started);
-      if (!crc_valid) {
+      ledgrid::ReceiverPacketPayload decoded{};
+      ledgrid::ReceiverPacketDecodeReport decode_report{};
+      const bool decoded_ok = ledgrid::decode_receiver_packet_payload(
+          packet, bytes, &decoded, &decode_report, fec_semantic_buffer,
+          sizeof(fec_semantic_buffer));
+      const auto fec_outcome = ledgrid::receiver_fec_packet_outcome(
+          decoded_ok, decode_report);
+      const bool fec_shaped =
+          fec_outcome != ledgrid::ReceiverFecPacketOutcome::NotFec;
+      if (fec_shaped) ++fec_packets_received;
+      const std::uint16_t decode_us = duration_u16(
+          static_cast<std::uint32_t>(esp_timer_get_time()) - decode_started);
+      last_crc_us = decode_us;
+      if (fec_shaped) {
+        fec_last_decode_us = decode_us;
+        std::uint16_t prior_max =
+            fec_max_decode_us.load(std::memory_order_relaxed);
+        while (decode_us > prior_max &&
+               !fec_max_decode_us.compare_exchange_weak(
+                   prior_max, decode_us, std::memory_order_relaxed)) {}
+      }
+      if (!decoded_ok) {
         ++crc_errors;
+        if (fec_shaped) {
+          switch (fec_outcome) {
+            case ledgrid::ReceiverFecPacketOutcome::Uncorrectable:
+              ++fec_uncorrectable_packets;
+              break;
+            case ledgrid::ReceiverFecPacketOutcome::SemanticCrcError:
+              ++fec_semantic_crc_errors;
+              break;
+            default:
+              ++fec_framing_errors;
+              break;
+          }
+        }
       } else {
         ++crc_ok_packets;
-        ledgrid::ReceiverPacketPayload decoded{};
-        if (!ledgrid::decode_crc_valid_receiver_packet_payload(
-                packet, bytes, &decoded)) {
-          lock_runtime();
-          receiver_runtime.set_last_result(
-              ledgrid::ReceiverOperationResult::InvalidCommand);
-          unlock_runtime();
-          queue_spi_transaction(index, false, false, false);
-          continue;
+        if (fec_shaped) {
+          ++fec_packets_accepted;
+          if (decode_report.corrected_codewords != 0U) {
+            ++fec_corrected_packets;
+            fec_corrected_codewords.fetch_add(
+                decode_report.corrected_codewords,
+                std::memory_order_relaxed);
+          }
         }
         const std::uint8_t* command = decoded.data;
         const std::size_t payload_bytes = decoded.size;
@@ -1341,6 +1409,8 @@ extern "C" void app_main() {
             payload_bytes == ledgrid::kStatusBytesV5;
         request_v6 = status_query && accepted &&
             payload_bytes == ledgrid::kStatusBytesV6;
+        request_v7 = status_query && accepted &&
+            payload_bytes == ledgrid::kStatusBytesV7;
         if (!status_query && dispatch_allowed) {
           lock_runtime();
           if (command[0] < 0x10 || command[0] == 0xFF) {
@@ -1352,6 +1422,7 @@ extern "C" void app_main() {
         }
       }
     }
-    queue_spi_transaction(index, request_v4, request_v5, request_v6);
+    queue_spi_transaction(
+        index, request_v4, request_v5, request_v6, request_v7);
   }
 }

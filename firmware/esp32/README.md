@@ -107,7 +107,28 @@ negotiated status query, is enveloped. Deployment health requires both the bit
 and Host envelope-enabled state on all five receivers before accepting the new
 firmware, so new-host/old-firmware traffic remains legacy and
 old-host/new-firmware traffic remains decodable. CRC-error accounting is
-unchanged; the envelope does not correct or conceal corruption.
+unchanged for legacy and v1 traffic.
+
+Aligned-envelope v2 is an explicit per-receiver FEC fallback. Its protected
+data begins `0x0b, 2, inner_v1_wire_bytes:u16`, followed by the complete
+canonical v1 envelope, including the v1 header, zero padding, and CRC. The
+entire sequence is split into even-count fixed codewords: 128 systematic data
+bytes plus two SECDED bytes (11 shortened-Hamming parity bits, one overall even
+parity bit, and four reserved-zero bits). Thus the installed eight-strip
+`SET_ALL` is 26 codewords/3,380 bytes and the one-strip form is four
+codewords/520 bytes; the maximum is 30 codewords/3,900 bytes and 3,830 semantic
+bytes. The decoder recognizes only an even-codeword shape whose raw 16-bit
+marker is exact or one bit from `0x0b02`, corrects before validating the v2
+header and nested v1 CRC, and rejects a double error in one codeword without
+dispatch or frame mutation. Valid legacy and v1 packets remain accepted.
+
+Capability `fec_envelope_v2 = 1<<15` and three fresh, counter-advancing status
+observations gate Host use. The maintained service requests it only for logical
+receiver 3 through `LEDGRID_FEC_RECEIVER_IDS=3`; every other receiver remains
+v1. Status v7 is 1,248 bytes and reports received, accepted, corrected packet
+and codeword, uncorrectable, semantic-CRC, framing, and last/maximum decode-time
+counters. The terminal outcomes exactly partition received FEC packets. Host
+sent/codeword/parity/padding counters advance only after a successful SPI I/O.
 
 | Command | Code | Payload |
 |---|---:|---|
@@ -118,7 +139,7 @@ unchanged; the envelope does not correct or conceal corruption.
 | SET_RANGE | `0x05` | start high, start low, count, RGB bytes |
 | SET_ALL | `0x06` | tightly packed RGB bytes; publishes inline |
 | CONFIG | `0x07` | local strips, LEDs/strip `u16`, optional flags, logical ID, and global offset `u16` |
-| STATUS_QUERY | `0x08` | 320-byte v3, negotiated 416-byte v4, 768-byte v5, or 1,216-byte v6 query; all bytes after ID zero |
+| STATUS_QUERY | `0x08` | 320-byte v3, negotiated 416-byte v4, 768-byte v5, 1,216-byte v6, or 1,248-byte v7 query; all bytes after ID zero |
 | LOCAL_BACKGROUND_START | `0x10` | component u16, cadence u16, global offset u32, seed u32, scene epoch u64 |
 | LOCAL_BACKGROUND_STOP | `0x11` | none |
 | LOCAL_BACKGROUND_PARAMETERS | `0x12` | cadence u16, global offset u32, seed u32 |
@@ -200,8 +221,8 @@ uses `last_processed_command` plus `operation_sequence` to bind later status to
 the exact CRC-valid operation. Status queries do not advance that sequence.
 
 Aligned-envelope capability bit `1<<14` is present in every current firmware
-environment. A 320/416/768/1,216-byte semantic status query clocks
-328/424/776/1,224 bytes respectively after wrapping, leaving room for the full
+environment. A 320/416/768/1,216/1,248-byte semantic status query clocks
+328/424/776/1,224/1,256 bytes respectively after wrapping, leaving room for the full
 MISO snapshot while satisfying the DMA transaction-length rule.
 
 When status-v3 advertises sparse-overlay capability bit `1<<4`, a new host may

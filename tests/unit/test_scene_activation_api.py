@@ -61,10 +61,15 @@ def _global_settings(revision: int = 3) -> dict:
 
 
 def _target_transport() -> dict:
-    devices = [
-        {
+    devices = []
+    for logical_device in range(5):
+        fec_enabled = logical_device == 3
+        full_frames = 300
+        devices.append({
             "logical_device": logical_device,
-            "expected_wire_bytes": 3320 if logical_device < 4 else 424,
+            "expected_wire_bytes": (
+                3380 if fec_enabled else 3320 if logical_device < 4 else 424
+            ),
             "deltas": {
                 "full_frame_transfers": 300,
                 "full_frame_status_transfers": 2,
@@ -78,12 +83,31 @@ def _target_transport() -> dict:
                 "spidev_buffer_size": 4096,
                 "full_frame_write_only_supported": True,
             },
-        }
-        for logical_device in range(5)
-    ]
+            "fec": {
+                "requested_count": int(fec_enabled),
+                "enabled_count": int(fec_enabled),
+                "deltas": {
+                    "fec_frames_sent": full_frames if fec_enabled else 0,
+                    "fec_codewords_sent": 26 * full_frames if fec_enabled else 0,
+                    "fec_parity_bytes_sent": 52 * full_frames if fec_enabled else 0,
+                    "fec_data_padding_bytes_sent": 4 * full_frames if fec_enabled else 0,
+                    "receiver_fec_packets_received": full_frames if fec_enabled else 0,
+                    "receiver_fec_packets_accepted": full_frames if fec_enabled else 0,
+                    "receiver_fec_corrected_packets": 1 if fec_enabled else 0,
+                    "receiver_fec_corrected_codewords": 1 if fec_enabled else 0,
+                    "receiver_fec_uncorrectable_packets": 0,
+                    "receiver_fec_semantic_crc_errors": 0,
+                    "receiver_fec_framing_errors": 0,
+                },
+                "final": {
+                    "receiver_fec_last_decode_us": 75 if fec_enabled else 0,
+                    "receiver_fec_max_decode_us": 90 if fec_enabled else 0,
+                },
+            },
+        })
     return {
         "aggregate": {
-            "expected_wire_bytes": 3320,
+            "expected_wire_bytes": 3380,
             "deltas": {
                 field: sum(device["deltas"][field] for device in devices)
                 for field in devices[0]["deltas"]
@@ -93,6 +117,18 @@ def _target_transport() -> dict:
                 "full_frame_max_status_sample_gap": 255,
                 "spidev_buffer_size": 4096,
                 "full_frame_write_only_supported": True,
+            },
+            "fec": {
+                "requested_count": 1,
+                "enabled_count": 1,
+                "deltas": {
+                    field: sum(device["fec"]["deltas"][field] for device in devices)
+                    for field in devices[0]["fec"]["deltas"]
+                },
+                "final": {
+                    "receiver_fec_last_decode_us": 75,
+                    "receiver_fec_max_decode_us": 90,
+                },
             },
         },
         "devices": devices,

@@ -743,8 +743,123 @@ _TARGET_TRANSPORT_FINAL_FIELDS = (
     "spidev_buffer_size",
     "full_frame_write_only_supported",
 )
-_TARGET_TRANSPORT_EXPECTED_WIRE_BYTES = (3320, 3320, 3320, 3320, 424)
+_TARGET_TRANSPORT_EXPECTED_WIRE_BYTES = (3320, 3320, 3320, 3380, 424)
 _TARGET_TRANSPORT_MAX_SAMPLE_GAP = 256
+_TARGET_FEC_DELTA_FIELDS = (
+    "fec_frames_sent",
+    "fec_codewords_sent",
+    "fec_parity_bytes_sent",
+    "fec_data_padding_bytes_sent",
+    "receiver_fec_packets_received",
+    "receiver_fec_packets_accepted",
+    "receiver_fec_corrected_packets",
+    "receiver_fec_corrected_codewords",
+    "receiver_fec_uncorrectable_packets",
+    "receiver_fec_semantic_crc_errors",
+    "receiver_fec_framing_errors",
+)
+
+
+def _target_fec_item(
+    value: Any,
+    label: str,
+    *,
+    expected_count: int,
+    full_frames: int | None,
+) -> dict[str, Any]:
+    payload = _object(value, label)
+    _only(payload, {"requested_count", "enabled_count", "deltas", "final"}, label)
+    requested = _integer(payload.get("requested_count"), f"{label}.requested_count", maximum=1)
+    enabled = _integer(payload.get("enabled_count"), f"{label}.enabled_count", maximum=1)
+    if requested != expected_count or enabled != expected_count:
+        raise QualificationValidationError(
+            f"{label} must select exactly the configured receiver-3 FEC policy"
+        )
+    raw_deltas = _object(payload.get("deltas"), f"{label}.deltas")
+    _only(raw_deltas, set(_TARGET_FEC_DELTA_FIELDS), f"{label}.deltas")
+    deltas = {
+        field: _integer(raw_deltas.get(field), f"{label}.deltas.{field}")
+        for field in _TARGET_FEC_DELTA_FIELDS
+    }
+    if expected_count == 0:
+        if any(deltas.values()):
+            raise QualificationValidationError(f"{label} contains unconfigured FEC traffic")
+    else:
+        expected_fec_frames = (
+            full_frames if full_frames is not None else deltas["fec_frames_sent"]
+        )
+        expected_host = {
+            "fec_frames_sent": expected_fec_frames,
+            "fec_codewords_sent": 26 * expected_fec_frames,
+            "fec_parity_bytes_sent": 52 * expected_fec_frames,
+            "fec_data_padding_bytes_sent": 4 * expected_fec_frames,
+        }
+        for field, expected in expected_host.items():
+            if deltas[field] != expected:
+                raise QualificationValidationError(
+                    f"{label}.deltas.{field} must be {expected}"
+                )
+        received = deltas["receiver_fec_packets_received"]
+        accepted = deltas["receiver_fec_packets_accepted"]
+        uncorrectable = deltas["receiver_fec_uncorrectable_packets"]
+        semantic_crc = deltas["receiver_fec_semantic_crc_errors"]
+        framing = deltas["receiver_fec_framing_errors"]
+        if received != accepted + uncorrectable + semantic_crc + framing:
+            raise QualificationValidationError(
+                f"{label}.deltas receiver FEC outcomes do not partition received packets"
+            )
+        if (
+            received != expected_fec_frames
+            or accepted != expected_fec_frames
+            or uncorrectable
+            or semantic_crc
+            or framing
+        ):
+            raise QualificationValidationError(
+                f"{label}.deltas requires one accepted FEC packet per sent frame "
+                "with zero terminal faults"
+            )
+        corrected_packets = deltas["receiver_fec_corrected_packets"]
+        corrected_codewords = deltas["receiver_fec_corrected_codewords"]
+        if (
+            corrected_packets > accepted
+            or corrected_codewords < corrected_packets
+            or corrected_codewords > 26 * corrected_packets
+        ):
+            raise QualificationValidationError(
+                f"{label}.deltas corrected FEC accounting is inconsistent"
+            )
+    raw_final = _object(payload.get("final"), f"{label}.final")
+    _only(
+        raw_final,
+        {"receiver_fec_last_decode_us", "receiver_fec_max_decode_us"},
+        f"{label}.final",
+    )
+    last_decode = _integer(
+        raw_final.get("receiver_fec_last_decode_us"),
+        f"{label}.final.receiver_fec_last_decode_us",
+    )
+    max_decode = _integer(
+        raw_final.get("receiver_fec_max_decode_us"),
+        f"{label}.final.receiver_fec_max_decode_us",
+    )
+    if last_decode > max_decode:
+        raise QualificationValidationError(
+            f"{label}.final last FEC decode exceeds maximum"
+        )
+    if expected_count == 0 and (last_decode != 0 or max_decode != 0):
+        raise QualificationValidationError(
+            f"{label}.final unconfigured receiver has FEC decode timing"
+        )
+    return {
+        "requested_count": requested,
+        "enabled_count": enabled,
+        "deltas": deltas,
+        "final": {
+            "receiver_fec_last_decode_us": last_decode,
+            "receiver_fec_max_decode_us": max_decode,
+        },
+    }
 
 
 def _target_transport_item(
@@ -755,7 +870,7 @@ def _target_transport_item(
     expected_wire_bytes: int,
 ) -> dict[str, Any]:
     payload = _object(value, label)
-    allowed = {"expected_wire_bytes", "deltas", "final"}
+    allowed = {"expected_wire_bytes", "deltas", "final", "fec"}
     if expected_logical_device is not None:
         allowed.add("logical_device")
     _only(payload, allowed, label)
@@ -855,6 +970,20 @@ def _target_transport_item(
             "spidev_buffer_size": buffer_size,
             "full_frame_write_only_supported": True,
         },
+        "fec": _target_fec_item(
+            payload.get("fec"),
+            f"{label}.fec",
+            expected_count=(
+                1
+                if expected_logical_device is None or expected_logical_device == 3
+                else 0
+            ),
+            full_frames=(
+                None
+                if expected_logical_device is None
+                else deltas["full_frame_transfers"]
+            ),
+        ),
     }
     if expected_logical_device is not None:
         result["logical_device"] = expected_logical_device
@@ -910,6 +1039,27 @@ def _target_transport_evidence(value: Any) -> dict[str, Any]:
             raise QualificationValidationError(
                 f"{label}.aggregate.deltas.{field} drifted from receiver sum"
             )
+    for field in _TARGET_FEC_DELTA_FIELDS:
+        if aggregate["fec"]["deltas"][field] != sum(
+            device["fec"]["deltas"][field] for device in devices
+        ):
+            raise QualificationValidationError(
+                f"{label}.aggregate.fec.deltas.{field} drifted from receiver sum"
+            )
+    expected_fec_final = {
+        "receiver_fec_last_decode_us": max(
+            device["fec"]["final"]["receiver_fec_last_decode_us"]
+            for device in devices
+        ),
+        "receiver_fec_max_decode_us": max(
+            device["fec"]["final"]["receiver_fec_max_decode_us"]
+            for device in devices
+        ),
+    }
+    if aggregate["fec"]["final"] != expected_fec_final:
+        raise QualificationValidationError(
+            f"{label}.aggregate.fec.final drifted from receiver values"
+        )
     expected_final = {
         "full_frame_frames_since_status_sample": max(
             device["final"]["full_frame_frames_since_status_sample"]
