@@ -626,6 +626,7 @@ class LEDController:
         self._receiver_fec_semantic_crc_errors = 0
         self._receiver_fec_framing_errors = 0
         self._receiver_fec_terminal_baseline = None
+        self._receiver_fec_terminal_baseline_finalized = False
         self._receiver_fec_terminal_baseline_invalid = False
         self._receiver_fec_terminal_counter_resets = 0
         self._receiver_fec_uncorrectable_packets_process_delta = 0
@@ -1820,6 +1821,9 @@ class LEDController:
             getattr(self, "_fec_transport_enabled", False)
         )
         fresh = self._update_receiver_status_v6(response)
+        fec_enabled_after_observation = bool(
+            getattr(self, "_fec_transport_enabled", False)
+        )
         values = {}
         for name, offset in (
             ("packets_received", 1216),
@@ -1839,17 +1843,40 @@ class LEDController:
             "framing_errors",
         )
         baseline = getattr(self, "_receiver_fec_terminal_baseline", None)
+        baseline_finalized = bool(
+            getattr(self, "_receiver_fec_terminal_baseline_finalized", False)
+        )
         current = {name: values[name] for name in terminal_names}
-        if baseline is None:
-            if fec_enabled_before_observation:
-                self._receiver_fec_terminal_baseline_invalid = True
-            else:
-                baseline = current
-                self._receiver_fec_terminal_baseline = dict(current)
-        elif any(current[name] < baseline[name] for name in terminal_names):
+        counter_reset = baseline is not None and any(
+            current[name] < baseline[name] for name in terminal_names
+        )
+        if counter_reset:
             self._receiver_fec_terminal_counter_resets = (
                 getattr(self, "_receiver_fec_terminal_counter_resets", 0) + 1
             )
+            self._receiver_fec_terminal_baseline_invalid = True
+        elif fec_enabled_before_observation and not baseline_finalized:
+            # Reaching v7 only after FEC was already active cannot establish
+            # which lifetime outcomes predate this Host process.
+            self._receiver_fec_terminal_baseline_invalid = True
+        elif fresh and not baseline_finalized:
+            # SPI responses are queued.  Keep advancing the lifetime snapshot
+            # throughout the three-observation negotiation so an early queued
+            # v7 response cannot hide historical pre-enable outcomes.
+            baseline = dict(current)
+            self._receiver_fec_terminal_baseline = baseline
+
+        if (
+            fresh
+            and not baseline_finalized
+            and fec_enabled_after_observation
+            and not getattr(self, "_receiver_fec_terminal_baseline_invalid", False)
+        ):
+            if baseline is None:
+                self._receiver_fec_terminal_baseline_invalid = True
+            else:
+                baseline_finalized = True
+                self._receiver_fec_terminal_baseline_finalized = True
         for name in terminal_names:
             setattr(
                 self,
