@@ -1,6 +1,7 @@
 #include "ledgrid/protocol.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <iterator>
 
@@ -50,30 +51,47 @@ bool fec_data_bit_index(std::uint16_t position, std::size_t* data_bit) {
   return false;
 }
 
-std::uint8_t fec_gf_multiply(std::uint8_t left, std::uint8_t right) {
-  std::uint8_t result = 0;
-  while (right != 0U) {
-    if ((right & 1U) != 0U) result ^= left;
-    right >>= 1U;
-    const bool carry = (left & 0x80U) != 0U;
-    left = static_cast<std::uint8_t>(left << 1U);
-    if (carry) left ^= 0x1DU;
+struct FecGfTables {
+  std::array<std::uint8_t, 510> exponent{};
+  std::array<std::uint8_t, 256> logarithm{};
+};
+
+constexpr FecGfTables make_fec_gf_tables() {
+  FecGfTables tables{};
+  std::uint16_t value = 1U;
+  for (std::size_t exponent = 0; exponent < 255U; ++exponent) {
+    tables.exponent[exponent] = static_cast<std::uint8_t>(value);
+    tables.logarithm[value] = static_cast<std::uint8_t>(exponent);
+    value <<= 1U;
+    if ((value & 0x100U) != 0U) value ^= 0x11DU;
   }
-  return result;
+  for (std::size_t exponent = 255U;
+       exponent < tables.exponent.size(); ++exponent) {
+    tables.exponent[exponent] = tables.exponent[exponent - 255U];
+  }
+  return tables;
+}
+
+constexpr FecGfTables kFecGfTables = make_fec_gf_tables();
+
+std::uint8_t fec_gf_multiply(std::uint8_t left, std::uint8_t right) {
+  if (left == 0U || right == 0U) return 0U;
+  return kFecGfTables.exponent[
+      static_cast<std::size_t>(kFecGfTables.logarithm[left]) +
+      kFecGfTables.logarithm[right]];
 }
 
 std::uint8_t fec_gf_power(std::uint8_t value, std::uint8_t exponent) {
-  std::uint8_t result = 1U;
-  while (exponent != 0U) {
-    if ((exponent & 1U) != 0U) result = fec_gf_multiply(result, value);
-    value = fec_gf_multiply(value, value);
-    exponent >>= 1U;
-  }
-  return result;
+  if (exponent == 0U) return 1U;
+  if (value == 0U) return 0U;
+  return kFecGfTables.exponent[
+      (static_cast<std::size_t>(kFecGfTables.logarithm[value]) * exponent) %
+      255U];
 }
 
 std::uint8_t fec_gf_inverse(std::uint8_t value) {
-  return value == 0U ? 0U : fec_gf_power(value, 254U);
+  return value == 0U ? 0U : kFecGfTables.exponent[
+      255U - kFecGfTables.logarithm[value]];
 }
 
 std::uint8_t parity8(std::uint8_t value) {
