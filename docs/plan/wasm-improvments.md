@@ -36,7 +36,7 @@ The checked qualification-record digest is carried in the guarded activation
 basis. The installation budget file is intentionally unqualified rather than
 inventing physical limits.
 
-Portable evidence for this checkpoint:
+Current portable evidence for this checkpoint:
 
 - **Passed:** ACT-01 through ACT-06, PROFILE-01, MASK-01, and CHECK-01.
 - **Implemented but release-blocked on evidence:** PERF-01 and POWER-01 have
@@ -78,7 +78,7 @@ results. Unguarded execution aliases fail closed and their visible UI actions
 hand off to Composer. Activation remains disabled by default and the explicit
 `LEDGRID_GUARDED_ACTIVATION_CANARY=1` override is development/canary-only.
 
-Portable evidence for this checkpoint:
+Historical portable evidence at that checkpoint:
 
 - **Passed:** ACT-01 through ACT-06 and CHECK-01, including real file-channel
   restart transitions, post-bind crash repair, failure injection at every apply
@@ -94,9 +94,12 @@ Portable evidence for this checkpoint:
   and 238 deployment tests plus 157 subtests passed. No deployment, receiver
   write, camera workflow, or physical-wall command was performed.
 
-This file is the current handoff for closing that gap. Broader rendering,
-receiver, installation-profile, and physical-wall contracts remain authoritative
-in:
+The second implementation checkpoint above supersedes this snapshot; it is
+retained only to preserve the execution history.
+
+The acceptance table and next implementation context below are the current
+handoff. Broader rendering, receiver, installation-profile, and physical-wall
+contracts remain authoritative in:
 
 - [Current UX acceptance](../CURRENT_UX_ACCEPTANCE.md)
 - [Animation pipeline contract](../ANIMATION_PIPELINE_CONTRACT_V1.md)
