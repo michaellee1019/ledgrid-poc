@@ -183,7 +183,10 @@ records a receipt artifact with kind `legacy_app_bootstrap`, schema `1`, and the
 snapshot digest/release ID. Candidate compensation must select that bootstrap;
 an unsafe, incomplete, or unprovable legacy root fails before activation. This
 bootstrap is a one-time rollback anchor, not acceptance of arbitrary mutable
-target content.
+target content. When neither an immutable release nor a running mutable service
+exists, the step records a `blank_slate` skip and leaves selection unset for the
+candidate activation; it must not invent a rollback anchor from an inactive
+recovery checkout.
 
 ### Receiver hardware reconciliation
 

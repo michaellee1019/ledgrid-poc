@@ -488,6 +488,28 @@ class TargetSnapshotIntegrationTests(unittest.TestCase):
         self.assertEqual(final["phase"], "complete")
         self.assertIsNone(final["recovery_release"])
 
+    def test_blank_slate_bootstrap_skips_without_a_running_mutable_service(self) -> None:
+        manager, candidate_id = self._legacy_bootstrap_fixture()
+        with patch.object(
+            deploy_target,
+            "_service_main_pid",
+            return_value=0,
+        ):
+            result = deploy_target.bootstrap_legacy_app(
+                self.target, candidate_id
+            )
+
+        self.assertEqual(result["outcome"], "skipped")
+        self.assertEqual(result["phase"], "blank_slate")
+        self.assertFalse(result["selected"])
+        self.assertIsNone(result["current_release"])
+        self.assertIsNone(result["bootstrap_release_id"])
+        self.assertIsNone(result["recovery_release"])
+        self.assertIsNone(manager.current_release_id())
+        self.assertFalse(
+            (self.target / deploy_target.LEGACY_BOOTSTRAP_RECORD).exists()
+        )
+
     def test_prepared_bootstrap_record_recovers_atomic_selection(self) -> None:
         manager, candidate_id = self._legacy_bootstrap_fixture()
         with patch.object(

@@ -763,10 +763,10 @@ def stage_app(root: Path, snapshot: Path) -> Mapping[str, Any]:
     }
 
 
-def _legacy_service_working_directory(root: Path, unit: str) -> Path:
+def _legacy_service_working_directory(root: Path, unit: str) -> Optional[Path]:
     pid = _service_main_pid(unit)
     if pid <= 0:
-        raise RuntimeError("legacy bootstrap requires a running mutable service")
+        return None
     try:
         working_directory = Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
     except OSError as exc:
@@ -881,6 +881,18 @@ def bootstrap_legacy_app(
         }
 
     working_directory = _legacy_service_working_directory(root, unit)
+    if working_directory is None:
+        return {
+            "outcome": "skipped",
+            "reason": (
+                "blank target has no immutable selection or running mutable service"
+            ),
+            "selected": False,
+            "current_release": None,
+            "bootstrap_release_id": None,
+            "recovery_release": None,
+            "phase": "blank_slate",
+        }
 
     sources = _legacy_bootstrap_sources(root)
     info = manager.stage(sources)
