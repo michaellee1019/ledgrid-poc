@@ -3374,22 +3374,23 @@ class LEDController:
                 separate_status_query = (
                     scheduled_status_sample
                     and (
-                        self._fec_full_frame_enabled()
+                        getattr(self, "_fec_transport_requested", False)
                         or self._selected_full_frame_wire_size()
                         < status_query_bytes
                     )
                 )
                 if separate_status_query:
                     # A one-strip aligned SET_ALL is too short to clock a
-                    # complete status snapshot. FEC SET_ALL frames are long
-                    # enough, but the protected host-to-receiver envelope does
-                    # not define a corresponding receiver-to-host FEC payload;
-                    # treating the raw MISO prefix of that transfer as a status
-                    # sample made the proof depend on an unrelated 4088-byte
-                    # full-duplex path. Sample first with the established
-                    # status-query transaction, then keep the actual frame on
-                    # the write-only path. The logical frame is still
-                    # classified exactly once below.
+                    # complete status snapshot. A receiver selected for FEC
+                    # also needs v7-only lifetime counters before FEC can be
+                    # enabled; its ordinary pre-FEC SET_ALL response is the
+                    # deliberately legacy-safe v3 prefix and cannot advance
+                    # that negotiation. Once enabled, the protected
+                    # host-to-receiver envelope has no corresponding
+                    # receiver-to-host FEC payload. In all three cases, sample
+                    # first with the established fresh status-query drain,
+                    # then keep the actual frame on the write-only path. The
+                    # logical frame is still classified exactly once below.
                     transport_lock = getattr(self, "_transport_lock", None)
                     if transport_lock is None:
                         transport_lock = self._transport_lock = threading.RLock()

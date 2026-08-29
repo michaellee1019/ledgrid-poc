@@ -395,6 +395,41 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         self.assertEqual(item._full_frame_frames_since_status_sample, 0)
         self.assertEqual(item._full_frame_max_status_sample_gap, 0)
 
+    def test_pre_fec_sample_drains_v7_queue_before_write_only_aligned_frame(self):
+        item = _controller(requested=True)
+        item._transport_envelope_enabled = True
+        item._receiver_status_query_bytes = protocol.RECEIVER_STATUS_BYTES_V7
+        item._update_receiver_status = lambda _response: True
+        colors = np.zeros((8 * 138, 3), dtype=np.uint8)
+
+        with mock.patch.object(protocol.time, "sleep") as sleep:
+            item.set_all_pixels(colors, wall_frame_sequence=76)
+
+        self.assertEqual(len(item.spi.response_packets), 3)
+        for packet in item.spi.response_packets:
+            self.assertEqual(
+                len(packet),
+                protocol._aligned_envelope_wire_size(
+                    protocol.RECEIVER_STATUS_BYTES_V7
+                ),
+            )
+        self.assertEqual(len(item.spi.write_only_packets), 1)
+        self.assertEqual(len(item.spi.write_only_packets[0]), 3320)
+        self.assertEqual(item._spi_transfers, 4)
+        self.assertEqual(item._fec_frames_sent, 0)
+        self.assertEqual(item._full_frame_transfers, 1)
+        self.assertEqual(item._full_frame_status_transfers, 1)
+        self.assertEqual(item._full_frame_status_samples, 1)
+        self.assertEqual(item._full_frame_status_sample_misses, 0)
+        self.assertEqual(item._full_frame_write_only_transfers, 0)
+        self.assertEqual(
+            sleep.call_args_list,
+            [
+                mock.call(protocol.FRESH_STATUS_DRAIN_INTERVAL_SECONDS),
+                mock.call(protocol.FRESH_STATUS_DRAIN_INTERVAL_SECONDS),
+            ],
+        )
+
     def test_failed_transfer_does_not_claim_fec_or_full_frame_sent(self):
         item = _controller(requested=True)
         item._transport_envelope_enabled = True
