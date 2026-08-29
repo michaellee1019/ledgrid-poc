@@ -978,6 +978,22 @@ std::size_t fec_rs_wire_offset(
   return matrix_offset + symbol * codewords + wire_block;
 }
 
+bool fec_outer_parity_valid(
+    const std::uint8_t* decoded,
+    std::size_t codewords) {
+  if (decoded == nullptr || codewords < 2U) return false;
+  const std::size_t data_codewords = codewords - 1U;
+  const std::size_t outer_offset = data_codewords * kFecDataBytes;
+  for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
+    std::uint8_t expected = 0U;
+    for (std::size_t block = 0; block < data_codewords; ++block) {
+      expected ^= decoded[block * kFecDataBytes + symbol];
+    }
+    if (decoded[outer_offset + symbol] != expected) return false;
+  }
+  return true;
+}
+
 bool fec_v5_decoded_payload_valid(
     const std::uint8_t* decoded,
     std::size_t codewords,
@@ -1032,15 +1048,9 @@ bool fec_v5_decoded_payload_valid(
        index < decoded_capacity; ++index) {
     if (decoded[index] != 0U) return false;
   }
-  if (outer_parity && require_outer_parity) {
-    const std::size_t outer_offset = data_codewords * kFecDataBytes;
-    for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
-      std::uint8_t expected = 0U;
-      for (std::size_t block = 0; block < data_codewords; ++block) {
-        expected ^= decoded[block * kFecDataBytes + symbol];
-      }
-      if (decoded[outer_offset + symbol] != expected) return false;
-    }
+  if (outer_parity && require_outer_parity &&
+      !fec_outer_parity_valid(decoded, codewords)) {
+    return false;
   }
   return receiver_packet_crc_valid(inner, inner_wire_size);
 }
@@ -1181,6 +1191,7 @@ bool decode_receiver_packet_payload(
   }
   std::uint16_t corrected_codewords = 0;
   std::uint16_t corrected_bits = 0;
+  bool outer_parity_unavailable = false;
   if (fec_rs) {
     const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;
     constexpr std::size_t kMaximumCorrections = kFecParityBytes / 2U;
@@ -1403,6 +1414,7 @@ bool decode_receiver_packet_payload(
         // canonical inner packet. Its CRC remains the semantic authority.
         recovered = fec_v5_decoded_payload_valid(
             scratch, codewords, fec_rs_version, true, false);
+        outer_parity_unavailable = recovered;
       }
       if (recovered) {
         ++corrected_codewords;
@@ -1836,6 +1848,16 @@ bool decode_receiver_packet_payload(
   if (!receiver_packet_crc_valid(inner, inner_wire_size)) {
     if (report != nullptr) {
       report->result = ReceiverPacketDecodeResult::FecSemanticCrcError;
+    }
+    return false;
+  }
+  if (fec_v7 && !outer_parity_unavailable &&
+      !fec_outer_parity_valid(scratch, codewords)) {
+    // Every ordinary repair must converge on both the canonical inner packet
+    // and its outer shard. The sole exception is an uncorrectable outer shard:
+    // it is redundant, so a canonical inner packet remains safe to consume.
+    if (report != nullptr) {
+      report->result = ReceiverPacketDecodeResult::FecUncorrectable;
     }
     return false;
   }

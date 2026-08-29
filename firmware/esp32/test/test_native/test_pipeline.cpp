@@ -1373,18 +1373,24 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
   }
 }
 
-void test_fec_outer_parity_recovers_one_terminal_codeword_and_two_fail_closed() {
-  std::vector<std::uint8_t> semantic(1U + 128U * 3U, 0x5A);
+void test_fec_outer_parity_covers_the_full_installed_frame_and_fails_closed() {
+  std::vector<std::uint8_t> semantic(1U + 8U * 138U * 3U, 0x5A);
   semantic[0] = static_cast<std::uint8_t>(ledgrid::ReceiverCommand::SetAll);
+  for (std::size_t index = 1U; index < semantic.size(); ++index) {
+    semantic[index] = static_cast<std::uint8_t>(index * 37U + 11U);
+  }
   const auto canonical = fec_packet(semantic);
   std::array<std::uint8_t, ledgrid::kFecScratchBytes> scratch{};
-  std::vector<std::uint8_t> working(semantic.size() - 1U, 0xA7);
-  const auto prior = working;
   const std::size_t codewords =
       (canonical.size() - ledgrid::kFecWireHeaderBytes) /
       ledgrid::kFecCodewordBytes;
+  const std::size_t data_codewords = codewords - 1U;
   const std::size_t matrix = ledgrid::kFecEnvelopeHeaderBytes;
+  TEST_ASSERT_EQUAL_UINT32(4088, canonical.size());
+  TEST_ASSERT_EQUAL_UINT32(68, codewords);
+  TEST_ASSERT_EQUAL_UINT32(67, data_codewords);
 
+  // Ordinary within-radius RS repair still precedes outer reconstruction.
   auto single = canonical;
   single[matrix] ^= 0xA5U;
   ledgrid::ReceiverPacketPayload decoded{};
@@ -1392,29 +1398,43 @@ void test_fec_outer_parity_recovers_one_terminal_codeword_and_two_fail_closed() 
   TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
       single.data(), single.size(), &decoded, &report,
       scratch.data(), scratch.size()));
-  const auto decision = ledgrid::classify_receiver_dispatch(
-      decoded.data, decoded.size, working.size(), ledgrid::BaseMode::HostFullScene,
-      false);
-  TEST_ASSERT_EQUAL_UINT8(
-      static_cast<std::uint8_t>(ledgrid::ReceiverDispatchRoute::HostFullFrame),
-      static_cast<std::uint8_t>(decision.route));
-  std::copy(decoded.data + 1U, decoded.data + decoded.size, working.begin());
-  TEST_ASSERT_EQUAL_MEMORY(semantic.data() + 1U, working.data(), working.size());
-
-  working = prior;
-  auto beyond_radius = canonical;
   const std::uint8_t errors[] = {0xA5U, 0x3CU, 0x81U, 0x5AU, 0xC3U, 0x7EU};
-  const std::size_t symbols[] = {0U, 10U, 20U, 30U, 40U, 50U};
-  for (std::size_t index = 0; index < std::size(errors); ++index) {
-    beyond_radius[
-        fec_rs_wire_offset(matrix, symbols[index], 0U, codewords)] ^=
-        errors[index];
+  const std::size_t symbols[] = {0U, 8U, 16U, 24U, 32U, 40U};
+  const auto damage_block = [&](
+      std::vector<std::uint8_t>* packet, std::size_t block) {
+    for (std::size_t index = 0; index < std::size(errors); ++index) {
+      (*packet)[fec_rs_wire_offset(
+          matrix, symbols[index], block, codewords)] ^= errors[index];
+    }
+  };
+
+  // The outer shard reconstructs any one failed data shard, including the
+  // header-bearing first shard, an interior shard, and the partially padded
+  // final data shard of the exact installed 8x138 frame.
+  const std::array<std::size_t, 3> recoverable_blocks = {
+      0U, data_codewords / 2U, data_codewords - 1U};
+  for (const std::size_t block : recoverable_blocks) {
+    auto beyond_radius = canonical;
+    damage_block(&beyond_radius, block);
+    TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
+        beyond_radius.data(), beyond_radius.size(), &decoded, &report,
+        scratch.data(), scratch.size()));
+    TEST_ASSERT_TRUE(report.fec_envelope_attempted);
+    TEST_ASSERT_EQUAL_UINT16(1, report.corrected_codewords);
+    TEST_ASSERT_EQUAL_UINT16(24, report.corrected_bits);
+    TEST_ASSERT_EQUAL_UINT32(semantic.size(), decoded.size);
+    TEST_ASSERT_EQUAL_MEMORY(semantic.data(), decoded.data, semantic.size());
   }
+
+  // The outer shard is redundant. If it alone exceeds the RS radius, the
+  // canonical inner packet and its end-to-end CRC remain authoritative.
+  auto outer_only = canonical;
+  damage_block(&outer_only, data_codewords);
   TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
-      beyond_radius.data(), beyond_radius.size(), &decoded, &report,
+      outer_only.data(), outer_only.size(), &decoded, &report,
       scratch.data(), scratch.size()));
-  TEST_ASSERT_TRUE(report.fec_envelope_attempted);
   TEST_ASSERT_EQUAL_UINT16(1, report.corrected_codewords);
+  TEST_ASSERT_EQUAL_UINT16(0, report.corrected_bits);
   TEST_ASSERT_EQUAL_MEMORY(semantic.data(), decoded.data, semantic.size());
 
   const auto legacy_v6 = fec_v6_packet(semantic);
@@ -1435,22 +1455,50 @@ void test_fec_outer_parity_recovers_one_terminal_codeword_and_two_fail_closed() 
           ledgrid::ReceiverPacketDecodeResult::FecUncorrectable),
       static_cast<std::uint8_t>(report.result));
 
-  auto two_terminal_blocks = canonical;
-  for (const std::size_t block : {0U, 1U}) {
-    for (std::size_t index = 0; index < std::size(errors); ++index) {
-      two_terminal_blocks[
-          fec_rs_wire_offset(matrix, symbols[index], block, codewords)] ^=
-          errors[index];
-    }
-  }
+  auto two_data_blocks = canonical;
+  damage_block(&two_data_blocks, 0U);
+  damage_block(&two_data_blocks, data_codewords - 1U);
   TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
-      two_terminal_blocks.data(), two_terminal_blocks.size(), &decoded,
-      &report, scratch.data(), scratch.size()));
+      two_data_blocks.data(), two_data_blocks.size(), &decoded, &report,
+      scratch.data(), scratch.size()));
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<std::uint8_t>(
           ledgrid::ReceiverPacketDecodeResult::FecUncorrectable),
       static_cast<std::uint8_t>(report.result));
-  TEST_ASSERT_EQUAL_MEMORY(prior.data(), working.data(), working.size());
+
+  auto data_and_outer = canonical;
+  damage_block(&data_and_outer, data_codewords / 2U);
+  damage_block(&data_and_outer, data_codewords);
+  TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
+      data_and_outer.data(), data_and_outer.size(), &decoded, &report,
+      scratch.data(), scratch.size()));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(
+          ledgrid::ReceiverPacketDecodeResult::FecUncorrectable),
+      static_cast<std::uint8_t>(report.result));
+
+  // A coordinated replacement can leave every RS codeword and the inner CRC
+  // individually canonical. It must still fail unless the unchanged outer
+  // shard agrees with the complete data matrix.
+  auto alternate_semantic = semantic;
+  alternate_semantic[71U] ^= 0x7BU;
+  const auto alternate = fec_packet(alternate_semantic);
+  auto coherent_data_without_outer = canonical;
+  for (std::size_t block = 0; block < data_codewords; ++block) {
+    for (std::size_t symbol = 0;
+         symbol < ledgrid::kFecCodewordBytes; ++symbol) {
+      const std::size_t offset =
+          fec_rs_wire_offset(matrix, symbol, block, codewords);
+      coherent_data_without_outer[offset] = alternate[offset];
+    }
+  }
+  TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
+      coherent_data_without_outer.data(), coherent_data_without_outer.size(),
+      &decoded, &report, scratch.data(), scratch.size()));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(
+          ledgrid::ReceiverPacketDecodeResult::FecUncorrectable),
+      static_cast<std::uint8_t>(report.result));
 }
 
 void test_fec_malformed_multisymbol_crc_padding_and_shape_fail_closed() {
@@ -1673,7 +1721,7 @@ int main(int, char**) {
   RUN_TEST(test_fec_envelope_golden_layout_and_exact_installed_sizes);
   RUN_TEST(test_fec_corrects_header_payload_crc_and_distinct_codeword_bits);
   RUN_TEST(
-      test_fec_outer_parity_recovers_one_terminal_codeword_and_two_fail_closed);
+      test_fec_outer_parity_covers_the_full_installed_frame_and_fails_closed);
   RUN_TEST(test_fec_malformed_multisymbol_crc_padding_and_shape_fail_closed);
   RUN_TEST(test_status_v7_preserves_v6_and_encodes_exact_fec_counters);
   RUN_TEST(test_fec_runtime_outcome_partition_is_total_and_exclusive);
