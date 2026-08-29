@@ -76,7 +76,8 @@ ERC/DRC implementation.
 
 ## Plots
 
-The `plots/` directory contains flattened SVG views of top/bottom copper and
-silkscreen generated from the supplied archive. These are review aids, not
-fabrication outputs. A revised-copper overlay cannot honestly be produced until
-the Rev5 board has been reconstructed and routed.
+The `plots/` directory contains flattened SVG and PNG views of top/bottom copper
+and silkscreen generated from the supplied archive. These are review aids, not
+fabrication outputs. The Rev5 combined and per-layer review views are under
+`../../rev5/easyeda/plots/`; both sets are included in `hardware-increment.zip`
+for visual comparison.

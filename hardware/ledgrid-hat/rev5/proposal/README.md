@@ -119,6 +119,7 @@ The exact reconstruction and release gates are listed in
 ## Proposed deliverables present here
 
 - Architecture diagram and electrical/layout requirements
+- SVG and PNG architecture diagram plus combined/per-layer PCB PNG reviews
 - Candidate BOM with exact orderable part numbers and population status
 - Explicit SPI and LED connector mappings
 - Proposed stackup and fabrication requirements

@@ -93,9 +93,16 @@ placement decisions and unresolved checks.
   comparison only; it is not the Rev5 schematic.
 - `scaffold-manifest.json`: transformations, source hashes, route measurements,
   and validation results.
-- `plots/rev5-placement-routing-scaffold.svg`: review rendering of the retained
-  components, routed critical nets, and reserved placement areas.
+- `plots/rev5-placement-routing-scaffold.svg` and `.png`: combined review of
+  retained components, routed critical nets, and reserved placement areas.
+- `plots/rev5-top-copper.*`, `rev5-inner1-copper.*`,
+  `rev5-inner2-ground.*`, and `rev5-bottom-copper.*`: SVG and PNG views of each
+  Rev5 copper layer. Inner-layer images include the serialized GND-plane fill.
 - `LedGridWallHatRev5_SPI_SCAFFOLD_EasyEDA.zip`: transfer bundle.
+
+The repository-root `hardware-increment.zip` additionally contains the supplied
+V4 schematic PNG and PNG conversions of the V4 copper/silkscreen evidence plots
+for visual comparison. That archive is intentionally ignored by Git.
 
 ## Rebuild
 
@@ -118,3 +125,7 @@ harness sweeps are in `../analysis/` and are rebuilt with
 `tools/hardware/analyze_hat_rev5_electrical.py`. They include SPI source
 damping, all sixteen ESP-to-HCT lanes, the paired LED harness, stackup
 sensitivity, buck-current/inductor sizing, power-drop, and decoupling estimates.
+
+Per-layer SVGs are generated with `render_hat_rev5_scaffold.py --layer` using
+`top`, `inner1`, `inner2`, or `bottom`; `rsvg-convert` produces the corresponding
+PNG review images.
