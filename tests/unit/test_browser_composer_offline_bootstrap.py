@@ -121,6 +121,10 @@ class BrowserComposerOfflineBootstrapTests(unittest.TestCase):
         self.assertNotIn("refreshGlobalSettings", connectivity_body)
         self.assertNotIn("preloadMasks", connectivity_body)
         self.assertIn("state.bootstrap.capabilities.server_actions = actions", source)
+        self.assertIn("function mergeServerPresetCatalog", source)
+        self.assertIn("managedComponentIdentityMatches", source)
+        self.assertIn("localComponent.presets = clone(serverComponent.presets)", source)
+        self.assertIn("mergeServerPresetCatalog(payload);", source)
         self.assertIn(
             "ComposerState.localInstallationProfile(state.bootstrap)", source
         )

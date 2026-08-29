@@ -829,6 +829,31 @@
         return {compatible: true, activationReady: true, reason: null};
     }
 
+    function managedComponentIdentityMatches(localComponent, serverComponent) {
+        const localIdentity = localComponent?.browser_capabilities?.managed_identity || {};
+        const serverIdentity = serverComponent?.browser_capabilities?.managed_identity || {};
+        return ['component_digest', 'runtime_digest', 'parameter_schema_version'].every((field) => (
+            typeof localIdentity[field] === 'string'
+            && localIdentity[field].length > 0
+            && localIdentity[field] === serverIdentity[field]
+        ));
+    }
+
+    function mergeServerPresetCatalog(serverBootstrap) {
+        if (!state.bootstrap || !Array.isArray(serverBootstrap?.components)) return;
+        const localComponents = new Map(state.bootstrap.components.map((component) => [component.key, component]));
+        for (const serverComponent of serverBootstrap.components) {
+            const localComponent = localComponents.get(serverComponent?.key);
+            if (!localComponent || !managedComponentIdentityMatches(localComponent, serverComponent)) continue;
+            if (Array.isArray(serverComponent.presets)) {
+                // The bundled component remains the browser rendering authority.
+                // Only authored server-library entries are refreshed on reconnect.
+                localComponent.presets = clone(serverComponent.presets);
+            }
+        }
+        renderPresets();
+    }
+
     function updateServerComponentCompatibility() {
         const result = serverComponentCompatibility();
         state.serverCatalogCompatible = result.compatible;
@@ -843,6 +868,7 @@
         state.serverBootstrap = payload;
         const actions = clone(payload.capabilities?.server_actions || {});
         state.bootstrap.capabilities.server_actions = actions;
+        mergeServerPresetCatalog(payload);
         updateServerComponentCompatibility();
         return payload;
     }
