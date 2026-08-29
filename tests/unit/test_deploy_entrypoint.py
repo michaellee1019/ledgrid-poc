@@ -928,7 +928,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         self.assertEqual(sample.receiver_logical_ids, (0, 1, 2, 3))
         self.assertTrue(sample.ready)
 
-    def test_sample_health_requires_controller_ready_state(self) -> None:
+    def test_sample_health_accepts_idle_controller_as_ready(self) -> None:
         active = subprocess.CompletedProcess(("systemctl",), 0, "", "")
         status = {
             "updated_at": 100.25,
@@ -954,7 +954,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 Path("/target"), unit="ledgrid.service", api_url="http://local/status",
             )
 
-        self.assertFalse(sample.ready)
+        self.assertTrue(sample.ready)
 
     def test_sample_health_rejects_fractional_transport_device_count(self) -> None:
         active = subprocess.CompletedProcess(("systemctl",), 0, "", "")

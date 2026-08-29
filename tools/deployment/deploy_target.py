@@ -2740,7 +2740,12 @@ def _sample_health(root: Path, *, unit: str, api_url: str) -> TargetHealthSample
         leds_per_strip=int(led_info["leds_per_strip"]),
         receiver_count=int(aggregate["num_devices"]),
         receiver_logical_ids=tuple(logical_ids),
-        ready=status.get("is_running") is True,
+        # Playback is presentation state, not controller health.  A freshly
+        # deployed controller is ready when its service is active and its
+        # release-bound status is fresh and structurally valid; an intentionally
+        # idle wall (including a brightness-zero overnight deployment) must not
+        # be forced to start an animation just to pass readiness.
+        ready=True,
         receiver_device_map=receiver_device_map,
         receiver_statuses=receiver_statuses,
         transport_envelope_devices=int(aggregate["transport_envelope_devices"]),
