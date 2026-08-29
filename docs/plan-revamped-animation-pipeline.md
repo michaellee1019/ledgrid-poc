@@ -4671,6 +4671,63 @@ recovery checkpoint, not production acceptance.
    claim production readiness unless every non-waived required gate above has
    current same-release evidence.
 
+### Continuation evidence — 2026-08-29 dark-wall pause
+
+This section supersedes the fresh-slate starting-state description where the
+later evidence is explicit; it does not manufacture hardware acceptance.
+
+- The queued pre-FEC lifetime-baseline race is closed. The host now advances
+  monotonic valid-v7 lifetime snapshots until FEC enable is actually
+  acknowledged, so the queued `0/0/0 -> 8/0/10` pre-enable sequence cannot
+  become a false first-window delta. Focused coverage proves the exact queued
+  sequence, unchanged first post-enable counters, later increases, a
+  non-regressing enable boundary, and fail-closed reset/version handling.
+- Composer is now static-first and controller-optional. A generated versioned
+  bootstrap/catalog, exact managed installation profile, Python worker bundle,
+  native worker modules, and digest-pinned offline manifest ship under
+  `web/static/generated/composer`. Startup consumes those bundled artifacts
+  before any optional server refresh; reconnect updates server capabilities
+  without replacing the local draft. The portable SHA-256 fallback covers
+  insecure local HTTP origins where WebCrypto is unavailable. Component,
+  runtime, profile, ETag, and activation digest checks remain exact; only
+  server-owned save/live-state/qualification/activation/status/cancel/rollback
+  operations require the controller. The clean retained REL-01 matrix at
+  `2e6d3b3` passed Chromium 151, Firefox 153, and WebKit 26.5 with 24/24
+  journeys, 288/288 assertions, and zero wall reads or mutations. Its ignored
+  evidence artifact is
+  `run_state/browser_qualification/evidence/rel01-browser-evidence-clean-2e6d3b3.json`
+  (SHA-256
+  `667f30e2a2683dac5a729cfb20aa0557c98e11229da3d11a8c9a26cd4c824455`).
+- FEC v7 retains the installed 4,088-byte wire shape as 67 protected data
+  shards plus one protected outer XOR shard. Checkpoint
+  `3c0c86768ac1191a74aa625b5b070518f9867985` adds the final post-repair outer
+  equality check that was missing from the slower RS path. The exact 3,313-byte
+  installed semantic frame now has focused first/interior/final-data-shard,
+  outer-only, two-data-shard, data-plus-outer, and coordinated canonical-
+  codeword mismatch coverage. One failed data shard reconstructs only when the
+  outer shard and end-to-end inner CRC both agree; every second failed shard
+  and every coherent outer mismatch fail closed. v2 through v6 decoding and
+  capability rollback remain supported.
+- The complete portable gate passed at that source checkpoint: 1,944 Python
+  tests plus 3,403 subtests; 35 rendering tests plus 5 subtests, with the
+  highest p95 `snake-max-density` result at 1.9638 ms against the 4 ms budget;
+  all 139 native firmware tests; production, local-canary, and native-canary
+  images at 296,885, 382,109, and 541,849 reported bytes; and 273 deployment
+  tests plus 192 subtests. `git diff --check` and the no-deletions comparison
+  with local `main` also pass.
+- The blank receivers were bootstrapped earlier using exactly
+  `just deploy-force-firmware`; that force path must not be repeated. A later
+  ordinary candidate deployment was interrupted during receiver firmware
+  build, before receiver flashing, release selection, service restart, or
+  readiness. The wall was then stopped and verified idle with an all-zero
+  retained frame. The Pi remains powered on. No animation, activation,
+  firmware flash, deployment cutover, PERF-01 capture, or WALL-02 soak is
+  permitted while the operator's dark-wall instruction remains active.
+- PERF-01, guarded Rainbow/FEC activation, WALL-02, and direct visual wall
+  observation therefore remain **PAUSED**, not failed and not passed.
+  Electrical measurements and the physical iPhone/installed/VoiceOver gates
+  are `OPERATOR_WAIVED`, never `PASS`.
+
 ## Assumptions
 
 - The installation remains one Mac development machine, one Raspberry Pi, and
