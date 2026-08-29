@@ -57,6 +57,29 @@ console.log(JSON.stringify({
             "display": "0.30",
         })
 
+    def test_metric_stats_order_heavy_tail_percentiles_upward(self) -> None:
+        result = _run_state_script("""
+const ordinary = state.orderedMetricStats([1, 2, 3, 4]);
+const heavyTail = state.orderedMetricStats([...Array(19).fill(0), 100]);
+let malformed = null;
+try { state.orderedMetricStats([1, Number.NaN]); } catch (error) { malformed = error.message; }
+console.log(JSON.stringify({ordinary, heavyTail, malformed}));
+""")
+
+        self.assertEqual(result["ordinary"], {
+            "mean": 2.5,
+            "p95": 4,
+            "p99": 4,
+            "max": 4,
+        })
+        self.assertEqual(result["heavyTail"], {
+            "mean": 5,
+            "p95": 5,
+            "p99": 100,
+            "max": 100,
+        })
+        self.assertIn("finite numbers", result["malformed"])
+
     def test_check_binding_covers_generation_runtime_digest_and_geometry(self) -> None:
         result = _run_state_script("""
 const component = {

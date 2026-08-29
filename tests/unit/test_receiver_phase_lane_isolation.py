@@ -1,5 +1,8 @@
 import contextlib
+from copy import deepcopy
+import hashlib
 import io
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -13,13 +16,19 @@ from tools.diagnostics.receiver_phase_lane_isolation import (
     DispatchDiagnosticError,
     build_ab_comparisons,
     build_arm_plan,
+    _bind_board_inventories,
     _fresh_validated_snapshots,
     _controller,
+    _load_board_inventory,
+    _post_service_production_observation,
+    _preflight_source_and_topology,
     _report,
     _write_report,
+    classify_targeted_swap_arms,
     phase_experiments,
     production_state,
     receiver3_lane_experiments,
+    require_exact_transfer_deltas,
     strict_counter_deltas,
     three_phase_group_masks,
     validate_snapshot,
@@ -49,6 +58,46 @@ def _snapshot(logical_id=0, **overrides):
     )
     result.update(overrides)
     return result
+
+
+def _board_inventory(*, swap=False):
+    routes = ([0, 0], [0, 1], [1, 1], [1, 0], [1, 2])
+    serials = [f"02:00:00:00:00:{index:02x}" for index in range(5)]
+    if swap:
+        serials[2], serials[3] = serials[3], serials[2]
+    return {
+        "schema": "ledgrid.receiver-board-route-inventory",
+        "schema_version": 1,
+        "captured_at_utc": "2020-01-01T12:00:00Z",
+        "boards": [
+            {
+                "logical_device": logical_id,
+                "spi_route": list(routes[logical_id]),
+                "hardware_serial": serial,
+                "physical_label": f"board-{int(serial[-2:], 16)}",
+            }
+            for logical_id, serial in enumerate(serials)
+        ],
+    }
+
+
+def _args(**overrides):
+    result = {
+        "plan": "phase",
+        "target_fps": 120,
+        "transfers": 1,
+        "warmup_transfers": 1,
+        "repeats": 2,
+        "output": None,
+        "expected_script_sha256": "a" * 64,
+        "pre_board_inventory": Path("before.json"),
+        "post_board_inventory": Path("after.json"),
+        "source_identity": {},
+        "physical_board_inventory": {},
+        "run_identity": {},
+    }
+    result.update(overrides)
+    return SimpleNamespace(**result)
 
 
 class ReceiverPhaseLaneIsolationTests(unittest.TestCase):
@@ -170,13 +219,7 @@ class ReceiverPhaseLaneIsolationTests(unittest.TestCase):
         self.assertEqual(result, snapshots[-1])
 
     def test_progress_report_is_pure_atomic_json_and_not_complete(self):
-        args = SimpleNamespace(
-            plan="lane",
-            target_fps=120,
-            transfers=2000,
-            output=None,
-            source_identity={},
-        )
+        args = _args(plan="lane", transfers=2000, warmup_transfers=512)
         report = _report(args, [], complete=False)
         self.assertFalse(report["complete"])
         self.assertNotIn("comparisons", report)
@@ -219,22 +262,19 @@ class ReceiverPhaseLaneIsolationTests(unittest.TestCase):
                 events.append("close")
                 raise RuntimeError("close failed")
 
-        args = SimpleNamespace(
-            plan="phase",
-            target_fps=120,
-            transfers=1,
-            warmup_transfers=1,
-            output=None,
-        )
+        args = _args()
         with mock.patch.multiple(
             "tools.diagnostics.receiver_phase_lane_isolation",
             _preflight_source_and_topology=mock.Mock(return_value={}),
+            _bind_board_inventories=mock.Mock(return_value={}),
             _service_active=mock.Mock(return_value=True),
             _wait_for_safe_idle=mock.Mock(),
+            _post_service_production_observation=mock.Mock(),
             _service=mock.Mock(side_effect=lambda action: events.append(action)),
             _controller=mock.Mock(return_value=FakeController()),
             _apply_output_state=mock.Mock(),
             _send_black_transfers=mock.Mock(return_value=0.1),
+            require_exact_transfer_deltas=mock.Mock(return_value=[]),
             _fresh_validated_snapshots=mock.Mock(
                 return_value=[_snapshot(index) for index in range(5)]
             ),
@@ -242,6 +282,219 @@ class ReceiverPhaseLaneIsolationTests(unittest.TestCase):
         ), self.assertRaisesRegex(DispatchDiagnosticError, "cleanup failed"):
             run(args)
         self.assertEqual(events[-2:], ["close", "start"])
+
+    def test_cleanup_failure_rewrites_retained_report_as_incomplete(self):
+        class FakeController:
+            device_map = list(__import__(
+                "drivers.led_layout", fromlist=["WALL_DEVICE_MAP"]
+            ).WALL_DEVICE_MAP)
+
+            def set_brightness(self, _value):
+                pass
+
+            def clear(self):
+                pass
+
+            def close(self):
+                raise RuntimeError("close failed")
+
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "evidence.json"
+            args = _args(output=output)
+            with mock.patch.multiple(
+                "tools.diagnostics.receiver_phase_lane_isolation",
+                _preflight_source_and_topology=mock.Mock(return_value={}),
+                _bind_board_inventories=mock.Mock(return_value={}),
+                _service_active=mock.Mock(return_value=True),
+                _wait_for_safe_idle=mock.Mock(),
+                _post_service_production_observation=mock.Mock(),
+                _service=mock.Mock(),
+                _controller=mock.Mock(return_value=FakeController()),
+                _apply_output_state=mock.Mock(),
+                _send_black_transfers=mock.Mock(return_value=0.1),
+                require_exact_transfer_deltas=mock.Mock(return_value=[]),
+                _fresh_validated_snapshots=mock.Mock(
+                    return_value=[_snapshot(index) for index in range(5)]
+                ),
+                build_arm_plan=mock.Mock(return_value=()),
+            ), self.assertRaisesRegex(DispatchDiagnosticError, "cleanup failed"):
+                run(args)
+            retained = json.loads(output.read_text(encoding="utf-8"))
+        self.assertFalse(retained["complete"])
+        self.assertEqual(retained["run_identity"]["cleanup_status"], "failed")
+
+    def test_cleanup_operations_are_independent_and_post_service_is_authoritative(self):
+        events = []
+
+        class FakeController:
+            device_map = list(__import__(
+                "drivers.led_layout", fromlist=["WALL_DEVICE_MAP"]
+            ).WALL_DEVICE_MAP)
+
+            def set_brightness(self, _value):
+                events.append("brightness")
+                if events.count("brightness") > 1:
+                    raise RuntimeError("brightness cleanup failed")
+
+            def clear(self):
+                events.append("clear")
+
+            def close(self):
+                events.append("close")
+
+        apply_calls = 0
+
+        def apply_state(_controller, _state):
+            nonlocal apply_calls
+            apply_calls += 1
+            events.append("apply")
+
+        args = _args()
+        with mock.patch.multiple(
+            "tools.diagnostics.receiver_phase_lane_isolation",
+            _preflight_source_and_topology=mock.Mock(return_value={}),
+            _bind_board_inventories=mock.Mock(return_value={}),
+            _service_active=mock.Mock(return_value=True),
+            _wait_for_safe_idle=mock.Mock(),
+            _post_service_production_observation=mock.Mock(
+                side_effect=lambda: events.append("post-observe")
+            ),
+            _service=mock.Mock(side_effect=lambda action: events.append(action)),
+            _controller=mock.Mock(return_value=FakeController()),
+            _apply_output_state=mock.Mock(side_effect=apply_state),
+            _send_black_transfers=mock.Mock(return_value=0.1),
+            require_exact_transfer_deltas=mock.Mock(return_value=[]),
+            _fresh_validated_snapshots=mock.Mock(
+                return_value=[_snapshot(index) for index in range(5)]
+            ),
+            build_arm_plan=mock.Mock(return_value=()),
+        ), self.assertRaisesRegex(DispatchDiagnosticError, "cleanup failed"):
+            run(args)
+        self.assertGreaterEqual(apply_calls, 2)
+        self.assertIn("clear", events)
+        self.assertIn("close", events)
+        self.assertLess(events.index("start"), events.index("post-observe"))
+
+    def test_warmup_requires_exact_transfer_deltas(self):
+        before = [_snapshot(index) for index in range(5)]
+        after = [deepcopy(item) for item in before]
+        for item in after:
+            item["frames_sent"] = 7
+            item["full_frame_transfers"] = 7
+        self.assertEqual(
+            len(require_exact_transfer_deltas(before, after, transfers=7)), 5
+        )
+        after[4]["frames_sent"] = 6
+        with self.assertRaisesRegex(DispatchDiagnosticError, "expected 7"):
+            require_exact_transfer_deltas(before, after, transfers=7)
+
+    def test_board_inventory_binds_duplicate_free_physical_swap(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            before_path = root / "before.json"
+            after_path = root / "after.json"
+            before_path.write_text(json.dumps(_board_inventory()), encoding="utf-8")
+            after_path.write_text(
+                json.dumps(_board_inventory(swap=True)), encoding="utf-8"
+            )
+            binding = _bind_board_inventories(
+                before_path, after_path, require_swap=True
+            )
+            self.assertEqual(len(binding["moved_boards"]), 2)
+            with self.assertRaisesRegex(
+                DispatchDiagnosticError, "unchanged physical-board mapping"
+            ):
+                _bind_board_inventories(
+                    before_path, after_path, require_swap=False
+                )
+            duplicate = _board_inventory()
+            duplicate["boards"][1]["hardware_serial"] = duplicate["boards"][0][
+                "hardware_serial"
+            ]
+            before_path.write_text(json.dumps(duplicate), encoding="utf-8")
+            with self.assertRaisesRegex(DispatchDiagnosticError, "duplicate"):
+                _load_board_inventory(before_path, label="pre-swap")
+
+    def test_targeted_swap_plan_is_counterbalanced_and_classifies_conservatively(self):
+        with self.assertRaisesRegex(ValueError, "even value"):
+            build_arm_plan("swap", repeats=3)
+        plans = build_arm_plan("swap", repeats=2)
+        self.assertEqual(
+            [arm.condition for arm in plans[:4]], ["A", "B", "B", "A"]
+        )
+        self.assertEqual(
+            [arm.condition for arm in plans[4:]], ["B", "A", "A", "B"]
+        )
+        arms = []
+        for index, plan in enumerate(plans):
+            receivers = []
+            for logical_id in range(5):
+                row = {"logical_device": logical_id, "full_frame_transfers": 100}
+                row["receiver_crc_errors"] = (
+                    20 if logical_id == 3 and plan.condition == "B" else 1
+                )
+                receivers.append(row)
+            arms.append(
+                {
+                    "block_id": plan.block_id,
+                    "condition": plan.condition,
+                    "receivers": receivers,
+                }
+            )
+        result = classify_targeted_swap_arms(arms)
+        self.assertEqual(
+            result["classification"], "experiment_increases_receiver_3_faults"
+        )
+        arms[4]["receivers"][3]["receiver_crc_errors"] = 0
+        arms[7]["receivers"][3]["receiver_crc_errors"] = 0
+        self.assertEqual(
+            classify_targeted_swap_arms(arms)["classification"], "inconclusive"
+        )
+
+    def test_reviewed_script_digest_must_match_before_live_preflight(self):
+        actual = hashlib.sha256(
+            Path("tools/diagnostics/receiver_phase_lane_isolation.py").read_bytes()
+        ).hexdigest()
+        self.assertRegex(actual, r"^[0-9a-f]{64}$")
+        with self.assertRaisesRegex(DispatchDiagnosticError, "reviewed SHA-256"):
+            _preflight_source_and_topology("0" * 64)
+
+    def test_post_service_observation_requires_exact_production_topology(self):
+        devices = [_snapshot(index) for index in range(5)]
+        metrics = {
+            "driver": {
+                "aggregate": {
+                    "receiver_status_refresh": {
+                        "request_id": "fresh-1",
+                        "passed": True,
+                        "errors": [],
+                    }
+                },
+                "devices": devices,
+            }
+        }
+
+        def response(url, **_kwargs):
+            if url.endswith("/refresh"):
+                return {"accepted": True, "request_id": "fresh-1"}
+            return metrics
+
+        with mock.patch(
+            "tools.diagnostics.receiver_phase_lane_isolation._json_request",
+            side_effect=response,
+        ):
+            self.assertEqual(_post_service_production_observation(), devices)
+        devices[3]["receiver_stagger_phases"] = 1
+        with mock.patch(
+            "tools.diagnostics.receiver_phase_lane_isolation._json_request",
+            side_effect=response,
+        ), mock.patch(
+            "tools.diagnostics.receiver_phase_lane_isolation.time.sleep"
+        ), mock.patch(
+            "tools.diagnostics.receiver_phase_lane_isolation.time.monotonic",
+            side_effect=[0.0, 0.0, 6.0],
+        ), self.assertRaisesRegex(DispatchDiagnosticError, "production receiver state"):
+            _post_service_production_observation(timeout=5.0)
 
 
 if __name__ == "__main__":

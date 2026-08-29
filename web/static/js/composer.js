@@ -2373,16 +2373,16 @@
             const motion = deltaTotal / deltas;
             const averageLuminance = luminanceTotal / SAMPLE_FRAMES;
             const clipping = clippingChannels / Math.max(1, channelCount);
-            const sortedTimes = renderTimes.slice().sort((a, b) => a - b);
             const percentile = (values, fraction) => {
                 if (!values.length) return null;
                 const sorted = values.slice().sort((a, b) => a - b);
                 return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
             };
-            const p95 = sortedTimes[Math.min(sortedTimes.length - 1, Math.ceil(sortedTimes.length * .95) - 1)];
-            const p99 = sortedTimes[Math.min(sortedTimes.length - 1, Math.ceil(sortedTimes.length * .99) - 1)];
-            const meanRenderMs = renderTimes.reduce((total, value) => total + value, 0) / renderTimes.length;
-            const maxRenderMs = sortedTimes[sortedTimes.length - 1];
+            const renderStats = ComposerState.orderedMetricStats(renderTimes);
+            const meanRenderMs = renderStats.mean;
+            const p95 = renderStats.p95;
+            const p99 = renderStats.p99;
+            const maxRenderMs = renderStats.max;
             const backgroundRendererP95 = percentile(backgroundRendererTimes, .95);
             const clockRendererP95 = percentile(clockRendererTimes, .95);
             const bridgeAndCompositorP95 = percentile(bridgeAndCompositorTimes, .95);

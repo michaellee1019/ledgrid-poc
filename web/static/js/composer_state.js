@@ -57,6 +57,24 @@
         return precision ? numeric.toFixed(precision) : String(Math.round(numeric));
     }
 
+    function orderedMetricStats(values) {
+        if (!Array.isArray(values) || !values.length || values.some((value) => !Number.isFinite(value))) {
+            throw new TypeError('Metric samples must be a non-empty array of finite numbers.');
+        }
+        const sorted = values.slice().sort((left, right) => left - right);
+        const nearestRank = (fraction) => sorted[
+            Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)
+        ];
+        const mean = values.reduce((total, value) => total + value, 0) / values.length;
+        // A sufficiently heavy tail can make the arithmetic mean exceed a
+        // nearest-rank percentile. Qualification records require monotonic
+        // summary fields, so preserve the mean and order later bounds upward.
+        const p95 = Math.max(mean, nearestRank(.95));
+        const p99 = Math.max(p95, nearestRank(.99));
+        const maximum = Math.max(p99, sorted[sorted.length - 1]);
+        return {mean, p95, p99, max: maximum};
+    }
+
     function runtimeDigest(component) {
         const runtime = component?.browser_runtime || {};
         const build = component?.build || {};
@@ -154,6 +172,7 @@
         formatNumber,
         localInstallationProfile,
         normalizeNumber,
+        orderedMetricStats,
         runtimeDigest,
         sameCheckBinding,
         stableJson,
