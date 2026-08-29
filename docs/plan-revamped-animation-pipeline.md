@@ -4787,6 +4787,53 @@ WALL-02 or weaken any integrity threshold.
   measurement and the physical iPhone/installed/VoiceOver gates remain
   `OPERATOR_WAIVED`, never `PASS`.
 
+### Continuation evidence — 2026-08-29 black dispatch-order diagnostic
+
+This closes the software-only scheduling experiment from the hardware-review
+work package as a negative result. It is exploratory evidence, not PERF-01 or
+WALL-02 acceptance.
+
+- Commits `8d205d8` and `59a5d23` add a fail-closed diagnostic that stops the
+  controller through the supported device-state authority, takes exclusive SPI
+  ownership, forces receiver brightness to zero, sends only all-black complete
+  frames, preserves logical IDs/routes, compares within-SPI1 scheduling, and
+  restores the service to a verified black idle state in `finally`. The first
+  deployment attempt stopped before target mutation when the full gate rejected
+  a retired direct-stop alias; the corrected path then passed the complete gate
+  and selected immutable app release
+  `e7009bb41aac719c686f9bfa11c44bbc3e06c07a20ab97c237d5e7ea5e1ff9cf`.
+- The A/B/A run used production three-phase output staggering and exact
+  `(20,20,20,20,20) MHz` route clocks. Each arm ran for approximately 15.006
+  seconds. Requested cadence is shown separately from achieved diagnostic-loop
+  cadence, so the result cannot be confused with a controller PERF run.
+
+| Requested | Achieved | SPI1 order | Frames | Receiver-3 CRC | Receiver-3 uncorrectable | Receiver-3 status misses |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: |
+| 120 | 116.02 | `(2,3,4)` | 1,741 | 2 | 1 | 0 |
+| 120 | 115.75 | `(3,2,4)` | 1,737 | 31 | 30 | 4 |
+| 120 | 115.88 | `(2,3,4)` | 1,739 | 46 | 30 | 9 |
+| 160 | 78.77 | `(2,3,4)` | 1,182 | 15 | 15 | 2 |
+| 160 | 78.83 | `(3,2,4)` | 1,183 | 14 | 12 | 2 |
+| 160 | 79.19 | `(2,3,4)` | 1,188 | 4 | 4 | 0 |
+
+- Receivers 0, 1, 2, and 4 added zero CRC, publish, SPI-queue, display, status,
+  or FEC terminal faults in every arm. Receiver 3 added faults in both schedules
+  and corrected zero packets/codewords. The receiver-3-first arm had a higher
+  pooled uncorrectable rate than the two normal-order arms at both requested
+  cadences: approximately `1.73%` versus `0.89%` at 120, and `1.01%` versus
+  `0.80%` at 160. Large A-to-A variation also shows a nonstationary physical
+  disturbance; order is not an adequate production mitigation.
+- Cleanup independently verified `mode=idle`, `is_running=false`, no current
+  animation, brightness zero, no retained frame, the production dispatch order
+  `(0,1,2,3,4)`, the exact five 20 MHz routes, and release consistency. No
+  firmware was built or flashed, no scene was activated, and no visible output
+  was requested.
+- The remaining work is physical/operator work: aggressor isolation by per-board
+  phase/lane masks, board-versus-branch swaps with power removed, and analog
+  measurements at the receiver. None can be completed honestly from software
+  alone. PERF-01 therefore remains failed and WALL-02 remains
+  `BLOCKED_BY_PERF_01`.
+
 ## Assumptions
 
 - The installation remains one Mac development machine, one Raspberry Pi, and
