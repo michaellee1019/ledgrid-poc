@@ -45,7 +45,6 @@ constexpr std::size_t kMaxTotalLeds = kMaxStrips * kMaxLedsPerStrip;
 constexpr std::size_t kMaxRgbBytes = kMaxTotalLeds * 3;
 constexpr std::uint8_t kDefaultStrips = 8;
 constexpr std::uint16_t kDefaultLedsPerStrip = 138;
-constexpr std::uint8_t kDefaultBrightness = 50;
 constexpr std::uint16_t kInstalledGlobalStrips = 33;
 constexpr int kLedPins[kMaxStrips] = {18, 17, 16, 15, 7, 6, 5, 4};
 
@@ -101,7 +100,9 @@ TaskHandle_t display_task_handle = nullptr;
 ledgrid::ParallelLedDriver led_driver;
 ledgrid::ReceiverRuntime receiver_runtime(LEDGRID_ENABLE_LOCAL_BACKGROUND != 0);
 ledgrid::ReceiverOutputState receiver_output(
-    kDefaultStrips, kDefaultLedsPerStrip, kDefaultBrightness);
+    kDefaultStrips,
+    kDefaultLedsPerStrip,
+    ledgrid::kReceiverSafeBootBrightness);
 ledgrid::ReceiverOperationTracker operation_tracker;
 #if LEDGRID_ENABLE_INSTALLATION_PROFILES
 ledgrid::EspInstallationProfileStore installation_profile_store;

@@ -10,6 +10,7 @@
 
 #include "ledgrid/frame_mailbox.hpp"
 #include "ledgrid/protocol.hpp"
+#include "ledgrid/receiver_runtime.hpp"
 #include "ledgrid/startup_animation.hpp"
 #include "ledgrid/ws2812_encoder.hpp"
 
@@ -888,6 +889,8 @@ void test_startup_rainbow_is_45_degrees_and_moves_up_right() {
 }
 
 void test_startup_rainbow_cycles_once_per_second_and_checks_bounds() {
+  TEST_ASSERT_EQUAL_UINT8(0, ledgrid::kReceiverSafeBootBrightness);
+
   constexpr std::uint8_t strips = 8;
   constexpr std::uint16_t leds = 32;
   std::array<std::uint8_t, strips * leds * 3U> initial{};

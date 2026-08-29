@@ -12,6 +12,11 @@
 
 namespace ledgrid {
 
+// Receiver boot must remain physically dark until the host explicitly applies
+// the persisted operator brightness. The compiled fallback renderer remains
+// available, but a flash/reboot cannot create an uncommanded visible frame.
+constexpr std::uint8_t kReceiverSafeBootBrightness = 0;
+
 constexpr std::uint16_t kCompiledRainbowComponentId = 1;
 constexpr std::uint16_t kMinLocalCadenceHz = 1;
 constexpr std::uint16_t kMaxLocalCadenceHz = 200;
