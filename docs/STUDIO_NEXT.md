@@ -31,7 +31,7 @@ Studio Next currently provides:
 - Independent Room drafts for Vibe, representative plant behavior, output brightness, target FPS, and operator speed. Application is a visible serial plan, never described as atomic. A failure or observation timeout stops remaining calls and leaves per-property receipts.
 - State-first Health copy, four receiver sections, evidence source/age/policy, and receiver refresh as **Accepted → newer observation**. Because status does not echo the refresh request, the client says correlation is unavailable.
 - Desktop navigation and a 390 px task hierarchy with a compact Live bar, 48 px Stop and receipt targets, five-item bottom navigation, one active workspace (`hidden` and `inert` for the rest), wrapping names, and review/compare sheets.
-- Existing-tool links for Painter, Emoji arranger, and direct interaction.
+- Existing-tool links for Painter and direct interaction.
 
 ## Safety model
 

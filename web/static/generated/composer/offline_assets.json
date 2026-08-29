@@ -30,8 +30,8 @@
       "url": "/static/generated/composer/aurora_curtains_native.wasm"
     },
     {
-      "bytes": 927478,
-      "sha256": "a82461c2ae6059885d2aed9ecf35d9f98f03b5ad95a36e25510784b69ca3f7b4",
+      "bytes": 765008,
+      "sha256": "e4a0c96e1ad0efd4aaf43d773c0a92aefde71a3e393daddafb87badb56ec3009",
       "url": "/static/generated/composer/bootstrap.v1.json"
     },
     {
@@ -45,8 +45,8 @@
       "url": "/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin"
     },
     {
-      "bytes": 2370667,
-      "sha256": "f3d86c7251d850bdaddfee8ed489b9bdc2591e9dcaa52c75811c30bb6083d597",
+      "bytes": 2366025,
+      "sha256": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
       "url": "/static/generated/composer/ledgrid_python_runtime.zip"
     },
     {

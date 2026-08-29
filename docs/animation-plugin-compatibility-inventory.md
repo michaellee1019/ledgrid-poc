@@ -35,11 +35,11 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 
 | Classification | Count |
 | --- | ---: |
-| `ordinary_background` | 49 |
+| `ordinary_background` | 48 |
 | `compatibility_full_scene` | 1 |
 | `python_overlay` | 1 |
 | `unsupported_direct_hardware_stateful` | 0 |
-| **Total shipped packages** | **51** |
+| **Total shipped packages** | **50** |
 
 ## Shipped packages
 
@@ -58,7 +58,6 @@ the concrete class; inherited manager/base presentation is outside plugin code.
 | `cyclic_reef` | `CyclicReefAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `desert_wind` | `DesertWindAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `emoji` | `EmojiAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
-| `emoji_arranger` | `EmojiArrangerAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `firefly_synchrony` | `FireflySynchronyAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `fireworks` | `FireworksAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |
 | `flame_burst` | `FlameBurstAnimation` | `show` | `ordinary_background` | Concrete AnimationBase renderer; no direct controller mutation. |

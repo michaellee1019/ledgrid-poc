@@ -167,9 +167,6 @@
                     <a class="nav-link{{ ' active' if request.endpoint == 'frame_painter_page' else '' }}" href="{{ url_for('frame_painter_page') }}"{% if request.endpoint == 'frame_painter_page' %} aria-current="page"{% endif %}>
                         <i class="fas fa-paintbrush me-1" aria-hidden="true"></i> Painter
                     </a>
-                    <a class="nav-link{{ ' active' if request.endpoint == 'emoji_arranger_page' else '' }}" href="{{ url_for('emoji_arranger_page') }}"{% if request.endpoint == 'emoji_arranger_page' %} aria-current="page"{% endif %}>
-                        <i class="fas fa-face-smile me-1" aria-hidden="true"></i> Emoji
-                    </a>
                     <a class="nav-link{{ ' active' if request.endpoint == 'control_page' else '' }}" href="{{ url_for('control_page') }}"{% if request.endpoint == 'control_page' %} aria-current="page"{% endif %}>
                         <i class="fas fa-gauge-high me-1" aria-hidden="true"></i> Advanced
                     </a>

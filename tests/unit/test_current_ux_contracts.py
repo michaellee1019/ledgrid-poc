@@ -16,12 +16,11 @@ class CurrentUxContractTests(unittest.TestCase):
         cls.dashboard_css = (ROOT / "web/static/css/dashboard.css").read_text(encoding="utf-8")
         cls.control = (ROOT / "web/templates/control.html").read_text(encoding="utf-8")
         cls.painter = (ROOT / "web/templates/painter.html").read_text(encoding="utf-8")
-        cls.emoji = (ROOT / "web/templates/emoji_arranger.html").read_text(encoding="utf-8")
 
     def test_shared_navigation_is_task_oriented_and_responsive(self):
         self.assertIn('id="studioNavigation"', self.base)
         self.assertIn('aria-label="Toggle navigation"', self.base)
-        for label in ("Studio", "Painter", "Emoji", "Advanced"):
+        for label in ("Studio", "Painter", "Advanced"):
             self.assertIn(f"> {label}\n", self.base)
 
     def test_every_workspace_inherits_one_server_reconciled_live_bar(self):
@@ -85,11 +84,6 @@ class CurrentUxContractTests(unittest.TestCase):
     def test_live_action_language_is_consistent(self):
         self.assertIn("Mirror to wall", self.painter)
         self.assertIn("Stop / Return to draft", self.painter)
-        self.assertIn("Stop / Return to draft", self.emoji)
-        self.assertIn('id="activateInComposerLink" href="/composer"', self.emoji)
-        self.assertIn("activationRequiresComposer: true", self.emoji)
-        self.assertNotIn("/api/start/", self.emoji)
-        self.assertNotIn("async function takeLive", self.emoji)
         self.assertNotIn("Start live", self.dashboard)
         self.assertNotIn("Take selected look live", self.dashboard)
         self.assertNotIn("function startAnimation", self.base)

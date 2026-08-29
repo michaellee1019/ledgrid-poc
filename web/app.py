@@ -2084,12 +2084,6 @@ class AnimationWebInterface:
             status = self._status_payload()
             return render_template('control.html', animations=animations, status=status)
 
-        @self.app.route('/emoji')
-        def emoji_arranger_page():
-            """Emoji arranger page"""
-            status = self._status_payload()
-            return render_template('emoji_arranger.html', status=status)
-
         @self.app.route('/painter')
         def frame_painter_page():
             """Frame painter page."""
@@ -3914,7 +3908,6 @@ class AnimationWebInterface:
         print(f"   Dashboard: http://{self.host}:{self.port}/")
         print(f"   Control:   http://{self.host}:{self.port}/control")
         print(f"   Painter:   http://{self.host}:{self.port}/painter")
-        print(f"   Emoji:     http://{self.host}:{self.port}/emoji")
 
         self.app.run(host=self.host, port=self.port, debug=debug, threaded=True)
 

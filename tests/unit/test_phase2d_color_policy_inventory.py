@@ -51,7 +51,6 @@ SEMANTIC_IDS = frozenset((
 ))
 PRESERVE_IDS = frozenset((
     "emoji",
-    "emoji_arranger",
     "gif_animation",
     "gradient",
     "plant_calibration",
@@ -174,7 +173,7 @@ class Phase2DColorPolicyInventoryTests(unittest.TestCase):
         self.assertEqual(inventory["component_count"], len(self.plugin_ids) + 3)
         self.assertEqual(
             inventory["counts"],
-            {"grade": 10, "preserve": 12, "semantic": 32},
+            {"grade": 10, "preserve": 11, "semantic": 32},
         )
         identities = {
             (item["provider"], item["plugin_id"])
@@ -197,7 +196,7 @@ class Phase2DColorPolicyInventoryTests(unittest.TestCase):
             )
             for plugin_id in self.plugin_ids
         }
-        self.assertEqual(len(expected), 51)
+        self.assertEqual(len(expected), 50)
 
         for plugin_id, policy in expected.items():
             with self.subTest(plugin=plugin_id):
@@ -222,7 +221,7 @@ class Phase2DColorPolicyInventoryTests(unittest.TestCase):
 
     def test_classification_only_manifests_cannot_activate_vibe_behavior(self):
         classification_only = set(self.plugin_ids).difference(VIBE_ENABLED_IDS)
-        self.assertEqual(len(classification_only), 19)
+        self.assertEqual(len(classification_only), 18)
         for plugin_id in sorted(classification_only):
             with self.subTest(plugin=plugin_id):
                 vibe = self.loader.plugin_manifests[plugin_id]["vibe"]

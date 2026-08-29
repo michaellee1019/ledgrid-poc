@@ -6,7 +6,6 @@ import unittest
 
 from animation.libraries.pixel_art import EMOJI_PATTERNS
 from animation.plugins.emoji import EmojiAnimation
-from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 
 
 class _Controller:
@@ -31,11 +30,8 @@ class PixelArtTests(unittest.TestCase):
             "812f10d848b08bc4621334ebfbe115f1d5e8bb97decf047d7b1ffa56043f6715",
         )
 
-    def test_plugins_share_the_canonical_catalog_object(self):
-        arranger = EmojiArrangerAnimation(_Controller())
-
+    def test_emoji_plugin_uses_the_canonical_catalog_object(self):
         self.assertIs(EmojiAnimation.EMOJI_PATTERNS, EMOJI_PATTERNS)
-        self.assertIs(arranger.emoji_patterns, EMOJI_PATTERNS)
 
 
 if __name__ == "__main__":

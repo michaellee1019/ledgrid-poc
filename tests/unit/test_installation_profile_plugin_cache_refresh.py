@@ -24,7 +24,6 @@ from animation.plugins.ascii_drop import AsciiDropAnimation
 from animation.plugins.canopy_cup import CanopyCupAnimation
 from animation.plugins.christmas_tree import ChristmasTreeAnimation
 from animation.plugins.conway_life import ConwayLifeAnimation
-from animation.plugins.emoji_arranger import EmojiArrangerAnimation
 from animation.plugins.gif_animation import GifAnimation
 from animation.plugins.gradient import GradientAnimation
 from animation.plugins.living_ecosystem import LivingEcosystemAnimation
@@ -368,15 +367,6 @@ class InstallationProfilePluginCacheRefreshTests(unittest.TestCase):
             ),
         )
         self.assertEqual(race.game_rng.getstate(), race_rng)
-
-        text = EmojiArrangerAnimation(
-            _Controller(), {"plant_aware": True, "active_columns": 32}
-        )
-        text.set_presentation_context(_context(self.populated))
-        text.generate_frame(0.0, 0)
-        self.assertIsNotNone(text._plant_layout_key)
-        text.set_presentation_context(_context(self.empty))
-        self.assertIsNone(text._plant_layout_key)
 
         gif = GifAnimation(_Controller(), {"plant_aware": True})
         gif.set_presentation_context(_context(self.populated))
