@@ -1122,7 +1122,10 @@ async function runProfileMasks(browser, contract, composerUrl) {
   const expectedCells = Object.fromEntries(layers.map((layer, index) => [layer, index * 138 + ledOffset]));
   let savedCells = null;
   try {
-    const response = await navigateComposer(page, composerUrl);
+    // Profile authoring is an online API workflow. The matrix verifies service
+    // worker control separately; keeping this focused journey independent of a
+    // prior warm-up makes its profile save/publish proof directly reproducible.
+    const response = await navigateComposer(page, composerUrl, {waitForServiceWorker: false});
     if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
     assertions.push(observation('composer_loaded', true, `${response.status()} ${composerUrl}`));
     const bootstrapPreflight = await page.evaluate(async () => {

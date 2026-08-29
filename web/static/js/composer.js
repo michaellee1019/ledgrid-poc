@@ -133,6 +133,7 @@
             digest: null,
             revision: null,
             ledInfo: null,
+            unobservedNonPlantStrips: null,
             cells: null,
             savedCells: null,
             history: [],
@@ -3745,8 +3746,16 @@
         const stripCount = Number(info.strip_count);
         const ledsPerStrip = Number(info.leds_per_strip);
         const totalLeds = Number(info.total_leds);
-        if ((stripCount !== 32) || (ledsPerStrip !== 138) || totalLeds !== 4416) {
-            throw new Error('Installation-profile draft must use the calibrated 32 × 138 geometry.');
+        if ((stripCount !== 33) || (ledsPerStrip !== 138) || totalLeds !== 4554) {
+            throw new Error('Installation-profile draft must use the canonical 33 × 138 geometry.');
+        }
+        const unobservedNonPlantStrips = payload.unobserved_non_plant_strips;
+        if (
+            !Array.isArray(unobservedNonPlantStrips)
+            || unobservedNonPlantStrips.length !== 1
+            || unobservedNonPlantStrips[0] !== 32
+        ) {
+            throw new Error('Installation-profile draft must explicitly preserve unobserved physical strip 32.');
         }
         const globes = payload.masks?.globes;
         if (!globes || typeof globes !== 'object' || Array.isArray(globes)) {
@@ -3769,6 +3778,7 @@
         state.masks.digest = payload.digest;
         state.masks.revision = restored?.revision || payload.revision;
         state.masks.ledInfo = {strip_count: stripCount, leds_per_strip: ledsPerStrip, total_leds: totalLeds};
+        state.masks.unobservedNonPlantStrips = Array.from(unobservedNonPlantStrips);
         state.masks.cells = restored?.cells || cells;
         state.masks.savedCells = restored?.savedCells || cells.slice();
         state.masks.history = [];
@@ -4035,6 +4045,7 @@
             digest: state.masks.digest,
             revision: state.masks.revision,
             led_info: clone(state.masks.ledInfo),
+            unobserved_non_plant_strips: Array.from(state.masks.unobservedNonPlantStrips || []),
             masks: {foliage: maskIndices(1), globes},
         };
     }

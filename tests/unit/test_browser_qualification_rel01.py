@@ -529,6 +529,16 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             source,
         )
 
+    def test_profile_mask_probe_is_independent_of_service_worker_warmup(self) -> None:
+        source = (
+            ROOT / "tools" / "browser_qualification" / "playwright_probe.mjs"
+        ).read_text(encoding="utf-8")
+        profile_masks = source[source.index("async function runProfileMasks"):source.index("async function runPythonNativeClock")]
+        self.assertIn(
+            "navigateComposer(page, composerUrl, {waitForServiceWorker: false})",
+            profile_masks,
+        )
+
     def test_local_locked_module_executes_all_engines_and_receives_artifact_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

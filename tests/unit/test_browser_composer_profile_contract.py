@@ -79,6 +79,13 @@ class BrowserComposerProfileContractTests(unittest.TestCase):
         self.assertIn("restart the renderer with a null profile", self.composer)
         self.assertIn("resetChecker({preserveDocumentRevision: true});", self.composer)
 
+    def test_mask_editor_uses_the_complete_canonical_profile_geometry(self) -> None:
+        self.assertIn("stripCount !== 33", self.composer)
+        self.assertIn("totalLeds !== 4554", self.composer)
+        self.assertIn("unobserved_non_plant_strips", self.composer)
+        self.assertIn("unobservedNonPlantStrips", self.composer)
+        self.assertIn("33 × 138", self.template)
+
     def test_every_worker_init_and_recovery_descriptor_carries_profile(self) -> None:
         self.assertIn("installationProfile: descriptor.installationProfile", self.runtime)
         self.assertIn("installationProfileArtifact: profileArtifact", self.runtime)
