@@ -57,21 +57,38 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 - If a required sync or push is blocked, stop and report the exact command and error.
 <!-- END BEADS INTEGRATION -->
 
+## Parallel Bead Delivery
 
-## Build & Test
+These rules apply to the `ledgrid-poc-ib7` Composer completion and selective-reconstruction initiative. They are deliberately explicit so a Terra + High agent can dispatch bounded work without reconstructing the plan from the whole graph.
 
-_Add your build and test commands here_
+### Choose work
+
+Use only the curated queue:
 
 ```bash
-# Example:
-# npm install
-# npm test
+bd ready --parent ledgrid-poc-ib7 --exclude-type=epic --label worktree-ready --unassigned
 ```
 
-## Architecture Overview
+After identifying the earliest ready wave, add `--metadata-field wave=<wave>` to constrain dispatch to that group.
 
-_Add a brief overview of your project architecture_
+Never dispatch implementation work from unfiltered `bd ready`. Before claiming, run `bd show <id>` and confirm that the leaf is estimated at 60-480 minutes and records its phase, wave, exact base SHA, owned paths, shared or generated paths, conflict domain, focused and adjacent tests, and visible proof. If any field is missing, leave the bead unclaimed and refine or split it. Claim atomically with `bd update <id> --claim`. Dispatch the earliest ready wave and start only mutually distinct conflict domains from that wave.
 
-## Conventions & Patterns
+A leaf labeled `control-plane` may update only Beads, worktree registration, or integration bookkeeping from the control checkout. Every code or documentation leaf uses an isolated worktree created with `bd worktree create`; Beads are shared automatically. Use one bead, branch, worktree, and assignee per worker. Keep at most three workers active so one coordinator remains available.
 
-_Add your project-specific conventions here_
+The one-time bootstrap leaf `ledgrid-poc-ib7.19.1` is the only exception: it commits these contributor instructions from the control checkout, without `.beads/**`, before any isolated implementation worker starts. Once it closes, all later documentation changes follow the normal worktree rule.
+
+### Isolate ownership
+
+Every leaf has exactly one conflict domain: `worktree-control`, `product-inventory`, `test-inventory`, `composer-shell`, `web-controller-api`, `browser-runtime-assets`, `scene-profile-contract`, `animation-kernel`, `plugin-pack:<family>`, `receiver-protocol-firmware`, `deploy-toolchain`, `docs-test-config`, or `browser-evidence`. Run at most one worker in the same exact conflict domain at a time. Distinct plugin-pack domains may run together only when they own disjoint plugin directories and neither changes a shared kernel or registry. Treat shared registries and generated outputs as single-owner paths. Never let two workers regenerate the Composer bootstrap, service worker, preset census, profile fixtures, GIF assets, or firmware manifests concurrently.
+
+During source completion, `update-animation-pipeline` is coordinator-owned integration state. After the exact source freeze, selective reconstruction uses coordinator-owned `codex/ib7-reconstruction-integration` created from the recorded current-main SHA. Workers branch from the latest recorded integration SHA. Never merge the donor branch wholesale into reconstruction.
+
+### Finish a worker leaf
+
+Run the bead's focused tests, its named adjacent regression, and `git diff --check`. Capture the user-visible proof named by the bead without committing timestamped evidence. An implementation leaf commits one logical change. A verification-only or control-plane leaf creates no empty commit and records the exact tested or updated SHA instead. Append a Beads handoff containing the base SHA, tip or tested SHA, changed paths, generated outputs, test commands and results, duration, and proof location. Implementation leaves add `merge-ready`; verification and control-plane leaves use their explicit gate acceptance. Do not close an implementation bead or merge it yourself. Never stage `.beads/**`, local run state, browser traces, screenshots, or qualification captures.
+
+### Integrate serially
+
+The coordinator uses `bd merge-slot acquire --holder <name>` before integration and always releases it. Rebase the worker branch onto the current integration tip. Return semantic or shared-hot-file conflicts to the owning worker; do not improvise a conflict resolution in the queue. On the prospective integrated tip, rerun the focused test, adjacent regression, generated-output check when applicable, and the current visible-milestone gate. Integrate with a fast-forward merge, record the resulting SHA and proof in the bead, then close it. Remove only clean, merged worktrees with `bd worktree remove` and never use `--force` for routine cleanup.
+
+Local worker commits and coordinator integrations are authorized for this initiative. Git pushes, Dolt pushes, physical wall operations, and the squash to `main` are not part of ordinary worker authority. The squash remains gated by `ledgrid-poc-ib7.14`; device erase/reflash remains post-squash work. Each visible milestone must leave the integration branch runnable and demonstrably better even though limited deployment downtime is acceptable at final cutover.
