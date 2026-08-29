@@ -89,6 +89,12 @@ FULL_FRAME_STATUS_SAMPLE_INTERVAL = 128
 FULL_FRAME_STATUS_SAMPLE_RECEIVERS = 5
 COMMAND_ACK_MAX_STATUS_QUERIES = 16
 COMMAND_ACK_POLL_INTERVAL_SECONDS = 0.001
+# A streamed receiver can be inside a roughly 4.5 ms parallel-LED presentation
+# when its completed SPI transaction becomes available to the receiver task.
+# Pace queue-drain queries beyond that installed display cycle so the third
+# transfer can actually clock the requested extended snapshot instead of three
+# already-queued legacy-safe v3 responses.
+FRESH_STATUS_DRAIN_INTERVAL_SECONDS = 0.005
 MAX_PIXELS_SET_ALL = (MAX_ALIGNED_SEMANTIC_BYTES - 1) // 3
 MAX_PIXELS_PER_RANGE = min(255, (MAX_ALIGNED_SEMANTIC_BYTES - 4) // 3)
 
@@ -2065,7 +2071,7 @@ class LEDController:
                     # three transfers back-to-back can drain the two old slots
                     # before the new v7 response exists, especially while FEC
                     # decoding competes for the receiver core.
-                    time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
+                    time.sleep(FRESH_STATUS_DRAIN_INTERVAL_SECONDS)
                 self._clock_receiver_status_snapshot()
 
     def query_fresh_receiver_status(self):

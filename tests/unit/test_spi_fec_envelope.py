@@ -364,7 +364,8 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         item._update_receiver_status = lambda _response: True
         colors = np.zeros((8 * 138, 3), dtype=np.uint8)
 
-        item.set_all_pixels(colors, wall_frame_sequence=76)
+        with mock.patch.object(protocol.time, "sleep") as sleep:
+            item.set_all_pixels(colors, wall_frame_sequence=76)
 
         self.assertEqual(len(item.spi.response_packets), 4)
         for packet in item.spi.response_packets[:3]:
@@ -378,6 +379,13 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         self.assertEqual(len(item.spi.response_packets[3]), 4088)
         self.assertEqual(item.spi.response_packets[3][:2], b"\x0b\x07")
         self.assertEqual(item._spi_transfers, 4)
+        self.assertEqual(
+            sleep.call_args_list,
+            [
+                mock.call(protocol.FRESH_STATUS_DRAIN_INTERVAL_SECONDS),
+                mock.call(protocol.FRESH_STATUS_DRAIN_INTERVAL_SECONDS),
+            ],
+        )
         self.assertEqual(item._fec_frames_sent, 1)
         self.assertEqual(item._full_frame_transfers, 1)
         self.assertEqual(item._full_frame_status_transfers, 1)
