@@ -299,6 +299,21 @@ console.log(JSON.stringify({
         self.assertNotIn("serverCheck", persistence_calls)
         self.assertNotIn("check_token", persistence_calls)
 
+    def test_application_has_a_narrow_composer_module_registration_seam(self) -> None:
+        source = COMPOSER_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("function createComposerModuleRegistry(", source)
+        self.assertIn("const ComposerModules = createComposerModuleRegistry({", source)
+        self.assertIn("window.LEDGridComposerModules = ComposerModules", source)
+        self.assertIn("state: applicationState", source)
+        self.assertIn("events: Object.freeze({", source)
+        self.assertIn("dom: Object.freeze(dom)", source)
+        self.assertIn("runtime: Object.freeze(runtime)", source)
+        self.assertIn("registrations.forEach((installer) => installer(context))", source)
+        self.assertIn("if (context) installer(context)", source)
+        self.assertIn("ComposerModules.register('core-runtime-cleanup'", source)
+        self.assertIn("ComposerModules.initialize()", source)
+
         html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")
         self.assertIn('id="cancelActivationButton"', html)
         self.assertIn('id="rollbackActivationButton"', html)

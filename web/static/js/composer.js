@@ -153,6 +153,65 @@
         },
     };
 
+    /**
+     * Composer remains the composition root. Future domain packets register
+     * here instead of reaching into this closure or re-creating page globals.
+     * A module receives only the live state, event helpers, DOM handles, and
+     * browser-runtime dependencies it needs; registrations made after startup
+     * install immediately, which keeps deferred Composer scripts order-safe.
+     */
+    function createComposerModuleRegistry({state: applicationState, dom, runtime}) {
+        const registrations = new Map();
+        let context = null;
+
+        function install(name, installer) {
+            if (registrations.has(name)) throw new Error(`Composer module already registered: ${name}`);
+            registrations.set(name, installer);
+            if (context) installer(context);
+        }
+
+        return Object.freeze({
+            register(name, installer) {
+                if (typeof name !== 'string' || !name.trim()) throw new TypeError('Composer module names must be non-empty strings.');
+                if (typeof installer !== 'function') throw new TypeError(`Composer module ${name} must provide an installer.`);
+                install(name, installer);
+            },
+            initialize() {
+                if (context) return;
+                context = Object.freeze({
+                    state: applicationState,
+                    events: Object.freeze({
+                        on(target, type, listener, options) {
+                            target.addEventListener(type, listener, options);
+                            return () => target.removeEventListener(type, listener, options);
+                        },
+                    }),
+                    dom: Object.freeze(dom),
+                    runtime: Object.freeze(runtime),
+                });
+                registrations.forEach((installer) => installer(context));
+            },
+        });
+    }
+
+    const ComposerModules = createComposerModuleRegistry({
+        state,
+        dom: {byId: $, document},
+        runtime: {ComposerRuntime, ComposerState, window},
+    });
+    window.LEDGridComposerModules = ComposerModules;
+
+    // A single existing lifecycle binding proves the seam without pulling a
+    // feature domain out of the composition root ahead of its owning packet.
+    ComposerModules.register('core-runtime-cleanup', ({events, runtime, state: moduleState}) => {
+        events.on(runtime.window, 'beforeunload', () => {
+            runtime.window.clearInterval(moduleState.connectivityTimer);
+            clearActivationPolling();
+            disposeMotionPreference();
+            disposeRuntimes();
+        });
+    });
+
     function clone(value) {
         return ComposerState.clone ? ComposerState.clone(value) : JSON.parse(JSON.stringify(value ?? null));
     }
@@ -4326,12 +4385,7 @@
             refreshOfflineReadiness();
         });
         window.addEventListener('offline', () => setServerOnline(false));
-        window.addEventListener('beforeunload', () => {
-            window.clearInterval(state.connectivityTimer);
-            clearActivationPolling();
-            disposeMotionPreference();
-            disposeRuntimes();
-        });
+        ComposerModules.initialize();
         window.addEventListener('beforeunload', (event) => {
             if (!state.masks.dirty) return;
             event.preventDefault();
