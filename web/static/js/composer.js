@@ -832,11 +832,14 @@
     function managedComponentIdentityMatches(localComponent, serverComponent) {
         const localIdentity = localComponent?.browser_capabilities?.managed_identity || {};
         const serverIdentity = serverComponent?.browser_capabilities?.managed_identity || {};
-        return ['component_digest', 'runtime_digest', 'parameter_schema_version'].every((field) => (
+        const matchingDigests = ['component_digest', 'runtime_digest'].every((field) => (
             typeof localIdentity[field] === 'string'
             && localIdentity[field].length > 0
             && localIdentity[field] === serverIdentity[field]
         ));
+        return matchingDigests
+            && Number.isInteger(localIdentity.parameter_schema_version)
+            && localIdentity.parameter_schema_version === serverIdentity.parameter_schema_version;
     }
 
     function mergeServerPresetCatalog(serverBootstrap) {

@@ -123,6 +123,7 @@ class BrowserComposerOfflineBootstrapTests(unittest.TestCase):
         self.assertIn("state.bootstrap.capabilities.server_actions = actions", source)
         self.assertIn("function mergeServerPresetCatalog", source)
         self.assertIn("managedComponentIdentityMatches", source)
+        self.assertIn("Number.isInteger(localIdentity.parameter_schema_version)", source)
         self.assertIn("localComponent.presets = clone(serverComponent.presets)", source)
         self.assertIn("mergeServerPresetCatalog(payload);", source)
         self.assertIn(
