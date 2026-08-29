@@ -377,21 +377,26 @@
 
     function updateSelectedInstallationProfile(nextDigest) {
         const profile = state.installationProfile;
-        if (!/^[0-9a-f]{64}$/.test(nextDigest || '') || nextDigest === EMPTY_PROFILE_DIGEST) return;
+        if (!/^[0-9a-f]{64}$/.test(nextDigest || '')) return;
+        const isEmptyProfile = nextDigest === EMPTY_PROFILE_DIGEST;
         const priorDigest = profile.selectedDigest;
         const priorAuthority = state.bootstrap?.installation_profile?.authority;
         if (nextDigest === priorDigest && priorAuthority === 'host') return;
         const actions = globalActions();
-        for (const name of (
-            ['installation_profile_draft_url', 'installation_profile_publish_url', 'installation_profile_artifact_url']
-        )) {
-            const kind = name.replace('installation_profile_', '').replace('_url', '');
-            actions[name] = profileUrlForDigest(actions[name], priorDigest, nextDigest)
-                || managedProfileUrl(kind, nextDigest);
+        if (!isEmptyProfile) {
+            for (const name of (
+                ['installation_profile_draft_url', 'installation_profile_publish_url', 'installation_profile_artifact_url']
+            )) {
+                const kind = name.replace('installation_profile_', '').replace('_url', '');
+                actions[name] = profileUrlForDigest(actions[name], priorDigest, nextDigest)
+                    || managedProfileUrl(kind, nextDigest);
+            }
         }
         const followsSelected = !profile.desiredDigest || profile.desiredDigest === priorDigest;
         profile.selectedDigest = nextDigest;
-        profile.selectedArtifactUrl = actions.installation_profile_artifact_url || null;
+        profile.selectedArtifactUrl = isEmptyProfile
+            ? null
+            : actions.installation_profile_artifact_url || null;
         if (followsSelected) {
             profile.desiredDigest = nextDigest;
             profile.desiredArtifactUrl = profile.selectedArtifactUrl;

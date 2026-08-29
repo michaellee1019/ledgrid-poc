@@ -72,6 +72,8 @@ class BrowserComposerProfileContractTests(unittest.TestCase):
         self.assertIn("restoredMaskDraft", self.composer)
         self.assertIn("persistMaskDraft();\n        resetChecker({preserveDocumentRevision: true});", self.composer)
         self.assertIn("updateSelectedInstallationProfile", self.composer)
+        self.assertIn("const isEmptyProfile = nextDigest === EMPTY_PROFILE_DIGEST", self.composer)
+        self.assertIn("if (!isEmptyProfile)", self.composer)
         self.assertIn("resetChecker({preserveDocumentRevision: true});", self.composer)
 
     def test_every_worker_init_and_recovery_descriptor_carries_profile(self) -> None:
