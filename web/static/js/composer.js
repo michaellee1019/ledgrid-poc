@@ -940,7 +940,6 @@
         if (state.serverChecking) return 'Waiting for the wall server.';
         if (!state.serverOnline) return 'Reconnect to the wall server before activation.';
         if (state.globalSettings.loading || state.globalSettings.applying) return 'Wait for wall-wide settings to finish updating.';
-        if (state.globalSettings.dirty) return 'Apply or revert the Wall draft before activating this checked scene.';
         if (state.globalSettings.pendingObservation) return 'Wait until the wall reports the reviewed Wall settings before activation.';
         return null;
     }
@@ -2766,7 +2765,7 @@
         setActionBusy('activate', true);
         $('serverActionStatus').textContent = 'Reading the current wall settings before issuing a server Check…';
         try {
-            const observed = await refreshGlobalSettings({quiet: true});
+            const observed = await refreshGlobalSettings({quiet: true, preserveDraft: false});
             if (!observed) throw new Error('Could not read the current wall settings.');
             $('serverActionStatus').textContent = 'Requesting a short-lived server Check for this exact scene and wall state…';
             await createServerCheck();
