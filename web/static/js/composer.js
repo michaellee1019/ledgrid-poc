@@ -408,7 +408,16 @@
         profile.selectedArtifactUrl = isEmptyProfile
             ? null
             : actions.installation_profile_artifact_url || null;
-        if (followsSelected) {
+        // An empty controller selection is a real wall-state change, but it
+        // is not a browser-preview artifact.  Keep the already verified local
+        // descriptor running so a transient/unconfigured controller cannot
+        // restart the renderer with a null profile.  `selectedDigest` still
+        // records the empty state, which invalidates Check and keeps reviewed
+        // activation from treating the preview profile as live wall authority.
+        const canReplacePreviewProfile = !isEmptyProfile
+            && typeof profile.selectedArtifactUrl === 'string'
+            && profile.selectedArtifactUrl.length > 0;
+        if (followsSelected && canReplacePreviewProfile) {
             profile.desiredDigest = nextDigest;
             profile.desiredArtifactUrl = profile.selectedArtifactUrl;
             restartRuntimesAtCurrentState();
