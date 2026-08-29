@@ -280,6 +280,12 @@ h2 { font-size: .84rem; }
 .activation-readiness[data-state="ready"] { border-color: #536f48; color: var(--mint); }
 .activation-readiness[data-state="blocked"] { border-color: #755047; color: var(--danger); }
 .server-action-buttons, .local-action-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.live-edit-control { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; margin: 10px 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); cursor: pointer; }
+.live-edit-control strong, .live-edit-control small { display: block; }
+.live-edit-control strong { font-size: .72rem; }
+.live-edit-control small { margin-top: 3px; color: var(--faint); font-size: .6rem; line-height: 1.35; }
+.live-edit-control[data-state="active"] { border-color: #5e8153; background: linear-gradient(120deg, rgba(119,226,180,.11), rgba(200,246,108,.05)); }
+.live-edit-control[data-state="error"] { border-color: rgba(255,142,124,.65); }
 .local-action-buttons { margin-bottom: 8px; }
 
 .action-dialog { width: min(440px, calc(100vw - 28px)); padding: 0; border: 1px solid var(--line-strong); border-radius: 18px; background: #1b1e19; color: var(--ink); box-shadow: 0 28px 90px rgba(0,0,0,.72); }

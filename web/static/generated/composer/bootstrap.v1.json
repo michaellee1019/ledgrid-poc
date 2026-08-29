@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "3155292e1e9092a7625136064322ddc0dced673bcf6d52afbde84b363737e9a1",
+    "catalog_digest": "733a05efff882ebec45a8e53616e477f811638695c7c5bfb5825df90748c63a5",
     "kind": "bundled",
     "version": 1
   },
@@ -22,6 +22,8 @@
       "installation_profile_artifact_url": null,
       "installation_profile_draft_url": null,
       "installation_profile_publish_url": null,
+      "live_edit_available": true,
+      "live_edit_component_url_template": "/api/v1/scene/components/{target}",
       "masks_url": "/api/painter/masks",
       "online_required": true,
       "operator_speed_url": "/api/config/animation-speed",

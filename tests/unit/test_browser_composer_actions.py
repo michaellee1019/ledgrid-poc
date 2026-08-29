@@ -94,10 +94,11 @@ class _Channel:
     def __init__(self) -> None:
         self.read_count = 0
         self.commands: list[dict] = []
+        self.status: dict = {}
 
     def read_status(self) -> dict:
         self.read_count += 1
-        return {}
+        return deepcopy(self.status)
 
     def send_command(self, action: str, **data) -> dict:
         self.commands.append({"action": action, "data": deepcopy(data)})
@@ -361,6 +362,53 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertFalse(self.interface.animation_presets_dir.exists())
         self.assert_no_live_effect()
 
+    def test_explicit_live_edit_updates_only_the_expected_active_component(self) -> None:
+        self.channel.status = {
+            "is_running": True,
+            "current_animation": "gradient",
+            "scene_state": _scene(),
+        }
+        response = self.client.patch(
+            "/api/v1/scene/components/background",
+            json={
+                "live_edit": True,
+                "expected_component": {
+                    "provider": "python", "component_id": "gradient",
+                },
+                "params": {"speed": 1.4},
+            },
+        )
+
+        self.assertEqual(response.status_code, 202, response.get_json())
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertEqual(self.channel.commands, [{
+            "action": "update_scene_component",
+            "data": {
+                "target": "background",
+                "update": {
+                    "component": {
+                        "plugin_id": "gradient", "provider": "python",
+                        "parameter_overrides": {"speed": 1.4},
+                        "resolved_parameters": {"speed": 0.7},
+                    },
+                    "params": {"speed": 1.4},
+                },
+            },
+        }])
+
+        mismatched = self.client.patch(
+            "/api/v1/scene/components/background",
+            json={
+                "live_edit": True,
+                "expected_component": {
+                    "provider": "python", "component_id": "other",
+                },
+                "params": {"speed": 1.2},
+            },
+        )
+        self.assertEqual(mismatched.status_code, 409)
+        self.assertEqual(len(self.channel.commands), 1)
+
     def test_mobile_layers_surface_keeps_local_and_server_actions_reachable(self) -> None:
         html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")
         css = (ROOT / "web/static/css/composer.css").read_text(encoding="utf-8")
@@ -371,6 +419,7 @@ class BrowserComposerActionTests(unittest.TestCase):
             "exportPanelButton",
             "saveLibraryPanelButton",
             "activatePanelButton",
+            "liveEditToggle",
         ):
             self.assertIn(f'id="{element_id}"', html)
         self.assertIn('data-mobile-target="layers"', html)
@@ -384,6 +433,8 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertIn("status.telemetry?.complete", javascript)
         self.assertIn("check_token: serverCheck.token", javascript)
         self.assertIn("pollActivationStatus()", javascript)
+        self.assertIn("LIVE_EDIT_MIN_INTERVAL_MS = 40", javascript)
+        self.assertIn("queueLiveEdit({immediate: true})", javascript)
 
     def test_wall_workspace_is_complete_and_presets_exclude_global_state(self) -> None:
         html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")

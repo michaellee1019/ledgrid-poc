@@ -211,6 +211,10 @@
           <div class="server-surface-heading"><h2 id="serverActionsHeading">Wall actions</h2><span id="serverActionBadge">Online required</span></div>
           <p id="serverActionStatus" role="status" aria-live="polite">Drafts, checks, uploads, and downloads work locally. Saving and activation require the wall server.</p>
           <p class="activation-readiness" id="activationReadiness" role="status" aria-live="polite" data-state="unavailable">Run Check to determine whether this draft is ready for activation.</p>
+          <label class="live-edit-control" for="liveEditToggle">
+            <span><strong>Live edit</strong><small id="liveEditStatus" role="status" aria-live="polite">Off · Composer parameters stay local.</small></span>
+            <span class="compact-switch"><span class="sr-only">Apply Composer parameter edits to the live wall immediately</span><input id="liveEditToggle" type="checkbox" role="switch" disabled></span>
+          </label>
           <div class="local-action-buttons" aria-label="Local file actions">
             <button class="quiet-button" id="importPanelButton" type="button">Upload JSON</button>
             <button class="quiet-button" id="exportPanelButton" type="button">Download JSON</button>

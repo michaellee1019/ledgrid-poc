@@ -57,8 +57,9 @@ API endpoints:
 - `POST /api/v1/scene/activations/<activation_id>/rollback` — request a
   correlated exact-snapshot rollback when advertised
 - `POST /api/v1/scene/validate` — validate without changing live output
-- `PATCH /api/v1/scene/components/<target>` — rejected with 428; compose and
-  Check a complete scene instead
+- `PATCH /api/v1/scene/components/<target>` — rejected with 428 by default;
+  Composer live edit may submit `live_edit: true` with an exact expected active
+  component to stream validated parameter updates without replacing the scene
 - `POST /api/v1/scene/preview` — isolated scene preview using the selected vibe
   and plant state
 - `GET|POST /api/v1/scene-presets` — list or save scene-only presets

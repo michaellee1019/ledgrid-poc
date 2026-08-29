@@ -7,6 +7,7 @@
     const STORAGE_PREFIX = 'ledgrid.browser-composer.v1';
     const BUNDLED_BOOTSTRAP_URL = '/static/generated/composer/bootstrap.v1.json';
     const SAMPLE_FRAMES = 48;
+    const LIVE_EDIT_MIN_INTERVAL_MS = 40;
     const EMPTY_PROFILE_DIGEST = '0'.repeat(64);
     const GLOBE_REGION_ORDER = Object.freeze([
         'top_left',
@@ -86,6 +87,16 @@
             resourceKind: null,
             resourcePollTimer: null,
             resourcePollStartedAt: 0,
+        },
+        liveEdit: {
+            enabled: false,
+            inFlight: false,
+            pending: false,
+            timer: null,
+            lastSentAt: 0,
+            generation: 0,
+            message: null,
+            state: 'off',
         },
         autosaveTimer: null,
         connectivityTimer: null,
@@ -879,6 +890,7 @@
     function setServerOnline(online, {checking = false, quiet = false} = {}) {
         state.serverOnline = Boolean(online);
         state.serverChecking = checking;
+        if (!online && state.liveEdit.enabled) disableLiveEdit('Wall connection lost · live edit paused.');
         const activationAvailable = state.bootstrap?.capabilities?.server_actions?.activation_available === true;
         const activationMode = state.bootstrap?.capabilities?.server_actions?.activation_mode;
         const activationIsCanary = activationAvailable && activationMode === 'development_canary';
@@ -973,6 +985,126 @@
         return null;
     }
 
+    function liveEditAvailable() {
+        return Boolean(
+            state.component
+            && state.serverOnline
+            && !state.serverChecking
+            && globalActions().live_edit_available === true
+        );
+    }
+
+    function renderLiveEditMode() {
+        const toggle = $('liveEditToggle');
+        const status = $('liveEditStatus');
+        const control = toggle?.closest('.live-edit-control');
+        if (!toggle || !status || !control) return;
+        const available = liveEditAvailable();
+        toggle.checked = state.liveEdit.enabled;
+        toggle.disabled = !available && !state.liveEdit.enabled;
+        control.dataset.state = state.liveEdit.state;
+        status.textContent = state.liveEdit.message || (state.liveEdit.enabled
+            ? state.liveEdit.inFlight || state.liveEdit.pending
+                ? 'Live · sending the latest parameter change…'
+                : 'Live · parameter edits are applied immediately.'
+            : available
+                ? 'Off · Composer parameters stay local.'
+                : 'Unavailable · connect to the wall and choose a renderer.');
+    }
+
+    function disableLiveEdit(message = null) {
+        state.liveEdit.enabled = false;
+        state.liveEdit.pending = false;
+        state.liveEdit.generation += 1;
+        if (state.liveEdit.timer) window.clearTimeout(state.liveEdit.timer);
+        state.liveEdit.timer = null;
+        state.liveEdit.message = message;
+        state.liveEdit.state = message ? 'error' : 'off';
+        renderLiveEditMode();
+    }
+
+    function liveEditExpectedComponent() {
+        const identity = state.component?.browser_capabilities?.managed_identity || {};
+        const provider = identity.provider || state.component?.provider;
+        const componentId = identity.component_id || state.component?.plugin_id;
+        if (typeof provider !== 'string' || typeof componentId !== 'string') {
+            throw new Error('The selected renderer has no live-edit identity.');
+        }
+        return {provider, component_id: componentId};
+    }
+
+    function liveEditUrl() {
+        const template = globalActions().live_edit_component_url_template
+            || '/api/v1/scene/components/{target}';
+        return template.replace('{target}', 'background');
+    }
+
+    function queueLiveEdit({immediate = false} = {}) {
+        if (!state.liveEdit.enabled || !state.component) return;
+        state.liveEdit.pending = true;
+        state.liveEdit.message = null;
+        state.liveEdit.state = 'active';
+        if (state.liveEdit.inFlight) {
+            renderLiveEditMode();
+            return;
+        }
+        if (state.liveEdit.timer) window.clearTimeout(state.liveEdit.timer);
+        const delay = immediate ? 0 : Math.max(
+            0, LIVE_EDIT_MIN_INTERVAL_MS - (Date.now() - state.liveEdit.lastSentAt)
+        );
+        state.liveEdit.timer = window.setTimeout(flushLiveEdit, delay);
+        renderLiveEditMode();
+    }
+
+    async function flushLiveEdit() {
+        state.liveEdit.timer = null;
+        if (!state.liveEdit.enabled || state.liveEdit.inFlight || !state.liveEdit.pending) return;
+        state.liveEdit.pending = false;
+        state.liveEdit.inFlight = true;
+        state.liveEdit.lastSentAt = Date.now();
+        const generation = state.liveEdit.generation;
+        const params = authoredParams(state.component, state.params);
+        try {
+            await requestJson(liveEditUrl(), {
+                method: 'PATCH',
+                body: JSON.stringify({
+                    live_edit: true,
+                    expected_component: liveEditExpectedComponent(),
+                    params,
+                }),
+            });
+            if (generation !== state.liveEdit.generation) return;
+            state.liveEdit.message = state.liveEdit.pending
+                ? 'Live · sending the latest parameter change…'
+                : 'Live · latest parameter change queued for the wall.';
+            state.liveEdit.state = 'active';
+        } catch (error) {
+            if (generation !== state.liveEdit.generation) return;
+            if (error.code === 'offline') setServerOnline(false);
+            disableLiveEdit(`Live edit stopped · ${error.message}`);
+            toast(`Live edit stopped: ${error.message}`, 'error');
+        } finally {
+            state.liveEdit.inFlight = false;
+            if (state.liveEdit.enabled && state.liveEdit.pending) queueLiveEdit();
+            else renderLiveEditMode();
+        }
+    }
+
+    function setLiveEditEnabled(enabled) {
+        if (!enabled) {
+            disableLiveEdit();
+            return;
+        }
+        if (!liveEditAvailable()) {
+            disableLiveEdit('Live edit requires a connected wall and selected renderer.');
+            return;
+        }
+        state.liveEdit.enabled = true;
+        state.liveEdit.message = 'Live · applying this Composer draft now…';
+        state.liveEdit.state = 'active';
+        queueLiveEdit({immediate: true});
+    }
+
     function updateServerActionButtons() {
         const capability = componentCapability();
         const saveEnabled = Boolean(state.component && capability.saveable && state.serverCatalogCompatible && state.serverOnline && !state.serverChecking && !state.busyAction);
@@ -996,6 +1128,7 @@
             reason.dataset.state = blockReason ? 'blocked' : 'ready';
         }
         updateActivationResourceButtons();
+        renderLiveEditMode();
     }
 
     function setActionBusy(action, busy) {
@@ -1473,6 +1606,9 @@
     async function selectComponent(component, options = {}) {
         if (!componentCapability(component).previewable) return;
         if (state.component?.key === component.key && !options.force) return;
+        if (state.liveEdit.enabled && state.component?.key !== component.key) {
+            disableLiveEdit('Live edit paused because the selected renderer changed.');
+        }
         state.component = component;
         state.selectedPreset = null;
         updateServerComponentCompatibility();
@@ -1521,6 +1657,7 @@
         commitHistory();
         restartRuntimesAtCurrentState();
         scheduleAutosave();
+        queueLiveEdit({immediate: true});
         toast(`Loaded ${$('presetName').value}.`);
     }
 
@@ -1886,6 +2023,7 @@
         resetChecker();
         scheduleAutosave();
         requestRender();
+        queueLiveEdit();
     }
 
     function snapshot() {
@@ -1949,6 +2087,7 @@
             if (!clockWasEnabled && state.layers.clockEnabled) ensureOverlayRuntime().then(requestRender).catch(() => {});
         }
         requestRender();
+        queueLiveEdit({immediate: true});
     }
 
     function updateHistoryButtons() {
@@ -3914,6 +4053,7 @@
             commitHistory();
             scheduleAutosave();
             requestRender();
+            queueLiveEdit({immediate: true});
         });
         $('presetName').addEventListener('input', () => {
             resetChecker();
@@ -3958,6 +4098,7 @@
         });
         $('clockOpacity').addEventListener('change', commitHistory);
         $('clockPresetSelect').addEventListener('change', (event) => applyClockPreset(event.target.value));
+        $('liveEditToggle').addEventListener('change', (event) => setLiveEditEnabled(event.target.checked));
         $('fallbackSelect').addEventListener('change', (event) => {
             if (state.layers.fallbackKey === event.target.value) return;
             state.layers.fallbackKey = event.target.value;

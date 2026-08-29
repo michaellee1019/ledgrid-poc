@@ -380,6 +380,7 @@ class AnimationWebInterface:
                     'validate_import': True,
                     'save_component_preset': True,
                     'save_scene_preset': True,
+                    'live_edit_component': True,
                     'check_scene': self.activation_enabled,
                     'activate_scene': self.activation_enabled,
                     'activation_status': self.activation_enabled,
@@ -1112,9 +1113,68 @@ class AnimationWebInterface:
 
         @self.app.route('/api/v1/scene/components/<target>', methods=['PATCH'])
         def api_update_scene_component(target: str):
-            return self._guarded_scene_error(
-                f'Updating scene component {target!r} requires a complete guarded activation.'
-            )
+            """Apply an explicit live-editor parameter update to the active scene.
+
+            Ordinary direct PATCH calls remain fail-closed.  Composer live edit
+            opts in per request, names the component it expects to be live, and
+            may update parameters only; replacing a scene still uses guarded
+            activation.
+            """
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, dict) or payload.get('live_edit') is not True:
+                return self._guarded_scene_error(
+                    f'Updating scene component {target!r} requires a complete guarded activation.'
+                )
+            unknown = sorted(set(payload) - {
+                'live_edit', 'expected_component', 'params',
+            })
+            if unknown:
+                return jsonify({
+                    'error': f"unsupported live-edit fields: {', '.join(unknown)}",
+                    'code': 'invalid_live_edit',
+                }), 400
+            expected = payload.get('expected_component')
+            if not isinstance(expected, dict):
+                return jsonify({
+                    'error': 'live edit requires the expected active component',
+                    'code': 'live_edit_precondition_required',
+                }), 428
+            expected_provider = expected.get('provider')
+            expected_component_id = expected.get('component_id')
+            if not isinstance(expected_provider, str) or not isinstance(expected_component_id, str):
+                return jsonify({
+                    'error': 'expected active component must include provider and component_id',
+                    'code': 'invalid_live_edit',
+                }), 400
+            try:
+                update = self._validated_scene_update(target, {
+                    'params': payload.get('params'),
+                })
+                component = update.get('component')
+                if not isinstance(component, dict) or (
+                    component.get('provider') != expected_provider
+                    or component.get('plugin_id') != expected_component_id
+                ):
+                    raise SceneValidationError(
+                        'the wall is no longer running the Composer renderer selected for live edit'
+                    )
+                command = self.control_channel.send_command(
+                    'update_scene_component', target=target, update=update
+                )
+            except SceneValidationError as exc:
+                return jsonify({
+                    'error': str(exc), 'code': 'live_edit_conflict',
+                }), 409
+            except (TypeError, ValueError) as exc:
+                return jsonify({'error': str(exc), 'code': 'invalid_live_edit'}), 400
+            response = jsonify({
+                'success': True,
+                'target': target,
+                'component': component,
+                'command_id': self._command_id(command),
+            })
+            response.headers['Cache-Control'] = 'no-store'
+            return response, 202
 
         @self.app.route('/api/v1/scene/preview', methods=['POST'])
         def api_preview_scene():
@@ -3069,6 +3129,10 @@ class AnimationWebInterface:
                     'validate_import_url': '/api/v1/composer/presets/validate',
                     'save_component_preset_url': '/api/v1/composer/presets',
                     'save_scene_preset_url': '/api/v1/scene-presets',
+                    'live_edit_component_url_template': (
+                        '/api/v1/scene/components/{target}'
+                    ),
+                    'live_edit_available': True,
                     'validate_scene_url': '/api/v1/scene/validate',
                     'check_scene_url': '/api/v1/scene/checks',
                     'activate_scene_url': '/api/v1/scene',
