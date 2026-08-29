@@ -1307,6 +1307,24 @@ class ControllerActivationCoordinator:
             and scene["background"].get("provider") == "receiver_native"
         )
 
+    def _receiver_profile_transaction_required(
+        self, scene: Mapping[str, Any] | None
+    ) -> bool:
+        """Whether this scene needs profile I/O to receiver firmware.
+
+        A Host Python scene carries the complete frame from the Pi, so it only
+        needs the managed profile in the host manager.  When the explicit
+        receiver-geometry rollout gate is off, attempting receiver profile I/O
+        is both unnecessary and rejected by the controller adapter.  Native
+        scenes still require the receiver transaction and therefore remain
+        fail-closed under that gate.
+        """
+
+        if self._uses_receiver_runtime(scene):
+            return True
+        controller = getattr(self.manager, "controller", None)
+        return getattr(controller, "_receiver_geometry_profile_enabled", None) is not False
+
     @staticmethod
     def _receiver_publication_evidence(
         status: Mapping[str, Any],
@@ -1462,7 +1480,10 @@ class ControllerActivationCoordinator:
                 "empty receiver profile no-op authority changed before snapshot"
             )
         wall, receiver_snapshots = self._capture_receiver_profile_snapshot(
-            receiver_profile_noop=receiver_profile_noop
+            receiver_profile_noop=(
+                receiver_profile_noop
+                or not self._receiver_profile_transaction_required(scene)
+            )
         )
         body = {
             "state_revision": self._state_revision,
@@ -1570,10 +1591,15 @@ class ControllerActivationCoordinator:
             raise ControllerActivationValidationError(
                 "manager cannot preflight the desired installation profile"
             )
+        receiver_profile_transaction_required = (
+            self._receiver_profile_transaction_required(scene)
+        )
         if profile == EMPTY_INSTALLATION_PROFILE_DIGEST:
+            # Clearing a selected profile is different: even a Host Python
+            # scene must prove the receivers do not retain a binding.
             if not receiver_profile_noop:
                 self._preflight_empty_receiver_profile()
-        else:
+        elif receiver_profile_transaction_required:
             # Resolve all receiver transaction authority before snapshot/mutation.
             self._receiver_profile_context(profile)
         self._fault("preflighting", "installation_profile", activation_id)
@@ -1642,11 +1668,20 @@ class ControllerActivationCoordinator:
                     "empty receiver profile no-op authority changed after preflight"
                 )
             return
-        # Receiver-capable controllers must prove/rebind the exact generation
-        # even when the host selection already names the desired digest.
-        self._install_receiver_profile(profile_digest)
+        receiver_profile_transaction_required = (
+            self._receiver_profile_transaction_required(desired_scene)
+        )
+        # Receiver-native scenes must prove/rebind the exact generation even
+        # when the host selection already names the desired digest.  Host
+        # Python scenes only need the manager selection when the rollout gate
+        # explicitly disables receiver profile support.
+        if receiver_profile_transaction_required:
+            self._install_receiver_profile(profile_digest)
         if current == profile_digest:
-            if not self._receiver_profile_matches(profile_digest):
+            if (
+                receiver_profile_transaction_required
+                and not self._receiver_profile_matches(profile_digest)
+            ):
                 raise ControllerActivationError(
                     "receiver installation profile does not match host selection"
                 )
@@ -1792,6 +1827,7 @@ class ControllerActivationCoordinator:
             or observed_profile != profile_digest
             or (
                 not receiver_profile_noop
+                and self._receiver_profile_transaction_required(scene)
                 and not self._receiver_profile_matches(profile_digest)
             )
         ):

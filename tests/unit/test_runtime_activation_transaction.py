@@ -954,12 +954,25 @@ class RuntimeActivationTransactionTests(unittest.TestCase):
         self.assertEqual(controller.getter_calls, 0)
         self.assertEqual(controller.install_calls, 0)
 
+    def test_host_python_activation_skips_disabled_receiver_profile_transaction(self) -> None:
+        manager, coordinator = self.coordinator()
+        controller = _DisabledReceiverProfileController()
+        manager.controller = controller
+
+        status = coordinator.activate(
+            self.command(coordinator, profile_digest=PROFILE_A)
+        )
+
+        self.assertEqual(status["phase"], "active")
+        self.assertEqual(manager.profile, PROFILE_A)
+        self.assertEqual(controller.getter_calls, 0)
+        self.assertEqual(controller.install_calls, 0)
+
     def test_empty_profile_noop_rejects_every_nonexact_authority_case(self) -> None:
         cases = (
             ("enabled gate", True, EMPTY_INSTALLATION_PROFILE_DIGEST, False),
             ("unknown gate", None, EMPTY_INSTALLATION_PROFILE_DIGEST, False),
             ("nonempty current", False, PROFILE_A, False),
-            ("nonempty desired", False, EMPTY_INSTALLATION_PROFILE_DIGEST, True),
             ("receiver native", False, EMPTY_INSTALLATION_PROFILE_DIGEST, False),
         )
         for label, gate, current_profile, nonempty_desired in cases:
