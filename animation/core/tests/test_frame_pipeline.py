@@ -823,10 +823,10 @@ class ReceiverAcceptanceTests(unittest.TestCase):
             'full_frame_bytes': 3315,
             'spi_speed_hz': 20_000_000,
             'receiver_spi_speeds_hz': [
-                20_000_000, 20_000_000, 20_000_000, 20_000_000, 20_000_000,
+                20_000_000, 20_000_000, 20_000_000, 12_000_000, 20_000_000,
             ],
             'full_frame_spi_us': 1326,
-            'receiver_full_frame_spi_us': [1326, 1326, 1326, 1326, 166],
+            'receiver_full_frame_spi_us': [1326, 1326, 1326, 2210, 166],
             'nominal_show_us': 4440,
         })
 
