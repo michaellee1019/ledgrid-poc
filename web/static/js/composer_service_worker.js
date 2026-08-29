@@ -1,8 +1,8 @@
 'use strict';
 
 const CACHE_PREFIX = 'ledgrid-composer-shell-';
-const PREVIOUS_CACHE_VERSION = 'v19';
-const CACHE_VERSION = 'v20';
+const PREVIOUS_CACHE_VERSION = 'v20';
+const CACHE_VERSION = 'v21';
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 const STAGING_CACHE_NAME = `${CACHE_NAME}-staging`;
 const RUNTIME_CACHE_NAME = `${CACHE_NAME}-python-runtime`;
@@ -270,6 +270,16 @@ async function installVersionedShell() {
     }
 }
 
+async function refreshOpenComposerClients() {
+    if (typeof self.clients.matchAll !== 'function') return;
+    const clients = await self.clients.matchAll({type: 'window', includeUncontrolled: true});
+    await Promise.all(clients.map(async (client) => {
+        const url = new URL(client.url);
+        if (url.origin !== self.location.origin || url.pathname !== '/composer') return;
+        await client.navigate('/composer');
+    }));
+}
+
 self.addEventListener('install', (event) => {
     event.waitUntil(installVersionedShell());
 });
@@ -284,6 +294,7 @@ self.addEventListener('activate', (event) => {
                 && name !== RUNTIME_CACHE_NAME
             )).map((name) => caches.delete(name))))
             .then(() => self.clients.claim())
+            .then(() => refreshOpenComposerClients())
     );
 });
 
