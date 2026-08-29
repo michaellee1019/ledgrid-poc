@@ -4834,6 +4834,76 @@ WALL-02 acceptance.
   alone. PERF-01 therefore remains failed and WALL-02 remains
   `BLOCKED_BY_PERF_01`.
 
+### Continuation evidence — 2026-08-29 receiver-3 SPI re-solder follow-up
+
+This records the first protocol and streamed-integrity checks after the operator
+re-soldered logical receiver 3's SPI pins. It improves the hardware evidence but
+does not supersede the failed PERF-01 or authorize WALL-02.
+
+- The running topology remained exact: logical receiver 3 was on SPI1 CE0
+  (`spidev1.0`) at 20 MHz, with logical ID 3, global offset 24, eight active
+  strips, output mask `0xff`, and production three-phase staggering. It
+  negotiated status v7 and receiver-3 FEC. A fresh strict Phase 3A status refresh
+  passed identity, capability, and readable telemetry checks on all five
+  receivers. Receiver 3 added no SPI-queue or display-engine errors.
+- A fresh 35.8-second supporting window advanced receiver 3 by approximately
+  4,500 streamed transfers and added two CRC errors plus two uncorrectable FEC
+  packets. It added no status misses in that bounded window and corrected zero
+  packets/codewords. Connectivity was stable, but the required zero integrity
+  delta was not met.
+- A separate 61.081-second observation-only five-receiver capacity diagnostic
+  bound to the already-active Python Sparkle scene digest
+  `0c924fefd663a9debbde095286dce9217a181b16ea10bf9aa161e2120fc3d607`
+  at target 160 FPS. Receivers 0, 1, 2, and 4 each accepted and displayed 7,680
+  frames at 125.74 FPS without a protocol/status fault. Receiver 3 accepted and
+  displayed 7,482 frames at 122.49 FPS, added two CRC errors and three missing
+  status responses, and failed the same 150 FPS minimum. Because this was not a
+  new receipt-bound guarded PERF-01 activation, it is supporting repair evidence
+  only; the previous PERF-01 failure remains authoritative.
+- Cleanup was observation-only and verified the same Sparkle scene running at
+  brightness 128, target 160 FPS, operator speed scale 0.3, painter inactive,
+  and release
+  `b59a600df885511730ae9c45ac3af12ea2159725b6d9ff48e44fa3dd03b5c2dc`
+  consistent between the web and controller processes. No application,
+  configuration, deployment, or receiver firmware change was made.
+- The repair materially reduced the observed receiver-3 fault rate, but fresh
+  inbound CRC failures and outbound status misses remain. Production must retain
+  `LEDGRID_FEC_RECEIVER_IDS=3`, the v7 FEC drain/accounting and sampling path,
+  the receiver-3 acceptance rules, and three-phase staggering. PERF-01 remains
+  failed and WALL-02 remains `BLOCKED_BY_PERF_01`.
+
+#### Updated receiver-3 work plan
+
+1. Inspect and continuity-check receiver-side GPIO10/CS, GPIO11/MOSI,
+   GPIO12/SCLK, GPIO13/MISO, 3.3 V, and ground, plus both connector ends and the
+   Pi-side SPI1 CE0 branch. Check for cold joints, bridges, intermittent ground,
+   and strain at the newly soldered pins.
+2. Compare receiver 3 with clean receiver 2 at the ESP32 pins using a short
+   ground spring or differential probe. Capture SCLK, MOSI, CS, MISO, 3.3 V,
+   output-buffer supply, and Pi-to-local ground movement while retaining the
+   current three-phase mitigation. The combination of receive CRC faults and
+   returned-status misses keeps shared clock/select/reference faults in scope.
+3. If the analog measurements do not isolate the fault, perform the labelled,
+   powered-down board-versus-branch swap already defined in the hardware work
+   package. Restore and camera-verify the finalized `(0,1,2,3,4)` physical order
+   after every swap.
+4. After a physical repair, require a strict five-receiver status refresh and a
+   fresh receipt-bound 60-second PERF-01 at 20 MHz with zero CRC, FEC-terminal,
+   status, queue, publish, or display-error deltas and at least 150 displayed
+   FPS on every receiver. Do not use lifetime counters as repair-window deltas.
+5. Only after that electrical gate passes, test mitigation removal one variable
+   at a time. First retain three-phase staggering while disabling the production
+   receiver-3 FEC selection in a reversible candidate; require the same
+   zero-error PERF-01. Evaluate staggering separately only if desired. Keep the
+   general v7 decoder for rollback compatibility unless a separate protocol
+   retirement plan proves it unused. Update the production allowlist, special
+   sampling/health contract, fixtures, tests, and documentation together only
+   after the candidate passes.
+6. WALL-02 remains last: run the full receipt-bound 30-minute soak only after the
+   no-FEC candidate passes PERF-01 and visual lane/order inspection. Any fresh
+   receiver-3 integrity fault restores the existing FEC-selected production
+   configuration and keeps the blocker open.
+
 ## Assumptions
 
 - The installation remains one Mac development machine, one Raspberry Pi, and

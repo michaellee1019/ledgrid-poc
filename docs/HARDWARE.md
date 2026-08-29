@@ -218,6 +218,34 @@ hardware current protection and conservative software brightness limits.
 
 ### Current receiver-3 integrity finding
 
+The latest post-repair check on 2026-08-29 followed an operator re-solder of
+logical receiver 3's SPI pins. A fresh strict status refresh passed on all five
+receivers. Logical receiver 3 remained correctly bound to `spidev1.0` at
+20 MHz, reported logical ID 3 and global offset 24, negotiated status v7 and
+the receiver-3 FEC transport, and added no SPI-queue or display-engine errors.
+Connectivity and protocol negotiation are therefore working.
+
+The repaired link is substantially better but still fails the zero-error
+integrity requirement. In one fresh 35.8-second window over approximately
+4,500 receiver-3 transfers, receiver 3 added two CRC errors and two
+uncorrectable FEC packets; status misses stayed at zero in that window. A
+separate 61.081-second observation-only five-receiver capacity diagnostic on
+the already-active Sparkle scene added two receiver-3 CRC errors and three
+receiver-3 status misses. Receivers 0, 1, 2, and 4 added no protocol or status
+faults in that diagnostic. Receiver 3 displayed 7,482 frames at 122.49 FPS,
+while each other receiver displayed 7,680 frames at 125.74 FPS. The run also
+failed the wall-wide 150 FPS minimum, so it is supporting repair evidence, not
+PERF-01 acceptance.
+
+Do not remove `LEDGRID_FEC_RECEIVER_IDS=3`, receiver-3 v7 FEC accounting and
+sampling, or production three-phase staggering on this evidence. The bounded
+windows are authoritative post-repair deltas; lifetime CRC/FEC counters include
+earlier hardware states and must not be presented as repair-window deltas. The
+remaining combination of inbound CRC failures and missing returned status
+responses keeps SCLK, CS, the common ground/reference, local power, connectors,
+and both ends of the SPI branch in scope rather than isolating the problem to
+MOSI or MISO alone.
+
 A reversible non-flashing ABBA test on 2026-08-26 changed all five receivers
 between one-phase and three-phase WS2812 output staggering. Across exactly 5,016
 transfers per condition, logical receiver 3 (`spidev1.0`) recorded 514 CRC errors

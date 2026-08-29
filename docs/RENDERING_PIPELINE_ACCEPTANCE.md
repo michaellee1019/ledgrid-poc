@@ -201,10 +201,21 @@ requires DMA RX buffers and transaction lengths to be word-aligned/four-byte
 multiples and warns that inappropriate Host write lengths may be discarded.
 Retained live data contains 26 CRC failures on logical receiver 3 during a
 60-second 20 MHz run while the other receivers stayed clean. Receiver 3 must
-therefore use capability-negotiated v2. A corrected single-bit codeword remains
+therefore use capability-negotiated v7. A corrected single-bit codeword remains
 accepted and visible in correction counters; uncorrectable, semantic-CRC, and
-framing outcomes remain rejected and visible. Only a new full-size v2 stress
+framing outcomes remain rejected and visible. Only a new full-size v7 stress
 gate can establish that this fallback is sufficient on the installed link.
+
+The 2026-08-29 post-resolder check does not lift that requirement. All five
+receivers passed a fresh strict identity/capability/status refresh, but receiver
+3 then added two CRC errors and two uncorrectable FEC packets in a bounded
+35.8-second window. A separate 61.081-second observation-only Sparkle capacity
+diagnostic added two receiver-3 CRC errors and three receiver-3 status misses;
+the other four receivers stayed protocol-clean. Receiver 3 displayed 7,482
+frames at 122.49 FPS versus 7,680 frames at 125.74 FPS on each peer, and the
+whole run stayed below the 150 FPS gate. This is improved supporting evidence,
+not PERF-01 acceptance, and it does not authorize disabling receiver-3 FEC or
+running WALL-02.
 
 The capacity gate passes only when receiver telemetry shows:
 
