@@ -51,6 +51,39 @@ function observation(assertionId, passed, detail) {
   return {assertion_id: assertionId, passed: passed === true, detail: String(detail)};
 }
 
+async function navigateComposer(page, composerUrl, {waitForServiceWorker = true} = {}) {
+  let mainFrameNavigations = 0;
+  const observeNavigation = (frame) => {
+    if (frame === page.mainFrame()) mainFrameNavigations += 1;
+  };
+  page.on('framenavigated', observeNavigation);
+  try {
+    const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
+    if (waitForServiceWorker) {
+      await page.waitForFunction(
+        () => navigator.serviceWorker?.controller != null,
+        null,
+        {timeout: timeoutMs},
+      );
+    }
+    let observedNavigations = mainFrameNavigations;
+    let stableForMs = 0;
+    while (stableForMs < 300) {
+      await page.waitForTimeout(100);
+      if (mainFrameNavigations !== observedNavigations) {
+        observedNavigations = mainFrameNavigations;
+        stableForMs = 0;
+      } else {
+        stableForMs += 100;
+      }
+    }
+    await page.locator('#presetName').waitFor({state: 'visible', timeout: timeoutMs});
+    return response;
+  } finally {
+    page.off('framenavigated', observeNavigation);
+  }
+}
+
 async function selectBackground(
   page,
   preferredChip = 'Wasm',
@@ -199,7 +232,7 @@ async function runCore(browser, contract, composerUrl) {
   page.on('pageerror', (error) => consoleErrors.push(error.message));
   page.on('request', (request) => { if (mutationRequest(request)) forbidden.push(`${request.method()} ${new URL(request.url()).pathname}`); });
   try {
-    const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
+    const response = await navigateComposer(page, composerUrl);
     if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
     await page.locator('#composerWorkspace').waitFor({state: 'visible'});
     assertions.push(observation('composer_loaded', true, `${response.status()} ${composerUrl}`));
@@ -354,7 +387,7 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
       }));
     }, {previousCache: manifestContract.service_worker_upgrade.previous_cache});
 
-    const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
+    const response = await navigateComposer(page, composerUrl);
     if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
     assertions.push(observation('composer_loaded', true, `${response.status()} ${composerUrl}`));
     await page.waitForFunction(() => document.querySelector('#composerState')?.getAttribute('data-state') === 'ready', null, {timeout: timeoutMs});
@@ -581,7 +614,7 @@ async function runWorkerRecovery(browser, contract, composerUrl) {
   page.on('pageerror', (error) => consoleErrors.push(error.message));
   page.on('request', (request) => { if (mutationRequest(request)) forbidden.push(`${request.method()} ${new URL(request.url()).pathname}`); });
   try {
-    const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
+    const response = await navigateComposer(page, composerUrl);
     if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
     await selectBackground(page, 'Py', {
       activationReady: true,
@@ -656,7 +689,7 @@ async function runResponsiveLayouts(browser, contract, composerUrl) {
     let measurements = null;
     let viewportError = null;
     try {
-      const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
+      const response = await navigateComposer(page, composerUrl, {waitForServiceWorker: false});
       if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
       await page.locator('#composerWorkspace').waitFor({state: 'visible'});
       if (viewport.width <= 760) await page.locator('[data-mobile-target="layers"]').click();
@@ -811,7 +844,7 @@ async function runKeyboardOnlyDesktop(browser, contract, composerUrl) {
   const forbidden = [];
   attachObservability(page, 'keyboard_only_desktop', consoleErrors, forbidden);
   try {
-    const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
+    const response = await navigateComposer(page, composerUrl);
     if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
 
     await page.keyboard.press(args.engine === 'webkit' ? 'Alt+Tab' : 'Tab');
@@ -1007,7 +1040,7 @@ async function runGlobalControls(browser, contract, composerUrl) {
   const forbidden = [];
   attachObservability(page, 'global_controls', consoleErrors, forbidden);
   try {
-    const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
+    const response = await navigateComposer(page, composerUrl);
     if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
     await refreshObservedWallState(page);
     await page.locator('#vibeOptions button').first().waitFor({state: 'visible'});
@@ -1088,7 +1121,7 @@ async function runProfileMasks(browser, contract, composerUrl) {
   const expectedCells = Object.fromEntries(layers.map((layer, index) => [layer, index * 138 + ledOffset]));
   let savedCells = null;
   try {
-    const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
+    const response = await navigateComposer(page, composerUrl);
     if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
     assertions.push(observation('composer_loaded', true, `${response.status()} ${composerUrl}`));
     const bootstrapPreflight = await page.evaluate(async () => {
@@ -1191,7 +1224,7 @@ async function runPythonNativeClock(browser, contract, composerUrl) {
   const forbidden = [];
   attachObservability(page, 'python_native_clock', consoleErrors, forbidden);
   try {
-    const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
+    const response = await navigateComposer(page, composerUrl);
     if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
     await page.waitForFunction(() => document.querySelector('#componentList')?.getAttribute('aria-busy') === 'false');
     assertions.push(observation('composer_loaded', true, `${response.status()} ${composerUrl}`));

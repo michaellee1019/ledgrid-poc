@@ -1,5 +1,5 @@
 {
-  "cacheVersion": "v23",
+  "cacheVersion": "v24",
   "capturedAssets": [
     "/composer"
   ],
@@ -10,8 +10,8 @@
       "url": "/composer-app.js"
     },
     {
-      "bytes": 24272,
-      "sha256": "663a6d2efc1953b5d2407191bb6cf74bb91b7f48a69c70e4284ab57c8d36c955",
+      "bytes": 23777,
+      "sha256": "4b4bd6c747fdc856207751874b8cdb0d8066cbc7e675ff9cbe22f13686767935",
       "url": "/composer-service-worker.js"
     },
     {
@@ -95,7 +95,7 @@
       "url": "/static/js/composer_state.js"
     }
   ],
-  "previousCacheVersion": "v22",
+  "previousCacheVersion": "v23",
   "pythonRuntime": {
     "baseUrl": "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/",
     "delivery": "pinned-cross-origin-cache",

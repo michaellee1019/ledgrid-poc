@@ -708,8 +708,8 @@ async function message(harness, data) {
         self.assertIn("readyOffline: false", source)
         self.assertIn("name.startsWith(CACHE_PREFIX)", source)
         self.assertIn("names.filter", source)
-        self.assertIn("refreshOpenComposerClients", source)
-        self.assertIn("client.navigate('/composer')", source)
+        self.assertIn("self.clients.claim()", source)
+        self.assertNotIn("client.navigate('/composer')", source)
 
 
 if __name__ == "__main__":

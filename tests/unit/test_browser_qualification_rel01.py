@@ -472,6 +472,20 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             source,
         )
 
+    def test_probe_waits_for_service_worker_control_and_stable_navigation(self) -> None:
+        source = (
+            ROOT / "tools" / "browser_qualification" / "playwright_probe.mjs"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("async function navigateComposer", source)
+        self.assertIn("navigator.serviceWorker?.controller != null", source)
+        self.assertIn("mainFrameNavigations", source)
+        self.assertIn("navigateComposer(page, composerUrl)", source)
+        self.assertIn(
+            "navigateComposer(page, composerUrl, {waitForServiceWorker: false})",
+            source,
+        )
+
     def test_local_locked_module_executes_all_engines_and_receives_artifact_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

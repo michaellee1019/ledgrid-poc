@@ -136,9 +136,9 @@ class BrowserComposerPWATests(unittest.TestCase):
         self.assertIn("Offline asset digest mismatch", self.worker)
         self.assertIn("name.startsWith(CACHE_PREFIX)", self.worker)
         self.assertIn("name !== RUNTIME_CACHE_NAME", self.worker)
-        self.assertIn("refreshOpenComposerClients", self.worker)
-        self.assertIn("client.navigate('/composer')", self.worker)
-        self.assertIn("includeUncontrolled: true", self.worker)
+        self.assertIn("self.clients.claim()", self.worker)
+        self.assertNotIn("client.navigate('/composer')", self.worker)
+        self.assertNotIn("includeUncontrolled: true", self.worker)
 
     def test_navigation_and_static_bootstrap_have_explicit_offline_fallbacks(self) -> None:
         self.assertIn("event.request.mode === 'navigate'", self.worker)
