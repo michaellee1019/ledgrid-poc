@@ -102,6 +102,8 @@ constexpr std::size_t kFecV5BurstSpanStarts =
 constexpr std::size_t kFecV5MaximumBurstSpanSymbols = kFecParityBytes;
 constexpr std::size_t kFecV5MaximumBurstSpanStarts =
     kFecCodewordBytes - kFecV5MaximumBurstSpanSymbols + 1U;
+constexpr std::size_t kFecV5ConstantBurstMinimumSymbols =
+    kFecV5MaximumBurstSpanSymbols + 1U;
 
 template <std::size_t Span>
 using FecV5BurstInverse =
@@ -216,6 +218,23 @@ fec_v5_maximum_burst_inverse(std::size_t first) {
   if (first < 49U) return kFecV5MaximumBurstInverses6[first - 42U];
   return kFecV5MaximumBurstInverses7[first - 49U];
 }
+
+constexpr auto make_fec_v5_power_prefixes() {
+  std::array<
+      std::array<std::uint8_t, kFecCodewordBytes + 1U>,
+      kFecParityBytes> prefixes{};
+  for (std::size_t check = 0; check < kFecParityBytes; ++check) {
+    for (std::size_t symbol = 0; symbol < kFecCodewordBytes; ++symbol) {
+      prefixes[check][symbol + 1U] =
+          prefixes[check][symbol] ^ fec_gf_power(
+              static_cast<std::uint8_t>(symbol + 1U),
+              static_cast<std::uint8_t>(check));
+    }
+  }
+  return prefixes;
+}
+
+constexpr auto kFecV5PowerPrefixes = make_fec_v5_power_prefixes();
 
 std::uint8_t parity8(std::uint8_t value) {
   value ^= static_cast<std::uint8_t>(value >> 4U);
@@ -891,6 +910,60 @@ bool fec_v5_solve_maximum_contiguous_span(
   return true;
 }
 
+bool fec_v5_solve_constant_contiguous_span(
+    const std::uint8_t* syndromes,
+    std::size_t* correction_first,
+    std::size_t* correction_count,
+    std::uint8_t* correction_value) {
+  if (syndromes == nullptr || correction_first == nullptr ||
+      correction_count == nullptr || correction_value == nullptr) {
+    return false;
+  }
+  std::size_t matching_first = kFecCodewordBytes;
+  std::size_t matching_count = 0U;
+  std::uint8_t matching_value = 0U;
+  std::size_t matches = 0U;
+  for (std::size_t first = 0; first < kFecCodewordBytes; ++first) {
+    for (std::size_t count = kFecV5ConstantBurstMinimumSymbols;
+         first + count <= kFecCodewordBytes; ++count) {
+      std::uint8_t value = 0U;
+      bool value_established = false;
+      for (std::size_t check = 0; check < kFecParityBytes; ++check) {
+        const std::uint8_t coefficient =
+            kFecV5PowerPrefixes[check][first + count] ^
+            kFecV5PowerPrefixes[check][first];
+        if (coefficient == 0U) {
+          if (syndromes[check] != 0U) {
+            value_established = false;
+            break;
+          }
+          continue;
+        }
+        const std::uint8_t candidate = fec_gf_multiply(
+            syndromes[check], fec_gf_inverse(coefficient));
+        if (!value_established) {
+          value = candidate;
+          value_established = true;
+        } else if (candidate != value) {
+          value_established = false;
+          break;
+        }
+      }
+      if (!value_established || value == 0U) continue;
+      matching_first = first;
+      matching_count = count;
+      matching_value = value;
+      ++matches;
+      if (matches > 1U) return false;
+    }
+  }
+  if (matches != 1U) return false;
+  *correction_first = matching_first;
+  *correction_count = matching_count;
+  *correction_value = matching_value;
+  return true;
+}
+
 bool fec_v5_decoded_payload_valid(
     const std::uint8_t* decoded, std::size_t codewords) {
   if (decoded == nullptr) return false;
@@ -1093,6 +1166,9 @@ bool decode_receiver_packet_payload(
       std::size_t correction_symbols[kFecParityBytes] = {};
       std::uint8_t correction_values[kFecParityBytes] = {};
       std::size_t correction_count = 0;
+      std::size_t constant_correction_first = kFecCodewordBytes;
+      std::size_t constant_correction_count = 0U;
+      std::uint8_t constant_correction_value = 0U;
       if (!canonical) {
         const bool bounded_recovery = [&]() {
           // Berlekamp-Massey finds the shortest recurrence for the ten
@@ -1194,7 +1270,12 @@ bool decode_receiver_packet_payload(
           }
           return false;
         }();
-        if (!contiguous_burst_recovery) {
+        const bool constant_burst_recovery =
+            !contiguous_burst_recovery &&
+            fec_v5_solve_constant_contiguous_span(
+                syndromes, &constant_correction_first,
+                &constant_correction_count, &constant_correction_value);
+        if (!contiguous_burst_recovery && !constant_burst_recovery) {
           maximum_burst_blocks[block] = true;
           std::copy(
               std::begin(syndromes), std::end(syndromes),
@@ -1203,12 +1284,19 @@ bool decode_receiver_packet_payload(
           correction_count = 0U;
         } else {
           ++corrected_codewords;
-          for (std::size_t correction = 0;
-               correction < correction_count; ++correction) {
+          if (constant_burst_recovery) {
             corrected_bits = static_cast<std::uint16_t>(
-                corrected_bits + __builtin_popcount(
-                    static_cast<unsigned int>(
-                        correction_values[correction])));
+                corrected_bits + constant_correction_count *
+                    __builtin_popcount(static_cast<unsigned int>(
+                        constant_correction_value)));
+          } else {
+            for (std::size_t correction = 0;
+                 correction < correction_count; ++correction) {
+              corrected_bits = static_cast<std::uint16_t>(
+                  corrected_bits + __builtin_popcount(
+                      static_cast<unsigned int>(
+                          correction_values[correction])));
+            }
           }
         }
       }
@@ -1220,6 +1308,10 @@ bool decode_receiver_packet_payload(
           if (symbol == correction_symbols[correction]) {
             value ^= correction_values[correction];
           }
+        }
+        if (symbol >= constant_correction_first &&
+            symbol < constant_correction_first + constant_correction_count) {
+          value ^= constant_correction_value;
         }
         scratch[block * kFecDataBytes + symbol] = value;
       }

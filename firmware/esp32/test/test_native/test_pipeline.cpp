@@ -1255,11 +1255,33 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
   TEST_ASSERT_EQUAL_MEMORY(
       semantic.data(), maximum_burst_decoded.data, semantic.size());
 
-  // Eleven columns exceed both the independently validated and whole-frame
-  // bounded shapes and remain terminal.
-  auto over_radius_burst = canonical;
+  // A longer repeated-bit electrical burst has only three unknowns: start,
+  // length, and XOR value. All ten syndromes uniquely identify this interval.
+  auto uniform_long_burst = canonical;
   for (std::size_t offset = 0; offset < 11U * codewords; ++offset) {
-    over_radius_burst[matrix + offset] ^= 0xA5U;
+    uniform_long_burst[matrix + offset] ^= 0xA5U;
+  }
+  ledgrid::ReceiverPacketPayload uniform_long_decoded{};
+  ledgrid::ReceiverPacketDecodeReport uniform_long_report{};
+  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
+      uniform_long_burst.data(), uniform_long_burst.size(),
+      &uniform_long_decoded, &uniform_long_report,
+      scratch.data(), scratch.size()));
+  TEST_ASSERT_EQUAL_UINT16(codewords, uniform_long_report.corrected_codewords);
+  TEST_ASSERT_EQUAL_UINT16(
+      11U * codewords * 4U, uniform_long_report.corrected_bits);
+  TEST_ASSERT_EQUAL_MEMORY(
+      semantic.data(), uniform_long_decoded.data, semantic.size());
+
+  // The same eleven-column span with varying error magnitudes exceeds every
+  // bounded recovery shape and remains terminal.
+  auto over_radius_burst = canonical;
+  for (std::size_t symbol = 0; symbol < 11U; ++symbol) {
+    const std::uint8_t error = static_cast<std::uint8_t>(
+        0x11U + symbol * 13U);
+    for (std::size_t block = 0; block < codewords; ++block) {
+      over_radius_burst[matrix + symbol * codewords + block] ^= error;
+    }
   }
   ledgrid::ReceiverPacketPayload over_radius_decoded{};
   ledgrid::ReceiverPacketDecodeReport over_radius_report{};

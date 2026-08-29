@@ -92,7 +92,9 @@ constexpr std::size_t kFecV4EnvelopeMaxSemanticBytes =
 // error shape; the bounded contiguous-erasure fallback uses nine syndromes to
 // repair 612 bytes and the tenth to validate that candidate. Bursts through
 // 679 bytes may consume all ten syndromes in a contiguous run of codewords and
-// are accepted only after unique canonical whole-frame CRC validation.
+// are accepted only after unique canonical whole-frame CRC validation. Longer
+// repeated-bit spans are repaired only when all ten syndromes identify one
+// unique constant-XOR interval.
 // The installed broad-frame wire size remains 4,088 bytes.
 constexpr std::uint8_t kFecEnvelopeVersion = 5;
 constexpr std::size_t kFecDataBytes = 50;
