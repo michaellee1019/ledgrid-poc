@@ -59,7 +59,6 @@ async function selectBackground(
   await page.locator('#animationCatalogDisclosure').evaluate((element) => { element.open = true; });
   const catalog = page.locator('#componentList');
   await catalog.waitFor({state: 'visible'});
-  await page.waitForFunction(() => document.querySelector('#componentList')?.getAttribute('aria-busy') === 'false');
   const readinessSelector = activationReady == null
     ? ''
     : `[data-activation-ready="${String(activationReady)}"]`;
@@ -68,10 +67,15 @@ async function selectBackground(
   const preferred = preferredName == null
     ? runtimeCards.first()
     : runtimeCards.filter({has: page.locator(`strong:text-is("${preferredName}")`)});
+  await preferred.waitFor({state: 'visible', timeout: timeoutMs});
   if (await preferred.count() !== 1) {
     throw new Error(`No unique enabled ${preferredChip} background${preferredName ? ` named ${preferredName}` : ''} is available`);
   }
-  await preferred.click();
+  // Chromium can leave Playwright waiting in its scroll-into-view action for
+  // this independently scrollable catalog pane. The keyboard journey covers
+  // focus and user keyboard selection; here dispatch the component's normal
+  // click event directly after the enabled, unique-card assertion.
+  await preferred.evaluate((element) => element.click());
   await page.waitForFunction(() => {
     const button = document.querySelector('#runCheckerButton');
     return button instanceof HTMLButtonElement && !button.disabled;
@@ -579,7 +583,10 @@ async function runWorkerRecovery(browser, contract, composerUrl) {
   try {
     const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
     if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
-    await selectBackground(page, 'Wasm', {preferredName: contract.background_name});
+    await selectBackground(page, 'Py', {
+      activationReady: true,
+      preferredName: contract.background_name,
+    });
     assertions.push(observation('composer_loaded', true, `${response.status()} ${composerUrl}`));
 
     await alterFirstParameter(page);
@@ -749,6 +756,28 @@ async function focusWithKeyboard(page, selector, {reverse = false, maxSteps = 40
   throw new Error(`Keyboard focus did not reach ${selector} within ${maxSteps} Tab steps`);
 }
 
+async function focusNamedComponentWithKeyboard(page, name, {maxSteps = 400} = {}) {
+  await page.waitForFunction((expectedName) => (
+    [...document.querySelectorAll('#componentList .component-card:not([disabled])')]
+      .filter((card) => card.querySelector('strong')?.textContent?.trim() === expectedName)
+      .length === 1
+  ), name, {timeout: timeoutMs});
+  for (let step = 0; step <= maxSteps; step += 1) {
+    const focused = await page.evaluate((expectedName) => {
+      const active = document.activeElement;
+      return active instanceof HTMLButtonElement
+        && active.matches('#componentList .component-card:not([disabled])')
+        && active.querySelector('strong')?.textContent?.trim() === expectedName;
+    }, name);
+    if (focused) return;
+    const keys = [];
+    if (args.engine === 'webkit') keys.push('Alt');
+    keys.push('Tab');
+    await page.keyboard.press(keys.join('+'));
+  }
+  throw new Error(`Keyboard focus did not reach the ${name} component within ${maxSteps} Tab steps`);
+}
+
 async function completeLocalCheckWithKeyboard(page) {
   const button = page.locator('#runCheckerButton');
   await page.waitForFunction(() => {
@@ -784,7 +813,6 @@ async function runKeyboardOnlyDesktop(browser, contract, composerUrl) {
   try {
     const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
     if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
-    await page.waitForFunction(() => document.querySelector('#componentList')?.getAttribute('aria-busy') === 'false');
 
     await page.keyboard.press(args.engine === 'webkit' ? 'Alt+Tab' : 'Tab');
     const skipFocused = await page.evaluate(() => document.activeElement?.matches('.skip-link') === true);
@@ -798,8 +826,7 @@ async function runKeyboardOnlyDesktop(browser, contract, composerUrl) {
 
     await focusWithKeyboard(page, '#componentSearch');
     await page.keyboard.type(contract.background_name);
-    await page.waitForFunction(() => document.querySelectorAll('#componentList .component-card:not([disabled])').length === 1);
-    await focusWithKeyboard(page, '#componentList .component-card:not([disabled])');
+    await focusNamedComponentWithKeyboard(page, contract.background_name);
     await page.keyboard.press('Enter');
     await page.waitForFunction((name) => (
       document.querySelector('#stageHeading')?.textContent?.trim() === name

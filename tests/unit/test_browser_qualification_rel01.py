@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from copy import deepcopy
@@ -15,6 +16,7 @@ from animation.core.presentation_contracts import resolve_vibe
 from tools.browser_qualification.evidence import (
     EVIDENCE_SCHEMA,
     aggregate_evidence,
+    execute_playwright_engine,
     load_manifest,
     run_qualification,
     validate_engine_result,
@@ -222,6 +224,10 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             self.manifest["journeys"]["worker_recovery"]["required_assertions"],
         )
         self.assertEqual(
+            self.manifest["journeys"]["worker_recovery"]["background_name"],
+            "Color Gradient",
+        )
+        self.assertEqual(
             [
                 (item["width"], item["height"])
                 for item in self.manifest["journeys"]["responsive_layouts"]["viewports"]
@@ -419,6 +425,52 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             self.assertEqual(len(retained["results"]), 3)
             self.assertTrue(all(item["executed"] is False for item in retained["results"]))
             self.assertTrue(all(item["outcome"] == "FAIL" for item in retained["results"]))
+
+    def test_engine_process_timeout_is_retained_as_fail_closed_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            artifacts = root / "artifacts"
+            with patch(
+                "tools.browser_qualification.evidence.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(
+                    cmd=("node", "playwright_probe.mjs"),
+                    timeout=180,
+                    output="partial probe stdout",
+                    stderr="partial probe stderr",
+                ),
+            ):
+                result = execute_playwright_engine(
+                    engine="chromium",
+                    base_url="http://127.0.0.1:1",
+                    manifest_path=MANIFEST_PATH,
+                    playwright_module=root / "playwright",
+                    output_path=root / "chromium.json",
+                    artifacts_dir=artifacts,
+                    timeout_ms=20_000,
+                )
+
+            self.assertFalse(result["executed"])
+            self.assertEqual(result["outcome"], "FAIL")
+            self.assertEqual(result["runner"]["error"], "playwright_probe_timeout")
+            self.assertEqual(result["runner"]["timeout_seconds"], 180)
+            self.assertEqual(result["runner"]["stdout"], "partial probe stdout")
+            self.assertEqual(result["runner"]["stderr"], "partial probe stderr")
+            self.assertEqual(result["runner"]["artifacts_dir"], str(artifacts))
+            errors = validate_engine_result(result, "chromium", self.manifest)
+            self.assertIn("engine_not_executed", errors)
+            self.assertIn("missing_journey:core_no_mutation", errors)
+
+    def test_probe_uses_named_keyboard_selection_and_bounded_direct_catalog_click(self) -> None:
+        source = (
+            ROOT / "tools" / "browser_qualification" / "playwright_probe.mjs"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("await preferred.evaluate((element) => element.click());", source)
+        self.assertIn("focusNamedComponentWithKeyboard(page, contract.background_name)", source)
+        self.assertNotIn(
+            "document.querySelectorAll('#componentList .component-card:not([disabled])').length === 1",
+            source,
+        )
 
     def test_local_locked_module_executes_all_engines_and_receives_artifact_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

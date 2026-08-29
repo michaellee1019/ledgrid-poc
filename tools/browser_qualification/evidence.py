@@ -31,6 +31,11 @@ EVIDENCE_SCHEMA_VERSION = 1
 MANIFEST_SCHEMA = "ledgrid.rel01-browser-qualification-manifest"
 REQUIRED_ENGINES = ("chromium", "firefox", "webkit")
 ENGINE_PROCESS_MIN_TIMEOUT_SECONDS = 180
+# REL-01 has eight journeys. Keep one additional per-journey window for
+# browser launch and retained trace/video teardown so the Python watchdog does
+# not preempt Node while it is converting a bounded journey failure into its
+# own evidence record.
+ENGINE_PROCESS_JOURNEY_WINDOWS = 9
 
 
 def _utc_now() -> str:
@@ -415,7 +420,12 @@ def aggregate_evidence(
     }
 
 
-def _missing_engine_result(engine: str, reason: str) -> dict[str, Any]:
+def _missing_engine_result(
+    engine: str,
+    reason: str,
+    *,
+    runner: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     timestamp = _utc_now()
     return {
         "requested_engine": engine,
@@ -428,8 +438,27 @@ def _missing_engine_result(engine: str, reason: str) -> dict[str, Any]:
         "outcome": "FAIL",
         "journeys": [],
         "fixture_status": None,
-        "runner": {"exit_code": None, "error": reason},
+        "runner": dict(runner or {"exit_code": None, "error": reason}),
     }
+
+
+def _process_timeout_seconds(timeout_ms: int) -> int:
+    """Bound a whole-engine probe without truncating its retained journeys."""
+    per_journey_seconds = max(1, (timeout_ms + 999) // 1000)
+    return max(
+        ENGINE_PROCESS_MIN_TIMEOUT_SECONDS,
+        per_journey_seconds * ENGINE_PROCESS_JOURNEY_WINDOWS,
+    )
+
+
+def _captured_process_text(
+    value: str | bytes | None, *, limit: int = 2_000
+) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return value.strip()[-limit:] or None
 
 
 def resolve_playwright_module(explicit: Path | None = None) -> Path | None:
@@ -473,17 +502,36 @@ def execute_playwright_engine(
         )
     if artifacts_dir is not None:
         command += ("--artifacts-dir", os.fspath(artifacts_dir))
-    completed = subprocess.run(
-        command,
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=max(
-            ENGINE_PROCESS_MIN_TIMEOUT_SECONDS,
-            timeout_ms // 1000 * 6,
-        ),
-    )
+    process_timeout = _process_timeout_seconds(timeout_ms)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=process_timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stderr = _captured_process_text(exc.stderr)
+        reason = (
+            "Playwright probe exceeded its retained-engine timeout "
+            f"of {process_timeout} seconds"
+        )
+        if stderr:
+            reason = f"{reason}: {stderr[-1000:]}"
+        return _missing_engine_result(
+            engine,
+            reason,
+            runner={
+                "exit_code": None,
+                "error": "playwright_probe_timeout",
+                "timeout_seconds": process_timeout,
+                "stderr": stderr,
+                "stdout": _captured_process_text(exc.stdout),
+                "artifacts_dir": os.fspath(artifacts_dir) if artifacts_dir else None,
+            },
+        )
     if not output_path.is_file():
         reason = "Playwright probe did not produce an evidence result"
         if completed.stderr.strip():
