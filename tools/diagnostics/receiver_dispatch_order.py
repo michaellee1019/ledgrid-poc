@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 SERVICE = "ledgrid.service"
 STATUS_URL = "http://127.0.0.1:5000/api/status"
-STOP_URL = "http://127.0.0.1:5000/api/stop"
+DEVICE_STATE_URL = "http://127.0.0.1:5000/api/device/state"
 PRODUCTION_STAGGER_PHASES = 3
 FEC_RECEIVER_ID = 3
 DEFAULT_ORDERS = ((0, 1, 2, 3, 4), (0, 1, 3, 2, 4), (0, 1, 2, 3, 4))
@@ -152,8 +152,15 @@ def _service(action: str) -> None:
     subprocess.run(["systemctl", action, SERVICE], check=True)
 
 
-def _json_request(url: str, *, method: str = "GET") -> Mapping[str, Any]:
-    req = request.Request(url, method=method)
+def _json_request(
+    url: str, *, method: str = "GET", payload: Mapping[str, Any] | None = None
+) -> Mapping[str, Any]:
+    body = None
+    headers = {}
+    if payload is not None:
+        body = json.dumps(dict(payload), separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = request.Request(url, data=body, headers=headers, method=method)
     with request.urlopen(req, timeout=10) as response:
         payload = json.load(response)
     if not isinstance(payload, Mapping):
@@ -166,7 +173,11 @@ def _wait_for_safe_idle(timeout: float = 30.0) -> Mapping[str, Any]:
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            _json_request(STOP_URL, method="POST")
+            _json_request(
+                DEVICE_STATE_URL,
+                method="POST",
+                payload={"power": False, "brightness": 0},
+            )
             status = _json_request(STATUS_URL)
             if (
                 status.get("mode") == "idle"
