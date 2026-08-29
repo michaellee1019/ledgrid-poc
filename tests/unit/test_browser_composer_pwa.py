@@ -103,7 +103,7 @@ class BrowserComposerPWATests(unittest.TestCase):
             "/static/js/composer_state.js",
             "/static/js/composer_runtime.js",
             "/static/js/composer_sha256.js",
-            "/static/js/composer.js",
+            "/composer-app.js",
             "/static/js/composer_native_worker.js",
             "/static/js/composer_python_worker.js",
             "/static/generated/composer/aurora_curtains_native.wasm",
@@ -121,7 +121,7 @@ class BrowserComposerPWATests(unittest.TestCase):
             "/static/icons/composer.svg",
         }
         self.assertEqual(assets, expected)
-        route_backed = {"/composer", "/composer-service-worker.js"}
+        route_backed = {"/composer", "/composer-service-worker.js", "/composer-app.js"}
         for asset in sorted(assets - route_backed):
             self.assertTrue(
                 (STATIC / asset.removeprefix("/static/")).is_file(),

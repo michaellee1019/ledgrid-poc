@@ -2412,7 +2412,9 @@
 
             const targetFps = Math.max(1, safeNumber(state.globalSettings.draft?.targetFps, 30));
             const frameBudgetMs = 1000 / targetFps;
-            const renderStatus = ComposerState.advisoryRenderStatus(p95, frameBudgetMs);
+            const renderStatus = ComposerState.advisoryRenderStatus
+                ? ComposerState.advisoryRenderStatus(p95, frameBudgetMs)
+                : 'warn';
             const rendererBreakdown = state.layers.clockEnabled && backgroundRendererP95 !== null
                 ? ` Python p95: background ${backgroundRendererP95.toFixed(2)} ms${clockRendererP95 === null ? '' : ` + Clock ${clockRendererP95.toFixed(2)} ms`}; bridge/compositor ${bridgeAndCompositorP95.toFixed(2)} ms.`
                 : '';

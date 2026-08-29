@@ -134,7 +134,7 @@ class BrowserComposerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
         self.assertIn("composer.webmanifest", html)
-        self.assertIn("composer.js", html)
+        self.assertIn("composer-app.js", html)
         self.assertNotIn("/api/preview", html)
         self.assertEqual(self.channel.read_count, 0)
         self.assertEqual(self.channel.commands, [])
@@ -179,6 +179,14 @@ class BrowserComposerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["Service-Worker-Allowed"], "/")
         self.assertEqual(response.headers["Cache-Control"], "no-cache")
+        response.close()
+
+    def test_composer_application_bypasses_older_static_shell_caches(self) -> None:
+        response = self.client.get("/composer-app.js")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertIn("activationBlockReason", response.get_data(as_text=True))
         response.close()
 
 

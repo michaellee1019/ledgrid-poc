@@ -342,6 +342,23 @@ class AnimationWebInterface:
             response.headers['Cache-Control'] = 'no-cache'
             return response
 
+        @self.app.route('/composer-app.js')
+        def browser_composer_application():
+            """Serve the Composer program outside older offline-shell paths.
+
+            Earlier workers cached ``/static/js/composer.js`` by pathname.
+            Keeping this application entrypoint at a separate, revalidated path
+            lets an existing installed Composer receive an urgent UI fix before
+            its worker has completed a normal shell upgrade.
+            """
+            response = send_from_directory(
+                self.project_root / 'web' / 'static' / 'js',
+                'composer.js',
+                mimetype='application/javascript',
+            )
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+
         @self.app.route('/api/v1/composer/bootstrap')
         def api_browser_composer_bootstrap():
             """Read-only schemas, presets, and explicit browser capabilities."""

@@ -1,12 +1,17 @@
 {
-  "cacheVersion": "v21",
+  "cacheVersion": "v22",
   "capturedAssets": [
     "/composer"
   ],
   "localAssets": [
     {
-      "bytes": 24278,
-      "sha256": "d73ebb8d34a7a2bb4eac8370a9858eda822aa07967f441efd1294b481d7fd153",
+      "bytes": 209546,
+      "sha256": "82c9f62548b1a854143d514d10b05c85cb745a818ca7fe79d0f438874afaaaca",
+      "url": "/composer-app.js"
+    },
+    {
+      "bytes": 24272,
+      "sha256": "8872b4bcc98b1016c469c15c6a6047c22326a10cd10f50fd99e94e0dda7cd574",
       "url": "/composer-service-worker.js"
     },
     {
@@ -60,11 +65,6 @@
       "url": "/static/icons/composer.svg"
     },
     {
-      "bytes": 209468,
-      "sha256": "4e1410d553cf800bf84ee7550d83ac5990eef8452f0bb0a268918f37d1322549",
-      "url": "/static/js/composer.js"
-    },
-    {
       "bytes": 9972,
       "sha256": "65c35e7a8d2ab9f02289ea790d179e2e7d8bcef7438a12e844a1c4ee8d6bfb1d",
       "url": "/static/js/composer_compositor.js"
@@ -95,7 +95,7 @@
       "url": "/static/js/composer_state.js"
     }
   ],
-  "previousCacheVersion": "v20",
+  "previousCacheVersion": "v21",
   "pythonRuntime": {
     "baseUrl": "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/",
     "delivery": "pinned-cross-origin-cache",

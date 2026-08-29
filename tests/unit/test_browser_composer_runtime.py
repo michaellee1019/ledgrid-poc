@@ -447,7 +447,7 @@ const localPaths = {
   '/static/icons/composer-180.png': 'web/static/icons/composer-180.png',
   '/static/icons/composer-512.png': 'web/static/icons/composer-512.png',
   '/static/icons/composer.svg': 'web/static/icons/composer.svg',
-  '/static/js/composer.js': 'web/static/js/composer.js',
+  '/composer-app.js': 'web/static/js/composer.js',
   '/static/js/composer_compositor.js': 'web/static/js/composer_compositor.js',
   '/static/js/composer_native_worker.js': 'web/static/js/composer_native_worker.js',
   '/static/js/composer_python_worker.js': 'web/static/js/composer_python_worker.js',
