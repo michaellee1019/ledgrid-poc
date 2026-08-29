@@ -168,7 +168,7 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             self.manifest["journeys"]["core_no_mutation"]["required_assertions"],
         )
         self.assertIn(
-            "saved_identity_invalidated_prior_check",
+            "saved_identity_reviewable_after_save",
             self.manifest["journeys"]["core_no_mutation"]["required_assertions"],
         )
         self.assertIn(

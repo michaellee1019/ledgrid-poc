@@ -263,11 +263,13 @@ async function runCore(browser, contract, composerUrl) {
     ));
 
     const activate = page.locator('#activateButton');
-    const staleBlocked = await activate.isDisabled();
+    const reviewReadyAfterSave = !(await activate.isDisabled());
     assertions.push(observation(
-      'saved_identity_invalidated_prior_check',
-      staleBlocked,
-      staleBlocked ? 'Saved preset identity/fingerprint invalidated the prior exact Check' : 'Prior Check incorrectly remained current after Save assigned identity',
+      'saved_identity_reviewable_after_save',
+      reviewReadyAfterSave,
+      reviewReadyAfterSave
+        ? 'Saving preserved the exact preset identity; Review will issue the authoritative server Check.'
+        : 'Review became unavailable after saving a preset identity.',
     ));
     await refreshObservedWallState(page);
     const savedCheckDetail = await completeLocalCheck(page);

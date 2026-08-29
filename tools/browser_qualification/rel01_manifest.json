@@ -32,7 +32,7 @@
         "library_save_confirmed_without_wall_change",
         "saved_preset_reappears_after_reload",
         "deployment_snapshot_hidden_from_starting_points",
-        "saved_identity_invalidated_prior_check",
+        "saved_identity_reviewable_after_save",
         "saved_identity_check_completed",
         "activation_review_opened",
         "activation_review_cancelled",
