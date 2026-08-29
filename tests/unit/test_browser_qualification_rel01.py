@@ -176,6 +176,14 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             self.manifest["journeys"]["core_no_mutation"]["required_assertions"],
         )
         self.assertIn(
+            "saved_preset_reappears_after_reload",
+            self.manifest["journeys"]["core_no_mutation"]["required_assertions"],
+        )
+        self.assertIn(
+            "deployment_snapshot_hidden_from_starting_points",
+            self.manifest["journeys"]["core_no_mutation"]["required_assertions"],
+        )
+        self.assertIn(
             "stale_activation_rejected_before_queue",
             self.manifest["journeys"]["offline_reconnect"]["required_assertions"],
         )
@@ -185,6 +193,10 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
         )
         self.assertIn(
             "renderer_catalog_cached",
+            self.manifest["journeys"]["offline_reconnect"]["required_assertions"],
+        )
+        self.assertIn(
+            "mobile_renderer_selection_opens_tune",
             self.manifest["journeys"]["offline_reconnect"]["required_assertions"],
         )
         self.assertIn(

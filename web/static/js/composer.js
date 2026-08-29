@@ -95,6 +95,7 @@
             timer: null,
             lastSentAt: 0,
             generation: 0,
+            observedComponent: null,
             message: null,
             state: 'off',
         },
@@ -707,6 +708,11 @@
                 state.serverCheck = null;
             }
             state.controllerObservation = nextControllerObservation;
+            state.liveEdit.observedComponent = liveEditObservedComponent(payload);
+            if (state.liveEdit.enabled && !liveEditMatchesObservedComponent()) {
+                pauseLiveEdit('Live edit paused because the wall is now playing a different animation.');
+            }
+            renderLiveEditMode();
             state.wallStateLoaded = true;
             const hadDirtyDraft = state.globalSettings.dirty;
             state.globalSettings.observed = observed;
@@ -913,7 +919,7 @@
                 : online
                     ? activationAvailable
                         ? activationIsCanary
-                            ? 'Wall connected; guarded activation is available only as a development/canary capability, not a production GO.'
+                            ? 'Wall connected — review this draft to apply it to the wall.'
                             : 'Wall connected; activation capability labeling is invalid, so physical activation is unavailable.'
                         : 'Wall connected; library save is available, but physical activation is disabled.'
                     : 'Composer ready; shared save and wall operations are offline.';
@@ -923,7 +929,7 @@
             $('serverActionStatus').textContent = online
                 ? activationAvailable
                     ? activationIsCanary
-                        ? 'Development/canary activation is available; this server is not production-qualified.'
+                        ? 'Wall connected — review this draft to apply it to the wall.'
                         : 'Activation is fail-closed because this server is not labeled as a development/canary target.'
                     : 'Library save is available. Physical activation remains disabled for this release.'
                 : 'Offline: local drafts, checks, uploads, and downloads still work. Save and Activate are unavailable.';
@@ -994,12 +1000,31 @@
         return null;
     }
 
+    function liveEditObservedComponent(status) {
+        const scene = status?.scene || status?.scene_state || {};
+        const background = scene?.background?.component || scene?.background || {};
+        const provider = background?.provider;
+        const componentId = background?.plugin_id || background?.component_id;
+        return typeof provider === 'string' && typeof componentId === 'string'
+            ? {provider, component_id: componentId}
+            : null;
+    }
+
+    function liveEditMatchesObservedComponent() {
+        const expected = state.component ? liveEditExpectedComponent() : null;
+        const observed = state.liveEdit.observedComponent;
+        return Boolean(expected && observed
+            && expected.provider === observed.provider
+            && expected.component_id === observed.component_id);
+    }
+
     function liveEditAvailable() {
         return Boolean(
             state.component
             && state.serverOnline
             && !state.serverChecking
             && globalActions().live_edit_available === true
+            && liveEditMatchesObservedComponent()
         );
     }
 
@@ -1012,13 +1037,19 @@
         toggle.checked = state.liveEdit.enabled;
         toggle.disabled = !available && !state.liveEdit.enabled;
         control.dataset.state = state.liveEdit.state;
+        const expected = state.component ? liveEditExpectedComponent() : null;
+        const observed = state.liveEdit.observedComponent;
         status.textContent = state.liveEdit.message || (state.liveEdit.enabled
             ? state.liveEdit.inFlight || state.liveEdit.pending
                 ? 'Live · sending the latest parameter change…'
                 : 'Live · parameter edits are applied immediately.'
             : available
                 ? 'Off · Composer parameters stay local.'
-                : 'Unavailable · connect to the wall and choose a renderer.');
+                : !state.serverOnline || state.serverChecking
+                    ? 'Unavailable · connect to the wall and choose a renderer.'
+                    : !observed
+                        ? 'Refresh Wall settings to identify the animation currently playing.'
+                        : `Activate ${state.component?.name || humanize(expected?.component_id || '')} first. The wall is playing ${humanize(observed.component_id)}.`);
     }
 
     function disableLiveEdit(message = null) {
@@ -1029,6 +1060,13 @@
         state.liveEdit.timer = null;
         state.liveEdit.message = message;
         state.liveEdit.state = message ? 'error' : 'off';
+        renderLiveEditMode();
+    }
+
+    function pauseLiveEdit(message) {
+        disableLiveEdit();
+        state.liveEdit.message = message;
+        state.liveEdit.state = 'off';
         renderLiveEditMode();
     }
 
@@ -1105,7 +1143,13 @@
             return;
         }
         if (!liveEditAvailable()) {
-            disableLiveEdit('Live edit requires a connected wall and selected renderer.');
+            const observed = state.liveEdit.observedComponent;
+            const message = !state.serverOnline || state.serverChecking
+                ? 'Live edit requires a connected wall and selected renderer.'
+                : !observed
+                    ? 'Refresh Wall settings before starting live edit.'
+                    : `Activate ${state.component?.name || 'this animation'} before editing it live.`;
+            pauseLiveEdit(message);
             return;
         }
         state.liveEdit.enabled = true;
@@ -1121,11 +1165,13 @@
             $(id).disabled = !saveEnabled;
         });
         const blockReason = activationBlockReason();
-        ['activateButton', 'activatePanelButton'].forEach((id) => {
+        ['activateButton', 'activatePanelButton', 'mobileActivateButton'].forEach((id) => {
             $(id).disabled = Boolean(blockReason || state.busyAction);
             $(id).title = blockReason || 'Review this checked draft before activating it on the wall.';
             $(id).setAttribute('aria-disabled', String(Boolean(blockReason || state.busyAction)));
         });
+        const mobileStatus = $('mobileActivationStatus');
+        if (mobileStatus) mobileStatus.textContent = blockReason || 'Review this draft before applying it to the wall.';
         const reason = $('activationReadiness');
         if (reason) {
             const hasCurrentLocalCheck = currentCheckAllowsActivation();
@@ -1390,7 +1436,7 @@
             chip.className = `runtime-chip${capability.previewable ? '' : ' unsupported'}`;
             chip.textContent = capability.previewable ? (runtime.kind === 'native' ? 'Wasm' : 'Py') : 'Server';
             button.append(icon, copy, chip);
-            button.addEventListener('click', () => selectComponent(component));
+            button.addEventListener('click', () => selectComponent(component, {focusEditor: true}));
             host.appendChild(button);
         });
         enableRovingFocus(host, '.component-card');
@@ -1615,14 +1661,14 @@
     async function selectComponent(component, options = {}) {
         if (!componentCapability(component).previewable) return;
         if (state.component?.key === component.key && !options.force) return;
-        if (state.liveEdit.enabled && state.component?.key !== component.key) {
-            disableLiveEdit('Live edit paused because the selected renderer changed.');
+        if (state.component?.key && state.component.key !== component.key) {
+            pauseLiveEdit(`Off · ${component.name || humanize(component.plugin_id)} is a draft. Activate it before using Live edit.`);
         }
         state.component = component;
-        state.selectedPreset = null;
         updateServerComponentCompatibility();
         localStorage.setItem(`${STORAGE_PREFIX}.last-component`, component.key);
         const saved = options.ignoreAutosave ? null : loadAutosave(component);
+        state.selectedPreset = saved?.selected_preset || null;
         const defaults = defaultParams(component);
         state.params = enforceInstallationParams(component, saved?.params || defaults);
         state.originalParams = enforceInstallationParams(component, saved?.original_params || defaults);
@@ -1630,7 +1676,7 @@
         state.documentRevision = Number.isInteger(saved?.document_revision)
             ? saved.document_revision
             : state.documentRevision;
-        state.lastSavedPreset = null;
+        state.lastSavedPreset = saved?.last_saved_preset || null;
         $('presetName').value = saved?.name || `${component.name || humanize(component.plugin_id)} draft`;
         state.elapsed = 0;
         state.frameIndex = 0;
@@ -1648,6 +1694,7 @@
         if (!options.deferRuntime) await startRuntimes();
         scheduleAutosave();
         requestRender();
+        if (options.focusEditor && window.matchMedia('(max-width: 760px)').matches) selectMobileView('tune');
     }
 
     function applyPreset(preset, index) {
@@ -1666,6 +1713,7 @@
         commitHistory();
         restartRuntimesAtCurrentState();
         scheduleAutosave();
+        if (window.matchMedia('(max-width: 760px)').matches) selectMobileView('tune');
         queueLiveEdit({immediate: true});
         toast(`Loaded ${$('presetName').value}.`);
     }
@@ -2072,6 +2120,9 @@
             return;
         }
         const componentChanged = component.key !== state.component?.key;
+        if (componentChanged) {
+            pauseLiveEdit(`Off · ${component.name || humanize(component.plugin_id)} is a draft. Activate it before using Live edit.`);
+        }
         state.historyIndex = index;
         state.component = component;
         state.params = clone(entry.params);
@@ -2119,6 +2170,8 @@
                 params: state.params,
                 original_params: state.originalParams,
                 layers: state.layers,
+                selected_preset: state.selectedPreset,
+                last_saved_preset: state.lastSavedPreset,
                 document_revision: state.documentRevision,
                 draft_generation: state.draftGeneration,
                 saved_at: new Date().toISOString(),
@@ -2852,6 +2905,9 @@
             }
             if (existingIndex >= 0) state.component.presets.splice(existingIndex, 1, record);
             else state.component.presets.push(record);
+            state.component.presets.sort((left, right) => String(
+                left.name || left.preset_id || ''
+            ).localeCompare(String(right.name || right.preset_id || '')));
             state.selectedPreset = record.key;
             invalidateCheckerForPresetIdentityChange(previousPresetIdentity);
             renderPresets();
@@ -2869,6 +2925,7 @@
                     }),
                 });
                 $('serverActionStatus').textContent = 'Saved the component preset and exact scene revision to the server library. The physical wall was not changed.';
+                scheduleAutosave();
                 toast('Look and scene saved to the library.', 'success');
             } catch (sceneError) {
                 $('serverActionStatus').textContent = `Component preset saved; scene revision was not saved: ${sceneError.message}`;
@@ -4084,7 +4141,7 @@
         $('exportButton').addEventListener('click', exportJson);
         $('exportPanelButton').addEventListener('click', exportJson);
         ['saveLibraryButton', 'saveLibraryPanelButton'].forEach((id) => $(id).addEventListener('click', () => saveToLibrary()));
-        ['activateButton', 'activatePanelButton'].forEach((id) => $(id).addEventListener('click', reviewActivation));
+        ['activateButton', 'activatePanelButton', 'mobileActivateButton'].forEach((id) => $(id).addEventListener('click', reviewActivation));
         $('cancelActivationButton')?.addEventListener('click', cancelPendingActivation);
         $('rollbackActivationButton')?.addEventListener('click', rollbackActivation);
         $('controlsTab').addEventListener('click', () => selectInspectorTab('controls'));

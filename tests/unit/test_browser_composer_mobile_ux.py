@@ -229,10 +229,22 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
             self.final_mobile_css,
         )
 
+    def test_mobile_selection_opens_tune_and_keeps_apply_action_visible(self) -> None:
+        self.audit.by_id("mobileActivateButton")
+        self.audit.by_id("mobileActivationStatus")
+        self.assertIn("{focusEditor: true}", self.javascript)
+        self.assertIn("options.focusEditor && window.matchMedia('(max-width: 760px)').matches", self.javascript)
+        self.assertIn("selectMobileView('tune')", self.javascript)
+        self.assertRegex(
+            self.final_mobile_css,
+            r"\.mobile-activate-bar\s*\{[^}]*position:\s*fixed;[^}]*bottom:\s*var\(--mobile-nav-height\);",
+        )
+        self.assertIn("--mobile-activate-height: 60px;", self.final_mobile_css)
+
     def test_mobile_header_and_mask_editor_reserve_device_safe_areas(self) -> None:
         self.assertIn("--mobile-header-height: calc(72px + env(safe-area-inset-top));", self.css)
         self.assertIn(
-            "height: calc(100dvh - var(--mobile-header-height) - var(--mobile-nav-height));",
+            "height: calc(100dvh - var(--mobile-header-height) - var(--mobile-nav-height) - var(--mobile-activate-height));",
             self.css,
         )
         _tag, canvas_attrs = self.audit.by_id("maskCanvas")

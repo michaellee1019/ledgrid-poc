@@ -404,6 +404,47 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertEqual(mismatched.status_code, 409)
         self.assertEqual(len(self.channel.commands), 1)
 
+    def test_live_edit_checks_renderer_identity_before_validating_stale_parameters(self) -> None:
+        self.channel.status = {
+            "is_running": True,
+            "current_animation": "gradient",
+            "scene_state": _scene(),
+        }
+
+        response = self.client.patch(
+            "/api/v1/scene/components/background",
+            json={
+                "live_edit": True,
+                "expected_component": {
+                    "provider": "python", "component_id": "cloud_canyon",
+                },
+                # Valid for the stale Cloud Canyon editor, not Gradient.
+                "params": {"background": "mist"},
+            },
+        )
+
+        self.assertEqual(response.status_code, 409, response.get_json())
+        self.assertEqual(response.get_json()["code"], "live_edit_conflict")
+        self.assertIn("no longer running", response.get_json()["error"])
+        self.assertEqual(self.channel.commands, [])
+
+    def test_composer_catalog_hides_deployment_recovery_snapshots(self) -> None:
+        preset_dir = self.interface.animation_presets_dir / "gradient"
+        preset_dir.mkdir(parents=True)
+        for preset_id in ("before-deploy", "quiet"):
+            (preset_dir / f"{preset_id}.json").write_text(json.dumps({
+                "version": 2,
+                "preset_id": preset_id,
+                "name": preset_id,
+                "animation": "gradient",
+                "provider": "python",
+                "params": {"speed": 1.0},
+            }))
+
+        presets = self.interface._list_animation_presets("gradient")
+
+        self.assertEqual([preset["preset_id"] for preset in presets], ["quiet"])
+
     def test_mobile_layers_surface_keeps_local_and_server_actions_reachable(self) -> None:
         html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")
         css = (ROOT / "web/static/css/composer.css").read_text(encoding="utf-8")
@@ -414,10 +455,13 @@ class BrowserComposerActionTests(unittest.TestCase):
             "exportPanelButton",
             "saveLibraryPanelButton",
             "activatePanelButton",
+            "mobileActivateButton",
+            "mobileActivationStatus",
             "liveEditToggle",
         ):
             self.assertIn(f'id="{element_id}"', html)
         self.assertIn('data-mobile-target="layers"', html)
+        self.assertIn('class="mobile-activate-bar"', html)
         self.assertIn("grid-template-columns: repeat(6, 1fr)", css)
         self.assertIn(".server-action-buttons button, .local-action-buttons button, .mobile-tabs button { min-height: 44px; }", css)
         self.assertIn("return preset?.key || preset?.preset_id", javascript)
@@ -430,6 +474,8 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertIn("pollActivationStatus()", javascript)
         self.assertIn("LIVE_EDIT_MIN_INTERVAL_MS = 40", javascript)
         self.assertIn("queueLiveEdit({immediate: true})", javascript)
+        self.assertIn("liveEditMatchesObservedComponent()", javascript)
+        self.assertIn("Activate ${state.component?.name", javascript)
 
     def test_wall_workspace_is_complete_and_presets_exclude_global_state(self) -> None:
         html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")

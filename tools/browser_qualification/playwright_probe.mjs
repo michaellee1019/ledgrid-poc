@@ -242,6 +242,26 @@ async function runCore(browser, contract, composerUrl) {
     const saveStatus = (await page.locator('#serverActionStatus').textContent()) || '';
     assertions.push(observation('library_save_confirmed_without_wall_change', /saved/i.test(saveStatus), saveStatus));
 
+    await page.waitForTimeout(400);
+    await page.reload({waitUntil: 'domcontentloaded'});
+    await page.locator('#composerWorkspace').waitFor({state: 'visible'});
+    const savedPreset = page.locator('.preset-button').filter({has: page.locator(`strong:text-is("${name}")`)});
+    await savedPreset.waitFor({state: 'visible', timeout: timeoutMs});
+    await savedPreset.click();
+    const restoredName = await page.locator('#presetName').inputValue();
+    const restoredSelected = await savedPreset.getAttribute('aria-selected');
+    assertions.push(observation(
+      'saved_preset_reappears_after_reload',
+      restoredName === name && restoredSelected === 'true',
+      `${name} -> ${restoredName}; selected=${restoredSelected}`,
+    ));
+    const presetLabels = await page.locator('.preset-button strong').allTextContents();
+    assertions.push(observation(
+      'deployment_snapshot_hidden_from_starting_points',
+      !presetLabels.some((label) => label.trim().toLowerCase() === 'before-deploy'),
+      presetLabels.join(', ') || 'no starting points',
+    ));
+
     const activate = page.locator('#activateButton');
     const staleBlocked = await activate.isDisabled();
     assertions.push(observation(
@@ -367,6 +387,12 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
       activationReady: true,
       preferredName: contract.background_name,
     });
+    assertions.push(observation(
+      'mobile_renderer_selection_opens_tune',
+      await page.locator('#composerWorkspace').evaluate((element) => element.classList.contains('mobile-dual-pane'))
+        && await page.locator('[data-mobile-target="tune"]').getAttribute('aria-current') === 'page',
+      'Selecting an animation on a phone opens the paired preview and controls workspace',
+    ));
     assertions.push(observation(
       'static_preview_play_enabled',
       !(await page.locator('#playButton').isDisabled()),

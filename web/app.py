@@ -1147,10 +1147,8 @@ class AnimationWebInterface:
                     'code': 'invalid_live_edit',
                 }), 400
             try:
-                update = self._validated_scene_update(target, {
-                    'params': payload.get('params'),
-                })
-                component = update.get('component')
+                scene = self._current_scene_payload()
+                component = scene.get(target) if isinstance(scene, dict) else None
                 if not isinstance(component, dict) or (
                     component.get('provider') != expected_provider
                     or component.get('plugin_id') != expected_component_id
@@ -1158,6 +1156,9 @@ class AnimationWebInterface:
                     raise SceneValidationError(
                         'the wall is no longer running the Composer renderer selected for live edit'
                     )
+                update = self._validated_scene_update(target, {
+                    'params': payload.get('params'),
+                }, scene=scene)
                 # ``component`` is the validated active-scene reference used
                 # above for identity matching.  Do not send it back through
                 # the targeted updater: a background component object means
@@ -3637,7 +3638,9 @@ class AnimationWebInterface:
             preset_fingerprint=fingerprint,
         )
 
-    def _validated_scene_update(self, target: str, value: Any) -> Dict[str, Any]:
+    def _validated_scene_update(
+        self, target: str, value: Any, *, scene: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         if target not in {'background', FIXED_OVERLAY_SLOT}:
             raise SceneValidationError('scene target must be background or clock_overlay')
         update = value if isinstance(value, dict) else None
@@ -3661,7 +3664,7 @@ class AnimationWebInterface:
         if update.get('remove') and len(update) != 1:
             raise SceneValidationError('remove cannot be combined with other scene updates')
 
-        scene = self._current_scene_payload()
+        scene = scene if isinstance(scene, dict) else self._current_scene_payload()
         if scene is None:
             raise SceneValidationError('no live scene is available for a targeted update')
         candidate = json.loads(json.dumps(scene))
@@ -4269,6 +4272,10 @@ class AnimationWebInterface:
 
         summaries: List[Dict[str, Any]] = []
         for path in paths.values():
+            # Deployment recovery snapshots are controller bookkeeping, not
+            # authored looks.  Never present them as Composer starting points.
+            if path.stem == 'before-deploy':
+                continue
             payload = self._read_json_file(path)
             if payload and payload.get('animation', animation_name) == animation_name:
                 payload.setdefault('preset_id', path.stem)
