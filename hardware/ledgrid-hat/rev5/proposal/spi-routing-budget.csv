@@ -1,0 +1,9 @@
+Receiver,Bus,Signal,Pi GPIO,Pi Header Pin,ESP GPIO,Driver,Series Resistor,Default Ohms,Allowed Options,Maximum Routed Length mm,Maximum Signal Layer Transitions,Signal Test Point,Nearby Ground Point,Final Routed Length mm,Final Layer Transitions,Release Status
+A,SPI0,MOSI,10,19,11,Raspberry Pi,R_AMOSI,33,"0/22/33/47",90,1,TP_A_MOSI,TP_A_GMOSI,36.65,0,Scaffold route checked; native DRC/stackup pending
+A,SPI0,MISO,9,21,13,ESP32 A,R_AMISO,33,"0/22/33/47",90,1,TP_A_MISO,TP_A_GMISO,35.78,1,Scaffold route checked; native DRC/stackup pending
+A,SPI0,SCLK,11,23,12,Raspberry Pi,R_ASCLK,33,"0/22/33/47",75,1,TP_A_SCLK,TP_A_GSCLK,34.46,0,Scaffold route checked; native DRC/stackup pending
+A,SPI0,CS0,8,24,10,Raspberry Pi,R_ACS,33,"0/22/33/47",90,1,TP_A_CS,TP_A_GCS,45.37,0,Scaffold route checked; native DRC/stackup pending
+B,SPI1,MOSI,20,38,11,Raspberry Pi,R_BMOSI,33,"0/22/33/47",90,1,TP_B_MOSI,TP_B_GMOSI,30.61,1,Scaffold route checked; native DRC/stackup pending
+B,SPI1,MISO,19,35,13,ESP32 B,R_BMISO,33,"0/22/33/47",90,2,TP_B_MISO,TP_B_GMISO,32.03,2,Scaffold route checked; native DRC/stackup pending
+B,SPI1,SCLK,21,40,12,Raspberry Pi,R_BSCLK,33,"0/22/33/47",75,1,TP_B_SCLK,TP_B_GSCLK,25.86,1,Scaffold route checked; native DRC/stackup pending
+B,SPI1,CS0,18,12,10,Raspberry Pi,R_BCS,33,"0/22/33/47",90,2,TP_B_CS,TP_B_GCS,69.31,2,Scaffold route checked; native DRC/stackup pending

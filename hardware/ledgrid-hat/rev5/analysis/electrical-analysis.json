@@ -1,0 +1,130 @@
+{
+  "status": "BOUNDED POST-ROUTE ESTIMATE; BENCH AND NATIVE EDA SIGN-OFF REQUIRED",
+  "model": "Bergeron lossless transmission line with capacitive load and bounded conductor loss",
+  "spi_series_summary": {
+    "0": {
+      "worst_overshoot_pct": 62.57,
+      "latest_threshold_75pct_ns": 3.225,
+      "latest_settle_10pct_ns": 8.379
+    },
+    "22": {
+      "worst_overshoot_pct": 28.32,
+      "latest_threshold_75pct_ns": 3.651,
+      "latest_settle_10pct_ns": 4.538
+    },
+    "33": {
+      "worst_overshoot_pct": 16.64,
+      "latest_threshold_75pct_ns": 3.898,
+      "latest_settle_10pct_ns": 5.098
+    },
+    "47": {
+      "worst_overshoot_pct": 5.73,
+      "latest_threshold_75pct_ns": 4.267,
+      "latest_settle_10pct_ns": 5.811
+    }
+  },
+  "esp_to_hct_summary": {
+    "lane_count": 16,
+    "shortest_length_mm": 7.58,
+    "longest_length_mm": 17.3,
+    "worst_overshoot_pct": 31.28,
+    "latest_threshold_75pct_ns": 2.768,
+    "latest_settle_10pct_ns": 3.232,
+    "pulldown_dc_current_at_3p3_ua": 33.0,
+    "pulldown_worst_leakage_drop_v_at_1ua": 0.1
+  },
+  "led_series_summary": {
+    "33": {
+      "worst_overshoot_pct": 31.21,
+      "latest_threshold_75pct_ns": 39.825,
+      "latest_settle_10pct_ns": 69.844
+    },
+    "47": {
+      "worst_overshoot_pct": 21.2,
+      "latest_threshold_75pct_ns": 44.983,
+      "latest_settle_10pct_ns": 73.906
+    },
+    "68": {
+      "worst_overshoot_pct": 8.74,
+      "latest_threshold_75pct_ns": 61.757,
+      "latest_settle_10pct_ns": 83.281
+    },
+    "100": {
+      "worst_overshoot_pct": 0.0,
+      "latest_threshold_75pct_ns": 68.03,
+      "latest_settle_10pct_ns": 57.083
+    }
+  },
+  "microstrip_impedance_sensitivity": [
+    {
+      "height_mm": 0.08,
+      "z0_ohm": 37.37
+    },
+    {
+      "height_mm": 0.1,
+      "z0_ohm": 43.42
+    },
+    {
+      "height_mm": 0.15,
+      "z0_ohm": 55.67
+    },
+    {
+      "height_mm": 0.2,
+      "z0_ohm": 65.06
+    }
+  ],
+  "power": {
+    "buck": {
+      "vin_corner_v": 5.25,
+      "vout_v": 3.3,
+      "switching_frequency_corner_mhz": 1.8,
+      "inductor_min_uh": 1.76,
+      "inductor_ripple_a_pp": 0.387,
+      "peak_at_500ma_a": 0.693,
+      "peak_at_1a_a": 1.193,
+      "minimum_isat_with_20pct_margin_a": 1.432,
+      "selected_inductor_rating_a": 1.8,
+      "selected_inductor_dcr_ohm": 0.115,
+      "inductor_copper_loss_at_500ma_w": 0.0288,
+      "inductor_copper_loss_at_1a_w": 0.115,
+      "minimum_effective_cout_uf_release_gate": 10.0,
+      "nominal_cout_uf": 22.0,
+      "nominal_cin_uf": 10.0
+    },
+    "distribution": {
+      "per_receiver_5v_current_at_500ma_3v3_90pct_a": 0.367,
+      "two_receiver_5v_current_a": 0.733,
+      "logic_entry_budget_a": 1.25,
+      "0p75mm_1oz_50mm_branch_resistance_ohm": 0.0328,
+      "branch_drop_at_0p5a_mv": 16.4,
+      "1mm_1oz_50mm_entry_resistance_ohm": 0.0246,
+      "entry_drop_at_1p25a_mv": 30.8
+    },
+    "local_decoupling": {
+      "assumed_effective_10uf_uf": 8.0,
+      "assumed_effective_1uf_uf": 0.6,
+      "assumed_effective_100nf_uf": 0.08,
+      "250ma_1us_step_droop_mv": 28.8,
+      "note": "First-microsecond charge estimate only; converter loop and interconnect ESL require bench validation."
+    },
+    "hct": {
+      "vcc_min_v": 4.5,
+      "vih_min_v": 2.0,
+      "esp_high_nominal_v": 3.3,
+      "voh_min_at_minus_6ma_v": 3.84,
+      "input_capacitance_max_pf": 10.0,
+      "transition_time_max_50pf_ns": 19.0,
+      "bypass_per_package_uf": 0.1,
+      "bulk_per_two_packages_uf": 1.0,
+      "input_pulldown_ohm": 100000,
+      "pulldown_worst_leakage_drop_v_at_1ua": 0.1
+    }
+  },
+  "assumptions": {
+    "wifi": "disabled; no RF performance claim or antenna copper keepout",
+    "spi": "3.3 V, 45-85 ohm Z0, 15-45 ohm driver, 5-15 pF load, 0.8-3 ns edge",
+    "esp_to_hct": "3.3 V, 7.58-17.30 mm routes, 45-85 ohm Z0, 5-10 pF HCT input, 100 kohm pull-down",
+    "led_harness": "4.5 V, paired data/ground, 0.25-3 m, 80-120 ohm Z0, 10.5-50.5 pF load",
+    "omitted": "package/connector discontinuities, frequency-dependent dielectric and conductor loss, IBIS clamps, crosstalk field solve"
+  }
+}

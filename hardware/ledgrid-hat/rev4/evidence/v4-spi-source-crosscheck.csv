@@ -1,0 +1,9 @@
+Receiver,Signal,ESP GPIO,Schematic Net,PCB Net,Result,PCB Topology
+1_SMD,CS,10,1IO10,1IO10,Match,"Separate CS net with pull-up and four selectable CE jumper pads"
+1_SMD,MOSI,11,1IO11,1IO11,Partial,"PCB net is also connected to 2_SMD and SPI0/SPI1 MOSI selector pads"
+1_SMD,SCLK,12,1IO12,1IO12,Partial,"PCB net is also connected to 2_SMD and SPI0/SPI1 SCLK selector pads"
+1_SMD,MISO,13,1IO13,1IO13,Partial,"PCB net is also connected to 2_SMD and SPI0/SPI1 MISO selector pads"
+2_SMD,CS,10,2IO10,2IO10,Match,"Separate CS net with pull-up and four selectable CE jumper pads"
+2_SMD,MOSI,11,2IO11,1IO11,Mismatch,"PCB merges both receiver MOSI pins"
+2_SMD,SCLK,12,2IO12,1IO12,Mismatch,"PCB merges both receiver SCLK pins"
+2_SMD,MISO,13,2IO13,1IO13,Mismatch,"PCB merges both receiver MISO pins and creates contention risk"

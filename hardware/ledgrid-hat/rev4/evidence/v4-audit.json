@@ -1,0 +1,1564 @@
+{
+  "eda_source": {
+    "editor_version": "6.5.57",
+    "pcb_component_count": 45,
+    "pcb_sha256": "f2a4c7fe5d6d0049d4cf687849ca29969da905b71c6f73ca78dc18d3887e705a",
+    "pcb_shape_counts": {
+      "LIB": 45,
+      "RECT": 2,
+      "SOLIDREGION": 2,
+      "TEXT": 18,
+      "TRACK": 387,
+      "VIA": 80
+    },
+    "pcb_source": "PCB_LedGridWallHatV4_2026-08-28.json",
+    "router_rule": {
+      "nets": [
+        "1ENN",
+        "1IO10",
+        "1IO11",
+        "1IO12",
+        "1IO13",
+        "1IO15",
+        "1IO16",
+        "1IO17",
+        "1IO18",
+        "1IO19",
+        "1IO20",
+        "1IO4",
+        "1IO5",
+        "1IO6",
+        "1IO7",
+        "1_3V3",
+        "1_3V3_REG_4",
+        "1_SMD_12",
+        "1_SMD_15",
+        "1_SMD_16",
+        "1_SMD_17",
+        "1_SMD_22",
+        "1_SMD_23",
+        "1_SMD_24",
+        "1_SMD_25",
+        "1_SMD_26",
+        "1_SMD_27",
+        "1_SMD_28",
+        "1_SMD_29",
+        "1_SMD_30",
+        "1_SMD_31",
+        "1_SMD_32",
+        "1_SMD_33",
+        "1_SMD_34",
+        "1_SMD_35",
+        "1_SMD_36",
+        "1_SMD_37",
+        "1_SMD_38",
+        "1_SMD_39",
+        "1_SMD_40",
+        "1_SMD_41",
+        "1_USB_BOB_1",
+        "1_USB_BOB_4",
+        "2ENN",
+        "2IO10",
+        "2IO15",
+        "2IO16",
+        "2IO17",
+        "2IO18",
+        "2IO19",
+        "2IO20",
+        "2IO4",
+        "2IO5",
+        "2IO6",
+        "2IO7",
+        "2_3V3",
+        "2_3V3_REG_4",
+        "2_SMD_12",
+        "2_SMD_15",
+        "2_SMD_16",
+        "2_SMD_17",
+        "2_SMD_22",
+        "2_SMD_23",
+        "2_SMD_24",
+        "2_SMD_25",
+        "2_SMD_26",
+        "2_SMD_27",
+        "2_SMD_28",
+        "2_SMD_29",
+        "2_SMD_30",
+        "2_SMD_31",
+        "2_SMD_32",
+        "2_SMD_33",
+        "2_SMD_34",
+        "2_SMD_35",
+        "2_SMD_36",
+        "2_SMD_37",
+        "2_SMD_38",
+        "2_SMD_39",
+        "2_SMD_40",
+        "2_SMD_41",
+        "2_USB_BOB_1",
+        "2_USB_BOB_4",
+        "5V",
+        "GND",
+        "LED1",
+        "LED10",
+        "LED11",
+        "LED12",
+        "LED13",
+        "LED14",
+        "LED15",
+        "LED16",
+        "LED2",
+        "LED3",
+        "LED4",
+        "LED5",
+        "LED6",
+        "LED7",
+        "LED8",
+        "LED9",
+        "U12_1",
+        "U12_10",
+        "U12_11",
+        "U12_12",
+        "U12_13",
+        "U12_14",
+        "U12_15",
+        "U12_16",
+        "U12_17",
+        "U12_18",
+        "U12_19",
+        "U12_20",
+        "U12_21",
+        "U12_22",
+        "U12_23",
+        "U12_24",
+        "U12_25",
+        "U12_26",
+        "U12_27",
+        "U12_28",
+        "U12_29",
+        "U12_3",
+        "U12_30",
+        "U12_31",
+        "U12_32",
+        "U12_33",
+        "U12_34",
+        "U12_35",
+        "U12_36",
+        "U12_37",
+        "U12_38",
+        "U12_39",
+        "U12_4",
+        "U12_40",
+        "U12_5",
+        "U12_7",
+        "U12_8",
+        "U12_9",
+        "VUSB"
+      ],
+      "padsCount": 302,
+      "realtime": true,
+      "routerLayers": [
+        1,
+        2
+      ],
+      "skipNets": [],
+      "smdClearance": 0.152,
+      "specialNets": [
+        {
+          "clearance": "0.5984px",
+          "net": "1IO13",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2IO10",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_3V3",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2ENN",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1IO10",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "5V",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED16",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1IO12",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_11",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED12",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_3V3",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2IO17",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2IO18",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_12",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2IO19",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "VUSB",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED11",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_18",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2IO6",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED2",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2IO5",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_38",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED6",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2IO7",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1IO19",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED13",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED3",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1IO17",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED8",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1IO7",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED15",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED14",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_23",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_40",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1IO15",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_26",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1IO20",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED4",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "GND",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED9",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_22",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_31",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_29",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2IO4",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2IO15",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1IO4",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1IO6",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_41",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_21",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_41",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1IO16",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_35",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED10",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED5",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED7",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "LED1",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1ENN",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1IO5",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_19",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2IO16",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_24",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2IO20",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1IO11",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1IO18",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_USB_BOB_1",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_USB_BOB_4",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_USB_BOB_1",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_USB_BOB_4",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_3V3_REG_4",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_12",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_15",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_16",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_17",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_22",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_23",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_24",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_25",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_26",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_27",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_28",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_29",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_30",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_31",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_32",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_33",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_34",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_35",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_36",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_37",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_38",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_39",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_SMD_40",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "2_3V3_REG_4",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_1",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_3",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_4",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_5",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_7",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_8",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_9",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_10",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_13",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_14",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_15",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_16",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_17",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_20",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_25",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_27",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_28",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_30",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_32",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_33",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_34",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_36",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_37",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "U12_39",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_12",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_15",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_16",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_17",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_22",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_23",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_24",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_25",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_26",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_27",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_28",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_29",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_30",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_31",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_32",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_33",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_34",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_35",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_36",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_37",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_38",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_39",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        },
+        {
+          "clearance": "0.5984px",
+          "net": "1_SMD_40",
+          "viaHoleD": "1.2008px",
+          "viaHoleDiameter": "2.4016px",
+          "width": "1px"
+        }
+      ],
+      "trackClearance": 0.152,
+      "trackWidth": 0.254,
+      "unit": "mm",
+      "viaDiameter": 0.61,
+      "viaHoleD": 0.305
+    },
+    "schematic_component_count": 45,
+    "schematic_sha256": "c3682a5fb574e7799fffc0c24faba3f396fa8aa8a6d50f9074b48824c7e17821",
+    "schematic_source": "SCH_LedGridWallHatV4_2026-08-28.json",
+    "spi_routes": [
+      {
+        "esp_gpio": 10,
+        "layer_routed_copper_mm": {
+          "bottom": 22.206,
+          "top": 78.194
+        },
+        "net": "1IO10",
+        "receiver_refs_on_net": [
+          "1_SMD"
+        ],
+        "selector_options": [
+          {
+            "other_pad_nets": [
+              "U12_24"
+            ],
+            "refdes": "SJ_SPI0_CE0"
+          },
+          {
+            "other_pad_nets": [
+              "U12_31"
+            ],
+            "refdes": "SJ_SPI0_CE3"
+          },
+          {
+            "other_pad_nets": [
+              "U12_11"
+            ],
+            "refdes": "SJ_SPI1_CE0"
+          },
+          {
+            "other_pad_nets": [
+              "U12_22"
+            ],
+            "refdes": "SJ_SPI1_CE3"
+          }
+        ],
+        "shared_between_receivers": false,
+        "signal": "CS",
+        "source_pad_count": 6,
+        "source_pads": [
+          {
+            "layer": 1,
+            "pin": "2",
+            "refdes": "1R_CE_PULLUP"
+          },
+          {
+            "layer": 1,
+            "pin": "18",
+            "refdes": "1_SMD"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI0_CE0"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI0_CE3"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI1_CE0"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI1_CE3"
+          }
+        ],
+        "source_track_count": 20,
+        "source_via_count": 4,
+        "total_routed_copper_mm": 100.4,
+        "track_widths_mm": [
+          0.254
+        ],
+        "v4_role": "CS for 1_SMD"
+      },
+      {
+        "esp_gpio": 10,
+        "layer_routed_copper_mm": {
+          "bottom": 63.245,
+          "top": 17.995
+        },
+        "net": "2IO10",
+        "receiver_refs_on_net": [
+          "2_SMD"
+        ],
+        "selector_options": [
+          {
+            "other_pad_nets": [
+              "U12_26"
+            ],
+            "refdes": "SJ_SPI0_CE1"
+          },
+          {
+            "other_pad_nets": [
+              "U12_29"
+            ],
+            "refdes": "SJ_SPI0_CE2"
+          },
+          {
+            "other_pad_nets": [
+              "U12_12"
+            ],
+            "refdes": "SJ_SPI1_CE1"
+          },
+          {
+            "other_pad_nets": [
+              "U12_18"
+            ],
+            "refdes": "SJ_SPI1_CE2"
+          }
+        ],
+        "shared_between_receivers": false,
+        "signal": "CS",
+        "source_pad_count": 6,
+        "source_pads": [
+          {
+            "layer": 1,
+            "pin": "2",
+            "refdes": "2R_CE_PULLUP"
+          },
+          {
+            "layer": 1,
+            "pin": "18",
+            "refdes": "2_SMD"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI0_CE1"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI0_CE2"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI1_CE1"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI1_CE2"
+          }
+        ],
+        "source_track_count": 18,
+        "source_via_count": 6,
+        "total_routed_copper_mm": 81.241,
+        "track_widths_mm": [
+          0.254
+        ],
+        "v4_role": "CS for 2_SMD"
+      },
+      {
+        "esp_gpio": 11,
+        "layer_routed_copper_mm": {
+          "bottom": 37.013,
+          "top": 48.98
+        },
+        "net": "1IO11",
+        "receiver_refs_on_net": [
+          "1_SMD",
+          "2_SMD"
+        ],
+        "selector_options": [
+          {
+            "other_pad_nets": [
+              "U12_19"
+            ],
+            "refdes": "SJ_SPI0_MOSI"
+          },
+          {
+            "other_pad_nets": [
+              "U12_38"
+            ],
+            "refdes": "SJ_SPI1_MOSI"
+          }
+        ],
+        "shared_between_receivers": true,
+        "signal": "MOSI",
+        "source_pad_count": 4,
+        "source_pads": [
+          {
+            "layer": 1,
+            "pin": "19",
+            "refdes": "1_SMD"
+          },
+          {
+            "layer": 1,
+            "pin": "19",
+            "refdes": "2_SMD"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI0_MOSI"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI1_MOSI"
+          }
+        ],
+        "source_track_count": 12,
+        "source_via_count": 5,
+        "total_routed_copper_mm": 85.993,
+        "track_widths_mm": [
+          0.254
+        ],
+        "v4_role": "shared by 1_SMD and 2_SMD"
+      },
+      {
+        "esp_gpio": 12,
+        "layer_routed_copper_mm": {
+          "bottom": 56.941,
+          "top": 30.863
+        },
+        "net": "1IO12",
+        "receiver_refs_on_net": [
+          "1_SMD",
+          "2_SMD"
+        ],
+        "selector_options": [
+          {
+            "other_pad_nets": [
+              "U12_23"
+            ],
+            "refdes": "SJ_SPI0_SCLK"
+          },
+          {
+            "other_pad_nets": [
+              "U12_40"
+            ],
+            "refdes": "SJ_SPI1_SCLK"
+          }
+        ],
+        "shared_between_receivers": true,
+        "signal": "SCLK",
+        "source_pad_count": 4,
+        "source_pads": [
+          {
+            "layer": 1,
+            "pin": "20",
+            "refdes": "1_SMD"
+          },
+          {
+            "layer": 1,
+            "pin": "20",
+            "refdes": "2_SMD"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI0_SCLK"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI1_SCLK"
+          }
+        ],
+        "source_track_count": 12,
+        "source_via_count": 4,
+        "total_routed_copper_mm": 87.805,
+        "track_widths_mm": [
+          0.254
+        ],
+        "v4_role": "shared by 1_SMD and 2_SMD"
+      },
+      {
+        "esp_gpio": 13,
+        "layer_routed_copper_mm": {
+          "bottom": 23.062,
+          "top": 59.316
+        },
+        "net": "1IO13",
+        "receiver_refs_on_net": [
+          "1_SMD",
+          "2_SMD"
+        ],
+        "selector_options": [
+          {
+            "other_pad_nets": [
+              "U12_21"
+            ],
+            "refdes": "SJ_SPI0_MISO"
+          },
+          {
+            "other_pad_nets": [
+              "U12_35"
+            ],
+            "refdes": "SJ_SPI1_MISO"
+          }
+        ],
+        "shared_between_receivers": true,
+        "signal": "MISO",
+        "source_pad_count": 4,
+        "source_pads": [
+          {
+            "layer": 1,
+            "pin": "21",
+            "refdes": "1_SMD"
+          },
+          {
+            "layer": 1,
+            "pin": "21",
+            "refdes": "2_SMD"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI0_MISO"
+          },
+          {
+            "layer": 1,
+            "pin": "1",
+            "refdes": "SJ_SPI1_MISO"
+          }
+        ],
+        "source_track_count": 8,
+        "source_via_count": 2,
+        "total_routed_copper_mm": 82.378,
+        "track_widths_mm": [
+          0.254
+        ],
+        "v4_role": "shared by 1_SMD and 2_SMD"
+      }
+    ]
+  },
+  "fabrication_facts": {
+    "all_plated_drill_hits": 154,
+    "board_outline_centerline_bounds_mm": {
+      "height": 56.49999,
+      "max_x": 62.135,
+      "max_y": 0.19009,
+      "min_x": -2.86499,
+      "min_y": -56.3099,
+      "width": 64.99999
+    },
+    "bottom_copper_regions": 0,
+    "bottom_draw_segments": 188,
+    "bottom_flashes": 154,
+    "copper_layer_count": 2,
+    "copper_layers": [
+      "Gerber_BottomLayer.GBL",
+      "Gerber_TopLayer.GTL"
+    ],
+    "eda_generator": "EasyEDA v6.5.57 (from Gerber comments)",
+    "non_via_plated_holes": 74,
+    "plated_drill_diameters_mm": [
+      0.306,
+      0.915,
+      1.1,
+      1.2,
+      2.751
+    ],
+    "top_copper_regions": 0,
+    "top_draw_segments": 673,
+    "top_flashes": 386,
+    "track_aperture_widths_mm": [
+      0.254
+    ],
+    "via_drill_diameters_mm": [
+      0.306
+    ],
+    "via_drill_hits": 80,
+    "via_file_is_subset_of_all_plated_file": true
+  },
+  "inputs": {
+    "archive_members": [
+      "Drill_PTH_Through.DRL",
+      "Drill_PTH_Through_Via.DRL",
+      "Gerber_BoardOutlineLayer.GKO",
+      "Gerber_BottomLayer.GBL",
+      "Gerber_BottomSilkscreenLayer.GBO",
+      "Gerber_BottomSolderMaskLayer.GBS",
+      "Gerber_DocumentLayer.GDL",
+      "Gerber_TopLayer.GTL",
+      "Gerber_TopPasteMaskLayer.GTP",
+      "Gerber_TopSilkscreenLayer.GTO",
+      "Gerber_TopSolderMaskLayer.GTS",
+      "How-to-order-PCB.txt"
+    ],
+    "gerber_archive": "Gerber_LedGridWallHatV4_LedGridWallHatV4_2026-08-28.zip",
+    "gerber_sha256": "043b4bd539e6e9c3d89c5a95f3a45cd85fd3ebdad9a142121bf7bbce679f08c2",
+    "missing_expected_members": [],
+    "schematic_pixels": [
+      1265,
+      1002
+    ],
+    "schematic_png": "Schematic_LedGridWallHatV4_2026-08-28.png",
+    "schematic_sha256": "8f3e7103ff76494aaec61f3f21cbb1f3bb4be1c9914f792f80f130c739151108",
+    "unexpected_members": []
+  },
+  "limitations": [
+    "Gerbers contain no net names, component identities, design rules, or stackup.",
+    "Gerber facts and EDA-source facts are reported separately; named-net metrics come only from the JSON source.",
+    "The supplied schematic PNG is a visual cross-check and is not used to derive automated net connectivity.",
+    "This audit parses tracks, vias, pads, and metadata but is not a replacement for EDA Standard ERC/DRC.",
+    "No revised PCB is released because connector, enclosure, fab stackup, and mechanical choices remain open."
+  ]
+}

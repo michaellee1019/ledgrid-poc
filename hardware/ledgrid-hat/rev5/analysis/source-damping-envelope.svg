@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="480" viewBox="0 0 940 480">
+<rect width="100%" height="100%" fill="#0f172a"/>
+<text x="40" y="35" fill="#f8fafc" font-size="24" font-family="sans-serif">Rev5 bounded source-damping sweep</text>
+<line x1="80" y1="380" x2="900" y2="380" stroke="#64748b"/>
+<line x1="80" y1="70" x2="80" y2="380" stroke="#64748b"/>
+<line x1="80" y1="380.0" x2="900" y2="380.0" stroke="#334155"/>
+<text x="10" y="385.0" fill="#cbd5e1" font-size="13" font-family="sans-serif">0.0%</text>
+<line x1="80" y1="318.0" x2="900" y2="318.0" stroke="#334155"/>
+<text x="10" y="323.0" fill="#cbd5e1" font-size="13" font-family="sans-serif">14.4%</text>
+<line x1="80" y1="256.0" x2="900" y2="256.0" stroke="#334155"/>
+<text x="10" y="261.0" fill="#cbd5e1" font-size="13" font-family="sans-serif">28.8%</text>
+<line x1="80" y1="194.0" x2="900" y2="194.0" stroke="#334155"/>
+<text x="10" y="199.0" fill="#cbd5e1" font-size="13" font-family="sans-serif">43.2%</text>
+<line x1="80" y1="132.0" x2="900" y2="132.0" stroke="#334155"/>
+<text x="10" y="137.0" fill="#cbd5e1" font-size="13" font-family="sans-serif">57.6%</text>
+<line x1="80" y1="70.0" x2="900" y2="70.0" stroke="#334155"/>
+<text x="10" y="75.0" fill="#cbd5e1" font-size="13" font-family="sans-serif">72.0%</text>
+<polyline points="110.0,110.4 259.8,258.0 334.7,308.3 430.0,355.3" fill="none" stroke="#fb7185" stroke-width="4"/>
+<polyline points="540.0,245.5 606.9,288.7 707.2,342.3 860.0,380.0" fill="none" stroke="#60a5fa" stroke-width="4"/>
+<text x="180" y="420" fill="#fb7185" font-size="17" font-family="sans-serif">SPI series resistance (Ω)</text>
+<text x="620" y="420" fill="#60a5fa" font-size="17" font-family="sans-serif">LED series resistance (Ω)</text>
+<circle cx="110.0" cy="110.4" r="5" fill="#fb7185"/>
+<text x="101.0" y="404" fill="#e2e8f0" font-size="13" font-family="sans-serif">0</text>
+<circle cx="259.8" cy="258.0" r="5" fill="#fb7185"/>
+<text x="250.8" y="404" fill="#e2e8f0" font-size="13" font-family="sans-serif">22</text>
+<circle cx="334.7" cy="308.3" r="5" fill="#fb7185"/>
+<text x="325.7" y="404" fill="#e2e8f0" font-size="13" font-family="sans-serif">33</text>
+<circle cx="430.0" cy="355.3" r="5" fill="#fb7185"/>
+<text x="421.0" y="404" fill="#e2e8f0" font-size="13" font-family="sans-serif">47</text>
+<circle cx="540.0" cy="245.5" r="5" fill="#60a5fa"/>
+<text x="531.0" y="404" fill="#e2e8f0" font-size="13" font-family="sans-serif">33</text>
+<circle cx="606.9" cy="288.7" r="5" fill="#60a5fa"/>
+<text x="597.9" y="404" fill="#e2e8f0" font-size="13" font-family="sans-serif">47</text>
+<circle cx="707.2" cy="342.3" r="5" fill="#60a5fa"/>
+<text x="698.2" y="404" fill="#e2e8f0" font-size="13" font-family="sans-serif">68</text>
+<circle cx="860.0" cy="380.0" r="5" fill="#60a5fa"/>
+<text x="851.0" y="404" fill="#e2e8f0" font-size="13" font-family="sans-serif">100</text>
+</svg>
