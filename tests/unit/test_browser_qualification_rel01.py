@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 
 from animation.component_parameters import SCENE_EXTERNAL_COMPONENT_PARAMETERS
 from animation.core.activation_qualification import canonical_json_sha256
@@ -24,6 +25,7 @@ from tools.browser_qualification.fixture_server import (
     create_fixture_server,
 )
 from tools.browser_qualification.source_identity import fixture_release_id
+from tools.browser_qualification.run import create_run_directory, write_index
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -417,6 +419,42 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             self.assertEqual(len(retained["results"]), 3)
             self.assertTrue(all(item["executed"] is False for item in retained["results"]))
             self.assertTrue(all(item["outcome"] == "FAIL" for item in retained["results"]))
+
+    def test_local_locked_module_executes_all_engines_and_receives_artifact_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = root / "playwright"
+            package.mkdir()
+            output = root / "result.json"
+            artifacts = root / "artifacts"
+            with patch(
+                "tools.browser_qualification.evidence.execute_playwright_engine",
+                return_value=_engine_result("chromium", self.manifest),
+            ) as execute:
+                run_qualification(
+                    base_url="http://127.0.0.1:1",
+                    output_path=output,
+                    playwright_module=package,
+                    artifacts_dir=artifacts,
+                    source_provider=lambda: _source(),
+                )
+            self.assertEqual(execute.call_count, 3)
+            self.assertEqual(
+                [call.kwargs["artifacts_dir"] for call in execute.call_args_list],
+                [artifacts / engine for engine in self.manifest["required_engines"]],
+            )
+
+    def test_clean_runner_uses_unique_manifest_indexed_evidence_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first = create_run_directory(root)
+            second = create_run_directory(root)
+            self.assertNotEqual(first, second)
+            write_index(first / "index.json", {"schema": "test", "evidence": "result.json"})
+            self.assertEqual(
+                json.loads((first / "index.json").read_text(encoding="utf-8")),
+                {"schema": "test", "evidence": "result.json"},
+            )
 
 
 class BrowserQualificationFixtureServerTests(unittest.TestCase):

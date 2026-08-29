@@ -433,18 +433,15 @@ def _missing_engine_result(engine: str, reason: str) -> dict[str, Any]:
 
 
 def resolve_playwright_module(explicit: Path | None = None) -> Path | None:
+    """Locate the package installed by this qualification tool's lockfile.
+
+    ``explicit`` remains useful to unit tests which deliberately model a missing
+    package.  Normal qualification never reads an environment-provided module
+    path: a clean worktree installs this tool's committed package-lock instead.
+    """
     if explicit is not None:
         return explicit.resolve() if explicit.is_dir() else None
-    candidates: list[Path] = []
-    configured = os.environ.get("LEDGRID_PLAYWRIGHT_MODULE")
-    if configured:
-        candidates.append(Path(configured))
-    candidates.extend(
-        (
-            Path(__file__).with_name("node_modules") / "playwright",
-            ROOT / "node_modules" / "playwright",
-        )
-    )
+    candidates = (Path(__file__).with_name("node_modules") / "playwright",)
     return next((path.resolve() for path in candidates if path.is_dir()), None)
 
 
@@ -455,10 +452,10 @@ def execute_playwright_engine(
     manifest_path: Path,
     playwright_module: Path,
     output_path: Path,
+    artifacts_dir: Path | None,
     timeout_ms: int,
 ) -> dict[str, Any]:
-    completed = subprocess.run(
-        (
+    command = (
             "node",
             os.fspath(PLAYWRIGHT_PROBE),
             "--engine",
@@ -473,7 +470,11 @@ def execute_playwright_engine(
             os.fspath(output_path),
             "--timeout-ms",
             str(timeout_ms),
-        ),
+        )
+    if artifacts_dir is not None:
+        command += ("--artifacts-dir", os.fspath(artifacts_dir))
+    completed = subprocess.run(
+        command,
         cwd=ROOT,
         check=False,
         capture_output=True,
@@ -505,6 +506,7 @@ def run_qualification(
     output_path: Path,
     manifest_path: Path = DEFAULT_MANIFEST,
     playwright_module: Path | None = None,
+    artifacts_dir: Path | None = None,
     timeout_ms: int = 180_000,
     source_provider: Callable[[], Mapping[str, Any]] = git_source,
 ) -> dict[str, Any]:
@@ -518,7 +520,7 @@ def run_qualification(
             if resolved_module is None:
                 results[engine] = _missing_engine_result(
                     engine,
-                    "Playwright is unavailable; install the pinned tooling dependency or set LEDGRID_PLAYWRIGHT_MODULE",
+                    "Playwright is unavailable; run just browser-qualification-setup to install the pinned tooling dependency",
                 )
                 continue
             results[engine] = execute_playwright_engine(
@@ -527,6 +529,7 @@ def run_qualification(
                 manifest_path=manifest_path,
                 playwright_module=resolved_module,
                 output_path=temporary_path / f"{engine}.json",
+                artifacts_dir=(artifacts_dir / engine if artifacts_dir else None),
                 timeout_ms=timeout_ms,
             )
     evidence = aggregate_evidence(

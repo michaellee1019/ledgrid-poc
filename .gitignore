@@ -17,6 +17,7 @@
 htmlcov/
 .venv-web
 run_state
+tools/browser_qualification/node_modules/
 animation_system.log
 diagnostics/*.out
 calibration_photos/*

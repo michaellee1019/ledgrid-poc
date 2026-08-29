@@ -1230,6 +1230,26 @@ try {
   const browserType = playwright[args.engine];
   if (!browserType) throw new Error(`Playwright module does not expose ${args.engine}`);
   browser = await browserType.launch({headless: true});
+  if (args['artifacts-dir']) {
+    const artifactsDir = path.resolve(args['artifacts-dir']);
+    await fs.mkdir(artifactsDir, {recursive: true});
+    const newContext = browser.newContext.bind(browser);
+    let traceNumber = 0;
+    browser.newContext = async (options = {}) => {
+      const context = await newContext({...options, recordVideo: {dir: path.join(artifactsDir, 'videos')}});
+      const tracePath = path.join(artifactsDir, `trace-${traceNumber++}.zip`);
+      await context.tracing.start({screenshots: true, snapshots: true, sources: true});
+      const close = context.close.bind(context);
+      context.close = async (...closeArgs) => {
+        try {
+          await context.tracing.stop({path: tracePath});
+        } finally {
+          return close(...closeArgs);
+        }
+      };
+      return context;
+    };
+  }
   result.executed = true;
   result.reported_engine = browser.browserType().name();
   result.browser_version = browser.version();

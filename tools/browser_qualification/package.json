@@ -3,6 +3,9 @@
   "private": true,
   "version": "1.0.0",
   "description": "Pinned Playwright dependency for retained REL-01 portable-browser evidence.",
+  "scripts": {
+    "install-browsers": "playwright install chromium firefox webkit"
+  },
   "dependencies": {
     "playwright": "1.62.1"
   }

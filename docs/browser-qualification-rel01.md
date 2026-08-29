@@ -92,14 +92,26 @@ Native build output is content-addressed under the ignored
 `run_state/browser_qualification_native_builds` directory; authoritative library
 state remains inside the selected fixture state directory.
 
+The committed browser tooling has an npm lockfile. From a fresh worktree, install
+the locked package and all three supported engines once:
+
 ```bash
-uv run python -m tools.browser_qualification.fixture_server \
-  --state-dir /tmp/ledgrid-rel01-fixture \
-  --host 127.0.0.1 \
-  --port 8765
+just browser-qualification-setup
 ```
 
-The fixture status is available at `/__qualification__/status`. A nonzero
+Then run the complete no-wall matrix:
+
+```bash
+just browser-qualification
+```
+
+The runner starts its own fixture on an OS-assigned loopback port, shuts it down
+on success, failure, or interruption, and writes an ignored run directory under
+`run_state/browser_qualification/evidence/`. Its `index.json` names the retained
+evidence JSON, fixture state, Playwright traces, and videos. Each run has a UUID
+in its directory name, so simultaneous worktrees and local runs do not collide.
+The fixture status is available at `/__qualification__/status` while the runner
+is active. A nonzero
 `wall_mutation_attempts` count or any line in
 `wall-mutation-attempts.jsonl` is a qualification failure.
 `network_outage_blocks` is separate: WebKit offline qualification requires a
@@ -110,14 +122,14 @@ standalone, or a claim about full-device network behavior.
 
 ## Running and retaining evidence
 
-Install the exact Playwright version declared by the tooling package, or point
-the runner at an existing matching module without fetching during the run:
+For a previously started fixture, the evidence module resolves the local locked
+tooling package directly; no absolute module path or environment variable is
+needed:
 
 ```bash
-LEDGRID_PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright \
-  uv run python -m tools.browser_qualification.evidence \
+uv run --frozen python -m tools.browser_qualification.evidence \
   --base-url http://127.0.0.1:8765 \
-  --output /absolute/path/to/retained/rel01-browser-evidence.json
+  --output run_state/browser_qualification/evidence/manual-rel01.json
 ```
 
 The command exits successfully only when all three real engines execute every
