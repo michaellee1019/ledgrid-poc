@@ -1,7 +1,7 @@
 (function attachComposerState(global) {
     'use strict';
 
-    const CHECKER_VERSION = 'browser-checker-v3';
+    const CHECKER_VERSION = 'browser-checker-v4';
 
     function clone(value) {
         return JSON.parse(JSON.stringify(value ?? null));
@@ -73,6 +73,16 @@
         const p99 = Math.max(p95, nearestRank(.99));
         const maximum = Math.max(p99, sorted[sorted.length - 1]);
         return {mean, p95, p99, max: maximum};
+    }
+
+    function advisoryRenderStatus(p95, frameBudgetMs) {
+        if (!Number.isFinite(p95) || !Number.isFinite(frameBudgetMs) || frameBudgetMs <= 0) {
+            throw new TypeError('Render timing and frame budget must be finite positive numbers.');
+        }
+        // Browser timing includes the preview bridge and local compositor. Keep
+        // it visible as a caution, but do not let host-specific scheduling noise
+        // block a reviewed development/canary activation.
+        return p95 > frameBudgetMs * .5 ? 'warn' : 'pass';
     }
 
     function runtimeDigest(component) {
@@ -164,6 +174,7 @@
 
     global.LEDGridComposerState = Object.freeze({
         CHECKER_VERSION,
+        advisoryRenderStatus,
         capability,
         checkAllowsActivation,
         checkBinding,

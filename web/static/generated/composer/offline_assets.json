@@ -60,8 +60,8 @@
       "url": "/static/icons/composer.svg"
     },
     {
-      "bytes": 209578,
-      "sha256": "af02cd2e54738442e921d7c37653e4663a1809fee7c1b11d65ed01c7e1b04ca9",
+      "bytes": 209549,
+      "sha256": "5eb8d940165aac4fce685761b650d6d9133b7376837b171a1e257e33fa3f80b1",
       "url": "/static/js/composer.js"
     },
     {
@@ -90,8 +90,8 @@
       "url": "/static/js/composer_sha256.js"
     },
     {
-      "bytes": 7263,
-      "sha256": "bf30c706f481d2756d9cf6db57aeca9aaa25873d0536c048109d6084579f270c",
+      "bytes": 7841,
+      "sha256": "cd9a62a7447e414013406d2497ffc6cbb01dd303f61ab101d2a06ab9337b1817",
       "url": "/static/js/composer_state.js"
     }
   ],

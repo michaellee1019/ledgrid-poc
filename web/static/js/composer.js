@@ -2414,12 +2414,12 @@
 
             const targetFps = Math.max(1, safeNumber(state.globalSettings.draft?.targetFps, 30));
             const frameBudgetMs = 1000 / targetFps;
-            const renderStatus = p95 > frameBudgetMs ? 'fail' : p95 > frameBudgetMs * .5 ? 'warn' : 'pass';
+            const renderStatus = ComposerState.advisoryRenderStatus(p95, frameBudgetMs);
             const rendererBreakdown = state.layers.clockEnabled && backgroundRendererP95 !== null
                 ? ` Python p95: background ${backgroundRendererP95.toFixed(2)} ms${clockRendererP95 === null ? '' : ` + Clock ${clockRendererP95.toFixed(2)} ms`}; bridge/compositor ${bridgeAndCompositorP95.toFixed(2)} ms.`
                 : '';
-            updateMetric('render', `${p95.toFixed(2)} ms`, renderStatus, `${state.layers.clockEnabled ? 'Background + Clock + compositor' : runtime.engine}; ${frameBudgetMs.toFixed(2)} ms budget at ${targetFps} fps, measured on this browser rather than receiver hardware.${rendererBreakdown}`);
-            if (renderStatus === 'fail') failures.push('render time'); else if (renderStatus === 'warn') warnings.push('render time');
+            updateMetric('render', `${p95.toFixed(2)} ms`, renderStatus, `${state.layers.clockEnabled ? 'Background + Clock + compositor' : runtime.engine}; ${frameBudgetMs.toFixed(2)} ms budget at ${targetFps} fps, measured on this browser rather than receiver hardware. Advisory only; this metric does not block activation.${rendererBreakdown}`);
+            if (renderStatus === 'warn') warnings.push('render time');
 
             const grade = failures.length ? 'fail' : warnings.length ? 'warn' : 'pass';
             const score = Math.max(0, 100 - failures.length * 24 - warnings.length * 8);

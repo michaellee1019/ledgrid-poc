@@ -80,6 +80,21 @@ console.log(JSON.stringify({ordinary, heavyTail, malformed}));
         })
         self.assertIn("finite numbers", result["malformed"])
 
+    def test_render_p95_is_advisory_and_never_blocks_activation(self) -> None:
+        result = _run_state_script("""
+console.log(JSON.stringify({
+  fast: state.advisoryRenderStatus(2, 10),
+  caution: state.advisoryRenderStatus(6, 10),
+  overBudget: state.advisoryRenderStatus(40, 10),
+}));
+""")
+
+        self.assertEqual(result, {
+            "fast": "pass",
+            "caution": "warn",
+            "overBudget": "warn",
+        })
+
     def test_check_binding_covers_generation_runtime_digest_and_geometry(self) -> None:
         result = _run_state_script("""
 const component = {
@@ -205,7 +220,7 @@ console.log(JSON.stringify({
             "presetFingerprint": "a" * 64,
         }
         self.assertIsNone(result["beforeSave"]["presetIdentity"])
-        self.assertEqual(result["afterSave"]["checkerVersion"], "browser-checker-v3")
+        self.assertEqual(result["afterSave"]["checkerVersion"], "browser-checker-v4")
         self.assertEqual(result["afterSave"]["presetIdentity"], identity)
         self.assertFalse(result["staleImmediatelyAfterSave"])
         self.assertTrue(result["eligibleAfterRerun"])
@@ -232,6 +247,8 @@ console.log(JSON.stringify({
         self.assertIn("Apply or revert the Wall draft", source)
         self.assertIn("wallSettings: clone(state.globalSettings.draft)", source)
         self.assertIn("frameBudgetMs = 1000 / targetFps", source)
+        self.assertIn("ComposerState.advisoryRenderStatus(p95, frameBudgetMs)", source)
+        self.assertNotIn("failures.push('render time')", source)
         self.assertIn("serverCheck: null", source)
         self.assertIn("Pending · activation", source)
         self.assertIn("activationIdentitiesMatch(status)", source)
