@@ -1,0 +1,146 @@
+{
+  "artifact": "LED Grid Wall HAT Rev5 EasyEDA SPI scaffold",
+  "status": "NOT FOR FABRICATION",
+  "source_shape_counts": {
+    "LIB": 45,
+    "RECT": 2,
+    "SOLIDREGION": 2,
+    "TEXT": 18,
+    "TRACK": 387,
+    "VIA": 80
+  },
+  "output_shape_counts": {
+    "LIB": 31,
+    "RECT": 2,
+    "SOLIDREGION": 2,
+    "TEXT": 6
+  },
+  "removed_selector_footprints": [
+    "SJ_SPI0_CE0",
+    "SJ_SPI0_CE1",
+    "SJ_SPI0_CE2",
+    "SJ_SPI0_CE3",
+    "SJ_SPI0_MISO",
+    "SJ_SPI0_MOSI",
+    "SJ_SPI0_SCLK",
+    "SJ_SPI1_CE0",
+    "SJ_SPI1_CE1",
+    "SJ_SPI1_CE2",
+    "SJ_SPI1_CE3",
+    "SJ_SPI1_MISO",
+    "SJ_SPI1_MOSI",
+    "SJ_SPI1_SCLK"
+  ],
+  "removed_selector_labels": [
+    "CE0",
+    "CE0",
+    "CE1",
+    "CE1",
+    "CE2",
+    "CE2",
+    "CE3",
+    "CE3",
+    "SPI0",
+    "SPI1"
+  ],
+  "removed_stale_board_titles": [
+    "LED GRID WALL HAT V0.4",
+    "LED GRID WALL HAT V0.4"
+  ],
+  "pad_net_changes": [
+    {
+      "refdes": "2_SMD",
+      "pad": "19",
+      "old_net": "1IO11",
+      "new_net": "2IO11"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "20",
+      "old_net": "1IO12",
+      "new_net": "2IO12"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "21",
+      "old_net": "1IO13",
+      "new_net": "2IO13"
+    },
+    {
+      "refdes": "U12",
+      "pad": "12",
+      "old_net": "U12_12",
+      "new_net": "2IO10"
+    },
+    {
+      "refdes": "U12",
+      "pad": "19",
+      "old_net": "U12_19",
+      "new_net": "1IO11"
+    },
+    {
+      "refdes": "U12",
+      "pad": "21",
+      "old_net": "U12_21",
+      "new_net": "1IO13"
+    },
+    {
+      "refdes": "U12",
+      "pad": "23",
+      "old_net": "U12_23",
+      "new_net": "1IO12"
+    },
+    {
+      "refdes": "U12",
+      "pad": "24",
+      "old_net": "U12_24",
+      "new_net": "1IO10"
+    },
+    {
+      "refdes": "U12",
+      "pad": "35",
+      "old_net": "U12_35",
+      "new_net": "2IO13"
+    },
+    {
+      "refdes": "U12",
+      "pad": "38",
+      "old_net": "U12_38",
+      "new_net": "2IO11"
+    },
+    {
+      "refdes": "U12",
+      "pad": "40",
+      "old_net": "U12_40",
+      "new_net": "2IO12"
+    }
+  ],
+  "routing_layers": [
+    "TopLayer",
+    "Inner1_GND",
+    "Inner2_PWR",
+    "BottomLayer"
+  ],
+  "remaining_pad_count": 278,
+  "remaining_named_nets": 135,
+  "validation": {
+    "easyeda_document_type": 3,
+    "unrouted": true,
+    "fixed_spi_pad_assignments": "passed",
+    "selector_footprints_absent": true,
+    "four_copper_layers_enabled": true
+  },
+  "source_pcb": {
+    "file": "PCB_LedGridWallHatV4_2026-08-28.json",
+    "sha256": "f2a4c7fe5d6d0049d4cf687849ca29969da905b71c6f73ca78dc18d3887e705a"
+  },
+  "generated_pcb": {
+    "file": "PCB_LedGridWallHatRev5_SPI_SCAFFOLD.json",
+    "sha256": "35d6af2e5ce1bfe7a39d426b7d658c5bd81ffa7a9bcafc461e78ef62262f967c"
+  },
+  "schematic_reference": {
+    "file": "SCH_LedGridWallHatV4_REFERENCE.json",
+    "sha256": "c3682a5fb574e7799fffc0c24faba3f396fa8aa8a6d50f9074b48824c7e17821",
+    "note": "Unmodified V4 reference; not a Rev5 schematic"
+  }
+}

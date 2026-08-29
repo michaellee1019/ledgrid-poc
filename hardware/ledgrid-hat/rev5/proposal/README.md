@@ -123,7 +123,13 @@ The exact reconstruction and release gates are listed in
 - Bring-up and no-FEC acceptance plan
 - Source reconstruction and release checklist
 
-Revised Rev5 EDA source, revised schematic plot, PnP, final routed-length values,
-revised copper overlay, and Gerber/drill archive are intentionally absent until
-the release blockers are resolved. The unchanged editable V4 sources are kept
-under `../../rev4/reference/` for the reconstruction.
+An importable, deliberately unrouted EasyEDA Standard PCB starting point is in
+[`../easyeda/`](../easyeda/). It removes the unsafe V4 routing and selector
+footprints, applies the fixed dual-SPI pad nets, and enables the proposed four
+copper layers. It is a review scaffold, not completed Rev5 EDA source.
+
+The completed Rev5 schematic, routed PCB, revised schematic plot, PnP, final
+routed-length values, revised copper overlay, and Gerber/drill archive remain
+intentionally absent until the release blockers are resolved. The unchanged
+editable V4 sources are kept under `../../rev4/reference/` for reconstruction
+and comparison.
