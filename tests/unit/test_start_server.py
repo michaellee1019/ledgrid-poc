@@ -355,6 +355,10 @@ class StartServerTests(unittest.TestCase):
             captured["receiver_lane_masks"], (255, 255, 255, 255, 255)
         )
         self.assertEqual(
+            captured["receiver_spi_speeds_hz"],
+            (20_000_000, 20_000_000, 20_000_000, 12_000_000, 20_000_000),
+        )
+        self.assertEqual(
             captured["reverse_host_strips_by_logical_receiver"],
             (False, False, False, False, False),
         )

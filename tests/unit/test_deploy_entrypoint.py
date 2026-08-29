@@ -848,6 +848,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         host_reversals = (False, False, False, False, False)
         native_reversals = (False, False, True, True, False)
         masks = (255, 255, 255, 255, 255)
+        speeds = (20_000_000, 20_000_000, 20_000_000, 12_000_000, 20_000_000)
         return tuple(
             {
                 "logical_device": logical_id,
@@ -858,7 +859,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
                 "reverse_host_strip_order": host_reversals[logical_id],
                 "reverse_native_strip_order": native_reversals[logical_id],
                 "physical_output_lane_mask": masks[logical_id],
-                "spi_speed_hz": 8_000_000,
+                "spi_speed_hz": speeds[logical_id],
                 "spi_mode": 0,
             }
             for logical_id in range(5)
@@ -2091,6 +2092,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             ("reverse_host_strip_order", True),
             ("reverse_native_strip_order", True),
             ("spi_mode", 1),
+            ("spi_speed_hz", 20_000_001),
         )
         for field, value in mutations:
             with self.subTest(field=field):

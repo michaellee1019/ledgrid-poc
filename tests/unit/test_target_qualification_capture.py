@@ -89,7 +89,7 @@ def _device(logical_id: int, displayed: int) -> dict:
         "receiver_leds_per_strip": 138,
         "total_leds": widths[logical_id] * 138,
         "spi_mode": 0,
-        "spi_speed_hz": 20_000_000,
+        "spi_speed_hz": 12_000_000 if logical_id == 3 else 20_000_000,
         "receiver_last_encode_us": 900 + logical_id,
         "receiver_last_show_us": 4400 + logical_id,
         "receiver_frames_displayed": displayed,
@@ -193,7 +193,9 @@ def _metrics(*, final: bool) -> dict:
                         "reverse_host_strip_order": False,
                         "reverse_native_strip_order": native_reversed[logical_id],
                         "spi_mode": 0,
-                        "spi_speed_hz": 20_000_000,
+                        "spi_speed_hz": (
+                            12_000_000 if logical_id == 3 else 20_000_000
+                        ),
                     }
                     for logical_id in range(5)
                 ],

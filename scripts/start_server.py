@@ -46,6 +46,7 @@ from drivers.led_layout import (
     WALL_PHYSICAL_OUTPUT_LANE_MASKS,
     WALL_RECEIVER_GLOBAL_STRIP_OFFSETS,
     WALL_RECEIVER_STRIP_COUNTS,
+    WALL_RECEIVER_SPI_SPEEDS_HZ,
     WALL_REVERSE_HOST_STRIPS_BY_LOGICAL_RECEIVER,
     WALL_REVERSE_NATIVE_STRIPS_BY_LOGICAL_RECEIVER,
     default_strip_count,
@@ -655,6 +656,7 @@ def run_controller_mode(args):
             receiver_strip_counts=receiver_strip_counts,
             receiver_global_strip_offsets=receiver_global_strip_offsets,
             receiver_lane_masks=receiver_lane_masks,
+            receiver_spi_speeds_hz=WALL_RECEIVER_SPI_SPEEDS_HZ[:num_devices],
             device_map=list(
                 controller_topology.logical_to_transport_routes[
                     :num_devices

@@ -701,6 +701,41 @@ class HeterogeneousTopologyTests(unittest.TestCase):
                 20_000_000,
             )
 
+    def test_per_receiver_speed_contract_overrides_only_the_selected_route(self):
+        speeds = (20_000_000, 20_000_000, 20_000_000, 12_000_000, 20_000_000)
+        with (
+            mock.patch("drivers.multi_device.LEDController", _Device),
+            mock.patch.object(
+                MultiDeviceLEDController,
+                "_initialize_receiver_identity_observability",
+                lambda _self: None,
+            ),
+            mock.patch.dict(
+                "os.environ", {"LEDGRID_SPI1_SPEED": "8000000"}, clear=False
+            ),
+        ):
+            controller = MultiDeviceLEDController(
+                num_devices=5,
+                device_map=ROUTES,
+                receiver_strip_counts=WIDTHS,
+                receiver_global_strip_offsets=OFFSETS,
+                receiver_lane_masks=(0xFF,) * 5,
+                receiver_spi_speeds_hz=speeds,
+            )
+        self.assertEqual(
+            [device.spi_speed_hz for device in controller.devices], list(speeds)
+        )
+        self.assertEqual(
+            controller.get_stats()["aggregate"]["spi_speeds_hz"], list(speeds)
+        )
+
+        with self.assertRaisesRegex(TypeError, "receiver_spi_speeds_hz"):
+            MultiDeviceLEDController(
+                num_devices=1,
+                device_map=[(0, 0)],
+                receiver_spi_speeds_hz=(0,),
+            )
+
     def test_failed_partial_host_takeover_remains_degraded_when_native_stop_fails(self):
         controller = _controller()
         controller._native_background_active = True

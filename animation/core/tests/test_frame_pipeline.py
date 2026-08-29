@@ -20,7 +20,6 @@ if "spidev" not in sys.modules:
 from animation.core.base import AnimationBase, RenderedFrame
 from animation.core.manager import (
     FRAME_DEADLINE_COARSE_WINDOW_SECONDS,
-    FRAME_DEADLINE_SPIN_SECONDS,
     FRAME_SCHEDULER_HEADROOM_RATIO,
     AnimationManager,
     _plan_frame_deadline,
@@ -823,7 +822,11 @@ class ReceiverAcceptanceTests(unittest.TestCase):
             'leds_per_strip': 138,
             'full_frame_bytes': 3315,
             'spi_speed_hz': 20_000_000,
+            'receiver_spi_speeds_hz': [
+                20_000_000, 20_000_000, 20_000_000, 12_000_000, 20_000_000,
+            ],
             'full_frame_spi_us': 1326,
+            'receiver_full_frame_spi_us': [1326, 1326, 1326, 2210, 166],
             'nominal_show_us': 4440,
         })
 

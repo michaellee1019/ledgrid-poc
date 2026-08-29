@@ -127,6 +127,9 @@ FINALIZED_RECEIVER_LANE_MASKS = (0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
 FINALIZED_RECEIVER_HOST_REVERSALS = (False, False, False, False, False)
 FINALIZED_RECEIVER_NATIVE_REVERSALS = (False, False, True, True, False)
 FINALIZED_RECEIVER_SPI_MODE = 0
+FINALIZED_RECEIVER_SPI_SPEEDS_HZ = (
+    20_000_000, 20_000_000, 20_000_000, 12_000_000, 20_000_000,
+)
 
 
 _REMOTE_RELEASE_INSPECTOR = r"""
@@ -230,6 +233,7 @@ def receiver_firmware_health_contract(
                 "reverse_host_strip_order": host_reversals[logical_id],
                 "reverse_native_strip_order": native_reversals[logical_id],
                 "spi_mode": FINALIZED_RECEIVER_SPI_MODE,
+                "spi_speed_hz": FINALIZED_RECEIVER_SPI_SPEEDS_HZ[logical_id],
                 "leds_per_strip": leds_per_strip,
             }
             for logical_id in range(receiver_count)

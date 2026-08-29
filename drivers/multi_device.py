@@ -229,6 +229,7 @@ class MultiDeviceLEDController:
                  receiver_lane_masks: tuple[int, ...] | None = None,
                  receiver_strip_counts: tuple[int, ...] | None = None,
                  receiver_global_strip_offsets: tuple[int, ...] | None = None,
+                 receiver_spi_speeds_hz: tuple[int, ...] | None = None,
                  fec_receiver_ids: tuple[int, ...] = ()):
         """
         Initialize multi-device LED controller
@@ -261,6 +262,9 @@ class MultiDeviceLEDController:
                 Defaults to the legacy uniform ``strips_per_device`` layout.
             receiver_global_strip_offsets: Exact global strip origin by logical
                 receiver. Defaults to contiguous origins in logical-ID order.
+            receiver_spi_speeds_hz: Optional exact SPI clock by logical
+                receiver. When omitted, the legacy per-bus environment override
+                remains authoritative.
             receiver_lane_masks: Exact physical output-lane mask by logical
                 receiver. Defaults to the lowest ``local_strip_count`` lanes;
                 installed callers pass an explicit all-lane broadcast mask for
@@ -393,6 +397,17 @@ class MultiDeviceLEDController:
         self.receiver_strip_counts = receiver_strip_counts
         self.receiver_global_strip_offsets = receiver_global_strip_offsets
         self.receiver_lane_masks = receiver_lane_masks
+        if receiver_spi_speeds_hz is not None and (
+            type(receiver_spi_speeds_hz) is not tuple
+            or len(receiver_spi_speeds_hz) != num_devices
+            or any(type(value) is not int or value <= 0
+                   for value in receiver_spi_speeds_hz)
+        ):
+            raise TypeError(
+                "receiver_spi_speeds_hz must be a tuple of one positive integer "
+                "per receiver"
+            )
+        self.receiver_spi_speeds_hz = receiver_spi_speeds_hz
         self.leds_per_strip = leds_per_strip
         self.debug = debug
         self.parallel = parallel
@@ -534,7 +549,11 @@ class MultiDeviceLEDController:
             device = LEDController(
                 bus=device_bus,
                 device=device_id,  # CE0, CE1, etc.
-                speed=self._resolve_speed(device_bus, speed),
+                speed=(
+                    self.receiver_spi_speeds_hz[device_index]
+                    if self.receiver_spi_speeds_hz is not None
+                    else self._resolve_speed(device_bus, speed)
+                ),
                 mode=self._resolve_mode(device_bus, mode),
                 strips=self.receiver_strip_counts[device_index],
                 leds_per_strip=leds_per_strip,

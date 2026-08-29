@@ -2776,7 +2776,7 @@ def _validate_receiver_health_contract(
         "logical_device", "bus", "chip_select",
         "active_strips", "global_strip_offset",
         "local_strip_count", "lane_mask", "physical_output_lane_mask",
-        "spi_mode", "leds_per_strip",
+        "spi_mode", "spi_speed_hz", "leds_per_strip",
     )
     boolean_fields = (
         "reverse_host_strip_order", "reverse_native_strip_order",
@@ -2833,6 +2833,7 @@ def _receiver_health_rejection(
         "bus", "chip_select", "local_strip_count", "global_strip_offset",
         "physical_output_lane_mask", "reverse_host_strip_order",
         "reverse_native_strip_order", "spi_mode",
+        "spi_speed_hz",
     )
     for expected in expected_devices:
         logical_id = expected["logical_device"]

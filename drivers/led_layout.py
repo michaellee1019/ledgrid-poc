@@ -25,6 +25,18 @@ WALL_DEVICE_MAP: Tuple[DeviceMapEntry, ...] = (
     (1, 2),
 )
 
+# Receiver 3's installed SPI1.0 branch is measurably more susceptible to
+# receiver-output switching than the other four routes. Keep that containment
+# local to the affected route so the shared SPI1 bus and its healthy receivers
+# retain their qualified 20 MHz clock.
+WALL_RECEIVER_SPI_SPEEDS_HZ = (
+    20_000_000,
+    20_000_000,
+    20_000_000,
+    12_000_000,
+    20_000_000,
+)
+
 # Camera-measured installed geometry, indexed by logical receiver ID unless the
 # name explicitly says physical order. Transport routes above remain a separate
 # domain: logical receivers 2 and 3 still use crossed SPI1 chip-select routes,

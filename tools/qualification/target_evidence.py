@@ -36,7 +36,7 @@ from tools.benchmarks.receiver_acceptance import (
     INSTALLED_LEDS_PER_STRIP,
     INSTALLED_RECEIVER_COUNT,
     INSTALLED_RECEIVER_STRIP_COUNTS,
-    INSTALLED_SPI_SPEED_HZ,
+    INSTALLED_RECEIVER_SPI_SPEEDS_HZ,
     evaluate_phase3a_status,
 )
 
@@ -677,7 +677,7 @@ def validate_installed_topology(metrics: Any) -> None:
             "reverse_host_strip_order": False,
             "reverse_native_strip_order": native_reversed,
             "spi_mode": 0,
-            "spi_speed_hz": INSTALLED_SPI_SPEED_HZ,
+            "spi_speed_hz": INSTALLED_RECEIVER_SPI_SPEEDS_HZ[logical_id],
         }
         for field, expected in expected_map.items():
             if mapped.get(field) != expected:
@@ -695,7 +695,7 @@ def validate_installed_topology(metrics: Any) -> None:
             "receiver_leds_per_strip": INSTALLED_LEDS_PER_STRIP,
             "total_leds": width * INSTALLED_LEDS_PER_STRIP,
             "spi_mode": 0,
-            "spi_speed_hz": INSTALLED_SPI_SPEED_HZ,
+            "spi_speed_hz": INSTALLED_RECEIVER_SPI_SPEEDS_HZ[logical_id],
         }
         for field, expected in expected_device.items():
             if device.get(field) != expected:
