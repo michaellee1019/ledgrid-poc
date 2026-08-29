@@ -777,7 +777,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             for field in fields
         }
         aggregate.update({
-            "device_dispatch_order": [0, 1, 3, 2, 4],
+            "device_dispatch_order": [0, 1, 2, 3, 4],
             "fec_transport_requested_devices": sum(
                 item["fec_transport_requested"] is True for item in statuses
             ),
@@ -849,7 +849,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         host_reversals = (False, False, False, False, False)
         native_reversals = (False, False, True, True, False)
         masks = (255, 255, 255, 255, 255)
-        speeds = (20_000_000, 20_000_000, 20_000_000, 12_000_000, 20_000_000)
+        speeds = (20_000_000, 20_000_000, 20_000_000, 8_000_000, 20_000_000)
         return tuple(
             {
                 "logical_device": logical_id,
@@ -1470,7 +1470,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         )
 
         bad_dispatch = dict(self._receiver_aggregate(valid))
-        bad_dispatch["device_dispatch_order"] = [0, 1, 2, 3, 4]
+        bad_dispatch["device_dispatch_order"] = [0, 1, 3, 2, 4]
         self.assertIn(
             "exact qualified order",
             rejection(valid, bad_dispatch),

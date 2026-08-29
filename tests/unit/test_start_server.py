@@ -356,7 +356,7 @@ class StartServerTests(unittest.TestCase):
         )
         self.assertEqual(
             captured["receiver_spi_speeds_hz"],
-            (20_000_000, 20_000_000, 20_000_000, 12_000_000, 20_000_000),
+            (20_000_000, 20_000_000, 20_000_000, 8_000_000, 20_000_000),
         )
         self.assertEqual(
             captured["reverse_host_strips_by_logical_receiver"],

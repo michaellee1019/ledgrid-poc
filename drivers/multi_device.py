@@ -520,14 +520,6 @@ class MultiDeviceLEDController:
         self._devices_by_bus = {}
         for device_id, (device_bus, _chip_select) in enumerate(self.device_map):
             self._devices_by_bus.setdefault(device_bus, []).append(device_id)
-        # Put the receiver protected by the negotiated FEC transport first on
-        # its shared bus. On the installed wall this produces SPI1 order
-        # (3, 2, 4), completing the susceptible receiver-3 transaction before
-        # receivers 2/4 begin their new LED-output switching windows.
-        for device_ids in self._devices_by_bus.values():
-            device_ids.sort(key=lambda device_id: (
-                device_id not in self.fec_receiver_ids, device_id
-            ))
         if parallel and len(self._devices_by_bus) > 1:
             self._executor = ThreadPoolExecutor(
                 max_workers=len(self._devices_by_bus),
@@ -1986,8 +1978,8 @@ class MultiDeviceLEDController:
                 for future in futures:
                     successful = bool(future.result()) and successful
             else:
-                # Keep the same per-bus qualified order when bus overlap is
-                # disabled, including FEC-first dispatch on installed SPI1.
+                # Keep the same topology-owned per-bus order when bus overlap
+                # is disabled.
                 for device_ids in self._devices_by_bus.values():
                     successful = self._send_bus_frames(
                         device_ids, device_frames, wall_frame_sequence

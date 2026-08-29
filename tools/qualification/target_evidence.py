@@ -650,7 +650,7 @@ def validate_installed_topology(metrics: Any) -> None:
         or len(devices) != INSTALLED_RECEIVER_COUNT
     ):
         raise TargetEvidenceError("aggregate geometry is not the exact installed wall")
-    if aggregate.get("device_dispatch_order") != [0, 1, 3, 2, 4]:
+    if aggregate.get("device_dispatch_order") != [0, 1, 2, 3, 4]:
         raise TargetEvidenceError(
             "installed receiver dispatch order is not the exact qualified order"
         )

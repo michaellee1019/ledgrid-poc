@@ -262,7 +262,7 @@ class HeterogeneousTopologyTests(unittest.TestCase):
         )
         self.assertEqual(
             controller.get_stats()["aggregate"]["device_dispatch_order"],
-            [0, 1, 3, 2, 4],
+            [0, 1, 2, 3, 4],
         )
         controller._display_ownership_known = True
         dispatched = []
@@ -272,7 +272,7 @@ class HeterogeneousTopologyTests(unittest.TestCase):
             side_effect=lambda device_id, *_args: dispatched.append(device_id) or True,
         ):
             controller.set_all_pixels(np.zeros((33 * 138, 3), dtype=np.uint8))
-        self.assertEqual(dispatched, [0, 1, 3, 2, 4])
+        self.assertEqual(dispatched, [0, 1, 2, 3, 4])
         for invalid in ([3], (3, 3), (5,), (True,)):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 MultiDeviceLEDController(
@@ -715,7 +715,7 @@ class HeterogeneousTopologyTests(unittest.TestCase):
             )
 
     def test_per_receiver_speed_contract_overrides_only_the_selected_route(self):
-        speeds = (20_000_000, 20_000_000, 20_000_000, 12_000_000, 20_000_000)
+        speeds = (20_000_000, 20_000_000, 20_000_000, 8_000_000, 20_000_000)
         with (
             mock.patch("drivers.multi_device.LEDController", _Device),
             mock.patch.object(
