@@ -26,7 +26,7 @@
     },
     {
       "bytes": 927364,
-      "sha256": "35444670c43493eeb5662c335a2eba43ffd2a69760e2484a7c7d8fb2b70e479a",
+      "sha256": "718fd6789a09d66a867c715936b3802faf35fb74fa3f90bdfa7935cef31f3272",
       "url": "/static/generated/composer/bootstrap.v1.json"
     },
     {
@@ -40,8 +40,8 @@
       "url": "/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin"
     },
     {
-      "bytes": 2370693,
-      "sha256": "774ededc2074ac85aef7fa8693989b890f770e7dbd8f7fc50f9fbfd5b0e0c2a4",
+      "bytes": 2370667,
+      "sha256": "f3d86c7251d850bdaddfee8ed489b9bdc2591e9dcaa52c75811c30bb6083d597",
       "url": "/static/generated/composer/ledgrid_python_runtime.zip"
     },
     {

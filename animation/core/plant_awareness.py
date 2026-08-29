@@ -293,7 +293,6 @@ class PlantMaskCache:
 
     def get(self, clearance: Optional[int] = None) -> PlantMaskGeometry:
         strip_count, leds_per_strip = self.owner.get_strip_info()
-        total_leds = self.owner.get_pixel_count()
         radius = max(
             0,
             int(

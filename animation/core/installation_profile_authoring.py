@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Iterator, Mapping, Sequence
 import uuid
 
 import numpy as np

@@ -17,7 +17,6 @@ from animation.browser_preview.python.runtime import (
     BrowserPreviewRuntime,
     ENGINE,
     MAX_RUNTIME_INSTANCES,
-    PLUGIN_SPECS,
     SUPPORTED_PLUGINS,
 )
 from animation.core.base import RenderedFrame
@@ -261,7 +260,7 @@ class BrowserPythonBundleTests(unittest.TestCase):
             installation_profile_digest=PROFILE_DIGEST,
         )
         self.assertEqual(ready["role"], "overlay")
-        first = runtime.render(0.0, 0, wall_time=1787774400.0)
+        runtime.render(0.0, 0, wall_time=1787774400.0)
         first_bytes = runtime.frame_bytes
         repeated = runtime.render(1.0, 1, wall_time=1787774400.0)
         self.assertFalse(repeated["changed"])

@@ -28,7 +28,6 @@ from ipc.scene_contract import (
     activation_identity_from_basis,
     browser_scene_to_host_scene,
     build_scene_activation_basis,
-    canonical_json_sha256,
     decorate_browser_component,
     decorate_catalog,
     normalize_browser_scene_document,
