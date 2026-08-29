@@ -4739,6 +4739,54 @@ later evidence is explicit; it does not manufacture hardware acceptance.
   Electrical measurements and the physical iPhone/installed/VoiceOver gates
   are `OPERATOR_WAIVED`, never `PASS`.
 
+### Continuation evidence — 2026-08-29 brightness-zero PERF failure
+
+This evidence supersedes the paused hardware state above. It does not authorize
+WALL-02 or weaken any integrity threshold.
+
+- App-only deployment now accepts a healthy idle controller as ready, ships the
+  qualification budget in fast releases, uses the vectorized byte-exact v7
+  encoder, and drains the receiver's two queued response slots with one full
+  display-cycle margin. FEC-requested receiver 3 performs that v7 drain during
+  the pre-enable sampling phase rather than trying to negotiate from its
+  deliberately legacy-safe in-band v3 frame response. Focused transport
+  coverage passed 90 tests plus 32 subtests; repeated clean app-only deployments
+  passed the complete Python/rendering/deployment gate before target cutover.
+- The final guarded Rainbow Classic Spectrum activation was
+  `0fc7674b-2241-41b0-bf76-0a6cacbd89a7`, with Check basis
+  `6522c60c60e1db302b74cd35f1d1b75f55e658aef31126cfcf0a8f59e0c6f777`,
+  canonical scene
+  `5ed50c92e08fface99dd09fb48c3b5a277ccc67914cb656545dbd04d05aa31f6`,
+  and immutable release
+  `322356288284c8e2aae3e1c0fd2406c619ab2854931820ac3f605b56d77ce1f7`.
+  Requested, normalized, and observed identities were unanimous. Global
+  brightness was zero for the entire activation and observation.
+- The official 60.024-second observation-only PERF-01 run **FAILED**. Logical
+  receivers 0-2 displayed 8,064 frames each at 134.35 FPS. Receiver 4 displayed
+  8,063 frames at 134.33 FPS and added one CRC error. FEC receiver 3 displayed
+  only 2,979 frames at 49.63 FPS, added 138 CRC errors and 113 missing status
+  responses during the observer, and later exposed a process-local v7 terminal
+  delta of 179 uncorrectable packets with zero corrected packets/codewords.
+  Its semantic-CRC and framing deltas remained zero and its pre-enable lifetime
+  baseline remained established and valid. The Host loop was approximately
+  133.87 FPS, below the required 150 FPS.
+- A receiver-3-only 12 MHz topology derating was also tested at brightness zero
+  on release
+  `4c587a908353594a8c99acf452089f077f6d2b9e32988e4ef8d43c118b46503a`.
+  It still added 19 uncorrectable packets and 13 status misses while cadence
+  fell to approximately 121.10 FPS. That failed experiment and its regenerated
+  Composer bundle were reverted; the selected final release again reports the
+  exact `(20,20,20,20,20) MHz` topology.
+- Guarded rollback request
+  `0304e4de-d895-4888-ad0d-de7cfd8c5dae` succeeded. The controller is `idle`,
+  playback is stopped, brightness is zero, the Pi remains powered, and no
+  receiver was reflashed after the one authorized blank-wall bootstrap.
+- **WALL-02 is `BLOCKED_BY_PERF_01` and was not run.** A 30-minute soak on a
+  release already producing uncorrectable/CRC/status faults would violate its
+  prerequisite and could not become acceptance evidence. Electrical
+  measurement and the physical iPhone/installed/VoiceOver gates remain
+  `OPERATOR_WAIVED`, never `PASS`.
+
 ## Assumptions
 
 - The installation remains one Mac development machine, one Raspberry Pi, and

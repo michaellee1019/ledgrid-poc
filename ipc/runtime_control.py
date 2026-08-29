@@ -17,7 +17,7 @@ import re
 import threading
 import time
 import uuid
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Mapping
 
 from animation.core.installation_profile_runtime import (
     EMPTY_INSTALLATION_PROFILE_DIGEST,
