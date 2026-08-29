@@ -123,10 +123,12 @@ The exact reconstruction and release gates are listed in
 - Bring-up and no-FEC acceptance plan
 - Source reconstruction and release checklist
 
-An importable, deliberately unrouted EasyEDA Standard PCB starting point is in
+An importable EasyEDA Standard placement/routing starting point is in
 [`../easyeda/`](../easyeda/). It removes the unsafe V4 routing and selector
-footprints, applies the fixed dual-SPI pad nets, and enables the proposed four
-copper layers. It is a review scaffold, not completed Rev5 EDA source.
+footprints, applies the fixed dual-SPI pad nets, corrects the receiver/antenna
+floorplan, adds the critical SPI damping/test geometry and checked draft SPI
+routes, and enables the proposed four copper layers with an L2 ground area. It
+is a review scaffold, not completed Rev5 EDA source.
 
 The completed Rev5 schematic, routed PCB, revised schematic plot, PnP, final
 routed-length values, revised copper overlay, and Gerber/drill archive remain

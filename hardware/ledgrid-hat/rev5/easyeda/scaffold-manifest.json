@@ -1,5 +1,5 @@
 {
-  "artifact": "LED Grid Wall HAT Rev5 EasyEDA SPI scaffold",
+  "artifact": "LED Grid Wall HAT Rev5 EasyEDA placement/routing scaffold",
   "status": "NOT FOR FABRICATION",
   "source_shape_counts": {
     "LIB": 45,
@@ -10,10 +10,13 @@
     "VIA": 80
   },
   "output_shape_counts": {
-    "LIB": 31,
-    "RECT": 2,
-    "SOLIDREGION": 2,
-    "TEXT": 6
+    "COPPERAREA": 1,
+    "LIB": 37,
+    "RECT": 3,
+    "SOLIDREGION": 8,
+    "TEXT": 6,
+    "TRACK": 39,
+    "VIA": 18
   },
   "removed_selector_footprints": [
     "SJ_SPI0_CE0",
@@ -31,104 +34,645 @@
     "SJ_SPI1_MOSI",
     "SJ_SPI1_SCLK"
   ],
-  "removed_selector_labels": [
-    "CE0",
-    "CE0",
-    "CE1",
-    "CE1",
-    "CE2",
-    "CE2",
-    "CE3",
-    "CE3",
-    "SPI0",
-    "SPI1"
+  "removed_obsolete_or_blocking_footprints": [
+    "1B_RESET",
+    "1C1",
+    "1C2",
+    "1C_RESET",
+    "1R_CE_PULLUP",
+    "1R_RESET",
+    "1_3V3_REG",
+    "1_USB_BOB",
+    "2B_RESET",
+    "2C1",
+    "2C2",
+    "2C_RESET",
+    "2R_CE_PULLUP",
+    "2R_RESET",
+    "2_3V3_REG",
+    "2_USB_BOB",
+    "C1",
+    "CN1",
+    "C_TRAN1_A",
+    "C_TRAN1_B",
+    "C_TRAN2_A",
+    "C_TRAN2_B",
+    "SJ_VUSB",
+    "U3"
   ],
-  "removed_stale_board_titles": [
-    "LED GRID WALL HAT V0.4",
-    "LED GRID WALL HAT V0.4"
-  ],
+  "removed_selector_labels": 10,
+  "removed_stale_titles": 2,
+  "removed_selector_bank_rectangles": 2,
   "pad_net_changes": [
+    {
+      "refdes": "1_SMD",
+      "pad": "2",
+      "old_net": "1_3V3",
+      "new_net": "B_3V3"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "3",
+      "old_net": "1ENN",
+      "new_net": "B_EN"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "4",
+      "old_net": "1IO4",
+      "new_net": "B_GPIO4"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "5",
+      "old_net": "1IO5",
+      "new_net": "B_GPIO5"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "6",
+      "old_net": "1IO6",
+      "new_net": "B_GPIO6"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "7",
+      "old_net": "1IO7",
+      "new_net": "B_GPIO7"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "8",
+      "old_net": "1IO15",
+      "new_net": "B_GPIO15"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "9",
+      "old_net": "1IO16",
+      "new_net": "B_GPIO16"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "10",
+      "old_net": "1IO17",
+      "new_net": "B_GPIO17"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "11",
+      "old_net": "1IO18",
+      "new_net": "B_GPIO18"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "13",
+      "old_net": "1IO19",
+      "new_net": "B_GPIO19"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "14",
+      "old_net": "1IO20",
+      "new_net": "B_GPIO20"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "18",
+      "old_net": "1IO10",
+      "new_net": "B_SPI1_CS"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "19",
+      "old_net": "1IO11",
+      "new_net": "B_SPI1_MOSI"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "20",
+      "old_net": "1IO12",
+      "new_net": "B_SPI1_SCLK"
+    },
+    {
+      "refdes": "1_SMD",
+      "pad": "21",
+      "old_net": "1IO13",
+      "new_net": "B_SPI1_MISO"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "2",
+      "old_net": "2_3V3",
+      "new_net": "A_3V3"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "3",
+      "old_net": "2ENN",
+      "new_net": "A_EN"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "4",
+      "old_net": "2IO4",
+      "new_net": "A_GPIO4"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "5",
+      "old_net": "2IO5",
+      "new_net": "A_GPIO5"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "6",
+      "old_net": "2IO6",
+      "new_net": "A_GPIO6"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "7",
+      "old_net": "2IO7",
+      "new_net": "A_GPIO7"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "8",
+      "old_net": "2IO15",
+      "new_net": "A_GPIO15"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "9",
+      "old_net": "2IO16",
+      "new_net": "A_GPIO16"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "10",
+      "old_net": "2IO17",
+      "new_net": "A_GPIO17"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "11",
+      "old_net": "2IO18",
+      "new_net": "A_GPIO18"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "13",
+      "old_net": "2IO19",
+      "new_net": "A_GPIO19"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "14",
+      "old_net": "2IO20",
+      "new_net": "A_GPIO20"
+    },
+    {
+      "refdes": "2_SMD",
+      "pad": "18",
+      "old_net": "2IO10",
+      "new_net": "A_SPI0_CS"
+    },
     {
       "refdes": "2_SMD",
       "pad": "19",
       "old_net": "1IO11",
-      "new_net": "2IO11"
+      "new_net": "A_SPI0_MOSI"
     },
     {
       "refdes": "2_SMD",
       "pad": "20",
       "old_net": "1IO12",
-      "new_net": "2IO12"
+      "new_net": "A_SPI0_SCLK"
     },
     {
       "refdes": "2_SMD",
       "pad": "21",
       "old_net": "1IO13",
-      "new_net": "2IO13"
+      "new_net": "A_SPI0_MISO"
+    },
+    {
+      "refdes": "TRAN1_A",
+      "pad": "2",
+      "old_net": "1IO18",
+      "new_net": "B_GPIO18"
+    },
+    {
+      "refdes": "TRAN1_A",
+      "pad": "3",
+      "old_net": "LED1",
+      "new_net": "LED9"
+    },
+    {
+      "refdes": "TRAN1_A",
+      "pad": "5",
+      "old_net": "1IO17",
+      "new_net": "B_GPIO17"
+    },
+    {
+      "refdes": "TRAN1_A",
+      "pad": "6",
+      "old_net": "LED2",
+      "new_net": "LED10"
+    },
+    {
+      "refdes": "TRAN1_A",
+      "pad": "8",
+      "old_net": "LED3",
+      "new_net": "LED11"
+    },
+    {
+      "refdes": "TRAN1_A",
+      "pad": "9",
+      "old_net": "1IO16",
+      "new_net": "B_GPIO16"
+    },
+    {
+      "refdes": "TRAN1_A",
+      "pad": "11",
+      "old_net": "LED4",
+      "new_net": "LED12"
+    },
+    {
+      "refdes": "TRAN1_A",
+      "pad": "12",
+      "old_net": "1IO15",
+      "new_net": "B_GPIO15"
+    },
+    {
+      "refdes": "TRAN1_B",
+      "pad": "2",
+      "old_net": "1IO7",
+      "new_net": "B_GPIO7"
+    },
+    {
+      "refdes": "TRAN1_B",
+      "pad": "3",
+      "old_net": "LED5",
+      "new_net": "LED13"
+    },
+    {
+      "refdes": "TRAN1_B",
+      "pad": "5",
+      "old_net": "1IO6",
+      "new_net": "B_GPIO6"
+    },
+    {
+      "refdes": "TRAN1_B",
+      "pad": "6",
+      "old_net": "LED6",
+      "new_net": "LED14"
+    },
+    {
+      "refdes": "TRAN1_B",
+      "pad": "8",
+      "old_net": "LED7",
+      "new_net": "LED15"
+    },
+    {
+      "refdes": "TRAN1_B",
+      "pad": "9",
+      "old_net": "1IO5",
+      "new_net": "B_GPIO5"
+    },
+    {
+      "refdes": "TRAN1_B",
+      "pad": "11",
+      "old_net": "LED8",
+      "new_net": "LED16"
+    },
+    {
+      "refdes": "TRAN1_B",
+      "pad": "12",
+      "old_net": "1IO4",
+      "new_net": "B_GPIO4"
+    },
+    {
+      "refdes": "TRAN2_A",
+      "pad": "2",
+      "old_net": "2IO18",
+      "new_net": "A_GPIO18"
+    },
+    {
+      "refdes": "TRAN2_A",
+      "pad": "3",
+      "old_net": "LED9",
+      "new_net": "LED1"
+    },
+    {
+      "refdes": "TRAN2_A",
+      "pad": "5",
+      "old_net": "2IO17",
+      "new_net": "A_GPIO17"
+    },
+    {
+      "refdes": "TRAN2_A",
+      "pad": "6",
+      "old_net": "LED10",
+      "new_net": "LED2"
+    },
+    {
+      "refdes": "TRAN2_A",
+      "pad": "8",
+      "old_net": "LED11",
+      "new_net": "LED3"
+    },
+    {
+      "refdes": "TRAN2_A",
+      "pad": "9",
+      "old_net": "2IO16",
+      "new_net": "A_GPIO16"
+    },
+    {
+      "refdes": "TRAN2_A",
+      "pad": "11",
+      "old_net": "LED12",
+      "new_net": "LED4"
+    },
+    {
+      "refdes": "TRAN2_A",
+      "pad": "12",
+      "old_net": "2IO15",
+      "new_net": "A_GPIO15"
+    },
+    {
+      "refdes": "TRAN2_B",
+      "pad": "2",
+      "old_net": "2IO7",
+      "new_net": "A_GPIO7"
+    },
+    {
+      "refdes": "TRAN2_B",
+      "pad": "3",
+      "old_net": "LED13",
+      "new_net": "LED5"
+    },
+    {
+      "refdes": "TRAN2_B",
+      "pad": "5",
+      "old_net": "2IO6",
+      "new_net": "A_GPIO6"
+    },
+    {
+      "refdes": "TRAN2_B",
+      "pad": "6",
+      "old_net": "LED14",
+      "new_net": "LED6"
+    },
+    {
+      "refdes": "TRAN2_B",
+      "pad": "8",
+      "old_net": "LED15",
+      "new_net": "LED7"
+    },
+    {
+      "refdes": "TRAN2_B",
+      "pad": "9",
+      "old_net": "2IO5",
+      "new_net": "A_GPIO5"
+    },
+    {
+      "refdes": "TRAN2_B",
+      "pad": "11",
+      "old_net": "LED16",
+      "new_net": "LED8"
+    },
+    {
+      "refdes": "TRAN2_B",
+      "pad": "12",
+      "old_net": "2IO4",
+      "new_net": "A_GPIO4"
     },
     {
       "refdes": "U12",
       "pad": "12",
       "old_net": "U12_12",
-      "new_net": "2IO10"
+      "new_net": "B_SPI1_CS_PI"
     },
     {
       "refdes": "U12",
       "pad": "19",
       "old_net": "U12_19",
-      "new_net": "1IO11"
+      "new_net": "A_SPI0_MOSI_PI"
     },
     {
       "refdes": "U12",
       "pad": "21",
       "old_net": "U12_21",
-      "new_net": "1IO13"
+      "new_net": "A_SPI0_MISO_PI"
     },
     {
       "refdes": "U12",
       "pad": "23",
       "old_net": "U12_23",
-      "new_net": "1IO12"
+      "new_net": "A_SPI0_SCLK_PI"
     },
     {
       "refdes": "U12",
       "pad": "24",
       "old_net": "U12_24",
-      "new_net": "1IO10"
+      "new_net": "A_SPI0_CS_PI"
     },
     {
       "refdes": "U12",
       "pad": "35",
       "old_net": "U12_35",
-      "new_net": "2IO13"
+      "new_net": "B_SPI1_MISO_PI"
     },
     {
       "refdes": "U12",
       "pad": "38",
       "old_net": "U12_38",
-      "new_net": "2IO11"
+      "new_net": "B_SPI1_MOSI_PI"
     },
     {
       "refdes": "U12",
       "pad": "40",
       "old_net": "U12_40",
-      "new_net": "2IO12"
+      "new_net": "B_SPI1_SCLK_PI"
     }
   ],
-  "routing_layers": [
-    "TopLayer",
-    "Inner1_GND",
-    "Inner2_PWR",
-    "BottomLayer"
+  "placement_changes": [
+    {
+      "refdes": "TRAN2_A",
+      "role": "A output buffer",
+      "change": "moved 6.096 mm upward",
+      "reason": "clear output connector corridor"
+    },
+    {
+      "refdes": "TRAN2_B",
+      "role": "A output buffer",
+      "change": "moved 6.096 mm upward",
+      "reason": "clear output connector corridor"
+    },
+    {
+      "refdes": "2_SMD",
+      "role": "A/SPI0/LED1-8",
+      "change": "moved 4.064 mm upward",
+      "reason": "clear output connector corridor"
+    },
+    {
+      "refdes": "1_SMD",
+      "role": "B/SPI1/LED9-16",
+      "change": "rotated 180 degrees",
+      "reason": "antenna faces right board edge"
+    }
   ],
-  "remaining_pad_count": 278,
-  "remaining_named_nets": 135,
+  "placement_reservations": {
+    "A_BUCK_RESERVED": {
+      "x": 4115.0,
+      "y": 3476.0,
+      "width": 25.0,
+      "height": 24.0
+    },
+    "B_BUCK_RESERVED": {
+      "x": 4142.0,
+      "y": 3450.0,
+      "width": 20.0,
+      "height": 24.0
+    },
+    "CN1_34POS_RESERVED": {
+      "x": 4045.0,
+      "y": 3528.0,
+      "width": 183.0,
+      "height": 27.0
+    }
+  },
+  "antenna_keepouts": {
+    "A_LEFT_EDGE": [
+      3992.0,
+      3425.0,
+      4017.0,
+      3495.0
+    ],
+    "B_RIGHT_EDGE": [
+      4240.0,
+      3401.0,
+      4265.0,
+      3471.0
+    ]
+  },
+  "remaining_pad_count": 242,
+  "remaining_named_nets": 136,
+  "series_resistors": [
+    "R_ASCLK",
+    "R_AMOSI",
+    "R_ACS",
+    "R_AMISO",
+    "R_BMOSI",
+    "R_BSCLK",
+    "R_BCS",
+    "R_BMISO"
+  ],
+  "cs_pullups": [
+    "R_ACS_PU",
+    "R_BCS_PU"
+  ],
+  "signal_testpoints": [
+    "TP_A_CS",
+    "TP_A_MISO",
+    "TP_A_MOSI",
+    "TP_A_SCLK",
+    "TP_B_CS",
+    "TP_B_MISO",
+    "TP_B_MOSI",
+    "TP_B_SCLK"
+  ],
+  "ground_testpoints": [
+    "TP_A_GCS",
+    "TP_A_GMISO",
+    "TP_A_GMOSI",
+    "TP_A_GSCLK",
+    "TP_B_GCS",
+    "TP_B_GMISO",
+    "TP_B_GMOSI",
+    "TP_B_GSCLK"
+  ],
+  "buffer_bypass_capacitors": [
+    "C_AH1",
+    "C_AH2",
+    "C_BH1",
+    "C_BH2"
+  ],
+  "spi_route_metrics": {
+    "A_CS": {
+      "length_mm": 50.4,
+      "layers": [
+        1
+      ],
+      "signal_vias": 0
+    },
+    "A_MISO": {
+      "length_mm": 43.32,
+      "layers": [
+        1,
+        2
+      ],
+      "signal_vias": 1
+    },
+    "A_MOSI": {
+      "length_mm": 43.77,
+      "layers": [
+        1
+      ],
+      "signal_vias": 0
+    },
+    "A_SCLK": {
+      "length_mm": 41.57,
+      "layers": [
+        1
+      ],
+      "signal_vias": 0
+    },
+    "B_CS": {
+      "length_mm": 36.22,
+      "layers": [
+        1,
+        2
+      ],
+      "signal_vias": 1
+    },
+    "B_MISO": {
+      "length_mm": 61.04,
+      "layers": [
+        1,
+        2
+      ],
+      "signal_vias": 1
+    },
+    "B_MOSI": {
+      "length_mm": 36.13,
+      "layers": [
+        1,
+        2
+      ],
+      "signal_vias": 1
+    },
+    "B_SCLK": {
+      "length_mm": 36.82,
+      "layers": [
+        1,
+        2
+      ],
+      "signal_vias": 1
+    }
+  },
+  "minimum_different_net_track_centre_clearance_mm": 0.508,
   "validation": {
     "easyeda_document_type": 3,
-    "unrouted": true,
-    "fixed_spi_pad_assignments": "passed",
-    "selector_footprints_absent": true,
-    "four_copper_layers_enabled": true
+    "all_v4_tracks_and_vias_removed_before_rerouting": true,
+    "fixed_dual_spi_pad_assignments": "passed",
+    "route_length_and_via_limits": "passed",
+    "serialized_spi_connectivity_groups": 16,
+    "different_net_track_clearance": "passed structural centre-line check",
+    "antenna_orientation_and_four-layer_cutouts": "passed",
+    "l2_ground_copper_area_present": true,
+    "native_easyeda_drc": "required after import; not available in this generator"
   },
   "source_pcb": {
     "file": "PCB_LedGridWallHatV4_2026-08-28.json",
@@ -136,11 +680,11 @@
   },
   "generated_pcb": {
     "file": "PCB_LedGridWallHatRev5_SPI_SCAFFOLD.json",
-    "sha256": "35d6af2e5ce1bfe7a39d426b7d658c5bd81ffa7a9bcafc461e78ef62262f967c"
+    "sha256": "d04d5dd7e277fc8fd5c953c335cb6fc1fb3e0c73683a4b4d6141c054664378c8"
   },
   "schematic_reference": {
     "file": "SCH_LedGridWallHatV4_REFERENCE.json",
     "sha256": "c3682a5fb574e7799fffc0c24faba3f396fa8aa8a6d50f9074b48824c7e17821",
-    "note": "Unmodified V4 reference; not a Rev5 schematic"
+    "note": "Unmodified V4 reference; not Rev5"
   }
 }
