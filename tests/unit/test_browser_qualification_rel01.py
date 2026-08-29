@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -32,6 +33,7 @@ from tools.browser_qualification.run import create_run_directory, write_index
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = ROOT / "tools" / "browser_qualification" / "rel01_manifest.json"
+SERVICE_WORKER_PATH = ROOT / "web" / "static" / "js" / "composer_service_worker.js"
 NOW = "2026-08-28T01:00:00.000Z"
 LATER = "2026-08-28T01:01:00.000Z"
 
@@ -146,8 +148,8 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
         self.assertEqual(
             self.manifest["service_worker_upgrade"],
             {
-                "previous_cache": "ledgrid-composer-shell-v19",
-                "current_cache": "ledgrid-composer-shell-v20",
+                "previous_cache": "ledgrid-composer-shell-v23",
+                "current_cache": "ledgrid-composer-shell-v24",
             },
         )
         self.assertEqual(
@@ -195,6 +197,7 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             "previous_cache_generation_upgraded",
             self.manifest["journeys"]["offline_reconnect"]["required_assertions"],
         )
+
         self.assertIn(
             "renderer_catalog_cached",
             self.manifest["journeys"]["offline_reconnect"]["required_assertions"],
@@ -286,6 +289,22 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
                 "controller_or_receiver_performance",
                 "electrical_safety",
             }.issubset(self.manifest["excluded_claims"])
+        )
+
+    def test_manifest_cache_upgrade_tracks_composer_service_worker(self) -> None:
+        worker = SERVICE_WORKER_PATH.read_text(encoding="utf-8")
+        prefix = re.search(r"const CACHE_PREFIX = '([^']+)';", worker)
+        previous = re.search(r"const PREVIOUS_CACHE_VERSION = '([^']+)';", worker)
+        current = re.search(r"const CACHE_VERSION = '([^']+)';", worker)
+        self.assertIsNotNone(prefix)
+        self.assertIsNotNone(previous)
+        self.assertIsNotNone(current)
+        self.assertEqual(
+            self.manifest["service_worker_upgrade"],
+            {
+                "previous_cache": f"{prefix.group(1)}{previous.group(1)}",
+                "current_cache": f"{prefix.group(1)}{current.group(1)}",
+            },
         )
 
     def test_complete_clean_matrix_passes_portable_lane_but_not_rel01_gate(self) -> None:
