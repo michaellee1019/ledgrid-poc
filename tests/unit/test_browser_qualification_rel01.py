@@ -491,6 +491,20 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             source,
         )
 
+    def test_keyboard_library_save_requires_its_no_wall_mutation_confirmation(self) -> None:
+        source = (
+            ROOT / "tools" / "browser_qualification" / "playwright_probe.mjs"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "'library_save_keyboard_completed_without_wall_change',",
+            source,
+        )
+        self.assertIn(
+            "/saved/i.test(saveStatus) && /physical wall was not changed/i.test(saveStatus)",
+            source,
+        )
+
     def test_offline_probe_opens_mobile_catalog_before_selecting_a_component(self) -> None:
         source = (
             ROOT / "tools" / "browser_qualification" / "playwright_probe.mjs"

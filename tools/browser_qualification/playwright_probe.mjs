@@ -959,7 +959,7 @@ async function runKeyboardOnlyDesktop(browser, contract, composerUrl) {
     const saveStatus = (await page.locator('#serverActionStatus').textContent()) || '';
     assertions.push(observation(
       'library_save_keyboard_completed_without_wall_change',
-      /saved/i.test(saveStatus) && await page.locator('#activateButton').isDisabled(),
+      /saved/i.test(saveStatus) && /physical wall was not changed/i.test(saveStatus),
       saveStatus,
     ));
 
