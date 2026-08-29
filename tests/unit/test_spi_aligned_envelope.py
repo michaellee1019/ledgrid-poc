@@ -392,7 +392,11 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
         item._update_receiver_status = types.MethodType(
             protocol.LEDController._update_receiver_status, item
         )
-        item.spi.miso_responses = [_status_v6(20, aligned=True)]
+        item.spi.miso_responses = [
+            bytes(protocol.RECEIVER_STATUS_BYTES_V6),
+            bytes(protocol.RECEIVER_STATUS_BYTES_V6),
+            _status_v6(20, aligned=True),
+        ]
 
         item.set_all_pixels(
             np.zeros((138, 3), dtype=np.uint8),
@@ -403,14 +407,15 @@ class SpiAlignedEnvelopeTests(unittest.TestCase):
             wall_frame_sequence=103,
         )
 
-        self.assertEqual(len(item.spi.response_packets), 1)
-        self.assertEqual(len(item.spi.response_packets[0]), 1224)
-        self.assertEqual(item.spi.response_packets[0][0], protocol.CMD_ALIGNED_ENVELOPE)
+        self.assertEqual(len(item.spi.response_packets), 3)
+        for packet in item.spi.response_packets:
+            self.assertEqual(len(packet), 1224)
+            self.assertEqual(packet[0], protocol.CMD_ALIGNED_ENVELOPE)
         self.assertEqual(len(item.spi.write_only_packets), 2)
         self.assertTrue(all(
             len(packet) == 424 for packet in item.spi.write_only_packets
         ))
-        self.assertEqual(item._spi_transfers, 3)
+        self.assertEqual(item._spi_transfers, 5)
         self.assertEqual(item._full_frame_transfers, 2)
         self.assertEqual(item._full_frame_status_transfers, 1)
         self.assertEqual(item._full_frame_status_samples, 1)
