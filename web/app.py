@@ -1158,8 +1158,14 @@ class AnimationWebInterface:
                     raise SceneValidationError(
                         'the wall is no longer running the Composer renderer selected for live edit'
                     )
+                # ``component`` is the validated active-scene reference used
+                # above for identity matching.  Do not send it back through
+                # the targeted updater: a background component object means
+                # replacement, whereas live edit deliberately changes only
+                # the existing component's parameters.
                 command = self.control_channel.send_command(
-                    'update_scene_component', target=target, update=update
+                    'update_scene_component', target=target,
+                    update={'params': update['params']},
                 )
             except SceneValidationError as exc:
                 return jsonify({

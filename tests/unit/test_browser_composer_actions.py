@@ -386,11 +386,6 @@ class BrowserComposerActionTests(unittest.TestCase):
             "data": {
                 "target": "background",
                 "update": {
-                    "component": {
-                        "plugin_id": "gradient", "provider": "python",
-                        "parameter_overrides": {"speed": 1.4},
-                        "resolved_parameters": {"speed": 0.7},
-                    },
                     "params": {"speed": 1.4},
                 },
             },
