@@ -96,7 +96,13 @@ constexpr std::size_t kFecV4EnvelopeMaxSemanticBytes =
 // repeated-bit spans are repaired only when all ten syndromes identify one
 // unique constant-XOR interval.
 // The installed broad-frame wire size remains 4,088 bytes.
-constexpr std::uint8_t kFecEnvelopeVersion = 5;
+constexpr std::uint8_t kFecEnvelopeVersionV5 = 5;
+// V6 retains the exact v5 code and 4,088-byte installed wire bound, but rotates
+// logical codeword positions by the symbol row before writing each interleave
+// row. Fixed-position/periodic link interference is therefore distributed
+// across codewords instead of repeatedly consuming one codeword's ten
+// syndromes. Receivers retain ordinary v5 deinterleaving for rollback hosts.
+constexpr std::uint8_t kFecEnvelopeVersion = 6;
 constexpr std::size_t kFecDataBytes = 50;
 constexpr std::size_t kFecParityBytes = 10;
 constexpr std::size_t kFecCodewordBytes =
@@ -185,6 +191,7 @@ enum ReceiverCapability : std::uint32_t {
   kCapabilityFecEnvelopeV3 = 1U << 16U,
   kCapabilityFecEnvelopeV4 = 1U << 17U,
   kCapabilityFecEnvelopeV5 = 1U << 18U,
+  kCapabilityFecEnvelopeV6 = 1U << 19U,
 };
 
 struct ReceiverPacketPayload {

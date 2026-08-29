@@ -121,6 +121,7 @@ def _status_v7(receiver_packets, *, fec=True):
             | protocol.CAPABILITY_FEC_ENVELOPE_V3
             | protocol.CAPABILITY_FEC_ENVELOPE_V4
             | protocol.CAPABILITY_FEC_ENVELOPE_V5
+            | protocol.CAPABILITY_FEC_ENVELOPE_V6
         )
     response[64:68] = capabilities.to_bytes(4, "big")
     response[314] = protocol.STAGGER_OFF
@@ -150,6 +151,7 @@ def _status_v3(receiver_packets, *, fec=False):
             | protocol.CAPABILITY_FEC_ENVELOPE_V3
             | protocol.CAPABILITY_FEC_ENVELOPE_V4
             | protocol.CAPABILITY_FEC_ENVELOPE_V5
+            | protocol.CAPABILITY_FEC_ENVELOPE_V6
         )
     response[64:68] = capabilities.to_bytes(4, "big")
     response[314] = protocol.STAGGER_OFF
@@ -160,11 +162,11 @@ class SpiFecEnvelopeTests(unittest.TestCase):
     def test_exact_fixed_codeword_layout_and_golden_digest(self):
         packet = protocol._encode_fec_envelope(bytes((protocol.CMD_SHOW,)))
         self.assertEqual(len(packet), 248)
-        self.assertEqual(packet[:4], b"\x0b\x05\x00\x08")
+        self.assertEqual(packet[:4], b"\x0b\x06\x00\x08")
         self.assertEqual(packet[-4:], packet[:4])
         self.assertEqual(
             hashlib.sha256(packet).hexdigest(),
-            "e39953f0a25df41e937e5446492545530b4c4cbe273c51733885e681c9829d92",
+            "2504770d158295ae3796f1dbb3a253669e65aec8a9b88ff613e8a073cf2026ed",
         )
 
     def test_full_and_tail_frames_have_exact_bounded_wire_overhead(self):
@@ -185,7 +187,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
                     data_padding,
                 )
 
-    def test_v5_reed_solomon_parity_and_burst_distribution_are_exact(self):
+    def test_v6_reed_solomon_parity_and_diagonal_distribution_are_exact(self):
         packet = protocol._encode_fec_envelope(bytes(range(1, 65)))
         codewords = (
             len(packet) - protocol.FEC_WIRE_HEADER_BYTES
@@ -194,20 +196,40 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         for block in range(codewords):
             syndromes = [0] * protocol.FEC_PARITY_BYTES
             for symbol in range(protocol.FEC_CODEWORD_BYTES):
-                value = packet[matrix + symbol * codewords + block]
+                wire_block = (block + symbol) % codewords
+                value = packet[matrix + symbol * codewords + wire_block]
                 evaluation = symbol + 1
                 for power in range(protocol.FEC_PARITY_BYTES):
                     syndromes[power] ^= protocol._fec_gf_multiply(
                         value, protocol._fec_gf_power(evaluation, power)
                     )
             self.assertEqual(syndromes, [0] * protocol.FEC_PARITY_BYTES)
-        burst_start = matrix + 7
-        affected_blocks = [
-            (offset - matrix) % codewords
-            for offset in range(burst_start, burst_start + 5 * codewords)
+        fixed_wire_block = 3
+        affected_logical_blocks = [
+            (fixed_wire_block - symbol) % codewords
+            for symbol in range(protocol.FEC_CODEWORD_BYTES)
         ]
-        self.assertEqual(set(affected_blocks), set(range(codewords)))
-        self.assertTrue(all(affected_blocks.count(block) == 5 for block in range(codewords)))
+        self.assertEqual(set(affected_logical_blocks), set(range(codewords)))
+        self.assertLessEqual(
+            max(affected_logical_blocks.count(block) for block in range(codewords)),
+            (protocol.FEC_CODEWORD_BYTES + codewords - 1) // codewords,
+        )
+        installed = protocol._encode_fec_envelope(bytes(3313))
+        installed_codewords = (
+            len(installed) - protocol.FEC_WIRE_HEADER_BYTES
+        ) // protocol.FEC_CODEWORD_BYTES
+        self.assertEqual(installed_codewords, 68)
+        installed_fixed_position = [
+            (fixed_wire_block - symbol) % installed_codewords
+            for symbol in range(protocol.FEC_CODEWORD_BYTES)
+        ]
+        self.assertEqual(len(set(installed_fixed_position)), 60)
+        self.assertTrue(
+            all(
+                installed_fixed_position.count(block) <= 1
+                for block in range(installed_codewords)
+            )
+        )
 
     def test_bad_types_bounds_and_output_size_fail_closed(self):
         for value, error in (
@@ -236,7 +258,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
             protocol.RECEIVER_STATUS_BYTES_V7,
         )
 
-    def test_legacy_v2_v3_v4_capabilities_never_enable_v5_host_frames(self):
+    def test_legacy_v2_through_v5_capabilities_never_enable_v6_host_frames(self):
         item = _controller(requested=True)
         for counter in range(1, 5):
             response = _status_v7(counter, fec=False)
@@ -245,6 +267,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
                 | protocol.CAPABILITY_FEC_ENVELOPE_V2
                 | protocol.CAPABILITY_FEC_ENVELOPE_V3
                 | protocol.CAPABILITY_FEC_ENVELOPE_V4
+                | protocol.CAPABILITY_FEC_ENVELOPE_V5
             )
             response[64:68] = capabilities.to_bytes(4, "big")
             protocol.LEDController._update_receiver_status(item, response)
@@ -294,7 +317,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
             )
         self.assertFalse(item._fec_transport_enabled)
 
-    def test_selected_full_frame_uses_v5_once_and_accounts_exactly(self):
+    def test_selected_full_frame_uses_v6_once_and_accounts_exactly(self):
         item = _controller(requested=True)
         item._transport_envelope_enabled = True
         item._fec_transport_enabled = True
@@ -303,7 +326,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         colors = np.zeros((8 * 138, 3), dtype=np.uint8)
         item.set_all_pixels(colors, wall_frame_sequence=1)
         packet = item.spi.packets[-1]
-        self.assertEqual(packet[:2], b"\x0b\x05")
+        self.assertEqual(packet[:2], b"\x0b\x06")
         self.assertEqual(len(packet), 4088)
         self.assertEqual(item._fec_frames_sent, 1)
         self.assertEqual(item._fec_codewords_sent, 68)
@@ -333,7 +356,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         )
         self.assertEqual(len(item.spi.write_only_packets), 0)
         self.assertEqual(len(item.spi.response_packets[1]), 4088)
-        self.assertEqual(item.spi.response_packets[1][:2], b"\x0b\x05")
+        self.assertEqual(item.spi.response_packets[1][:2], b"\x0b\x06")
         self.assertEqual(item._spi_transfers, 2)
         self.assertEqual(item._fec_frames_sent, 1)
         self.assertEqual(item._full_frame_transfers, 1)

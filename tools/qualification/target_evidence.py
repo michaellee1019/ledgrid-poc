@@ -52,7 +52,7 @@ _ERROR_COUNTERS = (
 )
 _INSTALLED_ROUTES = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
 _INSTALLED_NATIVE_REVERSALS = (False, False, True, True, False)
-_REQUIRED_RECEIVER_CAPABILITIES = 0x7C00C
+_REQUIRED_RECEIVER_CAPABILITIES = 0xFC00C
 _TRANSPORT_COUNTERS = (
     "spi_transfers",
     "bytes_sent",

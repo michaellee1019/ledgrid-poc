@@ -964,8 +964,24 @@ bool fec_v5_solve_constant_contiguous_span(
   return true;
 }
 
+std::size_t fec_rs_wire_offset(
+    std::size_t matrix_offset,
+    std::size_t symbol,
+    std::size_t logical_block,
+    std::size_t codewords,
+    bool diagonal) {
+  std::size_t wire_block = logical_block;
+  if (diagonal) {
+    wire_block += symbol;
+    while (wire_block >= codewords) wire_block -= codewords;
+  }
+  return matrix_offset + symbol * codewords + wire_block;
+}
+
 bool fec_v5_decoded_payload_valid(
-    const std::uint8_t* decoded, std::size_t codewords) {
+    const std::uint8_t* decoded,
+    std::size_t codewords,
+    std::uint8_t expected_version) {
   if (decoded == nullptr) return false;
   const std::size_t decoded_capacity = codewords * kFecDataBytes;
   if (decoded_capacity < kFecEnvelopeHeaderBytes +
@@ -973,7 +989,7 @@ bool fec_v5_decoded_payload_valid(
                              kAnimationPipelineCrcBytes ||
       decoded[0] != static_cast<std::uint8_t>(
           ReceiverCommand::AlignedEnvelope) ||
-      decoded[1] != kFecEnvelopeVersion) {
+      decoded[1] != expected_version) {
     return false;
   }
   const std::size_t inner_wire_size =
@@ -1014,15 +1030,19 @@ bool fec_v5_decoded_payload_valid(
 bool fec_v5_systematic_payload_valid(
     const std::uint8_t* packet,
     std::size_t codewords,
-    std::uint8_t* scratch) {
+    std::uint8_t* scratch,
+    std::uint8_t expected_version,
+    bool diagonal) {
   const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;
   for (std::size_t block = 0; block < codewords; ++block) {
     for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
       scratch[block * kFecDataBytes + symbol] =
-          packet[matrix_offset + symbol * codewords + block];
+          packet[fec_rs_wire_offset(
+              matrix_offset, symbol, block, codewords, diagonal)];
     }
   }
-  return fec_v5_decoded_payload_valid(scratch, codewords);
+  return fec_v5_decoded_payload_valid(
+      scratch, codewords, expected_version);
 }
 
 ReceiverFecPacketOutcome receiver_fec_packet_outcome(
@@ -1090,10 +1110,12 @@ bool decode_receiver_packet_payload(
       fec_v3_shape && duplicated_marker_matches(kFecEnvelopeVersionV3);
   const bool fec_v4_candidate =
       fec_v4_shape && duplicated_marker_matches(kFecEnvelopeVersionV4);
-  const bool fec_v5_candidate =
+  const bool fec_v6_candidate =
       fec_v5_shape && duplicated_marker_matches(kFecEnvelopeVersion);
+  const bool fec_v5_candidate =
+      fec_v5_shape && duplicated_marker_matches(kFecEnvelopeVersionV5);
   if (!fec_v2_candidate && !fec_v3_candidate &&
-      !fec_v4_candidate && !fec_v5_candidate) {
+      !fec_v4_candidate && !fec_v5_candidate && !fec_v6_candidate) {
     if (receiver_packet_crc_valid(packet, packet_size) &&
         decode_crc_valid_receiver_packet_payload(
             packet, packet_size, payload)) {
@@ -1104,32 +1126,38 @@ bool decode_receiver_packet_payload(
     return false;
   }
   if (report != nullptr) report->fec_envelope_attempted = true;
-  const bool fec_v5 = fec_v5_candidate;
-  const bool fec_v4 = !fec_v5 && fec_v4_candidate;
-  const bool fec_v3 = !fec_v5 && !fec_v4 && fec_v3_candidate;
-  const std::size_t codewords = fec_v5
+  const bool fec_v6 = fec_v6_candidate;
+  const bool fec_v5 = !fec_v6 && fec_v5_candidate;
+  const bool fec_rs = fec_v6 || fec_v5;
+  const bool diagonal = fec_v6;
+  const std::uint8_t fec_rs_version = fec_v6
+      ? kFecEnvelopeVersion
+      : kFecEnvelopeVersionV5;
+  const bool fec_v4 = !fec_rs && fec_v4_candidate;
+  const bool fec_v3 = !fec_rs && !fec_v4 && fec_v3_candidate;
+  const std::size_t codewords = fec_rs
       ? (packet_size - kFecWireHeaderBytes) / kFecCodewordBytes
       : fec_v4
           ? (packet_size - kFecWireHeaderBytes) / kFecV4CodewordBytes
           : fec_v3
               ? (packet_size - kFecWireHeaderBytes) / kFecV3CodewordBytes
               : packet_size / kFecV2CodewordBytes;
-  const std::size_t data_bytes = fec_v5
+  const std::size_t data_bytes = fec_rs
       ? kFecDataBytes
       : fec_v4
           ? kFecV4DataBytes
           : fec_v3 ? kFecV3DataBytes : kFecV2DataBytes;
   const std::size_t decoded_capacity = codewords * data_bytes;
   if (scratch == nullptr || scratch_size < decoded_capacity ||
-      (fec_v5 && (codewords > kFecMaxCodewords || codewords % 4U != 0U)) ||
+      (fec_rs && (codewords > kFecMaxCodewords || codewords % 4U != 0U)) ||
       (fec_v4 && (codewords > kFecV4MaxCodewords || codewords % 4U != 0U)) ||
       (fec_v3 && (codewords > kFecV3MaxCodewords || codewords % 4U != 0U)) ||
-      (!fec_v5 && !fec_v4 && !fec_v3 && codewords > kFecV2MaxCodewords)) {
+      (!fec_rs && !fec_v4 && !fec_v3 && codewords > kFecV2MaxCodewords)) {
     return false;
   }
   std::uint16_t corrected_codewords = 0;
   std::uint16_t corrected_bits = 0;
-  if (fec_v5) {
+  if (fec_rs) {
     const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;
     constexpr std::size_t kMaximumCorrections = kFecParityBytes / 2U;
     // Clean installed frames are overwhelmingly the common case. Deinterleave
@@ -1139,7 +1167,7 @@ bool decode_receiver_packet_payload(
     // Parity-only damage is safe to ignore because it cannot change the
     // authenticated semantic payload.
     const bool systematic_payload_valid = fec_v5_systematic_payload_valid(
-        packet, codewords, scratch);
+        packet, codewords, scratch, fec_rs_version, diagonal);
     std::size_t contiguous_burst_hint = kFecCodewordBytes;
     bool maximum_burst_blocks[kFecMaxCodewords] = {};
     std::uint8_t maximum_burst_syndromes
@@ -1149,8 +1177,8 @@ bool decode_receiver_packet_payload(
          !systematic_payload_valid && block < codewords; ++block) {
       std::uint8_t syndromes[kFecParityBytes] = {};
       for (std::size_t symbol = 0; symbol < kFecCodewordBytes; ++symbol) {
-        const std::uint8_t value =
-            packet[matrix_offset + symbol * codewords + block];
+        const std::uint8_t value = packet[fec_rs_wire_offset(
+            matrix_offset, symbol, block, codewords, diagonal)];
         const std::uint8_t evaluation =
             static_cast<std::uint8_t>(symbol + 1U);
         std::uint8_t power = 1U;
@@ -1301,8 +1329,8 @@ bool decode_receiver_packet_payload(
         }
       }
       for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
-        std::uint8_t value =
-            packet[matrix_offset + symbol * codewords + block];
+        std::uint8_t value = packet[fec_rs_wire_offset(
+            matrix_offset, symbol, block, codewords, diagonal)];
         for (std::size_t correction = 0;
              correction < correction_count; ++correction) {
           if (symbol == correction_symbols[correction]) {
@@ -1355,7 +1383,7 @@ bool decode_receiver_packet_payload(
         for (std::size_t block = 0; block < codewords; ++block) {
           if (!maximum_burst_blocks[block]) continue;
           const std::size_t block_first =
-              wrapped && block < wrapped_prefix_blocks
+              !diagonal && wrapped && block < wrapped_prefix_blocks
                   ? first + 1U
                   : first;
           if (block_first >= kFecV5MaximumBurstSpanStarts) return false;
@@ -1372,8 +1400,8 @@ bool decode_receiver_packet_payload(
                     static_cast<unsigned int>(values[index])));
           }
           for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
-            std::uint8_t value = packet[
-                matrix_offset + symbol * codewords + block];
+            std::uint8_t value = packet[fec_rs_wire_offset(
+                matrix_offset, symbol, block, codewords, diagonal)];
             if (symbol >= block_first &&
                 symbol < block_first + kFecV5MaximumBurstSpanSymbols) {
               value ^= values[symbol - block_first];
@@ -1381,7 +1409,10 @@ bool decode_receiver_packet_payload(
             scratch[block * kFecDataBytes + symbol] = value;
           }
         }
-        if (!fec_v5_decoded_payload_valid(scratch, codewords)) return false;
+        if (!fec_v5_decoded_payload_valid(
+                scratch, codewords, fec_rs_version)) {
+          return false;
+        }
         if (candidate_codewords != nullptr) {
           *candidate_codewords = local_codewords;
         }
@@ -1678,8 +1709,8 @@ bool decode_receiver_packet_payload(
                              kAlignedEnvelopeHeaderBytes + 1U +
                              kAnimationPipelineCrcBytes ||
       scratch[0] != static_cast<std::uint8_t>(ReceiverCommand::AlignedEnvelope) ||
-      scratch[1] != (fec_v5
-          ? kFecEnvelopeVersion
+      scratch[1] != (fec_rs
+          ? fec_rs_version
           : fec_v4
               ? kFecEnvelopeVersionV4
               : fec_v3 ? kFecEnvelopeVersionV3 : kFecEnvelopeVersionV2)) {
@@ -1698,7 +1729,7 @@ bool decode_receiver_packet_payload(
   }
   const std::size_t semantic_size =
       (static_cast<std::size_t>(inner[2]) << 8U) | inner[3];
-  const std::size_t maximum_semantic_size = fec_v5
+  const std::size_t maximum_semantic_size = fec_rs
       ? kFecEnvelopeMaxSemanticBytes
       : fec_v4
           ? kFecV4EnvelopeMaxSemanticBytes
@@ -1718,7 +1749,7 @@ bool decode_receiver_packet_payload(
   std::size_t required_codewords =
       (kFecEnvelopeHeaderBytes + inner_wire_size + data_bytes - 1U) /
       data_bytes;
-  if (fec_v5 || fec_v4 || fec_v3) {
+  if (fec_rs || fec_v4 || fec_v3) {
     required_codewords += (4U - required_codewords % 4U) % 4U;
   } else if (required_codewords % 2U != 0U) {
     ++required_codewords;

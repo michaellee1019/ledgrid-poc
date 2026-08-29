@@ -46,7 +46,8 @@ FEC_DATA_BYTES = 50
 FEC_PARITY_BYTES = 10
 FEC_CODEWORD_BYTES = FEC_DATA_BYTES + FEC_PARITY_BYTES
 FEC_MAX_CODEWORDS = 68
-FEC_ENVELOPE_VERSION = 5
+FEC_ENVELOPE_VERSION_V5 = 5
+FEC_ENVELOPE_VERSION = 6
 FEC_ENVELOPE_HEADER_BYTES = 4
 FEC_WIRE_HEADER_BYTES = 2 * FEC_ENVELOPE_HEADER_BYTES
 MAX_FEC_SEMANTIC_BYTES = (
@@ -350,7 +351,7 @@ _FEC_PACKED_PARITY_TABLES = tuple(
 
 
 def _fec_envelope_wire_size(semantic_length):
-    """Return exact DMA-safe v5 FEC wire bytes for one semantic packet."""
+    """Return exact DMA-safe v6 FEC wire bytes for one semantic packet."""
     if isinstance(semantic_length, bool) or not isinstance(semantic_length, int):
         raise TypeError("semantic_length must be an integer")
     if semantic_length < 1 or semantic_length > MAX_FEC_SEMANTIC_BYTES:
@@ -367,7 +368,7 @@ def _fec_envelope_wire_size(semantic_length):
 
 
 def _encode_fec_envelope(payload, output=None, inner_output=None):
-    """Interleave a five-symbol-correcting v5 envelope around canonical v1 bytes."""
+    """Diagonally interleave a five-symbol-correcting v6 canonical envelope."""
     try:
         semantic = memoryview(payload).cast("B")
     except (TypeError, ValueError) as exc:
@@ -406,13 +407,16 @@ def _encode_fec_envelope(payload, output=None, inner_output=None):
                 value = inner[protected_offset - FEC_ENVELOPE_HEADER_BYTES]
             else:
                 value = 0
-            wire[matrix_offset + symbol * codewords + block] = value
+            wire_block = (block + symbol) % codewords
+            wire[matrix_offset + symbol * codewords + wire_block] = value
             packed_parity ^= _FEC_PACKED_PARITY_TABLES[symbol][value]
         for parity in range(FEC_PARITY_BYTES):
             shift = 8 * (FEC_PARITY_BYTES - parity - 1)
-            wire[
-                matrix_offset + (FEC_DATA_BYTES + parity) * codewords + block
-            ] = (packed_parity >> shift) & 0xFF
+            symbol = FEC_DATA_BYTES + parity
+            wire_block = (block + symbol) % codewords
+            wire[matrix_offset + symbol * codewords + wire_block] = (
+                packed_parity >> shift
+            ) & 0xFF
     return wire
 
 LOCAL_BACKGROUND_RAINBOW = 1
@@ -598,6 +602,7 @@ CAPABILITY_FEC_ENVELOPE_V2 = 1 << 15
 CAPABILITY_FEC_ENVELOPE_V3 = 1 << 16
 CAPABILITY_FEC_ENVELOPE_V4 = 1 << 17
 CAPABILITY_FEC_ENVELOPE_V5 = 1 << 18
+CAPABILITY_FEC_ENVELOPE_V6 = 1 << 19
 
 ALL_LANES_MASK = 0xFF
 STAGGER_OFF = 1
@@ -1421,7 +1426,7 @@ class LEDController:
             )
 
     def _observe_fec_transport_capability(self, advertised, receiver_packets):
-        """Enable v5 only after opt-in and three fresh capability snapshots."""
+        """Enable v6 only after opt-in and three fresh capability snapshots."""
         advertised = bool(
             getattr(self, "_fec_transport_requested", False) and advertised
         )
@@ -1552,7 +1557,7 @@ class LEDController:
         )
         fec_advertised = bool(
             self._receiver_capabilities & CAPABILITY_ALIGNED_ENVELOPE_V1
-            and self._receiver_capabilities & CAPABILITY_FEC_ENVELOPE_V5
+            and self._receiver_capabilities & CAPABILITY_FEC_ENVELOPE_V6
         )
         fec_terminal_telemetry_available = bool(
             len(response) >= RECEIVER_STATUS_BYTES_V7
@@ -1630,6 +1635,7 @@ class LEDController:
             | CAPABILITY_FEC_ENVELOPE_V3
             | CAPABILITY_FEC_ENVELOPE_V4
             | CAPABILITY_FEC_ENVELOPE_V5
+            | CAPABILITY_FEC_ENVELOPE_V6
         ):
             self._receiver_status_query_bytes = RECEIVER_STATUS_BYTES_V7
         elif self._receiver_capabilities & CAPABILITY_STATUS_V6:

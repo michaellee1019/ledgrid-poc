@@ -78,7 +78,7 @@ def _device(receiver_id: int, elapsed: float) -> dict:
         "receiver_status_version": 7,
         "receiver_status_max_version_seen": 7,
         "receiver_status_seen": True,
-        "receiver_capabilities": 0x7C00C,
+        "receiver_capabilities": 0xFC00C,
         "transport_envelope_enabled": True,
         "transport_envelope_negotiation_candidate": None,
         "transport_envelope_negotiation_streak": 0,
