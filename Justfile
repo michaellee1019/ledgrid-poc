@@ -144,6 +144,7 @@ generate-previews:
 browser-composer-assets:
 	{{python_env}} python tools/build_browser_python_bundle.py
 	python3 tools/build_browser_native.py --check
+	{{python_env}} python tools/build_browser_composer_bootstrap.py
 	{{python_env}} python tools/build_browser_offline_manifest.py
 
 # Run the Mac-only software dashboard with 30 FPS contact-strip loops.

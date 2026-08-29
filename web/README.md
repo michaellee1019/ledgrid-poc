@@ -10,20 +10,33 @@ Notes:
 - Requests are forwarded to the controller via ipc/control_channel.py.
 - Keep UI-specific logic here; avoid embedding animation logic in routes.
 - Rebuild the checked-in browser runtime assets with
-  `just browser-composer-assets`. The first Python preview on a device downloads
-  the pinned Pyodide runtime; rendering, Clock compositing, and checking then stay
-  inside Web Workers. The browser bundle contains the complete valid Python
-  animation catalog and its curated assets. Receiver-native C++ previews use the
-  compact checked-in Wasm modules. That lane covers both the managed Aurora
-  pilot and the feature-gated firmware builtin `compiled_rainbow`; each is
-  built from its authoritative C++ source and can be composed with the Python
-  Clock overlay entirely in the browser.
+  `just browser-composer-assets`. This generates a versioned static bootstrap,
+  an immutable content-addressed installation profile, the Python runtime
+  archive, native Wasm previews, and the offline manifest. Composer loads that
+  bundled catalog before probing for a wall server, so rendering, parameter and
+  timeline editing, local Check, autosave, import, and export need no controller
+  or running animation. The first Python preview on a device downloads the
+  pinned Pyodide runtime; “Prepare for offline use” recaches and verifies every
+  exact runtime resource observed by the worker. Rendering, Clock compositing,
+  and checking stay inside Web Workers. Receiver-native C++ previews cover both
+  the managed Aurora pilot and feature-gated firmware builtin
+  `compiled_rainbow`; each is built from its authoritative C++ source and can
+  be composed with the Python Clock overlay entirely in the browser.
+- Reaching a wall server refreshes only its advertised capabilities. Composer
+  does not read current wall settings or the managed mask draft until the
+  operator explicitly chooses the corresponding Wall action. Shared-library
+  save, wall settings, server qualification, activation, observation,
+  cancellation, and rollback remain server-gated and exact-digest-bound.
 
 API endpoints:
 - `GET /composer` — installable browser-Wasm preset composer; opening it is
   private and non-mutating
-- `GET /api/v1/composer/bootstrap` — provider-qualified schemas, full authored
-  preset parameters, geometry, and explicit browser runtime capabilities
+- `GET /static/generated/composer/bootstrap.v1.json` — generated offline-first
+  provider-qualified renderer catalog, geometry, and bundled profile identity
+- `GET /api/v1/composer/bootstrap?catalog_only=1` — optional read-only server
+  capability and component-identity refresh without observing live wall state
+- `GET /api/v1/composer/bootstrap` — compatibility/full server bootstrap that
+  may include the selected managed profile for explicit server workflows
 - `GET /api/v1/composer/connectivity` — uncached server reachability probe
 - `POST /api/v1/composer/presets/validate` — read-only component or composed-scene
   JSON validation

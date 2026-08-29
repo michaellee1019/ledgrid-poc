@@ -17,15 +17,17 @@ version, timestamps, viewport observations, and individual assertion outcomes.
   proves Undo/Redo and the Clock toggle, runs a local Check, saves to the
   authoring library, proves the assigned preset identity invalidates that Check,
   reruns Check for the saved identity, and cancels guarded activation review.
-- `offline_reconnect` seeds a real `v16` cache on the fixture origin, proves the
-  verified `v17` promotion removes it, intentionally exercises a Python
-  background and pinned offline-runtime preparation, proves the active worker
-  controls the Composer and retains its renderer catalog, reloads and edits
-  while offline, proves a stale Check cannot enable review, runs a new Check,
-  exports, and reconnects.
-  Chromium and Firefox use browser-native offline emulation. Because Playwright
-  WebKit 26.5 rejects navigation before dispatching to an active service worker
-  under that flag, WebKit uses the no-wall fixture's origin-outage gate instead:
+- `offline_reconnect` seeds a real `v17` cache on the fixture origin, proves the
+  verified `v18` promotion removes it, blocks the dynamic bootstrap endpoint,
+  and proves the versioned static catalog still starts a Python renderer with
+  Play enabled and zero wall-state reads. It then prepares the pinned offline
+  runtime, proves the active worker retains the bundled catalog and exact
+  profile, reloads and edits while offline, proves a stale Check cannot enable
+  review, runs a new Check, exports, reconnects, refreshes digest-compatible
+  server capabilities, and verifies the local draft did not change.
+  Chromium uses browser-native offline emulation. Because Playwright Firefox 153
+  and WebKit 26.5 reject navigation before dispatching to an active service
+  worker under that flag, they use the no-wall fixture's origin-outage gate:
   every origin request returns 503, the fixture retains the rejected count and
   path, and `/composer` must still reload from verified cache before the gate is
   removed for reconnect.

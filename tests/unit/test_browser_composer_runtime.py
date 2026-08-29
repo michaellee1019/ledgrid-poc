@@ -440,7 +440,9 @@ const localPaths = {
   '/static/composer.webmanifest': 'web/static/composer.webmanifest',
   '/static/css/composer.css': 'web/static/css/composer.css',
   '/static/generated/composer/aurora_curtains_native.wasm': 'web/static/generated/composer/aurora_curtains_native.wasm',
+  '/static/generated/composer/bootstrap.v1.json': 'web/static/generated/composer/bootstrap.v1.json',
   '/static/generated/composer/compiled_rainbow.wasm': 'web/static/generated/composer/compiled_rainbow.wasm',
+  '/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin': 'web/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin',
   '/static/generated/composer/ledgrid_python_runtime.zip': 'web/static/generated/composer/ledgrid_python_runtime.zip',
   '/static/icons/composer-180.png': 'web/static/icons/composer-180.png',
   '/static/icons/composer-512.png': 'web/static/icons/composer-512.png',
@@ -685,7 +687,8 @@ async function message(harness, data) {
         self.assertIn("PYTHON_RUNTIME_READY", source)
         self.assertIn("OFFLINE_STATUS", source)
         self.assertIn("readyOffline: true", source)
-        self.assertIn("responseDigest(bootstrap)", source)
+        self.assertIn("shell.match(BUNDLED_BOOTSTRAP_URL)", source)
+        self.assertIn("activeProfile", source)
         self.assertIn("Python runtime asset changed", source)
         self.assertIn("INSTALLATION_PROFILE_ARTIFACT", source)
         self.assertIn("deliverInstallationProfileArtifact", source)

@@ -825,6 +825,8 @@
                 type: 'PYTHON_RUNTIME_READY',
                 pyodideVersion: response.pyodideVersion,
                 packages: response.packages,
+                runtimeUrls: response.runtimeUrls,
+                installationProfile: this.installationProfile,
             });
         }
 

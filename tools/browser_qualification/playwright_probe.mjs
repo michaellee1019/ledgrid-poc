@@ -117,7 +117,7 @@ async function completeLocalCheck(page) {
 }
 
 async function alterFirstParameter(page) {
-  const control = page.locator('#parameterList input:not([type="hidden"])').first();
+  const control = page.locator('#parameterList input[type="range"], #parameterList input[type="number"]').first();
   await control.waitFor({state: 'visible'});
   return control.evaluate((element) => {
     const input = /** @type {HTMLInputElement} */ (element);
@@ -175,6 +175,15 @@ async function cachedPythonRuntimeInventory(page, currentCache) {
   }, {shellCacheName: currentCache});
 }
 
+async function refreshObservedWallState(page) {
+  await page.locator('#wallTab').click();
+  await page.locator('#refreshWallButton').click();
+  await page.waitForFunction(() => {
+    const status = document.querySelector('#wallDraftStatus')?.textContent || '';
+    return !/has not been read|Reading observed wall state/i.test(status);
+  }, null, {timeout: timeoutMs});
+}
+
 async function runCore(browser, contract, composerUrl) {
   const context = await browser.newContext({viewport: contract.viewport, acceptDownloads: true, serviceWorkers: 'allow'});
   const page = await context.newPage();
@@ -200,10 +209,10 @@ async function runCore(browser, contract, composerUrl) {
     const values = await alterFirstParameter(page);
     assertions.push(observation('parameter_tuned', values.prior !== values.tuned, `${values.prior} -> ${values.tuned}`));
     await page.locator('#undoButton').click();
-    await page.waitForFunction((prior) => document.querySelector('#parameterList input:not([type="hidden"])')?.value === prior, values.prior);
+    await page.waitForFunction((prior) => document.querySelector('#parameterList input[type="range"], #parameterList input[type="number"]')?.value === prior, values.prior);
     assertions.push(observation('undo_restored_prior_value', true, values.prior));
     await page.locator('#redoButton').click();
-    await page.waitForFunction((tuned) => document.querySelector('#parameterList input:not([type="hidden"])')?.value === tuned, values.tuned);
+    await page.waitForFunction((tuned) => document.querySelector('#parameterList input[type="range"], #parameterList input[type="number"]')?.value === tuned, values.tuned);
     assertions.push(observation('redo_restored_tuned_value', true, values.tuned));
 
     await page.locator('#layersTab').click();
@@ -240,6 +249,7 @@ async function runCore(browser, contract, composerUrl) {
       staleBlocked,
       staleBlocked ? 'Saved preset identity/fingerprint invalidated the prior exact Check' : 'Prior Check incorrectly remained current after Save assigned identity',
     ));
+    await refreshObservedWallState(page);
     const savedCheckDetail = await completeLocalCheck(page);
     assertions.push(observation('saved_identity_check_completed', true, savedCheckDetail));
     try {
@@ -265,6 +275,7 @@ async function runCore(browser, contract, composerUrl) {
 }
 
 async function runOffline(browser, contract, composerUrl, baseUrl) {
+  const offlineStrategy = manifestContract.offline_strategies[args.engine];
   const context = await browser.newContext({viewport: contract.viewport, acceptDownloads: true, serviceWorkers: 'allow'});
   const page = await context.newPage();
   page.setDefaultTimeout(timeoutMs);
@@ -273,12 +284,13 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
   const expectedOfflineConsole = [];
   const failedRequests = [];
   const forbidden = [];
+  const wallReads = [];
   let offlineMode = false;
   page.on('console', (message) => {
     if (message.type() !== 'error') return;
     if (offlineMode && (
       /(?:ERR_INTERNET_DISCONNECTED|internet connection appears to be offline)/i.test(message.text())
-      || (args.engine === 'webkit' && /server responded with a status of 503 \(SERVICE UNAVAILABLE\)/i.test(message.text()))
+      || (offlineStrategy === 'fixture_origin_outage' && /server responded with a status of 503 \(SERVICE UNAVAILABLE\)/i.test(message.text()))
     )) {
       expectedOfflineConsole.push(message.text());
     } else {
@@ -292,7 +304,20 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
     error: request.failure()?.errorText || 'unknown request failure',
   }));
   page.on('request', (request) => { if (mutationRequest(request)) forbidden.push(`${request.method()} ${new URL(request.url()).pathname}`); });
+  page.on('request', (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (request.method() === 'GET' && (
+      pathname === '/api/status'
+      || pathname === '/api/painter/masks'
+      || /^\/api\/v1\/installation-profiles\/[0-9a-f]{64}\/draft$/.test(pathname)
+    )) wallReads.push(pathname);
+  });
   try {
+    await page.route('**/api/v1/composer/bootstrap?catalog_only=1', (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({schema: 'unavailable'}),
+    }));
     const markerUrl = new URL('/static/icons/composer.svg', baseUrl).toString();
     const markerResponse = await page.goto(markerUrl, {waitUntil: 'domcontentloaded'});
     if (!markerResponse?.ok()) throw new Error(`Could not establish the fixture origin: ${markerResponse?.status() || 'no response'}`);
@@ -306,6 +331,12 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
     const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
     if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
     assertions.push(observation('composer_loaded', true, `${response.status()} ${composerUrl}`));
+    await page.waitForFunction(() => document.querySelector('#composerState')?.getAttribute('data-state') === 'ready', null, {timeout: timeoutMs});
+    assertions.push(observation(
+      'opening_wall_state_reads_zero',
+      wallReads.length === 0,
+      wallReads.join(', ') || 'Opening Composer read no status, masks, or selected wall profile',
+    ));
     const cacheNames = await waitForCacheUpgrade(page, manifestContract.service_worker_upgrade);
     assertions.push(observation(
       'previous_cache_generation_upgraded',
@@ -321,8 +352,9 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
       await page.evaluate(() => navigator.serviceWorker.controller?.scriptURL || 'controlled'),
     ));
     const cachedBootstrap = await page.evaluate(async ({currentCache}) => {
-      const response = await fetch('/api/v1/composer/bootstrap', {cache: 'reload'});
-      const cached = await (await caches.open(currentCache)).match('/api/v1/composer/bootstrap');
+      const url = '/static/generated/composer/bootstrap.v1.json';
+      const response = await fetch(url, {cache: 'reload'});
+      const cached = await (await caches.open(currentCache)).match(url);
       return {status: response.status, cached: Boolean(cached)};
     }, {currentCache: manifestContract.service_worker_upgrade.current_cache});
     assertions.push(observation(
@@ -335,6 +367,11 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
       activationReady: true,
       preferredName: contract.background_name,
     });
+    assertions.push(observation(
+      'static_preview_play_enabled',
+      !(await page.locator('#playButton').isDisabled()),
+      'Play remained local while dynamic server bootstrap was unavailable',
+    ));
     await page.locator('[data-mobile-target="layers"]').click();
     await page.locator('#installationAdvanced').evaluate((element) => { element.open = true; });
     await page.locator('#prepareOfflineButton').click();
@@ -346,10 +383,9 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
       throw new Error(`Offline preparation did not become ready: ${readiness}; notifications=${toast || 'none'}`, {cause: error});
     }
     assertions.push(observation('offline_assets_prepared', true, (await page.locator('#offlineReadiness').textContent()) || 'ready'));
-    const offlineStrategy = manifestContract.offline_strategies[args.engine];
     assertions.push(observation(
       'offline_strategy_declared',
-      offlineStrategy === (args.engine === 'webkit' ? 'fixture_origin_outage' : 'native_network_offline'),
+      ['native_network_offline', 'fixture_origin_outage'].includes(offlineStrategy),
       offlineStrategy,
     ));
     const runtimeInventoryBefore = await cachedPythonRuntimeInventory(
@@ -367,7 +403,7 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
     const priorDocumentToken = `rel01-${Date.now()}-${Math.random()}`;
     await page.evaluate((token) => { window.__rel01OfflineDocumentToken = token; }, priorDocumentToken);
     offlineMode = true;
-    const fixtureOriginOutage = args.engine === 'webkit';
+    const fixtureOriginOutage = offlineStrategy === 'fixture_origin_outage';
     if (fixtureOriginOutage) {
       await context.addCookies([{
         name: 'ledgrid_rel01_origin_offline', value: '1', url: baseUrl,
@@ -436,12 +472,22 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
       await context.setOffline(false);
     }
     offlineMode = false;
-    const connectivity = await page.evaluate(async (url) => {
-      const response = await fetch(new URL('/api/v1/composer/connectivity', url));
-      return {status: response.status, payload: await response.json()};
-    }, baseUrl);
-    if (connectivity.status !== 200 || connectivity.payload?.online !== true) throw new Error(`Reconnect did not restore server connectivity: ${JSON.stringify(connectivity)}`);
-    assertions.push(observation('reconnect_succeeded', true, `HTTP ${connectivity.status}`));
+    await page.unroute('**/api/v1/composer/bootstrap?catalog_only=1');
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await page.waitForFunction(() => /Wall connected/.test(document.querySelector('#serverState')?.textContent || ''), null, {timeout: timeoutMs});
+    const reconnectedName = await page.locator('#presetName').inputValue();
+    assertions.push(observation('reconnect_succeeded', true, (await page.locator('#serverState').textContent()) || 'Wall connected'));
+    assertions.push(observation(
+      'reconnect_preserved_local_draft',
+      reconnectedName === offlineName,
+      `${offlineName} -> ${reconnectedName}`,
+    ));
+    const connectedSaveAvailable = !(await page.locator('#saveLibraryButton').isDisabled());
+    assertions.push(observation(
+      'wall_capabilities_refreshed',
+      connectedSaveAvailable,
+      connectedSaveAvailable ? 'Digest-compatible server save capability attached' : 'Server save capability did not attach',
+    ));
   } catch (error) {
     assertions.push(observation(
       'journey_error',
@@ -738,16 +784,23 @@ async function runKeyboardOnlyDesktop(browser, contract, composerUrl) {
       (await page.locator('#stageHeading').textContent()) || contract.background_name,
     ));
 
-    await focusWithKeyboard(page, '#parameterList input:not([type="hidden"])');
+    await focusWithKeyboard(page, '#parameterList input[type="range"], #parameterList input[type="number"]');
     const priorParameter = await page.evaluate(() => document.activeElement?.value || null);
-    await page.keyboard.press('ArrowRight');
+    const parameterKey = await page.evaluate(() => {
+      const input = /** @type {HTMLInputElement} */ (document.activeElement);
+      const current = Number(input.value);
+      const maximum = Number(input.max || Number.POSITIVE_INFINITY);
+      if (input.type === 'range') return current < maximum ? 'ArrowRight' : 'ArrowLeft';
+      return current < maximum ? 'ArrowUp' : 'ArrowDown';
+    });
+    await page.keyboard.press(parameterKey);
     await page.waitForFunction((prior) => document.activeElement?.value !== prior, priorParameter);
     const tunedParameter = await page.evaluate(() => document.activeElement?.value || null);
     await focusWithKeyboard(page, '#controlsTab', {reverse: true});
     await page.keyboard.press('ControlOrMeta+Z');
-    await page.waitForFunction((prior) => document.querySelector('#parameterList input:not([type="hidden"])')?.value === prior, priorParameter);
+    await page.waitForFunction((prior) => document.querySelector('#parameterList input[type="range"], #parameterList input[type="number"]')?.value === prior, priorParameter);
     await page.keyboard.press('ControlOrMeta+Shift+Z');
-    await page.waitForFunction((tuned) => document.querySelector('#parameterList input:not([type="hidden"])')?.value === tuned, tunedParameter);
+    await page.waitForFunction((tuned) => document.querySelector('#parameterList input[type="range"], #parameterList input[type="number"]')?.value === tuned, tunedParameter);
     assertions.push(observation(
       'parameter_keyboard_edit_undo_redo',
       priorParameter !== tunedParameter,
@@ -805,6 +858,10 @@ async function runKeyboardOnlyDesktop(browser, contract, composerUrl) {
     const firstCheck = await completeLocalCheckWithKeyboard(page);
     assertions.push(observation('local_check_keyboard_completed', true, firstCheck));
 
+    await page.waitForFunction(() => (
+      document.querySelector('#networkStatus')?.getAttribute('data-state') === 'online'
+      && !document.querySelector('#saveLibraryButton')?.disabled
+    ), null, {timeout: timeoutMs});
     await page.keyboard.press('ControlOrMeta+S');
     await page.waitForFunction(() => (
       /physical wall was not changed/i.test(document.querySelector('#serverActionStatus')?.textContent || '')
@@ -817,6 +874,14 @@ async function runKeyboardOnlyDesktop(browser, contract, composerUrl) {
       saveStatus,
     ));
 
+    await page.keyboard.press('w');
+    await page.waitForFunction(() => document.querySelector('#wallTab')?.getAttribute('aria-selected') === 'true');
+    await focusWithKeyboard(page, '#refreshWallButton');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => {
+      const status = document.querySelector('#wallDraftStatus')?.textContent || '';
+      return !/has not been read|Reading observed wall state/i.test(status);
+    }, null, {timeout: timeoutMs});
     await focusWithKeyboard(page, '#importButton', {reverse: true});
     await page.keyboard.press('c');
     await completeLocalCheckWithKeyboard(page);
@@ -889,7 +954,7 @@ async function runGlobalControls(browser, contract, composerUrl) {
   try {
     const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
     if (!response?.ok()) throw new Error(`Composer navigation returned ${response?.status() || 'no response'}`);
-    await page.locator('#wallTab').click();
+    await refreshObservedWallState(page);
     await page.locator('#vibeOptions button').first().waitFor({state: 'visible'});
     assertions.push(observation('composer_loaded', true, `${response.status()} ${composerUrl}`));
 
@@ -988,6 +1053,7 @@ async function runProfileMasks(browser, contract, composerUrl) {
       document.querySelector('#componentList')?.getAttribute('aria-busy') === 'false'
       && document.querySelector('#networkStatus')?.getAttribute('data-state') === 'online'
     ), null, {timeout: timeoutMs});
+    await refreshObservedWallState(page);
     const draftPreflight = await page.evaluate(async (url) => {
       const response = await fetch(url, {cache: 'no-store'});
       const payload = await response.json();
@@ -1093,8 +1159,9 @@ async function runPythonNativeClock(browser, contract, composerUrl) {
         const reason = await page.locator('#activateButton').getAttribute('title');
         assertions.push(observation(
           'managed_native_host_ineligibility_declared',
-          reason === contract.managed_native_ineligibility_reason,
-          `declared=${reason || 'none'} expected=${contract.managed_native_ineligibility_reason}`,
+          reason === contract.managed_native_ineligibility_reason
+            || reason === contract.managed_native_digest_mismatch_reason,
+          `declared=${reason || 'none'} expected=${contract.managed_native_ineligibility_reason} or ${contract.managed_native_digest_mismatch_reason}`,
         ));
       }
     }

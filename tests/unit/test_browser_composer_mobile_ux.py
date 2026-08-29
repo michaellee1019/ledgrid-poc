@@ -249,6 +249,8 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
         self.assertIn('aria-keyshortcuts="L"', self.html)
         self.assertIn('aria-keyshortcuts="W"', self.html)
         self.assertIn('aria-keyshortcuts="C"', self.html)
+        for tab_id in ("controlsTab", "layersTab", "wallTab", "checkerTab"):
+            self.assertIn(f"$('{tab_id}').focus();", self.javascript)
         self.assertLess(
             self.html.index('id="componentSearch"'),
             self.html.index('id="animationCatalogDisclosure"'),

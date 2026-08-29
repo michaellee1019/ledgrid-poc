@@ -55,7 +55,7 @@ def load_manifest(path: Path = DEFAULT_MANIFEST) -> dict[str, Any]:
         raise ValueError("manifest must require Chromium, Firefox, and WebKit exactly")
     if payload.get("offline_strategies") != {
         "chromium": "native_network_offline",
-        "firefox": "native_network_offline",
+        "firefox": "fixture_origin_outage",
         "webkit": "fixture_origin_outage",
     }:
         raise ValueError("manifest must declare the exact per-engine offline strategies")

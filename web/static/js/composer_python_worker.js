@@ -179,7 +179,9 @@ async function verifyInstallationProfile(value, suppliedArtifact = null) {
         bytes = new Uint8Array(await response.arrayBuffer());
     }
     etag = etag?.replace(/^W\//, '').replace(/^"|"$/g, '');
-    if (etag && etag !== expected.digest) {
+    const managedArtifactPath = new URL(expected.url).pathname
+        === `/api/v1/installation-profiles/${expected.digest}/artifact`;
+    if (managedArtifactPath && etag && etag !== expected.digest) {
         throw new Error('The installation-profile response ETag does not match the selected digest.');
     }
     canonicalProfileHeader(bytes);
@@ -435,12 +437,19 @@ async function prepare(message) {
         }
     }
     await ensurePreparedPackages(pyodide);
+    const runtimeUrls = [...new Set([
+        `${PYODIDE_BASE_URL}pyodide.mjs`,
+        ...performance.getEntriesByType('resource')
+            .map((entry) => entry.name)
+            .filter((url) => typeof url === 'string' && url.startsWith(PYODIDE_BASE_URL)),
+    ])].sort();
     self.postMessage({
         type: 'prepared',
         requestId: message.requestId,
         engine: ENGINE,
         pyodideVersion: PYODIDE_VERSION,
         packages: [...PREPARED_PACKAGES],
+        runtimeUrls,
     });
 }
 

@@ -107,6 +107,11 @@ class BrowserComposerPWATests(unittest.TestCase):
             "/static/js/composer_python_worker.js",
             "/static/generated/composer/aurora_curtains_native.wasm",
             "/static/generated/composer/compiled_rainbow.wasm",
+            "/static/generated/composer/bootstrap.v1.json",
+            (
+                "/static/generated/composer/installation_profile_"
+                "ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin"
+            ),
             "/static/generated/composer/ledgrid_python_runtime.zip",
             "/static/generated/composer/offline_assets.json",
             "/static/composer.webmanifest",
@@ -131,31 +136,35 @@ class BrowserComposerPWATests(unittest.TestCase):
         self.assertIn("name.startsWith(CACHE_PREFIX)", self.worker)
         self.assertIn("name !== RUNTIME_CACHE_NAME", self.worker)
 
-    def test_navigation_and_bootstrap_have_explicit_offline_fallbacks(self) -> None:
+    def test_navigation_and_static_bootstrap_have_explicit_offline_fallbacks(self) -> None:
         self.assertIn("event.request.mode === 'navigate'", self.worker)
         self.assertRegex(
             self.worker,
             r"url\.pathname\s*===\s*['\"]/composer['\"]",
         )
         self.assertIn("networkFirst(event.request, '/composer')", self.worker)
-        self.assertIn("networkFirst(event.request, BOOTSTRAP_URL)", self.worker)
+        self.assertIn("const BUNDLED_BOOTSTRAP_URL", self.worker)
+        self.assertIn("shell.match(BUNDLED_BOOTSTRAP_URL)", self.worker)
+        self.assertNotIn("networkFirst(event.request, BOOTSTRAP_URL)", self.worker)
         self.assertIn("const cached = await caches.match(fallbackKey)", self.worker)
         self.assertIn("if (cached) return cached", self.worker)
 
     def test_ready_offline_requires_verified_catalog_and_python_runtime(self) -> None:
         self.assertIn("type: 'OFFLINE_STATUS'", self.worker)
         self.assertIn("'PYTHON_RUNTIME_READY'", self.worker)
-        self.assertIn("responseDigest(bootstrap)", self.worker)
+        self.assertIn("bootstrapPayload?.artifact?.kind !== 'bundled'", self.worker)
+        self.assertIn("activeProfile", self.worker)
         self.assertIn("Python runtime asset changed", self.worker)
         self.assertIn("readyOffline: true", self.worker)
         self.assertIn("readyOffline: false", self.worker)
 
     def test_selected_profile_artifact_is_verified_and_available_offline(self) -> None:
         self.assertIn("PROFILE_ARTIFACT_PATH", self.worker)
+        self.assertIn("BUNDLED_PROFILE_PATH", self.worker)
         self.assertIn("verifiedProfileArtifact", self.worker)
         self.assertIn("canonical.fill(0, 68, 100)", self.worker)
         self.assertIn("cacheImmutableProfileArtifact", self.worker)
-        self.assertIn("installation_profile_artifact_url", self.worker)
+        self.assertIn("profileArtifactDigest", self.worker)
         self.assertIn("profileArtifacts", self.worker)
         self.assertIn("INSTALLATION_PROFILE_ARTIFACT", self.worker)
         self.assertIn("deliverInstallationProfileArtifact", self.worker)
@@ -174,13 +183,10 @@ class BrowserComposerPWATests(unittest.TestCase):
         }
         self.assertTrue(assets.isdisjoint(forbidden))
         self.assertIn("if (event.request.method !== 'GET') return", self.worker)
-        self.assertIn(
-            "url.pathname.startsWith('/api/') && url.pathname !== BOOTSTRAP_URL",
-            self.worker,
-        )
+        self.assertIn("if (url.pathname.startsWith('/api/')) return", self.worker)
         self.assertEqual(
             set(re.findall(r"/api/[A-Za-z0-9_./:-]+", self.worker)),
-            {"/api/v1/composer/bootstrap"},
+            set(),
         )
 
     def test_compositor_is_loaded_as_part_of_the_document_shell(self) -> None:

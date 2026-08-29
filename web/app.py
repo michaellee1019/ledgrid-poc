@@ -345,7 +345,12 @@ class AnimationWebInterface:
         @self.app.route('/api/v1/composer/bootstrap')
         def api_browser_composer_bootstrap():
             """Read-only schemas, presets, and explicit browser capabilities."""
-            return jsonify(self._browser_composer_bootstrap())
+            catalog_only = request.args.get('catalog_only') == '1'
+            response = jsonify(self._browser_composer_bootstrap(
+                observe_installation_profile=not catalog_only,
+            ))
+            response.headers['Cache-Control'] = 'no-store'
+            return response
 
         @self.app.route('/api/v1/composer/connectivity')
         def api_browser_composer_connectivity():
@@ -363,6 +368,7 @@ class AnimationWebInterface:
                     'activation_status': self.activation_enabled,
                 },
                 'activation_mode': self.activation_mode,
+                'bootstrap_url': '/api/v1/composer/bootstrap?catalog_only=1',
             })
             response.headers['Cache-Control'] = 'no-store'
             return response
@@ -2746,7 +2752,9 @@ class AnimationWebInterface:
             'diagnostics': diagnostics,
         }
 
-    def _browser_composer_bootstrap(self) -> Dict[str, Any]:
+    def _browser_composer_bootstrap(
+        self, *, observe_installation_profile: bool = True
+    ) -> Dict[str, Any]:
         """Build the complete read model needed after the app shell loads.
 
         Unlike the gallery summaries, composer presets include their authored
@@ -2969,7 +2977,9 @@ class AnimationWebInterface:
             self.preview_manager, 'get_installation_profile_status', None
         )
         profile_status = (
-            profile_status_getter() if callable(profile_status_getter) else {}
+            profile_status_getter()
+            if observe_installation_profile and callable(profile_status_getter)
+            else {}
         )
         profile_digest = profile_status.get(
             'selected_digest', EMPTY_INSTALLATION_PROFILE_DIGEST
@@ -2992,7 +3002,10 @@ class AnimationWebInterface:
             f'/api/v1/installation-profiles/{profile_digest}/artifact'
             if managed_profile_selected else None
         )
-        plant_state = getattr(self.preview_manager, 'plant_modifier_state', None)
+        plant_state = (
+            getattr(self.preview_manager, 'plant_modifier_state', None)
+            if observe_installation_profile else None
+        )
         plant_modifiers = (
             plant_state.to_dict()
             if isinstance(plant_state, PlantModifierState)
@@ -3033,6 +3046,9 @@ class AnimationWebInterface:
                     'activation_available': self.activation_enabled,
                     'activation_mode': self.activation_mode,
                     'connectivity_url': '/api/v1/composer/connectivity',
+                    'bootstrap_url': (
+                        '/api/v1/composer/bootstrap?catalog_only=1'
+                    ),
                     'validate_import_url': '/api/v1/composer/presets/validate',
                     'save_component_preset_url': '/api/v1/composer/presets',
                     'save_scene_preset_url': '/api/v1/scene-presets',

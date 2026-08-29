@@ -15,8 +15,8 @@ else:  # Direct script execution puts tools/ rather than the repository on sys.p
     from build_browser_python_bundle import PYODIDE_VERSION
 
 
-PREVIOUS_CACHE_VERSION = "v16"
-CACHE_VERSION = "v17"
+PREVIOUS_CACHE_VERSION = "v17"
+CACHE_VERSION = "v18"
 DEFAULT_OUTPUT = Path("web/static/generated/composer/offline_assets.json")
 LOCAL_ASSETS = {
     "/composer-service-worker.js": Path("web/static/js/composer_service_worker.js"),
@@ -27,6 +27,16 @@ LOCAL_ASSETS = {
     ),
     "/static/generated/composer/compiled_rainbow.wasm": Path(
         "web/static/generated/composer/compiled_rainbow.wasm"
+    ),
+    "/static/generated/composer/bootstrap.v1.json": Path(
+        "web/static/generated/composer/bootstrap.v1.json"
+    ),
+    (
+        "/static/generated/composer/installation_profile_"
+        "ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin"
+    ): Path(
+        "web/static/generated/composer/installation_profile_"
+        "ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin"
     ),
     "/static/generated/composer/ledgrid_python_runtime.zip": Path(
         "web/static/generated/composer/ledgrid_python_runtime.zip"
@@ -66,7 +76,7 @@ def build_manifest(repo_root: Path) -> dict[str, object]:
         "cacheVersion": CACHE_VERSION,
         "previousCacheVersion": PREVIOUS_CACHE_VERSION,
         "localAssets": assets,
-        "capturedAssets": ["/composer", "/api/v1/composer/bootstrap"],
+        "capturedAssets": ["/composer"],
         "pythonRuntime": {
             "baseUrl": (
                 f"https://cdn.jsdelivr.net/pyodide/v{PYODIDE_VERSION}/full/"

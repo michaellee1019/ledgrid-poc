@@ -1,15 +1,17 @@
 'use strict';
 
 const CACHE_PREFIX = 'ledgrid-composer-shell-';
-const PREVIOUS_CACHE_VERSION = 'v16';
-const CACHE_VERSION = 'v17';
+const PREVIOUS_CACHE_VERSION = 'v17';
+const CACHE_VERSION = 'v18';
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 const STAGING_CACHE_NAME = `${CACHE_NAME}-staging`;
 const RUNTIME_CACHE_NAME = `${CACHE_NAME}-python-runtime`;
 const OFFLINE_MANIFEST_URL = '/static/generated/composer/offline_assets.json';
 const OFFLINE_METADATA_URL = '/.ledgrid-composer/offline-metadata';
-const BOOTSTRAP_URL = '/api/v1/composer/bootstrap';
 const PROFILE_ARTIFACT_PATH = /^\/api\/v1\/installation-profiles\/([0-9a-f]{64})\/artifact$/;
+const BUNDLED_BOOTSTRAP_URL = '/static/generated/composer/bootstrap.v1.json';
+const BUNDLED_PROFILE_URL = '/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin';
+const BUNDLED_PROFILE_PATH = /^\/static\/generated\/composer\/installation_profile_([0-9a-f]{64})\.bin$/;
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_BASE_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const REQUIRED_PYTHON_PACKAGES = Object.freeze(['numpy', 'pillow']);
@@ -25,6 +27,8 @@ const SHELL_ASSETS = [
     '/static/js/composer_python_worker.js',
     '/static/generated/composer/aurora_curtains_native.wasm',
     '/static/generated/composer/compiled_rainbow.wasm',
+    '/static/generated/composer/bootstrap.v1.json',
+    '/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin',
     '/static/generated/composer/ledgrid_python_runtime.zip',
     '/static/generated/composer/offline_assets.json',
     '/static/composer.webmanifest',
@@ -74,6 +78,12 @@ async function verifiedProfileArtifact(response, expectedDigest) {
         sha256: hex(await crypto.subtle.digest('SHA-256', payload)),
         contentDigest: expectedDigest,
     };
+}
+
+function profileArtifactDigest(pathname) {
+    return PROFILE_ARTIFACT_PATH.exec(pathname)?.[1]
+        || BUNDLED_PROFILE_PATH.exec(pathname)?.[1]
+        || null;
 }
 
 async function readMetadata(cacheName = CACHE_NAME) {
@@ -238,7 +248,7 @@ async function installVersionedShell() {
             previousCacheVersion: PREVIOUS_CACHE_VERSION,
             shellComplete: true,
             verifiedShell,
-            bootstrap: null,
+            activeProfile: null,
             pythonRuntime: {
                 baseUrl: PYODIDE_BASE_URL,
                 packages: [],
@@ -276,14 +286,6 @@ self.addEventListener('activate', (event) => {
     );
 });
 
-async function rememberBootstrap(response) {
-    const digest = await responseDigest(response);
-    await updateMetadata((metadata) => ({
-        ...metadata,
-        bootstrap: digest,
-    }));
-}
-
 async function networkFirst(request, fallbackKey = request) {
     try {
         const response = await fetch(request);
@@ -291,7 +293,6 @@ async function networkFirst(request, fallbackKey = request) {
         if (response.type === 'basic') {
             const cache = await caches.open(CACHE_NAME);
             await cache.put(fallbackKey, response.clone());
-            if (fallbackKey === BOOTSTRAP_URL) await rememberBootstrap(response);
         }
         return response;
     } catch (error) {
@@ -347,8 +348,8 @@ async function deliverInstallationProfileArtifact(message) {
         throw new Error('The requested installation-profile digest is invalid.');
     }
     const url = new URL(message.artifactUrl, self.location.origin);
-    const match = PROFILE_ARTIFACT_PATH.exec(url.pathname);
-    if (url.origin !== self.location.origin || !match || match[1] !== digest) {
+    const pathDigest = profileArtifactDigest(url.pathname);
+    if (url.origin !== self.location.origin || pathDigest !== digest) {
         throw new Error('The requested installation-profile artifact is not the selected same-origin digest.');
     }
     const response = await cacheImmutableProfileArtifact(new Request(url.href, {
@@ -386,19 +387,12 @@ async function verifiedOfflineStatus() {
             return {type: 'OFFLINE_STATUS', readyOffline: false, reason: `Offline asset changed: ${url}`};
         }
     }
-    const bootstrap = await shell.match(BOOTSTRAP_URL);
-    if (!bootstrap || !metadata.bootstrap) {
+    const bootstrap = await shell.match(BUNDLED_BOOTSTRAP_URL);
+    if (!bootstrap) {
         return {
             type: 'OFFLINE_STATUS', readyOffline: false,
-            reason: 'Open the composer online once to cache its renderer catalog.',
+            reason: 'The bundled renderer catalog is missing.',
         };
-    }
-    const bootstrapDigest = await responseDigest(bootstrap);
-    if (
-        bootstrapDigest.sha256 !== metadata.bootstrap.sha256
-        || bootstrapDigest.bytes !== metadata.bootstrap.bytes
-    ) {
-        return {type: 'OFFLINE_STATUS', readyOffline: false, reason: 'The cached renderer catalog could not be verified.'};
     }
     let bootstrapPayload;
     try {
@@ -406,29 +400,29 @@ async function verifiedOfflineStatus() {
     } catch (_error) {
         return {type: 'OFFLINE_STATUS', readyOffline: false, reason: 'The cached renderer catalog is unreadable.'};
     }
-    const profileArtifactUrl = bootstrapPayload?.capabilities?.server_actions
-        ?.installation_profile_artifact_url;
-    let profilePath;
-    try {
-        profilePath = new URL(profileArtifactUrl, self.location.origin).pathname;
-    } catch (_error) {
-        profilePath = '';
+    if (
+        bootstrapPayload?.schema !== 'ledgrid.browser-composer-bootstrap'
+        || bootstrapPayload?.artifact?.kind !== 'bundled'
+        || bootstrapPayload?.artifact?.version !== 1
+    ) {
+        return {type: 'OFFLINE_STATUS', readyOffline: false, reason: 'The bundled renderer catalog is incompatible.'};
     }
-    const profileMatch = PROFILE_ARTIFACT_PATH.exec(profilePath);
-    const recordedProfile = metadata.profileArtifacts?.[profilePath];
-    const cachedProfile = profileMatch ? await shell.match(profilePath) : null;
-    if (!profileMatch || !recordedProfile || !cachedProfile) {
+    const activeProfile = metadata.activeProfile;
+    const profilePath = activeProfile?.path;
+    const expectedProfileDigest = profileArtifactDigest(profilePath || '');
+    const cachedProfile = profilePath ? await shell.match(profilePath) : null;
+    if (!expectedProfileDigest || expectedProfileDigest !== activeProfile?.contentDigest || !cachedProfile) {
         return {
             type: 'OFFLINE_STATUS', readyOffline: false,
-            reason: 'Open a managed installation profile online before working offline.',
+            reason: 'Prepare the exact selected installation profile for offline use.',
         };
     }
     try {
-        const actualProfile = await verifiedProfileArtifact(cachedProfile, profileMatch[1]);
+        const actualProfile = await verifiedProfileArtifact(cachedProfile, expectedProfileDigest);
         if (
-            actualProfile.sha256 !== recordedProfile.sha256
-            || actualProfile.bytes !== recordedProfile.bytes
-            || actualProfile.contentDigest !== recordedProfile.contentDigest
+            actualProfile.sha256 !== activeProfile.sha256
+            || actualProfile.bytes !== activeProfile.bytes
+            || actualProfile.contentDigest !== activeProfile.contentDigest
         ) {
             throw new Error('recorded profile identity changed');
         }
@@ -479,16 +473,69 @@ async function verifiedOfflineStatus() {
 
 async function markPythonRuntimeReady(message) {
     const packages = Array.isArray(message.packages) ? [...new Set(message.packages)].sort() : [];
+    const runtimeUrls = Array.isArray(message.runtimeUrls)
+        ? [...new Set(message.runtimeUrls)].sort()
+        : [];
+    const entrypoint = `${PYODIDE_BASE_URL}pyodide.mjs`;
     const valid = message.pyodideVersion === PYODIDE_VERSION
-        && REQUIRED_PYTHON_PACKAGES.every((name) => packages.includes(name));
+        && REQUIRED_PYTHON_PACKAGES.every((name) => packages.includes(name))
+        && runtimeUrls.includes(entrypoint)
+        && runtimeUrls.every((url) => typeof url === 'string' && url.startsWith(PYODIDE_BASE_URL));
     if (!valid) {
         return {
             type: 'OFFLINE_STATUS', readyOffline: false,
             reason: 'The prepared Python runtime does not match the pinned offline policy.',
         };
     }
+    try {
+        for (const url of runtimeUrls) {
+            const response = await cachePinnedPythonRuntime(new Request(url, {mode: 'cors'}));
+            if (!response.ok || response.type !== 'cors') {
+                throw new Error(`Python runtime asset is unavailable: ${url}`);
+            }
+        }
+    } catch (error) {
+        return {
+            type: 'OFFLINE_STATUS', readyOffline: false,
+            reason: error instanceof Error ? error.message : String(error),
+        };
+    }
+    let profileUrl;
+    try {
+        profileUrl = new URL(message.installationProfile?.artifactUrl, self.location.origin);
+    } catch (_error) {
+        profileUrl = null;
+    }
+    const profileDigest = String(message.installationProfile?.digest || '').toLowerCase();
+    const pathDigest = profileUrl ? profileArtifactDigest(profileUrl.pathname) : null;
+    const shell = await caches.open(CACHE_NAME);
+    const cachedProfile = profileUrl ? await shell.match(profileUrl.pathname) : null;
+    if (
+        !profileUrl
+        || profileUrl.origin !== self.location.origin
+        || pathDigest !== profileDigest
+        || !cachedProfile
+    ) {
+        return {
+            type: 'OFFLINE_STATUS', readyOffline: false,
+            reason: 'The exact selected installation profile is not cached.',
+        };
+    }
+    let profileIdentity;
+    try {
+        profileIdentity = await verifiedProfileArtifact(cachedProfile, profileDigest);
+    } catch (_error) {
+        return {
+            type: 'OFFLINE_STATUS', readyOffline: false,
+            reason: 'The exact selected installation profile failed verification.',
+        };
+    }
     await updateMetadata((metadata) => ({
         ...metadata,
+        activeProfile: {
+            ...profileIdentity,
+            path: profileUrl.pathname,
+        },
         pythonRuntime: {
             ...metadata.pythonRuntime,
             packages,
@@ -533,21 +580,16 @@ self.addEventListener('fetch', (event) => {
     }
     if (url.origin !== self.location.origin) return;
 
-    const profileMatch = PROFILE_ARTIFACT_PATH.exec(url.pathname);
-    if (profileMatch) {
-        event.respondWith(cacheImmutableProfileArtifact(event.request, profileMatch[1]));
+    const profileDigest = profileArtifactDigest(url.pathname);
+    if (profileDigest) {
+        event.respondWith(cacheImmutableProfileArtifact(event.request, profileDigest));
         return;
     }
 
-    // Bootstrap and content-addressed installation profiles are the only API
-    // reads stored for offline work. Reachability, status, save, validation,
-    // and activation requests always go to the network.
-    if (url.pathname.startsWith('/api/') && url.pathname !== BOOTSTRAP_URL) return;
-
-    if (url.pathname === BOOTSTRAP_URL) {
-        event.respondWith(networkFirst(event.request, BOOTSTRAP_URL));
-        return;
-    }
+    // Every API read except an immutable profile artifact remains network-only.
+    // The renderer catalog is a generated static shell asset, so reachability,
+    // capability refresh, status, save, validation, and activation are never cached.
+    if (url.pathname.startsWith('/api/')) return;
 
     if (event.request.mode === 'navigate' && url.pathname === '/composer') {
         event.respondWith(networkFirst(event.request, '/composer'));

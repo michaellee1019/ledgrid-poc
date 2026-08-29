@@ -135,15 +135,15 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             self.manifest["offline_strategies"],
             {
                 "chromium": "native_network_offline",
-                "firefox": "native_network_offline",
+                "firefox": "fixture_origin_outage",
                 "webkit": "fixture_origin_outage",
             },
         )
         self.assertEqual(
             self.manifest["service_worker_upgrade"],
             {
-                "previous_cache": "ledgrid-composer-shell-v16",
-                "current_cache": "ledgrid-composer-shell-v17",
+                "previous_cache": "ledgrid-composer-shell-v17",
+                "current_cache": "ledgrid-composer-shell-v18",
             },
         )
         self.assertEqual(
@@ -193,6 +193,14 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
         )
         self.assertIn(
             "service_worker_controls_composer",
+            self.manifest["journeys"]["offline_reconnect"]["required_assertions"],
+        )
+        self.assertIn(
+            "opening_wall_state_reads_zero",
+            self.manifest["journeys"]["offline_reconnect"]["required_assertions"],
+        )
+        self.assertIn(
+            "reconnect_preserved_local_draft",
             self.manifest["journeys"]["offline_reconnect"]["required_assertions"],
         )
         self.assertIn(

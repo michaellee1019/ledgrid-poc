@@ -20,7 +20,8 @@
     <div class="brand-lockup">
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
       <span class="brand-name"><strong>Living Wall</strong><small>Composer</small></span>
-      <span class="server-pill" id="serverState" data-state="checking" role="status" aria-live="polite" aria-label="Wall server connection"><i aria-hidden="true"></i><span>Checking server</span></span>
+      <span class="server-pill" id="composerState" data-state="loading" role="status" aria-live="polite" aria-label="Composer readiness"><i aria-hidden="true"></i><span>Composer loading</span></span>
+      <span class="server-pill" id="serverState" data-state="checking" role="status" aria-live="polite" aria-label="Wall connection"><i aria-hidden="true"></i><span>Checking wall</span></span>
     </div>
     <div class="document-identity">
       <label class="sr-only" for="presetName">Preset name</label>
@@ -197,7 +198,7 @@
               <small id="fallbackHelp">Python backgrounds use themselves. Native backgrounds require a real Host Python fallback.</small>
             </label>
             <div class="app-readiness" aria-label="Composer app status">
-              <p><span aria-hidden="true">⌁</span><span><strong>Connection</strong><small id="networkStatus">See the wall server status in the header.</small></span></p>
+              <p><span aria-hidden="true">⌁</span><span><strong>Wall connection</strong><small id="networkStatus">Composer readiness and wall connectivity are independent.</small></span></p>
               <p><span aria-hidden="true">↓</span><span><strong>Offline editing</strong><small id="offlineReadiness" role="status" aria-live="polite" data-state="unknown">Availability is confirmed after local assets finish caching.</small></span></p>
               <button class="quiet-button full-button" id="prepareOfflineButton" type="button">Prepare for offline use</button>
               <p><span aria-hidden="true">▣</span><span><strong>Installed app</strong><small id="installStatus" role="status" aria-live="polite" data-state="unknown">Installation is optional; app mode has not been detected yet.</small></span></p>
@@ -265,7 +266,7 @@
         </section>
 
         <div class="wall-apply-bar">
-          <p id="wallDraftStatus" role="status" aria-live="polite">Loading current wall state…</p>
+          <p id="wallDraftStatus" role="status" aria-live="polite">Composer draft only · current wall state has not been read.</p>
           <div><button class="quiet-button" id="resetWallDraftButton" type="button" disabled>Revert</button><button class="primary-button" id="reviewWallButton" type="button" disabled>Review changes</button></div>
         </div>
       </section>

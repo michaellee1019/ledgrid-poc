@@ -64,7 +64,9 @@ async function verifyInstallationProfile(value) {
         throw new Error(`Unable to load selected installation profile (${response.status})`);
     }
     const etag = response.headers.get('ETag')?.replace(/^W\//, '').replace(/^"|"$/g, '');
-    if (etag && etag !== expected.digest) {
+    const managedArtifactPath = new URL(expected.url).pathname
+        === `/api/v1/installation-profiles/${expected.digest}/artifact`;
+    if (managedArtifactPath && etag && etag !== expected.digest) {
         throw new Error('Installation-profile ETag does not match selected digest');
     }
     const bytes = new Uint8Array(await response.arrayBuffer());

@@ -11,7 +11,7 @@
   ],
   "offline_strategies": {
     "chromium": "native_network_offline",
-    "firefox": "native_network_offline",
+    "firefox": "fixture_origin_outage",
     "webkit": "fixture_origin_outage"
   },
   "journeys": {
@@ -46,9 +46,11 @@
       },
       "required_assertions": [
         "composer_loaded",
+        "opening_wall_state_reads_zero",
         "previous_cache_generation_upgraded",
         "service_worker_controls_composer",
         "renderer_catalog_cached",
+        "static_preview_play_enabled",
         "offline_assets_prepared",
         "offline_strategy_declared",
         "offline_network_isolation_enforced",
@@ -60,6 +62,8 @@
         "python_runtime_cache_stable",
         "offline_export_completed",
         "reconnect_succeeded",
+        "reconnect_preserved_local_draft",
+        "wall_capabilities_refreshed",
         "browser_console_clean",
         "forbidden_wall_requests_zero"
       ]
@@ -155,6 +159,7 @@
       "python_background_name": "Color Gradient",
       "managed_native_background_name": "Aurora Curtains (Native)",
       "managed_native_ineligibility_reason": "The managed host implementation is not loaded.",
+      "managed_native_digest_mismatch_reason": "The connected wall has a different component digest.",
       "required_assertions": [
         "composer_loaded",
         "python_background_with_clock_checked",
@@ -166,8 +171,8 @@
     }
   },
   "service_worker_upgrade": {
-    "previous_cache": "ledgrid-composer-shell-v16",
-    "current_cache": "ledgrid-composer-shell-v17"
+    "previous_cache": "ledgrid-composer-shell-v17",
+    "current_cache": "ledgrid-composer-shell-v18"
   },
   "forbidden_live_mutation_requests": [
     "PUT|POST|DELETE /api/v1/scene",

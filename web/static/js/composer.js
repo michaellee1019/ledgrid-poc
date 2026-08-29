@@ -5,6 +5,7 @@
     const ComposerState = window.LEDGridComposerState || {};
     const $ = (id) => document.getElementById(id);
     const STORAGE_PREFIX = 'ledgrid.browser-composer.v1';
+    const BUNDLED_BOOTSTRAP_URL = '/static/generated/composer/bootstrap.v1.json';
     const SAMPLE_FRAMES = 48;
     const EMPTY_PROFILE_DIGEST = '0'.repeat(64);
     const GLOBE_REGION_ORDER = Object.freeze([
@@ -88,8 +89,14 @@
         },
         autosaveTimer: null,
         connectivityTimer: null,
+        composerReady: false,
         serverOnline: false,
         serverChecking: true,
+        serverBootstrap: null,
+        serverCatalogCompatible: false,
+        serverActivationCompatible: false,
+        serverCatalogReason: 'Wall capabilities have not been refreshed.',
+        wallStateLoaded: false,
         busyAction: null,
         lastSavedPreset: null,
         globalSettings: {
@@ -337,6 +344,10 @@
         return url;
     }
 
+    function managedProfileUrl(kind, digest) {
+        return `/api/v1/installation-profiles/${digest}/${kind}`;
+    }
+
     function initializeInstallationProfileState() {
         const digest = state.bootstrap?.installation_profile?.digest || null;
         const artifactUrl = globalActions().installation_profile_artifact_url || null;
@@ -369,12 +380,15 @@
         const profile = state.installationProfile;
         if (!/^[0-9a-f]{64}$/.test(nextDigest || '') || nextDigest === EMPTY_PROFILE_DIGEST) return;
         const priorDigest = profile.selectedDigest;
-        if (nextDigest === priorDigest) return;
+        const priorAuthority = state.bootstrap?.installation_profile?.authority;
+        if (nextDigest === priorDigest && priorAuthority === 'host') return;
         const actions = globalActions();
         for (const name of (
             ['installation_profile_draft_url', 'installation_profile_publish_url', 'installation_profile_artifact_url']
         )) {
-            actions[name] = profileUrlForDigest(actions[name], priorDigest, nextDigest);
+            const kind = name.replace('installation_profile_', '').replace('_url', '');
+            actions[name] = profileUrlForDigest(actions[name], priorDigest, nextDigest)
+                || managedProfileUrl(kind, nextDigest);
         }
         const followsSelected = !profile.desiredDigest || profile.desiredDigest === priorDigest;
         profile.selectedDigest = nextDigest;
@@ -386,6 +400,7 @@
         }
         if (state.bootstrap?.installation_profile) {
             state.bootstrap.installation_profile.digest = nextDigest;
+            state.bootstrap.installation_profile.authority = 'host';
         }
         resetChecker({preserveDocumentRevision: true});
         renderLayers();
@@ -620,6 +635,7 @@
             ? 'Reading observed wall state…'
             : state.globalSettings.applying ? 'Applying commands in order…'
             : state.globalSettings.pendingObservation ? 'Commands accepted · waiting for observed wall state'
+            : !state.wallStateLoaded ? 'Composer draft only · current wall state has not been read.'
             : changes.length ? `${changes.length} unapplied wall change${changes.length === 1 ? '' : 's'} · preview is local`
             : 'Draft matches observed wall state.';
         $('resetWallDraftButton').disabled = !changes.length || state.globalSettings.applying;
@@ -667,6 +683,7 @@
                 state.serverCheck = null;
             }
             state.controllerObservation = nextControllerObservation;
+            state.wallStateLoaded = true;
             const hadDirtyDraft = state.globalSettings.dirty;
             state.globalSettings.observed = observed;
             if (state.globalSettings.pendingObservation) {
@@ -770,6 +787,63 @@
         return {...frame, pixels};
     }
 
+    function setComposerReady(ready, detail = null) {
+        state.composerReady = Boolean(ready);
+        const pill = $('composerState');
+        if (!pill) return;
+        pill.dataset.state = ready ? 'ready' : 'loading';
+        pill.querySelector('span').textContent = ready ? 'Composer ready' : 'Composer loading';
+        pill.title = detail || (ready
+            ? 'Local rendering and editing are ready on this device.'
+            : 'Loading the bundled renderer catalog.');
+    }
+
+    function serverComponentCompatibility() {
+        if (!state.component || !state.serverBootstrap) {
+            return {compatible: false, activationReady: false, reason: 'Choose a renderer and refresh wall capabilities.'};
+        }
+        const serverComponent = state.serverBootstrap.components.find((item) => item.key === state.component.key);
+        if (!serverComponent) {
+            return {compatible: false, activationReady: false, reason: 'The connected wall does not advertise this renderer.'};
+        }
+        const localIdentity = state.component.browser_capabilities?.managed_identity || {};
+        const serverIdentity = serverComponent.browser_capabilities?.managed_identity || {};
+        for (const field of ['component_digest', 'runtime_digest', 'parameter_schema_version']) {
+            if (localIdentity[field] !== serverIdentity[field]) {
+                return {compatible: false, activationReady: false, reason: `The connected wall has a different ${field.replaceAll('_', ' ')}.`};
+            }
+        }
+        if (serverComponent.browser_capabilities?.activation_ready !== true) {
+            return {
+                compatible: true,
+                activationReady: false,
+                reason: serverComponent.browser_capabilities?.reason || 'This renderer is not activation-ready on the connected wall.',
+            };
+        }
+        return {compatible: true, activationReady: true, reason: null};
+    }
+
+    function updateServerComponentCompatibility() {
+        const result = serverComponentCompatibility();
+        state.serverCatalogCompatible = result.compatible;
+        state.serverActivationCompatible = result.activationReady;
+        state.serverCatalogReason = result.reason;
+        updateServerActionButtons();
+    }
+
+    async function refreshServerBootstrap(url = null) {
+        const bootstrapUrl = url || globalActions().bootstrap_url || '/api/v1/composer/bootstrap?catalog_only=1';
+        const payload = assertBootstrap(await requestJson(bootstrapUrl));
+        state.serverBootstrap = payload;
+        const actions = clone(payload.capabilities?.server_actions || {});
+        if (!actions.installation_profile_artifact_url) {
+            actions.installation_profile_artifact_url = globalActions().installation_profile_artifact_url || null;
+        }
+        state.bootstrap.capabilities.server_actions = actions;
+        updateServerComponentCompatibility();
+        return payload;
+    }
+
     function setServerOnline(online, {checking = false, quiet = false} = {}) {
         state.serverOnline = Boolean(online);
         state.serverChecking = checking;
@@ -778,18 +852,18 @@
         const activationIsCanary = activationAvailable && activationMode === 'development_canary';
         const pill = $('serverState');
         pill.dataset.state = checking ? 'checking' : online ? 'online' : 'offline';
-        pill.querySelector('span').textContent = checking ? 'Checking server' : online ? 'Server online' : 'Local only';
-        $('serverActionBadge').textContent = online ? 'Server online' : 'Local only';
+        pill.querySelector('span').textContent = checking ? 'Checking wall' : online ? 'Wall connected' : 'Wall offline';
+        $('serverActionBadge').textContent = online ? 'Wall connected' : 'Wall offline';
         if ($('networkStatus')) {
             $('networkStatus').textContent = checking
                 ? 'Checking the wall server…'
                 : online
                     ? activationAvailable
                         ? activationIsCanary
-                            ? 'Wall server online; guarded activation is available only as a development/canary capability, not a production GO.'
-                            : 'Wall server online; activation capability labeling is invalid, so physical activation is unavailable.'
-                        : 'Wall server online; library save is available, but physical activation is disabled.'
-                    : 'Local only; server save and wall activation are disabled.';
+                            ? 'Wall connected; guarded activation is available only as a development/canary capability, not a production GO.'
+                            : 'Wall connected; activation capability labeling is invalid, so physical activation is unavailable.'
+                        : 'Wall connected; library save is available, but physical activation is disabled.'
+                    : 'Composer ready; shared save and wall operations are offline.';
             $('networkStatus').dataset.state = checking ? 'checking' : online ? 'online' : 'offline';
         }
         if (!quiet && !state.busyAction) {
@@ -857,6 +931,8 @@
         if (state.bootstrap?.capabilities?.server_actions?.activation_mode !== 'development_canary') {
             return 'Physical-wall activation is not labeled as an explicit development/canary capability.';
         }
+        if (!state.serverCatalogCompatible || !state.serverActivationCompatible) return state.serverCatalogReason || 'The connected wall catalog does not match this renderer.';
+        if (!state.wallStateLoaded) return 'Read current Wall settings before running server qualification or activation.';
         const capability = componentCapability();
         if (!capability.activationReady) return capability.reason || 'This look is not activation-ready.';
         if (state.serverChecking) return 'Waiting for the wall server.';
@@ -873,7 +949,7 @@
 
     function updateServerActionButtons() {
         const capability = componentCapability();
-        const saveEnabled = Boolean(state.component && capability.saveable && state.serverOnline && !state.serverChecking && !state.busyAction);
+        const saveEnabled = Boolean(state.component && capability.saveable && state.serverCatalogCompatible && state.serverOnline && !state.serverChecking && !state.busyAction);
         ['saveLibraryButton', 'saveLibraryPanelButton'].forEach((id) => {
             $(id).disabled = !saveEnabled;
         });
@@ -908,12 +984,22 @@
         try {
             const url = state.bootstrap.capabilities?.server_actions?.connectivity_url || '/api/v1/composer/connectivity';
             const payload = await requestJson(url);
+            if (payload.online === true) {
+                try {
+                    await refreshServerBootstrap(payload.bootstrap_url);
+                } catch (error) {
+                    state.serverBootstrap = null;
+                    state.serverCatalogCompatible = false;
+                    state.serverActivationCompatible = false;
+                    state.serverCatalogReason = `Wall capabilities are unavailable: ${error.message}`;
+                }
+            }
             setServerOnline(payload.online === true, {quiet});
-            if (payload.online === true) await Promise.all([
-                refreshGlobalSettings({quiet: true, preserveDraft: true}),
-                preloadMasks(),
-            ]);
         } catch (_error) {
+            state.serverBootstrap = null;
+            state.serverCatalogCompatible = false;
+            state.serverActivationCompatible = false;
+            state.serverCatalogReason = 'The wall is offline.';
             setServerOnline(false, {quiet});
         }
     }
@@ -990,6 +1076,10 @@
             throw new Error('The composer catalog contains invalid wall geometry.');
         }
         if (!Array.isArray(payload.components)) throw new Error('The composer catalog has no component list.');
+        if (payload.artifact?.kind === 'bundled' && (
+            payload.artifact.version !== 1
+            || !/^[0-9a-f]{64}$/.test(payload.artifact.catalog_digest || '')
+        )) throw new Error('The bundled composer catalog has no valid version identity.');
         if (!/^[0-9a-f]{64}$/.test(payload.installation_profile?.digest || '')) {
             throw new Error('The composer catalog has no managed installation-profile identity.');
         }
@@ -1008,8 +1098,11 @@
     }
 
     async function loadBootstrap() {
-        const response = await fetch('/api/v1/composer/bootstrap', {headers: {'Accept': 'application/json'}});
-        if (!response.ok) throw new Error(`Catalog request failed (${response.status}).`);
+        const response = await fetch(BUNDLED_BOOTSTRAP_URL, {
+            headers: {'Accept': 'application/json'},
+            cache: 'no-cache',
+        });
+        if (!response.ok) throw new Error(`Bundled catalog request failed (${response.status}).`);
         state.bootstrap = assertBootstrap(await response.json());
         initializeInstallationProfileState();
         initializeGlobalSettings();
@@ -1020,7 +1113,7 @@
             || state.bootstrap.components.find((item) => item.role === 'background' && componentCapability(item).previewable);
         if (preferred) await selectComponent(preferred);
         else showCatalogUnavailable('No components currently declare a supported browser runtime.');
-        await checkConnectivity();
+        setComposerReady(true, `Bundled catalog ${state.bootstrap.artifact?.catalog_digest?.slice(0, 12) || 'ready'}`);
     }
 
     function configureCanvas() {
@@ -1245,9 +1338,12 @@
         if ($('installationProfileStatus')) {
             const selected = state.installationProfile.selectedDigest || '';
             const desired = state.installationProfile.desiredDigest || selected;
+            const bundled = state.bootstrap?.installation_profile?.authority === 'bundled';
             $('installationProfileStatus').textContent = desired !== selected
                 ? `Published profile ${desired.slice(0, 12)}… is staged for the next Check and reviewed activation · wall remains ${selected.slice(0, 12)}….`
-                : `Plant geometry is authoritative host state · selected profile ${selected.slice(0, 12)}… · presets cannot override it.`;
+                : bundled
+                    ? `Bundled profile ${selected.slice(0, 12)}… drives local preview · use Refresh in Wall settings to read the connected wall.`
+                    : `Plant geometry is authoritative host state · selected profile ${selected.slice(0, 12)}… · presets cannot override it.`;
         }
         $('backgroundLayerIcon').textContent = component.icon || '✦';
         $('backgroundLayerName').textContent = component.name || humanize(component.plugin_id);
@@ -1352,6 +1448,7 @@
         if (state.component?.key === component.key && !options.force) return;
         state.component = component;
         state.selectedPreset = null;
+        updateServerComponentCompatibility();
         localStorage.setItem(`${STORAGE_PREFIX}.last-component`, component.key);
         const saved = options.ignoreAutosave ? null : loadAutosave(component);
         const defaults = defaultParams(component);
@@ -3189,26 +3286,10 @@
             const source = await file.text();
             const payload = JSON.parse(source);
             assertSafeImport(payload);
-            let validated;
-            let serverValidated = false;
-            if (state.serverOnline) {
-                const url = state.bootstrap.capabilities?.server_actions?.validate_import_url || '/api/v1/composer/presets/validate';
-                try {
-                    validated = await requestJson(url, {method: 'POST', body: JSON.stringify(payload)});
-                    serverValidated = true;
-                } catch (error) {
-                    if (error.code !== 'offline') throw error;
-                    setServerOnline(false);
-                    validated = locallyValidatedImport(payload);
-                }
-            } else {
-                validated = locallyValidatedImport(payload);
-            }
+            const validated = locallyValidatedImport(payload);
             await applyImportedDraft(validated);
-            $('serverActionStatus').textContent = serverValidated
-                ? 'Upload validated by the server and opened as a local draft. The physical wall was not changed.'
-                : 'Upload checked locally and opened as a draft. Server validation is pending until you reconnect.';
-            toast(serverValidated ? 'Preset validated and opened locally.' : 'Preset opened locally; server validation is pending.');
+            $('serverActionStatus').textContent = 'Upload checked locally and opened as a draft. The physical wall was not changed.';
+            toast('Preset checked and opened locally.');
         } catch (error) {
             if (error.code === 'offline') setServerOnline(false);
             toast(error.message, 'error');
@@ -3944,15 +4025,19 @@
                 } else if (key === 't') {
                     event.preventDefault();
                     selectMobileView('tune');
+                    $('controlsTab').focus();
                 } else if (key === 'l') {
                     event.preventDefault();
                     selectMobileView('layers');
+                    $('layersTab').focus();
                 } else if (key === 'w') {
                     event.preventDefault();
                     selectMobileView('wall');
+                    $('wallTab').focus();
                 } else if (key === 'c') {
                     event.preventDefault();
                     selectMobileView('check');
+                    $('checkerTab').focus();
                 }
                 return;
             }
@@ -4018,8 +4103,10 @@
         try {
             if (!ComposerRuntime) throw new Error('The browser runtime adapter did not load.');
             await loadBootstrap();
+            checkConnectivity();
             state.connectivityTimer = window.setInterval(() => checkConnectivity({quiet: true}), 15000);
         } catch (error) {
+            setComposerReady(false, error.message);
             showCatalogUnavailable(error.message);
             setEngineState('error', 'Catalog error', 'Refresh to retry');
             $('componentList').setAttribute('aria-busy', 'false');
