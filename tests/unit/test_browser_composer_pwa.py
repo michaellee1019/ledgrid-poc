@@ -102,6 +102,7 @@ class BrowserComposerPWATests(unittest.TestCase):
             "/static/js/composer_compositor.js",
             "/static/js/composer_state.js",
             "/static/js/composer_runtime.js",
+            "/static/js/composer_sha256.js",
             "/static/js/composer.js",
             "/static/js/composer_native_worker.js",
             "/static/js/composer_python_worker.js",

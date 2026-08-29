@@ -981,9 +981,13 @@ std::size_t fec_rs_wire_offset(
 bool fec_v5_decoded_payload_valid(
     const std::uint8_t* decoded,
     std::size_t codewords,
-    std::uint8_t expected_version) {
+    std::uint8_t expected_version,
+    bool outer_parity,
+    bool require_outer_parity) {
   if (decoded == nullptr) return false;
-  const std::size_t decoded_capacity = codewords * kFecDataBytes;
+  if (outer_parity && codewords < 2U) return false;
+  const std::size_t data_codewords = codewords - (outer_parity ? 1U : 0U);
+  const std::size_t decoded_capacity = data_codewords * kFecDataBytes;
   if (decoded_capacity < kFecEnvelopeHeaderBytes +
                              kAlignedEnvelopeHeaderBytes + 1U +
                              kAnimationPipelineCrcBytes ||
@@ -1006,7 +1010,10 @@ bool fec_v5_decoded_payload_valid(
   }
   const std::size_t semantic_size =
       (static_cast<std::size_t>(inner[2]) << 8U) | inner[3];
-  if (semantic_size == 0U || semantic_size > kFecEnvelopeMaxSemanticBytes) {
+  const std::size_t maximum_semantic_size = outer_parity
+      ? kFecEnvelopeMaxSemanticBytes
+      : kFecV6EnvelopeMaxSemanticBytes;
+  if (semantic_size == 0U || semantic_size > maximum_semantic_size) {
     return false;
   }
   const std::size_t inner_unpadded = kAlignedEnvelopeHeaderBytes +
@@ -1018,11 +1025,22 @@ bool fec_v5_decoded_payload_valid(
   std::size_t required_codewords =
       (kFecEnvelopeHeaderBytes + inner_wire_size + kFecDataBytes - 1U) /
       kFecDataBytes;
+  if (outer_parity) ++required_codewords;
   required_codewords += (4U - required_codewords % 4U) % 4U;
   if (required_codewords != codewords) return false;
   for (std::size_t index = kFecEnvelopeHeaderBytes + inner_wire_size;
        index < decoded_capacity; ++index) {
     if (decoded[index] != 0U) return false;
+  }
+  if (outer_parity && require_outer_parity) {
+    const std::size_t outer_offset = data_codewords * kFecDataBytes;
+    for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
+      std::uint8_t expected = 0U;
+      for (std::size_t block = 0; block < data_codewords; ++block) {
+        expected ^= decoded[block * kFecDataBytes + symbol];
+      }
+      if (decoded[outer_offset + symbol] != expected) return false;
+    }
   }
   return receiver_packet_crc_valid(inner, inner_wire_size);
 }
@@ -1032,7 +1050,8 @@ bool fec_v5_systematic_payload_valid(
     std::size_t codewords,
     std::uint8_t* scratch,
     std::uint8_t expected_version,
-    bool diagonal) {
+    bool diagonal,
+    bool outer_parity) {
   const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;
   for (std::size_t block = 0; block < codewords; ++block) {
     for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
@@ -1042,7 +1061,7 @@ bool fec_v5_systematic_payload_valid(
     }
   }
   return fec_v5_decoded_payload_valid(
-      scratch, codewords, expected_version);
+      scratch, codewords, expected_version, outer_parity, true);
 }
 
 ReceiverFecPacketOutcome receiver_fec_packet_outcome(
@@ -1110,12 +1129,15 @@ bool decode_receiver_packet_payload(
       fec_v3_shape && duplicated_marker_matches(kFecEnvelopeVersionV3);
   const bool fec_v4_candidate =
       fec_v4_shape && duplicated_marker_matches(kFecEnvelopeVersionV4);
-  const bool fec_v6_candidate =
+  const bool fec_v7_candidate =
       fec_v5_shape && duplicated_marker_matches(kFecEnvelopeVersion);
+  const bool fec_v6_candidate =
+      fec_v5_shape && duplicated_marker_matches(kFecEnvelopeVersionV6);
   const bool fec_v5_candidate =
       fec_v5_shape && duplicated_marker_matches(kFecEnvelopeVersionV5);
   if (!fec_v2_candidate && !fec_v3_candidate &&
-      !fec_v4_candidate && !fec_v5_candidate && !fec_v6_candidate) {
+      !fec_v4_candidate && !fec_v5_candidate && !fec_v6_candidate &&
+      !fec_v7_candidate) {
     if (receiver_packet_crc_valid(packet, packet_size) &&
         decode_crc_valid_receiver_packet_payload(
             packet, packet_size, payload)) {
@@ -1126,13 +1148,15 @@ bool decode_receiver_packet_payload(
     return false;
   }
   if (report != nullptr) report->fec_envelope_attempted = true;
-  const bool fec_v6 = fec_v6_candidate;
-  const bool fec_v5 = !fec_v6 && fec_v5_candidate;
-  const bool fec_rs = fec_v6 || fec_v5;
-  const bool diagonal = fec_v6;
-  const std::uint8_t fec_rs_version = fec_v6
+  const bool fec_v7 = fec_v7_candidate;
+  const bool fec_v6 = !fec_v7 && fec_v6_candidate;
+  const bool fec_v5 = !fec_v7 && !fec_v6 && fec_v5_candidate;
+  const bool fec_rs = fec_v7 || fec_v6 || fec_v5;
+  const bool diagonal = fec_v7 || fec_v6;
+  const bool outer_parity = fec_v7;
+  const std::uint8_t fec_rs_version = fec_v7
       ? kFecEnvelopeVersion
-      : kFecEnvelopeVersionV5;
+      : fec_v6 ? kFecEnvelopeVersionV6 : kFecEnvelopeVersionV5;
   const bool fec_v4 = !fec_rs && fec_v4_candidate;
   const bool fec_v3 = !fec_rs && !fec_v4 && fec_v3_candidate;
   const std::size_t codewords = fec_rs
@@ -1167,7 +1191,7 @@ bool decode_receiver_packet_payload(
     // Parity-only damage is safe to ignore because it cannot change the
     // authenticated semantic payload.
     const bool systematic_payload_valid = fec_v5_systematic_payload_valid(
-        packet, codewords, scratch, fec_rs_version, diagonal);
+        packet, codewords, scratch, fec_rs_version, diagonal, outer_parity);
     std::size_t contiguous_burst_hint = kFecCodewordBytes;
     bool maximum_burst_blocks[kFecMaxCodewords] = {};
     std::uint8_t maximum_burst_syndromes
@@ -1344,6 +1368,48 @@ bool decode_receiver_packet_payload(
         scratch[block * kFecDataBytes + symbol] = value;
       }
     }
+    if (!systematic_payload_valid && outer_parity &&
+        maximum_burst_block_count == 1U) {
+      std::size_t failed_block = 0U;
+      while (failed_block < codewords &&
+             !maximum_burst_blocks[failed_block]) {
+        ++failed_block;
+      }
+      const std::size_t data_codewords = codewords - 1U;
+      bool recovered = false;
+      if (failed_block < data_codewords) {
+        const std::size_t outer_offset = data_codewords * kFecDataBytes;
+        std::uint16_t reconstructed_bits = 0U;
+        for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
+          std::uint8_t value = scratch[outer_offset + symbol];
+          for (std::size_t block = 0; block < data_codewords; ++block) {
+            if (block == failed_block) continue;
+            value ^= scratch[block * kFecDataBytes + symbol];
+          }
+          const std::size_t offset = failed_block * kFecDataBytes + symbol;
+          reconstructed_bits = static_cast<std::uint16_t>(
+              reconstructed_bits + __builtin_popcount(
+                  static_cast<unsigned int>(scratch[offset] ^ value)));
+          scratch[offset] = value;
+        }
+        recovered = fec_v5_decoded_payload_valid(
+            scratch, codewords, fec_rs_version, true, true);
+        if (recovered) {
+          corrected_bits = static_cast<std::uint16_t>(
+              corrected_bits + reconstructed_bits);
+        }
+      } else if (failed_block == data_codewords) {
+        // Damage confined to the redundant outer shard cannot change the
+        // canonical inner packet. Its CRC remains the semantic authority.
+        recovered = fec_v5_decoded_payload_valid(
+            scratch, codewords, fec_rs_version, true, false);
+      }
+      if (recovered) {
+        ++corrected_codewords;
+        maximum_burst_blocks[failed_block] = false;
+        maximum_burst_block_count = 0U;
+      }
+    }
     if (!systematic_payload_valid && maximum_burst_block_count != 0U) {
       // A burst longer than nine interleave columns leaves a contiguous run
       // of codewords with ten damaged symbols. Ten equations solve those
@@ -1410,7 +1476,7 @@ bool decode_receiver_packet_payload(
           }
         }
         if (!fec_v5_decoded_payload_valid(
-                scratch, codewords, fec_rs_version)) {
+                scratch, codewords, fec_rs_version, outer_parity, true)) {
           return false;
         }
         if (candidate_codewords != nullptr) {
@@ -1705,7 +1771,10 @@ bool decode_receiver_packet_payload(
     }
   }
 
-  if (decoded_capacity < kFecEnvelopeHeaderBytes +
+  const std::size_t semantic_decoded_capacity = fec_v7
+      ? decoded_capacity - kFecOuterParityBytes
+      : decoded_capacity;
+  if (semantic_decoded_capacity < kFecEnvelopeHeaderBytes +
                              kAlignedEnvelopeHeaderBytes + 1U +
                              kAnimationPipelineCrcBytes ||
       scratch[0] != static_cast<std::uint8_t>(ReceiverCommand::AlignedEnvelope) ||
@@ -1721,7 +1790,7 @@ bool decode_receiver_packet_payload(
   const std::uint8_t* inner = scratch + kFecEnvelopeHeaderBytes;
   if (inner_wire_size < kAlignedEnvelopeHeaderBytes + 1U +
                             kAnimationPipelineCrcBytes ||
-      inner_wire_size > decoded_capacity - kFecEnvelopeHeaderBytes ||
+      inner_wire_size > semantic_decoded_capacity - kFecEnvelopeHeaderBytes ||
       inner_wire_size % kSpiDmaAlignmentBytes != 0U ||
       inner[0] != static_cast<std::uint8_t>(ReceiverCommand::AlignedEnvelope) ||
       inner[1] != kAlignedEnvelopeVersion) {
@@ -1729,8 +1798,10 @@ bool decode_receiver_packet_payload(
   }
   const std::size_t semantic_size =
       (static_cast<std::size_t>(inner[2]) << 8U) | inner[3];
-  const std::size_t maximum_semantic_size = fec_rs
+  const std::size_t maximum_semantic_size = fec_v7
       ? kFecEnvelopeMaxSemanticBytes
+      : fec_rs
+      ? kFecV6EnvelopeMaxSemanticBytes
       : fec_v4
           ? kFecV4EnvelopeMaxSemanticBytes
           : fec_v3
@@ -1749,6 +1820,7 @@ bool decode_receiver_packet_payload(
   std::size_t required_codewords =
       (kFecEnvelopeHeaderBytes + inner_wire_size + data_bytes - 1U) /
       data_bytes;
+  if (fec_v7) ++required_codewords;
   if (fec_rs || fec_v4 || fec_v3) {
     required_codewords += (4U - required_codewords % 4U) % 4U;
   } else if (required_codewords % 2U != 0U) {
@@ -1758,7 +1830,7 @@ bool decode_receiver_packet_payload(
     return false;
   }
   for (std::size_t index = kFecEnvelopeHeaderBytes + inner_wire_size;
-       index < decoded_capacity; ++index) {
+       index < semantic_decoded_capacity; ++index) {
     if (scratch[index] != 0U) return false;
   }
   if (!receiver_packet_crc_valid(inner, inner_wire_size)) {

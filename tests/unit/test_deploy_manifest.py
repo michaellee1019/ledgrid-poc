@@ -191,6 +191,29 @@ class DeployManifestTests(unittest.TestCase):
             },
         )
 
+    def test_fast_manifest_keeps_every_generated_composer_runtime_asset(self):
+        composer_assets = (
+            "web/static/generated/composer/bootstrap.v1.json",
+            "web/static/generated/composer/offline_assets.json",
+            "web/static/generated/composer/profile.bin",
+            "web/static/generated/composer/renderer.wasm",
+        )
+        other_generated = "web/static/generated/other/catalog.json"
+        for path in (*composer_assets, other_generated):
+            self._write(path)
+        self._track(*composer_assets, other_generated)
+
+        plan = manifest_plan(self.root, "fast")
+
+        self.assertEqual(
+            plan.selected,
+            tuple(PurePosixPath(path) for path in composer_assets),
+        )
+        self.assertIn(
+            (other_generated, "outside fast application scope"),
+            {(item.path.as_posix(), item.reason) for item in plan.excluded},
+        )
+
     def test_dependency_inputs_are_safe_untracked_for_full_but_excluded_from_fast(self):
         for path in ("pyproject.toml", "uv.lock", "requirements-pi.lock"):
             self._write(path)

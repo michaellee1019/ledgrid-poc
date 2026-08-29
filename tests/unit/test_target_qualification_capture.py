@@ -39,10 +39,10 @@ def _device(logical_id: int, displayed: int) -> dict:
     envelope_bytes = transfers * (16 if logical_id == 3 else 4)
     aligned_padding = (-(full_frame_semantic + 6)) % 4
     fec_enabled = logical_id == 3
-    fec_data_padding = 76 * transfers if fec_enabled else 0
+    fec_data_padding = 26 * transfers if fec_enabled else 0
     padding_bytes = transfers * aligned_padding + fec_data_padding
     crc_bytes = transfers * 2
-    fec_parity = 680 * transfers if fec_enabled else 0
+    fec_parity = 730 * transfers if fec_enabled else 0
     full_frame_wire = (
         4088 if fec_enabled else ((full_frame_semantic + 9) // 4) * 4
     )
@@ -51,7 +51,7 @@ def _device(logical_id: int, displayed: int) -> dict:
         "receiver_logical_device": logical_id,
         "receiver_status_version": 7,
         "receiver_status_max_version_seen": 7,
-        "receiver_capabilities": 0xFC00C,
+        "receiver_capabilities": 0x1FC00C,
         "transport_envelope_enabled": True,
         "transport_envelope_negotiation_candidate": None,
         "transport_envelope_negotiation_streak": 0,
@@ -148,8 +148,6 @@ def _metrics(*, final: bool) -> dict:
                 "strip_count": 33,
                 "total_leds": 4554,
                 "device_dispatch_order": [0, 1, 2, 3, 4],
-                "fec_isolated_full_frame_dispatch": True,
-                "full_frame_dispatch_phases": [[[0, 1], [2]], [[3, 4]]],
                 "transport_envelope_devices": 5,
                 "fec_transport_requested_devices": 1,
                 "fec_transport_enabled_devices": 1,
@@ -458,19 +456,6 @@ class TargetQualificationCaptureTests(unittest.TestCase):
 
         mutations = (
             ("dispatch", ("aggregate", 0, "device_dispatch_order", [0, 1, 3, 2, 4])),
-            (
-                "dispatch isolation disabled",
-                ("aggregate", 0, "fec_isolated_full_frame_dispatch", False),
-            ),
-            (
-                "dispatch isolation phases",
-                (
-                    "aggregate",
-                    0,
-                    "full_frame_dispatch_phases",
-                    [[[0, 1]], [[2, 3, 4]]],
-                ),
-            ),
             ("route", ("device_map", 2, "chip_select", 0)),
             ("width", ("device_map", 4, "local_strip_count", 8)),
             ("offset", ("devices", 3, "receiver_global_strip_offset", 16)),
@@ -490,8 +475,6 @@ class TargetQualificationCaptureTests(unittest.TestCase):
                 expected_error = (
                     "qualified order"
                     if label == "dispatch"
-                    else "full-frame dispatch is not isolated"
-                    if label.startswith("dispatch isolation")
                     else "aligned transport capabilities"
                     if label == "capabilities"
                     else "not enabled"

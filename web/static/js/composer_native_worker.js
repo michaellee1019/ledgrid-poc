@@ -1,3 +1,5 @@
+import {sha256Bytes} from './composer_sha256.js';
+
 'use strict';
 
 const ENGINE = 'receiver-native-cpp-wasm';
@@ -53,9 +55,6 @@ async function verifyInstallationProfile(value) {
         }
         return verifiedProfile;
     }
-    if (!self.crypto?.subtle) {
-        throw new Error('Cryptographic installation-profile verification is unavailable');
-    }
     const response = await fetch(expected.url, {
         cache: 'no-store',
         headers: {'Accept': 'application/octet-stream'},
@@ -95,7 +94,7 @@ async function verifyInstallationProfile(value) {
     const embedded = digestHex(bytes.subarray(68, 100));
     const digestInput = bytes.slice();
     digestInput.fill(0, 68, 100);
-    const computed = digestHex(new Uint8Array(await self.crypto.subtle.digest('SHA-256', digestInput)));
+    const computed = digestHex(await sha256Bytes(digestInput, self.crypto));
     if (embedded !== expected.digest || computed !== expected.digest) {
         throw new Error('Selected LGIP artifact failed content-digest verification');
     }

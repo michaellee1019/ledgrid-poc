@@ -793,8 +793,8 @@ def _target_fec_item(
         expected_host = {
             "fec_frames_sent": expected_fec_frames,
             "fec_codewords_sent": 68 * expected_fec_frames,
-            "fec_parity_bytes_sent": 680 * expected_fec_frames,
-            "fec_data_padding_bytes_sent": 76 * expected_fec_frames,
+            "fec_parity_bytes_sent": 730 * expected_fec_frames,
+            "fec_data_padding_bytes_sent": 26 * expected_fec_frames,
         }
         for field, expected in expected_host.items():
             if deltas[field] != expected:

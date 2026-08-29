@@ -155,15 +155,15 @@ diagonally interleaved Reed-Solomon codewords (50 protected data bytes plus ten
 GF(256) parity bytes), totaling 4,088 bytes or 1,635.2 us. The one-strip tail
 remains 424 bytes. The five receivers clock 14,472 bytes, or 5,788.8 us when
 treated serially. The qualified Host schedule overlaps receivers 0-1 on SPI0
-with receiver 2 on SPI1, waits for both controller prefixes, then sends
-receivers 3-4 on SPI1 without cross-controller DMA overlap. Its raw transfer
-budget is 4,460.8 us before Host overhead.
+with receivers 2-4 on SPI1 while preserving logical order on each controller.
+SPI0 consumes 2,656 us and SPI1 consumes 3,132.8 us, so the raw parallel
+critical-path budget is 3,132.8 us before Host overhead.
 For aligned streaming the Host avoids allocating an unused multi-kilobyte MISO
 list on most `SET_ALL` transactions. It retains one staggered fresh sample per
 receiver every 128 shared wall-frame sequences and never schedules more than one
 receiver sample on a wall frame. Receivers 0-2 capture that sample in-band on
 their 3,320-byte frame. Receiver 3 first uses the explicit query and then keeps
-its 4,088-byte v6 frame on one full-duplex ioctl whose unrelated MISO bytes are
+its 4,088-byte v7 frame on one full-duplex ioctl whose unrelated MISO bytes are
 discarded. Receiver 4's
 424-byte frame cannot clock the 1,248-byte status-v7 snapshot, so its scheduled
 phase adds one 1,256-byte aligned status query before the write-only tail frame:

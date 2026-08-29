@@ -14,6 +14,7 @@ import sys
 
 
 RUNTIME_PRESETS = PurePosixPath("presets/animations")
+COMPOSER_GENERATED_ROOT = PurePosixPath("web/static/generated/composer")
 FAST_CODE_SUFFIXES = {".css", ".html", ".js", ".py"}
 FAST_CONFIG_FILES = {
     PurePosixPath("config/plant_globe_map_32x138.json"),
@@ -117,6 +118,12 @@ def _is_safe_untracked(root: Path, path: PurePosixPath) -> bool:
 def _include_fast(path: PurePosixPath) -> bool:
     if _is_beneath(path, RUNTIME_PRESETS):
         return False
+    # Composer is a static-worker application. Its generated catalog, exact
+    # installation profile, and browser-native modules are runtime assets, not
+    # optional build output, so application-only releases must ship them as a
+    # versioned unit regardless of file suffix.
+    if _is_beneath(path, COMPOSER_GENERATED_ROOT):
+        return True
     # A plugin package owns its implementation, manifests, presets, tests, and
     # visual assets. Sync it as one unit so new asset types do not require a
     # deployment-script update.

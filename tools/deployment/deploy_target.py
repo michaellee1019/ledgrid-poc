@@ -2949,9 +2949,9 @@ def _receiver_health_rejection(
             int(status["fec_codewords_sent"])
             != (68 * fec_frames if expected_fec else 0)
             or int(status["fec_parity_bytes_sent"])
-            != (680 * fec_frames if expected_fec else 0)
+            != (730 * fec_frames if expected_fec else 0)
             or int(status["fec_data_padding_bytes_sent"])
-            != (76 * fec_frames if expected_fec else 0)
+            != (26 * fec_frames if expected_fec else 0)
             or (not expected_fec and fec_frames != 0)
         ):
             return f"receiver {logical_id} host FEC accounting is inconsistent"
@@ -3080,12 +3080,6 @@ def _receiver_health_rejection(
     ]
     if sample.receiver_aggregate.get("device_dispatch_order") != expected_dispatch_order:
         return "host receiver dispatch order is not the exact qualified order"
-    if (
-        sample.receiver_aggregate.get("fec_isolated_full_frame_dispatch") is not True
-        or sample.receiver_aggregate.get("full_frame_dispatch_phases")
-        != [[[0, 1], [2]], [[3, 4]]]
-    ):
-        return "host FEC full-frame dispatch is not isolated at receiver 3"
     if (
         sample.receiver_aggregate.get("fec_transport_requested_devices")
         != len(expected_fec_ids)

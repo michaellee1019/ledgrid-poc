@@ -78,7 +78,7 @@ def _device(receiver_id: int, elapsed: float) -> dict:
         "receiver_status_version": 7,
         "receiver_status_max_version_seen": 7,
         "receiver_status_seen": True,
-        "receiver_capabilities": 0xFC00C,
+        "receiver_capabilities": 0x1FC00C,
         "transport_envelope_enabled": True,
         "transport_envelope_negotiation_candidate": None,
         "transport_envelope_negotiation_streak": 0,
@@ -103,7 +103,7 @@ def _device(receiver_id: int, elapsed: float) -> dict:
         "semantic_bytes_sent": base + frames * full_frame_semantic,
         "transport_envelope_bytes_sent": base + frames * (16 if fec_enabled else 4),
         "transport_padding_bytes_sent": base + frames * (
-            77 if fec_enabled else (-(full_frame_semantic + 6)) % 4
+            27 if fec_enabled else (-(full_frame_semantic + 6)) % 4
         ),
         "full_frame_transfers": full_frame_total,
         "full_frame_semantic_bytes_sent": base + frames * full_frame_semantic,
@@ -119,8 +119,8 @@ def _device(receiver_id: int, elapsed: float) -> dict:
         "crc_bytes_sent": base + frames * 2,
         "fec_frames_sent": full_frame_total if fec_enabled else 0,
         "fec_codewords_sent": 68 * full_frame_total if fec_enabled else 0,
-        "fec_parity_bytes_sent": 680 * full_frame_total if fec_enabled else 0,
-        "fec_data_padding_bytes_sent": 76 * full_frame_total if fec_enabled else 0,
+        "fec_parity_bytes_sent": 730 * full_frame_total if fec_enabled else 0,
+        "fec_data_padding_bytes_sent": 26 * full_frame_total if fec_enabled else 0,
         "receiver_operation_sequence": base + frames,
         "receiver_packets": base + frames,
         "receiver_crc_ok_packets": base + frames,
@@ -172,8 +172,6 @@ def _status(elapsed: float) -> dict:
                 "transport_envelope_devices": 5,
                 "fec_transport_requested_devices": 1,
                 "fec_transport_enabled_devices": 1,
-                "fec_isolated_full_frame_dispatch": True,
-                "full_frame_dispatch_phases": [[[0, 1], [2]], [[3, 4]]],
                 "receiver_status_version": min(
                     item["receiver_status_version"] for item in devices
                 ),
@@ -576,33 +574,11 @@ class GuardedWallSoakTests(unittest.TestCase):
                     "transport_envelope_negotiation_candidate"
                 )
 
-        def isolation_disabled(status, _activation_status, _elapsed):
-            if status is not None:
-                status["driver_stats"]["aggregate"][
-                    "fec_isolated_full_frame_dispatch"
-                ] = False
-
-        def isolation_reordered(status, _activation_status, _elapsed):
-            if status is not None:
-                status["driver_stats"]["aggregate"][
-                    "full_frame_dispatch_phases"
-                ] = [[[0, 1]], [[2, 3, 4]]]
-
         for label, mutate, expected in (
             ("host disabled", host_disabled, "host aligned transport is not enabled"),
             ("aggregate short", aggregate_short, "exactly 5 receivers"),
             ("negotiation pending", negotiation_pending, "negotiation is not settled"),
             ("negotiation missing", negotiation_missing, "negotiation is not settled"),
-            (
-                "isolation disabled",
-                isolation_disabled,
-                "full-frame dispatch is not isolated",
-            ),
-            (
-                "isolation reordered",
-                isolation_reordered,
-                "full-frame dispatch is not isolated",
-            ),
         ):
             with self.subTest(label=label):
                 clock = _Clock()

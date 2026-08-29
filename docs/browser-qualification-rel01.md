@@ -17,8 +17,8 @@ version, timestamps, viewport observations, and individual assertion outcomes.
   proves Undo/Redo and the Clock toggle, runs a local Check, saves to the
   authoring library, proves the assigned preset identity invalidates that Check,
   reruns Check for the saved identity, and cancels guarded activation review.
-- `offline_reconnect` seeds a real `v18` cache on the fixture origin, proves the
-  verified `v19` promotion removes it, blocks the dynamic bootstrap endpoint,
+- `offline_reconnect` seeds a real `v19` cache on the fixture origin, proves the
+  verified `v20` promotion removes it, blocks the dynamic bootstrap endpoint,
   and proves the versioned static catalog still starts a Python renderer with
   Play enabled and zero wall-state reads. It then prepares the pinned offline
   runtime, proves the active worker retains the bundled catalog and exact

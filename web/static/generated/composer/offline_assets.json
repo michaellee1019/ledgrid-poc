@@ -1,12 +1,12 @@
 {
-  "cacheVersion": "v19",
+  "cacheVersion": "v20",
   "capturedAssets": [
     "/composer"
   ],
   "localAssets": [
     {
-      "bytes": 23746,
-      "sha256": "21aab109c8ca6e74e46e95dcdcbbfba07eb9ee3e3d16157fd609bda88df12481",
+      "bytes": 23783,
+      "sha256": "c8dc0445db4e28fb6166a9ba4babc26d734b02062e0a0e19eafad7170cd80267",
       "url": "/composer-service-worker.js"
     },
     {
@@ -26,7 +26,7 @@
     },
     {
       "bytes": 927364,
-      "sha256": "e5f810dc99ded5630ecf2b6a0f47cdbd5ad5a6fae2b90958c85d6f325ac3169c",
+      "sha256": "35444670c43493eeb5662c335a2eba43ffd2a69760e2484a7c7d8fb2b70e479a",
       "url": "/static/generated/composer/bootstrap.v1.json"
     },
     {
@@ -40,8 +40,8 @@
       "url": "/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin"
     },
     {
-      "bytes": 2370743,
-      "sha256": "c82f339231b7f01a3cee4c62a58f8f5ad83b0358771bc1fd761a7db0d0070bc4",
+      "bytes": 2370693,
+      "sha256": "774ededc2074ac85aef7fa8693989b890f770e7dbd8f7fc50f9fbfd5b0e0c2a4",
       "url": "/static/generated/composer/ledgrid_python_runtime.zip"
     },
     {
@@ -70,13 +70,13 @@
       "url": "/static/js/composer_compositor.js"
     },
     {
-      "bytes": 12351,
-      "sha256": "ae3c50ef34358da867bc198ba8b42359c81ffd1630026d80189cd78ea62cc142",
+      "bytes": 12245,
+      "sha256": "aaadf2de08b027c7463b282560dfe74fa99331d9a28b16dda8f5c2acc3d59e8f",
       "url": "/static/js/composer_native_worker.js"
     },
     {
-      "bytes": 19059,
-      "sha256": "3468a8a2892694356b71632e4eb7c6e304a49b8b2e9c069422e2eaa228ce6f06",
+      "bytes": 18942,
+      "sha256": "e877ec171cea56c5425ed91230791e03126816a5ead2b573c8da4c55a133ad8d",
       "url": "/static/js/composer_python_worker.js"
     },
     {
@@ -85,12 +85,17 @@
       "url": "/static/js/composer_runtime.js"
     },
     {
+      "bytes": 4391,
+      "sha256": "dabe96bba88e2f4dffa47c110bb372a05122027c414f2115d577a626cec2559c",
+      "url": "/static/js/composer_sha256.js"
+    },
+    {
       "bytes": 6218,
       "sha256": "07c63ea566a93cafe9aeb77bc0a71bd07570ea8b7acbc27f7218bffb191cb903",
       "url": "/static/js/composer_state.js"
     }
   ],
-  "previousCacheVersion": "v18",
+  "previousCacheVersion": "v19",
   "pythonRuntime": {
     "baseUrl": "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/",
     "delivery": "pinned-cross-origin-cache",

@@ -1,5 +1,7 @@
 /* Python/Wasm animation worker. The composer must create this as type: "module". */
 
+import {sha256Bytes} from './composer_sha256.js';
+
 'use strict';
 
 const PYODIDE_VERSION = '314.0.5';
@@ -159,9 +161,6 @@ async function verifyInstallationProfile(value, suppliedArtifact = null) {
         }
         return verifiedProfile;
     }
-    if (!self.crypto?.subtle) {
-        throw new Error('Cryptographic verification is unavailable; installation profile rejected.');
-    }
     let bytes;
     let etag;
     if (suppliedArtifact?.bytes instanceof ArrayBuffer) {
@@ -191,7 +190,7 @@ async function verifyInstallationProfile(value, suppliedArtifact = null) {
     ));
     const digestInput = bytes.slice();
     digestInput.fill(0, PROFILE_DIGEST_OFFSET, PROFILE_DIGEST_OFFSET + PROFILE_DIGEST_BYTES);
-    const computed = digestHex(new Uint8Array(await self.crypto.subtle.digest('SHA-256', digestInput)));
+    const computed = digestHex(await sha256Bytes(digestInput, self.crypto));
     if (embedded !== expected.digest || computed !== expected.digest) {
         throw new Error('The selected LGIP artifact failed content-digest verification.');
     }

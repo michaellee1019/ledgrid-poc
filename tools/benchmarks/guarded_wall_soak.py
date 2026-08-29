@@ -44,7 +44,7 @@ DEFAULT_SAMPLE_INTERVAL_SECONDS = 5.0
 DEFAULT_TIMEOUT_SECONDS = 15.0
 DEFAULT_TARGET_FPS = 150
 DEFAULT_MIN_DISPLAYED_FPS = 150.0
-REQUIRED_RECEIVER_CAPABILITIES = 0xFC00C
+REQUIRED_RECEIVER_CAPABILITIES = 0x1FC00C
 EXPECTED_FULL_FRAME_WIRE_BYTES = (3320, 3320, 3320, 4088, 424)
 EXPECTED_GEOMETRY = {"strip_count": 33, "leds_per_strip": 138, "total_leds": 4554}
 EXPECTED_TOPOLOGY = (
@@ -445,12 +445,6 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
         or aggregate.get("fec_transport_enabled_devices") != 1
     ):
         failures.append("FEC transport is not requested and enabled on exactly one receiver")
-    if (
-        aggregate.get("fec_isolated_full_frame_dispatch") is not True
-        or aggregate.get("full_frame_dispatch_phases")
-        != [[[0, 1], [2]], [[3, 4]]]
-    ):
-        failures.append("FEC full-frame dispatch is not isolated at receiver 3")
     device_map = _sequence(aggregate.get("device_map"))
     if len(device_map) != len(EXPECTED_TOPOLOGY):
         failures.append(
@@ -585,8 +579,8 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
             None in (fec_frames, fec_codewords, fec_parity, fec_padding)
             or (not expected_fec and fec_frames != 0)
             or fec_codewords != expected_codewords * fec_frames
-            or fec_parity != 10 * expected_codewords * fec_frames
-            or fec_padding != 76 * fec_frames
+            or fec_parity != (730 if expected_fec else 0) * fec_frames
+            or fec_padding != 26 * fec_frames
         ):
             failures.append(f"receiver {logical_id} host FEC accounting is inconsistent")
         corrected_packets = _integer(item.get("receiver_fec_corrected_packets"))
@@ -958,8 +952,8 @@ def _fec_delta_failures(
         failures.append(f"{label} FEC sent frames do not match full-frame transfers")
     if (
         deltas["fec_codewords_sent"] != 68 * frames
-        or deltas["fec_parity_bytes_sent"] != 680 * frames
-        or deltas["fec_data_padding_bytes_sent"] != 76 * frames
+        or deltas["fec_parity_bytes_sent"] != 730 * frames
+        or deltas["fec_data_padding_bytes_sent"] != 26 * frames
     ):
         failures.append(f"{label} host FEC accounting is inconsistent")
     received = deltas["receiver_fec_packets_received"]

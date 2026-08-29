@@ -52,7 +52,7 @@ _ERROR_COUNTERS = (
 )
 _INSTALLED_ROUTES = ((0, 0), (0, 1), (1, 1), (1, 0), (1, 2))
 _INSTALLED_NATIVE_REVERSALS = (False, False, True, True, False)
-_REQUIRED_RECEIVER_CAPABILITIES = 0xFC00C
+_REQUIRED_RECEIVER_CAPABILITIES = 0x1FC00C
 _TRANSPORT_COUNTERS = (
     "spi_transfers",
     "bytes_sent",
@@ -471,9 +471,9 @@ def _require_transport_accounting_snapshot(driver: Mapping[str, Any]) -> None:
             or _integer(device.get("fec_codewords_sent"), f"receiver {logical_id} FEC codewords")
             != expected_codewords * fec_frames
             or _integer(device.get("fec_parity_bytes_sent"), f"receiver {logical_id} FEC parity bytes")
-            != 10 * expected_codewords * fec_frames
+            != (730 if expected_fec else 0) * fec_frames
             or _integer(device.get("fec_data_padding_bytes_sent"), f"receiver {logical_id} FEC data padding")
-            != 76 * fec_frames
+            != 26 * fec_frames
         ):
             raise TargetEvidenceError(
                 f"receiver {logical_id} host FEC accounting is inconsistent"
@@ -581,8 +581,8 @@ def _require_fec_delta(
     expected_host = {
         "fec_frames_sent": full_frames,
         "fec_codewords_sent": 68 * full_frames,
-        "fec_parity_bytes_sent": 680 * full_frames,
-        "fec_data_padding_bytes_sent": 76 * full_frames,
+        "fec_parity_bytes_sent": 730 * full_frames,
+        "fec_data_padding_bytes_sent": 26 * full_frames,
     }
     for field, expected in expected_host.items():
         if deltas[field] != expected:
@@ -653,14 +653,6 @@ def validate_installed_topology(metrics: Any) -> None:
     if aggregate.get("device_dispatch_order") != [0, 1, 2, 3, 4]:
         raise TargetEvidenceError(
             "installed receiver dispatch order is not the exact qualified order"
-        )
-    if (
-        aggregate.get("fec_isolated_full_frame_dispatch") is not True
-        or aggregate.get("full_frame_dispatch_phases")
-        != [[[0, 1], [2]], [[3, 4]]]
-    ):
-        raise TargetEvidenceError(
-            "installed FEC full-frame dispatch is not isolated at receiver 3"
         )
     _require_transport_accounting_snapshot(driver)
     device_map = aggregate.get("device_map")

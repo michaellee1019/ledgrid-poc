@@ -102,15 +102,22 @@ constexpr std::uint8_t kFecEnvelopeVersionV5 = 5;
 // row. Fixed-position/periodic link interference is therefore distributed
 // across codewords instead of repeatedly consuming one codeword's ten
 // syndromes. Receivers retain ordinary v5 deinterleaving for rollback hosts.
-constexpr std::uint8_t kFecEnvelopeVersion = 6;
+constexpr std::uint8_t kFecEnvelopeVersionV6 = 6;
+// V7 reserves the final systematic codeword as the XOR of all preceding data
+// codewords. After ordinary RS correction, one otherwise-uncorrectable data
+// codeword can be reconstructed from that protected outer parity shard. The
+// installed frame remains exactly 68 codewords/4,088 wire bytes.
+constexpr std::uint8_t kFecEnvelopeVersion = 7;
 constexpr std::size_t kFecDataBytes = 50;
 constexpr std::size_t kFecParityBytes = 10;
 constexpr std::size_t kFecCodewordBytes =
     kFecDataBytes + kFecParityBytes;
 constexpr std::size_t kFecMaxCodewords = 68;
-constexpr std::size_t kFecEnvelopeMaxSemanticBytes =
+constexpr std::size_t kFecOuterParityBytes = kFecDataBytes;
+constexpr std::size_t kFecV6EnvelopeMaxSemanticBytes =
     kFecMaxCodewords * kFecDataBytes - kFecEnvelopeHeaderBytes -
     kAlignedEnvelopeHeaderBytes - kAnimationPipelineCrcBytes;
+constexpr std::size_t kFecEnvelopeMaxSemanticBytes = 3338;
 constexpr std::size_t kFecScratchBytes =
     kFecV2MaxCodewords * kFecV2DataBytes;
 constexpr std::size_t kInstallationProfilePreflightBytes = 69;
@@ -192,6 +199,7 @@ enum ReceiverCapability : std::uint32_t {
   kCapabilityFecEnvelopeV4 = 1U << 17U,
   kCapabilityFecEnvelopeV5 = 1U << 18U,
   kCapabilityFecEnvelopeV6 = 1U << 19U,
+  kCapabilityFecEnvelopeV7 = 1U << 20U,
 };
 
 struct ReceiverPacketPayload {

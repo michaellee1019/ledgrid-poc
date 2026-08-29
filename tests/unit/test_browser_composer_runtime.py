@@ -452,6 +452,7 @@ const localPaths = {
   '/static/js/composer_native_worker.js': 'web/static/js/composer_native_worker.js',
   '/static/js/composer_python_worker.js': 'web/static/js/composer_python_worker.js',
   '/static/js/composer_runtime.js': 'web/static/js/composer_runtime.js',
+  '/static/js/composer_sha256.js': 'web/static/js/composer_sha256.js',
   '/static/js/composer_state.js': 'web/static/js/composer_state.js',
 };
 
@@ -485,9 +486,13 @@ function makeHarness(failUrl = null) {
   const events = {};
   const priorName = `ledgrid-composer-shell-${manifest.previousCacheVersion}`;
   const priorRuntimeName = `${priorName}-python-runtime`;
+  const liveV17Name = 'ledgrid-composer-shell-v17';
+  const liveV17RuntimeName = `${liveV17Name}-python-runtime`;
   let networkDisabled = false;
   stores.set(priorName, new Map([['/prior-complete', new FakeResponse('prior-complete')]]));
   stores.set(priorRuntimeName, new Map([['https://runtime.invalid/prior', new FakeResponse('prior-runtime')]]));
+  stores.set(liveV17Name, new Map([['/live-v17-complete', new FakeResponse('live-v17-complete')]]));
+  stores.set(liveV17RuntimeName, new Map([['https://runtime.invalid/v17', new FakeResponse('live-v17-runtime')]]));
   const caches = {
     async open(name) {
       opened.push(name);
@@ -539,6 +544,7 @@ function makeHarness(failUrl = null) {
   vm.runInNewContext(source, context);
   return {
     events, stores, writes, opened, priorName, priorRuntimeName,
+    liveV17Name, liveV17RuntimeName,
     setOffline(value) { networkDisabled = Boolean(value); },
   };
 }
@@ -566,6 +572,8 @@ async function message(harness, data) {
   await assert.rejects(dispatch(failing.events.install), /injected fetch failure/);
   assert.strictEqual((await failing.stores.get(failing.priorName).get('/prior-complete').arrayBuffer()).byteLength, 14);
   assert.ok(failing.stores.has(failing.priorRuntimeName), 'prior runtime cache must survive');
+  assert.ok(failing.stores.has(failing.liveV17Name), 'the currently deployed v17 shell must survive a failed direct upgrade');
+  assert.ok(failing.stores.has(failing.liveV17RuntimeName), 'the currently deployed v17 runtime must survive a failed direct upgrade');
   assert.ok(failing.opened.some((name) => name.endsWith('-staging')), 'upgrade must use an isolated staging cache');
   assert.ok(!failing.writes.some((item) => item.name === `ledgrid-composer-shell-${manifest.cacheVersion}`),
             'a failed fetch must never write into the final generation');
@@ -578,10 +586,13 @@ async function message(harness, data) {
   await assert.rejects(dispatch(tampered.events.activate), /failed verification/);
   assert.ok(tampered.stores.has(tampered.priorName),
             'activation verification failure must preserve the prior complete generation');
+  assert.ok(tampered.stores.has(tampered.liveV17Name),
+            'activation verification failure must preserve the live v17 generation');
 
   const successful = makeHarness();
   await dispatch(successful.events.install);
   assert.ok(successful.stores.has(successful.priorName), 'prior cache remains active until activation');
+  assert.ok(successful.stores.has(successful.liveV17Name), 'live v17 remains active until verified v20 activation');
   const current = successful.stores.get(currentName);
   assert.ok(current, 'verified generation must be promoted after complete staging');
   for (const [url, declared] of assets) {
@@ -594,6 +605,8 @@ async function message(harness, data) {
   await dispatch(successful.events.activate);
   assert.ok(!successful.stores.has(successful.priorName));
   assert.ok(!successful.stores.has(successful.priorRuntimeName));
+  assert.ok(!successful.stores.has(successful.liveV17Name), 'verified v20 activation removes the live v17 shell');
+  assert.ok(!successful.stores.has(successful.liveV17RuntimeName), 'verified v20 activation removes the live v17 runtime');
   assert.ok(successful.stores.has(currentName));
   assert.ok(!Array.from(successful.stores.keys()).some((name) => name.endsWith('-staging')));
 

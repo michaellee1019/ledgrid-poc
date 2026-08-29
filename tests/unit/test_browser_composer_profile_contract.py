@@ -11,6 +11,7 @@ COMPOSER = ROOT / "web/static/js/composer.js"
 RUNTIME = ROOT / "web/static/js/composer_runtime.js"
 PYTHON_WORKER = ROOT / "web/static/js/composer_python_worker.js"
 NATIVE_WORKER = ROOT / "web/static/js/composer_native_worker.js"
+SHA256_MODULE = ROOT / "web/static/js/composer_sha256.js"
 TEMPLATE = ROOT / "web/templates/composer.html"
 BUNDLE_BUILDER = ROOT / "tools/build_browser_python_bundle.py"
 
@@ -32,6 +33,7 @@ class BrowserComposerProfileContractTests(unittest.TestCase):
         cls.runtime = RUNTIME.read_text(encoding="utf-8")
         cls.python_worker = PYTHON_WORKER.read_text(encoding="utf-8")
         cls.native_worker = NATIVE_WORKER.read_text(encoding="utf-8")
+        cls.sha256_module = SHA256_MODULE.read_text(encoding="utf-8")
         cls.template = TEMPLATE.read_text(encoding="utf-8")
         cls.builder = BUNDLE_BUILDER.read_text(encoding="utf-8")
 
@@ -85,12 +87,15 @@ class BrowserComposerProfileContractTests(unittest.TestCase):
 
     def test_both_workers_verify_embedded_lgip_content_digest(self) -> None:
         for worker in (self.python_worker, self.native_worker):
-            self.assertIn("crypto.subtle.digest('SHA-256'", worker)
+            self.assertIn("import {sha256Bytes} from './composer_sha256.js'", worker)
+            self.assertIn("await sha256Bytes(digestInput, self.crypto)", worker)
             self.assertIn("digestInput.fill(0", worker)
             self.assertIn("LGIP", worker)
             self.assertIn("verifiedProfile", worker)
             self.assertIn("installationProfile", worker)
             self.assertNotIn("fallbackMask", worker)
+        self.assertIn("export function sha256Portable", self.sha256_module)
+        self.assertIn("cryptoProvider?.subtle", self.sha256_module)
         self.assertIn("bind_installation_profile_path", self.python_worker)
         self.assertIn("const PROFILE_DIGEST_OFFSET = 68", self.python_worker)
         self.assertIn("message.installationProfileArtifact", self.python_worker)

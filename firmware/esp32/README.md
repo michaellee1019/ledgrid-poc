@@ -109,21 +109,25 @@ firmware, so new-host/old-firmware traffic remains legacy and
 old-host/new-firmware traffic remains decodable. CRC-error accounting is
 unchanged for legacy and v1 traffic.
 
-Aligned-envelope v6 is the active per-receiver FEC fallback. Two separated raw
-headers identify `0x0b, 6, inner_v1_wire_bytes:u16`; the protected payload
+Aligned-envelope v7 is the active per-receiver FEC fallback. Two separated raw
+headers identify `0x0b, 7, inner_v1_wire_bytes:u16`; the protected payload
 contains another header plus the complete canonical v1 envelope, including
 alignment and CRC. Each shortened systematic Reed-Solomon codeword has 50
 data symbols and ten parity symbols at distinct GF(256) evaluation points. It
 corrects five arbitrary bytes per codeword. Each symbol row rotates its logical
 codeword positions, spreading fixed wire-position and periodic interference
 across the 68 codewords instead of repeatedly consuming one codeword's parity
-budget. The installed eight-strip `SET_ALL` is
+budget. The last systematic codeword is an outer XOR parity shard over every
+preceding data codeword and has its own ten RS parity bytes. It reconstructs
+one otherwise-uncorrectable data codeword while the canonical inner CRC remains
+the semantic authority; two such data-codeword failures remain terminal. The
+installed eight-strip `SET_ALL` is
 68 codewords/4,088 bytes, the one-strip form is 12 codewords/728 bytes, and the
-maximum is 68 codewords/4,088 bytes and 3,390 semantic bytes. The v2, v3, and
-v4, and v5 decoders/capabilities remain accepted for old-
+maximum is 68 codewords/4,088 bytes and 3,338 semantic bytes. The v2, v3, v4,
+v5, and v6 decoders/capabilities remain accepted for old-
 Host rollback compatibility. Valid legacy and v1 packets remain accepted.
 
-Capability `fec_envelope_v6 = 1<<19` and three fresh, counter-advancing status
+Capability `fec_envelope_v7 = 1<<20` and three fresh, counter-advancing status
 observations gate new-Host use. The maintained service requests it only for logical
 receiver 3 through `LEDGRID_FEC_RECEIVER_IDS=3`; every other receiver remains
 v1. Status v7 is 1,248 bytes and reports received, accepted, corrected packet

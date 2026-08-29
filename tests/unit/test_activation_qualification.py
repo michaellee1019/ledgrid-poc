@@ -153,8 +153,8 @@ def _target_transport() -> dict:
                 "deltas": {
                     "fec_frames_sent": full_frames if fec_enabled else 0,
                     "fec_codewords_sent": 68 * full_frames if fec_enabled else 0,
-                    "fec_parity_bytes_sent": 680 * full_frames if fec_enabled else 0,
-                    "fec_data_padding_bytes_sent": 76 * full_frames if fec_enabled else 0,
+                    "fec_parity_bytes_sent": 730 * full_frames if fec_enabled else 0,
+                    "fec_data_padding_bytes_sent": 26 * full_frames if fec_enabled else 0,
                     "receiver_fec_packets_received": full_frames if fec_enabled else 0,
                     "receiver_fec_packets_accepted": full_frames if fec_enabled else 0,
                     "receiver_fec_corrected_packets": 2 if fec_enabled else 0,

@@ -25,10 +25,9 @@ WALL_DEVICE_MAP: Tuple[DeviceMapEntry, ...] = (
     (1, 2),
 )
 
-# Receiver 3's protected SPI1.0 transfer is isolated from cross-controller DMA
-# overlap in ``MultiDeviceLEDController``. All routes retain the established
-# 20 MHz clock; the dispatch boundary, rather than a per-route clock reduction,
-# contains the remaining speed-independent corruption trial.
+# Every installed route retains the established 20 MHz clock. FEC v7 contains
+# one otherwise-uncorrectable receiver-3 codeword without reducing the normal
+# cross-controller parallel dispatch schedule.
 WALL_RECEIVER_SPI_SPEEDS_HZ = (
     20_000_000,
     20_000_000,

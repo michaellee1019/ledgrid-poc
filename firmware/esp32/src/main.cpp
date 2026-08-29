@@ -62,8 +62,9 @@ static_assert(kSpiFrameBytes <= kSpiBufferSize,
 static_assert(1U + kMaxRgbBytes <=
                   ledgrid::kAlignedEnvelopeMaxSemanticBytes,
               "maximum RGB frame exceeds aligned semantic bound");
-static_assert(1U + kMaxRgbBytes <= ledgrid::kFecEnvelopeMaxSemanticBytes,
-              "maximum RGB frame exceeds FEC semantic bound");
+static_assert(1U + kMaxStrips * kDefaultLedsPerStrip * 3U <=
+                  ledgrid::kFecEnvelopeMaxSemanticBytes,
+              "installed RGB frame exceeds FEC semantic bound");
 static_assert(ledgrid::kStatusBytesV3 + kCrcBytes <= kSpiBufferSize,
               "status query plus CRC exceeds transport buffer");
 static_assert(ledgrid::kStatusBytesV5 + kCrcBytes <= kSpiBufferSize,
@@ -672,6 +673,12 @@ ledgrid::ReceiverStatusV7 status_snapshot() {
                         ledgrid::kCapabilityFecEnvelopeV4 |
                         ledgrid::kCapabilityFecEnvelopeV5 |
                         ledgrid::kCapabilityFecEnvelopeV6;
+  const std::size_t active_semantic_bytes =
+      1U + static_cast<std::size_t>(output.strip_count) *
+               output.leds_per_strip * 3U;
+  if (active_semantic_bytes <= ledgrid::kFecEnvelopeMaxSemanticBytes) {
+    status.capabilities |= ledgrid::kCapabilityFecEnvelopeV7;
+  }
   if (receiver_runtime.local_background_enabled()) {
     status.capabilities |= ledgrid::kCapabilityStaticLocalBackground |
                            ledgrid::kCapabilityPresentationContextV1 |
