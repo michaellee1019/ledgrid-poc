@@ -212,6 +212,23 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
             r"\.play-button\s*\{[^}]*width:\s*44px;[^}]*min-width:\s*44px;[^}]*max-width:\s*44px;",
         )
 
+    def test_phone_editing_keeps_preview_and_controls_side_by_side(self) -> None:
+        self.assertIn("mobile-dual-pane", self.javascript)
+        self.assertIn("['stage', 'tune'].includes(view.dataset.mobileView)", self.javascript)
+        self.assertIn("selectMobileView('tune')", self.javascript)
+        self.assertRegex(
+            self.final_mobile_css,
+            r"\.composer-shell\.mobile-dual-pane\s*\{[^}]*grid-template-columns:\s*minmax\(112px,\s*34%\)\s+minmax\(0,\s*1fr\);",
+        )
+        self.assertIn(
+            ".composer-shell.mobile-dual-pane .stage-pane.mobile-view.is-active",
+            self.final_mobile_css,
+        )
+        self.assertIn(
+            ".composer-shell.mobile-dual-pane .inspector-pane.mobile-view.is-active",
+            self.final_mobile_css,
+        )
+
     def test_mobile_header_and_mask_editor_reserve_device_safe_areas(self) -> None:
         self.assertIn("--mobile-header-height: calc(72px + env(safe-area-inset-top));", self.css)
         self.assertIn(

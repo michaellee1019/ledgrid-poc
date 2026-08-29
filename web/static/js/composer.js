@@ -4006,7 +4006,15 @@
 
     function selectMobileView(name) {
         const target = ['check', 'layers', 'wall'].includes(name) ? 'tune' : name;
-        document.querySelectorAll('.mobile-view').forEach((view) => view.classList.toggle('is-active', view.dataset.mobileView === target));
+        const pairedWorkspace = window.matchMedia('(max-width: 760px)').matches
+            && target !== 'library';
+        $('composerWorkspace').classList.toggle('mobile-dual-pane', pairedWorkspace);
+        document.querySelectorAll('.mobile-view').forEach((view) => {
+            const active = pairedWorkspace
+                ? ['stage', 'tune'].includes(view.dataset.mobileView)
+                : view.dataset.mobileView === target;
+            view.classList.toggle('is-active', active);
+        });
         document.querySelectorAll('[data-mobile-target]').forEach((button) => {
             if (button.dataset.mobileTarget === name) button.setAttribute('aria-current', 'page');
             else button.removeAttribute('aria-current');
@@ -4014,8 +4022,8 @@
         if (name === 'check') selectInspectorTab('checker');
         else if (name === 'layers') selectInspectorTab('layers');
         else if (name === 'wall') selectInspectorTab('wall');
-        else if (name === 'tune') selectInspectorTab('controls');
-        if (target === 'tune') document.querySelector('.inspector-pane').scrollTop = 0;
+        else if (name === 'tune' || name === 'stage') selectInspectorTab('controls');
+        if (pairedWorkspace) document.querySelector('.inspector-pane').scrollTop = 0;
     }
 
     function bindEvents() {
@@ -4271,6 +4279,7 @@
 
     async function initialize() {
         bindEvents();
+        if (window.matchMedia('(max-width: 760px)').matches) selectMobileView('tune');
         initializeMotionPreference();
         updateInstallStatus();
         setServerOnline(false, {checking: true, quiet: true});

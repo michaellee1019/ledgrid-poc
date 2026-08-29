@@ -818,4 +818,57 @@ h2 { font-size: 11px; font-weight: 650; }
   .mask-editor-actions { grid-template-columns: repeat(2,minmax(0,1fr)); padding-right: calc(8px + env(safe-area-inset-right)); padding-bottom: calc(7px + env(safe-area-inset-bottom)); padding-left: calc(8px + env(safe-area-inset-left)); }
   .mask-editor-actions > span { display: none; }
   .mask-editor-actions button { min-height: 44px; }
+
+  /* Preview and controls remain visible together while editing on a phone.
+     Looks still opens as a dedicated, comfortably scrollable library. */
+  .composer-shell.mobile-dual-pane {
+    display: grid;
+    grid-template-columns: minmax(112px, 34%) minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .composer-shell.mobile-dual-pane .library-pane { display: none; }
+  .composer-shell.mobile-dual-pane .stage-pane.mobile-view.is-active {
+    display: grid;
+    grid-column: 1;
+    grid-template-rows: minmax(0, 1fr) 44px;
+    min-height: 0;
+    height: 100%;
+    padding: 6px 4px 6px calc(6px + env(safe-area-inset-left));
+    border-right: 1px solid var(--line);
+  }
+  .composer-shell.mobile-dual-pane .stage-topline,
+  .composer-shell.mobile-dual-pane .provenance-note { display: none; }
+  .composer-shell.mobile-dual-pane .preview-workspace {
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    min-height: 0;
+  }
+  .composer-shell.mobile-dual-pane .wall-room {
+    width: min(100%, 132px);
+    min-height: 0;
+  }
+  .composer-shell.mobile-dual-pane .wall-bezel { max-height: 100%; }
+  .composer-shell.mobile-dual-pane .preview-mode-bar {
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+  .composer-shell.mobile-dual-pane .comparison-help,
+  .composer-shell.mobile-dual-pane .split-legend { display: none; }
+  .composer-shell.mobile-dual-pane .compare-control button { min-height: 34px; font-size: 10px; }
+  .composer-shell.mobile-dual-pane .transport {
+    grid-column: 1;
+    grid-template-columns: 40px minmax(0, 1fr);
+    min-height: 44px;
+  }
+  .composer-shell.mobile-dual-pane .transport .timecode,
+  .composer-shell.mobile-dual-pane .transport .fps-select { display: none; }
+  .composer-shell.mobile-dual-pane .play-button { width: 40px; min-width: 40px; height: 40px; }
+  .composer-shell.mobile-dual-pane .inspector-pane.mobile-view.is-active {
+    display: block;
+    grid-column: 2;
+    min-height: 0;
+    height: 100%;
+    padding: 9px calc(9px + env(safe-area-inset-right)) 18px 9px;
+    overflow: auto;
+  }
+  .composer-shell.mobile-dual-pane .parameter-list { padding-bottom: 16px; }
 }
