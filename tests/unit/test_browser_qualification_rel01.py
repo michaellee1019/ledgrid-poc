@@ -491,6 +491,16 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
             source,
         )
 
+    def test_offline_probe_opens_mobile_catalog_before_selecting_a_component(self) -> None:
+        source = (
+            ROOT / "tools" / "browser_qualification" / "playwright_probe.mjs"
+        ).read_text(encoding="utf-8")
+        offline = source[source.index("async function runOffline"):source.index("async function draftSnapshot")]
+        self.assertLess(
+            offline.index("await page.locator('[data-mobile-target=\"library\"]').click();"),
+            offline.index("await selectBackground(page, 'Py', {"),
+        )
+
     def test_probe_waits_for_service_worker_control_and_stable_navigation(self) -> None:
         source = (
             ROOT / "tools" / "browser_qualification" / "playwright_probe.mjs"

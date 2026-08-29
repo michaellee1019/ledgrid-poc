@@ -422,6 +422,7 @@ async function runOffline(browser, contract, composerUrl, baseUrl) {
       JSON.stringify(cachedBootstrap),
     ));
 
+    await page.locator('[data-mobile-target="library"]').click();
     await selectBackground(page, 'Py', {
       activationReady: true,
       preferredName: contract.background_name,
