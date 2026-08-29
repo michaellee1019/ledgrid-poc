@@ -650,6 +650,10 @@ def validate_installed_topology(metrics: Any) -> None:
         or len(devices) != INSTALLED_RECEIVER_COUNT
     ):
         raise TargetEvidenceError("aggregate geometry is not the exact installed wall")
+    if aggregate.get("device_dispatch_order") != [0, 1, 3, 2, 4]:
+        raise TargetEvidenceError(
+            "installed receiver dispatch order is not the exact qualified order"
+        )
     _require_transport_accounting_snapshot(driver)
     device_map = aggregate.get("device_map")
     if not isinstance(device_map, list) or len(device_map) != INSTALLED_RECEIVER_COUNT:

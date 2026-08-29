@@ -52,6 +52,10 @@ class BrowserComposerOfflineBootstrapTests(unittest.TestCase):
             payload["installation_profile"]["artifact_url"], BUNDLED_PROFILE_URL
         )
         self.assertEqual(payload["installation_profile"]["authority"], "bundled")
+        self.assertIsNone(
+            payload["capabilities"]["server_actions"]
+            ["installation_profile_artifact_url"]
+        )
 
         previewable = [
             item for item in payload["components"]
@@ -117,7 +121,12 @@ class BrowserComposerOfflineBootstrapTests(unittest.TestCase):
         self.assertNotIn("refreshGlobalSettings", connectivity_body)
         self.assertNotIn("preloadMasks", connectivity_body)
         self.assertIn("state.bootstrap.capabilities.server_actions = actions", source)
-        self.assertIn("globalActions().installation_profile_artifact_url", source)
+        self.assertIn(
+            "ComposerState.localInstallationProfile(state.bootstrap)", source
+        )
+        self.assertNotIn(
+            "actions.installation_profile_artifact_url = globalActions()", source
+        )
         self.assertNotIn("state.bootstrap = payload", source)
 
         play_start = source.index("function syncPlayButton()")

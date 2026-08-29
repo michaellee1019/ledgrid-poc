@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "9b61a91c06047b06899e0fec0bb42e51815853da72a43735d6d22c3952f2e408",
+    "catalog_digest": "4e6d2f0c206d51255043f0660b6cd785a6ce575f50efde241ba5488c0abdc824",
     "kind": "bundled",
     "version": 1
   },
@@ -19,7 +19,7 @@
       "brightness_url": "/api/config/brightness",
       "check_scene_url": "/api/v1/scene/checks",
       "connectivity_url": "/api/v1/composer/connectivity",
-      "installation_profile_artifact_url": "/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin",
+      "installation_profile_artifact_url": null,
       "installation_profile_draft_url": null,
       "installation_profile_publish_url": null,
       "masks_url": "/api/painter/masks",

@@ -349,12 +349,11 @@
     }
 
     function initializeInstallationProfileState() {
-        const digest = state.bootstrap?.installation_profile?.digest || null;
-        const artifactUrl = globalActions().installation_profile_artifact_url || null;
-        state.installationProfile.selectedDigest = digest;
-        state.installationProfile.selectedArtifactUrl = artifactUrl;
-        state.installationProfile.desiredDigest = digest;
-        state.installationProfile.desiredArtifactUrl = artifactUrl;
+        const localProfile = ComposerState.localInstallationProfile(state.bootstrap);
+        state.installationProfile.selectedDigest = localProfile?.digest || null;
+        state.installationProfile.selectedArtifactUrl = localProfile?.artifactUrl || null;
+        state.installationProfile.desiredDigest = localProfile?.digest || null;
+        state.installationProfile.desiredArtifactUrl = localProfile?.artifactUrl || null;
         state.installationProfile.candidate = null;
     }
 
@@ -836,9 +835,6 @@
         const payload = assertBootstrap(await requestJson(bootstrapUrl));
         state.serverBootstrap = payload;
         const actions = clone(payload.capabilities?.server_actions || {});
-        if (!actions.installation_profile_artifact_url) {
-            actions.installation_profile_artifact_url = globalActions().installation_profile_artifact_url || null;
-        }
         state.bootstrap.capabilities.server_actions = actions;
         updateServerComponentCompatibility();
         return payload;
@@ -1064,7 +1060,7 @@
             : 'Running in a browser tab; installation is optional.';
     }
 
-    function assertBootstrap(payload) {
+    function assertBootstrap(payload, {requireLocalProfile = false} = {}) {
         if (!payload || payload.schema !== 'ledgrid.browser-composer-bootstrap' || payload.schema_version !== 1) {
             throw new Error('The composer catalog uses an unsupported schema.');
         }
@@ -1081,12 +1077,10 @@
             || !/^[0-9a-f]{64}$/.test(payload.artifact.catalog_digest || '')
         )) throw new Error('The bundled composer catalog has no valid version identity.');
         if (!/^[0-9a-f]{64}$/.test(payload.installation_profile?.digest || '')) {
-            throw new Error('The composer catalog has no managed installation-profile identity.');
+            throw new Error('The composer catalog has no installation-profile identity.');
         }
-        const selectedDigest = payload.installation_profile.digest;
-        const artifactUrl = payload.capabilities?.server_actions?.installation_profile_artifact_url;
-        if (selectedDigest !== EMPTY_PROFILE_DIGEST && (typeof artifactUrl !== 'string' || !artifactUrl)) {
-            throw new Error('The composer catalog has no immutable selected-profile artifact URL.');
+        if (requireLocalProfile && !ComposerState.localInstallationProfile(payload)) {
+            throw new Error('The bundled composer catalog has no exact local installation-profile artifact.');
         }
         payload.components.forEach((component) => {
             const capabilities = component.browser_capabilities;
@@ -1103,7 +1097,7 @@
             cache: 'no-cache',
         });
         if (!response.ok) throw new Error(`Bundled catalog request failed (${response.status}).`);
-        state.bootstrap = assertBootstrap(await response.json());
+        state.bootstrap = assertBootstrap(await response.json(), {requireLocalProfile: true});
         initializeInstallationProfileState();
         initializeGlobalSettings();
         configureCanvas();

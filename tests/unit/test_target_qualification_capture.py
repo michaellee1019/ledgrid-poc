@@ -147,6 +147,7 @@ def _metrics(*, final: bool) -> dict:
                 "num_devices": 5,
                 "strip_count": 33,
                 "total_leds": 4554,
+                "device_dispatch_order": [0, 1, 3, 2, 4],
                 "transport_envelope_devices": 5,
                 "fec_transport_requested_devices": 1,
                 "fec_transport_enabled_devices": 1,
@@ -454,6 +455,7 @@ class TargetQualificationCaptureTests(unittest.TestCase):
         validate_installed_topology(metrics)
 
         mutations = (
+            ("dispatch", ("aggregate", 0, "device_dispatch_order", [0, 1, 2, 3, 4])),
             ("route", ("device_map", 2, "chip_select", 0)),
             ("width", ("device_map", 4, "local_strip_count", 8)),
             ("offset", ("devices", 3, "receiver_global_strip_offset", 16)),
@@ -471,7 +473,9 @@ class TargetQualificationCaptureTests(unittest.TestCase):
                 else:
                     changed["driver"][collection][index][field] = replacement
                 expected_error = (
-                    "aligned transport capabilities"
+                    "qualified order"
+                    if label == "dispatch"
+                    else "aligned transport capabilities"
                     if label == "capabilities"
                     else "not enabled"
                     if label == "host disabled"

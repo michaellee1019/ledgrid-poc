@@ -777,6 +777,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             for field in fields
         }
         aggregate.update({
+            "device_dispatch_order": [0, 1, 3, 2, 4],
             "fec_transport_requested_devices": sum(
                 item["fec_transport_requested"] is True for item in statuses
             ),
@@ -1466,6 +1467,13 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         self.assertIn(
             "exactly one receiver",
             rejection(valid, bad_aggregate),
+        )
+
+        bad_dispatch = dict(self._receiver_aggregate(valid))
+        bad_dispatch["device_dispatch_order"] = [0, 1, 2, 3, 4]
+        self.assertIn(
+            "exact qualified order",
+            rejection(valid, bad_dispatch),
         )
 
         before = self._health_sample(responses=2)

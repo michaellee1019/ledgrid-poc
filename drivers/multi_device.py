@@ -520,6 +520,14 @@ class MultiDeviceLEDController:
         self._devices_by_bus = {}
         for device_id, (device_bus, _chip_select) in enumerate(self.device_map):
             self._devices_by_bus.setdefault(device_bus, []).append(device_id)
+        # Put the receiver protected by the negotiated FEC transport first on
+        # its shared bus. On the installed wall this produces SPI1 order
+        # (3, 2, 4), completing the susceptible receiver-3 transaction before
+        # receivers 2/4 begin their new LED-output switching windows.
+        for device_ids in self._devices_by_bus.values():
+            device_ids.sort(key=lambda device_id: (
+                device_id not in self.fec_receiver_ids, device_id
+            ))
         if parallel and len(self._devices_by_bus) > 1:
             self._executor = ThreadPoolExecutor(
                 max_workers=len(self._devices_by_bus),
@@ -1978,10 +1986,11 @@ class MultiDeviceLEDController:
                 for future in futures:
                     successful = bool(future.result()) and successful
             else:
-                # Send to devices sequentially
-                for device_id, device_colors in enumerate(device_frames):
-                    successful = self._send_to_device(
-                        device_id, device_colors, wall_frame_sequence
+                # Keep the same per-bus qualified order when bus overlap is
+                # disabled, including FEC-first dispatch on installed SPI1.
+                for device_ids in self._devices_by_bus.values():
+                    successful = self._send_bus_frames(
+                        device_ids, device_frames, wall_frame_sequence
                     ) and successful
             self._logical_frames_sent += 1
             if successful and (
@@ -3518,6 +3527,11 @@ class MultiDeviceLEDController:
                 'frames_sent': max_frames_sent,
                 'logical_frames_sent': self._logical_frames_sent,
                 'spi_bus_count': len(self._devices_by_bus),
+                'device_dispatch_order': [
+                    logical_device
+                    for device_ids in self._devices_by_bus.values()
+                    for logical_device in device_ids
+                ],
                 'device_map': [
                     {
                         'logical_device': logical_device,

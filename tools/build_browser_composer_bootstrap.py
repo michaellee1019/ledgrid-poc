@@ -108,7 +108,7 @@ def build_bootstrap(repo_root: Path) -> dict[str, Any]:
         "activation_mode": "offline",
         "installation_profile_draft_url": None,
         "installation_profile_publish_url": None,
-        "installation_profile_artifact_url": BUNDLED_PROFILE_URL,
+        "installation_profile_artifact_url": None,
     })
     identity_payload = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False

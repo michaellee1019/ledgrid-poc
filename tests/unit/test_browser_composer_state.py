@@ -93,6 +93,41 @@ console.log(JSON.stringify({
         self.assertFalse(result["capability"]["activationReady"])
         self.assertIn("identity", result["capability"]["reason"])
 
+    def test_local_profile_comes_from_static_catalog_not_server_actions(self) -> None:
+        result = _run_state_script("""
+const digest = 'c'.repeat(64);
+const local = state.localInstallationProfile({
+  installation_profile: {
+    digest,
+    artifact_url: `/static/generated/composer/installation_profile_${digest}.bin`,
+    authority: 'bundled',
+  },
+  capabilities: {server_actions: {installation_profile_artifact_url: null}},
+});
+const absent = state.localInstallationProfile({
+  installation_profile: {digest, artifact_url: null},
+  capabilities: {
+    server_actions: {
+      installation_profile_artifact_url: `/api/v1/installation-profiles/${digest}/artifact`,
+    },
+  },
+});
+const empty = state.localInstallationProfile({
+  installation_profile: {digest: '0'.repeat(64), artifact_url: '/static/profile.bin'},
+});
+console.log(JSON.stringify({local, absent, empty}));
+""")
+
+        self.assertEqual(result["local"], {
+            "digest": "c" * 64,
+            "artifactUrl": (
+                "/static/generated/composer/installation_profile_"
+                f"{'c' * 64}.bin"
+            ),
+        })
+        self.assertIsNone(result["absent"])
+        self.assertIsNone(result["empty"])
+
     def test_activation_accepts_current_cautions_but_rejects_failures_and_stale_checks(self) -> None:
         result = _run_state_script("""
 const component = {key: 'host_python:solid', browser_runtime: {digest: 'runtime-1'}};

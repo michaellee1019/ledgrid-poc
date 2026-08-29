@@ -142,8 +142,8 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
         self.assertEqual(
             self.manifest["service_worker_upgrade"],
             {
-                "previous_cache": "ledgrid-composer-shell-v17",
-                "current_cache": "ledgrid-composer-shell-v18",
+                "previous_cache": "ledgrid-composer-shell-v18",
+                "current_cache": "ledgrid-composer-shell-v19",
             },
         )
         self.assertEqual(

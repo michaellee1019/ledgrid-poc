@@ -79,6 +79,17 @@
         };
     }
 
+    function localInstallationProfile(bootstrap) {
+        const profile = bootstrap?.installation_profile;
+        const digest = String(profile?.digest || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(digest) || /^0+$/.test(digest)) return null;
+        if (typeof profile?.artifact_url !== 'string' || !profile.artifact_url) return null;
+        return {
+            digest,
+            artifactUrl: profile.artifact_url,
+        };
+    }
+
     function capability(component) {
         const declared = component?.browser_capabilities || component?.activation_capability || component?.capability || {};
         const previewable = declared.previewable ?? Boolean(component?.browser_runtime?.supported);
@@ -141,6 +152,7 @@
         clone,
         componentPresetIdentity,
         formatNumber,
+        localInstallationProfile,
         normalizeNumber,
         runtimeDigest,
         sameCheckBinding,

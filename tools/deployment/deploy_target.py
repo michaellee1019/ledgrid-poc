@@ -3071,6 +3071,23 @@ def _receiver_health_rejection(
         )
         if sampling_rejection is not None:
             return sampling_rejection
+    buses = tuple(dict.fromkeys(int(item["bus"]) for item in expected_devices))
+    expected_dispatch_order = [
+        logical_id
+        for bus in buses
+        for logical_id in sorted(
+            (
+                int(item["logical_device"])
+                for item in expected_devices
+                if int(item["bus"]) == bus
+            ),
+            key=lambda logical_id: (
+                logical_id not in expected_fec_ids, logical_id
+            ),
+        )
+    ]
+    if sample.receiver_aggregate.get("device_dispatch_order") != expected_dispatch_order:
+        return "host receiver dispatch order is not the exact qualified order"
     if (
         sample.receiver_aggregate.get("fec_transport_requested_devices")
         != len(expected_fec_ids)
