@@ -338,17 +338,33 @@ _FEC_DATA_TO_PARITY_COEFFICIENTS = tuple(
     )
     for evaluation in _FEC_SYMBOL_EVALUATIONS[:FEC_DATA_BYTES]
 )
-_FEC_PACKED_PARITY_TABLES = tuple(
-    tuple(
-        sum(
-            _fec_gf_multiply(value, coefficient)
-            << (8 * (FEC_PARITY_BYTES - parity - 1))
-            for parity, coefficient in enumerate(coefficients)
-        )
-        for value in range(256)
-    )
-    for coefficients in _FEC_DATA_TO_PARITY_COEFFICIENTS
+_FEC_PARITY_TABLES = np.asarray(
+    [
+        [
+            [
+                _fec_gf_multiply(value, coefficient)
+                for coefficient in coefficients
+            ]
+            for value in range(256)
+        ]
+        for coefficients in _FEC_DATA_TO_PARITY_COEFFICIENTS
+    ],
+    dtype=np.uint8,
 )
+_FEC_DATA_SYMBOL_INDICES = np.arange(FEC_DATA_BYTES, dtype=np.intp)[:, None]
+_FEC_V7_LAYOUTS = {}
+
+
+def _fec_v7_layout(codewords):
+    """Return immutable vector indices for one exact v7 wire shape."""
+    cached = _FEC_V7_LAYOUTS.get(codewords)
+    if cached is not None:
+        return cached
+    symbols = np.arange(FEC_CODEWORD_BYTES, dtype=np.intp)[:, None]
+    blocks = np.arange(codewords, dtype=np.intp)[None, :]
+    cached = (symbols, (blocks + symbols) % codewords)
+    _FEC_V7_LAYOUTS[codewords] = cached
+    return cached
 
 
 def _fec_envelope_wire_size(semantic_length):
@@ -398,32 +414,36 @@ def _encode_fec_envelope(payload, output=None, inner_output=None):
     wire[:FEC_ENVELOPE_HEADER_BYTES] = header
     wire[-FEC_ENVELOPE_HEADER_BYTES:] = header
     codewords = (wire_size - FEC_WIRE_HEADER_BYTES) // FEC_CODEWORD_BYTES
-    matrix_offset = FEC_ENVELOPE_HEADER_BYTES
-    outer_parity = bytearray(FEC_OUTER_PARITY_BYTES)
-    for block in range(codewords):
-        packed_parity = 0
-        for symbol in range(FEC_DATA_BYTES):
-            if block == codewords - 1:
-                value = outer_parity[symbol]
-            else:
-                protected_offset = block * FEC_DATA_BYTES + symbol
-                if protected_offset < FEC_ENVELOPE_HEADER_BYTES:
-                    value = header[protected_offset]
-                elif protected_offset < FEC_ENVELOPE_HEADER_BYTES + inner_size:
-                    value = inner[protected_offset - FEC_ENVELOPE_HEADER_BYTES]
-                else:
-                    value = 0
-                outer_parity[symbol] ^= value
-            wire_block = (block + symbol) % codewords
-            wire[matrix_offset + symbol * codewords + wire_block] = value
-            packed_parity ^= _FEC_PACKED_PARITY_TABLES[symbol][value]
-        for parity in range(FEC_PARITY_BYTES):
-            shift = 8 * (FEC_PARITY_BYTES - parity - 1)
-            symbol = FEC_DATA_BYTES + parity
-            wire_block = (block + symbol) % codewords
-            wire[matrix_offset + symbol * codewords + wire_block] = (
-                packed_parity >> shift
-            ) & 0xFF
+    data = np.zeros((codewords, FEC_DATA_BYTES), dtype=np.uint8)
+    protected = data[:-1].reshape(-1)
+    protected[:FEC_ENVELOPE_HEADER_BYTES] = np.frombuffer(
+        header, dtype=np.uint8
+    )
+    protected[
+        FEC_ENVELOPE_HEADER_BYTES:FEC_ENVELOPE_HEADER_BYTES + inner_size
+    ] = np.frombuffer(inner, dtype=np.uint8)
+    np.bitwise_xor.reduce(data[:-1], axis=0, out=data[-1])
+
+    # Each data symbol contributes one precomputed ten-byte GF(256) parity
+    # vector.  Gather the complete 50 x codeword contribution matrix in C and
+    # reduce it there instead of executing 3,400 Python byte iterations on the
+    # Pi for every wall frame.
+    contributions = _FEC_PARITY_TABLES[
+        _FEC_DATA_SYMBOL_INDICES, data.T, :
+    ]
+    parity = np.bitwise_xor.reduce(contributions, axis=0)
+    words = np.empty((codewords, FEC_CODEWORD_BYTES), dtype=np.uint8)
+    words[:, :FEC_DATA_BYTES] = data
+    words[:, FEC_DATA_BYTES:] = parity
+
+    # V7 diagonal interleaving rotates logical block positions by symbol row.
+    # The cached scatter indices preserve the byte-for-byte wire contract while
+    # avoiding another 4,080 Python-level assignments per frame.
+    symbols, wire_blocks = _fec_v7_layout(codewords)
+    body = np.frombuffer(wire, dtype=np.uint8)[
+        FEC_ENVELOPE_HEADER_BYTES:-FEC_ENVELOPE_HEADER_BYTES
+    ].reshape(FEC_CODEWORD_BYTES, codewords)
+    body[symbols, wire_blocks] = words.T
     return wire
 
 LOCAL_BACKGROUND_RAINBOW = 1
