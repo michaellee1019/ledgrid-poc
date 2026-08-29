@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
+import json
 import tempfile
 from pathlib import Path
 import unittest
 
-from animation.core.activation_qualification import canonical_json_sha256
+from animation.core.activation_qualification import (
+    QualificationValidationError,
+    canonical_json_sha256,
+)
 from tools.qualification.target_evidence import (
     TargetEvidenceError,
     atomic_write_json,
     build_target_evidence,
     capture,
+    load_calibrated_electrical_measurement,
     metric_stats,
     validate_active_activation,
     validate_installed_topology,
@@ -28,6 +34,67 @@ GLOBALS = "d" * 64
 PROFILE = "0" * 64
 RELEASE = "e" * 64
 SESSION = "f" * 32
+BUDGET = "7" * 64
+
+
+def _artifact_reference(path: Path, *, format_name: str | None = None) -> dict:
+    content = path.read_bytes()
+    result = {
+        "path": str(path.resolve()),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "size_bytes": len(content),
+    }
+    if format_name is not None:
+        result["format"] = format_name
+    return result
+
+
+def _write_electrical_capture(directory: str | Path) -> tuple[Path, dict]:
+    root = Path(directory)
+    logger = root / "logger.csv"
+    rows = ["timestamp_ms,voltage_v,current_a"]
+    for index, timestamp in enumerate(range(1_950_000, 2_000_001, 1_000)):
+        rows.append(f"{timestamp},{5.0 + index / 1000:.3f},{6.0 + index / 100:.2f}")
+    logger.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    certificate = root / "calibration-certificate.pdf"
+    certificate.write_bytes(b"test calibration certificate CAL-2026-001\n")
+    descriptor = {
+        "schema": "ledgrid.calibrated-electrical-capture",
+        "schema_version": 2,
+        "binding_digest": BINDING,
+        "budget_digest": BUDGET,
+        "activation_id": "perf-canary",
+        "brightness": 50,
+        "raw_logger_export": _artifact_reference(
+            logger, format_name="ledgrid-electrical-csv-v1"
+        ),
+        "calibration_certificate": _artifact_reference(certificate),
+        "instrument": {
+            "manufacturer": "Traceable Instruments",
+            "model": "VI Logger",
+            "serial_number": "VI-001",
+        },
+        "calibration": {
+            "certificate_id": "CAL-2026-001",
+            "laboratory": "Accredited Calibration Lab",
+            "calibrated_at": 1_800_000,
+            "expires_at": 2_200_000,
+        },
+        "measurement": {
+            "acquisition_method": "simultaneous four-wire voltage and shunt current",
+            "topology": {
+                "mode": "exact_measurement_points",
+                "measurement_points": [{
+                    "branch_id": "wall_main",
+                    "voltage_point": "wall DC bus after branch fuse",
+                    "current_point": "wall-exclusive DC feed shunt",
+                }],
+            },
+        },
+    }
+    descriptor_path = root / "electrical-capture.json"
+    descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+    return descriptor_path, descriptor
 
 
 def _device(logical_id: int, displayed: int) -> dict:
@@ -308,6 +375,217 @@ class TargetQualificationCaptureTests(unittest.TestCase):
             by_source["receiver"]["transport_digest"],
             canonical_json_sha256(transport),
         )
+
+    def test_ingests_exact_traceable_electrical_artifact_into_controller_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path, _ = _write_electrical_capture(directory)
+            artifact, electrical = load_calibrated_electrical_measurement(
+                path,
+                binding_digest=BINDING,
+                budget_digest=BUDGET,
+                activation_id="perf-canary",
+                brightness=50,
+                target_window_started_at=1_950_000,
+                target_window_ended_at=2_000_000,
+            )
+
+            result = build_target_evidence(
+                [_metrics(final=False), _metrics(final=True)],
+                elapsed_seconds=1.0,
+                binding_digest=BINDING,
+                captured_at=2_000_000,
+                target_fps=150,
+                brightness=50,
+                environment="Raspberry Pi 4; calibrated target window",
+                runtime_identity=RUNTIME_IDENTITY,
+                capture_started_at=1_950_000,
+                electrical_measurement=artifact,
+                electrical=electrical,
+            )
+
+            controller = next(
+                item for item in result["evidence"] if item["source"] == "controller_pi"
+            )
+            receiver = next(
+                item for item in result["evidence"] if item["source"] == "receiver"
+            )
+            self.assertEqual(controller["electrical"]["kind"], "calibrated_measurement")
+            self.assertEqual(controller["electrical"]["budget_digest"], BUDGET)
+            self.assertEqual(controller["electrical"]["provenance"]["sample_count"], 51)
+            self.assertEqual(
+                controller["electrical"]["provenance"]["descriptor_digest"],
+                canonical_json_sha256(artifact),
+            )
+            self.assertEqual(result["electrical_measurement"], artifact)
+            self.assertEqual(result["capture_started_at"], 1_950_000)
+            self.assertIsNone(receiver["electrical"])
+
+    def test_calibrated_artifact_fails_closed_on_identity_window_and_provenance(self) -> None:
+        mutations = (
+            ("binding_digest", lambda value: value.__setitem__("binding_digest", "9" * 64)),
+            ("budget_digest", lambda value: value.__setitem__("budget_digest", "9" * 64)),
+            ("activation_id", lambda value: value.__setitem__("activation_id", "other")),
+            ("brightness", lambda value: value.__setitem__("brightness", 51)),
+            (
+                "wrong logger digest",
+                lambda value: value["raw_logger_export"].__setitem__("sha256", "9" * 64),
+            ),
+            (
+                "wrong logger size",
+                lambda value: value["raw_logger_export"].__setitem__("size_bytes", 1),
+            ),
+            (
+                "wrong certificate digest",
+                lambda value: value["calibration_certificate"].__setitem__("sha256", "9" * 64),
+            ),
+            (
+                "expired calibration",
+                lambda value: value["calibration"].__setitem__("expires_at", 1_999_999),
+            ),
+            (
+                "missing serial",
+                lambda value: value["instrument"].pop("serial_number"),
+            ),
+            (
+                "missing measurement branch",
+                lambda value: value["measurement"]["topology"].__setitem__(
+                    "measurement_points", []
+                ),
+            ),
+            (
+                "unknown field",
+                lambda value: value.__setitem__("estimated_power_w", 42),
+            ),
+        )
+        for label, mutate in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                path, artifact = _write_electrical_capture(directory)
+                mutate(artifact)
+                atomic_write_json(path, artifact)
+                with self.assertRaises(TargetEvidenceError):
+                    load_calibrated_electrical_measurement(
+                        path,
+                        binding_digest=BINDING,
+                        budget_digest=BUDGET,
+                        activation_id="perf-canary",
+                        brightness=50,
+                        target_window_started_at=1_950_000,
+                        target_window_ended_at=2_000_000,
+                    )
+
+    def test_source_artifacts_remain_required_after_initial_ingestion(self) -> None:
+        for artifact_name in ("raw_logger_export", "calibration_certificate"):
+            with self.subTest(artifact=artifact_name), tempfile.TemporaryDirectory() as directory:
+                path, _ = _write_electrical_capture(directory)
+                descriptor, electrical = load_calibrated_electrical_measurement(
+                    path,
+                    binding_digest=BINDING,
+                    budget_digest=BUDGET,
+                    activation_id="perf-canary",
+                    brightness=50,
+                    target_window_started_at=1_950_000,
+                    target_window_ended_at=2_000_000,
+                )
+                artifact_path = Path(descriptor[artifact_name]["path"])
+                artifact_path.write_bytes(artifact_path.read_bytes() + b"tampered")
+                with self.assertRaisesRegex(QualificationValidationError, "size"):
+                    build_target_evidence(
+                        [_metrics(final=False), _metrics(final=True)],
+                        elapsed_seconds=1.0,
+                        binding_digest=BINDING,
+                        captured_at=2_000_000,
+                        target_fps=150,
+                        brightness=50,
+                        environment="Raspberry Pi 4 test",
+                        runtime_identity=RUNTIME_IDENTITY,
+                        capture_started_at=1_950_000,
+                        electrical_measurement=descriptor,
+                        electrical=electrical,
+                    )
+
+    def test_reviewed_common_distribution_requires_bound_attestation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path, descriptor = _write_electrical_capture(directory)
+            attestation = Path(directory) / "topology-review.txt"
+            attestation.write_text("reviewed common feed covers branches A and B\n", encoding="utf-8")
+            descriptor["measurement"]["topology"] = {
+                "mode": "reviewed_common_distribution",
+                "voltage_point": "common DC bus",
+                "current_point": "common wall-exclusive shunt",
+                "covered_branches": ["branch_b", "branch_a"],
+                "reviewed_by": "Electrical Reviewer",
+                "reviewed_at": 1_850_000,
+                "topology_attestation": _artifact_reference(attestation),
+            }
+            atomic_write_json(path, descriptor)
+            normalized, _ = load_calibrated_electrical_measurement(
+                path,
+                binding_digest=BINDING,
+                budget_digest=BUDGET,
+                activation_id="perf-canary",
+                brightness=50,
+                target_window_started_at=1_950_000,
+                target_window_ended_at=2_000_000,
+            )
+            self.assertEqual(
+                normalized["measurement"]["topology"]["covered_branches"],
+                ["branch_a", "branch_b"],
+            )
+            descriptor["measurement"]["topology"].pop("topology_attestation")
+            atomic_write_json(path, descriptor)
+            with self.assertRaises(TargetEvidenceError):
+                load_calibrated_electrical_measurement(
+                    path,
+                    binding_digest=BINDING,
+                    budget_digest=BUDGET,
+                    activation_id="perf-canary",
+                    brightness=50,
+                    target_window_started_at=1_950_000,
+                    target_window_ended_at=2_000_000,
+                )
+
+    def test_target_envelope_rejects_detached_or_tampered_electrical_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path, _ = _write_electrical_capture(directory)
+            artifact, electrical = load_calibrated_electrical_measurement(
+                path,
+                binding_digest=BINDING,
+                budget_digest=BUDGET,
+                activation_id="perf-canary",
+                brightness=50,
+                target_window_started_at=1_950_000,
+                target_window_ended_at=2_000_000,
+            )
+            with self.assertRaisesRegex(TargetEvidenceError, "supplied together"):
+                build_target_evidence(
+                    [_metrics(final=False), _metrics(final=True)],
+                    elapsed_seconds=1.0,
+                    binding_digest=BINDING,
+                    captured_at=2_000_000,
+                    target_fps=150,
+                    brightness=50,
+                    environment="Raspberry Pi 4 test",
+                    runtime_identity=RUNTIME_IDENTITY,
+                    capture_started_at=1_950_000,
+                    electrical=electrical,
+                )
+
+            tampered = deepcopy(electrical)
+            tampered["current_a"]["max"] = 6.9
+            with self.assertRaisesRegex(QualificationValidationError, "raw logger"):
+                build_target_evidence(
+                    [_metrics(final=False), _metrics(final=True)],
+                    elapsed_seconds=1.0,
+                    binding_digest=BINDING,
+                    captured_at=2_000_000,
+                    target_fps=150,
+                    brightness=50,
+                    environment="Raspberry Pi 4 test",
+                    runtime_identity=RUNTIME_IDENTITY,
+                    capture_started_at=1_950_000,
+                    electrical_measurement=artifact,
+                    electrical=tampered,
+                )
 
     def test_integrity_delta_and_missing_max_fail_without_evidence(self) -> None:
         corrupted = _metrics(final=True)

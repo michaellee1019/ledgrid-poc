@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Capture receipt-bound controller/Pi and receiver PERF-01 evidence.
+"""Capture receipt-bound target PERF-01 and optional POWER-01 evidence.
 
 This observer never starts, stops, or reconfigures the wall. It requires one
 already-active guarded activation and atomically replaces retained evidence only
-after the complete capture passes identity, topology, and integrity checks.
+after the complete capture passes identity, topology, integrity, and optional
+calibrated-instrument checks.
 """
 
 from __future__ import annotations
@@ -25,14 +26,17 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPOSITORY_ROOT))
 
-from animation.core.activation_qualification import (
+from animation.core.activation_qualification import (  # noqa: E402
+    ELECTRICAL_CAPTURE_SCHEMA,
+    ELECTRICAL_CAPTURE_VERSION,
     TARGET_EVIDENCE_SCHEMA,
     TARGET_EVIDENCE_VERSION,
     canonical_json_sha256,
+    derive_calibrated_electrical_measurement,
     normalize_target_qualification_evidence,
 )
-from tools.benchmarks.live_display_state import require_active_scene
-from tools.benchmarks.receiver_acceptance import (
+from tools.benchmarks.live_display_state import require_active_scene  # noqa: E402
+from tools.benchmarks.receiver_acceptance import (  # noqa: E402
     INSTALLED_LEDS_PER_STRIP,
     INSTALLED_RECEIVER_COUNT,
     INSTALLED_RECEIVER_STRIP_COUNTS,
@@ -630,6 +634,58 @@ def metric_stats(values: Sequence[float]) -> dict[str, float]:
     }
 
 
+def _unique_electrical_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise TargetEvidenceError(
+                f"calibrated electrical capture contains duplicate key {key!r}"
+            )
+        result[key] = value
+    return result
+
+
+def load_calibrated_electrical_measurement(
+    path: str | Path,
+    *,
+    binding_digest: str,
+    budget_digest: str,
+    activation_id: str,
+    brightness: int,
+    target_window_started_at: int,
+    target_window_ended_at: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Verify immutable raw/certificate artifacts and derive one exact capture."""
+    try:
+        value = json.loads(
+            Path(path).read_text(encoding="utf-8"),
+            object_pairs_hook=_unique_electrical_object,
+            parse_constant=lambda token: (_ for _ in ()).throw(
+                TargetEvidenceError(
+                    f"calibrated electrical capture contains {token}"
+                )
+            ),
+        )
+    except TargetEvidenceError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise TargetEvidenceError(
+            f"could not load calibrated electrical capture descriptor: {exc}"
+        ) from exc
+    try:
+        return derive_calibrated_electrical_measurement(
+            value,
+            target_window_started_at=target_window_started_at,
+            target_window_ended_at=target_window_ended_at,
+            expected_binding_digest=binding_digest,
+            expected_budget_digest=budget_digest,
+            expected_activation_id=activation_id,
+            expected_brightness=brightness,
+        )
+    except Exception as exc:
+        raise TargetEvidenceError(str(exc)) from exc
+
+
 def validate_installed_topology(metrics: Any) -> None:
     """Bind host routes, logical widths, offsets, and receiver geometry."""
 
@@ -879,11 +935,22 @@ def build_target_evidence(
     brightness: int,
     environment: str,
     runtime_identity: Mapping[str, Any],
+    capture_started_at: int | None = None,
+    electrical_measurement: Mapping[str, Any] | None = None,
+    electrical: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the strict envelope from an already identity-checked window."""
 
     if len(metrics_samples) < 2 or elapsed_seconds <= 0:
         raise TargetEvidenceError("at least two metrics samples are required")
+    if (electrical_measurement is None) != (electrical is None):
+        raise TargetEvidenceError(
+            "calibrated electrical artifact and derived evidence must be supplied together"
+        )
+    if electrical_measurement is not None and capture_started_at is None:
+        raise TargetEvidenceError(
+            "calibrated electrical evidence requires the target capture start time"
+        )
     first = metrics_samples[0]
     last = metrics_samples[-1]
     performance_summaries: list[Mapping[str, Any]] = []
@@ -1092,7 +1159,6 @@ def build_target_evidence(
     common = {
         "binding_digest": binding_digest,
         "captured_at": captured_at,
-        "electrical": None,
     }
     transport = {
         "aggregate": _full_frame_transport_evidence_item(
@@ -1125,6 +1191,7 @@ def build_target_evidence(
             {
                 **common,
                 "source": "controller_pi",
+                "electrical": None if electrical is None else dict(electrical),
                 "environment": (
                     environment
                     + f"; {controller_samples} sampled rolling controller windows; "
@@ -1141,6 +1208,7 @@ def build_target_evidence(
             {
                 **common,
                 "source": "receiver",
+                "electrical": None,
                 "transport_digest": canonical_json_sha256(transport),
                 "environment": (
                     environment
@@ -1156,6 +1224,9 @@ def build_target_evidence(
             },
         ],
     }
+    if electrical_measurement is not None:
+        envelope["capture_started_at"] = capture_started_at
+        envelope["electrical_measurement"] = dict(electrical_measurement)
     return normalize_target_qualification_evidence(envelope)
 
 
@@ -1224,6 +1295,8 @@ def capture(
     warmup: float,
     duration: float,
     interval: float,
+    electrical_measurement_path: str | Path | None = None,
+    budget_digest: str | None = None,
     get_json: Callable[[str], Any] = _get_json,
     post_json: Callable[[str, Mapping[str, Any]], Any] = _post_json,
     monotonic: Callable[[], float] = time.monotonic,
@@ -1284,6 +1357,7 @@ def capture(
         sleep=sleep,
     )
     samples: list[Mapping[str, Any]] = [baseline_metrics]
+    capture_started_at = int(time.time() * 1000)
     started = monotonic()
     while True:
         sample = get_json(f"{base}/api/metrics")
@@ -1334,6 +1408,23 @@ def capture(
             "release, controller session, or runtime identity changed during capture"
         )
     captured_at = int(time.time() * 1000)
+    if (electrical_measurement_path is None) != (budget_digest is None):
+        raise TargetEvidenceError(
+            "electrical measurement path and budget digest must be supplied together"
+        )
+    electrical_measurement = None
+    electrical = None
+    if electrical_measurement_path is not None:
+        assert budget_digest is not None
+        electrical_measurement, electrical = load_calibrated_electrical_measurement(
+            electrical_measurement_path,
+            binding_digest=binding_digest,
+            budget_digest=budget_digest,
+            activation_id=activation_id,
+            brightness=brightness,
+            target_window_started_at=capture_started_at,
+            target_window_ended_at=captured_at,
+        )
     model_path = Path("/proc/device-tree/model")
     model = (
         model_path.read_bytes().rstrip(b"\x00").decode("utf-8", "replace")
@@ -1354,6 +1445,11 @@ def capture(
         brightness=brightness,
         environment=environment,
         runtime_identity=runtime_identity,
+        capture_started_at=(
+            capture_started_at if electrical_measurement is not None else None
+        ),
+        electrical_measurement=electrical_measurement,
+        electrical=electrical,
     )
 
 
@@ -1379,6 +1475,19 @@ def main() -> None:
     parser.add_argument("--plugin", default="rainbow")
     parser.add_argument("--target-fps", type=int, default=150)
     parser.add_argument("--brightness", type=int, default=50)
+    parser.add_argument(
+        "--electrical-measurement",
+        type=Path,
+        help=(
+            f"strict {ELECTRICAL_CAPTURE_SCHEMA} schema-v{ELECTRICAL_CAPTURE_VERSION} "
+            "descriptor for digested raw logger and calibration artifacts"
+        ),
+    )
+    parser.add_argument(
+        "--budget-digest",
+        type=_digest_argument,
+        help="exact calibrated installation-budget digest named by the instrument artifact",
+    )
     parser.add_argument("--warmup", type=float, default=3.0)
     parser.add_argument("--duration", type=float, default=60.0)
     parser.add_argument("--interval", type=float, default=0.25)
@@ -1396,6 +1505,8 @@ def main() -> None:
         parser.error("--target-fps must be from 1 through 200")
     if not 0 <= args.brightness <= 255:
         parser.error("--brightness must be from 0 through 255")
+    if (args.electrical_measurement is None) != (args.budget_digest is None):
+        parser.error("--electrical-measurement and --budget-digest must be supplied together")
     for name in ("warmup", "duration", "interval"):
         value = getattr(args, name)
         if not math.isfinite(value) or value <= 0:
@@ -1415,6 +1526,8 @@ def main() -> None:
             warmup=args.warmup,
             duration=args.duration,
             interval=args.interval,
+            electrical_measurement_path=args.electrical_measurement,
+            budget_digest=args.budget_digest,
         )
         atomic_write_json(args.output, evidence)
     except Exception as exc:

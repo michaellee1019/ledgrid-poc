@@ -42,3 +42,26 @@ does not contain enough as-built electrical evidence to choose those values.
 Qualification therefore fails closed until measured, reviewed limits replace
 the unknowns in a new revision. Never infer these fields from nominal component
 ratings or software defaults.
+
+Do not mark the budget calibrated merely because a meter is available. First
+record and review the installed supply, fuse/branch, conductor, connector,
+injection, return-path, and LED-strip limits. Then increment the revision and
+populate every physical limit from that reviewed as-built envelope with an
+explicit derating/headroom policy. The current file must remain unqualified
+until that work and the first traceable measurement are complete.
+
+The target capture helper can ingest a separate
+`ledgrid.calibrated-electrical-capture` schema-v2 descriptor. It names the exact
+qualification binding digest, calibrated budget digest, activation ID, and
+brightness, but contains no trusted summary statistics. Instead it pins an
+immutable raw `ledgrid-electrical-csv-v1` logger export and calibration
+certificate by absolute local path, byte size, and SHA-256. The raw rows are
+`timestamp_ms,voltage_v,current_a`; target loading and final evaluation both
+reopen the artifacts and recompute sample count, interval/window, and ordered
+mean/p95/p99/max voltage/current statistics. The descriptor must also bind every
+exact measurement point and branch, or pin a reviewed common-distribution
+topology attestation. This ingestion support does not make the current budget
+calibrated and does not turn whole-home or browser estimates into installed-wall
+evidence. See
+[`docs/ACTIVATION_TARGET_QUALIFICATION.md`](../docs/ACTIVATION_TARGET_QUALIFICATION.md)
+for the physical measurement and evidence-retention procedure.

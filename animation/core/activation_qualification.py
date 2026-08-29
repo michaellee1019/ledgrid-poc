@@ -8,10 +8,15 @@ but only a calibrated controller/receiver measurement can satisfy POWER-01.
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import math
+import os
 import re
+import stat
+import statistics
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -34,6 +39,11 @@ DEFAULT_INSTALLATION_BUDGET_PATH = (
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _CONTROLLER_SESSION_ID = re.compile(r"^[0-9a-f]{32}$")
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$")
+ELECTRICAL_CAPTURE_SCHEMA = "ledgrid.calibrated-electrical-capture"
+ELECTRICAL_CAPTURE_VERSION = 2
+ELECTRICAL_LOGGER_FORMAT = "ledgrid-electrical-csv-v1"
+MAX_ELECTRICAL_ARTIFACT_BYTES = 64 * 1024 * 1024
+MAX_ELECTRICAL_SAMPLE_INTERVAL_MS = 1_000.0
 
 
 class QualificationValidationError(ValueError):
@@ -537,11 +547,361 @@ def activation_qualification_binding_digest(value: Any) -> str:
     return canonical_json_sha256(_normalize_binding(value))
 
 
-def _electrical(value: Any, source: str, label: str) -> dict[str, Any]:
+def _artifact_reference(value: Any, label: str, *, require_format: bool) -> dict[str, Any]:
+    payload = _object(value, label)
+    allowed = {"path", "sha256", "size_bytes"}
+    if require_format:
+        allowed.add("format")
+    _only(payload, allowed, label)
+    path = Path(_text(payload.get("path"), f"{label}.path", maximum_bytes=4096))
+    if not path.is_absolute():
+        raise QualificationValidationError(f"{label}.path must be absolute")
+    result: dict[str, Any] = {
+        "path": str(path),
+        "sha256": _digest(payload.get("sha256"), f"{label}.sha256"),
+        "size_bytes": _integer(
+            payload.get("size_bytes"),
+            f"{label}.size_bytes",
+            minimum=1,
+            maximum=MAX_ELECTRICAL_ARTIFACT_BYTES,
+        ),
+    }
+    if require_format:
+        if payload.get("format") != ELECTRICAL_LOGGER_FORMAT:
+            raise QualificationValidationError(
+                f"{label}.format must be {ELECTRICAL_LOGGER_FORMAT!r}"
+            )
+        result["format"] = ELECTRICAL_LOGGER_FORMAT
+    return result
+
+
+def _read_bound_artifact(reference: Mapping[str, Any], label: str) -> bytes:
+    path = Path(reference["path"])
+    try:
+        before = path.lstat()
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise QualificationValidationError(f"{label} must be a regular non-symlink file")
+        if before.st_size != reference["size_bytes"]:
+            raise QualificationValidationError(f"{label} size does not match retained provenance")
+        with path.open("rb") as handle:
+            opened = os.fstat(handle.fileno())
+            if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                raise QualificationValidationError(f"{label} changed while it was opened")
+            content = handle.read(MAX_ELECTRICAL_ARTIFACT_BYTES + 1)
+            after = os.fstat(handle.fileno())
+    except QualificationValidationError:
+        raise
+    except OSError as exc:
+        raise QualificationValidationError(f"could not read {label}: {exc}") from exc
+    if len(content) != reference["size_bytes"] or (
+        after.st_size != opened.st_size or after.st_mtime_ns != opened.st_mtime_ns
+    ):
+        raise QualificationValidationError(f"{label} changed while it was read")
+    if hashlib.sha256(content).hexdigest() != reference["sha256"]:
+        raise QualificationValidationError(f"{label} digest does not match retained provenance")
+    return content
+
+
+def _electrical_topology(value: Any, label: str) -> dict[str, Any]:
+    payload = _object(value, label)
+    mode = payload.get("mode")
+    if mode == "exact_measurement_points":
+        _only(payload, {"mode", "measurement_points"}, label)
+        points = payload.get("measurement_points")
+        if not isinstance(points, list) or len(points) != 1:
+            raise QualificationValidationError(
+                f"{label}.measurement_points must contain the one branch represented by each raw row"
+            )
+        normalized_points = []
+        for index, raw in enumerate(points):
+            item_label = f"{label}.measurement_points[{index}]"
+            item = _object(raw, item_label)
+            _only(item, {"branch_id", "voltage_point", "current_point"}, item_label)
+            normalized_points.append({
+                "branch_id": _identifier(item.get("branch_id"), f"{item_label}.branch_id"),
+                "voltage_point": _text(item.get("voltage_point"), f"{item_label}.voltage_point"),
+                "current_point": _text(item.get("current_point"), f"{item_label}.current_point"),
+            })
+        branch_ids = [item["branch_id"] for item in normalized_points]
+        if len(branch_ids) != len(set(branch_ids)):
+            raise QualificationValidationError(f"{label}.measurement_points contains duplicate branches")
+        normalized_points.sort(key=lambda item: item["branch_id"])
+        return {"mode": mode, "measurement_points": normalized_points}
+    if mode == "reviewed_common_distribution":
+        _only(
+            payload,
+            {
+                "mode", "voltage_point", "current_point", "covered_branches",
+                "reviewed_by", "reviewed_at", "topology_attestation",
+            },
+            label,
+        )
+        branches = payload.get("covered_branches")
+        if not isinstance(branches, list) or not branches:
+            raise QualificationValidationError(f"{label}.covered_branches must be non-empty")
+        normalized_branches = [
+            _identifier(branch, f"{label}.covered_branches[{index}]")
+            for index, branch in enumerate(branches)
+        ]
+        if len(normalized_branches) != len(set(normalized_branches)):
+            raise QualificationValidationError(f"{label}.covered_branches contains duplicates")
+        attestation = _artifact_reference(
+            payload.get("topology_attestation"),
+            f"{label}.topology_attestation",
+            require_format=False,
+        )
+        _read_bound_artifact(attestation, f"{label}.topology_attestation")
+        return {
+            "mode": mode,
+            "voltage_point": _text(payload.get("voltage_point"), f"{label}.voltage_point"),
+            "current_point": _text(payload.get("current_point"), f"{label}.current_point"),
+            "covered_branches": sorted(normalized_branches),
+            "reviewed_by": _text(payload.get("reviewed_by"), f"{label}.reviewed_by"),
+            "reviewed_at": _integer(payload.get("reviewed_at"), f"{label}.reviewed_at", minimum=1),
+            "topology_attestation": attestation,
+        }
+    raise QualificationValidationError(
+        f"{label}.mode must be 'exact_measurement_points' or 'reviewed_common_distribution'"
+    )
+
+
+def _nearest_rank_stats(values: Sequence[float], label: str) -> dict[str, float]:
+    if not values:
+        raise QualificationValidationError(f"{label} is empty")
+    ordered = sorted(values)
+    return {
+        "mean": float(statistics.fmean(ordered)),
+        "p95": float(ordered[min(len(ordered) - 1, math.ceil(len(ordered) * 0.95) - 1)]),
+        "p99": float(ordered[min(len(ordered) - 1, math.ceil(len(ordered) * 0.99) - 1)]),
+        "max": float(ordered[-1]),
+    }
+
+
+def _parse_raw_electrical_csv(content: bytes, label: str) -> dict[str, Any]:
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise QualificationValidationError(f"{label} must be UTF-8") from exc
+    try:
+        rows = list(csv.reader(io.StringIO(text, newline=""), strict=True))
+    except csv.Error as exc:
+        raise QualificationValidationError(f"{label} is malformed CSV: {exc}") from exc
+    if not rows or rows[0] != ["timestamp_ms", "voltage_v", "current_a"]:
+        raise QualificationValidationError(
+            f"{label} must start with timestamp_ms,voltage_v,current_a"
+        )
+    timestamps: list[int] = []
+    voltage: list[float] = []
+    current: list[float] = []
+    for row_number, row in enumerate(rows[1:], start=2):
+        if len(row) != 3 or any(not cell.strip() for cell in row):
+            raise QualificationValidationError(f"{label} row {row_number} must contain three values")
+        try:
+            timestamp = int(row[0], 10)
+        except ValueError as exc:
+            raise QualificationValidationError(f"{label} row {row_number} timestamp is invalid") from exc
+        if str(timestamp) != row[0] or timestamp < 1:
+            raise QualificationValidationError(f"{label} row {row_number} timestamp is not canonical")
+        try:
+            raw_voltage = float(row[1])
+            raw_current = float(row[2])
+        except ValueError as exc:
+            raise QualificationValidationError(
+                f"{label} row {row_number} voltage/current is invalid"
+            ) from exc
+        sample_voltage = _finite(raw_voltage, f"{label} row {row_number} voltage_v", minimum=0.0)
+        sample_current = _finite(raw_current, f"{label} row {row_number} current_a", minimum=0.0)
+        if timestamps and timestamp <= timestamps[-1]:
+            raise QualificationValidationError(f"{label} timestamps must be strictly increasing")
+        timestamps.append(timestamp)
+        voltage.append(sample_voltage)
+        current.append(sample_current)
+    if len(timestamps) < 2:
+        raise QualificationValidationError(f"{label} must contain at least two samples")
+    intervals = [float(after - before) for before, after in zip(timestamps, timestamps[1:])]
+    if max(intervals) > MAX_ELECTRICAL_SAMPLE_INTERVAL_MS:
+        raise QualificationValidationError(
+            f"{label} sample gap exceeds {MAX_ELECTRICAL_SAMPLE_INTERVAL_MS:g} ms"
+        )
+    return {
+        "sample_count": len(timestamps),
+        "sample_window": {"started_at": timestamps[0], "ended_at": timestamps[-1]},
+        "sample_interval_ms": _nearest_rank_stats(intervals, f"{label} intervals"),
+        "voltage_v": _nearest_rank_stats(voltage, f"{label} voltage"),
+        "current_a": _nearest_rank_stats(current, f"{label} current"),
+    }
+
+
+def derive_calibrated_electrical_measurement(
+    value: Any,
+    *,
+    target_window_started_at: int,
+    target_window_ended_at: int,
+    expected_binding_digest: str | None = None,
+    expected_budget_digest: str | None = None,
+    expected_activation_id: str | None = None,
+    expected_brightness: int | None = None,
+    label: str = "calibrated electrical capture",
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Verify local raw artifacts and derive every electrical statistic."""
+
     payload = _object(value, label)
     _only(
         payload,
-        {"kind", "budget_digest", "brightness", "voltage_v", "current_a"},
+        {
+            "schema", "schema_version", "binding_digest", "budget_digest",
+            "activation_id", "brightness", "raw_logger_export",
+            "calibration_certificate", "instrument", "calibration", "measurement",
+        },
+        label,
+    )
+    if payload.get("schema") != ELECTRICAL_CAPTURE_SCHEMA:
+        raise QualificationValidationError(f"{label}.schema must be {ELECTRICAL_CAPTURE_SCHEMA!r}")
+    if payload.get("schema_version") != ELECTRICAL_CAPTURE_VERSION:
+        raise QualificationValidationError(f"{label}.schema_version must be {ELECTRICAL_CAPTURE_VERSION}")
+    binding_digest = _digest(payload.get("binding_digest"), f"{label}.binding_digest")
+    budget_digest = _digest(payload.get("budget_digest"), f"{label}.budget_digest")
+    activation_id = _text(payload.get("activation_id"), f"{label}.activation_id")
+    brightness = _integer(payload.get("brightness"), f"{label}.brightness", maximum=255)
+    for name, actual, expected in (
+        ("binding_digest", binding_digest, expected_binding_digest),
+        ("budget_digest", budget_digest, expected_budget_digest),
+        ("activation_id", activation_id, expected_activation_id),
+        ("brightness", brightness, expected_brightness),
+    ):
+        if expected is not None and actual != expected:
+            raise QualificationValidationError(f"{label}.{name} does not match the target capture")
+    raw_logger = _artifact_reference(payload.get("raw_logger_export"), f"{label}.raw_logger_export", require_format=True)
+    certificate = _artifact_reference(payload.get("calibration_certificate"), f"{label}.calibration_certificate", require_format=False)
+    raw_content = _read_bound_artifact(raw_logger, f"{label}.raw_logger_export")
+    _read_bound_artifact(certificate, f"{label}.calibration_certificate")
+    instrument = _object(payload.get("instrument"), f"{label}.instrument")
+    _only(instrument, {"manufacturer", "model", "serial_number"}, f"{label}.instrument")
+    normalized_instrument = {
+        name: _text(instrument.get(name), f"{label}.instrument.{name}")
+        for name in ("manufacturer", "model", "serial_number")
+    }
+    calibration = _object(payload.get("calibration"), f"{label}.calibration")
+    _only(calibration, {"certificate_id", "laboratory", "calibrated_at", "expires_at"}, f"{label}.calibration")
+    calibrated_at = _integer(calibration.get("calibrated_at"), f"{label}.calibration.calibrated_at", minimum=1)
+    expires_at = _integer(calibration.get("expires_at"), f"{label}.calibration.expires_at", minimum=1)
+    if calibrated_at > target_window_started_at or expires_at < target_window_ended_at:
+        raise QualificationValidationError(f"{label} calibration does not cover the target window")
+    normalized_calibration = {
+        "certificate_id": _text(calibration.get("certificate_id"), f"{label}.calibration.certificate_id"),
+        "laboratory": _text(calibration.get("laboratory"), f"{label}.calibration.laboratory"),
+        "calibrated_at": calibrated_at,
+        "expires_at": expires_at,
+    }
+    measurement = _object(payload.get("measurement"), f"{label}.measurement")
+    _only(measurement, {"acquisition_method", "topology"}, f"{label}.measurement")
+    normalized_measurement = {
+        "acquisition_method": _text(measurement.get("acquisition_method"), f"{label}.measurement.acquisition_method"),
+        "topology": _electrical_topology(measurement.get("topology"), f"{label}.measurement.topology"),
+    }
+    derived = _parse_raw_electrical_csv(raw_content, f"{label}.raw_logger_export")
+    sample_window = derived["sample_window"]
+    max_interval = derived["sample_interval_ms"]["max"]
+    if (
+        sample_window["started_at"] > target_window_started_at
+        or sample_window["ended_at"] < target_window_ended_at
+        or target_window_started_at - sample_window["started_at"] > max_interval
+        or sample_window["ended_at"] - target_window_ended_at > max_interval
+    ):
+        raise QualificationValidationError(f"{label} raw sample window must tightly span the target capture")
+    normalized = {
+        "schema": ELECTRICAL_CAPTURE_SCHEMA,
+        "schema_version": ELECTRICAL_CAPTURE_VERSION,
+        "binding_digest": binding_digest,
+        "budget_digest": budget_digest,
+        "activation_id": activation_id,
+        "brightness": brightness,
+        "raw_logger_export": raw_logger,
+        "calibration_certificate": certificate,
+        "instrument": normalized_instrument,
+        "calibration": normalized_calibration,
+        "measurement": normalized_measurement,
+    }
+    provenance = {
+        "descriptor": normalized,
+        "descriptor_digest": canonical_json_sha256(normalized),
+        "capture_window": {
+            "started_at": target_window_started_at,
+            "ended_at": target_window_ended_at,
+        },
+        "sample_window": derived["sample_window"],
+        "sample_count": derived["sample_count"],
+        "sample_interval_ms": derived["sample_interval_ms"],
+    }
+    electrical = {
+        "kind": "calibrated_measurement",
+        "budget_digest": budget_digest,
+        "brightness": brightness,
+        "voltage_v": derived["voltage_v"],
+        "current_a": derived["current_a"],
+        "provenance": provenance,
+    }
+    return normalized, electrical
+
+
+def _calibrated_measurement_provenance(
+    value: Any,
+    label: str,
+    *,
+    binding_digest: str,
+    budget_digest: str,
+    brightness: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    payload = _object(value, label)
+    _only(
+        payload,
+        {
+            "descriptor", "descriptor_digest", "capture_window", "sample_window",
+            "sample_count", "sample_interval_ms",
+        },
+        label,
+    )
+    capture_window = _object(payload.get("capture_window"), f"{label}.capture_window")
+    _only(capture_window, {"started_at", "ended_at"}, f"{label}.capture_window")
+    started_at = _integer(capture_window.get("started_at"), f"{label}.capture_window.started_at", minimum=1)
+    ended_at = _integer(capture_window.get("ended_at"), f"{label}.capture_window.ended_at", minimum=1)
+    if started_at > ended_at:
+        raise QualificationValidationError(f"{label}.capture_window is reversed")
+    descriptor, derived = derive_calibrated_electrical_measurement(
+        payload.get("descriptor"),
+        target_window_started_at=started_at,
+        target_window_ended_at=ended_at,
+        expected_binding_digest=binding_digest,
+        expected_budget_digest=budget_digest,
+        expected_brightness=brightness,
+        label=f"{label}.descriptor",
+    )
+    expected_provenance = derived["provenance"]
+    if payload != expected_provenance:
+        raise QualificationValidationError(
+            f"{label} does not match statistics re-derived from the raw logger export"
+        )
+    return expected_provenance, derived
+
+
+def _electrical(
+    value: Any,
+    source: str,
+    label: str,
+    *,
+    binding_digest: str | None = None,
+) -> dict[str, Any]:
+    payload = _object(value, label)
+    _only(
+        payload,
+        {
+            "kind",
+            "budget_digest",
+            "brightness",
+            "voltage_v",
+            "current_a",
+            "provenance",
+        },
         label,
     )
     kind = payload.get("kind")
@@ -550,6 +910,7 @@ def _electrical(value: Any, source: str, label: str) -> dict[str, Any]:
             f"{label}.kind must be 'uncalibrated_estimate' or 'calibrated_measurement'"
         )
     budget_digest = payload.get("budget_digest")
+    provenance = payload.get("provenance")
     if kind == "uncalibrated_estimate":
         if source != "browser":
             raise QualificationValidationError(
@@ -559,21 +920,44 @@ def _electrical(value: Any, source: str, label: str) -> dict[str, Any]:
             raise QualificationValidationError(
                 "an uncalibrated electrical estimate must not claim a budget digest"
             )
+        if provenance is not None:
+            raise QualificationValidationError(
+                "an uncalibrated electrical estimate must not claim calibrated provenance"
+            )
     else:
         if source == "browser":
             raise QualificationValidationError(
                 "browser evidence cannot claim a calibrated electrical measurement"
             )
         budget_digest = _digest(budget_digest, f"{label}.budget_digest")
-    return {
+        if binding_digest is None:
+            raise QualificationValidationError(
+                f"{label} calibrated evidence requires an evidence binding digest"
+            )
+    brightness = _integer(
+        payload.get("brightness"), f"{label}.brightness", maximum=255
+    )
+    result = {
         "kind": kind,
         "budget_digest": budget_digest,
-        "brightness": _integer(
-            payload.get("brightness"), f"{label}.brightness", maximum=255
-        ),
+        "brightness": brightness,
         "voltage_v": _metric_stats(payload.get("voltage_v"), f"{label}.voltage_v"),
         "current_a": _metric_stats(payload.get("current_a"), f"{label}.current_a"),
     }
+    if kind == "calibrated_measurement":
+        normalized_provenance, derived = _calibrated_measurement_provenance(
+            provenance,
+            f"{label}.provenance",
+            binding_digest=binding_digest,
+            budget_digest=budget_digest,
+            brightness=brightness,
+        )
+        if result["voltage_v"] != derived["voltage_v"] or result["current_a"] != derived["current_a"]:
+            raise QualificationValidationError(
+                f"{label} statistics do not match the raw logger export"
+            )
+        result["provenance"] = normalized_provenance
+    return result
 
 
 def _evidence(value: Any, index: int) -> dict[str, Any]:
@@ -617,11 +1001,12 @@ def _evidence(value: Any, index: int) -> dict[str, Any]:
         raise QualificationValidationError(
             f"{label}.transport_digest is required for receiver evidence"
         )
+    evidence_binding_digest = _digest(
+        payload.get("binding_digest"), f"{label}.binding_digest"
+    )
     result = {
         "source": source,
-        "binding_digest": _digest(
-            payload.get("binding_digest"), f"{label}.binding_digest"
-        ),
+        "binding_digest": evidence_binding_digest,
         "captured_at": _integer(
             payload.get("captured_at"), f"{label}.captured_at", minimum=1
         ),
@@ -658,7 +1043,12 @@ def _evidence(value: Any, index: int) -> dict[str, Any]:
         "electrical": (
             None
             if electrical is None
-            else _electrical(electrical, source, f"{label}.electrical")
+            else _electrical(
+                electrical,
+                source,
+                f"{label}.electrical",
+                binding_digest=evidence_binding_digest,
+            )
         ),
     }
     if source == "receiver":
@@ -1144,6 +1534,23 @@ def _target_runtime_identity(value: Any) -> dict[str, Any]:
     }
 
 
+def _target_electrical_measurement(
+    value: Any,
+    *,
+    binding_digest: str,
+    capture_started_at: int,
+    captured_at: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    label = "target qualification evidence.electrical_measurement"
+    return derive_calibrated_electrical_measurement(
+        value,
+        target_window_started_at=capture_started_at,
+        target_window_ended_at=captured_at,
+        expected_binding_digest=binding_digest,
+        label=label,
+    )
+
+
 def normalize_target_qualification_evidence(value: Any) -> dict[str, Any]:
     """Normalize one atomically retained controller/receiver capture.
 
@@ -1161,10 +1568,12 @@ def normalize_target_qualification_evidence(value: Any) -> dict[str, Any]:
             "revision",
             "binding_digest",
             "captured_at",
+            "capture_started_at",
             "environment",
             "runtime_identity",
             "transport",
             "evidence",
+            "electrical_measurement",
         },
         "target qualification evidence",
     )
@@ -1187,6 +1596,27 @@ def normalize_target_qualification_evidence(value: Any) -> dict[str, Any]:
         "target qualification evidence.captured_at",
         minimum=1,
     )
+    raw_electrical_measurement = payload.get("electrical_measurement")
+    has_electrical_measurement = raw_electrical_measurement is not None
+    has_capture_started_at = "capture_started_at" in payload
+    if has_electrical_measurement != has_capture_started_at:
+        raise QualificationValidationError(
+            "target qualification evidence calibrated electrical measurement "
+            "requires capture_started_at, and capture_started_at is otherwise forbidden"
+        )
+    capture_started_at = (
+        None
+        if not has_capture_started_at
+        else _integer(
+            payload.get("capture_started_at"),
+            "target qualification evidence.capture_started_at",
+            minimum=1,
+        )
+    )
+    if capture_started_at is not None and capture_started_at > captured_at:
+        raise QualificationValidationError(
+            "target qualification evidence.capture_started_at must not exceed captured_at"
+        )
     raw_evidence = payload.get("evidence")
     if not isinstance(raw_evidence, list):
         raise QualificationValidationError(
@@ -1208,6 +1638,29 @@ def normalize_target_qualification_evidence(value: Any) -> dict[str, Any]:
             raise QualificationValidationError(
                 f"{item['source']} evidence does not match the envelope capture time"
             )
+    electrical_measurement = None
+    if has_electrical_measurement:
+        assert capture_started_at is not None
+        electrical_measurement, derived_electrical = _target_electrical_measurement(
+            raw_electrical_measurement,
+            binding_digest=binding_digest,
+            capture_started_at=capture_started_at,
+            captured_at=captured_at,
+        )
+        controller = next(item for item in evidence if item["source"] == "controller_pi")
+        receiver_item = next(item for item in evidence if item["source"] == "receiver")
+        if controller["electrical"] != derived_electrical:
+            raise QualificationValidationError(
+                "controller_pi electrical evidence does not match the retained calibrated artifact"
+            )
+        if receiver_item["electrical"] is not None:
+            raise QualificationValidationError(
+                "receiver electrical evidence must remain null when the controller capture owns the instrument artifact"
+            )
+    elif any(item["electrical"] is not None for item in evidence):
+        raise QualificationValidationError(
+            "target qualification evidence cannot contain electrical values without a calibrated artifact"
+        )
     evidence.sort(key=lambda item: EVIDENCE_SOURCES.index(item["source"]))
     runtime_identity = _target_runtime_identity(payload.get("runtime_identity"))
     transport = _target_transport_evidence(payload.get("transport"))
@@ -1217,7 +1670,7 @@ def normalize_target_qualification_evidence(value: Any) -> dict[str, Any]:
         raise QualificationValidationError(
             "receiver evidence transport_digest does not match normalized transport proof"
         )
-    return {
+    result = {
         "schema": TARGET_EVIDENCE_SCHEMA,
         "schema_version": TARGET_EVIDENCE_VERSION,
         "revision": _integer(
@@ -1235,6 +1688,10 @@ def normalize_target_qualification_evidence(value: Any) -> dict[str, Any]:
         "transport": transport,
         "evidence": evidence,
     }
+    if electrical_measurement is not None:
+        result["capture_started_at"] = capture_started_at
+        result["electrical_measurement"] = electrical_measurement
+    return result
 
 
 def load_target_qualification_evidence(path: str | Path) -> dict[str, Any]:
@@ -1332,6 +1789,8 @@ def evaluate_activation_qualification(
     headroom = physical["safety"]["required_current_headroom_ratio"]
     maximum_power = physical["safety"]["maximum_p99_power_w"]
     for source, electrical in calibrated_measurements:
+        if electrical["provenance"]["capture_window"]["ended_at"] > now:
+            freshness_reasons.append(f"future_{source}_electrical_evidence")
         if electrical["budget_digest"] != budget_digest:
             identity_reasons.append(f"{source}_electrical_budget_mismatch")
         if electrical["brightness"] != brightness:
@@ -1383,6 +1842,9 @@ def evaluate_activation_qualification(
 
 __all__ = [
     "DEFAULT_INSTALLATION_BUDGET_PATH",
+    "ELECTRICAL_CAPTURE_SCHEMA",
+    "ELECTRICAL_CAPTURE_VERSION",
+    "ELECTRICAL_LOGGER_FORMAT",
     "EVIDENCE_SOURCES",
     "INSTALLATION_BUDGET_SCHEMA",
     "INSTALLATION_BUDGET_VERSION",
@@ -1393,6 +1855,7 @@ __all__ = [
     "QualificationValidationError",
     "activation_qualification_binding_digest",
     "activation_qualification_record_digest",
+    "derive_calibrated_electrical_measurement",
     "evaluate_activation_qualification",
     "installation_qualification_budget_digest",
     "load_installation_qualification_budget",

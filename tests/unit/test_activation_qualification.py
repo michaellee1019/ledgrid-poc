@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+import tempfile
 import unittest
 from copy import deepcopy
 
@@ -11,6 +14,7 @@ from animation.core.activation_qualification import (
     activation_qualification_binding_digest,
     activation_qualification_record_digest,
     canonical_json_sha256,
+    derive_calibrated_electrical_measurement,
     evaluate_activation_qualification,
     installation_qualification_budget_digest,
     load_installation_qualification_budget,
@@ -24,6 +28,8 @@ NOW_MS = 2_000_000
 RELEASE_ID = "e" * 64
 SESSION_ID = "f" * 32
 CURRENT_IDENTITY_DIGEST = "9" * 64
+_ARTIFACT_DIRECTORY = tempfile.TemporaryDirectory()
+_ARTIFACT_ROOT = Path(_ARTIFACT_DIRECTORY.name)
 
 
 def _calibrated_budget() -> dict:
@@ -76,14 +82,86 @@ def _stats(mean: float = 2.0, p95: float = 5.0, p99: float = 7.0, maximum: float
     return {"mean": mean, "p95": p95, "p99": p99, "max": maximum}
 
 
-def _electrical(kind: str, budget_digest: str | None, brightness: int = 128) -> dict:
-    return {
+def _artifact_reference(path: Path, *, format_name: str | None = None) -> dict:
+    content = path.read_bytes()
+    result = {
+        "path": str(path.resolve()),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "size_bytes": len(content),
+    }
+    if format_name is not None:
+        result["format"] = format_name
+    return result
+
+
+def _electrical(
+    kind: str,
+    budget_digest: str | None,
+    brightness: int = 128,
+    *,
+    binding_digest: str | None = None,
+    voltage: float = 5.0,
+    current: float = 6.0,
+) -> dict:
+    result = {
         "kind": kind,
         "budget_digest": budget_digest,
         "brightness": brightness,
         "voltage_v": _stats(5.0, 5.1, 5.2, 5.3),
         "current_a": _stats(6.0, 7.0, 8.0, 8.5),
     }
+    if kind == "calibrated_measurement":
+        assert budget_digest is not None and binding_digest is not None
+        identity = f"{binding_digest}-{budget_digest}-{brightness}-{voltage}-{current}"
+        name = hashlib.sha256(identity.encode("ascii")).hexdigest()
+        logger = _ARTIFACT_ROOT / f"{name}.csv"
+        rows = ["timestamp_ms,voltage_v,current_a"] + [
+            f"{timestamp},{voltage},{current}"
+            for timestamp in range(NOW_MS - 20_000, NOW_MS + 1, 1_000)
+        ]
+        logger.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        certificate = _ARTIFACT_ROOT / "certificate.pdf"
+        certificate.write_bytes(b"test calibration certificate CERT-001\n")
+        descriptor = {
+            "schema": "ledgrid.calibrated-electrical-capture",
+            "schema_version": 2,
+            "binding_digest": binding_digest,
+            "budget_digest": budget_digest,
+            "activation_id": "qualification-test",
+            "brightness": brightness,
+            "raw_logger_export": _artifact_reference(
+                logger, format_name="ledgrid-electrical-csv-v1"
+            ),
+            "calibration_certificate": _artifact_reference(certificate),
+            "instrument": {
+                "manufacturer": "Test Instruments",
+                "model": "Traceable Meter",
+                "serial_number": "TEST-001",
+            },
+            "calibration": {
+                "certificate_id": "CERT-001",
+                "laboratory": "Test Calibration Laboratory",
+                "calibrated_at": NOW_MS - 100_000,
+                "expires_at": NOW_MS + 100_000,
+            },
+            "measurement": {
+                "acquisition_method": "simultaneous voltage and current logger",
+                "topology": {
+                    "mode": "exact_measurement_points",
+                    "measurement_points": [{
+                        "branch_id": "wall_main",
+                        "voltage_point": "wall bus",
+                        "current_point": "wall-exclusive shunt",
+                    }],
+                },
+            },
+        }
+        _, result = derive_calibrated_electrical_measurement(
+            descriptor,
+            target_window_started_at=NOW_MS - 20_000,
+            target_window_ended_at=NOW_MS,
+        )
+    return result
 
 
 def _evidence(
@@ -201,9 +279,15 @@ def _target_transport() -> dict:
     }
 
 
-def _record(*, browser_estimate: bool = True) -> dict:
+def _record(
+    *,
+    browser_estimate: bool = True,
+    binding: dict | None = None,
+    electrical_voltage: float = 5.0,
+    electrical_current: float = 6.0,
+) -> dict:
     budget = _calibrated_budget()
-    binding = _binding()
+    binding = _binding() if binding is None else binding
     binding_digest = activation_qualification_binding_digest(binding)
     budget_digest = installation_qualification_budget_digest(budget)
     browser_electrical = (
@@ -224,7 +308,12 @@ def _record(*, browser_estimate: bool = True) -> dict:
                 "controller_pi",
                 binding_digest,
                 electrical=_electrical(
-                    "calibrated_measurement", budget_digest
+                    "calibrated_measurement",
+                    budget_digest,
+                    binding["brightness"],
+                    binding_digest=binding_digest,
+                    voltage=electrical_voltage,
+                    current=electrical_current,
                 ),
             ),
             _evidence("receiver", binding_digest),
@@ -233,6 +322,32 @@ def _record(*, browser_estimate: bool = True) -> dict:
 
 
 class ActivationQualificationTests(unittest.TestCase):
+    def test_evaluator_rederives_raw_samples_and_rechecks_local_artifacts(self) -> None:
+        budget = _calibrated_budget()
+        record = _record()
+        controller = next(
+            item for item in record["evidence"] if item["source"] == "controller_pi"
+        )
+        reported = deepcopy(record)
+        reported_controller = next(
+            item for item in reported["evidence"] if item["source"] == "controller_pi"
+        )
+        reported_controller["electrical"]["provenance"]["sample_count"] += 1
+        with self.assertRaisesRegex(QualificationValidationError, "re-derived"):
+            evaluate_activation_qualification(reported, budget, now_ms=NOW_MS)
+
+        raw_path = Path(
+            controller["electrical"]["provenance"]["descriptor"]
+            ["raw_logger_export"]["path"]
+        )
+        original = raw_path.read_bytes()
+        try:
+            raw_path.write_bytes(original + b"tampered")
+            with self.assertRaisesRegex(QualificationValidationError, "size"):
+                evaluate_activation_qualification(record, budget, now_ms=NOW_MS)
+        finally:
+            raw_path.write_bytes(original)
+
     def test_exact_pass_is_canonical_and_binds_every_activation_input(self) -> None:
         budget = _calibrated_budget()
         record = _record()
@@ -339,13 +454,9 @@ class ActivationQualificationTests(unittest.TestCase):
     def test_electrical_and_brightness_thresholds_use_exact_activation(self) -> None:
         budget = _calibrated_budget()
 
-        brightness = _record()
-        brightness["binding"]["brightness"] = 201
-        changed_binding = activation_qualification_binding_digest(brightness["binding"])
-        for item in brightness["evidence"]:
-            item["binding_digest"] = changed_binding
-            if item["electrical"] is not None:
-                item["electrical"]["brightness"] = 201
+        bright_binding = _binding()
+        bright_binding["brightness"] = 201
+        brightness = _record(binding=bright_binding)
         result = evaluate_activation_qualification(brightness, budget, now_ms=NOW_MS)
         self.assertIn("activation_brightness_exceeds_budget", result["reasons"])
 
@@ -354,16 +465,16 @@ class ActivationQualificationTests(unittest.TestCase):
             item for item in mismatched["evidence"] if item["source"] == "controller_pi"
         )
         controller["electrical"]["brightness"] = 127
-        result = evaluate_activation_qualification(mismatched, budget, now_ms=NOW_MS)
-        self.assertIn("controller_pi_electrical_brightness_mismatch", result["reasons"])
+        with self.assertRaisesRegex(QualificationValidationError, "target capture"):
+            evaluate_activation_qualification(mismatched, budget, now_ms=NOW_MS)
 
-        current = _record()
-        controller = next(
-            item for item in current["evidence"] if item["source"] == "controller_pi"
-        )
-        controller["electrical"]["current_a"] = _stats(8.0, 8.5, 9.001, 9.1)
+        current = _record(electrical_current=9.1)
         result = evaluate_activation_qualification(current, budget, now_ms=NOW_MS)
         self.assertIn("controller_pi_current_exceeds_safe_budget", result["reasons"])
+
+        future = _record()
+        result = evaluate_activation_qualification(future, budget, now_ms=NOW_MS - 1)
+        self.assertIn("future_controller_pi_electrical_evidence", result["reasons"])
 
     def test_malformed_nonfinite_and_unordered_statistics_are_rejected(self) -> None:
         for replacement in (float("nan"), float("inf"), "fast", True):
@@ -395,6 +506,7 @@ class ActivationQualificationTests(unittest.TestCase):
         browser["electrical"] = _electrical(
             "calibrated_measurement",
             installation_qualification_budget_digest(_calibrated_budget()),
+            binding_digest=browser["binding_digest"],
         )
         with self.assertRaisesRegex(
             QualificationValidationError,
@@ -410,6 +522,28 @@ class ActivationQualificationTests(unittest.TestCase):
             "must be labeled browser",
         ):
             normalize_activation_qualification_record(target_estimate)
+
+        missing_provenance = _record()
+        controller = next(
+            item for item in missing_provenance["evidence"]
+            if item["source"] == "controller_pi"
+        )
+        controller["electrical"].pop("provenance")
+        with self.assertRaisesRegex(QualificationValidationError, "provenance"):
+            normalize_activation_qualification_record(missing_provenance)
+
+        expired_provenance = _record()
+        controller = next(
+            item for item in expired_provenance["evidence"]
+            if item["source"] == "controller_pi"
+        )
+        controller["electrical"]["provenance"]["descriptor"]["calibration"][
+            "expires_at"
+        ] = NOW_MS - 20_001
+        with self.assertRaisesRegex(
+            QualificationValidationError, "calibration does not cover"
+        ):
+            normalize_activation_qualification_record(expired_provenance)
 
     def test_browser_only_estimate_is_advisory_and_never_satisfies_power(self) -> None:
         budget = _calibrated_budget()
@@ -438,7 +572,7 @@ class ActivationQualificationTests(unittest.TestCase):
         controller = next(
             item for item in record["evidence"] if item["source"] == "controller_pi"
         )
-        controller["electrical"]["budget_digest"] = record["budget"]["digest"]
+        controller["electrical"] = None
         result = evaluate_activation_qualification(record, budget, now_ms=NOW_MS)
         self.assertFalse(result["qualified"])
         self.assertTrue(result["gates"]["identity"]["passed"])

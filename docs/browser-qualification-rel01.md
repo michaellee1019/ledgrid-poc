@@ -130,3 +130,88 @@ record is not committed automatically.
 separators), not the byte digest of the pretty-printed manifest file. This keeps
 the evidence binding stable across whitespace-only formatting while still
 changing for every semantic manifest edit.
+
+## Physical iPhone, installed mode, and VoiceOver evidence
+
+The external lane has a separate fail-closed validator. It validates evidence;
+it does not drive an iPhone, infer observations, or turn external evidence into
+the complete REL-01 release result by itself:
+
+```bash
+uv run python -m tools.browser_qualification.external_iphone_evidence \
+  --write-template /absolute/path/to/rel01-iphone-capture.json
+
+uv run python -m tools.browser_qualification.external_iphone_evidence \
+  --input /absolute/path/to/rel01-iphone-capture.json \
+  --output /absolute/path/to/retained/rel01-iphone-evidence.json
+```
+
+The generated worksheet contains the exact current journey, assertion, and
+viewport structure, but is deliberately `NOT_EXECUTED`, has no device claims,
+and cannot pass until an operator replaces every placeholder with observed
+evidence.
+
+The input must use schema `ledgrid.rel01-external-iphone-capture`, version `1`,
+and declare `disposition: EXECUTED`. `OPERATOR_WAIVED`, simulator, Continuity
+Camera-only, unavailable, unpaired, or non-inspectable devices cannot pass. The
+device record must retain its name, model name and identifier, hardware UDID,
+iOS version/build, Safari version, WebKit version, available CoreDevice state,
+and USB or network transport. The physical-UDID shape deliberately excludes a
+Simulator UUID.
+
+The capture has exactly three sessions: `safari`, `installed_standalone`, and
+`voiceover`. Normal Safari must report `navigator_standalone: false` with Safari
+chrome visible. Installed mode must report `navigator_standalone: true`, no
+Safari chrome, and a present Home Screen installation. The VoiceOver session
+must identify which of those surfaces it used, prove VoiceOver was enabled, and
+pass every declared spoken name/role/state, state-change, live-region,
+navigation-order, modal-containment, focus-return, and unlabeled-control
+observation.
+
+Every session must retain the exact current eight-journey and assertion set from
+`rel01_manifest.json`, including the complete responsive viewport observation
+set. Capture objects are strict: missing, additional, or duplicate JSON fields,
+duplicate session/journey/assertion/viewport identifiers, and a session order
+other than Safari, installed standalone, then VoiceOver fail closed.
+
+Session and artifact timestamps must be explicit UTC `Z` timestamps. Sessions
+cannot overlap, run longer than six hours, finish more than seven days before
+validation, or exceed five minutes of future clock skew. Every media timestamp
+and every HAR entry timestamp must fall inside its owning session.
+
+Each session supplies a relative, session-bound HAR path plus its byte count and
+SHA-256. The validator rereads and hashes the HAR, rejects duplicate JSON keys,
+parses every entry, derives the request count, and independently classifies
+mutating API requests using the same authoring-only exceptions as the portable
+probe. Operator-supplied request counts or mutation summaries are not accepted.
+The retained record contains the derived facts.
+
+Media records likewise use relative paths and explicitly name their owning
+session, byte count, SHA-256, type, and format. The validator hashes and parses
+PNG/JPEG images, WAV audio, and MOV/MP4/M4A streams locally, checks the declared
+type and format against the parsed artifact, and requires a visual artifact for
+every session. VoiceOver requires a parsed audio stream; an
+`audio_included: true` claim is not evidence. Paths and digests cannot be reused
+across sessions, so each session has distinct retained artifacts. Missing,
+changed, malformed, path-escaping, reused, or mislabeled files fail closed.
+
+The capture is bound to all of the following rather than merely labeled with
+them:
+
+- the current clean 40-character Git commit and its derived fixture release ID;
+- the canonical current manifest SHA-256;
+- the checked-in installation-profile, Python runtime, and managed-native
+  browser-runtime digests;
+- before/after fixture status schema version `2`, including matching source,
+  web/controller release identity, profile and native bundle/payload identities;
+- `wall_consumer_attached: false` and `wall_mutation_attempts: 0` before and
+  after every session.
+
+A passing retained record sets `external_evidence_satisfied: true` but always
+keeps `release_gate_satisfied: false`; this tool never claims the overall
+release passed. REL-01 may be closed only by a separate release decision that
+also verifies the clean portable Chromium/Firefox/WebKit record.
+The current no-wall fixture remains loopback-only. Safari Web Inspector and
+`rvictl` do not forward a physical device to that origin; a separately reviewed,
+secure device-local tunnel is therefore a prerequisite for a physical run and
+must not be replaced by a public/LAN bind of the no-wall fixture.
