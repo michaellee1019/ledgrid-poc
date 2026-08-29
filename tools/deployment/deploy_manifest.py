@@ -17,6 +17,10 @@ RUNTIME_PRESETS = PurePosixPath("presets/animations")
 COMPOSER_GENERATED_ROOT = PurePosixPath("web/static/generated/composer")
 FAST_CODE_SUFFIXES = {".css", ".html", ".js", ".py"}
 FAST_CONFIG_FILES = {
+    # Guarded Check loads this release-owned budget at request time.  A fast
+    # release without it can start and pass service readiness but cannot issue
+    # any activation token.
+    PurePosixPath("config/installation_qualification_budget.json"),
     PurePosixPath("config/plant_globe_map_32x138.json"),
     PurePosixPath("config/plant_pixel_map.json"),
     PurePosixPath("config/plant_pixel_map_32x138.json"),

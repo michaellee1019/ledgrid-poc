@@ -76,6 +76,7 @@ class DeployManifestTests(unittest.TestCase):
             "web/templates/index.html",
             "web/static/css/dashboard.css",
             "web/static/js/dashboard.js",
+            "config/installation_qualification_budget.json",
             "config/plant_globe_map_32x138.json",
             "scripts/start_systemd.sh",
         )
