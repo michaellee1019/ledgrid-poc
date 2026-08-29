@@ -928,7 +928,6 @@
             return 'Physical-wall activation is not labeled as an explicit development/canary capability.';
         }
         if (!state.serverCatalogCompatible || !state.serverActivationCompatible) return state.serverCatalogReason || 'The connected wall catalog does not match this renderer.';
-        if (!state.wallStateLoaded) return 'Read current Wall settings before running server qualification or activation.';
         const capability = componentCapability();
         if (!capability.activationReady) return capability.reason || 'This look is not activation-ready.';
         if (state.serverChecking) return 'Waiting for the wall server.';
@@ -936,10 +935,6 @@
         if (state.globalSettings.loading || state.globalSettings.applying) return 'Wait for wall-wide settings to finish updating.';
         if (state.globalSettings.dirty) return 'Apply or revert the Wall draft before activating this checked scene.';
         if (state.globalSettings.pendingObservation) return 'Wait until the wall reports the reviewed Wall settings before activation.';
-        if (!state.checkResult) return 'Run Check for this exact draft before activation.';
-        if (!currentCheckAllowsActivation()) return ['pass', 'warn'].includes(state.checkResult.status)
-            ? 'The previous Check is stale. Run Check again for this draft.'
-            : 'Activation requires a completed Check with no failures for this exact draft.';
         return null;
     }
 
@@ -957,9 +952,12 @@
         });
         const reason = $('activationReadiness');
         if (reason) {
-            reason.textContent = blockReason || (state.checkResult?.status === 'warn'
-                ? 'Activation-ready with cautions: review this exact checked draft before continuing.'
-                : 'Activation-ready: this exact draft passed Check.');
+            const hasCurrentLocalCheck = currentCheckAllowsActivation();
+            reason.textContent = blockReason || (!hasCurrentLocalCheck
+                ? 'Activation-ready: the server will issue the authoritative Check when you review this scene.'
+                : state.checkResult?.status === 'warn'
+                    ? 'Activation-ready with cautions: review this exact checked draft before continuing.'
+                    : 'Activation-ready: this exact draft passed Check.');
             reason.dataset.state = blockReason ? 'blocked' : 'ready';
         }
         updateActivationResourceButtons();
@@ -2778,8 +2776,11 @@
         if ($('activateProfileDigest')) $('activateProfileDigest').textContent = state.installationProfile.desiredDigest || 'Unavailable';
         if ($('activateRevision')) $('activateRevision').textContent = String(state.documentRevision);
         if ($('activateCheck')) {
-            const outcome = state.checkResult?.status === 'warn' ? 'Passed with cautions' : 'Passed';
-            const cautions = state.checkResult?.warnings?.length
+            const hasCurrentLocalCheck = currentCheckAllowsActivation();
+            const outcome = !hasCurrentLocalCheck
+                ? 'Server Check issued'
+                : state.checkResult?.status === 'warn' ? 'Passed with cautions' : 'Passed';
+            const cautions = hasCurrentLocalCheck && state.checkResult?.warnings?.length
                 ? ` · review ${state.checkResult.warnings.join(', ')}`
                 : '';
             const expires = state.serverCheck?.expiresAt
