@@ -356,7 +356,7 @@ class SpiFecEnvelopeTests(unittest.TestCase):
         self.assertFalse(item._last_transfer_captured_response)
         self.assertFalse(item._last_transfer_status_sampled)
 
-    def test_scheduled_fec_sample_uses_query_then_full_duplex_fec_frame(self):
+    def test_scheduled_fec_sample_drains_queue_before_full_duplex_fec_frame(self):
         item = _controller(requested=True)
         item._transport_envelope_enabled = True
         item._fec_transport_enabled = True
@@ -366,17 +366,18 @@ class SpiFecEnvelopeTests(unittest.TestCase):
 
         item.set_all_pixels(colors, wall_frame_sequence=76)
 
-        self.assertEqual(len(item.spi.response_packets), 2)
-        self.assertEqual(
-            len(item.spi.response_packets[0]),
-            protocol._aligned_envelope_wire_size(
-                protocol.RECEIVER_STATUS_BYTES_V7
-            ),
-        )
+        self.assertEqual(len(item.spi.response_packets), 4)
+        for packet in item.spi.response_packets[:3]:
+            self.assertEqual(
+                len(packet),
+                protocol._aligned_envelope_wire_size(
+                    protocol.RECEIVER_STATUS_BYTES_V7
+                ),
+            )
         self.assertEqual(len(item.spi.write_only_packets), 0)
-        self.assertEqual(len(item.spi.response_packets[1]), 4088)
-        self.assertEqual(item.spi.response_packets[1][:2], b"\x0b\x07")
-        self.assertEqual(item._spi_transfers, 2)
+        self.assertEqual(len(item.spi.response_packets[3]), 4088)
+        self.assertEqual(item.spi.response_packets[3][:2], b"\x0b\x07")
+        self.assertEqual(item._spi_transfers, 4)
         self.assertEqual(item._fec_frames_sent, 1)
         self.assertEqual(item._full_frame_transfers, 1)
         self.assertEqual(item._full_frame_status_transfers, 1)

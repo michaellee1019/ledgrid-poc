@@ -640,13 +640,17 @@ class MultiDeviceLEDController:
                     before = int(
                         device.get_stats().get("receiver_status_responses", 0) or 0
                     )
-                    status = None
-                    # Two snapshots may already be queued in the slave. A query
-                    # consumes one old response and only then queues a new one,
-                    # so depth+1 transfers are required for the final parsed
-                    # snapshot to causally follow this explicit request.
-                    for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 1):
-                        status = device.query_receiver_status()
+                    fresh_query = getattr(
+                        device, "query_fresh_receiver_status", None
+                    )
+                    if callable(fresh_query):
+                        status = fresh_query()
+                    else:
+                        status = None
+                        # Compatibility for test/dry-run facades that expose
+                        # only the original single-transfer query surface.
+                        for _ in range(SPI_RESPONSE_QUEUE_DEPTH + 1):
+                            status = device.query_receiver_status()
                     after = int(
                         device.get_stats().get("receiver_status_responses", 0) or 0
                     )

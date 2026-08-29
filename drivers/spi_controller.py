@@ -2052,6 +2052,27 @@ class LEDController:
         self._clock_receiver_status_snapshot()
         return self.get_stats()
 
+    def _drain_fresh_receiver_status(self):
+        """Drain the slave queue through a causally post-request snapshot."""
+        transport_lock = getattr(self, "_transport_lock", None)
+        if transport_lock is None:
+            transport_lock = self._transport_lock = threading.RLock()
+        with transport_lock:
+            for query_index in range(SPI_RESPONSE_QUEUE_DEPTH + 1):
+                if query_index:
+                    # Give the receiver task time to parse the preceding query
+                    # and queue its requested extended snapshot.  Sending all
+                    # three transfers back-to-back can drain the two old slots
+                    # before the new v7 response exists, especially while FEC
+                    # decoding competes for the receiver core.
+                    time.sleep(COMMAND_ACK_POLL_INTERVAL_SECONDS)
+                self._clock_receiver_status_snapshot()
+
+    def query_fresh_receiver_status(self):
+        """Drain the slave queue and return a causally post-request snapshot."""
+        self._drain_fresh_receiver_status()
+        return self.get_stats()
+
     def _command_status(
         self, payload, *, command=None, required_status_version=3
     ):
@@ -3367,7 +3388,7 @@ class LEDController:
                     if transport_lock is None:
                         transport_lock = self._transport_lock = threading.RLock()
                     with transport_lock:
-                        self._clock_receiver_status_snapshot()
+                        self._drain_fresh_receiver_status()
                         captured_response = True
                         status_sampled = bool(getattr(
                             self, "_last_transfer_status_sampled", False
