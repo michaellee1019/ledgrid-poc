@@ -150,15 +150,14 @@ receiver-counter samples; HTTP request time before the first sample and cleanup
 time cannot dilute the measured cadence.
 
 The installed timing budget is explicit. Ordinary broad receivers use a 3,320
-byte aligned `SET_ALL`, or 1,328 us at 20 MHz. Logical receiver 3's marginal
-SPI1.0 route is topology-owned at 12 MHz and uses 68
+byte aligned `SET_ALL`, or 1,328 us at 20 MHz. Logical receiver 3 uses 68
 diagonally interleaved Reed-Solomon codewords (50 protected data bytes plus ten
-GF(256) parity bytes), totaling 4,088 bytes or 2,725.3 us. The one-strip tail
-remains 424 bytes. The five receivers clock 14,472 bytes in 6,878.9 us when
+GF(256) parity bytes), totaling 4,088 bytes or 1,635.2 us. The one-strip tail
+remains 424 bytes. The five receivers clock 14,472 bytes, or 5,788.8 us when
 treated serially. The qualified Host schedule overlaps receivers 0-1 on SPI0
 with receivers 2-4 on SPI1 while preserving logical order on each controller.
-SPI0 consumes 2,656 us and SPI1 consumes 4,222.9 us, so the raw parallel
-critical-path budget is 4,222.9 us before Host overhead.
+SPI0 consumes 2,656 us and SPI1 consumes 3,132.8 us, so the raw parallel
+critical-path budget is 3,132.8 us before Host overhead.
 For aligned streaming the Host avoids allocating an unused multi-kilobyte MISO
 list on most `SET_ALL` transactions. It retains one staggered fresh sample per
 receiver every 128 shared wall-frame sequences and never schedules more than one

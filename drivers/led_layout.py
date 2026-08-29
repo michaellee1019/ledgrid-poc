@@ -25,14 +25,14 @@ WALL_DEVICE_MAP: Tuple[DeviceMapEntry, ...] = (
     (1, 2),
 )
 
-# The marginal installed SPI1.0 branch is topology-owned and derated to 12 MHz;
-# every other route retains 20 MHz. FEC v7 still fits the parallel bus schedule
-# with more than the required 150 FPS cadence at this receiver-3 wire rate.
+# Every installed route retains the established 20 MHz clock. FEC v7 contains
+# one otherwise-uncorrectable receiver-3 codeword without reducing the normal
+# cross-controller parallel dispatch schedule.
 WALL_RECEIVER_SPI_SPEEDS_HZ = (
     20_000_000,
     20_000_000,
     20_000_000,
-    12_000_000,
+    20_000_000,
     20_000_000,
 )
 

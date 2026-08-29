@@ -849,7 +849,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         host_reversals = (False, False, False, False, False)
         native_reversals = (False, False, True, True, False)
         masks = (255, 255, 255, 255, 255)
-        speeds = (20_000_000, 20_000_000, 20_000_000, 12_000_000, 20_000_000)
+        speeds = (20_000_000,) * 5
         return tuple(
             {
                 "logical_device": logical_id,
