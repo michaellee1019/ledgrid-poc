@@ -55,22 +55,20 @@ only when accompanied by ground-return stitching vias.
 
 ## Four-layer floorplan
 
-1. **L1 — components and critical signals.** Keep each SPI bus on L1 from the Pi
-   header through its source resistors to its receiver where possible. Keep USB
-   pairs short on L1.
-2. **L2 — uninterrupted ground.** No splits, slots, power islands, or routed
-   traces beneath SPI, USB, module RF boundaries, or high-edge-rate LED data.
-3. **L3 — power and low-speed.** Use separate wide 5 V feeds to the A and B buck
-   sections and local 3.3 V pours. Do not route one receiver through the other's
-   supply/ground path.
-4. **L4 — secondary signals/components.** LED fanout may use L4 with a continuous
-   L2 reference and spatial separation from SPI. Avoid routing beneath antennas.
+1. **L1 — components and critical signals.** Route most SPI, local power loops,
+   output damping stubs, and future USB pairs here.
+2. **L2 — GND-dominant plus bounded signals.** The scaffold uses short local OE
+   buses and the long B-CS segment here. Keep all other L2 copper as GND and do
+   not create additional slots beneath L1 signals.
+3. **L3 — uninterrupted ground.** This is the continuous reference for every
+   Bottom GPIO/SPI route and for B-CS on L2. Do not repurpose it for power.
+4. **L4 — secondary signals.** The sixteen short ESP-to-HCT routes use L4 with
+   transitions at their endpoints. Route power on wide outer copper/pours.
 
-Place the receivers so their antennas face different board edges and the
-manufacturer keepout projects inward over no copper, trace, component, metal
-hardware, or plane on any layer. Add the keepout as a locked rule area, not
-only a silkscreen drawing. Maintain at least the module datasheet keepout and
-check the additional enclosure clearance recommended by Espressif.
+Wi-Fi/Bluetooth are disabled by design, so the Rev5 scaffold intentionally has
+no antenna copper exclusion and makes no RF-performance claim. If radio use is
+ever restored, receiver placement, keepouts, enclosure clearance, and RF
+certification must be reopened as a new hardware revision.
 
 ## Power architecture
 
@@ -94,15 +92,16 @@ the proposal BOM leaves this as a design-review item.
 - 2.2 µH shielded inductor selected for saturation and ripple current.
 - 10 µF X5R/X7R input and 22 µF X5R/X7R output at the converter pins, rated at
   10 V so DC-bias derating is reviewable.
-- Keep the switch node compact and entirely away from SPI, USB, antennas, and
-  module edges. Follow the TI datasheet example layout before optimizing
+- Keep the switch node compact and entirely away from SPI, USB, and module
+  signal edges. Follow the TI datasheet example layout before optimizing
   placement.
 - At each module 3.3 V entry, add 10 µF bulk, 1 µF ceramic, and 0.1 µF ceramic
   with direct L2 ground vias. Keep the 0.1 µF loop shortest.
-- Use separate L3 branches from the Pi 5 V entry to A and B; do not daisy-chain.
+- Use separate wide outer-layer branches from the Pi 5 V entry to A and B; do
+  not daisy-chain and do not cut the L3 ground reference.
 
 The AP2112 is not retained. At 500 mA it would dissipate about 0.85 W from 5 V,
-before radio current peaks and ambient/enclosure effects.
+before processor current peaks and ambient/enclosure effects.
 
 ### Reset and enable
 
@@ -116,8 +115,10 @@ prototype units before release. `EN` must never float.
   input high at 4.5–5.5 V, so a 3.3 V ESP high is valid.
 - Put 0.1 µF at every HCT VCC pin pair and one 1 µF local bulk capacitor per two
   packages, with direct L2 ground vias.
-- Keep output enables intentionally low through a documented 0 Ω link in the
-  baseline. Do not leave them floating.
+- Hold output enables high with 10 kΩ to 5 V. Use one 2N7002 per receiver to
+  pull OE low only when ESP GPIO8 is high, with 100 kΩ from gate to ground.
+  Add 100 kΩ pull-downs to all sixteen HCT data inputs. Firmware must initialize
+  every lane low before asserting GPIO8. No HCT input or OE may float.
 - Place one configurable output resistor at every HCT output pin; default 68 Ω,
   options 0/33/47/100 Ω.
 - Route LED1–LED8 from receiver A and LED9–LED16 from receiver B unless the

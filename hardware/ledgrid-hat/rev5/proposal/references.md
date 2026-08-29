@@ -11,6 +11,7 @@ source-capture time.
 - [TI SN74HCT125 datasheet](https://www.ti.com/lit/gpn/SN74HCT125) — HCT input threshold, bypassing, output-enable behavior, and package data.
 - [Diodes AP2112 datasheet](https://www.diodes.com/datasheet/download/AP2112.pdf) — V4 regulator current, dropout, thermal resistance, stability, and capacitor requirements.
 - [TI TPS62162 product data](https://www.ti.com/product/TPS62162) — proposed fixed-3.3 V, 1 A buck topology and reference layout.
+- [Wurth 74438334022 datasheet](https://www.we-online.com/components/products/datasheet/74438334022.pdf) — 2.2 µH inductor current rating and DCR used in the power sweep.
 - [TI TPD4E05U06 product data](https://www.ti.com/product/TPD4E05U06/part-details/TPD4E05U06DQAR) — optional four-channel LED-cable ESD candidate.
 - [TI TPD2EUSB30 product data](https://www.ti.com/product/TPD2EUSB30) — two-channel native-USB ESD candidate.
 - [3M 303 series connector drawing](https://multimedia.3m.com/mws/mediawebserver?mwsId=66666UuZjcFSLXTt4Xf_Lxs6EVuQEcuZgVs6EVs6E666666--) — proposed keyed 34-position LED data/ground header family.

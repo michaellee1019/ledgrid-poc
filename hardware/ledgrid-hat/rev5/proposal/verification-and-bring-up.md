@@ -11,19 +11,22 @@ engineering prototype after all release gates pass.
 2. Cross-check every Pi header pin and ESP GPIO against the authoritative table
    in `architecture.md`. Independently review receiver A and receiver B.
 3. Run PCB DRC with zero unexplained errors using fab-approved rules.
-4. Inspect L2 alone and with each critical net highlighted. It must remain
-   continuous under all SPI and USB routes and their via transitions.
+4. Inspect L3 alone; it must be uninterrupted under every Bottom and L2 route.
+   Inspect L2 refill around the bounded OE/B-CS routes and confirm that its GND
+   copper remains useful under L1 signals.
 5. Run a stub/topology review for all eight SPI nets. Each must have exactly one
    driver, one receiver, one inline series element at the driver, and no branch.
 6. Verify every SPI signal test point is after the damping resistor and has a
    ground point within 5 mm without a long test-point branch.
-7. Verify all sixteen LED resistors and signal/ground connector pairs, all HCT
-   bypass parts, and all four optional LED ESD arrays.
+7. Verify all sixteen ESP-to-HCT lanes, 100 kΩ input pull-downs, GPIO8/2N7002
+   OE networks, LED resistors, signal/ground connector pairs, HCT bypass parts,
+   and all four optional LED ESD arrays.
 8. Validate both buck sections against the TI reference schematic/layout,
    including component voltage/current ratings, capacitor DC-bias derating,
    switch-node size, and thermal vias.
-9. Apply locked antenna keepouts to every copper, mask, paste, silk, courtyard,
-   and component layer; inspect in 2D and 3D with Pi hardware and spacers.
+9. Confirm Wi-Fi/Bluetooth are disabled in release firmware and that no
+   production requirement depends on RF performance. Reopen placement and
+   keepouts if that premise changes.
 10. Check USB pair impedance against the selected fab stack, D+/D− mismatch,
     connector shell/CC wiring, ESD current path, and return-via symmetry.
 11. Inspect solder-mask slivers, annular rings, clearances, board-edge spacing,
@@ -41,6 +44,8 @@ engineering prototype after all release gates pass.
 - Verify CN1 contains no 5 V or LED-strip power.
 - Verify 3.3 V-only SPI continuity end-to-end through the intended resistors and
   absence of continuity to 5 V.
+- Verify all HCT outputs are high-impedance during power-up/reset, remain so
+  while GPIO8 is low, and enable only after all sixteen lane GPIOs are low.
 - Inspect and document all DNP/alternate resistor populations.
 
 ## Power-only qualification
@@ -51,7 +56,7 @@ permits it, then power the complete logic load.
 
 - Record inrush and steady-state 5 V input current.
 - Measure A_3V3 and B_3V3 DC value, startup monotonicity, ripple, and droop during
-  simultaneous radio/load activity.
+  simultaneous Wi-Fi-disabled processing and LED activity.
 - Observe both ESP `EN` pins and confirm reliable power-on reset.
 - Measure local ground movement between Pi-header ground, each ESP ground, and
   CN1 ground during worst-case LED data switching.
@@ -84,7 +89,7 @@ Probe at the ESP-side test point with the dedicated short ground spring:
   relation to MOSI/MISO
 - MOSI and CS: edge quality and setup/hold at the receiver
 - MISO: edge quality at both ESP source and Pi receiver if accessible
-- Local 3.3 V and buffer 5 V: droop/ripple during radio and LED switching
+- Local 3.3 V and buffer 5 V: droop/ripple during processor and LED switching
 - Local ground relative to Pi-header ground: transient movement during the same
   patterns
 

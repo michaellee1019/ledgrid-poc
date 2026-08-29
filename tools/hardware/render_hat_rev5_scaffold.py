@@ -51,7 +51,7 @@ def render(board: dict[str, object]) -> str:
         '<rect x="3990" y="3324" width="285" height="240" fill="#101827"/>',
         '<rect x="4008.7205" y="3332.7517" width="255.9055" height="222.4407" rx="11.811" '
         'fill="#17352d" stroke="#e5e7eb" stroke-width="1"/>',
-        '<text x="4012" y="3329" fill="#f9fafb" font-size="5" font-family="sans-serif">Rev5 placement/routing scaffold — NOT FOR FABRICATION</text>',
+        '<text x="4012" y="3329" fill="#f9fafb" font-size="5" font-family="sans-serif">Rev5 analyzed routing scaffold — NOT FOR FABRICATION</text>',
     ]
 
     for shape in shapes:
@@ -66,7 +66,7 @@ def render(board: dict[str, object]) -> str:
 
     for shape in shapes:
         fields = str(shape).split("~")
-        if fields[0] != "TRACK" or len(fields) < 6 or fields[2] not in {"1", "2"}:
+        if fields[0] != "TRACK" or len(fields) < 6 or fields[2] not in {"1", "2", "21"}:
             continue
         net = fields[3]
         if net.startswith("A_"):
@@ -77,9 +77,12 @@ def render(board: dict[str, object]) -> str:
             color = "#94a3b8"
         elif net == "5V":
             color = "#facc15"
+        elif net.startswith("LED"):
+            color = "#34d399"
         else:
             continue
-        dash = ' stroke-dasharray="2 1"' if fields[2] == "2" else ""
+        dash = (' stroke-dasharray="2 1"' if fields[2] == "2" else
+                ' stroke-dasharray="4 1 1 1"' if fields[2] == "21" else "")
         content.append(
             f'<polyline points="{points(fields[4])}" fill="none" stroke="{color}" '
             f'stroke-width="{max(float(fields[1]), 0.8)}" stroke-linecap="round" stroke-linejoin="round"{dash}/>'
@@ -103,10 +106,11 @@ def render(board: dict[str, object]) -> str:
             content.append(
                 f'<text x="{min_x+1}" y="{min_y+5}" fill="{color}" font-size="4" font-family="sans-serif">{html.escape(label)}</text>'
             )
-        elif refdes.startswith(("R_A", "R_B", "TP_A", "TP_B", "C_AH", "C_BH")):
+        elif refdes.startswith(("R_A", "R_B", "R_LED", "TP_A", "TP_B", "C_A", "C_B", "Q_A", "Q_B")):
             x = sum(point[0] for point in pads) / len(pads)
             y = sum(point[1] for point in pads) / len(pads)
-            color = "#fda4af" if "_A" in refdes else "#93c5fd"
+            color = ("#34d399" if refdes.startswith("R_LED") else
+                     "#fda4af" if "_A" in refdes else "#93c5fd")
             content.append(f'<circle cx="{x}" cy="{y}" r="1.7" fill="{color}" fill-opacity="0.75"/>')
 
     for shape in shapes:
@@ -116,10 +120,11 @@ def render(board: dict[str, object]) -> str:
 
     content.extend([
         '<g font-family="sans-serif" font-size="4">',
-        '<rect x="4012" y="3540" width="5" height="2" fill="#fb7185"/><text x="4019" y="3542" fill="#f9fafb">A / SPI0 Top</text>',
-        '<rect x="4055" y="3540" width="5" height="2" fill="#60a5fa"/><text x="4062" y="3542" fill="#f9fafb">B / SPI1 (dashed = Bottom)</text>',
-        '<rect x="4124" y="3540" width="5" height="2" fill="url(#keepout)"/><text x="4131" y="3542" fill="#f9fafb">antenna copper keepout</text>',
-        '<rect x="4190" y="3540" width="5" height="2" fill="#f59e0b" fill-opacity="0.3" stroke="#fbbf24"/><text x="4197" y="3542" fill="#f9fafb">placement reservation</text>',
+        '<rect x="4012" y="3540" width="5" height="2" fill="#fb7185"/><text x="4019" y="3542" fill="#f9fafb">Receiver A</text>',
+        '<rect x="4052" y="3540" width="5" height="2" fill="#60a5fa"/><text x="4059" y="3542" fill="#f9fafb">Receiver B</text>',
+        '<rect x="4092" y="3540" width="5" height="2" fill="#34d399"/><text x="4099" y="3542" fill="#f9fafb">buffer-to-damping</text>',
+        '<text x="4154" y="3542" fill="#f9fafb">dashed = Bottom · dash-dot = Inner1</text>',
+        '<rect x="4225" y="3540" width="5" height="2" fill="#f59e0b" fill-opacity="0.3" stroke="#fbbf24"/><text x="4232" y="3542" fill="#f9fafb">reservation</text>',
         "</g></svg>",
     ])
     return "\n".join(content) + "\n"

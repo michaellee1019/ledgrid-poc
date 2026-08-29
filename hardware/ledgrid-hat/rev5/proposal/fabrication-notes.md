@@ -7,10 +7,10 @@ archive or an unreleased Rev5 board.
 
 | Layer | Copper | Purpose |
 | --- | --- | --- |
-| L1 | 1 oz | Components, point-to-point SPI, USB pairs |
-| L2 | 1 oz | Solid ground plane; no routing or splits |
-| L3 | 1 oz | 5 V/3.3 V distribution and low-speed signals |
-| L4 | 1 oz | Secondary signals, principally LED fanout |
+| L1 | 1 oz | Components, point-to-point SPI, USB pairs, local power |
+| L2 | 1 oz | GND-dominant; bounded OE buses and B-CS only |
+| L3 | 1 oz | Uninterrupted solid GND reference |
+| L4 | 1 oz | ESP-to-HCT fanout and secondary SPI segments |
 
 - Nominal finished thickness: 1.6 mm unless the Pi mechanical stack requires a
   different thickness.
@@ -26,18 +26,19 @@ archive or an unreleased Rev5 board.
 
 These conservative capture values must be reconciled with the selected fab:
 
-- Minimum signal width/clearance: 0.15/0.15 mm.
+- Minimum signal width/clearance: 0.15/0.15 mm; 0.254 mm is the routed
+  critical-signal starting width pending the fab field solver.
 - Preferred via: 0.30 mm finished drill, ≥0.60 mm pad.
 - Minimum finished annular ring: 0.15 mm.
-- Copper-to-board-edge: ≥0.30 mm, larger at antennas and connectors.
+- Copper-to-board-edge: ≥0.30 mm, larger at connectors.
 - Solder-mask sliver: ≥0.10 mm where the fab process supports it.
 - Silkscreen-to-exposed-copper clearance: ≥0.15 mm.
 - Do not tent testable vias that are explicitly used as ground spring points.
 
 ## Power copper
 
-- Use L3 pours for 5 V and local 3.3 V, with L1/L4 pours only when they do not
-  disrupt controlled return paths or antenna keepouts.
+- Keep L3 entirely GND. Use wide L1/L4 copper/pours for 5 V and local 3.3 V
+  without disrupting the Bottom signal reference.
 - Use multiple ground vias at the Pi power entry, each buck input/output return,
   each ESP supply entry, each HCT bypass group, each ESD array, and CN1 ground
   region.
@@ -55,13 +56,15 @@ These conservative capture values must be reconciled with the selected fab:
   consistent geometry and solid reference are more important than exact
   impedance at these short lengths.
 - SCLK maximum length 75 mm; MOSI/MISO/CS maximum 90 mm.
-- SPI layer transitions: zero preferred, one maximum with adjacent L2 return
-  stitching. No branches/stubs.
+- SPI layer transitions: zero preferred. The scaffold uses two only on B-CS
+  (to/from L2) and B-MISO (to/from Bottom); each transition needs nearby ground
+  stitching in the final native layout. No branches/stubs.
 - Keep SCLK at least 3× its trace width from other SPI nets and farther from LED
   outputs where placement permits.
 - USB: 90 Ω ±10% differential, D+/D− length mismatch ≤0.5 mm, no stubs, no
   plane discontinuities.
-- Do not route signals or planes in either module antenna keepout on any layer.
+- Wi-Fi/Bluetooth are unused; no antenna keepout is required or claimed. Any
+  future radio enablement requires a new placement/keepout review.
 
 ## Drill-file release rule
 

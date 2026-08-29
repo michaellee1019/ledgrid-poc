@@ -14,8 +14,8 @@ The assembled HAT must visibly identify:
 - Resistor option labels sufficient to distinguish SPI damping from LED-output
   damping during rework
 
-Keep silkscreen out of antenna keepouts and exposed copper. Put a schematic
-mapping table on the back silkscreen if it fits without reducing legibility:
+Keep silkscreen out of exposed copper. Put a schematic mapping table on the
+back silkscreen if it fits without reducing legibility:
 
 ```text
 A SPI0: P19 MOSI | P21 MISO | P23 CLK | P24 CS
@@ -33,8 +33,8 @@ even pin; pins 33 and 34 are additional grounds. There is no power pin.
 
 Keep each signal and its paired return adjacent through the mating cable. Use
 twisted signal/ground pairs where the cable system permits. Do not combine the
-grounds only at the remote LED end; every ground pin connects to the HAT L2
-plane immediately at CN1.
+grounds only at the remote LED end; every ground pin connects through a short
+via cluster to both HAT ground planes immediately at CN1.
 
 ## Test-point access
 
@@ -57,7 +57,7 @@ routed trace.
   assembly supplier's stencil process.
 - Inspect all HCT bypass capacitors, ESP entry capacitors, and buck input/output
   capacitors for correct placement, not merely correct net connection.
-- Verify antenna keepout on paste, mask, silkscreen, copper, courtyards, and
-  mechanical hardware before panel approval.
+- Confirm the production configuration keeps Wi-Fi/Bluetooth disabled. If RF
+  is reintroduced, stop and perform a new placement/keepout/mechanical review.
 - Fit-check the HAT on the selected Pi with the final spacers, USB plugs, and
   mating LED cable before ordering more than engineering prototypes.

@@ -26,7 +26,8 @@ default.
   regulator's recommended local input capacitor.
 - USB lacks tuning/protection footprints and a documented 90 Ω differential
   routing constraint.
-- ESP antenna keepout compliance cannot be proven from the supplied layers.
+- V4 placed modules around antenna assumptions that are unnecessary because
+  Rev5 intentionally disables Wi-Fi/Bluetooth.
 - Receiver numbering and selectable bus/CE jumpers make population-dependent
   behavior ambiguous; no fixed A=SPI0/B=SPI1 contract exists in the PCB.
 
@@ -37,8 +38,8 @@ See the full observation-by-observation report in
 
 - Receiver A is point-to-point on Raspberry Pi SPI0; receiver B is
   point-to-point on SPI1. Breakout branches are removed.
-- The PCB becomes four layers: critical signals/components, uninterrupted
-  ground, power/low-speed, then secondary signals/components.
+- The PCB becomes four layers: components/critical signals, GND-dominant plus
+  bounded OE/B-CS routing, uninterrupted GND, then secondary signals.
 - Eight configurable 33 Ω SPI source-damping resistors are located at the
   actual driver: Pi end for SCLK/MOSI/CS and ESP end for MISO.
 - Four configurable 68 Ω output resistors per HCT group (sixteen total) are
@@ -54,7 +55,10 @@ See the full observation-by-observation report in
 - Each native USB port gains 22 Ω series tuning footprints, DNP shunt-capacitor
   footprints, a two-channel low-capacitance ESD array, and a 90 Ω differential
   routing requirement.
-- Both module antennas must face a board edge with a full multilayer keepout.
+- Wi-Fi/Bluetooth are disabled; no antenna exclusion zone is applied or
+  credited. Reintroducing RF requires a new placement/keepout review.
+- All sixteen ESP-to-HCT paths are routed. Every HCT input has 100 kΩ to ground,
+  and GPIO8 controls a fail-safe 10 kΩ/2N7002/100 kΩ OE network.
 
 The complete electrical/layout contract is in [`architecture.md`](architecture.md).
 The exact V4-to-Rev5 SPI net edits are enumerated in
@@ -90,9 +94,9 @@ Rev5 uses planes/pours and wide neck-downs rather than treating power as another
    validation against manufacturer drawings and real mating parts.
 6. Firmware must explicitly enable SPI1 and use the Rev5 A/B naming before
    integration; software changes are outside this hardware-only package.
-7. The V4 source geometry has been audited, but no Rev5 schematic ERC, PCB DRC,
-   antenna-keepout rule check, routed-length report, 3D mechanical check, or
-   Gerber-versus-source comparison has been run.
+7. The V4 source geometry and Rev5 routed scaffold have been structurally
+   checked, but no Rev5 schematic ERC, native EasyEDA PCB DRC, 3D mechanical
+   check, or Gerber-versus-source comparison has been run.
 
 The exact reconstruction and release gates are listed in
 [`source-reconstruction-checklist.md`](source-reconstruction-checklist.md).
@@ -108,10 +112,9 @@ The exact reconstruction and release gates are listed in
 - USB shunt capacitors are DNP by default. Populate only after measured USB eye
   or emissions work establishes a value.
 - USB series resistors default to 22 Ω; retain 0/33 Ω tuning options.
-- HCT output-enable configuration remains deliberately always enabled in the
-  baseline proposal with a 0 Ω link to ground. An alternate pull-up/controlled
-  enable is allowed only with a reviewed level-safe control circuit and matching
-  firmware behavior.
+- HCT output enable defaults disabled: 10 kΩ pulls OE to 5 V, a 2N7002 pulls it
+  low only when ESP GPIO8 is high, and 100 kΩ holds the MOSFET gate low. Firmware
+  must initialize every lane GPIO low before enabling outputs.
 
 ## Proposed deliverables present here
 
@@ -125,13 +128,13 @@ The exact reconstruction and release gates are listed in
 
 An importable EasyEDA Standard placement/routing starting point is in
 [`../easyeda/`](../easyeda/). It removes the unsafe V4 routing and selector
-footprints, applies the fixed dual-SPI pad nets, corrects the receiver/antenna
-floorplan, adds the critical SPI damping/test geometry and checked draft SPI
-routes, and enables the proposed four copper layers with an L2 ground area. It
-is a review scaffold, not completed Rev5 EDA source.
+footprints, applies the fixed dual-SPI pad nets, orients both receivers toward
+their HCT banks, adds the complete ESP-to-HCT and buffer-to-damping routing,
+fail-safe OE/input state networks, local decoupling, checked SPI routes, and the
+four-layer reference strategy. It is still a review scaffold, not completed
+Rev5 EDA source.
 
-The completed Rev5 schematic, routed PCB, revised schematic plot, PnP, final
-routed-length values, revised copper overlay, and Gerber/drill archive remain
-intentionally absent until the release blockers are resolved. The unchanged
-editable V4 sources are kept under `../../rev4/reference/` for reconstruction
-and comparison.
+The completed Rev5 schematic, fully routed power/USB/ESD/CN1 interfaces, revised
+schematic plot, PnP, native DRC report, revised copper overlay, and Gerber/drill
+archive remain absent until the release blockers are resolved. The unchanged
+editable V4 sources are under `../../rev4/reference/` for comparison.
