@@ -657,7 +657,7 @@
     }
 
     async function refreshGlobalSettings({quiet = false, preserveDraft = true} = {}) {
-        if (!state.bootstrap || state.globalSettings.loading) return;
+        if (!state.bootstrap || state.globalSettings.loading) return false;
         state.globalSettings.loading = true;
         renderGlobalSettings();
         try {
@@ -706,8 +706,10 @@
             ) resetChecker({preserveDocumentRevision: true});
             persistGlobalDraft();
             if (!quiet) toast('Observed wall settings refreshed.');
+            return true;
         } catch (error) {
             if (!quiet) toast(error.message, 'error');
+            return false;
         } finally {
             state.globalSettings.loading = false;
             renderGlobalSettings();
@@ -2757,8 +2759,11 @@
             return;
         }
         setActionBusy('activate', true);
-        $('serverActionStatus').textContent = 'Requesting a short-lived server Check for this exact scene and wall state…';
+        $('serverActionStatus').textContent = 'Reading the current wall settings before issuing a server Check…';
         try {
+            const observed = await refreshGlobalSettings({quiet: true});
+            if (!observed) throw new Error('Could not read the current wall settings.');
+            $('serverActionStatus').textContent = 'Requesting a short-lived server Check for this exact scene and wall state…';
             await createServerCheck();
         } catch (error) {
             if (error.code === 'offline') setServerOnline(false);
