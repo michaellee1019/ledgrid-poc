@@ -1721,7 +1721,10 @@
 
     async function selectComponent(component, options = {}) {
         if (!componentCapability(component).previewable) return;
-        if (state.component?.key === component.key && !options.force) return;
+        if (state.component?.key === component.key && !options.force) {
+            if (options.focusEditor && window.matchMedia('(max-width: 760px)').matches) selectMobileView('tune');
+            return;
+        }
         if (state.component?.key && state.component.key !== component.key) {
             pauseLiveEdit(`Off · ${component.name || humanize(component.plugin_id)} is a draft. Activate it before using Live edit.`);
         }
