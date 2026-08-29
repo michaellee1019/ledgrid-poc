@@ -23,9 +23,9 @@ from animation.core.installation_profile import (
 from animation.core.plant_awareness import GLOBE_REGION_ORDER, PlantMaskCache
 from tools.fixtures.generate_installation_profile_golden import (
     CLEARANCE_RADIUS,
-    FOLIAGE_INPUT,
-    GLOBES_INPUT,
-    REGIONS_INPUT,
+    FOLIAGE_EVIDENCE_INPUT,
+    GLOBES_EVIDENCE_INPUT,
+    REGIONS_EVIDENCE_INPUT,
     WALL_INPUT,
     build_fixture,
 )
@@ -41,7 +41,7 @@ FIXED_HEADER_BYTES = 112
 SECTION_ENTRY_BYTES = 24
 SECTION_COUNT = 9
 PIXEL_COUNT = 33 * 138
-CALIBRATION_PIXEL_COUNT = 32 * 138
+CAMERA_EVIDENCE_PIXEL_COUNT = 32 * 138
 PROFILE_BYTES = FIXED_HEADER_BYTES + SECTION_COUNT * SECTION_ENTRY_BYTES + (
     SECTION_COUNT * PIXEL_COUNT
 )
@@ -81,8 +81,8 @@ EXPECTED_SECTION_CRCS = (
 
 class _PlantOwner:
     params = {
-        "plant_mask_path": str(FOLIAGE_INPUT),
-        "plant_globe_mask_path": str(GLOBES_INPUT),
+        "plant_mask_path": str(FOLIAGE_EVIDENCE_INPUT),
+        "plant_globe_mask_path": str(GLOBES_EVIDENCE_INPUT),
         "plant_clearance": CLEARANCE_RADIUS,
     }
 
@@ -92,7 +92,7 @@ class _PlantOwner:
 
     @staticmethod
     def get_pixel_count() -> int:
-        return CALIBRATION_PIXEL_COUNT
+        return CAMERA_EVIDENCE_PIXEL_COUNT
 
 
 def _header(data: bytes) -> dict[str, Any]:
@@ -356,7 +356,12 @@ class InstallationProfileGoldenTests(unittest.TestCase):
                 self.assertLessEqual(int(encoded.max()), 127)
 
     def test_json_object_key_order_does_not_change_canonical_bytes(self) -> None:
-        inputs = (FOLIAGE_INPUT, GLOBES_INPUT, REGIONS_INPUT, WALL_INPUT)
+        inputs = (
+            FOLIAGE_EVIDENCE_INPUT,
+            GLOBES_EVIDENCE_INPUT,
+            REGIONS_EVIDENCE_INPUT,
+            WALL_INPUT,
+        )
         with tempfile.TemporaryDirectory() as temp_dir:
             reordered = []
             for source in inputs:
@@ -382,9 +387,9 @@ class InstallationProfileGoldenTests(unittest.TestCase):
             self.assertEqual(encode_installation_profile(profile), self.data)
 
     def test_canonical_input_lists_use_the_frozen_semantic_order(self) -> None:
-        foliage = json.loads(FOLIAGE_INPUT.read_text(encoding="utf-8"))
-        globes = json.loads(GLOBES_INPUT.read_text(encoding="utf-8"))
-        regions = json.loads(REGIONS_INPUT.read_text(encoding="utf-8"))
+        foliage = json.loads(FOLIAGE_EVIDENCE_INPUT.read_text(encoding="utf-8"))
+        globes = json.loads(GLOBES_EVIDENCE_INPUT.read_text(encoding="utf-8"))
+        regions = json.loads(REGIONS_EVIDENCE_INPUT.read_text(encoding="utf-8"))
 
         for name, values in (
             ("foliage.covered_indices", foliage["covered_indices"]),
@@ -395,7 +400,7 @@ class InstallationProfileGoldenTests(unittest.TestCase):
                 self.assertEqual(values, sorted(set(values)))
         self.assertEqual(
             [pixel["index"] for pixel in foliage["pixels"]],
-            list(range(CALIBRATION_PIXEL_COUNT)),
+            list(range(CAMERA_EVIDENCE_PIXEL_COUNT)),
         )
         self.assertEqual(
             [pixel["index"] for pixel in globes["pixels"]],

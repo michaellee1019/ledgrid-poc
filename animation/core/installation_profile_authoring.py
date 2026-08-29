@@ -2,7 +2,7 @@
 
 The immutable :class:`InstallationProfileLibrary` remains the only publication
 authority.  This module stores one restart-safe editable draft per immutable
-source digest, validates the canonical 32x138 authored surface, and compiles a
+source digest, validates the canonical 33x138 authored surface, and compiles a
 complete 33x138 LGIP artifact without selecting it for the live wall.
 """
 
@@ -22,12 +22,11 @@ import uuid
 import numpy as np
 
 from animation.core.installation_profile import (
-    CALIBRATION_PIXEL_COUNT,
-    CALIBRATION_STRIP_COUNT,
     GLOBAL_PIXEL_COUNT,
     GLOBAL_STRIP_COUNT,
     LEDS_PER_STRIP,
     InstallationProfile,
+    UNOBSERVED_NON_PLANT_STRIPS,
     encode_installation_profile,
 )
 from animation.core.installation_profile_library import (
@@ -113,9 +112,9 @@ def _validate_indices(value: object, label: str) -> tuple[int, ...]:
             raise InstallationProfileAuthoringError(
                 f"{label}[{position}] must be an integer"
             )
-        if index < 0 or index >= CALIBRATION_PIXEL_COUNT:
+        if index < 0 or index >= GLOBAL_PIXEL_COUNT:
             raise InstallationProfileAuthoringError(
-                f"{label}[{position}] is outside the 32x138 authored surface"
+                f"{label}[{position}] is outside the canonical 33x138 wall"
             )
         if index <= previous:
             raise InstallationProfileAuthoringError(
@@ -139,10 +138,14 @@ def _draft_document(
         "digest": digest,
         "revision": revision,
         "led_info": {
-            "strip_count": CALIBRATION_STRIP_COUNT,
+            "strip_count": GLOBAL_STRIP_COUNT,
             "leds_per_strip": LEDS_PER_STRIP,
-            "total_leds": CALIBRATION_PIXEL_COUNT,
+            "total_leds": GLOBAL_PIXEL_COUNT,
         },
+        # A complete canonical profile explicitly names the physical column
+        # outside the photographed plant evidence.  It is not padding and is
+        # not a runtime conversion target.
+        "unobserved_non_plant_strips": list(UNOBSERVED_NON_PLANT_STRIPS),
         "masks": {
             "foliage": list(foliage),
             "globes": {
@@ -161,11 +164,19 @@ def validate_installation_profile_draft(
 
     if not isinstance(value, dict):
         raise InstallationProfileAuthoringError("draft must be an object")
-    required = {"schema", "schema_version", "digest", "revision", "led_info", "masks"}
+    required = {
+        "schema",
+        "schema_version",
+        "digest",
+        "revision",
+        "led_info",
+        "unobserved_non_plant_strips",
+        "masks",
+    }
     if set(value) != required:
         raise InstallationProfileAuthoringError(
             "draft must contain exactly schema, schema_version, digest, revision, "
-            "led_info, and masks"
+            "led_info, unobserved_non_plant_strips, and masks"
         )
     if value.get("schema") != DRAFT_SCHEMA:
         raise InstallationProfileAuthoringError(f"draft.schema must be {DRAFT_SCHEMA!r}")
@@ -179,13 +190,17 @@ def validate_installation_profile_draft(
     revision = _require_revision(value.get("revision"))
 
     expected_geometry = {
-        "strip_count": CALIBRATION_STRIP_COUNT,
+        "strip_count": GLOBAL_STRIP_COUNT,
         "leds_per_strip": LEDS_PER_STRIP,
-        "total_leds": CALIBRATION_PIXEL_COUNT,
+        "total_leds": GLOBAL_PIXEL_COUNT,
     }
     if value.get("led_info") != expected_geometry:
         raise InstallationProfileAuthoringError(
-            "draft.led_info must be exactly the 32x138 authored geometry"
+            "draft.led_info must be exactly the canonical 33x138 wall geometry"
+        )
+    if value.get("unobserved_non_plant_strips") != list(UNOBSERVED_NON_PLANT_STRIPS):
+        raise InstallationProfileAuthoringError(
+            "draft.unobserved_non_plant_strips must explicitly name physical strip 32"
         )
     masks = value.get("masks")
     if not isinstance(masks, dict) or set(masks) != {"foliage", "globes"}:
@@ -219,6 +234,12 @@ def validate_installation_profile_draft(
                 f"semantic layers overlap at authored pixel {min(overlap)}"
             )
         occupied |= region
+    unobserved_start = min(UNOBSERVED_NON_PLANT_STRIPS) * LEDS_PER_STRIP
+    unobserved_pixels = set(range(unobserved_start, GLOBAL_PIXEL_COUNT))
+    if occupied & unobserved_pixels:
+        raise InstallationProfileAuthoringError(
+            "authored masks may not cover the explicit unobserved non-plant strip"
+        )
     return _draft_document(
         digest=digest,
         revision=revision,
@@ -232,14 +253,14 @@ def _draft_from_profile(digest: str, profile: InstallationProfile) -> dict[str, 
         raise InstallationProfileAuthoringError(
             "immutable source profile does not use canonical 33x138 geometry"
         )
-    if np.any(profile.category[CALIBRATION_STRIP_COUNT:]) or np.any(
-        profile.globe_region[CALIBRATION_STRIP_COUNT:]
+    if np.any(profile.category[list(UNOBSERVED_NON_PLANT_STRIPS)]) or np.any(
+        profile.globe_region[list(UNOBSERVED_NON_PLANT_STRIPS)]
     ):
         raise InstallationProfileAuthoringError(
-            "immutable source profile contains authored masks outside the 32x138 surface"
+            "immutable source profile masks the explicit unobserved non-plant strip"
         )
-    authored_category = profile.category[:CALIBRATION_STRIP_COUNT].ravel()
-    authored_regions = profile.globe_region[:CALIBRATION_STRIP_COUNT].ravel()
+    authored_category = profile.category.ravel()
+    authored_regions = profile.globe_region.ravel()
     foliage = np.flatnonzero(authored_category == 1).tolist()
     globes = {
         name: np.flatnonzero(authored_regions == region_id).tolist()
@@ -258,7 +279,7 @@ def compile_installation_profile_draft(
     *,
     clearance_radius: int,
 ) -> bytes:
-    """Compile a validated 32x138 draft into one canonical 33x138 LGIP."""
+    """Compile one canonical 33x138 draft into one canonical 33x138 LGIP."""
 
     normalized = validate_installation_profile_draft(draft)
     if type(clearance_radius) is not int or not 0 <= clearance_radius <= 4:
@@ -290,7 +311,7 @@ def compile_installation_profile_draft(
     clearance = obstacle.copy()
     for _ in range(clearance_radius):
         clearance = dilate_8(clearance)
-    clearance[CALIBRATION_STRIP_COUNT:] = False
+    clearance[list(UNOBSERVED_NON_PLANT_STRIPS)] = False
     distance, normal_x, normal_y = _distance_and_normals(obstacle)
 
     category = np.zeros(obstacle.shape, dtype=np.uint8)

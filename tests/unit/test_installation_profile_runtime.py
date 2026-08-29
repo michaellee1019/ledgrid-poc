@@ -31,8 +31,8 @@ from animation.core.plant_awareness import GLOBE_REGION_ORDER, PlantMaskCache
 from animation.core.presentation_contracts import AnimationRuntimeContext
 from tools.fixtures.generate_installation_profile_golden import (
     CLEARANCE_RADIUS,
-    FOLIAGE_INPUT,
-    GLOBES_INPUT,
+    FOLIAGE_EVIDENCE_INPUT,
+    GLOBES_EVIDENCE_INPUT,
 )
 
 
@@ -53,8 +53,8 @@ class _Controller:
 
 class _LegacyMaskOwner:
     params = {
-        "plant_mask_path": str(FOLIAGE_INPUT),
-        "plant_globe_mask_path": str(GLOBES_INPUT),
+        "plant_mask_path": str(FOLIAGE_EVIDENCE_INPUT),
+        "plant_globe_mask_path": str(GLOBES_EVIDENCE_INPUT),
         "plant_clearance": CLEARANCE_RADIUS,
     }
 

@@ -12,12 +12,13 @@ from pathlib import Path
 import numpy as np
 
 from animation.core.installation_profile import (
-    DEFAULT_FOLIAGE_PATH,
-    DEFAULT_GLOBES_PATH,
-    DEFAULT_REGIONS_PATH,
+    CAMERA_EVIDENCE_STRIP_COUNT,
+    DEFAULT_FOLIAGE_EVIDENCE_PATH,
+    DEFAULT_GLOBES_EVIDENCE_PATH,
+    DEFAULT_REGIONS_EVIDENCE_PATH,
     DEFAULT_WALL_PATH,
     FIXED_HEADER_BYTES,
-    CALIBRATION_STRIP_COUNT,
+    UNOBSERVED_NON_PLANT_STRIPS,
     GLOBAL_PIXEL_COUNT,
     GLOBAL_STRIP_COUNT,
     InstallationProfile,
@@ -33,9 +34,9 @@ from animation.core.plant_awareness import GLOBE_REGION_ORDER, PlantMaskCache
 
 
 CANONICAL_PATHS = (
-    DEFAULT_FOLIAGE_PATH,
-    DEFAULT_GLOBES_PATH,
-    DEFAULT_REGIONS_PATH,
+    DEFAULT_FOLIAGE_EVIDENCE_PATH,
+    DEFAULT_GLOBES_EVIDENCE_PATH,
+    DEFAULT_REGIONS_EVIDENCE_PATH,
     DEFAULT_WALL_PATH,
 )
 
@@ -60,17 +61,17 @@ class _PlantOwner:
     def __init__(self, clearance: int = 1):
         self.params = {
             "plant_clearance": clearance,
-            "plant_mask_path": str(DEFAULT_FOLIAGE_PATH),
-            "plant_globe_mask_path": str(DEFAULT_GLOBES_PATH),
+            "plant_mask_path": str(DEFAULT_FOLIAGE_EVIDENCE_PATH),
+            "plant_globe_mask_path": str(DEFAULT_GLOBES_EVIDENCE_PATH),
         }
 
     @staticmethod
     def get_strip_info():
-        return 32, 138
+        return CAMERA_EVIDENCE_STRIP_COUNT, 138
 
     @staticmethod
     def get_pixel_count():
-        return 32 * 138
+        return CAMERA_EVIDENCE_STRIP_COUNT * 138
 
 
 class InstallationProfileCompileTests(unittest.TestCase):
@@ -121,15 +122,16 @@ class InstallationProfileCompileTests(unittest.TestCase):
         self.assertEqual(tuple(profile.globe_region_masks), GLOBE_REGION_ORDER)
         self.assertTrue(np.array_equal(profile.obstacle, profile.category != 0))
         self.assertTrue(np.array_equal(profile.safe, profile.clearance == 0))
-        self.assertFalse(profile.obstacle[CALIBRATION_STRIP_COUNT:].any())
-        self.assertFalse(profile.clearance[CALIBRATION_STRIP_COUNT:].any())
-        self.assertFalse(profile.globe_region[CALIBRATION_STRIP_COUNT:].any())
+        self.assertEqual(UNOBSERVED_NON_PLANT_STRIPS, (32,))
+        self.assertFalse(profile.obstacle[list(UNOBSERVED_NON_PLANT_STRIPS)].any())
+        self.assertFalse(profile.clearance[list(UNOBSERVED_NON_PLANT_STRIPS)].any())
+        self.assertFalse(profile.globe_region[list(UNOBSERVED_NON_PLANT_STRIPS)].any())
 
     def test_derivation_matches_shared_plant_awareness_exactly(self):
         profile = compile_installation_profile(clearance_radius=2)
         geometry = PlantMaskCache(_PlantOwner(clearance=2)).get()
 
-        observed = slice(0, CALIBRATION_STRIP_COUNT)
+        observed = slice(0, CAMERA_EVIDENCE_STRIP_COUNT)
         np.testing.assert_array_equal(profile.foliage[observed], geometry.foliage)
         np.testing.assert_array_equal(profile.globes[observed], geometry.globes)
         np.testing.assert_array_equal(profile.obstacle[observed], geometry.obstacle)
@@ -201,7 +203,7 @@ class InstallationProfileCompileTests(unittest.TestCase):
                     with self.assertRaisesRegex(InstallationProfileError, pattern):
                         compile_installation_profile(foliage_path=invalid)
 
-    def test_each_input_must_assert_measured_32_by_138_geometry(self):
+    def test_each_camera_evidence_input_must_assert_measured_32_by_138_geometry(self):
         mutations = (
             lambda foliage, _g, _r, _w: foliage["geometry"].update(strip_count=31),
             lambda _f, globes, _r, _w: globes["geometry"].update(leds_per_strip=140),

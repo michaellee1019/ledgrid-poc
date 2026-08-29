@@ -35,12 +35,14 @@ MAX_PROFILE_BYTES = 65_535
 GLOBAL_STRIP_COUNT = 33
 LEDS_PER_STRIP = 138
 GLOBAL_PIXEL_COUNT = GLOBAL_STRIP_COUNT * LEDS_PER_STRIP
-# The photographed calibration remains valid evidence for the original 32
-# columns.  The finalized wall adds one independent physical column.  Keep the
-# evidence geometry explicit so compilation can append an intentionally open
-# (unmasked) strip instead of silently pretending the camera observed it.
-CALIBRATION_STRIP_COUNT = 32
-CALIBRATION_PIXEL_COUNT = CALIBRATION_STRIP_COUNT * LEDS_PER_STRIP
+# Camera captures currently cover strips 0 through 31.  They are immutable
+# evidence inputs, not a second installation-profile coordinate system: every
+# decoded, authored, previewed, and emitted profile is always 33x138.  Strip
+# 32 is explicitly a physically present, unobserved non-plant strip in the
+# current installation contract.
+CAMERA_EVIDENCE_STRIP_COUNT = 32
+CAMERA_EVIDENCE_PIXEL_COUNT = CAMERA_EVIDENCE_STRIP_COUNT * LEDS_PER_STRIP
+UNOBSERVED_NON_PLANT_STRIPS = (32,)
 
 ENCODING_UNSIGNED_ENUM = 1
 ENCODING_UNSIGNED_BOOLEAN = 2
@@ -82,9 +84,11 @@ _SECTION_DTYPES = (
 )
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_FOLIAGE_PATH = _REPOSITORY_ROOT / "config/plant_pixel_map_32x138.json"
-DEFAULT_GLOBES_PATH = _REPOSITORY_ROOT / "config/plant_globe_map_32x138.json"
-DEFAULT_REGIONS_PATH = _REPOSITORY_ROOT / "config/plant_globe_regions_32x138.json"
+# These historical filenames identify camera evidence only.  They must never
+# be exposed as an authored mask/profile path or interpreted as profile width.
+DEFAULT_FOLIAGE_EVIDENCE_PATH = _REPOSITORY_ROOT / "config/plant_pixel_map_32x138.json"
+DEFAULT_GLOBES_EVIDENCE_PATH = _REPOSITORY_ROOT / "config/plant_globe_map_32x138.json"
+DEFAULT_REGIONS_EVIDENCE_PATH = _REPOSITORY_ROOT / "config/plant_globe_regions_32x138.json"
 DEFAULT_WALL_PATH = _REPOSITORY_ROOT / "config/webcam_wall_calibration.json"
 
 
@@ -278,13 +282,13 @@ def _validate_geometry(payload: Mapping[str, Any], role: str) -> None:
     leds_per_strip = _require_int(geometry.get("leds_per_strip"), f"{role}.geometry.leds_per_strip")
     total_leds = _require_int(geometry.get("total_leds"), f"{role}.geometry.total_leds")
     if (strip_count, leds_per_strip, total_leds) != (
-        CALIBRATION_STRIP_COUNT,
+        CAMERA_EVIDENCE_STRIP_COUNT,
         LEDS_PER_STRIP,
-        CALIBRATION_PIXEL_COUNT,
+        CAMERA_EVIDENCE_PIXEL_COUNT,
     ):
         raise InstallationProfileError(
             f"{role}.geometry must be exactly "
-            f"{CALIBRATION_STRIP_COUNT}x{LEDS_PER_STRIP} calibration evidence"
+            f"{CAMERA_EVIDENCE_STRIP_COUNT}x{LEDS_PER_STRIP} camera evidence"
         )
     formula = geometry.get("index_formula")
     if formula is not None and formula != "strip * leds_per_strip + led":
@@ -299,7 +303,7 @@ def _validate_index_list(payload: Mapping[str, Any], key: str, role: str) -> Tup
         _require_int(
             value,
             f"{role}.{key}[{position}]",
-            maximum=CALIBRATION_PIXEL_COUNT - 1,
+            maximum=CAMERA_EVIDENCE_PIXEL_COUNT - 1,
         )
         for position, value in enumerate(values)
     )
@@ -312,7 +316,7 @@ def _validate_pixel_coordinates(record: Mapping[str, Any], label: str, index: in
     strip = _require_int(
         record.get("strip"),
         f"{label}.strip",
-        maximum=CALIBRATION_STRIP_COUNT - 1,
+        maximum=CAMERA_EVIDENCE_STRIP_COUNT - 1,
     )
     led = _require_int(record.get("led"), f"{label}.led", maximum=LEDS_PER_STRIP - 1)
     if strip * LEDS_PER_STRIP + led != index:
@@ -333,7 +337,7 @@ def _validate_foliage(payload: Mapping[str, Any]) -> Tuple[int, ...]:
 
     records = _require_list(payload.get("pixels"), "foliage.pixels")
     observed_count = _require_int(payload.get("observed_count"), "foliage.observed_count")
-    if observed_count != len(records) or observed_count != CALIBRATION_PIXEL_COUNT:
+    if observed_count != len(records) or observed_count != CAMERA_EVIDENCE_PIXEL_COUNT:
         raise InstallationProfileError(
             "foliage.pixels must contain one measured record per wall pixel"
         )
@@ -345,7 +349,7 @@ def _validate_foliage(payload: Mapping[str, Any]) -> Tuple[int, ...]:
         index = _require_int(
             record.get("index"),
             f"{label}.index",
-            maximum=CALIBRATION_PIXEL_COUNT - 1,
+            maximum=CAMERA_EVIDENCE_PIXEL_COUNT - 1,
         )
         if index != position:
             raise InstallationProfileError("foliage.pixels must be sorted, unique, and complete")
@@ -360,7 +364,7 @@ def _validate_foliage(payload: Mapping[str, Any]) -> Tuple[int, ...]:
         if occluded_flag:
             record_occluded.append(index)
     if (
-        tuple(record_indices) != tuple(range(CALIBRATION_PIXEL_COUNT))
+        tuple(record_indices) != tuple(range(CAMERA_EVIDENCE_PIXEL_COUNT))
         or tuple(record_occluded) != covered
     ):
         raise InstallationProfileError("foliage pixel records do not agree with covered_indices")
@@ -385,7 +389,7 @@ def _validate_region_definitions(
         strip_start = _require_int(
             record.get("strip_start"),
             f"{label}.strip_start",
-            maximum=CALIBRATION_STRIP_COUNT - 1,
+            maximum=CAMERA_EVIDENCE_STRIP_COUNT - 1,
         )
         led_start = _require_int(
             record.get("led_start"),
@@ -396,7 +400,7 @@ def _validate_region_definitions(
             record.get("width"),
             f"{label}.width",
             minimum=1,
-            maximum=CALIBRATION_STRIP_COUNT,
+            maximum=CAMERA_EVIDENCE_STRIP_COUNT,
         )
         height = _require_int(
             record.get("height"),
@@ -412,7 +416,7 @@ def _validate_region_definitions(
             (strip, led)
             for strip in range(
                 strip_start,
-                min(strip_start + width, CALIBRATION_STRIP_COUNT),
+                min(strip_start + width, CAMERA_EVIDENCE_STRIP_COUNT),
             )
             for led in range(led_start, min(led_start + height, LEDS_PER_STRIP))
         }
@@ -472,7 +476,7 @@ def _validate_globes(
         index = _require_int(
             record.get("index"),
             f"{label}.index",
-            maximum=CALIBRATION_PIXEL_COUNT - 1,
+            maximum=CAMERA_EVIDENCE_PIXEL_COUNT - 1,
         )
         if index <= previous_index:
             raise InstallationProfileError("globes.pixels must be sorted, unique, and ascending")
@@ -505,12 +509,12 @@ def _validate_wall(payload: Mapping[str, Any]) -> None:
         "wall.measured_layout.leds_per_strip",
     )
     if (strip_count, leds_per_strip) != (
-        CALIBRATION_STRIP_COUNT,
+        CAMERA_EVIDENCE_STRIP_COUNT,
         LEDS_PER_STRIP,
     ):
         raise InstallationProfileError(
             "wall measured_layout must be exactly "
-            f"{CALIBRATION_STRIP_COUNT}x{LEDS_PER_STRIP} camera evidence"
+            f"{CAMERA_EVIDENCE_STRIP_COUNT}x{LEDS_PER_STRIP} camera evidence"
         )
     if measured.get("verification_status") != "camera_verified":
         raise InstallationProfileError("wall measured_layout must be camera_verified")
@@ -549,9 +553,15 @@ def compile_installation_profile(
     """Compile the four canonical calibration inputs into the global profile."""
 
     radius = _require_int(clearance_radius, "clearance_radius", maximum=4)
-    foliage_payload = _read_json(Path(foliage_path or DEFAULT_FOLIAGE_PATH), "foliage")
-    globes_payload = _read_json(Path(globes_path or DEFAULT_GLOBES_PATH), "globes")
-    regions_payload = _read_json(Path(regions_path or DEFAULT_REGIONS_PATH), "regions")
+    foliage_payload = _read_json(
+        Path(foliage_path or DEFAULT_FOLIAGE_EVIDENCE_PATH), "foliage evidence"
+    )
+    globes_payload = _read_json(
+        Path(globes_path or DEFAULT_GLOBES_EVIDENCE_PATH), "globe evidence"
+    )
+    regions_payload = _read_json(
+        Path(regions_path or DEFAULT_REGIONS_EVIDENCE_PATH), "globe-region evidence"
+    )
     wall_payload = _read_json(Path(wall_path or DEFAULT_WALL_PATH), "wall")
 
     foliage_indices = _validate_foliage(foliage_payload)
@@ -573,10 +583,9 @@ def compile_installation_profile(
     clearance = obstacle.copy()
     for _ in range(radius):
         clearance = dilate_8(clearance)
-    # Strip 32 has no camera evidence yet.  It is deliberately represented as
-    # open space, even when dilation from observed strip 31 would otherwise
-    # infer a mask into the new column.
-    clearance[CALIBRATION_STRIP_COUNT:] = False
+    # The final physical strip has an explicit non-plant meaning, so camera
+    # evidence and dilation may not invent a mask or clearance there.
+    clearance[list(UNOBSERVED_NON_PLANT_STRIPS)] = False
     distance, normal_x, normal_y = _distance_and_normals(obstacle)
 
     category = np.zeros(obstacle.shape, dtype=np.uint8)
@@ -775,9 +784,9 @@ def decode_installation_profile(data: bytes) -> InstallationProfile:
 
 
 __all__ = [
-    "DEFAULT_FOLIAGE_PATH",
-    "DEFAULT_GLOBES_PATH",
-    "DEFAULT_REGIONS_PATH",
+    "DEFAULT_FOLIAGE_EVIDENCE_PATH",
+    "DEFAULT_GLOBES_EVIDENCE_PATH",
+    "DEFAULT_REGIONS_EVIDENCE_PATH",
     "DEFAULT_WALL_PATH",
     "ENCODING_SIGNED_BYTE",
     "ENCODING_UNSIGNED_BOOLEAN",
@@ -786,8 +795,9 @@ __all__ = [
     "FIXED_HEADER_BYTES",
     "FORMAT_VERSION",
     "GLOBAL_STRIP_COUNT",
-    "CALIBRATION_STRIP_COUNT",
-    "CALIBRATION_PIXEL_COUNT",
+    "CAMERA_EVIDENCE_STRIP_COUNT",
+    "CAMERA_EVIDENCE_PIXEL_COUNT",
+    "UNOBSERVED_NON_PLANT_STRIPS",
     "InstallationProfile",
     "InstallationProfileError",
     "LEDS_PER_STRIP",

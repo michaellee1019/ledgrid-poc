@@ -36,9 +36,11 @@ DEFAULT_RECEIVER_HEADER = (
     / "fixtures"
     / "installation_profile_receiver_v1.hpp"
 )
-FOLIAGE_INPUT = REPO_ROOT / "config" / "plant_pixel_map_32x138.json"
-GLOBES_INPUT = REPO_ROOT / "config" / "plant_globe_map_32x138.json"
-REGIONS_INPUT = REPO_ROOT / "config" / "plant_globe_regions_32x138.json"
+# These inputs are immutable 32-column camera evidence.  `build_fixture`
+# compiles them directly into the one canonical 33x138 installation profile.
+FOLIAGE_EVIDENCE_INPUT = REPO_ROOT / "config" / "plant_pixel_map_32x138.json"
+GLOBES_EVIDENCE_INPUT = REPO_ROOT / "config" / "plant_globe_map_32x138.json"
+REGIONS_EVIDENCE_INPUT = REPO_ROOT / "config" / "plant_globe_regions_32x138.json"
 WALL_INPUT = REPO_ROOT / "config" / "webcam_wall_calibration.json"
 CLEARANCE_RADIUS = 1
 
@@ -47,9 +49,9 @@ def build_fixture() -> bytes:
     """Compile the checked-in calibration inputs into deterministic v1 bytes."""
 
     profile = compile_installation_profile(
-        foliage_path=FOLIAGE_INPUT,
-        globes_path=GLOBES_INPUT,
-        regions_path=REGIONS_INPUT,
+        foliage_path=FOLIAGE_EVIDENCE_INPUT,
+        globes_path=GLOBES_EVIDENCE_INPUT,
+        regions_path=REGIONS_EVIDENCE_INPUT,
         wall_path=WALL_INPUT,
         clearance_radius=CLEARANCE_RADIUS,
     )
@@ -60,9 +62,9 @@ def build_receiver_fixtures() -> tuple[bytes, ...]:
     """Return installed-topology receiver views in logical-ID order."""
 
     profile = compile_installation_profile(
-        foliage_path=FOLIAGE_INPUT,
-        globes_path=GLOBES_INPUT,
-        regions_path=REGIONS_INPUT,
+        foliage_path=FOLIAGE_EVIDENCE_INPUT,
+        globes_path=GLOBES_EVIDENCE_INPUT,
+        regions_path=REGIONS_EVIDENCE_INPUT,
         wall_path=WALL_INPUT,
         clearance_radius=CLEARANCE_RADIUS,
     )

@@ -85,7 +85,7 @@ class InstallationProfileAuthoringApiTests(unittest.TestCase):
         occupied = set(changed["masks"]["foliage"])
         for values in changed["masks"]["globes"].values():
             occupied.update(values)
-        open_pixel = next(index for index in range(4416) if index not in occupied)
+        open_pixel = next(index for index in range(33 * 138) if index not in occupied)
         changed["masks"]["foliage"].append(open_pixel)
         changed["masks"]["foliage"].sort()
         return changed

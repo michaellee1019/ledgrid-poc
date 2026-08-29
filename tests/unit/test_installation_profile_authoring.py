@@ -42,7 +42,7 @@ class InstallationProfileAuthoringTests(unittest.TestCase):
         occupied = set(masks["foliage"])
         for values in masks["globes"].values():
             occupied.update(values)
-        return next(index for index in range(32 * 138) if index not in occupied)
+        return next(index for index in range(33 * 138) if index not in occupied)
 
     def changed_draft(self, draft: dict) -> dict:
         changed = deepcopy(draft)
@@ -57,21 +57,22 @@ class InstallationProfileAuthoringTests(unittest.TestCase):
         self.assertEqual(draft["digest"], self.digest)
         self.assertRegex(draft["revision"], r"^ipd-[0-9a-f]{32}$")
         self.assertEqual(draft["led_info"], {
-            "strip_count": 32,
+            "strip_count": 33,
             "leds_per_strip": 138,
-            "total_leds": 4416,
+            "total_leds": 4554,
         })
+        self.assertEqual(draft["unobserved_non_plant_strips"], [32])
         self.assertEqual(
             tuple(draft["masks"]["globes"]), GLOBE_REGION_ORDER
         )
         self.assertEqual(
             draft["masks"]["foliage"],
-            source.foliage[:32].ravel().nonzero()[0].tolist(),
+            source.foliage.ravel().nonzero()[0].tolist(),
         )
         for region_id, name in enumerate(GLOBE_REGION_ORDER, start=1):
             self.assertEqual(
                 draft["masks"]["globes"][name],
-                (source.globe_region[:32].ravel() == region_id).nonzero()[0].tolist(),
+                (source.globe_region.ravel() == region_id).nonzero()[0].tolist(),
             )
 
     def test_validation_rejects_geometry_bounds_overlap_and_region_drift(self) -> None:
@@ -79,12 +80,20 @@ class InstallationProfileAuthoringTests(unittest.TestCase):
         cases: list[tuple[str, dict, str]] = []
 
         geometry = deepcopy(draft)
-        geometry["led_info"]["strip_count"] = 33
-        cases.append(("geometry", geometry, "exactly the 32x138"))
+        geometry["led_info"]["strip_count"] = 32
+        cases.append(("geometry", geometry, "canonical 33x138"))
 
         bounds = deepcopy(draft)
-        bounds["masks"]["foliage"] = [4416]
-        cases.append(("bounds", bounds, "outside the 32x138"))
+        bounds["masks"]["foliage"] = [4554]
+        cases.append(("bounds", bounds, "outside the canonical 33x138"))
+
+        unobserved_marker = deepcopy(draft)
+        unobserved_marker["unobserved_non_plant_strips"] = []
+        cases.append(("unobserved marker", unobserved_marker, "physical strip 32"))
+
+        unobserved_mask = deepcopy(draft)
+        unobserved_mask["masks"]["foliage"] = [32 * 138]
+        cases.append(("unobserved mask", unobserved_mask, "unobserved non-plant strip"))
 
         overlap = deepcopy(draft)
         shared = overlap["masks"]["globes"][GLOBE_REGION_ORDER[0]][0]
