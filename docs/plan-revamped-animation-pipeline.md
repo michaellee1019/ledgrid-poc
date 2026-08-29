@@ -4698,6 +4698,14 @@ later evidence is explicit; it does not manufacture hardware acceptance.
   `run_state/browser_qualification/evidence/rel01-browser-evidence-clean-2e6d3b3.json`
   (SHA-256
   `667f30e2a2683dac5a729cfb20aa0557c98e11229da3d11a8c9a26cd4c824455`).
+  The final static asset checkpoint
+  `1819292e22930edafbae1e09a5aad08ebaac68aa` contains a 2,370,667-byte
+  Python worker bundle at SHA-256
+  `f3d86c7251d850bdaddfee8ed489b9bdc2591e9dcaa52c75811c30bb6083d597`,
+  a 927,364-byte bootstrap at SHA-256
+  `718fd6789a09d66a867c715936b3802faf35fb74fa3f90bdfa7935cef31f3272`,
+  and a 3,685-byte offline manifest at SHA-256
+  `07b9ec8f974d96f2b01b94b40e24cf60f4985f1aa5e6d2de5e7e68ab3d366128`.
 - FEC v7 retains the installed 4,088-byte wire shape as 67 protected data
   shards plus one protected outer XOR shard. Checkpoint
   `3c0c86768ac1191a74aa625b5b070518f9867985` adds the final post-repair outer
@@ -4708,13 +4716,16 @@ later evidence is explicit; it does not manufacture hardware acceptance.
   outer shard and end-to-end inner CRC both agree; every second failed shard
   and every coherent outer mismatch fail closed. v2 through v6 decoding and
   capability rollback remain supported.
-- The complete portable gate passed at that source checkpoint: 1,944 Python
-  tests plus 3,403 subtests; 35 rendering tests plus 5 subtests, with the
-  highest p95 `snake-max-density` result at 1.9638 ms against the 4 ms budget;
+- The complete portable gate passed again on the final static asset checkpoint:
+  1,944 Python tests plus 3,403 subtests; 35 rendering tests plus 5 subtests,
+  with the highest p95 `snake-max-density` result at 1.9641 ms against the 4 ms
+  budget;
   all 139 native firmware tests; production, local-canary, and native-canary
   images at 296,885, 382,109, and 541,849 reported bytes; and 273 deployment
-  tests plus 192 subtests. `git diff --check` and the no-deletions comparison
-  with local `main` also pass.
+  tests plus 192 subtests. The focused final Composer/affected-source set passed
+  259 tests plus 453 subtests. Dependency-lock, Python compilation, Ruff `F`,
+  deterministic regeneration, `git diff --check`, and the no-deletions
+  comparison with local `main` also pass.
 - The blank receivers were bootstrapped earlier using exactly
   `just deploy-force-firmware`; that force path must not be repeated. A later
   ordinary candidate deployment was interrupted during receiver firmware
