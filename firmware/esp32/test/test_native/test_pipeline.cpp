@@ -1216,11 +1216,12 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
         semantic.data(), parity_decoded.data, semantic.size());
   }
 
-  // A contiguous burst spanning five complete interleave columns maps to five
-  // bytes in every codeword and is fully corrected.
+  // A contiguous installed-link burst spanning eight complete interleave
+  // columns maps to eight consecutive bytes in every codeword. The bounded
+  // erasure fallback validates the two remaining syndromes before repair.
   auto burst = canonical;
   const std::size_t burst_start = matrix + 7U;
-  for (std::size_t offset = 0; offset < 5U * codewords; ++offset) {
+  for (std::size_t offset = 0; offset < 8U * codewords; ++offset) {
     burst[burst_start + offset] ^= 0xA5U;
   }
   ledgrid::ReceiverPacketPayload burst_decoded{};
@@ -1229,7 +1230,7 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
       burst.data(), burst.size(), &burst_decoded, &burst_report,
       scratch.data(), scratch.size()));
   TEST_ASSERT_EQUAL_UINT16(codewords, burst_report.corrected_codewords);
-  TEST_ASSERT_EQUAL_UINT16(codewords * 20U, burst_report.corrected_bits);
+  TEST_ASSERT_EQUAL_UINT16(codewords * 32U, burst_report.corrected_bits);
   TEST_ASSERT_EQUAL_MEMORY(semantic.data(), burst_decoded.data, semantic.size());
 
   // Either separated raw discriminator can carry attribution by itself.
@@ -1249,7 +1250,7 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
   }
 }
 
-void test_fec_six_symbols_are_terminal_and_runtime_frame_stays_unchanged() {
+void test_fec_six_separated_symbols_are_terminal_and_runtime_stays_unchanged() {
   std::vector<std::uint8_t> semantic(1U + 128U * 3U, 0x5A);
   semantic[0] = static_cast<std::uint8_t>(ledgrid::ReceiverCommand::SetAll);
   const auto canonical = fec_packet(semantic);
@@ -1280,8 +1281,9 @@ void test_fec_six_symbols_are_terminal_and_runtime_frame_stays_unchanged() {
   working = prior;
   auto beyond_radius = canonical;
   const std::uint8_t errors[] = {0xA5U, 0x3CU, 0x81U, 0x5AU, 0xC3U, 0x7EU};
-  for (std::size_t symbol = 0; symbol < std::size(errors); ++symbol) {
-    beyond_radius[matrix + symbol * codewords] ^= errors[symbol];
+  const std::size_t symbols[] = {0U, 10U, 20U, 30U, 40U, 50U};
+  for (std::size_t index = 0; index < std::size(errors); ++index) {
+    beyond_radius[matrix + symbols[index] * codewords] ^= errors[index];
   }
   TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
       beyond_radius.data(), beyond_radius.size(), &decoded, &report,
@@ -1308,8 +1310,9 @@ void test_fec_malformed_multisymbol_crc_padding_and_shape_fail_closed() {
 
   auto beyond_radius = canonical;
   const std::uint8_t errors[] = {0xA5U, 0x3CU, 0x81U, 0x5AU, 0xC3U, 0x7EU};
-  for (std::size_t symbol = 0; symbol < std::size(errors); ++symbol) {
-    beyond_radius[matrix + symbol * codewords] ^= errors[symbol];
+  const std::size_t symbols[] = {0U, 10U, 20U, 30U, 40U, 50U};
+  for (std::size_t index = 0; index < std::size(errors); ++index) {
+    beyond_radius[matrix + symbols[index] * codewords] ^= errors[index];
   }
   TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
       beyond_radius.data(), beyond_radius.size(), &decoded, &report,
@@ -1504,7 +1507,8 @@ int main(int, char**) {
   RUN_TEST(test_aligned_envelope_rejects_bad_crc_version_length_padding_and_alignment);
   RUN_TEST(test_fec_envelope_golden_layout_and_exact_installed_sizes);
   RUN_TEST(test_fec_corrects_header_payload_crc_and_distinct_codeword_bits);
-  RUN_TEST(test_fec_six_symbols_are_terminal_and_runtime_frame_stays_unchanged);
+  RUN_TEST(
+      test_fec_six_separated_symbols_are_terminal_and_runtime_stays_unchanged);
   RUN_TEST(test_fec_malformed_multisymbol_crc_padding_and_shape_fail_closed);
   RUN_TEST(test_status_v7_preserves_v6_and_encodes_exact_fec_counters);
   RUN_TEST(test_fec_runtime_outcome_partition_is_total_and_exclusive);

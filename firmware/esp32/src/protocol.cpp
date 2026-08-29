@@ -74,14 +74,16 @@ constexpr FecGfTables make_fec_gf_tables() {
 
 constexpr FecGfTables kFecGfTables = make_fec_gf_tables();
 
-std::uint8_t fec_gf_multiply(std::uint8_t left, std::uint8_t right) {
+constexpr std::uint8_t fec_gf_multiply(
+    std::uint8_t left, std::uint8_t right) {
   if (left == 0U || right == 0U) return 0U;
   return kFecGfTables.exponent[
       static_cast<std::size_t>(kFecGfTables.logarithm[left]) +
       kFecGfTables.logarithm[right]];
 }
 
-std::uint8_t fec_gf_power(std::uint8_t value, std::uint8_t exponent) {
+constexpr std::uint8_t fec_gf_power(
+    std::uint8_t value, std::uint8_t exponent) {
   if (exponent == 0U) return 1U;
   if (value == 0U) return 0U;
   return kFecGfTables.exponent[
@@ -89,9 +91,95 @@ std::uint8_t fec_gf_power(std::uint8_t value, std::uint8_t exponent) {
       255U];
 }
 
-std::uint8_t fec_gf_inverse(std::uint8_t value) {
+constexpr std::uint8_t fec_gf_inverse(std::uint8_t value) {
   return value == 0U ? 0U : kFecGfTables.exponent[
       255U - kFecGfTables.logarithm[value]];
+}
+
+constexpr std::size_t kFecV5BurstSpanSymbols = kFecParityBytes - 2U;
+constexpr std::size_t kFecV5BurstSpanStarts =
+    kFecCodewordBytes - kFecV5BurstSpanSymbols + 1U;
+using FecV5BurstInverse = std::array<
+    std::array<std::uint8_t, kFecV5BurstSpanSymbols>,
+    kFecV5BurstSpanSymbols>;
+
+template <std::size_t First, std::size_t Count>
+constexpr std::array<FecV5BurstInverse, Count>
+make_fec_v5_burst_inverses() {
+  std::array<FecV5BurstInverse, Count> output{};
+  for (std::size_t local = 0; local < Count; ++local) {
+    const std::size_t first = First + local;
+    std::array<
+        std::array<std::uint8_t, 2U * kFecV5BurstSpanSymbols>,
+        kFecV5BurstSpanSymbols> augmented{};
+    for (std::size_t row = 0; row < kFecV5BurstSpanSymbols; ++row) {
+      for (std::size_t column = 0;
+           column < kFecV5BurstSpanSymbols; ++column) {
+        augmented[row][column] = fec_gf_power(
+            static_cast<std::uint8_t>(first + column + 1U),
+            static_cast<std::uint8_t>(row));
+      }
+      augmented[row][kFecV5BurstSpanSymbols + row] = 1U;
+    }
+    for (std::size_t pivot = 0;
+         pivot < kFecV5BurstSpanSymbols; ++pivot) {
+      std::size_t pivot_row = pivot;
+      while (pivot_row < kFecV5BurstSpanSymbols &&
+             augmented[pivot_row][pivot] == 0U) {
+        ++pivot_row;
+      }
+      if (pivot_row != pivot) {
+        const auto saved = augmented[pivot];
+        augmented[pivot] = augmented[pivot_row];
+        augmented[pivot_row] = saved;
+      }
+      const std::uint8_t inverse =
+          fec_gf_inverse(augmented[pivot][pivot]);
+      for (std::size_t column = 0;
+           column < 2U * kFecV5BurstSpanSymbols; ++column) {
+        augmented[pivot][column] =
+            fec_gf_multiply(augmented[pivot][column], inverse);
+      }
+      for (std::size_t row = 0;
+           row < kFecV5BurstSpanSymbols; ++row) {
+        if (row == pivot || augmented[row][pivot] == 0U) continue;
+        const std::uint8_t scale = augmented[row][pivot];
+        for (std::size_t column = 0;
+             column < 2U * kFecV5BurstSpanSymbols; ++column) {
+          augmented[row][column] ^=
+              fec_gf_multiply(scale, augmented[pivot][column]);
+        }
+      }
+    }
+    for (std::size_t row = 0; row < kFecV5BurstSpanSymbols; ++row) {
+      for (std::size_t column = 0;
+           column < kFecV5BurstSpanSymbols; ++column) {
+        output[local][row][column] =
+            augmented[row][kFecV5BurstSpanSymbols + column];
+      }
+    }
+  }
+  return output;
+}
+
+constexpr auto kFecV5BurstInverses0 = make_fec_v5_burst_inverses<0U, 7U>();
+constexpr auto kFecV5BurstInverses1 = make_fec_v5_burst_inverses<7U, 7U>();
+constexpr auto kFecV5BurstInverses2 = make_fec_v5_burst_inverses<14U, 7U>();
+constexpr auto kFecV5BurstInverses3 = make_fec_v5_burst_inverses<21U, 7U>();
+constexpr auto kFecV5BurstInverses4 = make_fec_v5_burst_inverses<28U, 7U>();
+constexpr auto kFecV5BurstInverses5 = make_fec_v5_burst_inverses<35U, 7U>();
+constexpr auto kFecV5BurstInverses6 = make_fec_v5_burst_inverses<42U, 7U>();
+constexpr auto kFecV5BurstInverses7 = make_fec_v5_burst_inverses<49U, 4U>();
+
+const FecV5BurstInverse& fec_v5_burst_inverse(std::size_t first) {
+  if (first < 7U) return kFecV5BurstInverses0[first];
+  if (first < 14U) return kFecV5BurstInverses1[first - 7U];
+  if (first < 21U) return kFecV5BurstInverses2[first - 14U];
+  if (first < 28U) return kFecV5BurstInverses3[first - 21U];
+  if (first < 35U) return kFecV5BurstInverses4[first - 28U];
+  if (first < 42U) return kFecV5BurstInverses5[first - 35U];
+  if (first < 49U) return kFecV5BurstInverses6[first - 42U];
+  return kFecV5BurstInverses7[first - 49U];
 }
 
 std::uint8_t parity8(std::uint8_t value) {
@@ -637,6 +725,116 @@ bool receiver_packet_crc_valid(
   return received == calculated;
 }
 
+bool fec_v5_solution_valid(
+    const std::uint8_t* syndromes,
+    const std::size_t* correction_symbols,
+    const std::uint8_t* correction_values,
+    std::size_t correction_count) {
+  for (std::size_t check = 0; check < kFecParityBytes; ++check) {
+    std::uint8_t reconstructed = 0U;
+    for (std::size_t correction = 0;
+         correction < correction_count; ++correction) {
+      reconstructed ^= fec_gf_multiply(
+          correction_values[correction],
+          fec_gf_power(
+              static_cast<std::uint8_t>(
+                  correction_symbols[correction] + 1U),
+              static_cast<std::uint8_t>(check)));
+    }
+    if (reconstructed != syndromes[check]) return false;
+  }
+  return true;
+}
+
+bool fec_v5_solve_and_validate(
+    const std::uint8_t* syndromes,
+    const std::size_t* correction_symbols,
+    std::size_t correction_count,
+    std::uint8_t* correction_values,
+    bool require_nonzero) {
+  if (syndromes == nullptr || correction_symbols == nullptr ||
+      correction_values == nullptr || correction_count == 0U ||
+      correction_count > kFecParityBytes) {
+    return false;
+  }
+  std::uint8_t system[kFecParityBytes][kFecParityBytes + 1U] = {};
+  for (std::size_t row = 0; row < correction_count; ++row) {
+    for (std::size_t column = 0; column < correction_count; ++column) {
+      system[row][column] = fec_gf_power(
+          static_cast<std::uint8_t>(correction_symbols[column] + 1U),
+          static_cast<std::uint8_t>(row));
+    }
+    system[row][correction_count] = syndromes[row];
+  }
+  for (std::size_t pivot = 0; pivot < correction_count; ++pivot) {
+    std::size_t pivot_row = pivot;
+    while (pivot_row < correction_count &&
+           system[pivot_row][pivot] == 0U) {
+      ++pivot_row;
+    }
+    if (pivot_row == correction_count) return false;
+    if (pivot_row != pivot) {
+      for (std::size_t column = pivot;
+           column <= correction_count; ++column) {
+        std::swap(system[pivot][column], system[pivot_row][column]);
+      }
+    }
+    const std::uint8_t inverse_pivot =
+        fec_gf_inverse(system[pivot][pivot]);
+    for (std::size_t column = pivot;
+         column <= correction_count; ++column) {
+      system[pivot][column] =
+          fec_gf_multiply(system[pivot][column], inverse_pivot);
+    }
+    for (std::size_t row = 0; row < correction_count; ++row) {
+      if (row == pivot || system[row][pivot] == 0U) continue;
+      const std::uint8_t scale = system[row][pivot];
+      for (std::size_t column = pivot;
+           column <= correction_count; ++column) {
+        system[row][column] ^=
+            fec_gf_multiply(scale, system[pivot][column]);
+      }
+    }
+  }
+  for (std::size_t correction = 0;
+       correction < correction_count; ++correction) {
+    correction_values[correction] =
+        system[correction][correction_count];
+    if (require_nonzero && correction_values[correction] == 0U) {
+      return false;
+    }
+  }
+
+  return fec_v5_solution_valid(
+      syndromes, correction_symbols, correction_values, correction_count);
+}
+
+bool fec_v5_solve_contiguous_span(
+    const std::uint8_t* syndromes,
+    std::size_t first,
+    std::uint8_t* correction_values) {
+  if (syndromes == nullptr || correction_values == nullptr ||
+      first >= kFecV5BurstSpanStarts) {
+    return false;
+  }
+  const auto& inverse = fec_v5_burst_inverse(first);
+  for (std::size_t row = 0; row < kFecV5BurstSpanSymbols; ++row) {
+    correction_values[row] = 0U;
+    for (std::size_t column = 0;
+         column < kFecV5BurstSpanSymbols; ++column) {
+      correction_values[row] ^=
+          fec_gf_multiply(inverse[row][column], syndromes[column]);
+    }
+  }
+  std::size_t correction_symbols[kFecV5BurstSpanSymbols] = {};
+  for (std::size_t index = 0; index < kFecV5BurstSpanSymbols; ++index) {
+    correction_symbols[index] = first + index;
+  }
+  return fec_v5_solution_valid(
+      syndromes, correction_symbols, correction_values,
+      kFecV5BurstSpanSymbols);
+}
+
 bool fec_v5_systematic_payload_valid(
     const std::uint8_t* packet,
     std::size_t codewords,
@@ -808,6 +1006,7 @@ bool decode_receiver_packet_payload(
     // authenticated semantic payload.
     const bool systematic_payload_valid = fec_v5_systematic_payload_valid(
         packet, codewords, scratch);
+    std::size_t contiguous_burst_hint = kFecCodewordBytes;
     for (std::size_t block = 0;
          !systematic_payload_valid && block < codewords; ++block) {
       std::uint8_t syndromes[kFecParityBytes] = {};
@@ -826,158 +1025,114 @@ bool decode_receiver_packet_payload(
       const bool canonical = std::all_of(
           std::begin(syndromes), std::end(syndromes),
           [](std::uint8_t value) { return value == 0U; });
-      std::size_t correction_symbols[kMaximumCorrections] = {};
-      std::uint8_t correction_values[kMaximumCorrections] = {};
+      std::size_t correction_symbols[kFecParityBytes] = {};
+      std::uint8_t correction_values[kFecParityBytes] = {};
       std::size_t correction_count = 0;
       if (!canonical) {
-        // Berlekamp-Massey finds the shortest recurrence for the ten
-        // syndromes. With evaluation points X, its locator is
-        // Lambda(z) = product(1 + X*z), so roots occur at inverse(X).
-        std::uint8_t locator[kFecParityBytes + 1U] = {1U};
-        std::uint8_t previous[kFecParityBytes + 1U] = {1U};
-        std::size_t locator_degree = 0;
-        std::size_t shift = 1;
-        std::uint8_t previous_discrepancy = 1U;
-        for (std::size_t index = 0; index < kFecParityBytes; ++index) {
-          std::uint8_t discrepancy = syndromes[index];
-          for (std::size_t term = 1; term <= locator_degree; ++term) {
-            discrepancy ^= fec_gf_multiply(
-                locator[term], syndromes[index - term]);
+        const bool bounded_recovery = [&]() {
+          // Berlekamp-Massey finds the shortest recurrence for the ten
+          // syndromes. With evaluation points X, its locator is
+          // Lambda(z) = product(1 + X*z), so roots occur at inverse(X).
+          std::uint8_t locator[kFecParityBytes + 1U] = {1U};
+          std::uint8_t previous[kFecParityBytes + 1U] = {1U};
+          std::size_t locator_degree = 0;
+          std::size_t shift = 1;
+          std::uint8_t previous_discrepancy = 1U;
+          for (std::size_t index = 0; index < kFecParityBytes; ++index) {
+            std::uint8_t discrepancy = syndromes[index];
+            for (std::size_t term = 1; term <= locator_degree; ++term) {
+              discrepancy ^= fec_gf_multiply(
+                  locator[term], syndromes[index - term]);
+            }
+            if (discrepancy == 0U) {
+              ++shift;
+              continue;
+            }
+            std::uint8_t saved[kFecParityBytes + 1U] = {};
+            std::copy(std::begin(locator), std::end(locator), saved);
+            const std::uint8_t scale = fec_gf_multiply(
+                discrepancy, fec_gf_inverse(previous_discrepancy));
+            for (std::size_t term = 0;
+                 term + shift <= kFecParityBytes; ++term) {
+              locator[term + shift] ^=
+                  fec_gf_multiply(scale, previous[term]);
+            }
+            if (2U * locator_degree <= index) {
+              locator_degree = index + 1U - locator_degree;
+              std::copy(std::begin(saved), std::end(saved), previous);
+              previous_discrepancy = discrepancy;
+              shift = 1U;
+            } else {
+              ++shift;
+            }
           }
-          if (discrepancy == 0U) {
-            ++shift;
-            continue;
+          if (locator_degree == 0U ||
+              locator_degree > kMaximumCorrections) {
+            return false;
           }
-          std::uint8_t saved[kFecParityBytes + 1U] = {};
-          std::copy(std::begin(locator), std::end(locator), saved);
-          const std::uint8_t scale = fec_gf_multiply(
-              discrepancy, fec_gf_inverse(previous_discrepancy));
-          for (std::size_t term = 0;
-               term + shift <= kFecParityBytes; ++term) {
-            locator[term + shift] ^=
-                fec_gf_multiply(scale, previous[term]);
+          correction_count = 0;
+          for (std::size_t symbol = 0;
+               symbol < kFecCodewordBytes; ++symbol) {
+            const std::uint8_t inverse_evaluation = fec_gf_inverse(
+                static_cast<std::uint8_t>(symbol + 1U));
+            std::uint8_t value = locator[locator_degree];
+            for (std::size_t term = locator_degree; term > 0U; --term) {
+              value = fec_gf_multiply(value, inverse_evaluation) ^
+                  locator[term - 1U];
+            }
+            if (value == 0U) {
+              if (correction_count >= locator_degree) return false;
+              correction_symbols[correction_count++] = symbol;
+            }
           }
-          if (2U * locator_degree <= index) {
-            locator_degree = index + 1U - locator_degree;
-            std::copy(std::begin(saved), std::end(saved), previous);
-            previous_discrepancy = discrepancy;
-            shift = 1U;
-          } else {
-            ++shift;
-          }
-        }
+          return correction_count == locator_degree &&
+              fec_v5_solve_and_validate(
+                  syndromes, correction_symbols, correction_count,
+                  correction_values, true);
+        }();
 
-        if (locator_degree == 0U ||
-            locator_degree > kMaximumCorrections) {
+        const bool contiguous_burst_recovery = bounded_recovery || [&]() {
+          // The installed SPI fault is a contiguous wire burst. Interleaving
+          // maps that burst to a short consecutive symbol span in each
+          // codeword. Ten syndromes can validate and solve as many as eight
+          // erasures in that known-shape span, while arbitrary six-symbol
+          // errors remain outside the bounded correction contract.
+          const auto try_span = [&](std::size_t first) {
+            std::uint8_t candidate_values[kFecParityBytes] = {};
+            if (!fec_v5_solve_contiguous_span(
+                    syndromes, first, candidate_values)) {
+              return false;
+            }
+            correction_count = 0;
+            for (std::size_t index = 0;
+                 index < kFecV5BurstSpanSymbols; ++index) {
+              if (candidate_values[index] == 0U) continue;
+              correction_symbols[correction_count] =
+                  first + index;
+              correction_values[correction_count] = candidate_values[index];
+              ++correction_count;
+            }
+            if (correction_count == 0U) return false;
+            contiguous_burst_hint = first;
+            return true;
+          };
+          if (contiguous_burst_hint + kFecV5BurstSpanSymbols <=
+                  kFecCodewordBytes &&
+              try_span(contiguous_burst_hint)) {
+            return true;
+          }
+          for (std::size_t first = 0;
+               first + kFecV5BurstSpanSymbols <= kFecCodewordBytes; ++first) {
+            if (first == contiguous_burst_hint) continue;
+            if (try_span(first)) return true;
+          }
+          return false;
+        }();
+        if (!contiguous_burst_recovery) {
           if (report != nullptr) {
             report->result = ReceiverPacketDecodeResult::FecUncorrectable;
           }
           return false;
-        }
-        for (std::size_t symbol = 0;
-             symbol < kFecCodewordBytes; ++symbol) {
-          const std::uint8_t inverse_evaluation = fec_gf_inverse(
-              static_cast<std::uint8_t>(symbol + 1U));
-          std::uint8_t value = locator[locator_degree];
-          for (std::size_t term = locator_degree; term > 0U; --term) {
-            value = fec_gf_multiply(value, inverse_evaluation) ^
-                locator[term - 1U];
-          }
-          if (value == 0U) {
-            if (correction_count >= locator_degree) {
-              correction_count = kMaximumCorrections + 1U;
-              break;
-            }
-            correction_symbols[correction_count++] = symbol;
-          }
-        }
-        if (correction_count != locator_degree) {
-          if (report != nullptr) {
-            report->result = ReceiverPacketDecodeResult::FecUncorrectable;
-          }
-          return false;
-        }
-
-        // Solve the first L syndrome equations for the L error magnitudes.
-        std::uint8_t system[kMaximumCorrections]
-                           [kMaximumCorrections + 1U] = {};
-        for (std::size_t row = 0; row < correction_count; ++row) {
-          for (std::size_t column = 0;
-               column < correction_count; ++column) {
-            system[row][column] = fec_gf_power(
-                static_cast<std::uint8_t>(
-                    correction_symbols[column] + 1U),
-                static_cast<std::uint8_t>(row));
-          }
-          system[row][correction_count] = syndromes[row];
-        }
-        for (std::size_t pivot = 0; pivot < correction_count; ++pivot) {
-          std::size_t pivot_row = pivot;
-          while (pivot_row < correction_count &&
-                 system[pivot_row][pivot] == 0U) {
-            ++pivot_row;
-          }
-          if (pivot_row == correction_count) {
-            if (report != nullptr) {
-              report->result = ReceiverPacketDecodeResult::FecUncorrectable;
-            }
-            return false;
-          }
-          if (pivot_row != pivot) {
-            for (std::size_t column = pivot;
-                 column <= correction_count; ++column) {
-              std::swap(system[pivot][column], system[pivot_row][column]);
-            }
-          }
-          const std::uint8_t inverse_pivot =
-              fec_gf_inverse(system[pivot][pivot]);
-          for (std::size_t column = pivot;
-               column <= correction_count; ++column) {
-            system[pivot][column] =
-                fec_gf_multiply(system[pivot][column], inverse_pivot);
-          }
-          for (std::size_t row = 0; row < correction_count; ++row) {
-            if (row == pivot || system[row][pivot] == 0U) continue;
-            const std::uint8_t scale = system[row][pivot];
-            for (std::size_t column = pivot;
-                 column <= correction_count; ++column) {
-              system[row][column] ^=
-                  fec_gf_multiply(scale, system[pivot][column]);
-            }
-          }
-        }
-        for (std::size_t correction = 0;
-             correction < correction_count; ++correction) {
-          correction_values[correction] =
-              system[correction][correction_count];
-          if (correction_values[correction] == 0U) {
-            if (report != nullptr) {
-              report->result = ReceiverPacketDecodeResult::FecUncorrectable;
-            }
-            return false;
-          }
-        }
-
-        // A bounded decoder must validate every available syndrome before it
-        // mutates data. This rejects locator/magnitude solutions outside the
-        // five-symbol correction radius.
-        for (std::size_t check = 0; check < kFecParityBytes; ++check) {
-          std::uint8_t reconstructed = 0U;
-          for (std::size_t correction = 0;
-               correction < correction_count; ++correction) {
-            reconstructed ^= fec_gf_multiply(
-                correction_values[correction],
-                fec_gf_power(
-                    static_cast<std::uint8_t>(
-                        correction_symbols[correction] + 1U),
-                    static_cast<std::uint8_t>(check)));
-          }
-          if (reconstructed != syndromes[check]) {
-            if (report != nullptr) {
-              report->result = ReceiverPacketDecodeResult::FecUncorrectable;
-            }
-            return false;
-          }
         }
         ++corrected_codewords;
         for (std::size_t correction = 0;
