@@ -63,6 +63,7 @@
         overlayMode: null,
         compareGeneration: 0,
         frames: {draft: null, original: null, overlay: null, composed: null},
+        installationForeground: null,
         runtimeGeneration: 0,
         history: [],
         historyIndex: -1,
@@ -1724,7 +1725,7 @@
         $('componentDescription').textContent = component.description || 'Browser-rendered animation component.';
         const runtime = component.browser_runtime || {};
         $('provenanceTitle').textContent = runtime.kind === 'native' ? 'C++ compiled to WebAssembly' : 'Python running in Pyodide';
-        $('provenanceDetail').textContent = 'This authored renderer preview runs locally. It is not camera feedback or framebuffer readback from the installed wall.';
+        $('provenanceDetail').textContent = 'This authored renderer preview runs locally with the calibrated foliage and globe foreground. It is not camera feedback or framebuffer readback from the installed wall.';
         $('previewPlaceholder').hidden = true;
     }
 
@@ -1759,6 +1760,7 @@
             const draft = new ComposerRuntime(state.component, geometry, composerRuntimeOptions());
             state.runtimes = {draft, original: null, overlay: null};
             await draft.init(state.params);
+            state.installationForeground = await draft.installationProfileView();
             if (state.compare !== 'draft') await ensureOriginalRuntime();
             if (generation !== state.runtimeGeneration) return;
             const engine = draft.engine || state.component.browser_runtime.kind;
@@ -1794,6 +1796,7 @@
         state.runtimes.draft?.dispose();
         state.runtimes.original?.dispose();
         state.runtimes = {draft: null, original: null, overlay: null};
+        state.installationForeground = null;
         state.originalRuntimePromise = null;
         state.overlayRuntimePromise = null;
         state.overlayMode = null;
@@ -2299,7 +2302,16 @@
                 rgba[destination + 3] = 255;
             }
         }
-        return new ImageData(rgba, frame.width, frame.height);
+        const foreground = state.installationForeground;
+        const presented = foreground
+            ? window.LEDGridComposerCompositor.applyInstallationForeground({
+                width: frame.width,
+                height: frame.height,
+                rgba,
+                profile: foreground,
+            })
+            : rgba;
+        return new ImageData(presented, frame.width, frame.height);
     }
 
     function frameCanvas(frame) {

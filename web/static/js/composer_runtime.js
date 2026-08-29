@@ -435,6 +435,7 @@
             this.renderGenerations = new Map();
             this.latestRenders = new Map();
             this.attachPromise = null;
+            this.installationProfileViewPromise = null;
         }
 
         _scopedInstanceId(instanceId = 'primary') {
@@ -830,6 +831,28 @@
             });
         }
 
+        async installationProfileView() {
+            if (!this.ready || !this.installationProfile) {
+                throw new ComposerRuntimeError(
+                    'The verified installation profile is not ready for presentation.',
+                );
+            }
+            if (!this.installationProfileViewPromise) {
+                this.installationProfileViewPromise = installationProfileArtifact(
+                    this.installationProfile,
+                ).then((artifact) => {
+                    const decode = global.LEDGridComposerCompositor?.decodeInstallationProfile;
+                    if (typeof decode !== 'function') {
+                        throw new ComposerRuntimeError(
+                            'The installation foreground decoder is unavailable.',
+                        );
+                    }
+                    return decode(artifact.bytes, this.installationProfile.digest);
+                });
+            }
+            return this.installationProfileViewPromise;
+        }
+
         diagnostics() {
             return Object.freeze({
                 engine: this.engine,
@@ -850,6 +873,7 @@
             this.instances.clear();
             this.renderGenerations.clear();
             this.latestRenders.clear();
+            this.installationProfileViewPromise = null;
             if (host) {
                 for (const descriptor of descriptors) {
                     if (descriptor.initializedGeneration === host.generation && host.worker) {

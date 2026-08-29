@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "ledgrid_poc",
+  "project_id": "4279ef56-36f4-42db-bbc2-d32aa9ed290d"
+}

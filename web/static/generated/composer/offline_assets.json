@@ -1,17 +1,17 @@
 {
-  "cacheVersion": "v22",
+  "cacheVersion": "v23",
   "capturedAssets": [
     "/composer"
   ],
   "localAssets": [
     {
-      "bytes": 218597,
-      "sha256": "b8d3114dd4491a7c21e2d2f70c60863bf44aa8b5bcbce0b63e33302c56878d81",
+      "bytes": 222436,
+      "sha256": "7f67e9b1f69fb88cc2d3cf9c1c1cc1a024436ecc78eac2e321697a9dd0c724df",
       "url": "/composer-app.js"
     },
     {
       "bytes": 24272,
-      "sha256": "8872b4bcc98b1016c469c15c6a6047c22326a10cd10f50fd99e94e0dda7cd574",
+      "sha256": "663a6d2efc1953b5d2407191bb6cf74bb91b7f48a69c70e4284ab57c8d36c955",
       "url": "/composer-service-worker.js"
     },
     {
@@ -20,8 +20,8 @@
       "url": "/static/composer.webmanifest"
     },
     {
-      "bytes": 70126,
-      "sha256": "bfa8504f4c9b218a631048ec31c5773c6a9534118f8cd516e75990649d62e7bf",
+      "bytes": 71470,
+      "sha256": "8ad1b4f85359b5113a1a98fc020732a4a66f87ec31f63dfd1ad119dd5d2bd761",
       "url": "/static/css/composer.css"
     },
     {
@@ -65,8 +65,8 @@
       "url": "/static/icons/composer.svg"
     },
     {
-      "bytes": 9972,
-      "sha256": "65c35e7a8d2ab9f02289ea790d179e2e7d8bcef7438a12e844a1c4ee8d6bfb1d",
+      "bytes": 18470,
+      "sha256": "2d8e36c4b7062339a978f0c9e4cffa1035e96eb574b6004d812fc5feef2b96ff",
       "url": "/static/js/composer_compositor.js"
     },
     {
@@ -80,8 +80,8 @@
       "url": "/static/js/composer_python_worker.js"
     },
     {
-      "bytes": 38316,
-      "sha256": "f441c1d3f4ac5a0ccbb6b4670bcfeb7e3cd854593046d06fa35ea97fef47c238",
+      "bytes": 39448,
+      "sha256": "c30a7dce401d43d4ed3e0032103e0470a34eec08a42305bd2ee916c94461814d",
       "url": "/static/js/composer_runtime.js"
     },
     {
@@ -95,7 +95,7 @@
       "url": "/static/js/composer_state.js"
     }
   ],
-  "previousCacheVersion": "v21",
+  "previousCacheVersion": "v22",
   "pythonRuntime": {
     "baseUrl": "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/",
     "delivery": "pinned-cross-origin-cache",

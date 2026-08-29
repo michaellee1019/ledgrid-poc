@@ -28,3 +28,9 @@ compile_commands.json
 
 # Hardware review inputs are intentionally versioned with their audit package.
 !hardware/ledgrid-hat/**/reference/*.zip
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/

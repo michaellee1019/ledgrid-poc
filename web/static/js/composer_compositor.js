@@ -17,6 +17,23 @@
     const SOURCE_OVER = 'source-over';
     const KEYED = 'keyed';
     const CHANNEL_MAX = 255;
+    const LGIP_FIXED_HEADER_BYTES = 112;
+    const LGIP_SECTION_ENTRY_BYTES = 24;
+    const LGIP_SECTION_COUNT = 9;
+    const LGIP_PROFILE_HEADER_BYTES = (
+        LGIP_FIXED_HEADER_BYTES + LGIP_SECTION_ENTRY_BYTES * LGIP_SECTION_COUNT
+    );
+    const LGIP_CONTENT_DIGEST_OFFSET = 68;
+    const LGIP_CONTENT_DIGEST_BYTES = 32;
+    const FOLIAGE = 1;
+    const GLOBE = 2;
+
+    const FOREGROUND_TINTS = Object.freeze({
+        foliageCore: Object.freeze({alpha: 224, rgb: Object.freeze([4, 18, 8])}),
+        foliageEdge: Object.freeze({alpha: 216, rgb: Object.freeze([20, 78, 38])}),
+        globeCore: Object.freeze({alpha: 146, rgb: Object.freeze([52, 34, 16])}),
+        globeEdge: Object.freeze({alpha: 184, rgb: Object.freeze([178, 112, 42])}),
+    });
 
     class ComposerCompositorError extends Error {
         constructor(message) {
@@ -56,6 +73,178 @@
             return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
         }
         throw new ComposerCompositorError(`${name} must be an ArrayBuffer or byte array`);
+    }
+
+    function hexBytes(value) {
+        return Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    function decodeInstallationProfile(value, expectedDigest) {
+        const bytes = byteView(value, 'installation profile');
+        const digest = String(expectedDigest || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(digest) || /^0+$/.test(digest)) {
+            throw new ComposerCompositorError(
+                'installation profile digest must be a non-empty SHA-256 identity',
+            );
+        }
+        if (bytes.byteLength < LGIP_PROFILE_HEADER_BYTES || bytes.byteLength > 65535) {
+            throw new ComposerCompositorError('installation profile has an invalid byte count');
+        }
+        if (String.fromCharCode(...bytes.subarray(0, 4)) !== 'LGIP') {
+            throw new ComposerCompositorError('installation profile is not LGIP');
+        }
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        const exactHeader = [
+            [view.getUint16(4, false), 1, 'format version'],
+            [view.getUint16(6, false), LGIP_FIXED_HEADER_BYTES, 'fixed header size'],
+            [view.getUint32(8, false), 0, 'flags'],
+            [view.getUint16(12, false), 33, 'global strip count'],
+            [view.getUint16(14, false), 138, 'LED height'],
+            [view.getUint16(16, false), 0, 'strip origin'],
+            [view.getUint16(18, false), 33, 'represented strip count'],
+            [view.getUint32(20, false), 4554, 'pixel count'],
+            [view.getUint8(25), 7, 'globe-region count'],
+            [view.getUint16(26, false), LGIP_SECTION_COUNT, 'section count'],
+            [view.getUint16(28, false), LGIP_SECTION_ENTRY_BYTES, 'section entry size'],
+            [view.getUint32(32, false), bytes.byteLength, 'declared byte count'],
+        ];
+        for (const [actual, expected, label] of exactHeader) {
+            if (actual !== expected) {
+                throw new ComposerCompositorError(`installation profile ${label} is invalid`);
+            }
+        }
+        const embeddedDigest = hexBytes(bytes.subarray(
+            LGIP_CONTENT_DIGEST_OFFSET,
+            LGIP_CONTENT_DIGEST_OFFSET + LGIP_CONTENT_DIGEST_BYTES,
+        ));
+        if (embeddedDigest !== digest) {
+            throw new ComposerCompositorError(
+                'installation profile content identity does not match the verified renderer profile',
+            );
+        }
+
+        const sections = [];
+        let expectedOffset = LGIP_PROFILE_HEADER_BYTES;
+        for (let position = 0; position < LGIP_SECTION_COUNT; position += 1) {
+            const entry = LGIP_FIXED_HEADER_BYTES + position * LGIP_SECTION_ENTRY_BYTES;
+            const sectionId = view.getUint16(entry, false);
+            const elementWidth = view.getUint8(entry + 3);
+            const elementCount = view.getUint32(entry + 4, false);
+            const offset = view.getUint32(entry + 8, false);
+            const length = view.getUint32(entry + 12, false);
+            const reserved = view.getUint32(entry + 20, false);
+            if (
+                sectionId !== position + 1
+                || elementWidth !== 1
+                || elementCount !== 4554
+                || length !== 4554
+                || offset !== expectedOffset
+                || reserved !== 0
+                || offset + length > bytes.byteLength
+            ) {
+                throw new ComposerCompositorError(
+                    `installation profile section ${position + 1} is invalid`,
+                );
+            }
+            sections.push(bytes.slice(offset, offset + length));
+            expectedOffset = offset + length;
+        }
+        if (expectedOffset !== bytes.byteLength) {
+            throw new ComposerCompositorError(
+                'installation profile contains trailing or unreferenced bytes',
+            );
+        }
+
+        const category = sections[0];
+        const foliageEdge = sections[2];
+        const globeEdge = sections[3];
+        const globeRegion = sections[5];
+        let foliagePixels = 0;
+        let globePixels = 0;
+        for (let pixel = 0; pixel < category.length; pixel += 1) {
+            if (category[pixel] === FOLIAGE) foliagePixels += 1;
+            else if (category[pixel] === GLOBE) globePixels += 1;
+            else if (category[pixel] !== 0) {
+                throw new ComposerCompositorError('installation profile category is invalid');
+            }
+            if (
+                foliageEdge[pixel] > 1
+                || globeEdge[pixel] > 1
+                || globeRegion[pixel] > 7
+                || (category[pixel] === GLOBE) !== (globeRegion[pixel] !== 0)
+            ) {
+                throw new ComposerCompositorError(
+                    'installation profile foreground geometry is inconsistent',
+                );
+            }
+        }
+        return Object.freeze({
+            digest,
+            width: 33,
+            height: 138,
+            category,
+            foliageEdge,
+            globeEdge,
+            globeRegion,
+            foliagePixels,
+            globePixels,
+        });
+    }
+
+    function tintChannel(source, tint, alpha) {
+        return Math.floor((source * (CHANNEL_MAX - alpha) + tint * alpha + 127) / CHANNEL_MAX);
+    }
+
+    /**
+     * Add calibrated physical occlusion to image-style RGBA presentation bytes
+     * without changing the canonical renderer frame used for Check or activation.
+     */
+    function applyInstallationForeground({width, height, rgba, profile}) {
+        const resolvedWidth = positiveInteger(width, 'width');
+        const resolvedHeight = positiveInteger(height, 'height');
+        if (
+            !profile
+            || profile.width !== resolvedWidth
+            || profile.height !== resolvedHeight
+            || !(profile.category instanceof Uint8Array)
+        ) {
+            throw new ComposerCompositorError(
+                'installation foreground profile must match the preview geometry',
+            );
+        }
+        const input = byteView(rgba, 'rgba');
+        if (input.byteLength !== resolvedWidth * resolvedHeight * 4) {
+            throw new ComposerCompositorError(
+                `rgba must contain ${resolvedWidth * resolvedHeight * 4} bytes`,
+            );
+        }
+        const output = new Uint8ClampedArray(input);
+        for (let strip = 0; strip < resolvedWidth; strip += 1) {
+            for (let led = 0; led < resolvedHeight; led += 1) {
+                const profilePixel = strip * resolvedHeight + led;
+                const category = profile.category[profilePixel];
+                if (category === 0) continue;
+                const tint = category === FOLIAGE
+                    ? (profile.foliageEdge[profilePixel]
+                        ? FOREGROUND_TINTS.foliageEdge
+                        : FOREGROUND_TINTS.foliageCore)
+                    : (profile.globeEdge[profilePixel]
+                        ? FOREGROUND_TINTS.globeEdge
+                        : FOREGROUND_TINTS.globeCore);
+                const rgbaOffset = (
+                    (resolvedHeight - 1 - led) * resolvedWidth + strip
+                ) * 4;
+                output[rgbaOffset] = tintChannel(output[rgbaOffset], tint.rgb[0], tint.alpha);
+                output[rgbaOffset + 1] = tintChannel(
+                    output[rgbaOffset + 1], tint.rgb[1], tint.alpha,
+                );
+                output[rgbaOffset + 2] = tintChannel(
+                    output[rgbaOffset + 2], tint.rgb[2], tint.alpha,
+                );
+                output[rgbaOffset + 3] = CHANNEL_MAX;
+            }
+        }
+        return output;
     }
 
     function keyValue(value, layerIndex) {
@@ -241,8 +430,10 @@
     }
 
     return {
+        applyInstallationForeground,
         ComposerCompositorError,
         composeLayers,
+        decodeInstallationProfile,
         roundU8Product,
     };
 });

@@ -259,6 +259,57 @@ process.stdout.write(JSON.stringify({errors}));
         self.assertIn("3 bytes", result["errors"][0])
         self.assertIn("premultiplied RGBA", result["errors"][1])
 
+    def test_verified_profile_adds_physical_foliage_and_globes_to_presentation(self) -> None:
+        script = r"""
+const fs = require('fs');
+const {
+  applyInstallationForeground,
+  decodeInstallationProfile,
+} = require(process.argv[1]);
+const bytes = fs.readFileSync(process.argv[2]);
+const digest = bytes.subarray(68, 100).toString('hex');
+const profile = decodeInstallationProfile(bytes, digest);
+const rgba = new Uint8ClampedArray(33 * 138 * 4);
+for (let pixel = 0; pixel < 33 * 138; ++pixel) {
+  rgba.set([120, 120, 120, 255], pixel * 4);
+}
+const before = Buffer.from(rgba);
+const output = applyInstallationForeground({width: 33, height: 138, rgba, profile});
+const presentationOffset = pixel => {
+  const strip = Math.floor(pixel / 138);
+  const led = pixel % 138;
+  return ((137 - led) * 33 + strip) * 4;
+};
+const foliage = profile.category.findIndex(value => value === 1);
+const globe = profile.category.findIndex(value => value === 2);
+const open = profile.category.findIndex(value => value === 0);
+const sample = pixel => Array.from(output.slice(
+  presentationOffset(pixel), presentationOffset(pixel) + 4
+));
+let wrongDigest = null;
+try { decodeInstallationProfile(bytes, 'f'.repeat(64)); }
+catch (error) { wrongDigest = error.message; }
+process.stdout.write(JSON.stringify({
+  digest: profile.digest,
+  foliagePixels: profile.foliagePixels,
+  globePixels: profile.globePixels,
+  foliage: sample(foliage),
+  globe: sample(globe),
+  open: sample(open),
+  unchanged: before.equals(Buffer.from(rgba)),
+  wrongDigest,
+}));
+"""
+        result = _node(script, str(COMPOSITOR), str(PROFILE_PATH))
+        self.assertEqual(result["digest"], PROFILE_DIGEST)
+        self.assertEqual(result["foliagePixels"], 379)
+        self.assertEqual(result["globePixels"], 356)
+        self.assertNotEqual(result["foliage"], [120, 120, 120, 255])
+        self.assertNotEqual(result["globe"], [120, 120, 120, 255])
+        self.assertEqual(result["open"], [120, 120, 120, 255])
+        self.assertTrue(result["unchanged"])
+        self.assertIn("identity does not match", result["wrongDigest"])
+
 
 if __name__ == "__main__":
     unittest.main()

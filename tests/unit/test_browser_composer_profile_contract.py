@@ -90,6 +90,21 @@ class BrowserComposerProfileContractTests(unittest.TestCase):
         self.assertEqual(self.composer.count("new ComposerRuntime("), 6)
         self.assertEqual(self.composer.count("composerRuntimeOptions("), 7)
 
+    def test_preview_presents_verified_physical_foreground_without_mutating_frames(self) -> None:
+        compositor = (ROOT / "web/static/js/composer_compositor.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("decodeInstallationProfile", compositor)
+        self.assertIn("applyInstallationForeground", compositor)
+        self.assertIn("installationProfileView", self.runtime)
+        self.assertIn(
+            "state.installationForeground = await draft.installationProfileView()",
+            self.composer,
+        )
+        self.assertIn("applyInstallationForeground({", self.composer)
+        self.assertIn("calibrated foliage and globe foreground", self.composer)
+        self.assertIn("calibrated foliage and globe foreground", self.template)
+
     def test_both_workers_verify_embedded_lgip_content_digest(self) -> None:
         for worker in (self.python_worker, self.native_worker):
             self.assertIn("import {sha256Bytes} from './composer_sha256.js'", worker)

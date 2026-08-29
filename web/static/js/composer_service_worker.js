@@ -1,8 +1,8 @@
 'use strict';
 
 const CACHE_PREFIX = 'ledgrid-composer-shell-';
-const PREVIOUS_CACHE_VERSION = 'v21';
-const CACHE_VERSION = 'v22';
+const PREVIOUS_CACHE_VERSION = 'v22';
+const CACHE_VERSION = 'v23';
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 const STAGING_CACHE_NAME = `${CACHE_NAME}-staging`;
 const RUNTIME_CACHE_NAME = `${CACHE_NAME}-python-runtime`;
