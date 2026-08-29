@@ -3,7 +3,8 @@
 ## Scope and release rule
 
 These criteria apply to the current product at `/`, `/control`, `/painter`, and
-the canonical Emoji workspace `/emoji`. Prototype pages are out of scope.
+the canonical Emoji workspace `/emoji`, including their guarded Composer
+handoffs.
 
 The redesign is accepted only when every P0 and P1 criterion below passes in the
 running application at desktop and narrow mobile widths. A criterion is not
@@ -67,7 +68,7 @@ accepted from source inspection alone when it describes interactive behavior.
    raw status, component tests, and Tetris are still reachable.
 8. Repeat the navigation and primary actions with a keyboard and at 390×844.
 
-## Traceability to the original review
+## Product decision traceability
 
 | Original finding or recommendation | Acceptance coverage |
 |---|---|
@@ -84,3 +85,21 @@ accepted from source inspection alone when it describes interactive behavior.
 | Schema/capability-driven controls with no raw paths/objects and exact precision | PARAM-01 through PARAM-03 |
 | Complete labels and values with no ellipsis or clipped text | TEXT-01 |
 | Responsive and accessible operation | A11Y-01, A11Y-02, RESP-01, TEXT-01, QUAL-01 |
+
+## Durable decision continuity
+
+The following constraints are current product requirements. They preserve the
+useful conclusions from prior exploration without preserving alternate shells,
+example endpoints, or simulated control surfaces.
+
+| Durable decision | Current contract and implementation boundary |
+| --- | --- |
+| Desired state is never presented as observed wall state. | `LIVE-03` requires an accepted command to remain Pending until correlated identity evidence is observed; `LIVE-05` requires refresh reconciliation rather than stale local state. |
+| Phone operation has one clear active workspace and no hidden focus path. | `RESP-01` and `A11Y-01` require the active workspace, navigation, and primary controls to remain reachable at 390×844 with keyboard operation and without overlap. Composer's mobile navigation keeps inactive panels out of the active interaction path. |
+| Every consequential operation names its target and its action scope. | `LIVE-03`, `CAP-01`, and `CONS-03` require guarded Composer activation, one clear owner per mutation, and an explicit distinction between draft loading, Preview, Mirror to wall, and live activation. |
+| Provider, readiness, and preview provenance are distinct facts. | `CAP-01` requires guarded catalog activation; Composer and the animation-system contract expose provider-qualified identity, readiness, and preview provenance without treating catalog visibility as execution authority. |
+| Divergence preserves work and has an explicit recovery path. | `LIVE-02`, `LIVE-03`, and `QUAL-01` require drafts to remain private until deliberate action, blocked/failed actions to retain actionable state, and no success claim before server confirmation. |
+| Discovery remains complete without taking output live. | `DISC-01` through `DISC-05` require search, composable category/type/saved filters, durable Favorites and Recent views, and progressive disclosure that preserves the active filter state. |
+
+No historical executable UI, API example, scorecard, or evaluation artifact is a
+current product contract.

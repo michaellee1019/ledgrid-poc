@@ -25,15 +25,6 @@ class GuardedUiLegacyDebtTests(unittest.TestCase):
             ROOT / "web" / "templates" / "studio_next.html"
         ).read_text(encoding="utf-8")
         cls.web_readme = (ROOT / "web" / "README.md").read_text(encoding="utf-8")
-        cls.wall_conductor_readme = (
-            ROOT / "prototypes" / "wall-conductor" / "README.md"
-        ).read_text(encoding="utf-8")
-        cls.finder_decisions = (
-            ROOT / "prototypes" / "finder-wall-studio" / "PRODUCT_DECISIONS.md"
-        ).read_text(encoding="utf-8")
-        cls.studio_synthesis = (
-            ROOT / "prototypes" / "evaluations" / "SYNTHESIS.md"
-        ).read_text(encoding="utf-8")
         cls.web_app = (ROOT / "web" / "app.py").read_text(encoding="utf-8")
 
     def test_browser_contract_requires_check_envelope_and_correlated_resource(self) -> None:
@@ -95,19 +86,6 @@ class GuardedUiLegacyDebtTests(unittest.TestCase):
             "rejected with 428; load the preset as a draft and use Composer Check",
             compact,
         )
-
-    def test_unwired_prototype_maps_are_explicitly_historical(self) -> None:
-        for artifact in (
-            self.wall_conductor_readme,
-            self.finder_decisions,
-            self.studio_synthesis,
-        ):
-            with self.subTest(heading=artifact.splitlines()[0]):
-                compact = " ".join(artifact.casefold().split())
-                self.assertIn("superseded", compact)
-                self.assertIn("composer check", compact)
-                self.assertIn("managed", compact)
-                self.assertIn("installation-profile", compact)
 
     def test_fail_closed_aliases_preserve_stop_and_read_only_mask_boundaries(self) -> None:
         for alias in (

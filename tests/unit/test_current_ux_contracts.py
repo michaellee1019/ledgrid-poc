@@ -147,6 +147,24 @@ class CurrentUxContractTests(unittest.TestCase):
         self.assertIn('class="form-label small fw-semibold mb-1" for="painterPresetSelect"', self.painter)
         self.assertIn('class="form-label small fw-semibold mb-1" for="painterPresetName"', self.painter)
 
+    def test_durable_ux_decisions_are_mapped_to_current_acceptance(self):
+        contract = (ROOT / "docs" / "CURRENT_UX_ACCEPTANCE.md").read_text(
+            encoding="utf-8"
+        )
+        for decision in (
+            "Desired state is never presented as observed wall state.",
+            "Phone operation has one clear active workspace and no hidden focus path.",
+            "Every consequential operation names its target and its action scope.",
+            "Provider, readiness, and preview provenance are distinct facts.",
+            "Divergence preserves work and has an explicit recovery path.",
+            "Discovery remains complete without taking output live.",
+        ):
+            with self.subTest(decision=decision):
+                self.assertIn(decision, contract)
+        self.assertIn("Pending until correlated identity evidence is observed", contract)
+        self.assertIn("durable Favorites and Recent views", contract)
+        self.assertIn("No historical executable UI, API example, scorecard", contract)
+
 
 if __name__ == "__main__":
     unittest.main()
