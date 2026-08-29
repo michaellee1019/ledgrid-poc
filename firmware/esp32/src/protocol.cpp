@@ -99,32 +99,33 @@ constexpr std::uint8_t fec_gf_inverse(std::uint8_t value) {
 constexpr std::size_t kFecV5BurstSpanSymbols = kFecParityBytes - 1U;
 constexpr std::size_t kFecV5BurstSpanStarts =
     kFecCodewordBytes - kFecV5BurstSpanSymbols + 1U;
-using FecV5BurstInverse = std::array<
-    std::array<std::uint8_t, kFecV5BurstSpanSymbols>,
-    kFecV5BurstSpanSymbols>;
+constexpr std::size_t kFecV5MaximumBurstSpanSymbols = kFecParityBytes;
+constexpr std::size_t kFecV5MaximumBurstSpanStarts =
+    kFecCodewordBytes - kFecV5MaximumBurstSpanSymbols + 1U;
 
-template <std::size_t First, std::size_t Count>
-constexpr std::array<FecV5BurstInverse, Count>
+template <std::size_t Span>
+using FecV5BurstInverse =
+    std::array<std::array<std::uint8_t, Span>, Span>;
+
+template <std::size_t Span, std::size_t First, std::size_t Count>
+constexpr std::array<FecV5BurstInverse<Span>, Count>
 make_fec_v5_burst_inverses() {
-  std::array<FecV5BurstInverse, Count> output{};
+  std::array<FecV5BurstInverse<Span>, Count> output{};
   for (std::size_t local = 0; local < Count; ++local) {
     const std::size_t first = First + local;
     std::array<
-        std::array<std::uint8_t, 2U * kFecV5BurstSpanSymbols>,
-        kFecV5BurstSpanSymbols> augmented{};
-    for (std::size_t row = 0; row < kFecV5BurstSpanSymbols; ++row) {
-      for (std::size_t column = 0;
-           column < kFecV5BurstSpanSymbols; ++column) {
+        std::array<std::uint8_t, 2U * Span>, Span> augmented{};
+    for (std::size_t row = 0; row < Span; ++row) {
+      for (std::size_t column = 0; column < Span; ++column) {
         augmented[row][column] = fec_gf_power(
             static_cast<std::uint8_t>(first + column + 1U),
             static_cast<std::uint8_t>(row));
       }
-      augmented[row][kFecV5BurstSpanSymbols + row] = 1U;
+      augmented[row][Span + row] = 1U;
     }
-    for (std::size_t pivot = 0;
-         pivot < kFecV5BurstSpanSymbols; ++pivot) {
+    for (std::size_t pivot = 0; pivot < Span; ++pivot) {
       std::size_t pivot_row = pivot;
-      while (pivot_row < kFecV5BurstSpanSymbols &&
+      while (pivot_row < Span &&
              augmented[pivot_row][pivot] == 0U) {
         ++pivot_row;
       }
@@ -135,43 +136,65 @@ make_fec_v5_burst_inverses() {
       }
       const std::uint8_t inverse =
           fec_gf_inverse(augmented[pivot][pivot]);
-      for (std::size_t column = 0;
-           column < 2U * kFecV5BurstSpanSymbols; ++column) {
+      for (std::size_t column = 0; column < 2U * Span; ++column) {
         augmented[pivot][column] =
             fec_gf_multiply(augmented[pivot][column], inverse);
       }
-      for (std::size_t row = 0;
-           row < kFecV5BurstSpanSymbols; ++row) {
+      for (std::size_t row = 0; row < Span; ++row) {
         if (row == pivot || augmented[row][pivot] == 0U) continue;
         const std::uint8_t scale = augmented[row][pivot];
-        for (std::size_t column = 0;
-             column < 2U * kFecV5BurstSpanSymbols; ++column) {
+        for (std::size_t column = 0; column < 2U * Span; ++column) {
           augmented[row][column] ^=
               fec_gf_multiply(scale, augmented[pivot][column]);
         }
       }
     }
-    for (std::size_t row = 0; row < kFecV5BurstSpanSymbols; ++row) {
-      for (std::size_t column = 0;
-           column < kFecV5BurstSpanSymbols; ++column) {
+    for (std::size_t row = 0; row < Span; ++row) {
+      for (std::size_t column = 0; column < Span; ++column) {
         output[local][row][column] =
-            augmented[row][kFecV5BurstSpanSymbols + column];
+            augmented[row][Span + column];
       }
     }
   }
   return output;
 }
 
-constexpr auto kFecV5BurstInverses0 = make_fec_v5_burst_inverses<0U, 7U>();
-constexpr auto kFecV5BurstInverses1 = make_fec_v5_burst_inverses<7U, 7U>();
-constexpr auto kFecV5BurstInverses2 = make_fec_v5_burst_inverses<14U, 7U>();
-constexpr auto kFecV5BurstInverses3 = make_fec_v5_burst_inverses<21U, 7U>();
-constexpr auto kFecV5BurstInverses4 = make_fec_v5_burst_inverses<28U, 7U>();
-constexpr auto kFecV5BurstInverses5 = make_fec_v5_burst_inverses<35U, 7U>();
-constexpr auto kFecV5BurstInverses6 = make_fec_v5_burst_inverses<42U, 7U>();
-constexpr auto kFecV5BurstInverses7 = make_fec_v5_burst_inverses<49U, 3U>();
+constexpr auto kFecV5BurstInverses0 =
+    make_fec_v5_burst_inverses<kFecV5BurstSpanSymbols, 0U, 7U>();
+constexpr auto kFecV5BurstInverses1 =
+    make_fec_v5_burst_inverses<kFecV5BurstSpanSymbols, 7U, 7U>();
+constexpr auto kFecV5BurstInverses2 =
+    make_fec_v5_burst_inverses<kFecV5BurstSpanSymbols, 14U, 7U>();
+constexpr auto kFecV5BurstInverses3 =
+    make_fec_v5_burst_inverses<kFecV5BurstSpanSymbols, 21U, 7U>();
+constexpr auto kFecV5BurstInverses4 =
+    make_fec_v5_burst_inverses<kFecV5BurstSpanSymbols, 28U, 7U>();
+constexpr auto kFecV5BurstInverses5 =
+    make_fec_v5_burst_inverses<kFecV5BurstSpanSymbols, 35U, 7U>();
+constexpr auto kFecV5BurstInverses6 =
+    make_fec_v5_burst_inverses<kFecV5BurstSpanSymbols, 42U, 7U>();
+constexpr auto kFecV5BurstInverses7 =
+    make_fec_v5_burst_inverses<kFecV5BurstSpanSymbols, 49U, 3U>();
 
-const FecV5BurstInverse& fec_v5_burst_inverse(std::size_t first) {
+constexpr auto kFecV5MaximumBurstInverses0 =
+    make_fec_v5_burst_inverses<kFecV5MaximumBurstSpanSymbols, 0U, 7U>();
+constexpr auto kFecV5MaximumBurstInverses1 =
+    make_fec_v5_burst_inverses<kFecV5MaximumBurstSpanSymbols, 7U, 7U>();
+constexpr auto kFecV5MaximumBurstInverses2 =
+    make_fec_v5_burst_inverses<kFecV5MaximumBurstSpanSymbols, 14U, 7U>();
+constexpr auto kFecV5MaximumBurstInverses3 =
+    make_fec_v5_burst_inverses<kFecV5MaximumBurstSpanSymbols, 21U, 7U>();
+constexpr auto kFecV5MaximumBurstInverses4 =
+    make_fec_v5_burst_inverses<kFecV5MaximumBurstSpanSymbols, 28U, 7U>();
+constexpr auto kFecV5MaximumBurstInverses5 =
+    make_fec_v5_burst_inverses<kFecV5MaximumBurstSpanSymbols, 35U, 7U>();
+constexpr auto kFecV5MaximumBurstInverses6 =
+    make_fec_v5_burst_inverses<kFecV5MaximumBurstSpanSymbols, 42U, 7U>();
+constexpr auto kFecV5MaximumBurstInverses7 =
+    make_fec_v5_burst_inverses<kFecV5MaximumBurstSpanSymbols, 49U, 2U>();
+
+const FecV5BurstInverse<kFecV5BurstSpanSymbols>&
+fec_v5_burst_inverse(std::size_t first) {
   if (first < 7U) return kFecV5BurstInverses0[first];
   if (first < 14U) return kFecV5BurstInverses1[first - 7U];
   if (first < 21U) return kFecV5BurstInverses2[first - 14U];
@@ -180,6 +203,18 @@ const FecV5BurstInverse& fec_v5_burst_inverse(std::size_t first) {
   if (first < 42U) return kFecV5BurstInverses5[first - 35U];
   if (first < 49U) return kFecV5BurstInverses6[first - 42U];
   return kFecV5BurstInverses7[first - 49U];
+}
+
+const FecV5BurstInverse<kFecV5MaximumBurstSpanSymbols>&
+fec_v5_maximum_burst_inverse(std::size_t first) {
+  if (first < 7U) return kFecV5MaximumBurstInverses0[first];
+  if (first < 14U) return kFecV5MaximumBurstInverses1[first - 7U];
+  if (first < 21U) return kFecV5MaximumBurstInverses2[first - 14U];
+  if (first < 28U) return kFecV5MaximumBurstInverses3[first - 21U];
+  if (first < 35U) return kFecV5MaximumBurstInverses4[first - 28U];
+  if (first < 42U) return kFecV5MaximumBurstInverses5[first - 35U];
+  if (first < 49U) return kFecV5MaximumBurstInverses6[first - 42U];
+  return kFecV5MaximumBurstInverses7[first - 49U];
 }
 
 std::uint8_t parity8(std::uint8_t value) {
@@ -835,30 +870,42 @@ bool fec_v5_solve_contiguous_span(
       kFecV5BurstSpanSymbols);
 }
 
-bool fec_v5_systematic_payload_valid(
-    const std::uint8_t* packet,
-    std::size_t codewords,
-    std::uint8_t* scratch) {
-  const std::size_t decoded_capacity = codewords * kFecDataBytes;
-  const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;
-  for (std::size_t block = 0; block < codewords; ++block) {
-    for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
-      scratch[block * kFecDataBytes + symbol] =
-          packet[matrix_offset + symbol * codewords + block];
+bool fec_v5_solve_maximum_contiguous_span(
+    const std::uint8_t* syndromes,
+    std::size_t first,
+    std::uint8_t* correction_values) {
+  if (syndromes == nullptr || correction_values == nullptr ||
+      first >= kFecV5MaximumBurstSpanStarts) {
+    return false;
+  }
+  const auto& inverse = fec_v5_maximum_burst_inverse(first);
+  for (std::size_t row = 0;
+       row < kFecV5MaximumBurstSpanSymbols; ++row) {
+    correction_values[row] = 0U;
+    for (std::size_t column = 0;
+         column < kFecV5MaximumBurstSpanSymbols; ++column) {
+      correction_values[row] ^=
+          fec_gf_multiply(inverse[row][column], syndromes[column]);
     }
   }
+  return true;
+}
 
+bool fec_v5_decoded_payload_valid(
+    const std::uint8_t* decoded, std::size_t codewords) {
+  if (decoded == nullptr) return false;
+  const std::size_t decoded_capacity = codewords * kFecDataBytes;
   if (decoded_capacity < kFecEnvelopeHeaderBytes +
                              kAlignedEnvelopeHeaderBytes + 1U +
                              kAnimationPipelineCrcBytes ||
-      scratch[0] != static_cast<std::uint8_t>(
+      decoded[0] != static_cast<std::uint8_t>(
           ReceiverCommand::AlignedEnvelope) ||
-      scratch[1] != kFecEnvelopeVersion) {
+      decoded[1] != kFecEnvelopeVersion) {
     return false;
   }
   const std::size_t inner_wire_size =
-      (static_cast<std::size_t>(scratch[2]) << 8U) | scratch[3];
-  const std::uint8_t* inner = scratch + kFecEnvelopeHeaderBytes;
+      (static_cast<std::size_t>(decoded[2]) << 8U) | decoded[3];
+  const std::uint8_t* inner = decoded + kFecEnvelopeHeaderBytes;
   if (inner_wire_size < kAlignedEnvelopeHeaderBytes + 1U +
                             kAnimationPipelineCrcBytes ||
       inner_wire_size > decoded_capacity - kFecEnvelopeHeaderBytes ||
@@ -886,9 +933,23 @@ bool fec_v5_systematic_payload_valid(
   if (required_codewords != codewords) return false;
   for (std::size_t index = kFecEnvelopeHeaderBytes + inner_wire_size;
        index < decoded_capacity; ++index) {
-    if (scratch[index] != 0U) return false;
+    if (decoded[index] != 0U) return false;
   }
   return receiver_packet_crc_valid(inner, inner_wire_size);
+}
+
+bool fec_v5_systematic_payload_valid(
+    const std::uint8_t* packet,
+    std::size_t codewords,
+    std::uint8_t* scratch) {
+  const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;
+  for (std::size_t block = 0; block < codewords; ++block) {
+    for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
+      scratch[block * kFecDataBytes + symbol] =
+          packet[matrix_offset + symbol * codewords + block];
+    }
+  }
+  return fec_v5_decoded_payload_valid(scratch, codewords);
 }
 
 ReceiverFecPacketOutcome receiver_fec_packet_outcome(
@@ -1007,6 +1068,10 @@ bool decode_receiver_packet_payload(
     const bool systematic_payload_valid = fec_v5_systematic_payload_valid(
         packet, codewords, scratch);
     std::size_t contiguous_burst_hint = kFecCodewordBytes;
+    bool maximum_burst_blocks[kFecMaxCodewords] = {};
+    std::uint8_t maximum_burst_syndromes
+        [kFecMaxCodewords][kFecParityBytes] = {};
+    std::size_t maximum_burst_block_count = 0U;
     for (std::size_t block = 0;
          !systematic_payload_valid && block < codewords; ++block) {
       std::uint8_t syndromes[kFecParityBytes] = {};
@@ -1130,17 +1195,21 @@ bool decode_receiver_packet_payload(
           return false;
         }();
         if (!contiguous_burst_recovery) {
-          if (report != nullptr) {
-            report->result = ReceiverPacketDecodeResult::FecUncorrectable;
+          maximum_burst_blocks[block] = true;
+          std::copy(
+              std::begin(syndromes), std::end(syndromes),
+              maximum_burst_syndromes[block]);
+          ++maximum_burst_block_count;
+          correction_count = 0U;
+        } else {
+          ++corrected_codewords;
+          for (std::size_t correction = 0;
+               correction < correction_count; ++correction) {
+            corrected_bits = static_cast<std::uint16_t>(
+                corrected_bits + __builtin_popcount(
+                    static_cast<unsigned int>(
+                        correction_values[correction])));
           }
-          return false;
-        }
-        ++corrected_codewords;
-        for (std::size_t correction = 0;
-             correction < correction_count; ++correction) {
-          corrected_bits = static_cast<std::uint16_t>(
-              corrected_bits + __builtin_popcount(static_cast<unsigned int>(
-                  correction_values[correction])));
         }
       }
       for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
@@ -1154,6 +1223,107 @@ bool decode_receiver_packet_payload(
         }
         scratch[block * kFecDataBytes + symbol] = value;
       }
+    }
+    if (!systematic_payload_valid && maximum_burst_block_count != 0U) {
+      // A burst longer than nine interleave columns leaves a contiguous run
+      // of codewords with ten damaged symbols. Ten equations solve those
+      // erasures but cannot independently validate their unknown location, so
+      // accept only one location that reconstructs the complete canonical
+      // inner frame and its end-to-end CRC. A burst wrapping the interleave row
+      // boundary uses adjacent symbol spans on its prefix and suffix blocks.
+      std::size_t linear_runs = 0U;
+      for (std::size_t block = 0; block < codewords; ++block) {
+        if (maximum_burst_blocks[block] &&
+            (block == 0U || !maximum_burst_blocks[block - 1U])) {
+          ++linear_runs;
+        }
+      }
+      const bool wrapped = maximum_burst_block_count < codewords &&
+          maximum_burst_blocks[0] &&
+          maximum_burst_blocks[codewords - 1U];
+      const bool valid_shape = wrapped ? linear_runs == 2U : linear_runs == 1U;
+      if (!valid_shape) {
+        if (report != nullptr) {
+          report->result = ReceiverPacketDecodeResult::FecUncorrectable;
+        }
+        return false;
+      }
+      std::size_t wrapped_prefix_blocks = 0U;
+      while (wrapped_prefix_blocks < codewords &&
+             maximum_burst_blocks[wrapped_prefix_blocks]) {
+        ++wrapped_prefix_blocks;
+      }
+
+      const auto apply_maximum_burst_candidate = [&](
+          std::size_t first,
+          std::uint16_t* candidate_codewords,
+          std::uint16_t* candidate_bits) {
+        std::uint16_t local_codewords = 0U;
+        std::uint16_t local_bits = 0U;
+        for (std::size_t block = 0; block < codewords; ++block) {
+          if (!maximum_burst_blocks[block]) continue;
+          const std::size_t block_first =
+              wrapped && block < wrapped_prefix_blocks
+                  ? first + 1U
+                  : first;
+          if (block_first >= kFecV5MaximumBurstSpanStarts) return false;
+          std::uint8_t values[kFecV5MaximumBurstSpanSymbols] = {};
+          if (!fec_v5_solve_maximum_contiguous_span(
+                  maximum_burst_syndromes[block], block_first, values)) {
+            return false;
+          }
+          ++local_codewords;
+          for (std::size_t index = 0;
+               index < kFecV5MaximumBurstSpanSymbols; ++index) {
+            local_bits = static_cast<std::uint16_t>(
+                local_bits + __builtin_popcount(
+                    static_cast<unsigned int>(values[index])));
+          }
+          for (std::size_t symbol = 0; symbol < kFecDataBytes; ++symbol) {
+            std::uint8_t value = packet[
+                matrix_offset + symbol * codewords + block];
+            if (symbol >= block_first &&
+                symbol < block_first + kFecV5MaximumBurstSpanSymbols) {
+              value ^= values[symbol - block_first];
+            }
+            scratch[block * kFecDataBytes + symbol] = value;
+          }
+        }
+        if (!fec_v5_decoded_payload_valid(scratch, codewords)) return false;
+        if (candidate_codewords != nullptr) {
+          *candidate_codewords = local_codewords;
+        }
+        if (candidate_bits != nullptr) *candidate_bits = local_bits;
+        return true;
+      };
+
+      std::size_t matching_first = kFecCodewordBytes;
+      std::size_t matching_count = 0U;
+      const std::size_t candidate_starts = wrapped
+          ? kFecV5MaximumBurstSpanStarts - 1U
+          : kFecV5MaximumBurstSpanStarts;
+      for (std::size_t first = 0; first < candidate_starts; ++first) {
+        if (apply_maximum_burst_candidate(first, nullptr, nullptr)) {
+          matching_first = first;
+          ++matching_count;
+          if (matching_count > 1U) break;
+        }
+      }
+      std::uint16_t maximum_corrected_codewords = 0U;
+      std::uint16_t maximum_corrected_bits = 0U;
+      if (matching_count != 1U ||
+          !apply_maximum_burst_candidate(
+              matching_first, &maximum_corrected_codewords,
+              &maximum_corrected_bits)) {
+        if (report != nullptr) {
+          report->result = ReceiverPacketDecodeResult::FecUncorrectable;
+        }
+        return false;
+      }
+      corrected_codewords = static_cast<std::uint16_t>(
+          corrected_codewords + maximum_corrected_codewords);
+      corrected_bits = static_cast<std::uint16_t>(
+          corrected_bits + maximum_corrected_bits);
     }
   } else if (fec_v4) {
     const std::size_t matrix_offset = kFecEnvelopeHeaderBytes;

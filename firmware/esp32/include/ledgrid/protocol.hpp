@@ -90,8 +90,9 @@ constexpr std::size_t kFecV4EnvelopeMaxSemanticBytes =
 // Ten parity symbols correct five arbitrary byte errors in each 50-byte data
 // codeword. Interleaving 68 codewords corrects 340 bytes without assuming an
 // error shape; the bounded contiguous-erasure fallback uses nine syndromes to
-// repair an installed-link burst through 612 bytes and the tenth to validate
-// the candidate before mutation.
+// repair 612 bytes and the tenth to validate that candidate. Bursts through
+// 679 bytes may consume all ten syndromes in a contiguous run of codewords and
+// are accepted only after unique canonical whole-frame CRC validation.
 // The installed broad-frame wire size remains 4,088 bytes.
 constexpr std::uint8_t kFecEnvelopeVersion = 5;
 constexpr std::size_t kFecDataBytes = 50;

@@ -1233,12 +1233,33 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
   TEST_ASSERT_EQUAL_UINT16(codewords * 36U, burst_report.corrected_bits);
   TEST_ASSERT_EQUAL_MEMORY(semantic.data(), burst_decoded.data, semantic.size());
 
-  // Ten complete columns consume every syndrome as an erasure equation and
-  // leave no independent RS check. Keep that larger shape outside the bounded
-  // correction contract rather than accepting an unvalidated candidate.
+  // A longer contiguous burst gives three codewords ten errors and leaves
+  // the rest independently validated at nine. The ten-error run is accepted
+  // only because exactly one span restores the canonical whole-frame CRC.
+  auto maximum_burst = canonical;
+  constexpr std::size_t kMaximumExtraBytes = 3U;
+  for (std::size_t offset = 0;
+       offset < 9U * codewords + kMaximumExtraBytes; ++offset) {
+    maximum_burst[burst_start + offset] ^= 0xA5U;
+  }
+  ledgrid::ReceiverPacketPayload maximum_burst_decoded{};
+  ledgrid::ReceiverPacketDecodeReport maximum_burst_report{};
+  TEST_ASSERT_TRUE(ledgrid::decode_receiver_packet_payload(
+      maximum_burst.data(), maximum_burst.size(),
+      &maximum_burst_decoded, &maximum_burst_report,
+      scratch.data(), scratch.size()));
+  TEST_ASSERT_EQUAL_UINT16(codewords, maximum_burst_report.corrected_codewords);
+  TEST_ASSERT_EQUAL_UINT16(
+      (9U * codewords + kMaximumExtraBytes) * 4U,
+      maximum_burst_report.corrected_bits);
+  TEST_ASSERT_EQUAL_MEMORY(
+      semantic.data(), maximum_burst_decoded.data, semantic.size());
+
+  // Eleven columns exceed both the independently validated and whole-frame
+  // bounded shapes and remain terminal.
   auto over_radius_burst = canonical;
-  for (std::size_t offset = 0; offset < 10U * codewords; ++offset) {
-    over_radius_burst[burst_start + offset] ^= 0xA5U;
+  for (std::size_t offset = 0; offset < 11U * codewords; ++offset) {
+    over_radius_burst[matrix + offset] ^= 0xA5U;
   }
   ledgrid::ReceiverPacketPayload over_radius_decoded{};
   ledgrid::ReceiverPacketDecodeReport over_radius_report{};
