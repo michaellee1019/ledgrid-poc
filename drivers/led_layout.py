@@ -25,15 +25,15 @@ WALL_DEVICE_MAP: Tuple[DeviceMapEntry, ...] = (
     (1, 2),
 )
 
-# Receiver 3's installed SPI1.0 branch is measurably more susceptible to
-# receiver-output switching than the other four routes. Keep that containment
-# local to the affected route so the shared SPI1 bus and its healthy receivers
-# retain their qualified 20 MHz clock.
+# Receiver 3's protected SPI1.0 transfer is isolated from cross-controller DMA
+# overlap in ``MultiDeviceLEDController``. All routes retain the established
+# 20 MHz clock; the dispatch boundary, rather than a per-route clock reduction,
+# contains the remaining speed-independent corruption trial.
 WALL_RECEIVER_SPI_SPEEDS_HZ = (
     20_000_000,
     20_000_000,
     20_000_000,
-    8_000_000,
+    20_000_000,
     20_000_000,
 )
 

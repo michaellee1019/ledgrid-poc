@@ -240,25 +240,26 @@ enabled count before health acceptance, preserving the firmware-first rolling
 order. The outer CRC replaces, rather than nests, the legacy command CRC;
 existing valid/invalid CRC counters retain their integrity meaning.
 
-Logical receiver 3 alone may negotiate aligned-envelope v5 after the Host has
-been explicitly configured and has observed capability `fec_envelope_v5 =
-1<<18` in three fresh, strictly counter-advancing status snapshots. The
+Logical receiver 3 alone may negotiate aligned-envelope v6 after the Host has
+been explicitly configured and has observed capability `fec_envelope_v6 =
+1<<19` in three fresh, strictly counter-advancing status snapshots. The
 maintained service configuration is `LEDGRID_FEC_RECEIVER_IDS=3`; an empty
 allowlist is off, and unlisted receivers cannot enable FEC. The v2 and v3
 decoders and capabilities `1<<15` and `1<<16`, plus the v4 decoder and
-capability `1<<17`, remain in firmware solely so an older Host can still roll
-back safely. The Host emits only v5:
+capability `1<<17` and v5 decoder/capability `1<<18`, remain in firmware solely
+so an older Host can still roll back safely. The Host emits only v6:
 
 `header || interleaved_codewords || header`
 
-Each header is `0x0b || 5 || canonical_v1_wire_length:u16`. The protected data
+Each header is `0x0b || 6 || canonical_v1_wire_length:u16`. The protected data
 contains another copy of that header plus the complete canonical v1 packet,
 including alignment and CRC. Each shortened systematic Reed-Solomon codeword
 carries 50 data and ten parity symbols at distinct GF(256) evaluation points.
 Its minimum distance is eleven, so five arbitrary byte errors per codeword are
-corrected. All codewords are transmitted byte-interleaved, so a contiguous
-burst of at most 340 bytes changes at most five bytes in each of the 68
-installed broad-frame codewords. The nested v1 CRC
+corrected. Each transmitted symbol row rotates the logical codeword positions,
+so fixed wire-position and periodic interference is distributed across the 68
+installed broad-frame codewords rather than repeatedly consuming one
+codeword's parity budget. The nested v1 CRC
 remains the end-to-end semantic authority. Codeword count is a multiple of four
 for DMA alignment and at most 68. Either separated exact raw marker attributes
 the packet; decoded header/length, canonical v1 size/padding/CRC, and zero outer
@@ -279,7 +280,7 @@ Host FEC sent/codeword/parity/tail counters advance only after successful I/O.
 
 After envelope negotiation settles, ordinary v1 full-frame streaming may use
 the buffer-protocol `writebytes2` path because `SET_ALL` has no same-transaction
-acknowledgement to consume. V3 FEC frames instead use one `SPI_IOC_MESSAGE`
+acknowledgement to consume. V6 FEC frames instead use one `SPI_IOC_MESSAGE`
 full-duplex transfer and intentionally discard the unrelated raw MISO bytes;
 their scheduled status sample is an explicit preceding query. The Host must
 first read a positive kernel

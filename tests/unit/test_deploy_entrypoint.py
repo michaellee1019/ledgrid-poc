@@ -778,6 +778,8 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         }
         aggregate.update({
             "device_dispatch_order": [0, 1, 2, 3, 4],
+            "fec_isolated_full_frame_dispatch": True,
+            "full_frame_dispatch_phases": [[[0, 1], [2]], [[3, 4]]],
             "fec_transport_requested_devices": sum(
                 item["fec_transport_requested"] is True for item in statuses
             ),
@@ -849,7 +851,7 @@ class TargetHealthIntegrationTests(unittest.TestCase):
         host_reversals = (False, False, False, False, False)
         native_reversals = (False, False, True, True, False)
         masks = (255, 255, 255, 255, 255)
-        speeds = (20_000_000, 20_000_000, 20_000_000, 8_000_000, 20_000_000)
+        speeds = (20_000_000,) * 5
         return tuple(
             {
                 "logical_device": logical_id,
@@ -1475,6 +1477,18 @@ class TargetHealthIntegrationTests(unittest.TestCase):
             "exact qualified order",
             rejection(valid, bad_dispatch),
         )
+
+        for field, replacement in (
+            ("fec_isolated_full_frame_dispatch", False),
+            ("full_frame_dispatch_phases", [[[0, 1]], [[2, 3, 4]]]),
+        ):
+            with self.subTest(dispatch_isolation_field=field):
+                bad_isolation = dict(self._receiver_aggregate(valid))
+                bad_isolation[field] = replacement
+                self.assertIn(
+                    "full-frame dispatch is not isolated",
+                    rejection(valid, bad_isolation),
+                )
 
         before = self._health_sample(responses=2)
         bad_wire_statuses = [dict(item) for item in self._receiver_statuses(

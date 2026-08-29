@@ -89,7 +89,7 @@ def _device(logical_id: int, displayed: int) -> dict:
         "receiver_leds_per_strip": 138,
         "total_leds": widths[logical_id] * 138,
         "spi_mode": 0,
-        "spi_speed_hz": 8_000_000 if logical_id == 3 else 20_000_000,
+        "spi_speed_hz": 20_000_000,
         "receiver_last_encode_us": 900 + logical_id,
         "receiver_last_show_us": 4400 + logical_id,
         "receiver_frames_displayed": displayed,
@@ -148,6 +148,8 @@ def _metrics(*, final: bool) -> dict:
                 "strip_count": 33,
                 "total_leds": 4554,
                 "device_dispatch_order": [0, 1, 2, 3, 4],
+                "fec_isolated_full_frame_dispatch": True,
+                "full_frame_dispatch_phases": [[[0, 1], [2]], [[3, 4]]],
                 "transport_envelope_devices": 5,
                 "fec_transport_requested_devices": 1,
                 "fec_transport_enabled_devices": 1,
@@ -195,7 +197,7 @@ def _metrics(*, final: bool) -> dict:
                         "reverse_native_strip_order": native_reversed[logical_id],
                         "spi_mode": 0,
                         "spi_speed_hz": (
-                            8_000_000 if logical_id == 3 else 20_000_000
+                            20_000_000
                         ),
                     }
                     for logical_id in range(5)
@@ -456,6 +458,19 @@ class TargetQualificationCaptureTests(unittest.TestCase):
 
         mutations = (
             ("dispatch", ("aggregate", 0, "device_dispatch_order", [0, 1, 3, 2, 4])),
+            (
+                "dispatch isolation disabled",
+                ("aggregate", 0, "fec_isolated_full_frame_dispatch", False),
+            ),
+            (
+                "dispatch isolation phases",
+                (
+                    "aggregate",
+                    0,
+                    "full_frame_dispatch_phases",
+                    [[[0, 1]], [[2, 3, 4]]],
+                ),
+            ),
             ("route", ("device_map", 2, "chip_select", 0)),
             ("width", ("device_map", 4, "local_strip_count", 8)),
             ("offset", ("devices", 3, "receiver_global_strip_offset", 16)),
@@ -475,6 +490,8 @@ class TargetQualificationCaptureTests(unittest.TestCase):
                 expected_error = (
                     "qualified order"
                     if label == "dispatch"
+                    else "full-frame dispatch is not isolated"
+                    if label.startswith("dispatch isolation")
                     else "aligned transport capabilities"
                     if label == "capabilities"
                     else "not enabled"

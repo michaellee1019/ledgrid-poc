@@ -26,7 +26,8 @@ PERF-01 passes only when all of the following hold in one observation window:
   `0.0, 0.1, 1.1, 1.0, 1.2`, widths
   `8, 8, 8, 8, 1`, offsets `0, 8, 16, 24, 32`, installed direction maps, and
   aligned-envelope capability `1<<14`, retained FEC-v2/v3/v4 rollback capabilities
-  `1<<15`, `1<<16`, and `1<<17`, and active FEC-v5 capability `1<<18`; every Host receiver reports
+  `1<<15`, `1<<16`, `1<<17`, and `1<<18`, and active FEC-v6 capability
+  `1<<19`; every Host receiver reports
   `transport_envelope_enabled=true`, the aggregate enabled count is exactly
   five, and positive semantic/envelope/padding byte deltas reconcile exactly
   with wire-byte, transfer, CRC-byte, and FEC-parity deltas; exactly logical
@@ -35,8 +36,8 @@ PERF-01 passes only when all of the following hold in one observation window:
 - every receiver's dedicated successful `SET_ALL` counters advance at at least
   `150 FPS`; logical receivers 0-2 reconcile exactly from 3,313 semantic bytes
   to 3,320 aligned wire bytes per frame, logical receiver 3 from 3,313 to 4,088
-  FEC wire bytes (68 byte-interleaved codewords, 680 parity bytes, 76 outer
-  zero-tail bytes, and two four-byte raw headers),
+  FEC wire bytes (68 diagonally interleaved codewords, 680 parity bytes, 76
+  outer zero-tail bytes, and two four-byte raw headers),
   and logical receiver 4 from 415
   semantic bytes to 424 aligned wire bytes per frame, so status/SHOW/partial
   traffic cannot substitute for full-frame stress;

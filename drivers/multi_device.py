@@ -270,7 +270,7 @@ class MultiDeviceLEDController:
                 installed callers pass an explicit all-lane broadcast mask for
                 the dedicated one-strip tail receiver.
             fec_receiver_ids: Explicit logical receivers allowed to negotiate
-                aligned-envelope v2 for complete SET_ALL frames. Empty keeps
+                aligned-envelope v6 for complete SET_ALL frames. Empty keeps
                 every receiver on aligned-envelope v1.
         """
         if type(receiver_geometry_profile) is not bool:
@@ -1917,6 +1917,67 @@ class MultiDeviceLEDController:
             ) and successful
         return successful
 
+    def _full_frame_dispatch_phases(self):
+        """Return parallel prefixes and FEC-isolated per-bus suffixes.
+
+        The installed SPI1 route can corrupt a protected transfer while the
+        other controller is driving its own DMA transaction. Preserve normal
+        cross-bus overlap until the first FEC receiver on each bus, wait for
+        those prefixes to finish, then issue every remaining transaction on
+        that bus without cross-controller overlap. Per-bus logical order never
+        changes, and installations without FEC retain the original parallel
+        schedule exactly.
+        """
+        parallel_prefixes = []
+        isolated_suffixes = []
+        fec_receivers = set(getattr(self, "fec_receiver_ids", ()))
+        for device_ids in self._devices_by_bus.values():
+            first_fec = next(
+                (
+                    index
+                    for index, device_id in enumerate(device_ids)
+                    if device_id in fec_receivers
+                ),
+                None,
+            )
+            if first_fec is None:
+                parallel_prefixes.append(tuple(device_ids))
+                continue
+            if first_fec > 0:
+                parallel_prefixes.append(tuple(device_ids[:first_fec]))
+            isolated_suffixes.append(tuple(device_ids[first_fec:]))
+        return tuple(parallel_prefixes), tuple(isolated_suffixes)
+
+    def _send_full_frame_dispatch(
+        self, device_frames, wall_frame_sequence=None
+    ):
+        """Send one wall frame with the installed FEC transaction isolated."""
+        successful = True
+        if self._executor is None:
+            for device_ids in self._devices_by_bus.values():
+                successful = self._send_bus_frames(
+                    device_ids, device_frames, wall_frame_sequence
+                ) and successful
+            return successful
+
+        parallel_prefixes, isolated_suffixes = self._full_frame_dispatch_phases()
+        futures = [
+            self._executor.submit(
+                self._send_bus_frames,
+                device_ids,
+                device_frames,
+                wall_frame_sequence,
+            )
+            for device_ids in parallel_prefixes
+        ]
+        for future in futures:
+            successful = bool(future.result()) and successful
+        for device_ids in isolated_suffixes:
+            successful = self._send_bus_frames(
+                device_ids, device_frames, wall_frame_sequence
+            ) and successful
+        return successful
+
     def _send_bus_partial(
         self,
         device_ids,
@@ -1945,6 +2006,47 @@ class MultiDeviceLEDController:
             except Exception as exc:
                 if self.debug:
                     print(f"✗ Error partially sending to device {device_id}: {exc}")
+
+    def _send_partial_frame_dispatch(
+        self, device_frames, device_ranges, wall_frame_sequence=None
+    ):
+        """Send dirty ranges under the same FEC isolation boundary.
+
+        A sufficiently dense dirty range is promoted to SET_ALL by
+        ``_send_bus_partial`` and can therefore use FEC. Applying the installed
+        dispatch phases here prevents that promoted transfer from regaining
+        the cross-controller overlap removed from the ordinary full-frame path.
+        """
+        if self._executor is None:
+            for device_ids in self._devices_by_bus.values():
+                self._send_bus_partial(
+                    device_ids,
+                    device_frames,
+                    device_ranges,
+                    wall_frame_sequence,
+                )
+            return
+
+        parallel_prefixes, isolated_suffixes = self._full_frame_dispatch_phases()
+        futures = [
+            self._executor.submit(
+                self._send_bus_partial,
+                device_ids,
+                device_frames,
+                device_ranges,
+                wall_frame_sequence,
+            )
+            for device_ids in parallel_prefixes
+        ]
+        for future in futures:
+            future.result()
+        for device_ids in isolated_suffixes:
+            self._send_bus_partial(
+                device_ids,
+                device_frames,
+                device_ranges,
+                wall_frame_sequence,
+            )
     
     def set_all_pixels(self, colors: List[Tuple[int, int, int]]):
         """
@@ -1963,27 +2065,9 @@ class MultiDeviceLEDController:
             # protocol's universal takeover path; no local STOP is required.
             device_frames = self._split_frame(colors)
             wall_frame_sequence = self._claim_logical_wall_frame_sequence()
-            successful = True
-
-            if self._executor is not None:
-                futures = [
-                    self._executor.submit(
-                        self._send_bus_frames,
-                        device_ids,
-                        device_frames,
-                        wall_frame_sequence,
-                    )
-                    for device_ids in self._devices_by_bus.values()
-                ]
-                for future in futures:
-                    successful = bool(future.result()) and successful
-            else:
-                # Keep the same topology-owned per-bus order when bus overlap
-                # is disabled.
-                for device_ids in self._devices_by_bus.values():
-                    successful = self._send_bus_frames(
-                        device_ids, device_frames, wall_frame_sequence
-                    ) and successful
+            successful = self._send_full_frame_dispatch(
+                device_frames, wall_frame_sequence
+            )
             self._logical_frames_sent += 1
             if successful and (
                 was_local or was_native or had_sparse_authority
@@ -2119,27 +2203,9 @@ class MultiDeviceLEDController:
                 if ranges:
                     device_ranges[device_id] = ranges
 
-            if self._executor is not None:
-                futures = [
-                    self._executor.submit(
-                        self._send_bus_partial,
-                        device_ids,
-                        device_frames,
-                        device_ranges,
-                        wall_frame_sequence,
-                    )
-                    for device_ids in self._devices_by_bus.values()
-                ]
-                for future in futures:
-                    future.result()
-            else:
-                for device_ids in self._devices_by_bus.values():
-                    self._send_bus_partial(
-                        device_ids,
-                        device_frames,
-                        device_ranges,
-                        wall_frame_sequence,
-                    )
+            self._send_partial_frame_dispatch(
+                device_frames, device_ranges, wall_frame_sequence
+            )
             self._logical_frames_sent += 1
     
     def set_pixel(self, pixel: int, r: int, g: int, b: int):
@@ -3523,6 +3589,13 @@ class MultiDeviceLEDController:
                     logical_device
                     for device_ids in self._devices_by_bus.values()
                     for logical_device in device_ids
+                ],
+                'fec_isolated_full_frame_dispatch': bool(
+                    self._executor is not None and self.fec_receiver_ids
+                ),
+                'full_frame_dispatch_phases': [
+                    [list(device_ids) for device_ids in phase]
+                    for phase in self._full_frame_dispatch_phases()
                 ],
                 'device_map': [
                     {

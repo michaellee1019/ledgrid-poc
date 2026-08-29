@@ -172,6 +172,8 @@ def _status(elapsed: float) -> dict:
                 "transport_envelope_devices": 5,
                 "fec_transport_requested_devices": 1,
                 "fec_transport_enabled_devices": 1,
+                "fec_isolated_full_frame_dispatch": True,
+                "full_frame_dispatch_phases": [[[0, 1], [2]], [[3, 4]]],
                 "receiver_status_version": min(
                     item["receiver_status_version"] for item in devices
                 ),
@@ -574,11 +576,33 @@ class GuardedWallSoakTests(unittest.TestCase):
                     "transport_envelope_negotiation_candidate"
                 )
 
+        def isolation_disabled(status, _activation_status, _elapsed):
+            if status is not None:
+                status["driver_stats"]["aggregate"][
+                    "fec_isolated_full_frame_dispatch"
+                ] = False
+
+        def isolation_reordered(status, _activation_status, _elapsed):
+            if status is not None:
+                status["driver_stats"]["aggregate"][
+                    "full_frame_dispatch_phases"
+                ] = [[[0, 1]], [[2, 3, 4]]]
+
         for label, mutate, expected in (
             ("host disabled", host_disabled, "host aligned transport is not enabled"),
             ("aggregate short", aggregate_short, "exactly 5 receivers"),
             ("negotiation pending", negotiation_pending, "negotiation is not settled"),
             ("negotiation missing", negotiation_missing, "negotiation is not settled"),
+            (
+                "isolation disabled",
+                isolation_disabled,
+                "full-frame dispatch is not isolated",
+            ),
+            (
+                "isolation reordered",
+                isolation_reordered,
+                "full-frame dispatch is not isolated",
+            ),
         ):
             with self.subTest(label=label):
                 clock = _Clock()

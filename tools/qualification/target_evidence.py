@@ -654,6 +654,14 @@ def validate_installed_topology(metrics: Any) -> None:
         raise TargetEvidenceError(
             "installed receiver dispatch order is not the exact qualified order"
         )
+    if (
+        aggregate.get("fec_isolated_full_frame_dispatch") is not True
+        or aggregate.get("full_frame_dispatch_phases")
+        != [[[0, 1], [2]], [[3, 4]]]
+    ):
+        raise TargetEvidenceError(
+            "installed FEC full-frame dispatch is not isolated at receiver 3"
+        )
     _require_transport_accounting_snapshot(driver)
     device_map = aggregate.get("device_map")
     if not isinstance(device_map, list) or len(device_map) != INSTALLED_RECEIVER_COUNT:

@@ -445,6 +445,12 @@ def _topology_failures(status: Mapping[str, Any]) -> list[str]:
         or aggregate.get("fec_transport_enabled_devices") != 1
     ):
         failures.append("FEC transport is not requested and enabled on exactly one receiver")
+    if (
+        aggregate.get("fec_isolated_full_frame_dispatch") is not True
+        or aggregate.get("full_frame_dispatch_phases")
+        != [[[0, 1], [2]], [[3, 4]]]
+    ):
+        failures.append("FEC full-frame dispatch is not isolated at receiver 3")
     device_map = _sequence(aggregate.get("device_map"))
     if len(device_map) != len(EXPECTED_TOPOLOGY):
         failures.append(

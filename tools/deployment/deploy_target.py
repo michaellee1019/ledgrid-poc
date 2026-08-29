@@ -3081,6 +3081,12 @@ def _receiver_health_rejection(
     if sample.receiver_aggregate.get("device_dispatch_order") != expected_dispatch_order:
         return "host receiver dispatch order is not the exact qualified order"
     if (
+        sample.receiver_aggregate.get("fec_isolated_full_frame_dispatch") is not True
+        or sample.receiver_aggregate.get("full_frame_dispatch_phases")
+        != [[[0, 1], [2]], [[3, 4]]]
+    ):
+        return "host FEC full-frame dispatch is not isolated at receiver 3"
+    if (
         sample.receiver_aggregate.get("fec_transport_requested_devices")
         != len(expected_fec_ids)
         or sample.receiver_aggregate.get("fec_transport_enabled_devices")
