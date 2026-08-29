@@ -89,8 +89,9 @@ constexpr std::size_t kFecV4EnvelopeMaxSemanticBytes =
 // V5 increases the shortened systematic Reed-Solomon distance to eleven.
 // Ten parity symbols correct five arbitrary byte errors in each 50-byte data
 // codeword. Interleaving 68 codewords corrects 340 bytes without assuming an
-// error shape; the bounded contiguous-erasure fallback uses the same ten
-// syndromes to validate and repair an installed-link burst through 544 bytes.
+// error shape; the bounded contiguous-erasure fallback uses nine syndromes to
+// repair an installed-link burst through 612 bytes and the tenth to validate
+// the candidate before mutation.
 // The installed broad-frame wire size remains 4,088 bytes.
 constexpr std::uint8_t kFecEnvelopeVersion = 5;
 constexpr std::size_t kFecDataBytes = 50;

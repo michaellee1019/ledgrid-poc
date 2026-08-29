@@ -96,7 +96,7 @@ constexpr std::uint8_t fec_gf_inverse(std::uint8_t value) {
       255U - kFecGfTables.logarithm[value]];
 }
 
-constexpr std::size_t kFecV5BurstSpanSymbols = kFecParityBytes - 2U;
+constexpr std::size_t kFecV5BurstSpanSymbols = kFecParityBytes - 1U;
 constexpr std::size_t kFecV5BurstSpanStarts =
     kFecCodewordBytes - kFecV5BurstSpanSymbols + 1U;
 using FecV5BurstInverse = std::array<
@@ -169,7 +169,7 @@ constexpr auto kFecV5BurstInverses3 = make_fec_v5_burst_inverses<21U, 7U>();
 constexpr auto kFecV5BurstInverses4 = make_fec_v5_burst_inverses<28U, 7U>();
 constexpr auto kFecV5BurstInverses5 = make_fec_v5_burst_inverses<35U, 7U>();
 constexpr auto kFecV5BurstInverses6 = make_fec_v5_burst_inverses<42U, 7U>();
-constexpr auto kFecV5BurstInverses7 = make_fec_v5_burst_inverses<49U, 4U>();
+constexpr auto kFecV5BurstInverses7 = make_fec_v5_burst_inverses<49U, 3U>();
 
 const FecV5BurstInverse& fec_v5_burst_inverse(std::size_t first) {
   if (first < 7U) return kFecV5BurstInverses0[first];
@@ -1094,9 +1094,10 @@ bool decode_receiver_packet_payload(
         const bool contiguous_burst_recovery = bounded_recovery || [&]() {
           // The installed SPI fault is a contiguous wire burst. Interleaving
           // maps that burst to a short consecutive symbol span in each
-          // codeword. Ten syndromes can validate and solve as many as eight
-          // erasures in that known-shape span, while arbitrary six-symbol
-          // errors remain outside the bounded correction contract.
+          // codeword. Nine syndromes solve as many as nine erasures in that
+          // known-shape span and the tenth validates the result, while
+          // arbitrary six-symbol errors remain outside the bounded correction
+          // contract.
           const auto try_span = [&](std::size_t first) {
             std::uint8_t candidate_values[kFecParityBytes] = {};
             if (!fec_v5_solve_contiguous_span(

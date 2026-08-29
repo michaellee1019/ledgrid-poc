@@ -1216,12 +1216,12 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
         semantic.data(), parity_decoded.data, semantic.size());
   }
 
-  // A contiguous installed-link burst spanning eight complete interleave
-  // columns maps to eight consecutive bytes in every codeword. The bounded
-  // erasure fallback validates the two remaining syndromes before repair.
+  // A contiguous installed-link burst spanning nine complete interleave
+  // columns maps to nine consecutive bytes in every codeword. The bounded
+  // erasure fallback validates the remaining syndrome before repair.
   auto burst = canonical;
   const std::size_t burst_start = matrix + 7U;
-  for (std::size_t offset = 0; offset < 8U * codewords; ++offset) {
+  for (std::size_t offset = 0; offset < 9U * codewords; ++offset) {
     burst[burst_start + offset] ^= 0xA5U;
   }
   ledgrid::ReceiverPacketPayload burst_decoded{};
@@ -1230,8 +1230,26 @@ void test_fec_corrects_header_payload_crc_and_distinct_codeword_bits() {
       burst.data(), burst.size(), &burst_decoded, &burst_report,
       scratch.data(), scratch.size()));
   TEST_ASSERT_EQUAL_UINT16(codewords, burst_report.corrected_codewords);
-  TEST_ASSERT_EQUAL_UINT16(codewords * 32U, burst_report.corrected_bits);
+  TEST_ASSERT_EQUAL_UINT16(codewords * 36U, burst_report.corrected_bits);
   TEST_ASSERT_EQUAL_MEMORY(semantic.data(), burst_decoded.data, semantic.size());
+
+  // Ten complete columns consume every syndrome as an erasure equation and
+  // leave no independent RS check. Keep that larger shape outside the bounded
+  // correction contract rather than accepting an unvalidated candidate.
+  auto over_radius_burst = canonical;
+  for (std::size_t offset = 0; offset < 10U * codewords; ++offset) {
+    over_radius_burst[burst_start + offset] ^= 0xA5U;
+  }
+  ledgrid::ReceiverPacketPayload over_radius_decoded{};
+  ledgrid::ReceiverPacketDecodeReport over_radius_report{};
+  TEST_ASSERT_FALSE(ledgrid::decode_receiver_packet_payload(
+      over_radius_burst.data(), over_radius_burst.size(),
+      &over_radius_decoded, &over_radius_report,
+      scratch.data(), scratch.size()));
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<std::uint8_t>(
+          ledgrid::ReceiverPacketDecodeResult::FecUncorrectable),
+      static_cast<std::uint8_t>(over_radius_report.result));
 
   // Either separated raw discriminator can carry attribution by itself.
   const std::array<std::size_t, 2> marker_offsets = {
