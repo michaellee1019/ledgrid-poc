@@ -1,0 +1,13 @@
+V4 Object or Net,V4 State,Rev5 Replacement,Required Action
+1_SMD pin 18 / 1IO10,"Selectable among SPI0/SPI1 CE0/CE3; 10k pull-up","B_CS: U12 pin 12 / GPIO18 -> R_BCS -> ESP B GPIO10; 10k pull-up after resistor","Rename 1_SMD to receiver B; delete all CE selectors; preserve pull-up at receiver"
+1_SMD pin 19 / 1IO11,"Shared with 2_SMD and SPI0/SPI1 MOSI selectors","B_MOSI: U12 pin 38 / GPIO20 -> R_BMOSI -> ESP B GPIO11","Split shared PCB net; point-to-point route over L2"
+1_SMD pin 20 / 1IO12,"Shared with 2_SMD and SPI0/SPI1 SCLK selectors","B_SCLK: U12 pin 40 / GPIO21 -> R_BSCLK -> ESP B GPIO12","Split shared PCB net; point-to-point route over L2"
+1_SMD pin 21 / 1IO13,"Shared with 2_SMD and SPI0/SPI1 MISO selectors","B_MISO: ESP B GPIO13 -> R_BMISO -> U12 pin 35 / GPIO19","Split shared PCB net; put resistor at ESP driver"
+2_SMD pin 18 / 2IO10,"Selectable among SPI0/SPI1 CE1/CE2; 10k pull-up","A_CS: U12 pin 24 / GPIO8 -> R_ACS -> ESP A GPIO10; 10k pull-up after resistor","Rename 2_SMD to receiver A; delete all CE selectors; preserve pull-up at receiver"
+2_SMD pin 19 / PCB 1IO11,"Schematic says 2IO11 but PCB merges into shared 1IO11","A_MOSI: U12 pin 19 / GPIO10 -> R_AMOSI -> ESP A GPIO11","Correct schematic/PCB mismatch and route point-to-point"
+2_SMD pin 20 / PCB 1IO12,"Schematic says 2IO12 but PCB merges into shared 1IO12","A_SCLK: U12 pin 23 / GPIO11 -> R_ASCLK -> ESP A GPIO12","Correct schematic/PCB mismatch and route point-to-point"
+2_SMD pin 21 / PCB 1IO13,"Schematic says 2IO13 but PCB merges into shared 1IO13","A_MISO: ESP A GPIO13 -> R_AMISO -> U12 pin 21 / GPIO9","Correct schematic/PCB mismatch; put resistor at ESP driver"
+SJ_SPI0_MOSI/SCLK/MISO,"Bus-selection solder jumpers","No replacement","Delete symbols, footprints, and all branches"
+SJ_SPI1_MOSI/SCLK/MISO,"Bus-selection solder jumpers","No replacement","Delete symbols, footprints, and all branches"
+SJ_SPI0_CE0/CE1/CE2/CE3,"Chip-select selection solder jumpers","No replacement","Delete symbols, footprints, and all branches"
+SJ_SPI1_CE0/CE1/CE2/CE3,"Chip-select selection solder jumpers","No replacement","Delete symbols, footprints, and all branches"

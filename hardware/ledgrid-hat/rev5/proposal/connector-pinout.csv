@@ -1,0 +1,35 @@
+Connector,Pin,Signal,Paired Pin,Pair Function,Notes
+CN1,1,LED1,2,Ground return for LED1,"Receiver A lane 1; no LED power"
+CN1,2,GND,1,Ground return for LED1,Connect directly to L2 at connector
+CN1,3,LED2,4,Ground return for LED2,"Receiver A lane 2; no LED power"
+CN1,4,GND,3,Ground return for LED2,Connect directly to L2 at connector
+CN1,5,LED3,6,Ground return for LED3,"Receiver A lane 3; no LED power"
+CN1,6,GND,5,Ground return for LED3,Connect directly to L2 at connector
+CN1,7,LED4,8,Ground return for LED4,"Receiver A lane 4; no LED power"
+CN1,8,GND,7,Ground return for LED4,Connect directly to L2 at connector
+CN1,9,LED5,10,Ground return for LED5,"Receiver A lane 5; no LED power"
+CN1,10,GND,9,Ground return for LED5,Connect directly to L2 at connector
+CN1,11,LED6,12,Ground return for LED6,"Receiver A lane 6; no LED power"
+CN1,12,GND,11,Ground return for LED6,Connect directly to L2 at connector
+CN1,13,LED7,14,Ground return for LED7,"Receiver A lane 7; no LED power"
+CN1,14,GND,13,Ground return for LED7,Connect directly to L2 at connector
+CN1,15,LED8,16,Ground return for LED8,"Receiver A lane 8; no LED power"
+CN1,16,GND,15,Ground return for LED8,Connect directly to L2 at connector
+CN1,17,LED9,18,Ground return for LED9,"Receiver B lane 1; no LED power"
+CN1,18,GND,17,Ground return for LED9,Connect directly to L2 at connector
+CN1,19,LED10,20,Ground return for LED10,"Receiver B lane 2; no LED power"
+CN1,20,GND,19,Ground return for LED10,Connect directly to L2 at connector
+CN1,21,LED11,22,Ground return for LED11,"Receiver B lane 3; no LED power"
+CN1,22,GND,21,Ground return for LED11,Connect directly to L2 at connector
+CN1,23,LED12,24,Ground return for LED12,"Receiver B lane 4; no LED power"
+CN1,24,GND,23,Ground return for LED12,Connect directly to L2 at connector
+CN1,25,LED13,26,Ground return for LED13,"Receiver B lane 5; no LED power"
+CN1,26,GND,25,Ground return for LED13,Connect directly to L2 at connector
+CN1,27,LED14,28,Ground return for LED14,"Receiver B lane 6; no LED power"
+CN1,28,GND,27,Ground return for LED14,Connect directly to L2 at connector
+CN1,29,LED15,30,Ground return for LED15,"Receiver B lane 7; no LED power"
+CN1,30,GND,29,Ground return for LED15,Connect directly to L2 at connector
+CN1,31,LED16,32,Ground return for LED16,"Receiver B lane 8; no LED power"
+CN1,32,GND,31,Ground return for LED16,Connect directly to L2 at connector
+CN1,33,GND,34,Additional ground,No LED power
+CN1,34,GND,33,Additional ground,No LED power

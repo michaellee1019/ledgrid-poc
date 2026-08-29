@@ -1,0 +1,14 @@
+{
+  "Gerber_TopLayer\\.GTL": "ignore",
+  "Gerber_BottomLayer\\.GBL": "ignore",
+  "Gerber_TopSilkscreenLayer\\.GTO": "top silk",
+  "Gerber_BottomSilkscreenLayer\\.GBO": "bottom silk",
+  "Gerber_TopSolderMaskLayer\\.GTS": "ignore",
+  "Gerber_BottomSolderMaskLayer\\.GBS": "ignore",
+  "Gerber_TopPasteMaskLayer\\.GTP": "ignore",
+  "Gerber_BoardOutlineLayer\\.GKO": "mechanical outline",
+  "Gerber_DocumentLayer\\.GDL": "ignore",
+  "Drill_PTH_Through\\.DRL": "ignore",
+  "Drill_PTH_Through_Via\\.DRL": "ignore",
+  "How-to-order-PCB\\.txt": "ignore"
+}

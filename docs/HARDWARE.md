@@ -191,10 +191,11 @@ window and photographed geometry.
 
 The repository also retains an alternate `LEDGRID_HAT=1` software mode. It
 configures two receivers on SPI0 CE0/CE1 and exposes 16 lanes. It is not the
-33-lane installed-wall configuration described above. No HAT schematic, PCB
-layout, connector pinout, BOM, or fabrication output is checked in, so the code
-and diagnostic utility establish only the host-side software mapping. Do not use
-them as manufacturing documentation for a carrier board.
+33-lane installed-wall configuration described above. The supplied V4 HAT
+source/evidence and a non-fabrication Rev5 proposal are checked in under
+[`hardware/ledgrid-hat/`](../hardware/ledgrid-hat/). The V4 schematic and PCB
+disagree on SPI topology, and Rev5 has not passed ERC/DRC or manufacturing
+release gates. Do not use either as released carrier-board manufacturing data.
 
 ## Power and signal integrity requirements
 
