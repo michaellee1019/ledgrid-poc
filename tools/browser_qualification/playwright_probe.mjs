@@ -58,8 +58,14 @@ async function navigateComposer(page, composerUrl, {waitForServiceWorker = true}
   };
   page.on('framenavigated', observeNavigation);
   try {
-    const response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
+    let response = await page.goto(composerUrl, {waitUntil: 'domcontentloaded'});
     if (waitForServiceWorker) {
+      await page.waitForFunction(async () => {
+        const registration = await navigator.serviceWorker.ready;
+        return registration.active?.state === 'activated';
+      }, null, {timeout: timeoutMs});
+      const initiallyControlled = await page.evaluate(() => navigator.serviceWorker?.controller != null);
+      if (!initiallyControlled) response = await page.reload({waitUntil: 'domcontentloaded'});
       await page.waitForFunction(
         () => navigator.serviceWorker?.controller != null,
         null,

@@ -521,6 +521,9 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("async function navigateComposer", source)
+        self.assertIn("navigator.serviceWorker.ready", source)
+        self.assertIn("registration.active?.state === 'activated'", source)
+        self.assertIn("if (!initiallyControlled) response = await page.reload", source)
         self.assertIn("navigator.serviceWorker?.controller != null", source)
         self.assertIn("mainFrameNavigations", source)
         self.assertIn("navigateComposer(page, composerUrl)", source)
