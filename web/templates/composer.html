@@ -37,7 +37,6 @@
       <button class="quiet-button" id="exportButton" type="button" title="Export JSON · Ctrl/⌘ E" aria-keyshortcuts="Control+E Meta+E">Export</button>
       <span class="toolbar-separator" aria-hidden="true"></span>
       <button class="quiet-button server-action" id="saveLibraryButton" type="button" title="Save to library · Ctrl/⌘ S" aria-keyshortcuts="Control+S Meta+S" disabled>Save</button>
-      <button class="primary-button server-action" id="activateButton" type="button" title="Review before activating the physical wall" disabled>Review &amp; activate</button>
       <input id="importFile" type="file" accept="application/json,.json" hidden>
     </div>
   </header>
@@ -289,7 +288,7 @@
               <button class="quiet-button full-button" id="prepareOfflineButton" type="button">Prepare for offline use</button>
               <p><span aria-hidden="true">▣</span><span><strong>Installed app</strong><small id="installStatus" role="status" aria-live="polite" data-state="unknown">Installation is optional; app mode has not been detected yet.</small></span></p>
             </div>
-            <p class="install-guidance" id="installGuidance">On iPhone, use Share, then Add to Home Screen. The installed composer keeps the same private local draft and never activates the wall without review.</p>
+            <p class="install-guidance" id="installGuidance">On iPhone, use Share, then Add to Home Screen. The installed composer keeps the same private local draft and applies edits only through checked activation.</p>
           </div>
         </details>
 
@@ -297,17 +296,13 @@
           <div class="server-surface-heading"><h2 id="serverActionsHeading">Wall actions</h2><span id="serverActionBadge">Online required</span></div>
           <p id="serverActionStatus" role="status" aria-live="polite">Drafts, checks, uploads, and downloads work locally. Saving and activation require the wall server.</p>
           <p class="activation-readiness" id="activationReadiness" role="status" aria-live="polite" data-state="unavailable">Run Check to determine whether this draft is ready for activation.</p>
-          <label class="live-edit-control" for="liveEditToggle">
-            <span><strong>Live edit</strong><small id="liveEditStatus" role="status" aria-live="polite">Off · Composer parameters stay local.</small></span>
-            <span class="compact-switch"><span class="sr-only">Apply Composer parameter edits to the live wall immediately</span><input id="liveEditToggle" type="checkbox" role="switch" disabled></span>
-          </label>
+          <p class="activation-readiness" id="immediateApplyStatus" role="status" aria-live="polite" data-state="idle">Ready · edits apply automatically after a guarded server Check.</p>
           <div class="local-action-buttons" aria-label="Local file actions">
             <button class="quiet-button" id="importPanelButton" type="button">Upload JSON</button>
             <button class="quiet-button" id="exportPanelButton" type="button">Download JSON</button>
           </div>
           <div class="server-action-buttons">
             <button class="quiet-button server-action" id="saveLibraryPanelButton" type="button" disabled>Save to library</button>
-            <button class="primary-button server-action" id="activatePanelButton" type="button" disabled>Review &amp; activate</button>
           </div>
           <div class="server-action-buttons" aria-label="Current activation actions">
             <button class="quiet-button server-action" id="cancelActivationButton" type="button" hidden disabled>Cancel pending activation</button>
@@ -321,7 +316,7 @@
           <div><p class="eyebrow">Installation state</p><h1>Wall settings</h1></div>
           <button class="text-button" id="refreshWallButton" type="button">Refresh</button>
         </div>
-        <p class="wall-scope-note">These settings are independent of this look. Changes preview locally where supported and reach the physical wall only after review.</p>
+        <p class="wall-scope-note">These settings are independent of this look. Supported changes join the same checked immediate-apply queue.</p>
 
         <section class="wall-control-section" aria-labelledby="vibeHeading">
           <div class="wall-section-heading"><h2 id="vibeHeading">Vibe</h2><output id="vibeReadout">Neutral</output></div>
@@ -361,7 +356,7 @@
 
         <div class="wall-apply-bar">
           <p id="wallDraftStatus" role="status" aria-live="polite">Composer draft only · current wall state has not been read.</p>
-          <div><button class="quiet-button" id="resetWallDraftButton" type="button" disabled>Revert</button><button class="primary-button" id="reviewWallButton" type="button" disabled>Review changes</button></div>
+          <div><button class="quiet-button" id="resetWallDraftButton" type="button" disabled>Revert</button></div>
         </div>
       </section>
 
@@ -395,8 +390,7 @@
   </main>
 
   <div class="mobile-activate-bar" aria-label="Apply selected animation to the wall">
-    <span id="mobileActivationStatus" role="status" aria-live="polite">Choose a look, run Check, then review it before applying.</span>
-    <button class="primary-button server-action" id="mobileActivateButton" type="button" disabled>Review &amp; activate</button>
+    <span id="mobileActivationStatus" role="status" aria-live="polite">Edits apply automatically after a guarded server Check.</span>
   </div>
 
   <nav class="mobile-tabs" aria-label="Composer sections">
@@ -419,50 +413,12 @@
     </form>
   </dialog>
 
-  <dialog class="action-dialog" id="activateDialog" aria-labelledby="activateHeading" aria-describedby="activateDialogDescription" aria-modal="true">
-    <form method="dialog">
-      <span class="dialog-icon live" aria-hidden="true">◉</span>
-      <p class="eyebrow">Physical wall</p>
-      <h2 id="activateHeading">Activate this scene?</h2>
-      <p id="activateDialogDescription">This queues one server-authorized activation. Pending is not Active: the composer waits for a correlated controller observation of the exact scene, wall settings, runtime, and installation profile.</p>
-      <dl class="activation-summary">
-        <div><dt>Background</dt><dd id="activateBackground">—</dd></div>
-        <div><dt>Provider</dt><dd id="activateProvider">—</dd></div>
-        <div><dt>Runtime digest</dt><dd id="activateRuntimeDigest">—</dd></div>
-        <div><dt>Installation profile</dt><dd id="activateProfileDigest">—</dd></div>
-        <div><dt>Revision</dt><dd id="activateRevision">—</dd></div>
-        <div><dt>Check</dt><dd id="activateCheck">—</dd></div>
-        <div><dt>Overlay</dt><dd id="activateOverlay">Off</dd></div>
-        <div><dt>Fallback</dt><dd id="activateFallback">—</dd></div>
-        <div><dt>Destination</dt><dd id="activateDestination">Physical Living Wall</dd></div>
-      </dl>
-      <div class="dialog-actions">
-        <button class="quiet-button" value="cancel">Cancel</button>
-        <button class="primary-button" id="confirmActivateButton" value="confirm">Queue activation</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog class="action-dialog wall-review-dialog" id="wallReviewDialog" aria-labelledby="wallReviewHeading" aria-describedby="wallReviewDescription" aria-modal="true">
-    <form method="dialog">
-      <span class="dialog-icon live" aria-hidden="true">◫</span>
-      <p class="eyebrow">Physical wall</p>
-      <h2 id="wallReviewHeading">Apply wall-wide changes?</h2>
-      <p id="wallReviewDescription">These commands are applied in order and are not atomic. If one fails, the composer stops and refreshes observed state.</p>
-      <dl class="activation-summary" id="wallChangeSummary"></dl>
-      <div class="dialog-actions">
-        <button class="quiet-button" value="cancel">Cancel</button>
-        <button class="primary-button" id="confirmWallChangesButton" value="confirm">Apply to wall</button>
-      </div>
-    </form>
-  </dialog>
-
   <dialog class="action-dialog" id="profileCandidateDialog" aria-labelledby="profileCandidateHeading" aria-describedby="profileCandidateDescription" aria-modal="true">
     <form method="dialog">
       <span class="dialog-icon" aria-hidden="true">◇</span>
       <p class="eyebrow">Published profile candidate</p>
       <h2 id="profileCandidateHeading">Use this profile for the next Check?</h2>
-      <p id="profileCandidateDescription">This stages the immutable candidate for local preview, Check, and the existing reviewed activation transaction. It does not select the profile on the wall.</p>
+      <p id="profileCandidateDescription">This stages the immutable candidate for local preview, Check, and the next guarded immediate apply. It does not select the profile on the wall by itself.</p>
       <dl class="activation-summary">
         <div><dt>Candidate</dt><dd id="profileCandidateDigest">—</dd></div>
         <div><dt>Currently selected</dt><dd id="profileCandidateSelectedDigest">—</dd></div>
@@ -510,7 +466,7 @@
           <p><i class="mask-swatch middle-right" aria-hidden="true"></i><span>Middle right globe</span><strong id="editor-middle-right-count">0</strong></p>
           <p><i class="mask-swatch lower-left" aria-hidden="true"></i><span>Lower left globe</span><strong id="editor-lower-left-count">0</strong></p>
           <p><i class="mask-swatch lower-right" aria-hidden="true"></i><span>Lower right globe</span><strong id="editor-lower-right-count">0</strong></p>
-          <small>Each globe keeps its stable identity. Save updates only the managed draft; Publish creates a candidate; wall selection requires a separate reviewed activation.</small>
+          <small>Each globe keeps its stable identity. Save updates only the managed draft; Publish creates a candidate; staging it enters the guarded immediate-apply queue.</small>
         </aside>
       </div>
       <footer class="mask-editor-actions">

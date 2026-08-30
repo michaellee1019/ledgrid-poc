@@ -7,6 +7,48 @@
         return JSON.parse(JSON.stringify(value ?? null));
     }
 
+    function createLatestStateQueue() {
+        let revision = 0;
+        let queued = null;
+        let inFlight = null;
+        let outcome = null;
+        const snapshot = (intent) => Object.freeze({
+            revision,
+            intent: Object.freeze(clone(intent)),
+        });
+        return Object.freeze({
+            enqueue(intent) {
+                revision += 1;
+                queued = snapshot(intent);
+                outcome = null;
+                return queued;
+            },
+            begin() {
+                if (inFlight || !queued) return null;
+                inFlight = queued;
+                queued = null;
+                return inFlight;
+            },
+            finish(entry, nextOutcome = null) {
+                if (!inFlight || entry?.revision !== inFlight.revision) return false;
+                inFlight = null;
+                const current = entry.revision === revision;
+                if (current && nextOutcome) outcome = Object.freeze(clone(nextOutcome));
+                return current;
+            },
+            invalidate(nextOutcome = null) {
+                revision += 1;
+                queued = null;
+                if (nextOutcome) outcome = Object.freeze(clone(nextOutcome));
+                return revision;
+            },
+            currentRevision() { return revision; },
+            hasQueued() { return Boolean(queued); },
+            hasInFlight() { return Boolean(inFlight); },
+            outcome() { return outcome; },
+        });
+    }
+
     function stableJson(value) {
         if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
         if (value && typeof value === 'object') {
@@ -502,6 +544,7 @@
         checkBinding,
         clone,
         componentPresetIdentity,
+        createLatestStateQueue,
         createWallReconciliation,
         formatNumber,
         localInstallationProfile,

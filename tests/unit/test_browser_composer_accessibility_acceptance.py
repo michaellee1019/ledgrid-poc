@@ -85,8 +85,7 @@ class BrowserComposerAccessibilityAcceptanceTests(unittest.TestCase):
 
     def test_modal_name_description_focus_and_return_are_deterministic(self) -> None:
         dialogs = (
-            "overwriteDialog", "activateDialog", "wallReviewDialog",
-            "profileCandidateDialog", "maskEditorDialog",
+            "overwriteDialog", "profileCandidateDialog", "maskEditorDialog",
         )
         for dialog_id in dialogs:
             with self.subTest(dialog=dialog_id):
@@ -98,7 +97,7 @@ class BrowserComposerAccessibilityAcceptanceTests(unittest.TestCase):
                     self.assertIn(described_by, self.elements.ids)
 
         # All openings go through one helper, so initial and return focus cannot
-        # drift independently between activation, wall, profile, and mask flows.
+        # drift independently between overwrite, profile, and mask flows.
         self.assertEqual(self.script.count(".showModal()"), 1)
         self.assertIn("function showComposerModal(", self.script)
         self.assertIn("function restoreModalFocus(", self.script)
@@ -220,7 +219,8 @@ class BrowserComposerAccessibilityAcceptanceTests(unittest.TestCase):
     def test_guarded_activation_and_managed_profile_are_the_only_authorities(self) -> None:
         self.assertNotIn("/api/start/", self.script)
         self.assertNotIn("/api/painter/masks", self.script)
-        self.assertIn("await createServerCheck()", self.script)
+        self.assertIn("await createServerCheck(", self.script)
+        self.assertIn("await submitCheckedIntent(entry.intent, serverCheck)", self.script)
         self.assertIn("check_token: serverCheck.token", self.script)
         self.assertIn("expected_controller_state_revision", self.script)
         self.assertIn("headers: {'Idempotency-Key': serverCheck.idempotencyKey}", self.script)

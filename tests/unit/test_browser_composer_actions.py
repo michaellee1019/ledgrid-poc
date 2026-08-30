@@ -701,7 +701,7 @@ class BrowserComposerActionTests(unittest.TestCase):
 
         self.assertEqual([preset["preset_id"] for preset in presets], ["quiet"])
 
-    def test_mobile_layers_surface_keeps_local_and_server_actions_reachable(self) -> None:
+    def test_mobile_layers_surface_keeps_local_actions_and_immediate_apply_status_reachable(self) -> None:
         html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")
         css = (ROOT / "web/static/css/composer.css").read_text(encoding="utf-8")
         javascript = (ROOT / "web/static/js/composer.js").read_text(encoding="utf-8")
@@ -710,10 +710,8 @@ class BrowserComposerActionTests(unittest.TestCase):
             "importPanelButton",
             "exportPanelButton",
             "saveLibraryPanelButton",
-            "activatePanelButton",
-            "mobileActivateButton",
             "mobileActivationStatus",
-            "liveEditToggle",
+            "immediateApplyStatus",
         ):
             self.assertIn(f'id="{element_id}"', html)
         self.assertIn('data-mobile-target="layers"', html)
@@ -727,11 +725,33 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertIn("expected_controller_state_revision", javascript)
         self.assertIn("status.telemetry?.complete", javascript)
         self.assertIn("check_token: serverCheck.token", javascript)
-        self.assertIn("pollActivationStatus()", javascript)
-        self.assertIn("LIVE_EDIT_MIN_INTERVAL_MS = 40", javascript)
-        self.assertIn("queueLiveEdit({immediate: true})", javascript)
-        self.assertIn("liveEditMatchesObservedComponent()", javascript)
-        self.assertIn("Activate ${state.component?.name", javascript)
+        self.assertIn("IMMEDIATE_APPLY_MIN_INTERVAL_MS = 120", javascript)
+        self.assertIn("createLatestStateQueue()", javascript)
+        self.assertIn("queueImmediateApply({immediate: true", javascript)
+        self.assertIn("await submitCheckedIntent(entry.intent, serverCheck)", javascript)
+        self.assertIn("await waitForImmediateActivation(entry, result)", javascript)
+        self.assertNotIn("liveEditToggle", javascript)
+        self.assertNotIn("reviewActivation", javascript)
+        self.assertNotIn('id="activatePanelButton"', html)
+        self.assertNotIn('id="mobileActivateButton"', html)
+
+    def test_immediate_apply_is_serial_guarded_and_history_navigation_is_non_mutating(self) -> None:
+        html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "web/static/js/composer.js").read_text(encoding="utf-8")
+
+        self.assertIn("if (state.urlState.applying) return false", javascript)
+        self.assertIn("scheduleApply: false", javascript)
+        self.assertIn("if (!fromBrowser) queueImmediateApply", javascript)
+        self.assertIn("apply.queue.enqueue(intent)", javascript)
+        self.assertIn("if (apply.inFlight) return", javascript)
+        self.assertIn("await refreshGlobalSettings({quiet: true, preserveDraft: true})", javascript)
+        self.assertIn("await createServerCheck(", javascript)
+        self.assertIn("await submitCheckedIntent(entry.intent, serverCheck)", javascript)
+        self.assertIn("await waitForImmediateActivation(entry, result)", javascript)
+        self.assertIn("controller reconnected. A fresh edit is required", javascript)
+        self.assertIn("outcome = {state: 'failed', retryable: true", javascript)
+        self.assertNotIn('id="activateDialog"', html)
+        self.assertNotIn('id="wallReviewDialog"', html)
 
     def test_saved_preset_controls_use_provider_qualified_drafts_not_apply_shortcuts(self) -> None:
         html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")
@@ -750,7 +770,7 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertIn("/api/v1/components/${encodeURIComponent(component.plugin_id)}/presets/", javascript)
         self.assertIn("provider=${encodeURIComponent(component.provider)}", javascript)
         self.assertIn("preset_immutable", (ROOT / "web/app.py").read_text(encoding="utf-8"))
-        self.assertIn("Run Check before reviewed activation.", javascript)
+        self.assertIn("queued for guarded immediate apply", javascript)
         self.assertNotIn("/apply", javascript[javascript.index("function reopenSavedRecord"):javascript.index("function updateSavedRecord")])
         update_start = javascript.index("async function updateSavedRecord")
         delete_start = javascript.index("async function deleteSavedRecord")
@@ -769,7 +789,7 @@ class BrowserComposerActionTests(unittest.TestCase):
         for element_id in (
             "vibeOptions", "globalBrightness", "globalSpeed", "globalTargetFps",
             "plantModifierGroups", "editMasksButton", "maskCanvas",
-            "wallReviewDialog", "confirmWallChangesButton",
+            "immediateApplyStatus",
         ):
             self.assertIn(f'id="{element_id}"', html)
         for modifier in (
@@ -781,6 +801,9 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertIn("params: authoredParams(state.component, state.params)", javascript)
         self.assertIn("parameters: authoredParams(component, params)", javascript)
         self.assertIn("!isGlobalInstallationParameter(key)", javascript)
+        self.assertNotIn('id="wallReviewDialog"', html)
+        self.assertNotIn('id="confirmWallChangesButton"', html)
+        self.assertIn("queueImmediateApply({source: 'wall setting'})", javascript)
 
 
 if __name__ == "__main__":

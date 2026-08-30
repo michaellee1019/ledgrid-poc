@@ -11,7 +11,7 @@
     const CATALOG_INITIAL_RESULT_LIMIT = ComposerState.LIBRARY_DISCOVERY_BATCH_SIZE || 24;
     const BUNDLED_BOOTSTRAP_URL = '/static/generated/composer/bootstrap.v1.json';
     const SAMPLE_FRAMES = 48;
-    const LIVE_EDIT_MIN_INTERVAL_MS = 40;
+    const IMMEDIATE_APPLY_MIN_INTERVAL_MS = 120;
     const EMPTY_PROFILE_DIGEST = '0'.repeat(64);
     const GLOBE_REGION_ORDER = Object.freeze([
         'top_left',
@@ -94,16 +94,13 @@
             resourcePollTimer: null,
             resourcePollStartedAt: 0,
         },
-        liveEdit: {
-            enabled: false,
+        immediateApply: {
+            queue: ComposerState.createLatestStateQueue(),
             inFlight: false,
-            pending: false,
             timer: null,
             lastSentAt: 0,
-            generation: 0,
-            observedComponent: null,
             message: null,
-            state: 'off',
+            state: 'idle',
         },
         autosaveTimer: null,
         connectivityTimer: null,
@@ -192,7 +189,7 @@
             canvas: $('previewCanvas'),
             onInput: async (input) => {
                 // This invokes the Pyodide worker that owns the local draft
-                // instance. It does not use the wall API or live-edit path.
+                // instance. It does not use the wall API or immediate-apply queue.
                 const runtime = state.runtimes.draft;
                 if (!runtime?.ready) throw new Error('The local preview is still loading.');
                 const result = await runtime.interact(input);
@@ -448,7 +445,11 @@
             toast('That saved selection is no longer available in this catalog.', 'error');
             return;
         }
-        await selectComponent(resolved.component, {focusEditor: true, skipLibraryRecent: true});
+        await selectComponent(resolved.component, {
+            focusEditor: true,
+            skipLibraryRecent: true,
+            scheduleApply: resolved.presetIndex == null,
+        });
         if (resolved.presetIndex != null) applyPreset(resolved.component.presets[resolved.presetIndex], resolved.presetIndex);
         else rememberLibrarySelection();
     }
@@ -1066,8 +1067,6 @@
             : changes.length ? `${changes.length} unapplied wall change${changes.length === 1 ? '' : 's'} · preview is local`
             : 'Draft matches observed wall state.';
         $('resetWallDraftButton').disabled = !changes.length || state.globalSettings.applying;
-        $('reviewWallButton').disabled = !changes.length || !state.serverOnline || state.globalSettings.applying || state.globalSettings.pendingObservation;
-        $('reviewWallButton').title = !state.serverOnline ? 'Reconnect to review wall-wide changes.' : 'Review every wall-wide command before applying.';
         const controller = state.controllerObservation || {};
         const pendingPower = Boolean(state.globalSettings.powerActivation)
             || (state.globalSettings.pendingObservation && changes.some((change) => change.id === 'power'));
@@ -1107,6 +1106,7 @@
         resetChecker({preserveDocumentRevision: true});
         requestRender();
         if (render) renderGlobalSettings();
+        queueImmediateApply({source: 'wall setting'});
     }
 
     async function refreshGlobalSettings({quiet = false, preserveDraft = true} = {}) {
@@ -1128,18 +1128,23 @@
                 activeIdentity: clone(payload.active_identity || null),
                 installationProfileDigest: payload.installation_profile_digest || null,
             };
+            const priorControllerSession = state.controllerObservation?.sessionId;
             if (
                 state.serverCheck
                 && JSON.stringify(state.controllerObservation) !== JSON.stringify(nextControllerObservation)
             ) {
                 state.serverCheck = null;
             }
-            state.controllerObservation = nextControllerObservation;
-            state.liveEdit.observedComponent = liveEditObservedComponent(payload);
-            if (state.liveEdit.enabled && !liveEditMatchesObservedComponent()) {
-                pauseLiveEdit('Live edit paused because the wall is now playing a different animation.');
+            if (
+                priorControllerSession
+                && nextControllerObservation.sessionId
+                && priorControllerSession !== nextControllerObservation.sessionId
+            ) {
+                invalidateImmediateApply(
+                    'Not sent · controller reconnected. A fresh edit is required; prior edits were not replayed.',
+                );
             }
-            renderLiveEditMode();
+            state.controllerObservation = nextControllerObservation;
             state.wallStateLoaded = true;
             const hadDirtyDraft = state.globalSettings.dirty;
             state.globalSettings.observed = observed;
@@ -1340,70 +1345,6 @@
         }
     }
 
-    function reviewGlobalChanges() {
-        const returnFocus = document.activeElement;
-        const changes = globalChangeList();
-        if (!changes.length || !state.serverOnline) return;
-        if (changes.some((change) => change.id === 'power')) {
-            $('serverActionStatus').textContent = 'Output power uses the same checked activation path as scene restoration.';
-            reviewActivation();
-            return;
-        }
-        const summary = $('wallChangeSummary');
-        summary.replaceChildren();
-        changes.forEach((change) => {
-            const row = document.createElement('div');
-            const term = document.createElement('dt');
-            const detail = document.createElement('dd');
-            term.textContent = change.label;
-            detail.textContent = `${change.before} → ${change.after}`;
-            row.append(term, detail);
-            summary.appendChild(row);
-        });
-        showComposerModal($('wallReviewDialog'), {
-            initialFocus: $('wallReviewDialog').querySelector('[value="cancel"]'),
-            returnFocus,
-        });
-    }
-
-    async function applyGlobalChanges() {
-        if (!state.serverOnline || !state.globalSettings.dirty || state.globalSettings.applying) return;
-        const draft = clone(state.globalSettings.draft);
-        const changes = new Set(globalChangeList().map((change) => change.id));
-        if (changes.has('power')) {
-            throw new Error('Output power requires the checked activation path.');
-        }
-        const actions = globalActions();
-        state.globalSettings.applying = true;
-        renderGlobalSettings();
-        try {
-            // Capture the current provider/revision before sending anything.
-            // A successful command without this correlation cannot prove that
-            // the same controller later applied the reviewed settings.
-            const reconciliation = beginGlobalSettingsReconciliation(draft);
-            if (changes.has('vibe')) await requestJson(actions.vibe_url || '/api/v1/vibe', {method: 'POST', body: JSON.stringify({vibe: draft.vibeId})});
-            if (changes.has('plant')) await requestJson(actions.plant_modifiers_url || '/api/config/plant-modifiers', {method: 'POST', body: JSON.stringify({plant_modifiers: draft.plantModifiers})});
-            if (changes.has('brightness')) await requestJson(actions.brightness_url || '/api/config/brightness', {method: 'POST', body: JSON.stringify({brightness: draft.brightness})});
-            if (changes.has('targetFps')) await requestJson(actions.target_fps_url || '/api/config/target-fps', {method: 'POST', body: JSON.stringify({target_fps: draft.targetFps})});
-            if (changes.has('speed')) await requestJson(actions.operator_speed_url || '/api/config/animation-speed', {method: 'POST', body: JSON.stringify({multiplier: draft.speedMultiplier})});
-            state.globalSettings.reconciliation = reconciliation;
-            state.globalSettings.pendingObservation = true;
-            state.globalSettings.pendingSince = state.globalSettings.reconciliation.pending.issuedAt;
-            persistGlobalDraft();
-            toast('Wall-wide commands sent; waiting for observed state.', 'success');
-        } catch (error) {
-            if (error.code === 'offline') setServerOnline(false);
-            toast(`Wall update stopped: ${error.message}`, 'error');
-            state.globalSettings.pendingObservation = false;
-            state.globalSettings.pendingSince = 0;
-            await refreshGlobalSettings({quiet: true, preserveDraft: true});
-        } finally {
-            state.globalSettings.applying = false;
-            renderGlobalSettings();
-            if (state.globalSettings.pendingObservation) pollGlobalSettingsReconciliation();
-        }
-    }
-
     function previewElapsed(component, elapsed) {
         if (component?.presentation?.timing_adapter === 'wall_clock') return elapsed;
         const profile = vibeProfile();
@@ -1507,9 +1448,12 @@
     }
 
     function setServerOnline(online, {checking = false, quiet = false} = {}) {
+        const wasOnline = state.serverOnline;
         state.serverOnline = Boolean(online);
         state.serverChecking = checking;
-        if (!online && state.liveEdit.enabled) disableLiveEdit('Wall connection lost · live edit paused.');
+        if (!online && wasOnline) {
+            invalidateImmediateApply('Not sent · wall connection lost. Reconnect does not replay prior edits.');
+        }
         const activationAvailable = state.bootstrap?.capabilities?.server_actions?.activation_available === true;
         const activationMode = state.bootstrap?.capabilities?.server_actions?.activation_mode;
         const activationIsCanary = activationAvailable && activationMode === 'development_canary';
@@ -1523,7 +1467,7 @@
                 : online
                     ? activationAvailable
                         ? activationIsCanary
-                            ? 'Wall connected — review this draft to apply it to the wall.'
+                            ? 'Wall connected — edits are checked and applied in order.'
                             : 'Wall connected; activation capability labeling is invalid, so physical activation is unavailable.'
                         : 'Wall connected; library save is available, but physical activation is disabled.'
                     : 'Composer ready; shared save and wall operations are offline.';
@@ -1533,10 +1477,10 @@
             $('serverActionStatus').textContent = online
                 ? activationAvailable
                     ? activationIsCanary
-                        ? 'Wall connected — review this draft to apply it to the wall.'
+                        ? 'Wall connected — edits are checked and applied in order.'
                         : 'Activation is fail-closed because this server is not labeled as a development/canary target.'
                     : 'Library save is available. Physical activation remains disabled for this release.'
-                : 'Offline: local drafts, checks, uploads, and downloads still work. Save and Activate are unavailable.';
+                : 'Offline: local drafts, checks, uploads, and downloads still work. Edits are not replayed after reconnect.';
         }
         updateServerActionButtons();
         renderGlobalSettings();
@@ -1600,167 +1544,195 @@
         if (!capability.activationReady) return capability.reason || 'This look is not activation-ready.';
         if (state.serverChecking) return 'Waiting for the wall server.';
         if (!state.serverOnline) return 'Reconnect to the wall server before activation.';
+        if (state.busyAction === 'stop' || state.operations.stop?.pending) {
+            return 'Wait for the checked Stop operation to finish.';
+        }
+        if (state.activation.resourceRequestUrl) {
+            return 'Wait for the current cancel or rollback request to finish.';
+        }
         if (state.globalSettings.loading || state.globalSettings.applying) return 'Wait for wall-wide settings to finish updating.';
-        if (state.globalSettings.pendingObservation) return 'Wait until the wall reports the reviewed Wall settings before activation.';
+        if (state.globalSettings.pendingObservation) return 'Wait until the wall reports the pending settings before applying another edit.';
         return null;
     }
 
-    function liveEditObservedComponent(status) {
-        const scene = status?.scene || status?.scene_state || {};
-        const background = scene?.background?.component || scene?.background || {};
-        const provider = background?.provider;
-        const componentId = background?.plugin_id || background?.component_id;
-        return typeof provider === 'string' && typeof componentId === 'string'
-            ? {provider, component_id: componentId}
-            : null;
-    }
-
-    function liveEditMatchesObservedComponent() {
-        const expected = state.component ? liveEditExpectedComponent() : null;
-        const observed = state.liveEdit.observedComponent;
-        return Boolean(expected && observed
-            && expected.provider === observed.provider
-            && expected.component_id === observed.component_id);
-    }
-
-    function liveEditAvailable() {
-        return Boolean(
-            state.component
-            && state.serverOnline
-            && !state.serverChecking
-            && globalActions().live_edit_available === true
-            && liveEditMatchesObservedComponent()
-        );
-    }
-
-    function renderLiveEditMode() {
-        const toggle = $('liveEditToggle');
-        const status = $('liveEditStatus');
-        const control = toggle?.closest('.live-edit-control');
-        if (!toggle || !status || !control) return;
-        const available = liveEditAvailable();
-        toggle.checked = state.liveEdit.enabled;
-        toggle.disabled = !available && !state.liveEdit.enabled;
-        control.dataset.state = state.liveEdit.state;
-        const expected = state.component ? liveEditExpectedComponent() : null;
-        const observed = state.liveEdit.observedComponent;
-        status.textContent = state.liveEdit.message || (state.liveEdit.enabled
-            ? state.liveEdit.inFlight || state.liveEdit.pending
-                ? 'Live · sending the latest parameter change…'
-                : 'Live · parameter edits are applied immediately.'
-            : available
-                ? 'Off · Composer parameters stay local.'
-                : !state.serverOnline || state.serverChecking
-                    ? 'Unavailable · connect to the wall and choose a renderer.'
-                    : !observed
-                        ? 'Refresh Wall settings to identify the animation currently playing.'
-                        : `Activate ${state.component?.name || humanize(expected?.component_id || '')} first. The wall is playing ${humanize(observed.component_id)}.`);
-    }
-
-    function disableLiveEdit(message = null) {
-        state.liveEdit.enabled = false;
-        state.liveEdit.pending = false;
-        state.liveEdit.generation += 1;
-        if (state.liveEdit.timer) window.clearTimeout(state.liveEdit.timer);
-        state.liveEdit.timer = null;
-        state.liveEdit.message = message;
-        state.liveEdit.state = message ? 'error' : 'off';
-        renderLiveEditMode();
-    }
-
-    function pauseLiveEdit(message) {
-        disableLiveEdit();
-        state.liveEdit.message = message;
-        state.liveEdit.state = 'off';
-        renderLiveEditMode();
-    }
-
-    function liveEditExpectedComponent() {
-        const identity = state.component?.browser_capabilities?.managed_identity || {};
-        const provider = identity.provider || state.component?.provider;
-        const componentId = identity.component_id || state.component?.plugin_id;
-        if (typeof provider !== 'string' || typeof componentId !== 'string') {
-            throw new Error('The selected renderer has no live-edit identity.');
+    function renderImmediateApplyStatus() {
+        const apply = state.immediateApply;
+        const status = $('immediateApplyStatus');
+        const message = apply.message || (apply.inFlight || apply.queue.hasQueued()
+            ? 'Pending · edits are checked and sent in order; only the newest queued edit is retained.'
+            : 'Ready · edits apply automatically after a guarded server Check.');
+        if (status) {
+            status.textContent = message;
+            status.dataset.state = apply.state;
         }
-        return {provider, component_id: componentId};
+        const mobileStatus = $('mobileActivationStatus');
+        if (mobileStatus) mobileStatus.textContent = message;
     }
 
-    function liveEditUrl() {
-        const template = globalActions().live_edit_component_url_template
-            || '/api/v1/scene/components/{target}';
-        return template.replace('{target}', 'background');
+    function invalidateImmediateApply(message = 'Not sent · reconnect does not replay prior edits.') {
+        const apply = state.immediateApply;
+        if (apply.timer) window.clearTimeout(apply.timer);
+        apply.timer = null;
+        apply.queue.invalidate({state: 'paused', message});
+        apply.message = message;
+        apply.state = 'paused';
+        renderImmediateApplyStatus();
     }
 
-    function queueLiveEdit({immediate = false} = {}) {
-        if (!state.liveEdit.enabled || !state.component) return;
-        state.liveEdit.pending = true;
-        state.liveEdit.message = null;
-        state.liveEdit.state = 'active';
-        if (state.liveEdit.inFlight) {
-            renderLiveEditMode();
-            return;
+    function immediateApplyEntryIsCurrent(entry) {
+        return entry?.revision === state.immediateApply.queue.currentRevision();
+    }
+
+    function captureImmediateApplyIntent(source = 'edit') {
+        if (!state.component) throw new Error('Choose a look before applying edits.');
+        return Object.freeze({
+            source,
+            componentKey: state.component.key,
+            documentRevision: state.documentRevision,
+            scene: clone(buildScene()),
+            globalSettings: clone(activationGlobalSettings()),
+        });
+    }
+
+    function queueImmediateApply({immediate = false, source = 'edit'} = {}) {
+        if (state.urlState.applying) return false;
+        const blockReason = activationBlockReason();
+        if (blockReason) {
+            invalidateImmediateApply(`Not sent · ${blockReason}`);
+            return false;
         }
-        if (state.liveEdit.timer) window.clearTimeout(state.liveEdit.timer);
-        const delay = immediate ? 0 : Math.max(
-            0, LIVE_EDIT_MIN_INTERVAL_MS - (Date.now() - state.liveEdit.lastSentAt)
-        );
-        state.liveEdit.timer = window.setTimeout(flushLiveEdit, delay);
-        renderLiveEditMode();
-    }
-
-    async function flushLiveEdit() {
-        state.liveEdit.timer = null;
-        if (!state.liveEdit.enabled || state.liveEdit.inFlight || !state.liveEdit.pending) return;
-        state.liveEdit.pending = false;
-        state.liveEdit.inFlight = true;
-        state.liveEdit.lastSentAt = Date.now();
-        const generation = state.liveEdit.generation;
-        const params = authoredParams(state.component, state.params);
+        let intent;
         try {
-            await requestJson(liveEditUrl(), {
-                method: 'PATCH',
-                body: JSON.stringify({
-                    live_edit: true,
-                    expected_component: liveEditExpectedComponent(),
-                    params,
-                }),
-            });
-            if (generation !== state.liveEdit.generation) return;
-            state.liveEdit.message = state.liveEdit.pending
-                ? 'Live · sending the latest parameter change…'
-                : 'Live · latest parameter change queued for the wall.';
-            state.liveEdit.state = 'active';
+            intent = captureImmediateApplyIntent(source);
         } catch (error) {
-            if (generation !== state.liveEdit.generation) return;
-            if (error.code === 'offline') setServerOnline(false);
-            disableLiveEdit(`Live edit stopped · ${error.message}`);
-            toast(`Live edit stopped: ${error.message}`, 'error');
-        } finally {
-            state.liveEdit.inFlight = false;
-            if (state.liveEdit.enabled && state.liveEdit.pending) queueLiveEdit();
-            else renderLiveEditMode();
+            invalidateImmediateApply(`Not sent · ${error.message}`);
+            return false;
         }
+        const apply = state.immediateApply;
+        apply.queue.enqueue(intent);
+        apply.message = 'Pending · newest edit queued for a guarded apply.';
+        apply.state = 'pending';
+        if (!apply.inFlight) {
+            if (apply.timer) window.clearTimeout(apply.timer);
+            const delay = immediate ? 0 : Math.max(
+                0,
+                IMMEDIATE_APPLY_MIN_INTERVAL_MS - (Date.now() - apply.lastSentAt),
+            );
+            apply.timer = window.setTimeout(flushImmediateApply, delay);
+        }
+        renderImmediateApplyStatus();
+        return true;
     }
 
-    function setLiveEditEnabled(enabled) {
-        if (!enabled) {
-            disableLiveEdit();
-            return;
+    async function waitForImmediateActivation(entry, result) {
+        const statusUrl = result.status_url
+            || `/api/v1/scene/activations/${encodeURIComponent(result.activation_id)}`;
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < 120000) {
+            const status = await requestJson(statusUrl);
+            if (status.activation_id !== result.activation_id) {
+                throw new Error('The activation status correlation ID changed.');
+            }
+            if (immediateApplyEntryIsCurrent(entry)) {
+                state.activation.activationId = result.activation_id;
+                state.activation.statusUrl = statusUrl;
+                state.activation.lastStatus = clone(status);
+                renderActivationStatus(status);
+            }
+            if (status.phase === 'active') {
+                if (!activationIdentitiesMatch(status)) {
+                    throw new Error('The controller did not observe the exact checked edit.');
+                }
+                return status;
+            }
+            if (['failed', 'timed_out', 'rolled_back'].includes(status.phase)) {
+                throw new Error(status.error || `Activation ${status.phase}.`);
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, 1000));
         }
-        if (!liveEditAvailable()) {
-            const observed = state.liveEdit.observedComponent;
-            const message = !state.serverOnline || state.serverChecking
-                ? 'Live edit requires a connected wall and selected renderer.'
-                : !observed
-                    ? 'Refresh Wall settings before starting live edit.'
-                    : `Activate ${state.component?.name || 'this animation'} before editing it live.`;
-            pauseLiveEdit(message);
-            return;
+        throw new Error('Activation timed out before the newest edit was observed.');
+    }
+
+    async function flushImmediateApply() {
+        const apply = state.immediateApply;
+        apply.timer = null;
+        if (apply.inFlight) return;
+        const entry = apply.queue.begin();
+        if (!entry) return;
+        apply.inFlight = true;
+        apply.lastSentAt = Date.now();
+        apply.message = 'Checking the latest edit against the current controller revision…';
+        apply.state = 'checking';
+        renderImmediateApplyStatus();
+        let outcome = null;
+        try {
+            const blockReason = activationBlockReason();
+            if (blockReason) throw new Error(blockReason);
+            const observed = await refreshGlobalSettings({quiet: true, preserveDraft: true});
+            if (!observed) throw new Error('Could not read the current wall settings.');
+            if (!immediateApplyEntryIsCurrent(entry)) return;
+            const serverCheck = await createServerCheck(
+                entry.intent.globalSettings,
+                entry.intent.scene,
+            );
+            if (!immediateApplyEntryIsCurrent(entry)) return;
+            const result = await submitCheckedIntent(entry.intent, serverCheck);
+            if (immediateApplyEntryIsCurrent(entry)) {
+                state.activation.activationId = result.activation_id;
+                state.activation.idempotencyKey = serverCheck.idempotencyKey;
+                state.activation.statusUrl = result.status_url
+                    || `/api/v1/scene/activations/${encodeURIComponent(result.activation_id)}`;
+                state.activation.pollStartedAt = Date.now();
+                state.activation.lastStatus = null;
+                const desiredPower = entry.intent.globalSettings?.output?.power;
+                if (typeof desiredPower === 'boolean'
+                    && desiredPower !== state.globalSettings.observed?.power) {
+                    state.globalSettings.powerActivation = {
+                        desired: desiredPower,
+                        phase: 'queued',
+                        outcome: {
+                            state: 'pending',
+                            message: 'The checked output-power edit is awaiting controller acknowledgement.',
+                        },
+                    };
+                    renderGlobalSettings();
+                }
+                apply.message = 'Queued · pending is not observed active.';
+                apply.state = 'queued';
+                renderImmediateApplyStatus();
+            }
+            await waitForImmediateActivation(entry, result);
+            if (immediateApplyEntryIsCurrent(entry)) {
+                const refreshed = await refreshGlobalSettings({quiet: true, preserveDraft: true});
+                if (!refreshed) throw new Error('The applied edit could not be confirmed in current wall settings.');
+            }
+            outcome = {state: 'active', message: 'Active · the exact newest edit was observed by the controller.'};
+            if (immediateApplyEntryIsCurrent(entry)) {
+                apply.message = outcome.message;
+                apply.state = 'active';
+                renderImmediateApplyStatus();
+            }
+        } catch (error) {
+            outcome = {state: 'failed', retryable: true, message: `Not applied · ${error.message}`};
+            if (immediateApplyEntryIsCurrent(entry)) {
+                if (error.code === 'offline') setServerOnline(false);
+                apply.message = outcome.message;
+                apply.state = 'failed';
+                state.globalSettings.powerActivation = null;
+                state.globalSettings.reconciliation = {outcome};
+                $('serverActionStatus').textContent = outcome.message;
+                renderGlobalSettings();
+                renderImmediateApplyStatus();
+                toast(outcome.message, 'error');
+            }
+        } finally {
+            apply.queue.finish(entry, outcome);
+            apply.inFlight = false;
+            if (apply.queue.hasQueued()) {
+                apply.timer = window.setTimeout(flushImmediateApply, 0);
+            }
+            renderImmediateApplyStatus();
         }
-        state.liveEdit.enabled = true;
-        state.liveEdit.message = 'Live · applying this Composer draft now…';
-        state.liveEdit.state = 'active';
-        queueLiveEdit({immediate: true});
     }
 
     function updateServerActionButtons() {
@@ -1770,31 +1742,20 @@
             $(id).disabled = !saveEnabled;
         });
         const blockReason = activationBlockReason();
-        ['activateButton', 'activatePanelButton', 'mobileActivateButton'].forEach((id) => {
-            $(id).disabled = Boolean(blockReason || state.busyAction);
-            $(id).title = blockReason || 'Review this checked draft before activating it on the wall.';
-            $(id).setAttribute('aria-disabled', String(Boolean(blockReason || state.busyAction)));
-        });
-        const mobileStatus = $('mobileActivationStatus');
-        if (mobileStatus) mobileStatus.textContent = blockReason || 'Review this draft before applying it to the wall.';
         const reason = $('activationReadiness');
         if (reason) {
-            const hasCurrentLocalCheck = currentCheckAllowsActivation();
-            reason.textContent = blockReason || (!hasCurrentLocalCheck
-                ? 'Activation-ready: the server will issue the authoritative Check when you review this scene.'
-                : state.checkResult?.status === 'warn'
-                    ? 'Activation-ready with cautions: review this exact checked draft before continuing.'
-                    : 'Activation-ready: this exact draft passed Check.');
+            reason.textContent = blockReason
+                || 'Ready for immediate apply: every edit receives a fresh guarded server Check.';
             reason.dataset.state = blockReason ? 'blocked' : 'ready';
         }
         updateActivationResourceButtons();
-        renderLiveEditMode();
+        renderImmediateApplyStatus();
     }
 
     function setActionBusy(action, busy) {
         state.busyAction = busy ? action : null;
         const ids = action === 'activate'
-            ? ['activateButton', 'activatePanelButton']
+            ? []
             : action === 'save'
                 ? ['saveLibraryButton', 'saveLibraryPanelButton']
                 : ['operationsStopButton'];
@@ -1945,7 +1906,7 @@
             restoreError = error;
         }
         if (requested) await applyUrlState(requested, {replace: true});
-        else if (preferred) await selectComponent(preferred, {urlMode: 'replace'});
+        else if (preferred) await selectComponent(preferred, {urlMode: 'replace', scheduleApply: false});
         else showCatalogUnavailable('No components currently declare a supported browser runtime.');
         if (restoreError) reportUrlRestoreFailure(restoreError.message);
         setComposerReady(true, `Bundled catalog ${state.bootstrap.artifact?.catalog_digest?.slice(0, 12) || 'ready'}`);
@@ -1962,6 +1923,7 @@
                 urlMode: 'none',
                 deferRuntime: true,
                 skipLibraryRecent: true,
+                scheduleApply: false,
             });
             const requestedPreset = (component.presets || []).find((item, index) => (
                 presetIdentity(item, index) === (preset || draft.selectedPreset)
@@ -2060,7 +2022,7 @@
         // local renderer. Rendering a large catalog never instantiates the
         // individual previews or sends a wall request.
         await selectComponent(entry.component, entry.kind === 'preset'
-            ? {focusEditor: true, skipLibraryRecent: true}
+            ? {focusEditor: true, skipLibraryRecent: true, scheduleApply: false}
             : {focusEditor: true});
         if (entry.kind === 'preset') applyPreset(entry.preset, entry.presetIndex);
     }
@@ -2326,15 +2288,19 @@
                 };
                 if (recordIndex >= 0) component.presets.splice(recordIndex, 1, catalogRecord);
                 else component.presets.push(catalogRecord);
-                await selectComponent(component, {force: true, focusEditor: true});
+                await selectComponent(component, {
+                    force: true,
+                    focusEditor: true,
+                    scheduleApply: false,
+                });
                 applyPreset(catalogRecord, Math.max(0, component.presets.indexOf(catalogRecord)));
             } else {
                 throw new Error('The selected saved record is invalid.');
             }
             state.savedRecords.reopened = state.savedRecords.selected;
             renderSavedRecords();
-            $('serverActionStatus').textContent = 'Saved record reopened as a local draft. Run Check before reviewed activation.';
-            toast('Saved record reopened as a draft; the wall was not changed.', 'success');
+            $('serverActionStatus').textContent = 'Saved record reopened and queued for guarded immediate apply.';
+            toast('Saved record reopened; its newest state is queued.', 'success');
         } catch (error) {
             if (error.code === 'offline') setServerOnline(false);
             $('savedRecordStatus').textContent = `Could not reopen record: ${error.message}`;
@@ -2498,7 +2464,7 @@
             const desired = state.installationProfile.desiredDigest || selected;
             const bundled = state.bootstrap?.installation_profile?.authority === 'bundled';
             $('installationProfileStatus').textContent = desired !== selected
-                ? `Published profile ${desired.slice(0, 12)}… is staged for the next Check and reviewed activation · wall remains ${selected.slice(0, 12)}….`
+                ? `Published profile ${desired.slice(0, 12)}… is staged for guarded immediate apply · wall remains ${selected.slice(0, 12)}….`
                 : bundled
                     ? `Bundled profile ${selected.slice(0, 12)}… drives local preview · use Refresh in Wall settings to read the connected wall.`
                     : `Plant geometry is authoritative host state · selected profile ${selected.slice(0, 12)}… · presets cannot override it.`;
@@ -2582,6 +2548,7 @@
         scheduleAutosave();
         syncComposerUrl({mode: 'coalesce'});
         requestRender();
+        queueImmediateApply({source: 'Clock parameter'});
     }
 
     function applyClockPreset(presetId) {
@@ -2599,6 +2566,7 @@
         commitHistory();
         scheduleAutosave();
         requestRender();
+        queueImmediateApply({immediate: true, source: 'Clock preset'});
         toast(`Clock starting point: ${preset.name || humanize(presetId)}.`);
     }
 
@@ -2607,9 +2575,6 @@
         if (state.component?.key === component.key && !options.force) {
             if (options.focusEditor && window.matchMedia('(max-width: 760px)').matches) selectMobileView('edit');
             return;
-        }
-        if (state.component?.key && state.component.key !== component.key) {
-            pauseLiveEdit(`Off · ${component.name || humanize(component.plugin_id)} is a draft. Activate it before using Live edit.`);
         }
         const hadHistory = state.history.length > 0;
         state.component = component;
@@ -2647,6 +2612,9 @@
         if (!options.skipLibraryRecent) rememberLibrarySelection();
         const urlMode = options.urlMode ?? (hadHistory ? 'push' : 'replace');
         if (urlMode !== 'none') syncComposerUrl({mode: urlMode});
+        if (options.scheduleApply !== false) {
+            queueImmediateApply({immediate: true, source: 'renderer selection'});
+        }
     }
 
     function applyPreset(preset, index) {
@@ -2666,7 +2634,7 @@
         restartRuntimesAtCurrentState();
         scheduleAutosave();
         if (window.matchMedia('(max-width: 760px)').matches) selectMobileView('edit');
-        queueLiveEdit({immediate: true});
+        queueImmediateApply({immediate: true, source: 'preset'});
         rememberLibrarySelection();
         toast(`Loaded ${$('presetName').value}.`);
     }
@@ -3090,7 +3058,7 @@
         scheduleAutosave();
         syncComposerUrl({mode: 'coalesce'});
         requestRender();
-        queueLiveEdit();
+        queueImmediateApply({source: 'parameter'});
     }
 
     function snapshot() {
@@ -3132,9 +3100,6 @@
             return;
         }
         const componentChanged = component.key !== state.component?.key;
-        if (componentChanged) {
-            pauseLiveEdit(`Off · ${component.name || humanize(component.plugin_id)} is a draft. Activate it before using Live edit.`);
-        }
         state.historyIndex = index;
         state.component = component;
         state.params = clone(entry.params);
@@ -3159,7 +3124,7 @@
             if (!clockWasEnabled && state.layers.clockEnabled) ensureOverlayRuntime().then(requestRender).catch(() => {});
         }
         requestRender();
-        queueLiveEdit({immediate: true});
+        if (!fromBrowser) queueImmediateApply({immediate: true, source: 'history'});
         if (!fromBrowser) syncComposerUrl({mode: 'push'});
     }
 
@@ -3980,8 +3945,11 @@
         return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
     }
 
-    async function createServerCheck(globalSettings = activationGlobalSettings()) {
-        const scene = buildScene();
+    async function createServerCheck(
+        globalSettings = activationGlobalSettings(),
+        scene = buildScene(),
+        {store = false} = {},
+    ) {
         const checkUrl = state.bootstrap.capabilities?.server_actions?.check_scene_url
             || '/api/v1/scene/checks';
         const result = await requestJson(checkUrl, {
@@ -3995,79 +3963,34 @@
         if (!result.check_token || !result.basis_digest || !result.basis?.controller) {
             throw new Error('The wall server returned an incomplete Check authorization.');
         }
-        state.serverCheck = {
+        const serverCheck = {
             token: result.check_token,
             basis: clone(result.basis),
             basisDigest: result.basis_digest,
             expiresAt: result.expires_at,
             idempotencyKey: newIdempotencyKey(),
         };
-        return state.serverCheck;
+        if (store) state.serverCheck = serverCheck;
+        return serverCheck;
     }
 
-    async function reviewActivation() {
-        const returnFocus = document.activeElement;
-        const blockReason = activationBlockReason();
-        if (blockReason) {
-            toast(blockReason, 'error');
-            $('serverActionStatus').textContent = `Activation is not ready: ${blockReason}`;
-            return;
+    async function submitCheckedIntent(intent, serverCheck) {
+        if (!serverCheck?.token) throw new Error('The server Check did not authorize this edit.');
+        if (serverCheck.expiresAt && Date.now() >= serverCheck.expiresAt * 1000) {
+            throw new Error('The server Check expired before this edit could be sent.');
         }
-        try {
-            buildScene();
-        } catch (error) {
-            toast(error.message, 'error');
-            $('serverActionStatus').textContent = `Activation is not ready: ${error.message}`;
-            return;
-        }
-        setActionBusy('activate', true);
-        $('serverActionStatus').textContent = 'Reading the current wall settings before issuing a server Check…';
-        try {
-            // Preserve only a locally reviewed power intent. Other Wall
-            // drafts retain the established activation behavior of refreshing
-            // to the observed global state before the server Check.
-            const preservePowerIntent = state.globalSettings.draft?.power
-                !== state.globalSettings.observed?.power;
-            const observed = preservePowerIntent
-                ? await refreshGlobalSettings({quiet: true, preserveDraft: true})
-                : await refreshGlobalSettings({quiet: true, preserveDraft: false});
-            if (!observed) throw new Error('Could not read the current wall settings.');
-            $('serverActionStatus').textContent = 'Requesting a short-lived server Check for this exact scene and wall state…';
-            await createServerCheck();
-        } catch (error) {
-            if (error.code === 'offline') setServerOnline(false);
-            state.serverCheck = null;
-            $('serverActionStatus').textContent = `Server Check failed: ${error.message}`;
-            toast(error.message, 'error');
-            return;
-        } finally {
-            setActionBusy('activate', false);
-        }
-        const fallback = pythonFallbacks().find((item) => item.key === state.layers.fallbackKey);
-        $('activateBackground').textContent = state.component.name || humanize(state.component.plugin_id);
-        $('activateOverlay').textContent = state.layers.clockEnabled ? `Clock · ${Math.round(state.layers.clockOpacity / 255 * 100)}%` : 'Off';
-        $('activateFallback').textContent = fallback?.name || 'Unavailable';
-        if ($('activateProvider')) $('activateProvider').textContent = state.component.provider;
-        if ($('activateRuntimeDigest')) $('activateRuntimeDigest').textContent = ComposerState.runtimeDigest?.(state.component) || 'Catalog identity';
-        if ($('activateProfileDigest')) $('activateProfileDigest').textContent = state.installationProfile.desiredDigest || 'Unavailable';
-        if ($('activateRevision')) $('activateRevision').textContent = String(state.documentRevision);
-        if ($('activateCheck')) {
-            const hasCurrentLocalCheck = currentCheckAllowsActivation();
-            const outcome = !hasCurrentLocalCheck
-                ? 'Server Check issued'
-                : state.checkResult?.status === 'warn' ? 'Passed with cautions' : 'Passed';
-            const cautions = hasCurrentLocalCheck && state.checkResult?.warnings?.length
-                ? ` · review ${state.checkResult.warnings.join(', ')}`
-                : '';
-            const expires = state.serverCheck?.expiresAt
-                ? new Date(state.serverCheck.expiresAt * 1000).toLocaleTimeString()
-                : 'soon';
-            $('activateCheck').textContent = `${outcome}${cautions} · server-authorized until ${expires}`;
-        }
-        if ($('activateDestination')) $('activateDestination').textContent = 'Physical living wall';
-        showComposerModal($('activateDialog'), {
-            initialFocus: $('activateDialog').querySelector('[value="cancel"]'),
-            returnFocus,
+        const activateUrl = state.bootstrap.capabilities?.server_actions?.activate_scene_url
+            || '/api/v1/scene';
+        return requestJson(activateUrl, {
+            method: 'PUT',
+            headers: {'Idempotency-Key': serverCheck.idempotencyKey},
+            body: JSON.stringify({
+                check_token: serverCheck.token,
+                expected_controller_session_id: serverCheck.basis.controller.session_id,
+                expected_controller_state_revision: serverCheck.basis.controller.state_revision,
+                scene: intent.scene,
+                global_settings: intent.globalSettings,
+            }),
         });
     }
 
@@ -4351,74 +4274,6 @@
         );
     }
 
-    async function activateScene() {
-        if (state.busyAction) return;
-        setActionBusy('activate', true);
-        $('serverActionStatus').textContent = 'Validating the exact background, Clock slot, and Python fallback…';
-        try {
-            const blockReason = activationBlockReason();
-            if (blockReason) throw new Error(blockReason);
-            const scene = buildScene();
-            const powerChanged = state.globalSettings.draft?.power
-                !== state.globalSettings.observed?.power;
-            const serverCheck = state.serverCheck;
-            if (!serverCheck?.token) throw new Error('Request a fresh server Check before activation.');
-            if (serverCheck.expiresAt && Date.now() >= serverCheck.expiresAt * 1000) {
-                state.serverCheck = null;
-                throw new Error('The server Check expired. Review activation again.');
-            }
-            const activateUrl = state.bootstrap.capabilities?.server_actions?.activate_scene_url || '/api/v1/scene';
-            const result = await requestJson(activateUrl, {
-                method: 'PUT',
-                headers: {'Idempotency-Key': serverCheck.idempotencyKey},
-                body: JSON.stringify({
-                    check_token: serverCheck.token,
-                    expected_controller_session_id: serverCheck.basis.controller.session_id,
-                    expected_controller_state_revision: serverCheck.basis.controller.state_revision,
-                    scene,
-                    global_settings: activationGlobalSettings(),
-                }),
-            });
-            state.activation.activationId = result.activation_id;
-            state.activation.idempotencyKey = serverCheck.idempotencyKey;
-            state.activation.statusUrl = result.status_url
-                || `/api/v1/scene/activations/${encodeURIComponent(result.activation_id)}`;
-            state.activation.pollStartedAt = Date.now();
-            state.activation.lastStatus = null;
-            state.serverCheck = null;
-            if (powerChanged) {
-                state.globalSettings.powerActivation = {
-                    desired: state.globalSettings.draft.power,
-                    phase: 'queued',
-                    outcome: {
-                        state: 'pending',
-                        message: 'The checked output-power command was accepted; waiting for controller acknowledgement.',
-                    },
-                };
-                renderGlobalSettings();
-            }
-            $('serverActionStatus').textContent = `Pending · activation ${result.activation_id} is queued; the wall is not yet reported Active.`;
-            toast('Activation queued; waiting for correlated controller observation.');
-            pollActivationStatus();
-        } catch (error) {
-            if (error.code === 'offline') setServerOnline(false);
-            if (state.globalSettings.draft?.power !== state.globalSettings.observed?.power) {
-                state.globalSettings.powerActivation = null;
-                state.globalSettings.reconciliation = {
-                    outcome: {
-                        state: 'failed',
-                        message: `Output-power activation was not accepted: ${error.message}`,
-                    },
-                };
-                renderGlobalSettings();
-            }
-            $('serverActionStatus').textContent = `Activation was not accepted: ${error.message}`;
-            toast(error.message, 'error');
-        } finally {
-            setActionBusy('activate', false);
-        }
-    }
-
     async function copyJson() {
         const text = JSON.stringify(exportedDocument(), null, 2);
         try {
@@ -4613,6 +4468,7 @@
             ignoreAutosave: true,
             deferRuntime: true,
             historyMode: 'preserve',
+            scheduleApply: false,
         });
         state.params = enforceInstallationParams(component, {...defaultParams(component), ...clone(draft.params || {})});
         state.originalParams = clone(state.params);
@@ -4657,6 +4513,7 @@
         commitHistory();
         await startRuntimes();
         scheduleAutosave();
+        queueImmediateApply({immediate: true, source: 'import'});
     }
 
     async function importJson(file) {
@@ -5207,7 +5064,8 @@
         renderLayers();
         updateMaskControls('Candidate staged for local preview and the next Check. The wall remains unchanged.', 'success');
         restartRuntimesAtCurrentState();
-        toast('Profile candidate staged. Run Check before reviewed activation.');
+        queueImmediateApply({immediate: true, source: 'installation profile'});
+        toast('Profile candidate staged and queued for guarded immediate apply.');
     }
 
     function selectInspectorTab(name) {
@@ -5303,7 +5161,7 @@
             commitHistory();
             scheduleAutosave();
             requestRender();
-            queueLiveEdit({immediate: true});
+            queueImmediateApply({immediate: true, source: 'reset'});
         });
         $('presetName').addEventListener('input', () => {
             resetChecker();
@@ -5326,7 +5184,6 @@
         $('reopenSavedRecordButton').addEventListener('click', () => { void reopenSavedRecord(); });
         $('updateSavedRecordButton').addEventListener('click', () => { void updateSavedRecord(); });
         $('deleteSavedRecordButton').addEventListener('click', () => { void deleteSavedRecord(); });
-        ['activateButton', 'activatePanelButton', 'mobileActivateButton'].forEach((id) => $(id).addEventListener('click', reviewActivation));
         $('cancelActivationButton')?.addEventListener('click', cancelPendingActivation);
         $('rollbackActivationButton')?.addEventListener('click', rollbackActivation);
         $('controlsTab').addEventListener('click', () => selectInspectorTab('controls'));
@@ -5346,6 +5203,7 @@
                 $('clockPreviewNote').textContent = `Clock remains configured for activation; local layer preview is unavailable: ${error.message}`;
             });
             requestRender();
+            queueImmediateApply({immediate: true, source: 'Clock layer'});
         });
         $('clockOpacity').addEventListener('input', (event) => {
             state.layers.clockOpacity = Math.max(0, Math.min(255, Math.round(safeNumber(event.target.value, 220))));
@@ -5355,26 +5213,22 @@
             scheduleAutosave();
             syncComposerUrl({mode: 'coalesce'});
             requestRender();
+            queueImmediateApply({source: 'Clock opacity'});
         });
         $('clockOpacity').addEventListener('change', commitHistory);
         $('clockPresetSelect').addEventListener('change', (event) => applyClockPreset(event.target.value));
-        $('liveEditToggle').addEventListener('change', (event) => setLiveEditEnabled(event.target.checked));
         $('fallbackSelect').addEventListener('change', (event) => {
             if (state.layers.fallbackKey === event.target.value) return;
             state.layers.fallbackKey = event.target.value;
             resetChecker();
             commitHistory();
             scheduleAutosave();
+            queueImmediateApply({immediate: true, source: 'fallback'});
         });
         $('confirmOverwriteButton').addEventListener('click', (event) => {
             event.preventDefault();
             $('overwriteDialog').close();
             saveToLibrary({overwrite: true});
-        });
-        $('confirmActivateButton').addEventListener('click', (event) => {
-            event.preventDefault();
-            $('activateDialog').close();
-            activateScene();
         });
         $('runCheckerButton').addEventListener('click', runChecker);
         $('prepareOfflineButton')?.addEventListener('click', prepareOffline);
@@ -5400,12 +5254,7 @@
             resetChecker({preserveDocumentRevision: true});
             renderGlobalSettings();
             requestRender();
-        });
-        $('reviewWallButton').addEventListener('click', reviewGlobalChanges);
-        $('confirmWallChangesButton').addEventListener('click', (event) => {
-            event.preventDefault();
-            $('wallReviewDialog').close();
-            applyGlobalChanges();
+            queueImmediateApply({immediate: true, source: 'wall setting revert'});
         });
         const profileEditor = window.ComposerProfiles?.install({
             $,

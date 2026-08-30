@@ -57,6 +57,46 @@ const operations = globalThis.LEDGridComposerOperations;
 
 @unittest.skipUnless(shutil.which("node"), "node unavailable")
 class BrowserComposerStateTests(unittest.TestCase):
+    def test_latest_state_queue_serializes_coalesces_and_clones_intents(self) -> None:
+        result = _run_state_script("""
+const queue = state.createLatestStateQueue();
+const original = {value: 0, nested: {label: 'captured'}};
+queue.enqueue(original);
+const first = queue.begin();
+original.nested.label = 'mutated';
+for (let value = 1; value <= 25; value += 1) queue.enqueue({value});
+const blocked = queue.begin();
+const firstWasCurrent = queue.finish(first, {state: 'active'});
+const latest = queue.begin();
+const latestWasCurrent = queue.finish(latest, {state: 'active', message: 'latest'});
+queue.enqueue({value: 26});
+const invalidated = queue.begin();
+queue.enqueue({value: 27});
+queue.invalidate({state: 'paused', message: 'reconnected'});
+const invalidatedWasCurrent = queue.finish(invalidated, {state: 'active'});
+console.log(JSON.stringify({
+  first: first.intent,
+  blocked,
+  firstWasCurrent,
+  latest: latest.intent,
+  latestWasCurrent,
+  outcome: queue.outcome(),
+  invalidatedWasCurrent,
+  hasQueued: queue.hasQueued(),
+  hasInFlight: queue.hasInFlight(),
+}));
+""")
+
+        self.assertEqual(result["first"], {"value": 0, "nested": {"label": "captured"}})
+        self.assertIsNone(result["blocked"])
+        self.assertFalse(result["firstWasCurrent"])
+        self.assertEqual(result["latest"], {"value": 25})
+        self.assertTrue(result["latestWasCurrent"])
+        self.assertEqual(result["outcome"], {"state": "paused", "message": "reconnected"})
+        self.assertFalse(result["invalidatedWasCurrent"])
+        self.assertFalse(result["hasQueued"])
+        self.assertFalse(result["hasInFlight"])
+
     def test_output_power_presentation_states_are_revision_qualified(self) -> None:
         result = _run_operations_script("""
 const common = {provider: 'a'.repeat(32), revision: 41};
@@ -500,18 +540,19 @@ console.log(JSON.stringify({
         self.assertIn("adoptImportedPresetIdentity", source)
         self.assertIn("currentCheckAllowsActivation()", source)
         self.assertNotIn("Run Check for this exact draft before activation.", source)
-        self.assertIn("the server will issue the authoritative Check", source)
+        self.assertIn("await createServerCheck(", source)
+        self.assertIn("await submitCheckedIntent(entry.intent, serverCheck)", source)
         self.assertNotIn("Apply or revert the Wall draft before activating this checked scene.", source)
-        self.assertIn("refreshGlobalSettings({quiet: true, preserveDraft: false})", source)
+        self.assertIn("refreshGlobalSettings({quiet: true, preserveDraft: true})", source)
         self.assertIn("wallSettings: clone(state.globalSettings.draft)", source)
         self.assertIn("frameBudgetMs = 1000 / targetFps", source)
         self.assertIn("ComposerState.advisoryRenderStatus(p95, frameBudgetMs)", source)
         self.assertNotIn("failures.push('render time')", source)
         self.assertIn("serverCheck: null", source)
-        self.assertIn("Pending · activation", source)
+        self.assertIn("Pending · newest edit queued for a guarded apply.", source)
         self.assertIn("activationIdentitiesMatch(status)", source)
         self.assertIn("warnings: warnings.slice()", source)
-        self.assertIn("review ${state.checkResult.warnings.join(', ')}", source)
+        self.assertIn("browser_evidence: clone(state.checkResult)", source)
         self.assertIn("if (editing && key === 'z') return", source)
         self.assertIn("detail.textContent = detail.dataset.defaultDescription", source)
 
@@ -541,7 +582,7 @@ console.log(JSON.stringify({
         self.assertIn("function pollActivationResourceResult()", source)
         self.assertIn("result.outcome === 'pending'", source)
         self.assertIn("do not infer success", source)
-        self.assertIn("Passed with cautions", source)
+        self.assertIn("Ready · edits apply automatically after a guarded server Check.", source)
         self.assertIn("prepareOfflineButton", source)
         self.assertIn("const activationAvailable = state.bootstrap?.capabilities?.server_actions?.activation_available === true", source)
         self.assertIn("activationMode === 'development_canary'", source)

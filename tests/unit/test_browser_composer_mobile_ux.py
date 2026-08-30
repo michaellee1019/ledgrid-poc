@@ -127,8 +127,7 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
         self.audit.by_id("advancedParameterEmpty")
 
         for element_id in (
-            "activationReadiness", "activateProvider", "activateRuntimeDigest",
-            "activateRevision", "activateCheck", "activateDestination",
+            "activationReadiness", "immediateApplyStatus", "mobileActivationStatus",
         ):
             self.audit.by_id(element_id)
 
@@ -232,9 +231,9 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
             self.final_mobile_css,
         )
 
-    def test_mobile_selection_opens_edit_and_keeps_apply_action_visible(self) -> None:
-        self.audit.by_id("mobileActivateButton")
+    def test_mobile_selection_opens_edit_and_keeps_apply_status_visible(self) -> None:
         self.audit.by_id("mobileActivationStatus")
+        self.assertNotIn('id="mobileActivateButton"', self.html)
         self.assertIn("{focusEditor: true}", self.javascript)
         self.assertIn("options.focusEditor && window.matchMedia('(max-width: 760px)').matches", self.javascript)
         self.assertIn("selectMobileView('edit')", self.javascript)
