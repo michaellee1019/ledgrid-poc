@@ -7,6 +7,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from flask import Flask
+
 from animation.core.installation_profile import decode_installation_profile
 from animation.core.installation_profile_authoring import (
     InstallationProfileAuthoring,
@@ -17,6 +19,10 @@ from animation.core.installation_profile_authoring import (
 )
 from animation.core.installation_profile_library import InstallationProfileLibrary
 from animation.core.plant_awareness import GLOBE_REGION_ORDER
+from web.installation_profile_api import (
+    register_installation_profile_api,
+    undo_draft,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -196,6 +202,98 @@ class InstallationProfileAuthoringTests(unittest.TestCase):
             self.library.artifact_path(receipt.content_digest).stat().st_mode & 0o222,
             0,
         )
+
+    def test_edit_undo_save_publish_and_reload_preserve_canonical_profile(self) -> None:
+        """A UI undo is a revisioned save, never a hidden mutable profile mode."""
+
+        initial = self.authoring.load(self.digest)
+        edited = self.authoring.update(
+            self.digest,
+            expected_revision=initial["revision"],
+            draft=self.changed_draft(initial),
+        )
+        restored = undo_draft(
+            self.authoring,
+            self.digest,
+            expected_revision=edited["revision"],
+            historical_draft=initial,
+        )
+        self.assertNotEqual(restored["revision"], initial["revision"])
+        self.assertEqual(restored["masks"], initial["masks"])
+
+        receipt, published_from = self.authoring.publish(
+            self.digest, expected_revision=restored["revision"]
+        )
+        reloaded = InstallationProfileAuthoring(
+            InstallationProfileLibrary(self.root / "library"), self.state_root
+        ).load(self.digest)
+
+        # Canonical authoring deliberately derives its calibration identity from
+        # the public draft document, not the camera-evidence artifact it began
+        # from.  Re-publishing the unchanged draft is nevertheless exact.
+        repeated, _ = self.authoring.publish(
+            self.digest, expected_revision=restored["revision"]
+        )
+        self.assertEqual(receipt.content_digest, repeated.content_digest)
+        self.assertEqual(published_from, restored)
+        self.assertEqual(reloaded, restored)
+        self.assertEqual(
+            tuple(reloaded["masks"]["globes"]), GLOBE_REGION_ORDER
+        )
+
+    def test_http_draft_edit_undo_save_publish_activation_intent_and_reload(self) -> None:
+        app = Flask(__name__)
+        register_installation_profile_api(app, self.authoring)
+        client = app.test_client()
+        base = f"/api/v1/installation-profiles/{self.digest}"
+
+        loaded = client.get(base + "/draft")
+        self.assertEqual(loaded.status_code, 200)
+        initial = loaded.get_json()
+
+        saved = client.put(
+            base + "/draft",
+            json=self.changed_draft(initial),
+            headers={"If-Match": loaded.headers["ETag"]},
+        )
+        self.assertEqual(saved.status_code, 200)
+        edited = saved.get_json()
+
+        # A UI undo carries the earlier geometry forward under the revision
+        # produced by the edit, preserving compare-and-swap semantics.
+        undo = deepcopy(initial)
+        undo["revision"] = edited["revision"]
+        restored_response = client.put(
+            base + "/draft",
+            json=undo,
+            headers={"If-Match": saved.headers["ETag"]},
+        )
+        self.assertEqual(restored_response.status_code, 200)
+        restored = restored_response.get_json()
+        self.assertEqual(restored["masks"], initial["masks"])
+
+        published = client.post(
+            base + "/publish",
+            headers={"If-Match": restored_response.headers["ETag"]},
+        )
+        self.assertEqual(published.status_code, 200)
+        publication = published.get_json()
+        self.assertFalse(publication["selected"])
+        self.assertEqual(
+            publication["activation_intent"],
+            {
+                "source_installation_profile_digest": self.digest,
+                "installation_profile_digest": publication["published_digest"],
+            },
+        )
+        self.assertEqual(
+            client.get(publication["artifact_url"]).data,
+            self.library.resolve(publication["published_digest"]).encoded,
+        )
+
+        reloaded = client.get(base + "/draft")
+        self.assertEqual(reloaded.status_code, 200)
+        self.assertEqual(reloaded.get_json(), restored)
 
     def test_direct_compiler_rejects_noncanonical_draft_before_output(self) -> None:
         draft = self.authoring.load(self.digest)

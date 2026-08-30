@@ -66,6 +66,9 @@ EXPECTED_CALIBRATION_DIGEST = (
 EXPECTED_CONTENT_DIGEST = (
     "ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a"
 )
+EXPECTED_ARTIFACT_SHA256 = (
+    "3e9fd83f990f9d7fcd3a7e958212fad5fab82941d2e9973c3d0b0c19bdbcb918"
+)
 EXPECTED_SECTION_CRCS = (
     0x9A6783CF,
     0x8C323F0A,
@@ -245,6 +248,7 @@ class InstallationProfileGoldenTests(unittest.TestCase):
         )
         digest_source = self.data[:68] + bytes(32) + self.data[100:]
         self.assertEqual(hashlib.sha256(digest_source).digest(), header["content_digest"])
+        self.assertEqual(hashlib.sha256(self.data).hexdigest(), EXPECTED_ARTIFACT_SHA256)
         self.assertEqual(self.profile.calibration_digest, header["calibration_digest"])
 
     def test_section_table_offsets_crcs_and_decoded_payloads_are_exact(self) -> None:
