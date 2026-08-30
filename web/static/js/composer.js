@@ -134,6 +134,13 @@
             reconciliationTimer: null,
             powerActivation: null,
         },
+        operations: {
+            status: null,
+            loading: false,
+            error: null,
+            timer: null,
+            stop: null,
+        },
         installationProfile: {
             selectedDigest: null,
             selectedArtifactUrl: null,
@@ -256,6 +263,7 @@
             if (moduleState.globalSettings.reconciliationTimer) {
                 runtime.window.clearTimeout(moduleState.globalSettings.reconciliationTimer);
             }
+            clearOperationsPolling();
             clearActivationPolling();
             disposeMotionPreference();
             disposeRuntimes();
@@ -796,8 +804,7 @@
         };
     }
 
-    function activationGlobalSettings() {
-        const draft = state.globalSettings.draft;
+    function activationGlobalSettings(draft = state.globalSettings.draft) {
         if (!draft) throw new Error('Wall settings have not been observed yet.');
         const profile = vibeProfile(draft.vibeId);
         const controller = state.controllerObservation || {};
@@ -1161,6 +1168,177 @@
         }
     }
 
+    function renderOperationsStatus() {
+        const presentation = ComposerOperations?.statusPresentation?.(
+            state.operations.status || {},
+            {
+                desiredPower: state.globalSettings.draft?.power,
+                stop: state.operations.stop,
+            },
+        ) || null;
+        const bar = $('operationsBar');
+        if (!presentation || !bar) return;
+        bar.dataset.state = presentation.state;
+        $('operationsSelectedIdentity').textContent = `Selected · ${presentation.selectedIdentity}`;
+        $('operationsActiveIdentity').textContent = `Active · ${presentation.activeIdentity}`;
+        $('operationsController').textContent = `${presentation.controller} · ${presentation.freshness}`;
+        const desired = presentation.desiredPower == null ? 'Desired power unknown' : `Desired power ${presentation.desiredPower ? 'on' : 'off'}`;
+        const observed = presentation.observedPower == null ? 'Observed power unknown' : `Observed power ${presentation.observedPower ? 'on' : 'off'}`;
+        $('operationsPower').textContent = `${desired} · ${observed} · ${humanize(presentation.powerState)}`;
+        $('operationsStatus').textContent = presentation.flags.length
+            ? presentation.flags.map((flag) => `${humanize(flag.state)} · ${flag.message}`).join(' ')
+            : 'Fresh controller observation is current.';
+        $('operationsReceiver').textContent = `${humanize(presentation.receiver)} · ${presentation.receiverDetail}`;
+        $('operationsPerformance').textContent = `${humanize(presentation.performance)} · ${presentation.performanceDetail}`;
+        const evidence = $('operationsRawEvidence');
+        evidence.hidden = !presentation.rawEvidenceUrl;
+        if (presentation.rawEvidenceUrl) evidence.href = presentation.rawEvidenceUrl;
+        const stopButton = $('operationsStopButton');
+        const stopPending = Boolean(state.operations.stop?.pending);
+        const stopBlocked = !state.serverOnline || state.serverChecking || Boolean(state.busyAction) || stopPending
+            || presentation.freshness !== 'fresh';
+        stopButton.disabled = stopBlocked;
+        stopButton.dataset.busy = String(stopPending);
+        stopButton.title = stopBlocked
+            ? (stopPending ? 'Stop is waiting for the safe-idle observation.' : 'Stop requires a fresh connected controller observation.')
+            : 'Stop live output through a checked, revision-qualified activation.';
+    }
+
+    function clearOperationsPolling() {
+        if (state.operations.timer) window.clearTimeout(state.operations.timer);
+        state.operations.timer = null;
+    }
+
+    function stopObservationIsCurrent(status, stop) {
+        const observation = status?.observation || {};
+        const revision = observation.revision || {};
+        return observation.freshness === 'fresh'
+            && observation.state === 'idle'
+            && status?.output_power?.observed === false
+            && revision.session_id === stop.sessionId
+            && revision.state_revision === stop.revision;
+    }
+
+    function confirmStopObservation() {
+        const stop = state.operations.stop;
+        if (!stop?.pending || !state.operations.status) return false;
+        if (!stopObservationIsCurrent(state.operations.status, stop)) return false;
+        state.operations.stop = {
+            ...stop,
+            pending: false,
+            failed: false,
+            message: 'Stop confirmed by the current safe-idle controller observation.',
+        };
+        if (state.globalSettings.observed) state.globalSettings.observed.power = false;
+        if (state.globalSettings.draft) state.globalSettings.draft.power = false;
+        state.globalSettings.powerActivation = null;
+        state.globalSettings.dirty = !globalSettingsEqual(
+            state.globalSettings.draft, state.globalSettings.observed,
+        );
+        persistGlobalDraft();
+        renderGlobalSettings();
+        $('serverActionStatus').textContent = 'Stopped · the exact current controller observation reports safe idle and output power off.';
+        toast('Wall output is stopped and observed safe idle.', 'success');
+        return true;
+    }
+
+    async function refreshOperationsStatus({quiet = false} = {}) {
+        if (!state.bootstrap || state.operations.loading) return false;
+        state.operations.loading = true;
+        try {
+            const url = globalActions().operations_status_url || '/api/v1/composer/operations/status';
+            const payload = await requestJson(url);
+            if (payload?.schema !== 'ledgrid.composer-operations-status') {
+                throw new Error('The controller returned an unsupported operations status.');
+            }
+            state.operations.status = payload;
+            state.operations.error = null;
+            confirmStopObservation();
+            return true;
+        } catch (error) {
+            state.operations.error = error.message;
+            if (state.operations.stop?.pending) {
+                state.operations.stop = {
+                    ...state.operations.stop,
+                    failed: true,
+                    message: `Stop observation could not be read: ${error.message}`,
+                };
+            }
+            if (!quiet) toast(`Operational status unavailable: ${error.message}`, 'error');
+            return false;
+        } finally {
+            state.operations.loading = false;
+            renderOperationsStatus();
+        }
+    }
+
+    async function pollOperationsStatus() {
+        clearOperationsPolling();
+        await refreshOperationsStatus({quiet: true});
+        state.operations.timer = window.setTimeout(pollOperationsStatus, 5000);
+    }
+
+    async function stopOutput() {
+        if (state.busyAction || state.operations.stop?.pending) return;
+        const observed = await refreshGlobalSettings({quiet: true, preserveDraft: true});
+        if (!observed || !state.globalSettings.observed) {
+            toast('Stop needs a current controller observation before it can be checked.', 'error');
+            return;
+        }
+        const controller = state.controllerObservation || {};
+        const revision = Number(controller.globalSettingsRevision);
+        if (!controller.sessionId || !Number.isSafeInteger(revision) || revision < 0) {
+            toast('Stop needs a revision-qualified controller observation.', 'error');
+            return;
+        }
+        setActionBusy('stop', true);
+        state.operations.stop = {pending: true, failed: false, message: 'Preparing checked Stop…'};
+        renderOperationsStatus();
+        try {
+            const safeIdleSettings = {...clone(state.globalSettings.observed), power: false};
+            const scene = buildScene();
+            $('serverActionStatus').textContent = 'Requesting a revision-qualified Check for safe idle…';
+            const serverCheck = await createServerCheck(activationGlobalSettings(safeIdleSettings));
+            const activateUrl = globalActions().activate_scene_url || '/api/v1/scene';
+            const result = await requestJson(activateUrl, {
+                method: 'PUT',
+                headers: {'Idempotency-Key': serverCheck.idempotencyKey},
+                body: JSON.stringify({
+                    check_token: serverCheck.token,
+                    expected_controller_session_id: serverCheck.basis.controller.session_id,
+                    expected_controller_state_revision: serverCheck.basis.controller.state_revision,
+                    scene,
+                    global_settings: activationGlobalSettings(safeIdleSettings),
+                }),
+            });
+            state.activation.activationId = result.activation_id;
+            state.activation.idempotencyKey = serverCheck.idempotencyKey;
+            state.activation.statusUrl = result.status_url || `/api/v1/scene/activations/${encodeURIComponent(result.activation_id)}`;
+            state.activation.pollStartedAt = Date.now();
+            state.activation.lastStatus = null;
+            state.serverCheck = null;
+            state.operations.stop = {
+                pending: true,
+                failed: false,
+                activationId: result.activation_id,
+                sessionId: serverCheck.basis.controller.session_id,
+                revision: null,
+                message: 'Stop queued; waiting for the exact safe-idle controller observation.',
+            };
+            $('serverActionStatus').textContent = `Stop queued · activation ${result.activation_id} is not successful until safe idle is observed.`;
+            pollActivationStatus();
+            pollOperationsStatus();
+        } catch (error) {
+            if (error.code === 'offline') setServerOnline(false);
+            state.operations.stop = {pending: false, failed: true, message: `Stop was not accepted: ${error.message}`};
+            $('serverActionStatus').textContent = `Stop was not accepted: ${error.message}`;
+            toast(error.message, 'error');
+        } finally {
+            setActionBusy('stop', false);
+            renderOperationsStatus();
+        }
+    }
+
     function reviewGlobalChanges() {
         const returnFocus = document.activeElement;
         const changes = globalChangeList();
@@ -1361,6 +1539,7 @@
         }
         updateServerActionButtons();
         renderGlobalSettings();
+        renderOperationsStatus();
         if (state.masks.loaded) updateMaskControls();
     }
 
@@ -1615,7 +1794,9 @@
         state.busyAction = busy ? action : null;
         const ids = action === 'activate'
             ? ['activateButton', 'activatePanelButton']
-            : ['saveLibraryButton', 'saveLibraryPanelButton'];
+            : action === 'save'
+                ? ['saveLibraryButton', 'saveLibraryPanelButton']
+                : ['operationsStopButton'];
         ids.forEach((id) => $(id).dataset.busy = String(busy));
         $('layersPanel').setAttribute('aria-busy', String(busy));
         updateServerActionButtons();
@@ -1629,6 +1810,7 @@
             if (payload.online === true) {
                 try {
                     await refreshServerBootstrap(payload.bootstrap_url);
+                    refreshOperationsStatus({quiet: true});
                 } catch (error) {
                     state.serverBootstrap = null;
                     state.serverCatalogCompatible = false;
@@ -3573,7 +3755,7 @@
         return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
     }
 
-    async function createServerCheck() {
+    async function createServerCheck(globalSettings = activationGlobalSettings()) {
         const scene = buildScene();
         const checkUrl = state.bootstrap.capabilities?.server_actions?.check_scene_url
             || '/api/v1/scene/checks';
@@ -3581,7 +3763,7 @@
             method: 'POST',
             body: JSON.stringify({
                 scene,
-                global_settings: activationGlobalSettings(),
+                global_settings: globalSettings,
                 browser_evidence: clone(state.checkResult),
             }),
         });
@@ -3707,6 +3889,45 @@
         const phase = status?.phase || 'queued';
         state.activation.phase = phase;
         state.activation.lastStatus = clone(status);
+        const stop = state.operations.stop;
+        if (stop?.pending && status.activation_id === stop.activationId) {
+            if (phase === 'active' && activationIdentitiesMatch(status)) {
+                const revision = Number(status.controller?.state_revision_after);
+                if (status.controller?.session_id === stop.sessionId && Number.isSafeInteger(revision) && revision >= 0) {
+                    state.operations.stop = {
+                        ...stop,
+                        revision,
+                        message: 'Checked Stop is active; waiting for the exact safe-idle controller observation.',
+                    };
+                    refreshOperationsStatus({quiet: true});
+                    $('serverActionStatus').textContent = 'Checked Stop is active; output is not reported stopped until the current safe-idle observation arrives.';
+                    renderOperationsStatus();
+                    return false;
+                }
+                state.operations.stop = {
+                    ...stop,
+                    pending: false,
+                    failed: true,
+                    message: 'Stop activation did not return a matching controller revision.',
+                };
+                renderOperationsStatus();
+                return true;
+            }
+            if (['failed', 'timed_out', 'rolled_back'].includes(phase)) {
+                state.operations.stop = {
+                    ...stop,
+                    pending: false,
+                    failed: true,
+                    message: status.error || `Stop ${phase}.`,
+                };
+                $('serverActionStatus').textContent = `Stop ${humanize(phase).toLowerCase()} · ${status.error || 'controller did not reach safe idle.'}`;
+                renderOperationsStatus();
+                toast('Stop was not confirmed.', 'error');
+                return true;
+            }
+            $('serverActionStatus').textContent = `${humanize(phase)} · checked Stop is waiting for controller acknowledgement.`;
+            return false;
+        }
         const powerActivation = state.globalSettings.powerActivation;
         if (powerActivation) {
             powerActivation.phase = phase;
@@ -4925,6 +5146,8 @@
         $('runCheckerButton').addEventListener('click', runChecker);
         $('prepareOfflineButton')?.addEventListener('click', prepareOffline);
         $('refreshWallButton').addEventListener('click', () => refreshGlobalSettings({preserveDraft: true}));
+        $('operationsRefreshButton').addEventListener('click', () => refreshOperationsStatus());
+        $('operationsStopButton').addEventListener('click', stopOutput);
         $('globalPower').addEventListener('change', (event) => updateGlobalDraft((next) => {
             next.power = Boolean(event.target.checked);
         }));
@@ -5101,6 +5324,7 @@
             await loadBootstrap();
             checkConnectivity();
             state.connectivityTimer = window.setInterval(() => checkConnectivity({quiet: true}), 15000);
+            pollOperationsStatus();
         } catch (error) {
             setComposerReady(false, error.message);
             showCatalogUnavailable(error.message);

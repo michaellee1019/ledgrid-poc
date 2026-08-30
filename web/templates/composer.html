@@ -42,6 +42,34 @@
     </div>
   </header>
 
+  <section class="operations-bar" id="operationsBar" data-state="unavailable" aria-label="Observed wall status">
+    <div class="operations-summary">
+      <p class="eyebrow">Observed output</p>
+      <div class="operations-identities">
+        <strong id="operationsSelectedIdentity">Selected · none reported</strong>
+        <span id="operationsActiveIdentity">Active · none reported</span>
+      </div>
+      <small id="operationsController" role="status" aria-live="polite">Controller observation unavailable</small>
+    </div>
+    <div class="operations-readout">
+      <strong id="operationsPower">Desired power unknown · Observed power unknown</strong>
+      <span id="operationsStatus" role="status" aria-live="polite">Waiting for a controller observation.</span>
+    </div>
+    <div class="operations-actions">
+      <button class="quiet-button" id="operationsRefreshButton" type="button">Refresh status</button>
+      <button class="danger-button server-action" id="operationsStopButton" type="button" aria-describedby="operationsStopHelp" disabled>Stop output</button>
+      <span class="sr-only" id="operationsStopHelp">Stop uses a checked, revision-qualified activation and waits for an observed safe idle state.</span>
+    </div>
+    <details class="operations-diagnostics" id="operationsDiagnostics">
+      <summary>Receiver &amp; performance diagnostics</summary>
+      <div>
+        <p><strong>Receivers</strong><span id="operationsReceiver">Unknown</span></p>
+        <p><strong>Performance</strong><span id="operationsPerformance">Unknown</span></p>
+        <a id="operationsRawEvidence" href="/api/status" target="_blank" rel="noopener" hidden>View raw controller evidence</a>
+      </div>
+    </details>
+  </section>
+
   <main class="composer-shell" id="composerWorkspace" tabindex="-1">
     <aside class="pane library-pane mobile-view is-active" data-mobile-view="library" aria-labelledby="libraryHeading">
       <div class="pane-heading">

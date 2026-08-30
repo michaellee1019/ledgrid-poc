@@ -241,6 +241,27 @@ class BrowserComposerAccessibilityAcceptanceTests(unittest.TestCase):
         self.assertNotIn("saves both mask files", self.painter_html)
         self.assertIn("Manage profile in Composer", self.painter_html)
 
+    def test_persistent_operations_bar_keeps_stop_and_diagnostics_accessible(self) -> None:
+        tag, attrs = self.elements.by_id("operationsBar")
+        self.assertEqual(tag, "section")
+        self.assertEqual(attrs.get("aria-label"), "Observed wall status")
+        for element_id in (
+            "operationsSelectedIdentity", "operationsActiveIdentity",
+            "operationsController", "operationsPower", "operationsStatus",
+            "operationsReceiver", "operationsPerformance", "operationsRawEvidence",
+        ):
+            self.elements.by_id(element_id)
+        tag, stop = self.elements.by_id("operationsStopButton")
+        self.assertEqual(tag, "button")
+        self.assertEqual(stop.get("aria-describedby"), "operationsStopHelp")
+        tag, diagnostics = self.elements.by_id("operationsDiagnostics")
+        self.assertEqual(tag, "details")
+        self.assertIn("Receiver &amp; performance diagnostics", self.html)
+        self.assertIn("position: sticky", self.css[self.css.index(".operations-bar"):])
+        self.assertIn(".operations-actions button, .danger-button { min-height: 44px;", self.all_mobile_css)
+        self.assertIn("refreshOperationsStatus", self.script)
+        self.assertIn("stopObservationIsCurrent", self.script)
+
     def test_legacy_http_aliases_are_retained_only_as_fail_closed_boundaries(self) -> None:
         start_alias = self.web_app.split(
             "@self.app.route('/api/start/<animation_name>'", 1,

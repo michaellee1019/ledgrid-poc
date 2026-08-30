@@ -12,6 +12,9 @@ from web.app import AnimationWebInterface
 
 
 ROOT = Path(__file__).resolve().parents[2]
+COMPOSER_SCRIPT = (ROOT / "web" / "static" / "js" / "composer.js").read_text(
+    encoding="utf-8"
+)
 
 
 def _component(
@@ -229,6 +232,16 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertEqual(payload["output_power"]["revision"]["state_revision"], 7)
         self.assertEqual(payload["health"]["receivers"]["missing"], [1])
         self.assertEqual(payload["raw_evidence"]["owner"], "controller_status")
+
+    def test_stop_uses_checked_activation_and_requires_exact_safe_idle_observation(self) -> None:
+        self.assertIn("async function stopOutput()", COMPOSER_SCRIPT)
+        self.assertIn("await createServerCheck(activationGlobalSettings(safeIdleSettings))", COMPOSER_SCRIPT)
+        self.assertIn("expected_controller_state_revision: serverCheck.basis.controller.state_revision", COMPOSER_SCRIPT)
+        self.assertIn("headers: {'Idempotency-Key': serverCheck.idempotencyKey}", COMPOSER_SCRIPT)
+        self.assertIn("observation.state === 'idle'", COMPOSER_SCRIPT)
+        self.assertIn("status?.output_power?.observed === false", COMPOSER_SCRIPT)
+        self.assertIn("revision.state_revision === stop.revision", COMPOSER_SCRIPT)
+        self.assertNotIn("/api/stop", COMPOSER_SCRIPT)
 
     def test_interaction_capabilities_are_provider_qualified_and_live_fail_closed(self) -> None:
         gradient = self.interface.preview_manager.components[0]
