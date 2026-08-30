@@ -3015,6 +3015,9 @@ class AnimationWebInterface:
                     raw.get('availability') or {}
                 )),
                 'build': json.loads(json.dumps(raw.get('build') or {})),
+                'interaction_capabilities': json.loads(json.dumps(
+                    raw.get('interaction_capabilities') or {}
+                )),
                 'presentation': {
                     'timing_adapter': str(
                         (

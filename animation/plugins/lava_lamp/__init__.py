@@ -35,6 +35,9 @@ class LavaLampAnimation(AnimationBase):
     PHYSICS_DT = 0.01
     MAX_BLOBS = 16
     INTERACTION_TYPES = frozenset(("primary",))
+    COMPOSER_INTERACTIONS = {
+        "point": {"kind": "primary", "label": "Stir local preview"},
+    }
     PLANT_MODIFIER_SUPPORT = frozenset((
         "illuminate", "shadow", "refract", "attractor", "repulsor",
         "slow_zone", "obstacle", "bumper", "portal", "hazard",

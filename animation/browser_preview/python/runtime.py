@@ -36,6 +36,9 @@ MAX_RUNTIME_INSTANCES = 8
 _INSTANCE_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MISSING = object()
+_DIRECTIONAL_INPUTS = frozenset(
+    {"left", "right", "down", "rotate-left", "rotate-right", "drop"}
+)
 
 
 @dataclass(frozen=True)
@@ -237,6 +240,15 @@ def _validated_wall_time(value: Any) -> Optional[float]:
     resolved = float(value)
     if not math.isfinite(resolved) or resolved < 0.0:
         raise ValueError("wallTime must be a non-negative finite Unix timestamp")
+    return resolved
+
+
+def _validated_preview_coordinate(value: Any, name: str, maximum: int) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be numeric")
+    resolved = float(value)
+    if not math.isfinite(resolved) or not 0.0 <= resolved < maximum:
+        raise ValueError(f"{name} is outside the browser preview")
     return resolved
 
 
@@ -567,6 +579,74 @@ class BrowserPreviewRuntime:
             "wallClockFixed": resolved_wall_time is not None,
         }
 
+    def interact(
+        self,
+        kind: Any,
+        *,
+        instance_id: Optional[str] = None,
+        x: Any = None,
+        y: Any = None,
+        strength: Any = 1.0,
+        direction: Any = None,
+    ) -> Dict[str, Any]:
+        """Dispatch one explicit input to an isolated browser animation.
+
+        This adapter owns no controller and deliberately has no path to the
+        host command channel.  The method is intentionally narrow: point input
+        maps only to an animation's declared ``primary`` interaction and
+        directional input maps only to a declared local ``handle_input`` hook.
+        """
+        resolved_instance_id = _validated_instance_id(instance_id)
+        instance = self._instances.get(resolved_instance_id)
+        if instance is None:
+            raise RuntimeError(
+                f"Python browser preview instance {resolved_instance_id!r} is not initialized"
+            )
+        if kind == "point":
+            supported = getattr(instance.animation, "INTERACTION_TYPES", frozenset())
+            if "primary" not in supported:
+                raise ValueError("this local preview does not support point input")
+            resolved_x = _validated_preview_coordinate(
+                x, "x", instance.controller.strip_count
+            )
+            resolved_y = _validated_preview_coordinate(
+                y, "y", instance.controller.leds_per_strip
+            )
+            if isinstance(strength, bool) or not isinstance(strength, (int, float)):
+                raise ValueError("strength must be numeric")
+            resolved_strength = float(strength)
+            if not math.isfinite(resolved_strength) or not 0.0 < resolved_strength <= 1.0:
+                raise ValueError("strength must be finite and from 0 to 1")
+            handler = getattr(instance.animation, "handle_interaction", None)
+            if not callable(handler):
+                raise ValueError("this local preview has no point-input handler")
+            accepted = bool(handler("primary", resolved_x, resolved_y, resolved_strength))
+            return {
+                "engine": ENGINE,
+                "instanceId": resolved_instance_id,
+                "kind": "point",
+                "accepted": accepted,
+            }
+        if kind == "direction":
+            if not isinstance(direction, str) or direction not in _DIRECTIONAL_INPUTS:
+                raise ValueError("direction is not supported")
+            declared = getattr(instance.animation, "COMPOSER_INTERACTIONS", {})
+            allowed = declared.get("directions", ()) if isinstance(declared, Mapping) else ()
+            if direction not in allowed:
+                raise ValueError("this local preview does not support that direction")
+            handler = getattr(instance.animation, "handle_input", None)
+            if not callable(handler):
+                raise ValueError("this local preview has no directional-input handler")
+            handler(direction)
+            return {
+                "engine": ENGINE,
+                "instanceId": resolved_instance_id,
+                "kind": "direction",
+                "direction": direction,
+                "accepted": True,
+            }
+        raise ValueError("unsupported local interaction kind")
+
     def initialize_json(self, payload_json: str) -> str:
         payload = json.loads(payload_json)
         result = self.initialize(
@@ -587,6 +667,18 @@ class BrowserPreviewRuntime:
             payload.get("params"),
             payload.get("instanceId"),
             payload.get("wallTime"),
+        )
+        return json.dumps(result, separators=(",", ":"), sort_keys=True)
+
+    def interact_json(self, payload_json: str) -> str:
+        payload = json.loads(payload_json)
+        result = self.interact(
+            payload.get("kind"),
+            instance_id=payload.get("instanceId"),
+            x=payload.get("x"),
+            y=payload.get("y"),
+            strength=payload.get("strength", 1.0),
+            direction=payload.get("direction"),
         )
         return json.dumps(result, separators=(",", ":"), sort_keys=True)
 

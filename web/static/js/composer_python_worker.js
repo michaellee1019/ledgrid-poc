@@ -403,6 +403,26 @@ async function renderBatch(message) {
     }, [pixels.buffer]);
 }
 
+async function interact(message) {
+    if (!runtimeReady) {
+        throw new Error('The Python browser renderer has not been initialized.');
+    }
+    const pyodide = await ensurePyodide();
+    pyodide.globals.set('_ledgrid_payload_json', JSON.stringify({
+        instanceId: message.instanceId || 'primary',
+        kind: message.kind,
+        x: message.x,
+        y: message.y,
+        strength: message.strength,
+        direction: message.direction,
+    }));
+    const resultJson = pyodide.runPython(
+        '_ledgrid_browser_runtime.interact_json(_ledgrid_payload_json)'
+    );
+    const result = JSON.parse(resultJson);
+    self.postMessage({type: 'interaction', requestId: message.requestId, ...result});
+}
+
 async function dispose(message) {
     if (!runtimeReady) {
         self.postMessage({
@@ -459,6 +479,7 @@ async function dispatch(message) {
     if (message.type === 'init') return initialize(message);
     if (message.type === 'render') return render(message);
     if (message.type === 'renderBatch') return renderBatch(message);
+    if (message.type === 'interaction') return interact(message);
     if (message.type === 'dispose') return dispose(message);
     if (message.type === 'prepare') return prepare(message);
     throw new Error(`Unsupported Python renderer message: ${String(message.type)}`);

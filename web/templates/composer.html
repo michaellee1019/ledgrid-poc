@@ -171,6 +171,7 @@
         <span aria-hidden="true">◎</span>
         <p><strong id="provenanceTitle">Local simulation</strong><span id="provenanceDetail">This is an authored renderer preview—not camera feedback or framebuffer readback from the installation.</span></p>
       </div>
+      <section class="interaction-panel" id="previewInteractionPanel" aria-label="Preview controls" hidden></section>
     </section>
 
     <aside class="pane inspector-pane mobile-view" data-mobile-view="tune" aria-labelledby="inspectorHeading">
@@ -476,6 +477,7 @@
 
   <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
   <script src="{{ url_for('static', filename='js/composer_compositor.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/composer_interactions.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/composer_state.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/composer_runtime.js') }}" defer></script>
   <script src="{{ url_for('browser_composer_application') }}" defer></script>

@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "54033daafff178258a7e52e10919e57c04a1eadb672f46e1b2843c5fb11ac9b8",
+    "catalog_digest": "2bd4140a302f796522fbf3e77c94f84ec08fd763540753be57242018ad77616c",
     "kind": "bundled",
     "version": 1
   },
@@ -42,12 +42,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "pinball",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "e54ebf32e261e4770d342b6308bc696f590b19c9e83b0d89ad62236d00f5c7f9",
           "component_id": "pinball",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -55,7 +73,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -90,6 +108,24 @@
       },
       "description": "Fast self-playing 90s PC pinball with scores, streaks, jackpots, and minigames",
       "icon": "\ud83c\udfb1",
+      "interaction_capabilities": {
+        "component_id": "pinball",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:pinball",
       "name": "Arcade Pinball",
       "parameter_schema": {
@@ -355,12 +391,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "ascii_drop",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "8e2dc5f7fd3a38678b9b949d5e693a7565b05470ed1e23368a683343e1ee6333",
           "component_id": "ascii_drop",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -368,7 +422,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -409,6 +463,24 @@
       },
       "description": "5x7 characters fall and stack across the LED wall",
       "icon": "\ud83d\udcbb",
+      "interaction_capabilities": {
+        "component_id": "ascii_drop",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:ascii_drop",
       "name": "ASCII Drop",
       "parameter_schema": {
@@ -793,12 +865,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "aurora_curtains",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "6367a3d2c6eec7ef5a4534ce8799329d5edcf5e218d86294b65525cd95ea14c0",
           "component_id": "aurora_curtains",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -806,7 +896,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -843,6 +933,24 @@
       },
       "description": "Independent luminous curtains fold upward through faint stars",
       "icon": "\ud83c\udf0c",
+      "interaction_capabilities": {
+        "component_id": "aurora_curtains",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:aurora_curtains",
       "name": "Aurora Curtains",
       "parameter_schema": {
@@ -1157,6 +1265,24 @@
       },
       "browser_capabilities": {
         "activation_ready": false,
+        "interactions": {
+          "component_id": "aurora_curtains_native",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "receiver_native",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "bundle_digest": null,
           "component_digest": "6ff4b8ebd9ac5f665020f9ddfe0b511f6cf9bd48b9c38f4af33455879c09b0f1",
@@ -1206,6 +1332,24 @@
       },
       "description": "Receiver-rendered aurora ribbons that remain continuous across all four wall controllers.",
       "icon": "\ud83c\udf0c",
+      "interaction_capabilities": {
+        "component_id": "aurora_curtains_native",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "receiver_native",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "receiver_native:aurora_curtains_native",
       "name": "Aurora Curtains (Native)",
       "parameter_schema": {
@@ -1349,12 +1493,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "canopy_cup",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "cc2a7256c353650efb9824f539e61275e93a8632cf5bf47d9d0420414da9287f",
           "component_id": "canopy_cup",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -1362,7 +1524,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -1403,6 +1565,24 @@
       },
       "description": "Four tiny tribute racers web-swing, barrel-roll, glide, and bend stairways through a seven-heat living-wall tournament",
       "icon": "\ud83c\udf3f",
+      "interaction_capabilities": {
+        "component_id": "canopy_cup",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:canopy_cup",
       "name": "Canopy Cup: Impossible Ascent",
       "parameter_schema": {
@@ -2165,12 +2345,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "cellular_tapestry",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "7bb38a4805896d52cba5ee5395e164efbe40ad248b435b02e6d34cc786c568f6",
           "component_id": "cellular_tapestry",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -2178,7 +2376,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -2220,6 +2418,24 @@
       },
       "description": "Each new automaton row pushes a woven historical record down the wall",
       "icon": "\ud83e\uddf6",
+      "interaction_capabilities": {
+        "component_id": "cellular_tapestry",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:cellular_tapestry",
       "name": "Cellular Tapestry",
       "parameter_schema": {
@@ -2543,12 +2759,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "christmas_tree",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "2f38a3bfd4e5dd1a292bd933d1f165352b3c37f37816395d7c4d7cc38fc6b6f0",
           "component_id": "christmas_tree",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -2556,7 +2790,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -2598,6 +2832,24 @@
       },
       "description": "Cozy winter scenes with a grounded tree, gifts, garlands, and falling snow",
       "icon": "\ud83c\udf84",
+      "interaction_capabilities": {
+        "component_id": "christmas_tree",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:christmas_tree",
       "name": "Christmas Tree",
       "parameter_schema": {
@@ -2902,12 +3154,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "circadian_window",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "47100d8d0983441eb4f6b82ea1349a45b6f66487c583e7412b6bea396ef944b8",
           "component_id": "circadian_window",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -2915,7 +3185,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -2957,6 +3227,24 @@
       },
       "description": "An all-day procedural sky moving through dawn, daylight, and night",
       "icon": "\ud83c\udf05",
+      "interaction_capabilities": {
+        "component_id": "circadian_window",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:circadian_window",
       "name": "Circadian Window",
       "parameter_schema": {
@@ -3309,12 +3597,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": false,
+        "interactions": {
+          "component_id": "clock",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "34e80a321307ceff7fd34a5343ede65ef221f64052a55feeca332c369547aa6a",
           "component_id": "clock",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": "Full-scene compatibility component cannot be composed.",
@@ -3322,7 +3628,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -3363,6 +3669,24 @@
       },
       "description": "Useful and atmospheric clocks with composable faces, palettes, and backgrounds",
       "icon": "\ud83d\udd70\ufe0f",
+      "interaction_capabilities": {
+        "component_id": "clock",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:clock",
       "name": "Clock",
       "parameter_schema": {
@@ -4774,12 +5098,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "clock_overlay",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "5f77f5255af8d1866a420188dc2b77982e0983cf5447df3f6e7a6413e41f1c5b",
           "component_id": "clock_overlay",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -4787,7 +5129,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -4827,6 +5169,24 @@
       },
       "description": "Plant-aware clock marks with an optional high-contrast backdrop",
       "icon": "\ud83d\udd70\ufe0f",
+      "interaction_capabilities": {
+        "component_id": "clock_overlay",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:clock_overlay",
       "name": "Clock Overlay",
       "parameter_schema": {
@@ -4976,12 +5336,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "cloud_canyon",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "1277e8106e26b9dbec37526163e9ffb03c2f838c3c19418956188c5dd16d2525",
           "component_id": "cloud_canyon",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -4989,7 +5367,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -5026,6 +5404,24 @@
       },
       "description": "Billowing cloud banks occlude broad shafts leaking through a tall canyon",
       "icon": "\u2601\ufe0f",
+      "interaction_capabilities": {
+        "component_id": "cloud_canyon",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:cloud_canyon",
       "name": "Cloud Canyon",
       "parameter_schema": {
@@ -5333,12 +5729,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "gradient",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "2ffd2c6644e1395b73de42c24ed431f696f3b3a70b72e4d4ba3846f521335220",
           "component_id": "gradient",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -5346,7 +5760,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -5385,6 +5799,24 @@
       },
       "description": "Two-color horizontal, vertical, or diagonal gradient",
       "icon": "\ud83c\udf08",
+      "interaction_capabilities": {
+        "component_id": "gradient",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:gradient",
       "name": "Color Gradient",
       "parameter_schema": {
@@ -5698,12 +6130,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "wave",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "993630f667f5d2f1cca140db9dc365c08420e32a5bcb11446b1b9b03b3b61824",
           "component_id": "wave",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -5711,7 +6161,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -5751,6 +6201,24 @@
       },
       "description": "Traveling sine wave across the horizontal, vertical, or diagonal axis",
       "icon": "\ud83c\udf0a",
+      "interaction_capabilities": {
+        "component_id": "wave",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:wave",
       "name": "Color Wave",
       "parameter_schema": {
@@ -6120,6 +6588,24 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "compiled_rainbow",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "receiver_native",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "bundle_digest": "b112cc36c811423780ae5bd3812f9656e7c6de85bf76373735bfbc2cdd6a4e47",
           "component_digest": "4aee48abe0c23c723492c234eae37bfeed91db8e104d7f6a7606fdc995186738",
@@ -6177,6 +6663,24 @@
       },
       "description": "Firmware-built diagonal rainbow for receiver-local background playback",
       "icon": "\ud83c\udf08",
+      "interaction_capabilities": {
+        "component_id": "compiled_rainbow",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "receiver_native",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "receiver_native:compiled_rainbow",
       "name": "Compiled Rainbow",
       "parameter_schema": {
@@ -6228,12 +6732,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "conway_life",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "47cf52c0924309471b440f3d0d56350314ec4b36e52a3fa0c764ec22eca5b5a5",
           "component_id": "conway_life",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -6241,7 +6763,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -6298,6 +6820,24 @@
       },
       "description": "Classic B3/S23 Life with evolving color, atmospheric worlds, and pattern seeds",
       "icon": "\ud83e\uddec",
+      "interaction_capabilities": {
+        "component_id": "conway_life",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:conway_life",
       "name": "Conway's Game of Life",
       "parameter_schema": {
@@ -7214,12 +7754,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "cyclic_reef",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "ec260861c68ea2729c611464e40da2c63b32a406fe283e90be21c198fa388348",
           "component_id": "cyclic_reef",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -7227,7 +7785,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -7273,6 +7831,24 @@
       },
       "description": "Competing cyclic species form waves while grazers open dark channels",
       "icon": "\ud83e\udeb8",
+      "interaction_capabilities": {
+        "component_id": "cyclic_reef",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:cyclic_reef",
       "name": "Cyclic Reef",
       "parameter_schema": {
@@ -7597,12 +8173,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "desert_wind",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "56ee1258cd618625f49728e92a593a9b896c43e06216fd93953427a62242c1a7",
           "component_id": "desert_wind",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -7610,7 +8204,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -7649,6 +8243,24 @@
       },
       "description": "Layered dunes erode slowly while grains skim luminous crests",
       "icon": "\ud83c\udfdc\ufe0f",
+      "interaction_capabilities": {
+        "component_id": "desert_wind",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:desert_wind",
       "name": "Desert Wind",
       "parameter_schema": {
@@ -7968,12 +8580,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "emoji",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "a4707b5d7c2a439cfa4fe3a3d6e08e1e22ab64d2d85a65f4c27089b098fa68e2",
           "component_id": "emoji",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -7981,7 +8611,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -8027,6 +8657,24 @@
       },
       "description": "Displays a pixel emoji centered on the grid with a subtle pulse",
       "icon": "\ud83d\ude04",
+      "interaction_capabilities": {
+        "component_id": "emoji",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:emoji",
       "name": "Emoji",
       "parameter_schema": {
@@ -8379,12 +9027,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "firefly_synchrony",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "1bc15a2dc40f441dfec5f75b56f4a1a0c8fe3ea60ad32635038b6ebcc62e49de",
           "component_id": "firefly_synchrony",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -8392,7 +9058,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -8438,6 +9104,24 @@
       },
       "description": "Wandering coupled oscillators assemble and lose local rhythms",
       "icon": "\u2728",
+      "interaction_capabilities": {
+        "component_id": "firefly_synchrony",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:firefly_synchrony",
       "name": "Firefly Synchrony",
       "parameter_schema": {
@@ -8830,12 +9514,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "fireworks",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "7591e47006408464cb326fc55bd96413b9055f421380b56c0229b7710e04a12a",
           "component_id": "fireworks",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -8843,7 +9545,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -8898,6 +9600,24 @@
       },
       "description": "Launching rockets, colorful aerial shells, drifting embers, and sparkling trails",
       "icon": "\ud83c\udf86",
+      "interaction_capabilities": {
+        "component_id": "fireworks",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:fireworks",
       "name": "Fireworks",
       "parameter_schema": {
@@ -9333,12 +10053,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "flow_field_silk",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "c3a96a985e7eb668d47d5201a0e06cda08f51d4a766f4b920b893fb520b7a636",
           "component_id": "flow_field_silk",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -9346,7 +10084,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -9386,6 +10124,24 @@
       },
       "description": "Fine advected threads braid and fray in a slow underwater vector field",
       "icon": "\ud83e\uddf5",
+      "interaction_capabilities": {
+        "component_id": "flow_field_silk",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:flow_field_silk",
       "name": "Flow-Field Silk",
       "parameter_schema": {
@@ -9691,12 +10447,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "fluid_tank",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": "primary",
+              "label": "Puncture local preview",
+              "supported": true
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "6ce7e3b1ba383af63b33bf6cc7f907eefe8485eddabf25d32d44d40aa55e355f",
           "component_id": "fluid_tank",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -9704,7 +10478,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -9757,6 +10531,24 @@
       },
       "description": "Volume-conserving water, bubbles, waves, and pressure-driven punctures",
       "icon": "\ud83d\udca7",
+      "interaction_capabilities": {
+        "component_id": "fluid_tank",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": "primary",
+            "label": "Puncture local preview",
+            "supported": true
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:fluid_tank",
       "name": "Fluid Tank",
       "parameter_schema": {
@@ -10256,12 +11048,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "flame_burst",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "99375a86e552d18af48ba74fb3de0b138093becfb3777d3b8874f7973875cf1c",
           "component_id": "flame_burst",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -10269,7 +11079,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -10309,6 +11119,24 @@
       },
       "description": "Radial flame burst from the strip center with hot gradients and flicker",
       "icon": "\ud83d\udd25",
+      "interaction_capabilities": {
+        "component_id": "flame_burst",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:flame_burst",
       "name": "Frame Burst",
       "parameter_schema": {
@@ -10616,12 +11444,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "frostwork",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "4bd6f7120a6c64464e94e7693f45366e87526b757046e250aa500fe3574baf09",
           "component_id": "frostwork",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -10629,7 +11475,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -10669,6 +11515,24 @@
       },
       "description": "Branching ice advances from a cold border, sparkles at its tips, and melts",
       "icon": "\u2744\ufe0f",
+      "interaction_capabilities": {
+        "component_id": "frostwork",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:frostwork",
       "name": "Frostwork",
       "parameter_schema": {
@@ -11033,12 +11897,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "gif_animation",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "bfee6e9452903dbacb999b14c5ef158ad90a6af6571f3b6700088161b0b0b229",
           "component_id": "gif_animation",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -11046,7 +11928,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -11092,6 +11974,24 @@
       },
       "description": "Plays a GIF from a filesystem directory with frame timing",
       "icon": "\ud83c\udfac",
+      "interaction_capabilities": {
+        "component_id": "gif_animation",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:gif_animation",
       "name": "GIF Animation",
       "parameter_schema": {
@@ -12810,12 +13710,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "lava_lamp",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": "primary",
+              "label": "Stir local preview",
+              "supported": true
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "fb981d30c55d8e3eaadf5bc5c727ba60716ec9038a88b9968d852972ed41ab5c",
           "component_id": "lava_lamp",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -12823,7 +13741,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -12866,6 +13784,24 @@
       },
       "description": "Thermal wax blobs rise, merge, cool, and flow around the living wall",
       "icon": "\ud83e\udee7",
+      "interaction_capabilities": {
+        "component_id": "lava_lamp",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": "primary",
+            "label": "Stir local preview",
+            "supported": true
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:lava_lamp",
       "name": "Lava Lamp",
       "parameter_schema": {
@@ -13867,12 +14803,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "living_ecosystem",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "ddfd4683b1799e80d7836888e0a6bd4ef07839dfb73a99f4a5b965b7c8697888",
           "component_id": "living_ecosystem",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -13880,7 +14834,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -13932,6 +14886,24 @@
       },
       "description": "A 15-minute top-down habitat where grass and trees grow, herds form, hunters cooperate, and inherited traits visibly evolve",
       "icon": "\ud83c\udf3f",
+      "interaction_capabilities": {
+        "component_id": "living_ecosystem",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:living_ecosystem",
       "name": "Living Ecosystem",
       "parameter_schema": {
@@ -14691,12 +15663,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "living_stained_glass",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "1c6aa10785e4866d7a90585ffc18a6a9364878a15c0aece4b658374a337db46c",
           "component_id": "living_stained_glass",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -14704,7 +15694,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -14744,6 +15734,24 @@
       },
       "description": "Broad colored panes drift gently while their lead topology heals",
       "icon": "\ud83e\ude9f",
+      "interaction_capabilities": {
+        "component_id": "living_stained_glass",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:living_stained_glass",
       "name": "Living Stained Glass",
       "parameter_schema": {
@@ -15336,12 +16344,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "moonlit_fog_banks",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "85ddb3c81b711d3607d7b6e9821fba0ce13085899f7625a5a202c7e2ab4fc7b8",
           "component_id": "moonlit_fog_banks",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -15349,7 +16375,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -15388,6 +16414,24 @@
       },
       "description": "Slow fog banks reveal a hidden moon above dark ridges",
       "icon": "\ud83c\udf2b\ufe0f",
+      "interaction_capabilities": {
+        "component_id": "moonlit_fog_banks",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:moonlit_fog_banks",
       "name": "Moonlit Fog Banks",
       "parameter_schema": {
@@ -15707,12 +16751,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "maze_chase",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "5b4a5ef172ca344934aeb6cddfde060921e4dca8cad5c9d5b51863b8f83d2cc4",
           "component_id": "maze_chase",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -15720,7 +16782,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -15756,6 +16818,24 @@
       },
       "description": "Autoplaying pellet maze with strategic hunters, power chains, scores, lives, and arcade intermissions",
       "icon": "\ud83d\udc7e",
+      "interaction_capabilities": {
+        "component_id": "maze_chase",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:maze_chase",
       "name": "Neon Maze Chase",
       "parameter_schema": {
@@ -16031,12 +17111,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "night_train_windows",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "256f39ee39121686e9d7c5ebfb804ff362c11ed47c29e004cf95bc12b2d92ea3",
           "component_id": "night_train_windows",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -16044,7 +17142,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -16083,6 +17181,24 @@
       },
       "description": "Moonlit terrain, poles, and warm towns pass at layered speeds",
       "icon": "\ud83d\ude86",
+      "interaction_capabilities": {
+        "component_id": "night_train_windows",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:night_train_windows",
       "name": "Night Train Windows",
       "parameter_schema": {
@@ -16402,6 +17518,24 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": false,
+        "interactions": {
+          "component_id": "painter",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "aeda796eb704df97be169c0a1ef098dd4a210062b1f50ac0fe69d6caa6f0f3d8",
           "component_id": "painter",
@@ -16433,6 +17567,24 @@
       "defaults": {},
       "description": "Direct manually-authored complete-frame output",
       "icon": "\ud83c\udfa8",
+      "interaction_capabilities": {
+        "component_id": "painter",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:painter",
       "name": "Painter",
       "parameter_schema": {},
@@ -16458,12 +17610,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "physarum_network",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "8df11475f1386b759d60d9af718db365735c2ec6957631b19706faef2d9c8515",
           "component_id": "physarum_network",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -16471,7 +17641,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -16516,6 +17686,24 @@
       },
       "description": "Explorer agents reinforce efficient glowing routes between moving nutrients",
       "icon": "\ud83d\udd78\ufe0f",
+      "interaction_capabilities": {
+        "component_id": "physarum_network",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:physarum_network",
       "name": "Physarum Network",
       "parameter_schema": {
@@ -16895,12 +18083,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "pixel_chase",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "cd120546fdeccb63e1fa610fe57f91ba22843fb88b85ffc523076d23a165bb75",
           "component_id": "pixel_chase",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -16908,7 +18114,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -16952,6 +18158,24 @@
       },
       "description": "Chases configurable pixels and tails through every physical LED",
       "icon": "\ud83d\udca8",
+      "interaction_capabilities": {
+        "component_id": "pixel_chase",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:pixel_chase",
       "name": "Pixel Chase",
       "parameter_schema": {
@@ -17118,12 +18342,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "pixel_quest",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "a1994cc142f089bc648a4bf4565640c314ca85699d4ef7c2c51a46227856b96e",
           "component_id": "pixel_quest",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -17131,7 +18373,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -17167,6 +18409,24 @@
       },
       "description": "An endless procedural RPG with generated biomes, leveling heroes and monsters, powerups, spell combat, and escalating boss fights",
       "icon": "\u2694\ufe0f",
+      "interaction_capabilities": {
+        "component_id": "pixel_quest",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:pixel_quest",
       "name": "Pixel Quest: Wildlands",
       "parameter_schema": {
@@ -17403,12 +18663,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "plant_calibration",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "9e0bf0400065acfefa1caf0358b79218eba22f3a7fbfa903b7311b80b93d903d",
           "component_id": "plant_calibration",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -17416,7 +18694,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -17455,6 +18733,24 @@
       },
       "description": "Static reference patterns for wall photo calibration",
       "icon": "\ud83c\udfaf",
+      "interaction_capabilities": {
+        "component_id": "plant_calibration",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:plant_calibration",
       "name": "Plant Calibration",
       "parameter_schema": {
@@ -17581,12 +18877,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "plant_glow",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "80c70bd7149d45f09e5bfea4f0d59130598b479f9c2c5cb4aa20327de7bb4a66",
           "component_id": "plant_glow",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -17594,7 +18908,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -17654,6 +18968,24 @@
       },
       "description": "Breathing foliage and globe masks over color, Conway, or pinball worlds",
       "icon": "\ud83e\udeb4",
+      "interaction_capabilities": {
+        "component_id": "plant_glow",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:plant_glow",
       "name": "Plant Glow",
       "parameter_schema": {
@@ -18705,12 +20037,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "plant_mask_highlight",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "9e507b520dec17128374b4c13690a398a8caa9e3b71c975217a743a7a9794002",
           "component_id": "plant_mask_highlight",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -18718,7 +20068,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -18771,6 +20121,24 @@
       },
       "description": "Illuminates pixels currently mapped as covered by plants",
       "icon": "\ud83c\udf31",
+      "interaction_capabilities": {
+        "component_id": "plant_mask_highlight",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:plant_mask_highlight",
       "name": "Plant Mask Highlight",
       "parameter_schema": {
@@ -18995,12 +20363,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "quasicrystal_bloom",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "f9a998b6b3c458c0d7c180a0cd5108557ad0c67bf46a363a684c4a7755d40309",
           "component_id": "quasicrystal_bloom",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -19008,7 +20394,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -19049,6 +20435,24 @@
       },
       "description": "Five- to twelve-fold non-repeating rosettes open and tunnel in place",
       "icon": "\ud83c\udf10",
+      "interaction_capabilities": {
+        "component_id": "quasicrystal_bloom",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:quasicrystal_bloom",
       "name": "Quasicrystal Bloom",
       "parameter_schema": {
@@ -19428,12 +20832,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "rain_on_glass",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "a1d814f005dbb8854c8d0af64e941341f56592073b26f70eeab9022b3dd1d769",
           "component_id": "rain_on_glass",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -19441,7 +20863,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -19478,6 +20900,24 @@
       },
       "description": "Refractive beads descend through a dim moonlit or city-lit window",
       "icon": "\ud83c\udf27\ufe0f",
+      "interaction_capabilities": {
+        "component_id": "rain_on_glass",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:rain_on_glass",
       "name": "Rain on Glass",
       "parameter_schema": {
@@ -19786,12 +21226,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "rainbow",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "12a5c9dde43f7b0d9c6adb3578220c626b4d784ece5d381eb224eaff2d68f17e",
           "component_id": "rainbow",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -19799,7 +21257,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -19833,6 +21291,24 @@
       },
       "description": "Classic rainbow animation that cycles through all colors across the LED strips",
       "icon": "\ud83c\udf08",
+      "interaction_capabilities": {
+        "component_id": "rainbow",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:rainbow",
       "name": "Rainbow Cycle",
       "parameter_schema": {
@@ -20049,12 +21525,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "reaction_diffusion_garden",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "fc17510cafb27bba8abcd35cc68452215837851aafdebe6d94a351ba031279f2",
           "component_id": "reaction_diffusion_garden",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -20062,7 +21556,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -20108,6 +21602,24 @@
       },
       "description": "Gray-Scott chemistry grows luminous coral, spots, and fingerprints",
       "icon": "\ud83e\uddeb",
+      "interaction_capabilities": {
+        "component_id": "reaction_diffusion_garden",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:reaction_diffusion_garden",
       "name": "Reaction-Diffusion Garden",
       "parameter_schema": {
@@ -20500,12 +22012,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "simple_test",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "cdc7c0aa71aef00ad33a78e9f80fe580c52437a283c115ba85c66a424e68798f",
           "component_id": "simple_test",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -20513,7 +22043,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -20547,6 +22077,24 @@
       },
       "description": "Solid color test for all LEDs",
       "icon": "\ud83e\uddea",
+      "interaction_capabilities": {
+        "component_id": "simple_test",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:simple_test",
       "name": "Simple Test",
       "parameter_schema": {
@@ -20638,12 +22186,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "snake",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "03918bcaaa4c0710c5854f38162602f15a3cd7d677a8b03027d8b14140f6fdf3",
           "component_id": "snake",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -20651,7 +22217,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -20698,6 +22264,24 @@
       },
       "description": "Autonomous growing snakes with portals, battles, labyrinths, glow trails, and curated visual styles",
       "icon": "\ud83d\udc0d",
+      "interaction_capabilities": {
+        "component_id": "snake",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:snake",
       "name": "Snake Garden",
       "parameter_schema": {
@@ -21448,12 +23032,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "solid",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "9d25b3e76ac3613a1d83d4f4bab9bb2a91ec0f168f05bb5b685fbac990d058ec",
           "component_id": "solid",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -21461,7 +23063,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -21506,6 +23108,24 @@
       },
       "description": "Display a solid color across all LEDs with optional breathing effect",
       "icon": "\ud83c\udfa8",
+      "interaction_capabilities": {
+        "component_id": "solid",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:solid",
       "name": "Solid Color",
       "parameter_schema": {
@@ -21853,12 +23473,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "sparkle",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "f6cd3a1d3c1e59781cc7843b35d55a3e9c599a239070cd1b7203e84887ffa68c",
           "component_id": "sparkle",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -21866,7 +23504,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -21906,6 +23544,24 @@
       },
       "description": "Random sparkling lights effect",
       "icon": "\u2728",
+      "interaction_capabilities": {
+        "component_id": "sparkle",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:sparkle",
       "name": "Sparkle",
       "parameter_schema": {
@@ -22230,12 +23886,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "spiral_single",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "2feea28b69d22bb3051df838fead60d969c680c0c167ed92a3af9a17af83c2fb",
           "component_id": "spiral_single",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -22243,7 +23917,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -22278,6 +23952,24 @@
       },
       "description": "Single pixel spirals across the grid at maximum framerate",
       "icon": "\ud83c\udf00",
+      "interaction_capabilities": {
+        "component_id": "spiral_single",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:spiral_single",
       "name": "Spiral Single",
       "parameter_schema": {
@@ -22376,12 +24068,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "strip_order",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "6c34d4f27dfc29311b74045b0966632ab6bbbb6ee0cdd9427abad2a29e5c251f",
           "component_id": "strip_order",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -22389,7 +24099,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -22434,6 +24144,24 @@
       },
       "description": "Lights each vertical strip one at a time (50% white, 1s on / 1s off) to confirm strip ordering",
       "icon": "\ud83d\udd22",
+      "interaction_capabilities": {
+        "component_id": "strip_order",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:strip_order",
       "name": "Strip Order Test",
       "parameter_schema": {
@@ -22604,12 +24332,35 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "tetris",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [
+              "down",
+              "left",
+              "right",
+              "rotate-right"
+            ],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "4e057897df4eb3ceaf0a206cbf65aaef467bd197efd44244c5e6f2ee26fc5116",
           "component_id": "tetris",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -22617,7 +24368,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -22656,6 +24407,29 @@
       },
       "description": "Autoplaying Tetris board with coordinated falling tetrominoes",
       "icon": "\ud83e\uddf1",
+      "interaction_capabilities": {
+        "component_id": "tetris",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [
+            "down",
+            "left",
+            "right",
+            "rotate-right"
+          ],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:tetris",
       "name": "Tetris",
       "parameter_schema": {
@@ -22967,12 +24741,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "tidal_bioluminescence",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "7e9e27cb549900ed7bba2b93d78fbc2d915664249ad45fb5715e4b2f1b6126f2",
           "component_id": "tidal_bioluminescence",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -22980,7 +24772,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -23017,6 +24809,24 @@
       },
       "description": "Slow swells disturb sparse plankton into curling cyan wakes",
       "icon": "\ud83e\udebc",
+      "interaction_capabilities": {
+        "component_id": "tidal_bioluminescence",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:tidal_bioluminescence",
       "name": "Tidal Bioluminescence",
       "parameter_schema": {
@@ -23266,12 +25076,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "waterfall_veil",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "c5bbe7e2a2d194d0bce097a193d456cf0aa5c20ec6dd001c28c6e5809586bd34",
           "component_id": "waterfall_veil",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -23279,7 +25107,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -23316,6 +25144,24 @@
       },
       "description": "Fine streams descend through slate ledges and break into luminous mist",
       "icon": "\ud83d\udca7",
+      "interaction_capabilities": {
+        "component_id": "waterfall_veil",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:waterfall_veil",
       "name": "Waterfall Veil",
       "parameter_schema": {
@@ -23565,12 +25411,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "wind_in_the_reeds",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "49842c628a446ddb6b4ee86251d9f234cb69eb1c1b6a47c3e03936e09b7f2098",
           "component_id": "wind_in_the_reeds",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -23578,7 +25442,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -23624,6 +25488,24 @@
       },
       "description": "Inverse-kinematic reeds sway in coherent, slow gust fronts",
       "icon": "\ud83c\udf3e",
+      "interaction_capabilities": {
+        "component_id": "wind_in_the_reeds",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:wind_in_the_reeds",
       "name": "Wind in the Reeds",
       "parameter_schema": {
@@ -23948,12 +25830,30 @@
       "availability": {},
       "browser_capabilities": {
         "activation_ready": true,
+        "interactions": {
+          "component_id": "world_flags",
+          "live_wall": {
+            "available": false,
+            "reason": "Local preview controls never send commands to the wall."
+          },
+          "local_preview": {
+            "directions": [],
+            "point": {
+              "kind": null,
+              "label": null,
+              "supported": false
+            }
+          },
+          "provider": "python",
+          "schema": "ledgrid.composer-interaction-capabilities",
+          "schema_version": 1
+        },
         "managed_identity": {
           "component_digest": "423b0460a73a07900f59ebf15657fa6c1b2c4354588d49897b34a98956c4f310",
           "component_id": "world_flags",
           "parameter_schema_version": 1,
           "provider": "python",
-          "runtime_digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9"
+          "runtime_digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e"
         },
         "previewable": true,
         "reason": null,
@@ -23961,7 +25861,7 @@
       },
       "browser_runtime": {
         "asset_url": "/static/generated/composer/ledgrid_python_runtime.zip",
-        "digest": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+        "digest": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
         "engine": "python-pyodide-wasm",
         "kind": "python",
         "supported": true,
@@ -24002,6 +25902,24 @@
       },
       "description": "A scrolling parade of world flags adapted to the photographed LED wall",
       "icon": "\ud83c\udf0d",
+      "interaction_capabilities": {
+        "component_id": "world_flags",
+        "live_wall": {
+          "available": false,
+          "reason": "Local preview controls never send commands to the wall."
+        },
+        "local_preview": {
+          "directions": [],
+          "point": {
+            "kind": null,
+            "label": null,
+            "supported": false
+          }
+        },
+        "provider": "python",
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1
+      },
       "key": "python:world_flags",
       "name": "World Flags",
       "parameter_schema": {

@@ -109,6 +109,9 @@ class TetrisAnimation(AnimationBase):
     ANIMATION_DESCRIPTION = "Autoplaying Tetris board with coordinated falling tetrominoes"
     ANIMATION_AUTHOR = "LED Grid Team"
     ANIMATION_VERSION = "1.0"
+    COMPOSER_INTERACTIONS = {
+        "directions": ("left", "right", "down", "rotate-right"),
+    }
 
     def __init__(self, controller, config: Dict[str, Any] = None):
         super().__init__(controller, config)

@@ -36,6 +36,9 @@ class FluidTankAnimation(AnimationBase):
     ANIMATION_VERSION = "2.0"
     PLANT_MODIFIER_SUPPORT = frozenset(("obstacle", "refract", "slow_zone"))
     INTERACTION_TYPES = frozenset(("primary",))
+    COMPOSER_INTERACTIONS = {
+        "point": {"kind": "primary", "label": "Puncture local preview"},
+    }
     CC_PER_CELL = 5.0
 
     def __init__(self, controller, config: Dict[str, Any] = None):

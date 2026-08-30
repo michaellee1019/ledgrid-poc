@@ -56,6 +56,50 @@ _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*(?:[.-][a-z0-9_]+)*$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _CONTROLLER_SESSION_ID = re.compile(r"^[0-9a-f]{32}$")
 _UNSAFE_JSON_KEYS = frozenset(("__proto__", "constructor", "prototype"))
+_COMPOSER_INTERACTION_DIRECTIONS = frozenset(
+    {"left", "right", "down", "rotate-left", "rotate-right", "drop"}
+)
+
+
+def _browser_interaction_capabilities(
+    value: Any,
+    *,
+    provider: str,
+    component_id: str,
+    previewable: bool,
+) -> dict[str, Any]:
+    """Bind declared local preview controls to one exact component identity."""
+    raw = value if isinstance(value, Mapping) else {}
+    point = raw.get("point") if isinstance(raw.get("point"), Mapping) else {}
+    point_enabled = previewable and point.get("kind") == "primary"
+    directions = raw.get("directions")
+    if not isinstance(directions, (list, tuple)):
+        directions = ()
+    normalized_directions = sorted({
+        direction for direction in directions
+        if isinstance(direction, str) and direction in _COMPOSER_INTERACTION_DIRECTIONS
+    }) if previewable else []
+    return {
+        "schema": "ledgrid.composer-interaction-capabilities",
+        "schema_version": 1,
+        "provider": provider,
+        "component_id": component_id,
+        "local_preview": {
+            "point": {
+                "supported": point_enabled,
+                "kind": "primary" if point_enabled else None,
+                "label": (
+                    str(point.get("label") or "Interact with preview")
+                    if point_enabled else None
+                ),
+            },
+            "directions": normalized_directions,
+        },
+        "live_wall": {
+            "available": False,
+            "reason": "Local preview controls never send commands to the wall.",
+        },
+    }
 
 
 class SceneValidationError(ValueError):
@@ -530,6 +574,12 @@ def decorate_browser_component(
         and _SHA256.fullmatch(runtime_digest) is not None
     )
     previewable = runtime_supported and runtime_identity_ready
+    interactions = _browser_interaction_capabilities(
+        item.get("interaction_capabilities"),
+        provider=provider,
+        component_id=component_id,
+        previewable=previewable,
+    )
 
     compatibility = item.get("scene_compatibility")
     compatibility = compatibility if isinstance(compatibility, dict) else {}
@@ -608,7 +658,9 @@ def decorate_browser_component(
             "activation_ready": activation_ready,
             "reason": reason,
             "managed_identity": managed_identity,
+            "interactions": interactions,
         },
+        "interaction_capabilities": interactions,
     })
     return item
 

@@ -3,6 +3,7 @@
 
     const {ComposerRuntime} = window.LEDGridComposerRuntime || {};
     const ComposerState = window.LEDGridComposerState || {};
+    const ComposerInteractions = window.LEDGridComposerInteractions || {};
     const $ = (id) => document.getElementById(id);
     const STORAGE_PREFIX = 'ledgrid.browser-composer.v1';
     const LIBRARY_FAVORITES_STORAGE_KEY = 'ledgrid.browser-composer.library.favorites.v1';
@@ -173,6 +174,29 @@
             recents: [],
         },
     };
+    let previewInteractions = null;
+
+    function initializePreviewInteractions() {
+        if (previewInteractions || typeof ComposerInteractions.mount !== 'function') return;
+        previewInteractions = ComposerInteractions.mount({
+            root: $('previewInteractionPanel'),
+            canvas: $('previewCanvas'),
+            onInput: async (input) => {
+                // This invokes the Pyodide worker that owns the local draft
+                // instance. It does not use the wall API or live-edit path.
+                const runtime = state.runtimes.draft;
+                if (!runtime?.ready) throw new Error('The local preview is still loading.');
+                const result = await runtime.interact(input);
+                requestRender();
+                return result;
+            },
+        });
+    }
+
+    function updatePreviewInteractions() {
+        initializePreviewInteractions();
+        previewInteractions?.update(state.component);
+    }
 
     /**
      * Composer remains the composition root. Future domain packets register
@@ -2205,6 +2229,7 @@
         $('componentDescription').textContent = component.description || 'Browser-rendered animation component.';
         const runtime = component.browser_runtime || {};
         $('provenanceTitle').textContent = runtime.kind === 'native' ? 'C++ compiled to WebAssembly' : 'Python running in Pyodide';
+        updatePreviewInteractions();
         renderInstallationForegroundControl();
         $('previewPlaceholder').hidden = true;
     }
@@ -4944,6 +4969,7 @@
 
     async function initialize() {
         bindEvents();
+        initializePreviewInteractions();
         if (window.matchMedia('(max-width: 760px)').matches) selectMobileView('edit');
         initializeMotionPreference();
         updateInstallStatus();

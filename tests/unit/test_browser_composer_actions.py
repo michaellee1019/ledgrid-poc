@@ -193,6 +193,24 @@ class BrowserComposerActionTests(unittest.TestCase):
         )
         self.assert_no_live_effect()
 
+    def test_interaction_capabilities_are_provider_qualified_and_live_fail_closed(self) -> None:
+        gradient = self.interface.preview_manager.components[0]
+        gradient["interaction_capabilities"] = {
+            "point": {"kind": "primary", "label": "Fixture point input"},
+            "directions": ["left", "rotate-right", "unsupported"],
+        }
+
+        payload = self.client.get("/api/v1/composer/bootstrap").get_json()
+        component = next(item for item in payload["components"] if item["key"] == "python:gradient")
+        interactions = component["browser_capabilities"]["interactions"]
+        self.assertEqual(interactions["provider"], "python")
+        self.assertEqual(interactions["component_id"], "gradient")
+        self.assertTrue(interactions["local_preview"]["point"]["supported"])
+        self.assertEqual(interactions["local_preview"]["directions"], ["left", "rotate-right"])
+        self.assertFalse(interactions["live_wall"]["available"])
+        self.assertNotIn("interaction_url", payload["capabilities"]["server_actions"])
+        self.assert_no_live_effect()
+
     def test_component_upload_validation_is_read_only_and_provider_qualified(self) -> None:
         response = self.client.post(
             "/api/v1/composer/presets/validate",

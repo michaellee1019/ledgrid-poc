@@ -855,6 +855,13 @@ def bind_python_implementation(
             "defaults": defaults,
         }
     )
+    declared_interactions = getattr(animation_class, "COMPOSER_INTERACTIONS", {})
+    if isinstance(declared_interactions, Mapping):
+        # The implementation owns these semantic controls. The browser scene
+        # contract later binds them to a provider-qualified, local-only view.
+        rebound["interaction_capabilities"] = _json_copy(
+            dict(declared_interactions), f"component interactions {plugin_id}"
+        )
     rebound["compatibility"].update(
         {
             "classification": classification,

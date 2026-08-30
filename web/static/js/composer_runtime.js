@@ -652,6 +652,32 @@
             return this._render(safeInstancePart(instanceId), elapsed, frameIndex, params, wallTime);
         }
 
+        interact(input, instanceId = 'primary') {
+            if (!this.host || !this.ready) {
+                return Promise.reject(new ComposerRuntimeError('The browser renderer is not ready.'));
+            }
+            const payload = input && typeof input === 'object' ? snapshotValue(input) : null;
+            if (!payload || !['point', 'direction'].includes(payload.kind)) {
+                return Promise.reject(new ComposerRuntimeError('The local preview interaction is invalid.'));
+            }
+            const publicId = safeInstancePart(instanceId);
+            if (!this.instances.has(publicId)) {
+                return Promise.reject(new ComposerRuntimeError(
+                    `Renderer instance ${publicId} is not initialized.`,
+                ));
+            }
+            return this._withRecovery(async () => {
+                const response = await this.host.request({
+                    type: 'interaction', instanceId: this.instances.get(publicId).scopedId,
+                    ...payload,
+                }, this.timeoutMs);
+                if (response.type !== 'interaction') {
+                    throw new ComposerRuntimeError(`Unexpected renderer response: ${String(response.type)}`);
+                }
+                return {...response, instanceId: publicId};
+            });
+        }
+
         renderInstances(requests) {
             if (!this.host || !this.ready) {
                 return Promise.reject(new ComposerRuntimeError('The browser renderer is not ready.'));

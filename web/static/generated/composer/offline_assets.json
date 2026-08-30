@@ -1,17 +1,17 @@
 {
-  "cacheVersion": "v24",
+  "cacheVersion": "v25",
   "capturedAssets": [
     "/composer"
   ],
   "localAssets": [
     {
-      "bytes": 251893,
-      "sha256": "5c16d1a7251901de75972d823c8046d5d2df1bf13cc6e39c702412db32b1c6ad",
+      "bytes": 253015,
+      "sha256": "7040b4a0cbdcea522c4609f068bae38e2a1bc9649ad276a4c518206a929aefdd",
       "url": "/composer-app.js"
     },
     {
-      "bytes": 23777,
-      "sha256": "4b4bd6c747fdc856207751874b8cdb0d8066cbc7e675ff9cbe22f13686767935",
+      "bytes": 23820,
+      "sha256": "12ed0cec766789013749de9a5799933570a6e6601066464005f529fb9f78e015",
       "url": "/composer-service-worker.js"
     },
     {
@@ -30,8 +30,8 @@
       "url": "/static/generated/composer/aurora_curtains_native.wasm"
     },
     {
-      "bytes": 765008,
-      "sha256": "e4a0c96e1ad0efd4aaf43d773c0a92aefde71a3e393daddafb87badb56ec3009",
+      "bytes": 822942,
+      "sha256": "0173c0c8b663001bbc670a078893164a66ea2a49f379848d5488b7eade3e828f",
       "url": "/static/generated/composer/bootstrap.v1.json"
     },
     {
@@ -45,8 +45,8 @@
       "url": "/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin"
     },
     {
-      "bytes": 2366025,
-      "sha256": "6e4ef1fc6721f0749243d1a821356d9ca5cb77b526470eaa3a55ef0134505ae9",
+      "bytes": 2367081,
+      "sha256": "ecc7daec73d6123df8391ecc3f74ea4d9b92e01ecca2dce2722ca3527e3f140e",
       "url": "/static/generated/composer/ledgrid_python_runtime.zip"
     },
     {
@@ -70,18 +70,23 @@
       "url": "/static/js/composer_compositor.js"
     },
     {
+      "bytes": 6183,
+      "sha256": "40c81236980ccd7e957d460921a83bb1a061d9f6fa3b1bc725ea80582e4b5393",
+      "url": "/static/js/composer_interactions.js"
+    },
+    {
       "bytes": 12245,
       "sha256": "aaadf2de08b027c7463b282560dfe74fa99331d9a28b16dda8f5c2acc3d59e8f",
       "url": "/static/js/composer_native_worker.js"
     },
     {
-      "bytes": 18942,
-      "sha256": "e877ec171cea56c5425ed91230791e03126816a5ead2b573c8da4c55a133ad8d",
+      "bytes": 19726,
+      "sha256": "a533be5e1c8055ebe877cfa8f0552d2fb35fcc6cc71a0c41d3d309914a64979a",
       "url": "/static/js/composer_python_worker.js"
     },
     {
-      "bytes": 39797,
-      "sha256": "9138e4fa26e79cf6dc2b9b4d138d28c3c9502955237ae381466e3b34c5f5c054",
+      "bytes": 41125,
+      "sha256": "343ef6f1e508145006c6354cf0d19f631665daae8517d2c6de1121d06df14474",
       "url": "/static/js/composer_runtime.js"
     },
     {
@@ -95,7 +100,7 @@
       "url": "/static/js/composer_state.js"
     }
   ],
-  "previousCacheVersion": "v23",
+  "previousCacheVersion": "v24",
   "pythonRuntime": {
     "baseUrl": "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/",
     "delivery": "pinned-cross-origin-cache",

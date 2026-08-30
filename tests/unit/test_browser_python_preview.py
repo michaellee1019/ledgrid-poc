@@ -279,6 +279,30 @@ class BrowserPythonBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "not initialized"):
             runtime.render(0.0, 0, instance_id="missing")
 
+    def test_local_preview_interactions_are_explicit_and_instance_scoped(self):
+        runtime = _browser_runtime()
+        geometry = {"width": 33, "height": 138}
+        runtime.initialize(
+            "lava_lamp", "LavaLampAnimation", geometry,
+            installation_profile_digest=PROFILE_DIGEST,
+        )
+        point = runtime.interact("point", x=10, y=20, strength=1.0)
+        self.assertTrue(point["accepted"])
+        self.assertEqual(point["instanceId"], "primary")
+        self.assertEqual(len(runtime.animation._interactions), 1)
+
+        runtime.initialize(
+            "tetris", "TetrisAnimation", geometry, instance_id="tetris",
+            installation_profile_digest=PROFILE_DIGEST,
+        )
+        direction = runtime.interact(
+            "direction", direction="left", instance_id="tetris"
+        )
+        self.assertTrue(direction["accepted"])
+        self.assertEqual(runtime._instances["tetris"].animation.input_queue, ["left"])
+        with self.assertRaisesRegex(ValueError, "does not support that direction"):
+            runtime.interact("direction", direction="left")
+
     def test_runtime_rejects_explicit_legacy_mask_paths_at_both_boundaries(self):
         runtime = _browser_runtime()
         for name in ("plant_mask_path", "plant_globe_mask_path"):
