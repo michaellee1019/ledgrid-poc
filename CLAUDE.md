@@ -77,6 +77,23 @@ A leaf labeled `control-plane` may update only Beads, worktree registration, or 
 
 The one-time bootstrap leaf `ledgrid-poc-ib7.19.1` is the only exception: it commits these contributor instructions from the control checkout, without `.beads/**`, before any isolated implementation worker starts. Once it closes, all later documentation changes follow the normal worktree rule.
 
+### Reconcile queue state
+
+The scheduler, live-agent registry, Beads lifecycle, merge slot, and git worktrees are separate state planes. Never infer one from another. At the start and end of every scheduled tick or manual dispatch, inspect all five explicitly:
+
+```bash
+bd list --status=in_progress
+bd merge-slot check
+bd worktree list
+git worktree list --porcelain
+```
+
+Also inspect the live agent tree through the active Codex coordination tools. A bead is actively executing only when its `in_progress` record names a live worker and a matching isolated worktree. A completed worker may remain `in_progress` only while the coordinator is immediately validating or integrating its recorded tip. Any other mismatch is an orphaned claim: do not restart it, do not dispatch around it, and do not treat its worktree as proof of live work. Inspect its handoff, branch, and worktree; then either integrate completed work or append an interruption note and return the bead to `open` with its assignee cleared.
+
+The recurring queue dispatcher is only a wake-up mechanism, not execution authority. Keep it `PAUSED` while the initiative is quiesced. Each tick must finish reconciliation before claiming new work, must not overlap a prior reviewer or integration, and must fail closed when scheduler status, live agents, Beads, merge-slot, or worktree state disagree. Claim immediately before launching a worker, record the worker identity and worktree in the bead, and undo the claim if launch fails.
+
+When the user says stop, pause the dispatcher first so another tick cannot recreate work. Then interrupt workers, wait until the live-agent tree is empty, finish or abort any in-flight git operation safely, release the merge slot, and reconcile every `in_progress` bead. Preserve dirty or unmerged worktrees. A later request to resume starts with a fresh five-plane reconciliation; stale claims are never implicit permission to restart work.
+
 ### Isolate ownership
 
 Every leaf has exactly one conflict domain: `worktree-control`, `product-inventory`, `test-inventory`, `composer-shell`, `web-controller-api`, `browser-runtime-assets`, `scene-profile-contract`, `animation-kernel`, `plugin-pack:<family>`, `receiver-protocol-firmware`, `deploy-toolchain`, `docs-test-config`, or `browser-evidence`. Run at most one worker in the same exact conflict domain at a time. Distinct plugin-pack domains may run together only when they own disjoint plugin directories and neither changes a shared kernel or registry. Treat shared registries and generated outputs as single-owner paths. Never let two workers regenerate the Composer bootstrap, service worker, preset census, profile fixtures, GIF assets, or firmware manifests concurrently.
@@ -89,6 +106,6 @@ Run the bead's focused tests, its named adjacent regression, and `git diff --che
 
 ### Integrate serially
 
-The coordinator uses `bd merge-slot acquire --holder <name>` before integration and always releases it. Rebase the worker branch onto the current integration tip. Return semantic or shared-hot-file conflicts to the owning worker; do not improvise a conflict resolution in the queue. On the prospective integrated tip, rerun the focused test, adjacent regression, generated-output check when applicable, and the current visible-milestone gate. Integrate with a fast-forward merge, record the resulting SHA and proof in the bead, then close it. Remove only clean, merged worktrees with `bd worktree remove` and never use `--force` for routine cleanup.
+The coordinator uses `bd merge-slot acquire --holder <name>` before integration and always releases it. Rebase the worker branch onto the current integration tip. Return semantic or shared-hot-file conflicts to the owning worker; do not improvise a conflict resolution in the queue. On the prospective integrated tip, rerun the focused test, adjacent regression, generated-output check when applicable, and the current visible-milestone gate. Integrate with a fast-forward merge, record the resulting SHA and proof in the bead, then close it. Remove only clean, merged worktrees with `bd worktree remove` and never use `--force` for routine cleanup. If that command rejects a clean worktree solely because its local commit is intentionally not pushed, leave it in place unless the user explicitly requested local cleanup. With that authority, first prove `git merge-base --is-ancestor <worker-tip> <integration-tip>`, record the result, then use non-forced `git worktree remove <exact-path>` and `git worktree prune`; preserve the branch unless branch deletion was also requested.
 
 Local worker commits and coordinator integrations are authorized for this initiative. Git pushes, Dolt pushes, physical wall operations, and the squash to `main` are not part of ordinary worker authority. The squash remains gated by `ledgrid-poc-ib7.14`; device erase/reflash remains post-squash work. Each visible milestone must leave the integration branch runnable and demonstrably better even though limited deployment downtime is acceptable at final cutover.
