@@ -5,8 +5,8 @@
   ],
   "localAssets": [
     {
-      "bytes": 225639,
-      "sha256": "f0f62e9bf024acc2159065412694797918a56f492118970500dbb779c8f43547",
+      "bytes": 232367,
+      "sha256": "af21f6f03be5ff518f90f2208429721c08215f53c65dd962ef9865544122ec29",
       "url": "/composer-app.js"
     },
     {
@@ -20,8 +20,8 @@
       "url": "/static/composer.webmanifest"
     },
     {
-      "bytes": 71470,
-      "sha256": "8ad1b4f85359b5113a1a98fc020732a4a66f87ec31f63dfd1ad119dd5d2bd761",
+      "bytes": 72639,
+      "sha256": "2a1df18078a5a844db6f977e907a79f074dc3898b0ece11cfa703c55ca33c14b",
       "url": "/static/css/composer.css"
     },
     {
@@ -80,8 +80,8 @@
       "url": "/static/js/composer_python_worker.js"
     },
     {
-      "bytes": 39448,
-      "sha256": "c30a7dce401d43d4ed3e0032103e0470a34eec08a42305bd2ee916c94461814d",
+      "bytes": 39797,
+      "sha256": "9138e4fa26e79cf6dc2b9b4d138d28c3c9502955237ae381466e3b34c5f5c054",
       "url": "/static/js/composer_runtime.js"
     },
     {
@@ -90,8 +90,8 @@
       "url": "/static/js/composer_sha256.js"
     },
     {
-      "bytes": 7841,
-      "sha256": "cd9a62a7447e414013406d2497ffc6cbb01dd303f61ab101d2a06ab9337b1817",
+      "bytes": 11856,
+      "sha256": "2670c9317ce4027001d8dafda702e427ff20a225d6ac321c35d101e24b5b2ef0",
       "url": "/static/js/composer_state.js"
     }
   ],
