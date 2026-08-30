@@ -129,10 +129,14 @@ class ReceiverFrameReceiptTests(unittest.TestCase):
     def test_single_receiver_boundary_rejects_a_stale_or_wrong_sequence_status(self):
         controller = LEDController.__new__(LEDController)
         controller.logical_device_id = 3
-        controller.get_stats = mock.Mock(return_value={"receiver_status_responses": 7})
+        controller.get_stats = mock.Mock(return_value={
+            "receiver_status_responses": 7,
+            "receiver_frames_accepted": 12,
+        })
         controller.set_all_pixels = mock.Mock()
         controller.query_fresh_receiver_status = mock.Mock(return_value={
             "receiver_status_responses": 7,
+            "receiver_frames_accepted": 12,
             "receiver_status_version": 3,
             "receiver_logical_device": 3,
             "receiver_last_accepted_sequence": 9,
@@ -141,6 +145,46 @@ class ReceiverFrameReceiptTests(unittest.TestCase):
             controller.present_complete_frame(
                 [(0, 0, 0)], wall_frame_sequence=9, frame_digest="b" * 64
             )
+
+    def test_single_receiver_boundary_rejects_sequence_zero_without_acceptance_advance(self):
+        controller = LEDController.__new__(LEDController)
+        controller.logical_device_id = 3
+        controller.get_stats = mock.Mock(return_value={
+            "receiver_status_responses": 7,
+            "receiver_frames_accepted": 0,
+        })
+        controller.set_all_pixels = mock.Mock()
+        controller.query_fresh_receiver_status = mock.Mock(return_value={
+            "receiver_status_responses": 8,
+            "receiver_frames_accepted": 0,
+            "receiver_status_version": 3,
+            "receiver_logical_device": 3,
+            "receiver_last_accepted_sequence": 0,
+        })
+        with self.assertRaisesRegex(RuntimeError, "accepted-frame counter"):
+            controller.present_complete_frame(
+                [(0, 0, 0)], wall_frame_sequence=0, frame_digest="b" * 64
+            )
+
+    def test_single_receiver_boundary_accepts_exact_one_frame_increment(self):
+        controller = LEDController.__new__(LEDController)
+        controller.logical_device_id = 3
+        controller.get_stats = mock.Mock(return_value={
+            "receiver_status_responses": 7,
+            "receiver_frames_accepted": 0,
+        })
+        controller.set_all_pixels = mock.Mock()
+        controller.query_fresh_receiver_status = mock.Mock(return_value={
+            "receiver_status_responses": 8,
+            "receiver_frames_accepted": 1,
+            "receiver_status_version": 3,
+            "receiver_logical_device": 3,
+            "receiver_last_accepted_sequence": 0,
+        })
+        receipt = controller.present_complete_frame(
+            [(0, 0, 0)], wall_frame_sequence=0, frame_digest="b" * 64
+        )
+        self.assertEqual(receipt["wall_frame_sequence"], 0)
 
     def test_startup_refuses_authority_route_drift_before_controller_construction(self):
         authority = SimpleNamespace(identities=_identities(), authority_digest=AUTHORITY_DIGEST)

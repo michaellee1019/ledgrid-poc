@@ -3564,18 +3564,46 @@ class LEDController:
             or wall_frame_sequence < 0
         ):
             raise ValueError("wall_frame_sequence must be a non-negative integer")
-        before = int(self.get_stats().get("receiver_status_responses", 0) or 0)
-        self.set_all_pixels(colors, wall_frame_sequence=wall_frame_sequence)
-        status = self.query_fresh_receiver_status()
-        after = int(status.get("receiver_status_responses", 0) or 0)
-        if after <= before:
-            raise RuntimeError("complete-frame acknowledgement used a stale status")
-        if int(status.get("receiver_status_version", 0) or 0) < 3:
-            raise RuntimeError("complete-frame acknowledgement requires receiver status v3")
-        if status.get("receiver_logical_device") != self.logical_device_id:
-            raise RuntimeError("complete-frame acknowledgement has the wrong receiver")
-        if status.get("receiver_last_accepted_sequence") != wall_frame_sequence:
-            raise RuntimeError("receiver did not acknowledge the exact frame sequence")
+        transport_lock = getattr(self, "_transport_lock", None)
+        if transport_lock is None:
+            transport_lock = self._transport_lock = threading.RLock()
+        with transport_lock:
+            before = self.get_stats()
+            before_responses = before.get("receiver_status_responses")
+            before_accepted = before.get("receiver_frames_accepted")
+            if (
+                isinstance(before_responses, bool)
+                or not isinstance(before_responses, int)
+                or isinstance(before_accepted, bool)
+                or not isinstance(before_accepted, int)
+                or not 0 <= before_accepted <= 0xFFFFFFFF
+            ):
+                raise RuntimeError("complete-frame acknowledgement has invalid baseline counters")
+            self.set_all_pixels(colors, wall_frame_sequence=wall_frame_sequence)
+            status = self.query_fresh_receiver_status()
+            after = status.get("receiver_status_responses")
+            accepted = status.get("receiver_frames_accepted")
+            if (
+                isinstance(after, bool)
+                or not isinstance(after, int)
+                or after <= before_responses
+            ):
+                raise RuntimeError("complete-frame acknowledgement used a stale status")
+            if (
+                isinstance(accepted, bool)
+                or not isinstance(accepted, int)
+                or not 0 <= accepted <= 0xFFFFFFFF
+                or accepted != (before_accepted + 1) & 0xFFFFFFFF
+            ):
+                raise RuntimeError(
+                    "complete-frame acknowledgement did not advance the accepted-frame counter"
+                )
+            if int(status.get("receiver_status_version", 0) or 0) < 3:
+                raise RuntimeError("complete-frame acknowledgement requires receiver status v3")
+            if status.get("receiver_logical_device") != self.logical_device_id:
+                raise RuntimeError("complete-frame acknowledgement has the wrong receiver")
+            if status.get("receiver_last_accepted_sequence") != wall_frame_sequence:
+                raise RuntimeError("receiver did not acknowledge the exact frame sequence")
         return {
             "logical_device": self.logical_device_id,
             "wall_frame_sequence": wall_frame_sequence,
