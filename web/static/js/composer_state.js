@@ -172,6 +172,84 @@
         );
     }
 
+    /**
+     * Keep a browser request and the controller's later observation in one
+     * small, portable contract.  A successful HTTP command is only an
+     * acceptance; it cannot itself prove that the controller applied the
+     * desired state.  The provider (controller session) and revision make a
+     * pre-reconnect or pre-command snapshot unable to acknowledge a change.
+     */
+    function createWallReconciliation({provider, revision, desired, issuedAt = Date.now()} = {}) {
+        if (typeof provider !== 'string' || !provider.trim()) {
+            throw new TypeError('A controller provider identity is required for wall reconciliation.');
+        }
+        if (!Number.isSafeInteger(revision) || revision < 0) {
+            throw new TypeError('A non-negative controller revision is required for wall reconciliation.');
+        }
+        if (!desired || typeof desired !== 'object') {
+            throw new TypeError('A desired wall state is required for reconciliation.');
+        }
+        if (!Number.isFinite(issuedAt) || issuedAt < 0) {
+            throw new TypeError('A finite reconciliation issue time is required.');
+        }
+        return Object.freeze({
+            schema: 'ledgrid.composer-wall-reconciliation',
+            schemaVersion: 1,
+            provider: provider.trim(),
+            revision,
+            desired: clone(desired),
+            issuedAt,
+        });
+    }
+
+    function reconcileWallObservation(pending, {
+        provider,
+        revision,
+        observed,
+        observedAt = null,
+        fresh = null,
+    } = {}, now = Date.now()) {
+        if (!pending) return Object.freeze({
+            state: 'idle', acknowledged: false, retryable: false,
+            message: 'No wall change is awaiting acknowledgement.',
+        });
+        if (typeof provider !== 'string' || !provider.trim()) return Object.freeze({
+            state: 'stale', acknowledged: false, retryable: false,
+            message: 'Wall identity is unavailable; refresh Wall settings before retrying.',
+        });
+        if (!Number.isSafeInteger(revision) || revision < 0) return Object.freeze({
+            state: 'stale', acknowledged: false, retryable: false,
+            message: 'Wall revision is unavailable; refresh Wall settings before retrying.',
+        });
+        if (!observed || typeof observed !== 'object') return Object.freeze({
+            state: 'stale', acknowledged: false, retryable: false,
+            message: 'Wall settings are incomplete; refresh before retrying.',
+        });
+        if (provider !== pending.provider) return Object.freeze({
+            state: 'reconnected', acknowledged: false, retryable: true,
+            message: 'The controller reconnected. Review the wall change again to retry against its new session.',
+        });
+        const timestampIsFresh = Number.isFinite(observedAt)
+            && observedAt <= now + 5000
+            && now - observedAt <= 15000;
+        if (fresh !== true && !(fresh == null && timestampIsFresh)) return Object.freeze({
+            state: 'stale', acknowledged: false, retryable: false,
+            message: 'Waiting for a fresh wall observation. Refresh Wall settings to retry now.',
+        });
+        if (revision <= pending.revision) return Object.freeze({
+            state: 'waiting', acknowledged: false, retryable: false,
+            message: 'Commands were accepted; waiting for the controller revision that acknowledges them.',
+        });
+        if (!sameCheckBinding(pending.desired, observed)) return Object.freeze({
+            state: 'mismatch', acknowledged: false, retryable: true,
+            message: 'The fresh wall state differs from the reviewed change. Refresh or review again to retry.',
+        });
+        return Object.freeze({
+            state: 'acknowledged', acknowledged: true, retryable: false,
+            message: 'The controller acknowledged the reviewed Wall settings.',
+        });
+    }
+
     global.LEDGridComposerState = Object.freeze({
         CHECKER_VERSION,
         advisoryRenderStatus,
@@ -180,11 +258,13 @@
         checkBinding,
         clone,
         componentPresetIdentity,
+        createWallReconciliation,
         formatNumber,
         localInstallationProfile,
         normalizeNumber,
         orderedMetricStats,
         runtimeDigest,
+        reconcileWallObservation,
         sameCheckBinding,
         stableJson,
     });

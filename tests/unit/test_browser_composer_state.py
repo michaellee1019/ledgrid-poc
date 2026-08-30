@@ -188,6 +188,57 @@ console.log(JSON.stringify({
             "missing": False,
         })
 
+    def test_wall_reconciliation_requires_a_fresh_exact_newer_acknowledgement(self) -> None:
+        result = _run_state_script("""
+const desired = {vibeId: 'cozy', brightness: 96, targetFps: 120, speedMultiplier: 1.5};
+const pending = state.createWallReconciliation({
+  provider: 'a'.repeat(32), revision: 40, desired, issuedAt: 1000,
+});
+const acknowledgement = state.reconcileWallObservation(pending, {
+  provider: 'a'.repeat(32), revision: 41, observed: {...desired},
+  observedAt: 1001, fresh: true,
+}, 1010);
+const stale = state.reconcileWallObservation(pending, {
+  provider: 'a'.repeat(32), revision: 40, observed: {...desired},
+  observedAt: 1001, fresh: true,
+}, 1010);
+const staleTelemetry = state.reconcileWallObservation(pending, {
+  provider: 'a'.repeat(32), revision: 41, observed: {...desired},
+  observedAt: 1001, fresh: false,
+}, 1010);
+const mismatch = state.reconcileWallObservation(pending, {
+  provider: 'a'.repeat(32), revision: 41,
+  observed: {...desired, brightness: 32}, observedAt: 1001, fresh: true,
+}, 1010);
+const reconnected = state.reconcileWallObservation(pending, {
+  provider: 'b'.repeat(32), revision: 1, observed: {...desired},
+  observedAt: 1001, fresh: true,
+}, 1010);
+console.log(JSON.stringify({
+  acknowledgement, stale, staleTelemetry, mismatch, reconnected,
+  pending: {provider: pending.provider, revision: pending.revision, desired: pending.desired},
+}));
+""")
+
+        self.assertEqual(result["pending"], {
+            "provider": "a" * 32,
+            "revision": 40,
+            "desired": {
+                "vibeId": "cozy", "brightness": 96,
+                "targetFps": 120, "speedMultiplier": 1.5,
+            },
+        })
+        self.assertEqual(result["acknowledgement"]["state"], "acknowledged")
+        self.assertTrue(result["acknowledgement"]["acknowledged"])
+        self.assertEqual(result["stale"]["state"], "waiting")
+        self.assertFalse(result["stale"]["acknowledged"])
+        self.assertEqual(result["staleTelemetry"]["state"], "stale")
+        self.assertFalse(result["staleTelemetry"]["acknowledged"])
+        self.assertEqual(result["mismatch"]["state"], "mismatch")
+        self.assertTrue(result["mismatch"]["retryable"])
+        self.assertEqual(result["reconnected"]["state"], "reconnected")
+        self.assertTrue(result["reconnected"]["retryable"])
+
     def test_preset_identity_is_exact_check_binding_and_idempotent_when_unchanged(self) -> None:
         result = _run_state_script("""
 const component = {key: 'python:gradient', browser_runtime: {digest: 'runtime-1'}};

@@ -120,6 +120,8 @@
             applying: false,
             pendingObservation: false,
             pendingSince: 0,
+            reconciliation: null,
+            reconciliationTimer: null,
         },
         installationProfile: {
             selectedDigest: null,
@@ -207,6 +209,9 @@
     ComposerModules.register('core-runtime-cleanup', ({events, runtime, state: moduleState}) => {
         events.on(runtime.window, 'beforeunload', () => {
             runtime.window.clearInterval(moduleState.connectivityTimer);
+            if (moduleState.globalSettings.reconciliationTimer) {
+                runtime.window.clearTimeout(moduleState.globalSettings.reconciliationTimer);
+            }
             clearActivationPolling();
             disposeMotionPreference();
             disposeRuntimes();
@@ -579,6 +584,76 @@
         return JSON.stringify(left || null) === JSON.stringify(right || null);
     }
 
+    function clearGlobalSettingsReconciliationPolling() {
+        if (state.globalSettings.reconciliationTimer) {
+            window.clearTimeout(state.globalSettings.reconciliationTimer);
+        }
+        state.globalSettings.reconciliationTimer = null;
+    }
+
+    function observedStatusTimeMs(payload) {
+        const value = Number(payload?.observed_at ?? payload?.updated_at ?? payload?.timestamp);
+        if (!Number.isFinite(value) || value < 0) return null;
+        return value < 1e11 ? value * 1000 : value;
+    }
+
+    function reconcilePendingGlobalSettings(payload, observed) {
+        const reconciliation = state.globalSettings.reconciliation;
+        if (!reconciliation?.pending) return;
+        const controller = state.controllerObservation || {};
+        const outcome = ComposerState.reconcileWallObservation(
+            reconciliation.pending,
+            {
+                provider: controller.sessionId,
+                revision: Number(controller.globalSettingsRevision),
+                observed,
+                observedAt: observedStatusTimeMs(payload),
+                fresh: payload?.telemetry?.fresh === true ? true : null,
+            },
+        );
+        reconciliation.outcome = outcome;
+        if (outcome.acknowledged || outcome.retryable) {
+            state.globalSettings.pendingObservation = false;
+            state.globalSettings.pendingSince = 0;
+            clearGlobalSettingsReconciliationPolling();
+            return;
+        }
+        if (Date.now() - reconciliation.pending.issuedAt >= 60000) {
+            reconciliation.outcome = {
+                state: 'timed_out', acknowledged: false, retryable: true,
+                message: 'The wall did not acknowledge the reviewed change. Refresh or review again to retry.',
+            };
+            state.globalSettings.pendingObservation = false;
+            state.globalSettings.pendingSince = 0;
+            clearGlobalSettingsReconciliationPolling();
+        }
+    }
+
+    async function pollGlobalSettingsReconciliation() {
+        clearGlobalSettingsReconciliationPolling();
+        if (!state.globalSettings.pendingObservation) return;
+        await refreshGlobalSettings({quiet: true, preserveDraft: true});
+        if (!state.globalSettings.pendingObservation) return;
+        state.globalSettings.reconciliationTimer = window.setTimeout(
+            pollGlobalSettingsReconciliation, 1000,
+        );
+    }
+
+    function beginGlobalSettingsReconciliation(draft) {
+        const controller = state.controllerObservation || {};
+        return {
+            pending: ComposerState.createWallReconciliation({
+                provider: controller.sessionId,
+                revision: Number(controller.globalSettingsRevision),
+                desired: draft,
+            }),
+            outcome: {
+                state: 'waiting', acknowledged: false, retryable: false,
+                message: 'Commands were accepted; waiting for a fresh controller acknowledgement.',
+            },
+        };
+    }
+
     function loadStoredGlobalDraft() {
         try {
             const stored = JSON.parse(localStorage.getItem(`${STORAGE_PREFIX}.global-draft`));
@@ -611,6 +686,7 @@
         state.globalSettings.observed = bootstrapState;
         state.globalSettings.draft = loadStoredGlobalDraft() || clone(bootstrapState);
         state.globalSettings.dirty = !globalSettingsEqual(state.globalSettings.observed, state.globalSettings.draft);
+        state.globalSettings.reconciliation = null;
         renderGlobalSettings();
     }
 
@@ -717,10 +793,13 @@
         renderPlantModifiers(draft);
         const changes = globalChangeList();
         state.globalSettings.dirty = changes.length > 0;
+        const reconciliation = state.globalSettings.reconciliation;
+        const reconciliationMessage = reconciliation?.outcome?.message;
         $('wallDraftStatus').textContent = state.globalSettings.loading
             ? 'Reading observed wall state…'
             : state.globalSettings.applying ? 'Applying commands in order…'
-            : state.globalSettings.pendingObservation ? 'Commands accepted · waiting for observed wall state'
+            : state.globalSettings.pendingObservation ? reconciliationMessage || 'Commands accepted · waiting for observed wall state'
+            : reconciliation?.outcome?.retryable ? reconciliationMessage
             : !state.wallStateLoaded ? 'Composer draft only · current wall state has not been read.'
             : changes.length ? `${changes.length} unapplied wall change${changes.length === 1 ? '' : 's'} · preview is local`
             : 'Draft matches observed wall state.';
@@ -737,6 +816,10 @@
         next.plantModifiers = canonicalPlantModifiers(next.plantModifiers);
         state.globalSettings.draft = next;
         state.globalSettings.dirty = !globalSettingsEqual(next, state.globalSettings.observed);
+        state.globalSettings.pendingObservation = false;
+        state.globalSettings.pendingSince = 0;
+        state.globalSettings.reconciliation = null;
+        clearGlobalSettingsReconciliationPolling();
         persistGlobalDraft();
         resetChecker({preserveDocumentRevision: true});
         requestRender();
@@ -778,13 +861,7 @@
             const hadDirtyDraft = state.globalSettings.dirty;
             state.globalSettings.observed = observed;
             if (state.globalSettings.pendingObservation) {
-                if (globalSettingsEqual(state.globalSettings.draft, observed)) {
-                    state.globalSettings.pendingObservation = false;
-                    state.globalSettings.pendingSince = 0;
-                } else if (Date.now() - state.globalSettings.pendingSince > 60000) {
-                    state.globalSettings.pendingObservation = false;
-                    state.globalSettings.pendingSince = 0;
-                }
+                reconcilePendingGlobalSettings(payload, observed);
             } else if (!preserveDraft || !hadDirtyDraft) state.globalSettings.draft = clone(observed);
             const observedProfileDigest = payload.installation_profile_digest;
             updateSelectedInstallationProfile(observedProfileDigest);
@@ -838,15 +915,18 @@
         state.globalSettings.applying = true;
         renderGlobalSettings();
         try {
+            // Capture the current provider/revision before sending anything.
+            // A successful command without this correlation cannot prove that
+            // the same controller later applied the reviewed settings.
+            const reconciliation = beginGlobalSettingsReconciliation(draft);
             if (changes.has('vibe')) await requestJson(actions.vibe_url || '/api/v1/vibe', {method: 'POST', body: JSON.stringify({vibe: draft.vibeId})});
             if (changes.has('plant')) await requestJson(actions.plant_modifiers_url || '/api/config/plant-modifiers', {method: 'POST', body: JSON.stringify({plant_modifiers: draft.plantModifiers})});
             if (changes.has('brightness')) await requestJson(actions.brightness_url || '/api/config/brightness', {method: 'POST', body: JSON.stringify({brightness: draft.brightness})});
             if (changes.has('targetFps')) await requestJson(actions.target_fps_url || '/api/config/target-fps', {method: 'POST', body: JSON.stringify({target_fps: draft.targetFps})});
             if (changes.has('speed')) await requestJson(actions.operator_speed_url || '/api/config/animation-speed', {method: 'POST', body: JSON.stringify({multiplier: draft.speedMultiplier})});
-            state.globalSettings.observed = clone(draft);
-            state.globalSettings.dirty = false;
+            state.globalSettings.reconciliation = reconciliation;
             state.globalSettings.pendingObservation = true;
-            state.globalSettings.pendingSince = Date.now();
+            state.globalSettings.pendingSince = state.globalSettings.reconciliation.pending.issuedAt;
             persistGlobalDraft();
             toast('Wall-wide commands sent; waiting for observed state.', 'success');
         } catch (error) {
@@ -858,6 +938,7 @@
         } finally {
             state.globalSettings.applying = false;
             renderGlobalSettings();
+            if (state.globalSettings.pendingObservation) pollGlobalSettingsReconciliation();
         }
     }
 
