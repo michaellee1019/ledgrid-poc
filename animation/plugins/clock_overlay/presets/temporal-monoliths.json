@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Abstract Time",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "Nested columns rise with the current hour, minute, and second against a radiant sunset center.",
+  "name": "Temporal Monoliths",
+  "palette": {
+    "colors": [
+      "#0A010A",
+      "#FF5041",
+      "#FFCD5F",
+      "#480A42"
+    ],
+    "name": "Sunset"
+  },
+  "params": {
+    "brightness": 0.76,
+    "clock_offset_minutes": 0,
+    "face": "segments",
+    "format_24h": true,
+    "glow": 0.8,
+    "palette": "sunset",
+    "plant_aware": true,
+    "position_y": 0.58,
+    "scale": 1,
+    "show_seconds": true
+  },
+  "preset_id": "temporal-monoliths",
+  "tags": [
+    "abstract",
+    "segments",
+    "radial",
+    "sculptural"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

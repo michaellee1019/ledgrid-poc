@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Abstract Time",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "Three spare points locate the hour, minute, and second on a slowly translating emerald grid.",
+  "name": "Three Quiet Signals",
+  "palette": {
+    "colors": [
+      "#000704",
+      "#46DC78",
+      "#DCFFBE",
+      "#08371C"
+    ],
+    "name": "Forest"
+  },
+  "params": {
+    "brightness": 0.52,
+    "clock_offset_minutes": 0,
+    "face": "minimal",
+    "format_24h": true,
+    "glow": 0.48,
+    "palette": "forest",
+    "plant_aware": true,
+    "position_y": 0.45,
+    "scale": 1,
+    "show_seconds": true
+  },
+  "preset_id": "three-quiet-signals",
+  "tags": [
+    "abstract",
+    "minimal",
+    "grid",
+    "quiet"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

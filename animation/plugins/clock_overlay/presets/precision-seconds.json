@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Utility",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "A high-contrast 24-hour reference clock that keeps seconds prominent for timing tasks.",
+  "name": "Precision Seconds",
+  "palette": {
+    "colors": [
+      "#020302",
+      "#FF2D19",
+      "#FFF5E1",
+      "#410A05"
+    ],
+    "name": "Signal"
+  },
+  "params": {
+    "brightness": 0.86,
+    "clock_offset_minutes": 0,
+    "face": "digital",
+    "format_24h": true,
+    "glow": 0.08,
+    "palette": "signal",
+    "plant_aware": true,
+    "position_y": 0.5,
+    "scale": 1,
+    "show_seconds": true
+  },
+  "preset_id": "precision-seconds",
+  "tags": [
+    "seconds",
+    "timing",
+    "24-hour",
+    "high-contrast"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

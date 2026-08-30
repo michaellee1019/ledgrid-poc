@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Practical",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "A crisp monochrome 24-hour clock for studios, workshops, and shared offices.",
+  "name": "Office 24 Hour",
+  "palette": {
+    "colors": [
+      "#000000",
+      "#CDDCD2",
+      "#FFFFFF",
+      "#232A26"
+    ],
+    "name": "Mono"
+  },
+  "params": {
+    "brightness": 0.72,
+    "clock_offset_minutes": 0,
+    "face": "digital",
+    "format_24h": true,
+    "glow": 0.12,
+    "palette": "mono",
+    "plant_aware": true,
+    "position_y": 0.48,
+    "scale": 1,
+    "show_seconds": true
+  },
+  "preset_id": "office-24-hour",
+  "tags": [
+    "office",
+    "readable",
+    "24-hour",
+    "seconds"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

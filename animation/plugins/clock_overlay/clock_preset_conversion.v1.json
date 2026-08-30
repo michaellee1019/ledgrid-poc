@@ -1,0 +1,857 @@
+{
+  "entries": [
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "amber-afterglow",
+      "status": "converted",
+      "target_preset_id": "amber-afterglow"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "aurora-hourglass",
+      "status": "converted",
+      "target_preset_id": "aurora-hourglass"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "aurora-orbits",
+      "status": "converted",
+      "target_preset_id": "aurora-orbits"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "bedside-amber",
+      "status": "converted",
+      "target_preset_id": "bedside-amber"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "binary-constellation",
+      "status": "converted",
+      "target_preset_id": "binary-constellation"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "bioluminescent-tide",
+      "status": "converted",
+      "target_preset_id": "bioluminescent-tide"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "calendar-glance",
+      "status": "converted",
+      "target_preset_id": "calendar-glance"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "chrono-scan",
+      "status": "converted",
+      "target_preset_id": "chrono-scan"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "classic-wall-clock",
+      "status": "converted",
+      "target_preset_id": "classic-wall-clock"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "daypart-horizon",
+      "status": "converted",
+      "target_preset_id": "daypart-horizon"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "forest-night-almanac",
+      "status": "converted",
+      "target_preset_id": "forest-night-almanac"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "last-light-horizon",
+      "status": "converted",
+      "target_preset_id": "last-light-horizon"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "lunar-binary-constellation",
+      "status": "converted",
+      "target_preset_id": "lunar-binary-constellation"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "midnight-planetarium",
+      "status": "converted",
+      "target_preset_id": "midnight-planetarium"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "night-shift",
+      "status": "converted",
+      "target_preset_id": "night-shift"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "office-24-hour",
+      "status": "converted",
+      "target_preset_id": "office-24-hour"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "precision-seconds",
+      "status": "converted",
+      "target_preset_id": "precision-seconds"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "remote-team-minus-eight",
+      "status": "converted",
+      "target_preset_id": "remote-team-minus-eight"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "remote-team-plus-six",
+      "status": "converted",
+      "target_preset_id": "remote-team-plus-six"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "temporal-monoliths",
+      "status": "converted",
+      "target_preset_id": "temporal-monoliths"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "three-quiet-signals",
+      "status": "converted",
+      "target_preset_id": "three-quiet-signals"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "tidal-orrery",
+      "status": "converted",
+      "target_preset_id": "tidal-orrery"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "violet-drift-grid",
+      "status": "converted",
+      "target_preset_id": "violet-drift-grid"
+    },
+    {
+      "preserved_parameters": [
+        "brightness",
+        "clock_offset_minutes",
+        "face",
+        "format_24h",
+        "glow",
+        "palette",
+        "plant_aware",
+        "position_y",
+        "scale",
+        "show_seconds"
+      ],
+      "rejected_legacy_parameters": [
+        {
+          "parameter": "background",
+          "reason": "full-scene background; selected by Composer"
+        },
+        {
+          "parameter": "motion",
+          "reason": "full-scene background motion; selected by Composer"
+        },
+        {
+          "parameter": "density",
+          "reason": "full-scene background density; selected by Composer"
+        },
+        {
+          "parameter": "speed",
+          "reason": "full-scene background speed; selected by Composer"
+        }
+      ],
+      "source_preset_id": "violet-sandstorm",
+      "status": "converted",
+      "target_preset_id": "violet-sandstorm"
+    }
+  ],
+  "policy": {
+    "decision": "A curated Clock preset converts when its time-face parameters are supported by Clock Overlay. Its full-scene background controls are rejected rather than silently reinterpreted; Composer owns the selected background.",
+    "rejected_legacy_parameters": [
+      "background",
+      "motion",
+      "density",
+      "speed"
+    ],
+    "source_component": "clock",
+    "target_component": "clock_overlay"
+  },
+  "schema": "ledgrid.clock-preset-conversion",
+  "version": 1
+}

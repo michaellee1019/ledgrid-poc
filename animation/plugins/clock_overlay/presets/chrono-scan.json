@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Abstract Time",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "Three horizontal measures track the day, hour, and minute through a restless red signal field.",
+  "name": "Chrono Scan",
+  "palette": {
+    "colors": [
+      "#020302",
+      "#FF2D19",
+      "#FFF5E1",
+      "#410A05"
+    ],
+    "name": "Signal"
+  },
+  "params": {
+    "brightness": 0.68,
+    "clock_offset_minutes": 0,
+    "face": "linear",
+    "format_24h": true,
+    "glow": 0.75,
+    "palette": "signal",
+    "plant_aware": true,
+    "position_y": 0.53,
+    "scale": 1,
+    "show_seconds": true
+  },
+  "preset_id": "chrono-scan",
+  "tags": [
+    "abstract",
+    "linear",
+    "scanlines",
+    "signal"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

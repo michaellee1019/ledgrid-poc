@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Abstract Time",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "A six-column binary time code hovers like a machine constellation in an icy starfield.",
+  "name": "Binary Constellation",
+  "palette": {
+    "colors": [
+      "#00050C",
+      "#46D2FF",
+      "#E1FCFF",
+      "#08345C"
+    ],
+    "name": "Ice"
+  },
+  "params": {
+    "brightness": 0.72,
+    "clock_offset_minutes": 0,
+    "face": "binary",
+    "format_24h": true,
+    "glow": 0.68,
+    "palette": "ice",
+    "plant_aware": true,
+    "position_y": 0.48,
+    "scale": 1,
+    "show_seconds": true
+  },
+  "preset_id": "binary-constellation",
+  "tags": [
+    "abstract",
+    "binary",
+    "stars",
+    "coded-time"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

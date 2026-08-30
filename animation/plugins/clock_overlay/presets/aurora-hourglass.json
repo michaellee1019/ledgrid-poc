@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Atmospheric",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "Violet aurora ribbons drift behind a luminous minute hourglass.",
+  "name": "Aurora Hourglass",
+  "palette": {
+    "colors": [
+      "#04000E",
+      "#9650FF",
+      "#F5AFFF",
+      "#230850"
+    ],
+    "name": "Violet"
+  },
+  "params": {
+    "brightness": 0.62,
+    "clock_offset_minutes": 0,
+    "face": "hourglass",
+    "format_24h": false,
+    "glow": 0.76,
+    "palette": "violet",
+    "plant_aware": true,
+    "position_y": 0.5,
+    "scale": 1,
+    "show_seconds": true
+  },
+  "preset_id": "aurora-hourglass",
+  "tags": [
+    "aurora",
+    "hourglass",
+    "ambient",
+    "slow"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

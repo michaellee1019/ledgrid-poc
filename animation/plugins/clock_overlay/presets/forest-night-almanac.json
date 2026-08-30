@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Ambient",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "A practical date and time almanac glows softly beneath a forest-green night sky.",
+  "name": "Forest Night Almanac",
+  "palette": {
+    "colors": [
+      "#000704",
+      "#46DC78",
+      "#DCFFBE",
+      "#08371C"
+    ],
+    "name": "Forest"
+  },
+  "params": {
+    "brightness": 0.52,
+    "clock_offset_minutes": 0,
+    "face": "calendar",
+    "format_24h": false,
+    "glow": 0.46,
+    "palette": "forest",
+    "plant_aware": true,
+    "position_y": 0.5,
+    "scale": 1,
+    "show_seconds": false
+  },
+  "preset_id": "forest-night-almanac",
+  "tags": [
+    "calendar",
+    "stars",
+    "forest",
+    "practical"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

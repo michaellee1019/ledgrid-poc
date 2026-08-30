@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Abstract Time",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "DAWN, DAY, DUSK, or NIGHT floats above a breathing horizon with only the current hour beneath.",
+  "name": "Daypart Horizon",
+  "palette": {
+    "colors": [
+      "#120D08",
+      "#EBCD96",
+      "#FFF4CD",
+      "#46301C"
+    ],
+    "name": "Paper"
+  },
+  "params": {
+    "brightness": 0.58,
+    "clock_offset_minutes": 0,
+    "face": "word",
+    "format_24h": false,
+    "glow": 0.56,
+    "palette": "paper",
+    "plant_aware": true,
+    "position_y": 0.38,
+    "scale": 1,
+    "show_seconds": false
+  },
+  "preset_id": "daypart-horizon",
+  "tags": [
+    "abstract",
+    "word",
+    "horizon",
+    "daypart"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

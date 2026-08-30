@@ -7,6 +7,7 @@ import json
 import unittest
 from copy import deepcopy
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 
@@ -19,6 +20,10 @@ from animation.core.presentation_contracts import (
 )
 
 PLUGIN_IDS = ("clock", "clock_overlay")
+ROOT = Path(__file__).resolve().parents[2]
+CLOCK_CONVERSION_MANIFEST = (
+    ROOT / "animation/plugins/clock_overlay/clock_preset_conversion.v1.json"
+)
 FIXED_NOW = datetime(2026, 8, 21, 14, 37, 42, tzinfo=timezone.utc)
 CAPTURE_SECONDS = (0.0, 1.0, 61.0)
 BASELINE_DIGESTS = {
@@ -249,7 +254,29 @@ class ClockBridgeCleanupTests(unittest.TestCase):
         for vibe_id, values in fingerprints.items():
             with self.subTest(vibe=vibe_id):
                 self.assertEqual(len(values), len(paths))
-        self.assertEqual(tuple(self.loader.iter_curated_preset_files("clock_overlay")), ())
+        overlay_paths = tuple(self.loader.iter_curated_preset_files("clock_overlay"))
+        conversion = json.loads(CLOCK_CONVERSION_MANIFEST.read_text(encoding="utf-8"))
+        entries = conversion["entries"]
+        self.assertEqual(len(overlay_paths), 24)
+        self.assertEqual(len(entries), 24)
+        self.assertEqual(
+            {entry["source_preset_id"] for entry in entries},
+            {path.stem for path in paths},
+        )
+        self.assertEqual(
+            {entry["target_preset_id"] for entry in entries},
+            {path.stem for path in overlay_paths},
+        )
+        self.assertTrue(all(entry["status"] == "converted" for entry in entries))
+
+        for path in overlay_paths:
+            with self.subTest(overlay_preset=path.stem):
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(payload["animation"], "clock_overlay")
+                self.assertEqual(payload["preset_id"], path.stem)
+                self.loader.validate_component_parameters(
+                    "clock_overlay", payload["params"]
+                )
 
 
 if __name__ == "__main__":

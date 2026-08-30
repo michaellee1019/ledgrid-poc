@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "2bd4140a302f796522fbf3e77c94f84ec08fd763540753be57242018ad77616c",
+    "catalog_digest": "784d4902f9ef4ba603867772b8312e6797354630cfec807f52b55a82ab2dc283",
     "kind": "bundled",
     "version": 1
   },
@@ -26,6 +26,7 @@
       "live_edit_component_url_template": "/api/v1/scene/components/{target}",
       "masks_url": "/api/painter/masks",
       "online_required": true,
+      "operations_status_url": "/api/v1/composer/operations/status",
       "operator_speed_url": "/api/config/animation-speed",
       "plant_modifiers_url": "/api/config/plant-modifiers",
       "save_component_preset_url": "/api/v1/composer/presets",
@@ -5319,7 +5320,1160 @@
         "vibe_capabilities": [],
         "vibe_color_policy": "preserve"
       },
-      "presets": [],
+      "presets": [
+        {
+          "animation": "clock_overlay",
+          "category": "Atmospheric",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "Rising time columns catch the warm afterglow of a low amber sun.",
+          "key": "python:clock_overlay:amber-afterglow",
+          "name": "Amber Afterglow",
+          "palette": {
+            "colors": [
+              "#040100",
+              "#FF7E14",
+              "#FFE080",
+              "#5A1602"
+            ],
+            "name": "Amber"
+          },
+          "params": {
+            "brightness": 0.64,
+            "clock_offset_minutes": 0,
+            "face": "segments",
+            "format_24h": true,
+            "glow": 0.7,
+            "palette": "amber",
+            "plant_aware": true,
+            "position_y": 0.56,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "6f3992d8b37d33f7964e2ee4c73984253b3f391db2a3440de5254ff574f63cc5",
+          "preset_id": "amber-afterglow",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#040100",
+            "#FF7E14",
+            "#FFE080"
+          ],
+          "tags": [
+            "amber",
+            "horizon",
+            "segments",
+            "warm"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Atmospheric",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "Violet aurora ribbons drift behind a luminous minute hourglass.",
+          "key": "python:clock_overlay:aurora-hourglass",
+          "name": "Aurora Hourglass",
+          "palette": {
+            "colors": [
+              "#04000E",
+              "#9650FF",
+              "#F5AFFF",
+              "#230850"
+            ],
+            "name": "Violet"
+          },
+          "params": {
+            "brightness": 0.62,
+            "clock_offset_minutes": 0,
+            "face": "hourglass",
+            "format_24h": false,
+            "glow": 0.76,
+            "palette": "violet",
+            "plant_aware": true,
+            "position_y": 0.5,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "7526e7547bd9d7a8cddc3b9973f9097ed562e808ef2afe0bc51f4688fd4d72fc",
+          "preset_id": "aurora-hourglass",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#04000E",
+            "#9650FF",
+            "#F5AFFF"
+          ],
+          "tags": [
+            "aurora",
+            "hourglass",
+            "ambient",
+            "slow"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Abstract Time",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "Three drifting orbital bodies encode hours, minutes, and seconds inside a luminous polar haze.",
+          "key": "python:clock_overlay:aurora-orbits",
+          "name": "Aurora Orbits",
+          "palette": {
+            "colors": [
+              "#05000F",
+              "#FF23B4",
+              "#1EF5FF",
+              "#2D0555"
+            ],
+            "name": "Neon"
+          },
+          "params": {
+            "brightness": 0.78,
+            "clock_offset_minutes": 0,
+            "face": "orbit",
+            "format_24h": false,
+            "glow": 0.9,
+            "palette": "neon",
+            "plant_aware": true,
+            "position_y": 0.5,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "ca9d5c11c7014266e6bf969b9c912c94f06691672d12312830f4d640160a4bc7",
+          "preset_id": "aurora-orbits",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#05000F",
+            "#FF23B4",
+            "#1EF5FF"
+          ],
+          "tags": [
+            "abstract",
+            "orbit",
+            "aurora",
+            "atmospheric"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Practical",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "A low-glare 12-hour bedside clock with a steady amber face and no ticking seconds.",
+          "key": "python:clock_overlay:bedside-amber",
+          "name": "Bedside Amber",
+          "palette": {
+            "colors": [
+              "#040100",
+              "#FF7E14",
+              "#FFE080",
+              "#5A1602"
+            ],
+            "name": "Amber"
+          },
+          "params": {
+            "brightness": 0.22,
+            "clock_offset_minutes": 0,
+            "face": "digital",
+            "format_24h": false,
+            "glow": 0.18,
+            "palette": "amber",
+            "plant_aware": true,
+            "position_y": 0.5,
+            "scale": 1,
+            "show_seconds": false
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "e2c9c009e898572946887f76427cc25fc78903c833315bc0eb904791468dab79",
+          "preset_id": "bedside-amber",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#040100",
+            "#FF7E14",
+            "#FFE080"
+          ],
+          "tags": [
+            "bedside",
+            "readable",
+            "warm",
+            "12-hour"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Abstract Time",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "A six-column binary time code hovers like a machine constellation in an icy starfield.",
+          "key": "python:clock_overlay:binary-constellation",
+          "name": "Binary Constellation",
+          "palette": {
+            "colors": [
+              "#00050C",
+              "#46D2FF",
+              "#E1FCFF",
+              "#08345C"
+            ],
+            "name": "Ice"
+          },
+          "params": {
+            "brightness": 0.72,
+            "clock_offset_minutes": 0,
+            "face": "binary",
+            "format_24h": true,
+            "glow": 0.68,
+            "palette": "ice",
+            "plant_aware": true,
+            "position_y": 0.48,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "38e45a8e817070157ee8e7665ad68eb60db5f5bf2cc17ffeec2cb639c30e46a7",
+          "preset_id": "binary-constellation",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#00050C",
+            "#46D2FF",
+            "#E1FCFF"
+          ],
+          "tags": [
+            "abstract",
+            "binary",
+            "stars",
+            "coded-time"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Ambient",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "Linear hour, minute, and second currents glow beneath a rolling blue aurora.",
+          "key": "python:clock_overlay:bioluminescent-tide",
+          "name": "Bioluminescent Tide",
+          "palette": {
+            "colors": [
+              "#000412",
+              "#1478E6",
+              "#50FFDC",
+              "#041E5A"
+            ],
+            "name": "Ocean"
+          },
+          "params": {
+            "brightness": 0.58,
+            "clock_offset_minutes": 0,
+            "face": "linear",
+            "format_24h": true,
+            "glow": 0.58,
+            "palette": "ocean",
+            "plant_aware": true,
+            "position_y": 0.58,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "7968d642324543514fd688de0187f727013aaf036d84e96d4b63d43abbce900c",
+          "preset_id": "bioluminescent-tide",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#000412",
+            "#1478E6",
+            "#50FFDC"
+          ],
+          "tags": [
+            "ocean",
+            "aurora",
+            "linear",
+            "bioluminescent"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Practical",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "Time, weekday, and month-day arranged as a warm information panel for a quick daily glance.",
+          "key": "python:clock_overlay:calendar-glance",
+          "name": "Calendar Glance",
+          "palette": {
+            "colors": [
+              "#120D08",
+              "#EBCD96",
+              "#FFF4CD",
+              "#46301C"
+            ],
+            "name": "Paper"
+          },
+          "params": {
+            "brightness": 0.58,
+            "clock_offset_minutes": 0,
+            "face": "calendar",
+            "format_24h": false,
+            "glow": 0.16,
+            "palette": "paper",
+            "plant_aware": true,
+            "position_y": 0.5,
+            "scale": 1,
+            "show_seconds": false
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "6b9b39454864a03e715041cbbb341e27bdcec89d3f34ef783fce9ad35a0a5e31",
+          "preset_id": "calendar-glance",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#120D08",
+            "#EBCD96",
+            "#FFF4CD"
+          ],
+          "tags": [
+            "calendar",
+            "date",
+            "weekday",
+            "readable"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Abstract Time",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "Three horizontal measures track the day, hour, and minute through a restless red signal field.",
+          "key": "python:clock_overlay:chrono-scan",
+          "name": "Chrono Scan",
+          "palette": {
+            "colors": [
+              "#020302",
+              "#FF2D19",
+              "#FFF5E1",
+              "#410A05"
+            ],
+            "name": "Signal"
+          },
+          "params": {
+            "brightness": 0.68,
+            "clock_offset_minutes": 0,
+            "face": "linear",
+            "format_24h": true,
+            "glow": 0.75,
+            "palette": "signal",
+            "plant_aware": true,
+            "position_y": 0.53,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "236c8b97e12cc3d75cf83dbb99bbed3b1a81a99b6f526d31e4f28ff7a4148d60",
+          "preset_id": "chrono-scan",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#020302",
+            "#FF2D19",
+            "#FFF5E1"
+          ],
+          "tags": [
+            "abstract",
+            "linear",
+            "scanlines",
+            "signal"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Practical",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "A clean analog clock with luminous hands, hour marks, and a restrained dark radial backdrop.",
+          "key": "python:clock_overlay:classic-wall-clock",
+          "name": "Classic Wall Clock",
+          "palette": {
+            "colors": [
+              "#00050C",
+              "#46D2FF",
+              "#E1FCFF",
+              "#08345C"
+            ],
+            "name": "Ice"
+          },
+          "params": {
+            "brightness": 0.66,
+            "clock_offset_minutes": 0,
+            "face": "analog",
+            "format_24h": false,
+            "glow": 0.22,
+            "palette": "ice",
+            "plant_aware": true,
+            "position_y": 0.5,
+            "scale": 3,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "d90bd05c4d91b16e27b86c1f12a7e7928918cba7d1b81120c290a69364fa8e9e",
+          "preset_id": "classic-wall-clock",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#00050C",
+            "#46D2FF",
+            "#E1FCFF"
+          ],
+          "tags": [
+            "analog",
+            "wall-clock",
+            "readable",
+            "classic"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Abstract Time",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "DAWN, DAY, DUSK, or NIGHT floats above a breathing horizon with only the current hour beneath.",
+          "key": "python:clock_overlay:daypart-horizon",
+          "name": "Daypart Horizon",
+          "palette": {
+            "colors": [
+              "#120D08",
+              "#EBCD96",
+              "#FFF4CD",
+              "#46301C"
+            ],
+            "name": "Paper"
+          },
+          "params": {
+            "brightness": 0.58,
+            "clock_offset_minutes": 0,
+            "face": "word",
+            "format_24h": false,
+            "glow": 0.56,
+            "palette": "paper",
+            "plant_aware": true,
+            "position_y": 0.38,
+            "scale": 1,
+            "show_seconds": false
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "e6e0437a625c200404efefcdbe9f4fe61fcfa858182a67e82ffb671e591c4682",
+          "preset_id": "daypart-horizon",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#120D08",
+            "#EBCD96",
+            "#FFF4CD"
+          ],
+          "tags": [
+            "abstract",
+            "word",
+            "horizon",
+            "daypart"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Ambient",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "A practical date and time almanac glows softly beneath a forest-green night sky.",
+          "key": "python:clock_overlay:forest-night-almanac",
+          "name": "Forest Night Almanac",
+          "palette": {
+            "colors": [
+              "#000704",
+              "#46DC78",
+              "#DCFFBE",
+              "#08371C"
+            ],
+            "name": "Forest"
+          },
+          "params": {
+            "brightness": 0.52,
+            "clock_offset_minutes": 0,
+            "face": "calendar",
+            "format_24h": false,
+            "glow": 0.46,
+            "palette": "forest",
+            "plant_aware": true,
+            "position_y": 0.5,
+            "scale": 1,
+            "show_seconds": false
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "fedbfe0f656484457b2b2655f69c13dc0ae11d7c9a51b687daeb7061df8c8202",
+          "preset_id": "forest-night-almanac",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#000704",
+            "#46DC78",
+            "#DCFFBE"
+          ],
+          "tags": [
+            "calendar",
+            "stars",
+            "forest",
+            "practical"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Atmospheric",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "A minimal time line hangs over a slowly breathing sunset horizon.",
+          "key": "python:clock_overlay:last-light-horizon",
+          "name": "Last Light Horizon",
+          "palette": {
+            "colors": [
+              "#0A010A",
+              "#FF5041",
+              "#FFCD5F",
+              "#480A42"
+            ],
+            "name": "Sunset"
+          },
+          "params": {
+            "brightness": 0.63,
+            "clock_offset_minutes": 0,
+            "face": "minimal",
+            "format_24h": true,
+            "glow": 0.52,
+            "palette": "sunset",
+            "plant_aware": true,
+            "position_y": 0.42,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "1d5bef84da5d48664d19487a7ea3706bc1f0a7d9aa0e26d854e0bd4e1c143b68",
+          "preset_id": "last-light-horizon",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#0A010A",
+            "#FF5041",
+            "#FFCD5F"
+          ],
+          "tags": [
+            "sunset",
+            "horizon",
+            "minimal",
+            "calm"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Abstract",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "Binary time floats like an icy instrument panel among dense constellations.",
+          "key": "python:clock_overlay:lunar-binary-constellation",
+          "name": "Lunar Binary Constellation",
+          "palette": {
+            "colors": [
+              "#00050C",
+              "#46D2FF",
+              "#E1FCFF",
+              "#08345C"
+            ],
+            "name": "Ice"
+          },
+          "params": {
+            "brightness": 0.68,
+            "clock_offset_minutes": 0,
+            "face": "binary",
+            "format_24h": true,
+            "glow": 0.82,
+            "palette": "ice",
+            "plant_aware": true,
+            "position_y": 0.52,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "5bbcc10e06e600ae2e7fe98aa379bfe855dff1a921caadde951963f7c4f2fd0e",
+          "preset_id": "lunar-binary-constellation",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#00050C",
+            "#46D2FF",
+            "#E1FCFF"
+          ],
+          "tags": [
+            "binary",
+            "stars",
+            "ice",
+            "abstract"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Atmospheric",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "Three quiet time orbits travel through a sparse blue star field.",
+          "key": "python:clock_overlay:midnight-planetarium",
+          "name": "Midnight Planetarium",
+          "palette": {
+            "colors": [
+              "#000412",
+              "#1478E6",
+              "#50FFDC",
+              "#041E5A"
+            ],
+            "name": "Ocean"
+          },
+          "params": {
+            "brightness": 0.56,
+            "clock_offset_minutes": 0,
+            "face": "orbit",
+            "format_24h": true,
+            "glow": 0.66,
+            "palette": "ocean",
+            "plant_aware": true,
+            "position_y": 0.48,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "2d4ee8e4cbf61d225ab492460ea01ac56412b63b7c4f9ebf139bede0f020f3ad",
+          "preset_id": "midnight-planetarium",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#000412",
+            "#1478E6",
+            "#50FFDC"
+          ],
+          "tags": [
+            "stars",
+            "orbit",
+            "night",
+            "ambient"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Practical",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "A subdued violet 24-hour clock with seconds hidden for quiet late-night workspaces.",
+          "key": "python:clock_overlay:night-shift",
+          "name": "Night Shift",
+          "palette": {
+            "colors": [
+              "#04000E",
+              "#9650FF",
+              "#F5AFFF",
+              "#230850"
+            ],
+            "name": "Violet"
+          },
+          "params": {
+            "brightness": 0.34,
+            "clock_offset_minutes": 0,
+            "face": "digital",
+            "format_24h": true,
+            "glow": 0.14,
+            "palette": "violet",
+            "plant_aware": true,
+            "position_y": 0.52,
+            "scale": 1,
+            "show_seconds": false
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "9701d628d08fdd31c198a7061104bf1b75aeb9c25499b222c137327aeb38c960",
+          "preset_id": "night-shift",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#04000E",
+            "#9650FF",
+            "#F5AFFF"
+          ],
+          "tags": [
+            "night",
+            "office",
+            "low-light",
+            "24-hour"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Practical",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "A crisp monochrome 24-hour clock for studios, workshops, and shared offices.",
+          "key": "python:clock_overlay:office-24-hour",
+          "name": "Office 24 Hour",
+          "palette": {
+            "colors": [
+              "#000000",
+              "#CDDCD2",
+              "#FFFFFF",
+              "#232A26"
+            ],
+            "name": "Mono"
+          },
+          "params": {
+            "brightness": 0.72,
+            "clock_offset_minutes": 0,
+            "face": "digital",
+            "format_24h": true,
+            "glow": 0.12,
+            "palette": "mono",
+            "plant_aware": true,
+            "position_y": 0.48,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "664b66cae6e0677b4cf85782d3d902c71c86dcb65577d86d9ba79c43ad15baa2",
+          "preset_id": "office-24-hour",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#000000",
+            "#CDDCD2",
+            "#FFFFFF"
+          ],
+          "tags": [
+            "office",
+            "readable",
+            "24-hour",
+            "seconds"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Utility",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "A high-contrast 24-hour reference clock that keeps seconds prominent for timing tasks.",
+          "key": "python:clock_overlay:precision-seconds",
+          "name": "Precision Seconds",
+          "palette": {
+            "colors": [
+              "#020302",
+              "#FF2D19",
+              "#FFF5E1",
+              "#410A05"
+            ],
+            "name": "Signal"
+          },
+          "params": {
+            "brightness": 0.86,
+            "clock_offset_minutes": 0,
+            "face": "digital",
+            "format_24h": true,
+            "glow": 0.08,
+            "palette": "signal",
+            "plant_aware": true,
+            "position_y": 0.5,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "9656d9063eac13445ffda7976dc39995e341f8733a90340c981b9087d56f6c09",
+          "preset_id": "precision-seconds",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#020302",
+            "#FF2D19",
+            "#FFF5E1"
+          ],
+          "tags": [
+            "seconds",
+            "timing",
+            "24-hour",
+            "high-contrast"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "World Time",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "A cool 24-hour companion clock set six hours ahead of the controller's local time.",
+          "key": "python:clock_overlay:remote-team-plus-six",
+          "name": "Remote Team +6 Hours",
+          "palette": {
+            "colors": [
+              "#000412",
+              "#1478E6",
+              "#50FFDC",
+              "#041E5A"
+            ],
+            "name": "Ocean"
+          },
+          "params": {
+            "brightness": 0.62,
+            "clock_offset_minutes": 360,
+            "face": "digital",
+            "format_24h": true,
+            "glow": 0.2,
+            "palette": "ocean",
+            "plant_aware": true,
+            "position_y": 0.5,
+            "scale": 1,
+            "show_seconds": false
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "c6fc59282cb66ad4f55c62037c8a3d6223b7072602321931c641efa46abd27e8",
+          "preset_id": "remote-team-plus-six",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#000412",
+            "#1478E6",
+            "#50FFDC"
+          ],
+          "tags": [
+            "remote-team",
+            "offset",
+            "plus-six",
+            "24-hour"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "World Time",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "A green 24-hour companion clock set eight hours behind the controller's local time.",
+          "key": "python:clock_overlay:remote-team-minus-eight",
+          "name": "Remote Team -8 Hours",
+          "palette": {
+            "colors": [
+              "#000704",
+              "#46DC78",
+              "#DCFFBE",
+              "#08371C"
+            ],
+            "name": "Forest"
+          },
+          "params": {
+            "brightness": 0.58,
+            "clock_offset_minutes": -480,
+            "face": "digital",
+            "format_24h": true,
+            "glow": 0.18,
+            "palette": "forest",
+            "plant_aware": true,
+            "position_y": 0.5,
+            "scale": 1,
+            "show_seconds": false
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "0252b069b09594a41969fad2c5d6947ad184f5583e1560a2b888be2f0da3a95f",
+          "preset_id": "remote-team-minus-eight",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#000704",
+            "#46DC78",
+            "#DCFFBE"
+          ],
+          "tags": [
+            "remote-team",
+            "offset",
+            "minus-eight",
+            "24-hour"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Abstract Time",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "Nested columns rise with the current hour, minute, and second against a radiant sunset center.",
+          "key": "python:clock_overlay:temporal-monoliths",
+          "name": "Temporal Monoliths",
+          "palette": {
+            "colors": [
+              "#0A010A",
+              "#FF5041",
+              "#FFCD5F",
+              "#480A42"
+            ],
+            "name": "Sunset"
+          },
+          "params": {
+            "brightness": 0.76,
+            "clock_offset_minutes": 0,
+            "face": "segments",
+            "format_24h": true,
+            "glow": 0.8,
+            "palette": "sunset",
+            "plant_aware": true,
+            "position_y": 0.58,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "0547146506fde54c9b27177b396335c823e62d7c825ccdb118caca5b47bdffb2",
+          "preset_id": "temporal-monoliths",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#0A010A",
+            "#FF5041",
+            "#FFCD5F"
+          ],
+          "tags": [
+            "abstract",
+            "segments",
+            "radial",
+            "sculptural"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Abstract Time",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "Three spare points locate the hour, minute, and second on a slowly translating emerald grid.",
+          "key": "python:clock_overlay:three-quiet-signals",
+          "name": "Three Quiet Signals",
+          "palette": {
+            "colors": [
+              "#000704",
+              "#46DC78",
+              "#DCFFBE",
+              "#08371C"
+            ],
+            "name": "Forest"
+          },
+          "params": {
+            "brightness": 0.52,
+            "clock_offset_minutes": 0,
+            "face": "minimal",
+            "format_24h": true,
+            "glow": 0.48,
+            "palette": "forest",
+            "plant_aware": true,
+            "position_y": 0.45,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "f82dae1eb3577a66fd44a6482537a433bcdb70b3cfde2bd0f36ea43c2815b68b",
+          "preset_id": "three-quiet-signals",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#000704",
+            "#46DC78",
+            "#DCFFBE"
+          ],
+          "tags": [
+            "abstract",
+            "minimal",
+            "grid",
+            "quiet"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Abstract Time",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "Hour, minute, and second orbit through a moving blue lattice like a clockwork model of an alien tide.",
+          "key": "python:clock_overlay:tidal-orrery",
+          "name": "Tidal Orrery",
+          "palette": {
+            "colors": [
+              "#000412",
+              "#1478E6",
+              "#50FFDC",
+              "#041E5A"
+            ],
+            "name": "Ocean"
+          },
+          "params": {
+            "brightness": 0.66,
+            "clock_offset_minutes": 0,
+            "face": "orbit",
+            "format_24h": false,
+            "glow": 0.72,
+            "palette": "ocean",
+            "plant_aware": true,
+            "position_y": 0.52,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "75301ec608d1a24889c5c674d7b843740e26e83f19d0c1598c911681dff7819c",
+          "preset_id": "tidal-orrery",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#000412",
+            "#1478E6",
+            "#50FFDC"
+          ],
+          "tags": [
+            "abstract",
+            "orbit",
+            "grid",
+            "ocean"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Abstract",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "Sparse time markers glide across a slow violet lattice like a distant navigation display.",
+          "key": "python:clock_overlay:violet-drift-grid",
+          "name": "Violet Drift Grid",
+          "palette": {
+            "colors": [
+              "#04000E",
+              "#9650FF",
+              "#F5AFFF",
+              "#230850"
+            ],
+            "name": "Violet"
+          },
+          "params": {
+            "brightness": 0.48,
+            "clock_offset_minutes": 0,
+            "face": "minimal",
+            "format_24h": true,
+            "glow": 0.38,
+            "palette": "violet",
+            "plant_aware": true,
+            "position_y": 0.62,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "4af7145f2c2d1ac43cf99f12638b1fea96bb4eae02d4ac00cf8982714890353d",
+          "preset_id": "violet-drift-grid",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#04000E",
+            "#9650FF",
+            "#F5AFFF"
+          ],
+          "tags": [
+            "grid",
+            "minimal",
+            "violet",
+            "futurist"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        },
+        {
+          "animation": "clock_overlay",
+          "category": "Abstract Time",
+          "component_key": "python:clock_overlay",
+          "created_at": "2026-07-21T00:00:00Z",
+          "description": "A minute-long hourglass pours violet light while diagonal aurora currents move behind it.",
+          "key": "python:clock_overlay:violet-sandstorm",
+          "name": "Violet Sandstorm",
+          "palette": {
+            "colors": [
+              "#04000E",
+              "#9650FF",
+              "#F5AFFF",
+              "#230850"
+            ],
+            "name": "Violet"
+          },
+          "params": {
+            "brightness": 0.7,
+            "clock_offset_minutes": 0,
+            "face": "hourglass",
+            "format_24h": false,
+            "glow": 0.82,
+            "palette": "violet",
+            "plant_aware": true,
+            "position_y": 0.5,
+            "scale": 1,
+            "show_seconds": true
+          },
+          "plugin_id": "clock_overlay",
+          "preset_fingerprint": "db6f6761be384a13213f2ae10788316ccf7657bbd3619961503f0805c9de2ea1",
+          "preset_id": "violet-sandstorm",
+          "preview": null,
+          "provider": "python",
+          "swatches": [
+            "#04000E",
+            "#9650FF",
+            "#F5AFFF"
+          ],
+          "tags": [
+            "abstract",
+            "hourglass",
+            "aurora",
+            "flow"
+          ],
+          "updated_at": "2026-07-21T00:00:00Z",
+          "version": 2
+        }
+      ],
       "preview": null,
       "provider": "python",
       "provider_collision": false,

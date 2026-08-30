@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Practical",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "Time, weekday, and month-day arranged as a warm information panel for a quick daily glance.",
+  "name": "Calendar Glance",
+  "palette": {
+    "colors": [
+      "#120D08",
+      "#EBCD96",
+      "#FFF4CD",
+      "#46301C"
+    ],
+    "name": "Paper"
+  },
+  "params": {
+    "brightness": 0.58,
+    "clock_offset_minutes": 0,
+    "face": "calendar",
+    "format_24h": false,
+    "glow": 0.16,
+    "palette": "paper",
+    "plant_aware": true,
+    "position_y": 0.5,
+    "scale": 1,
+    "show_seconds": false
+  },
+  "preset_id": "calendar-glance",
+  "tags": [
+    "calendar",
+    "date",
+    "weekday",
+    "readable"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

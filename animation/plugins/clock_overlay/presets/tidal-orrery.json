@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Abstract Time",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "Hour, minute, and second orbit through a moving blue lattice like a clockwork model of an alien tide.",
+  "name": "Tidal Orrery",
+  "palette": {
+    "colors": [
+      "#000412",
+      "#1478E6",
+      "#50FFDC",
+      "#041E5A"
+    ],
+    "name": "Ocean"
+  },
+  "params": {
+    "brightness": 0.66,
+    "clock_offset_minutes": 0,
+    "face": "orbit",
+    "format_24h": false,
+    "glow": 0.72,
+    "palette": "ocean",
+    "plant_aware": true,
+    "position_y": 0.52,
+    "scale": 1,
+    "show_seconds": true
+  },
+  "preset_id": "tidal-orrery",
+  "tags": [
+    "abstract",
+    "orbit",
+    "grid",
+    "ocean"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

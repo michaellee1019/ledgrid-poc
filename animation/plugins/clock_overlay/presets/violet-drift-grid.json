@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Abstract",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "Sparse time markers glide across a slow violet lattice like a distant navigation display.",
+  "name": "Violet Drift Grid",
+  "palette": {
+    "colors": [
+      "#04000E",
+      "#9650FF",
+      "#F5AFFF",
+      "#230850"
+    ],
+    "name": "Violet"
+  },
+  "params": {
+    "brightness": 0.48,
+    "clock_offset_minutes": 0,
+    "face": "minimal",
+    "format_24h": true,
+    "glow": 0.38,
+    "palette": "violet",
+    "plant_aware": true,
+    "position_y": 0.62,
+    "scale": 1,
+    "show_seconds": true
+  },
+  "preset_id": "violet-drift-grid",
+  "tags": [
+    "grid",
+    "minimal",
+    "violet",
+    "futurist"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

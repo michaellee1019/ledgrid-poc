@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Abstract Time",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "A minute-long hourglass pours violet light while diagonal aurora currents move behind it.",
+  "name": "Violet Sandstorm",
+  "palette": {
+    "colors": [
+      "#04000E",
+      "#9650FF",
+      "#F5AFFF",
+      "#230850"
+    ],
+    "name": "Violet"
+  },
+  "params": {
+    "brightness": 0.7,
+    "clock_offset_minutes": 0,
+    "face": "hourglass",
+    "format_24h": false,
+    "glow": 0.82,
+    "palette": "violet",
+    "plant_aware": true,
+    "position_y": 0.5,
+    "scale": 1,
+    "show_seconds": true
+  },
+  "preset_id": "violet-sandstorm",
+  "tags": [
+    "abstract",
+    "hourglass",
+    "aurora",
+    "flow"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Abstract Time",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "Three drifting orbital bodies encode hours, minutes, and seconds inside a luminous polar haze.",
+  "name": "Aurora Orbits",
+  "palette": {
+    "colors": [
+      "#05000F",
+      "#FF23B4",
+      "#1EF5FF",
+      "#2D0555"
+    ],
+    "name": "Neon"
+  },
+  "params": {
+    "brightness": 0.78,
+    "clock_offset_minutes": 0,
+    "face": "orbit",
+    "format_24h": false,
+    "glow": 0.9,
+    "palette": "neon",
+    "plant_aware": true,
+    "position_y": 0.5,
+    "scale": 1,
+    "show_seconds": true
+  },
+  "preset_id": "aurora-orbits",
+  "tags": [
+    "abstract",
+    "orbit",
+    "aurora",
+    "atmospheric"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}

@@ -1,0 +1,37 @@
+{
+  "animation": "clock_overlay",
+  "category": "Practical",
+  "created_at": "2026-07-21T00:00:00Z",
+  "description": "A clean analog clock with luminous hands, hour marks, and a restrained dark radial backdrop.",
+  "name": "Classic Wall Clock",
+  "palette": {
+    "colors": [
+      "#00050C",
+      "#46D2FF",
+      "#E1FCFF",
+      "#08345C"
+    ],
+    "name": "Ice"
+  },
+  "params": {
+    "brightness": 0.66,
+    "clock_offset_minutes": 0,
+    "face": "analog",
+    "format_24h": false,
+    "glow": 0.22,
+    "palette": "ice",
+    "plant_aware": true,
+    "position_y": 0.5,
+    "scale": 3,
+    "show_seconds": true
+  },
+  "preset_id": "classic-wall-clock",
+  "tags": [
+    "analog",
+    "wall-clock",
+    "readable",
+    "classic"
+  ],
+  "updated_at": "2026-07-21T00:00:00Z",
+  "version": 2
+}
