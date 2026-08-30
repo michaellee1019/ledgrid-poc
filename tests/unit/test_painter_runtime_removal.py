@@ -18,9 +18,7 @@ RUNTIME_SOURCES = (
     ROOT / "scripts/start_server.py",
     ROOT / "web/app.py",
     ROOT / "web/local_control.py",
-    ROOT / "web/templates/base.html",
     ROOT / "web/static/js/composer.js",
-    ROOT / "web/static/js/studio_next.js",
     ROOT / "tools/browser_qualification/fixture_server.py",
     ROOT / "tools/browser_qualification/playwright_probe.mjs",
 )
