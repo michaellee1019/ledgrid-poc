@@ -86,6 +86,7 @@ from ipc.scene_contract import (
     decorate_catalog,
     filter_catalog,
     normalize_browser_scene_document,
+    build_composer_operations_status,
     normalize_global_settings_payload,
     normalize_scene_activation_command,
     normalize_scene_activation_status,
@@ -388,6 +389,15 @@ class AnimationWebInterface:
                 'activation_mode': self.activation_mode,
                 'bootstrap_url': '/api/v1/composer/bootstrap?catalog_only=1',
             })
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+
+        @self.app.route('/api/v1/composer/operations/status')
+        def api_browser_composer_operations_status():
+            """Revision-qualified observed output and bounded health evidence."""
+            response = jsonify(build_composer_operations_status(
+                self._status_payload(), now_ms=int(time.time() * 1000),
+            ))
             response.headers['Cache-Control'] = 'no-store'
             return response
 
@@ -3144,6 +3154,7 @@ class AnimationWebInterface:
                         '/api/v1/scene/activations/{activation_id}'
                     ),
                     'status_url': '/api/status',
+                    'operations_status_url': '/api/v1/composer/operations/status',
                     'vibe_url': '/api/v1/vibe',
                     'plant_modifiers_url': '/api/config/plant-modifiers',
                     'brightness_url': '/api/config/brightness',

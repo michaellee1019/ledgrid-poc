@@ -7,6 +7,7 @@ from copy import deepcopy
 
 from ipc.scene_contract import (
     BROWSER_SCENE_SCHEMA,
+    COMPOSER_OPERATIONS_STATUS_SCHEMA,
     GLOBAL_SETTINGS_SCHEMA,
     SCENE_ACTIVATION_COMMAND_SCHEMA,
     SCENE_ACTIVATION_STATUS_SCHEMA,
@@ -14,6 +15,7 @@ from ipc.scene_contract import (
     activation_identity_from_basis,
     browser_scene_to_host_scene,
     build_scene_activation_basis,
+    build_composer_operations_status,
     canonical_json_bytes,
     canonical_json_sha256,
     decorate_browser_component,
@@ -531,6 +533,83 @@ class SceneActivationContractTests(unittest.TestCase):
             "camera_observation": None,
         }
 
+
+class ComposerOperationsStatusContractTests(unittest.TestCase):
+    def _status(self, **changes: object) -> dict:
+        value = {
+            "updated_at": 1_000.0,
+            "is_running": True,
+            "controller_session_id": SESSION_A,
+            "controller_state_revision": 41,
+            "current_identity_digest": "d" * 64,
+            "active_identity": {"scene_identity": {"revision": 17, "digest": "e" * 64}},
+            "target_fps": 60,
+            "actual_fps": 58,
+            "receiver_count": 3,
+            "receiver_hybrid": {
+                "healthy": True,
+                "operational": True,
+                "telemetry_complete": True,
+                "readable_devices": [0, 1, 2],
+                "unverified_devices": [],
+            },
+            "latest_activation": {
+                "phase": "active",
+                "normalized_identity": {"scene_identity": {"revision": 17, "digest": "e" * 64}},
+                "controller": {"session_id": SESSION_A},
+            },
+        }
+        value.update(changes)
+        return value
+
+    def test_stale_observation_is_unavailable_and_keeps_raw_evidence_owned(self) -> None:
+        result = build_composer_operations_status(self._status(), now_ms=1_020_001)
+
+        self.assertEqual(result["schema"], COMPOSER_OPERATIONS_STATUS_SCHEMA)
+        self.assertEqual(result["observation"]["freshness"], "stale")
+        self.assertEqual(result["reconciliation"]["state"], "stale")
+        self.assertEqual(result["health"]["state"], "unavailable")
+        self.assertEqual(result["raw_evidence"], {
+            "owner": "controller_status", "url": "/api/status", "observed_at": 1_000_000,
+        })
+
+    def test_partial_receiver_evidence_is_degraded_without_exposing_driver_payload(self) -> None:
+        result = build_composer_operations_status(self._status(
+            receiver_hybrid={
+                "operational": False,
+                "degraded": True,
+                "telemetry_complete": False,
+                "readable_devices": [0, 2],
+                "unverified_devices": [1],
+                "error": "receiver 1 missed status drain",
+            },
+        ), now_ms=1_001_000)
+
+        receivers = result["health"]["receivers"]
+        self.assertEqual(result["health"]["state"], "degraded")
+        self.assertEqual(receivers["state"], "degraded")
+        self.assertEqual(receivers["connected"], [0, 2])
+        self.assertEqual(receivers["missing"], [1])
+        self.assertEqual(receivers["unverified"], [1])
+        self.assertNotIn("driver", result)
+
+    def test_controller_reconnect_cannot_acknowledge_an_old_activation_receipt(self) -> None:
+        result = build_composer_operations_status(self._status(
+            controller_session_id="2" * 32,
+            controller_state_revision=1,
+        ), now_ms=1_001_000)
+
+        self.assertEqual(result["observation"]["revision"]["session_id"], "2" * 32)
+        self.assertEqual(result["reconciliation"]["state"], "reconnected")
+        self.assertIn("session changed", result["reconciliation"]["reason"])
+
+    def test_fresh_mismatched_identity_is_explicitly_diverged(self) -> None:
+        result = build_composer_operations_status(self._status(
+            active_identity={"scene_identity": {"revision": 18, "digest": "f" * 64}},
+        ), now_ms=1_001_000)
+
+        self.assertEqual(result["reconciliation"]["state"], "diverged")
+        self.assertIn("does not match", result["reconciliation"]["reason"])
 
 if __name__ == "__main__":
     unittest.main()

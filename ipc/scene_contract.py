@@ -47,6 +47,8 @@ SCENE_ACTIVATION_COMMAND_SCHEMA = "ledgrid.scene-activation-command"
 SCENE_ACTIVATION_COMMAND_VERSION = 1
 SCENE_ACTIVATION_STATUS_SCHEMA = "ledgrid.scene-activation-status"
 SCENE_ACTIVATION_STATUS_VERSION = 1
+COMPOSER_OPERATIONS_STATUS_SCHEMA = "ledgrid.composer-operations-status"
+COMPOSER_OPERATIONS_STATUS_VERSION = 1
 SCENE_ACTIVATION_PHASES = frozenset((
     "queued", "preflighting", "applying", "observing", "active",
     "rolling_back", "rolled_back", "failed", "timed_out",
@@ -235,6 +237,200 @@ def _finite_number(
     if maximum is not None and result > maximum:
         raise SceneValidationError(f"{label} must be at most {maximum}")
     return result
+
+
+def _operations_timestamp_ms(value: Any) -> Optional[int]:
+    """Adapt the controller's epoch-seconds status timestamp without guessing.
+
+    Runtime status has historically used seconds, while controller receipts use
+    milliseconds.  A Composer read model has to make that unit conversion at
+    one boundary so clients can calculate a bounded evidence age consistently.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    if not math.isfinite(numeric) or numeric < 0:
+        return None
+    # Epoch timestamps before 2001 cannot be a useful current observation.
+    # Values at or above this threshold are already millisecond timestamps.
+    if numeric < 1_000_000_000_000:
+        numeric *= 1000
+    return int(numeric)
+
+
+def _operations_uint(value: Any) -> Optional[int]:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _operations_finite(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    result = float(value)
+    return result if math.isfinite(result) and result >= 0 else None
+
+
+def build_composer_operations_status(
+    status: Any,
+    *,
+    now_ms: int,
+    raw_evidence_url: str = "/api/status",
+    stale_after_ms: int = 10_000,
+) -> dict[str, Any]:
+    """Project controller status into Composer's bounded operations read model.
+
+    This is intentionally a projection, not a second source of truth.  It
+    carries a controller session/revision with every observation, summarizes
+    health without exposing raw controller internals, and names the original
+    status endpoint as the owner of any drill-down evidence.
+    """
+    if not isinstance(now_ms, int) or isinstance(now_ms, bool) or now_ms < 0:
+        raise SceneValidationError("composer operations now_ms must be a non-negative integer")
+    if not isinstance(stale_after_ms, int) or isinstance(stale_after_ms, bool) or stale_after_ms < 1:
+        raise SceneValidationError("composer operations stale_after_ms must be positive")
+    if not isinstance(raw_evidence_url, str) or not raw_evidence_url.startswith("/"):
+        raise SceneValidationError("composer operations raw_evidence_url must be an absolute path")
+
+    raw = dict(status) if isinstance(status, Mapping) else {}
+    observed_at = _operations_timestamp_ms(raw.get("updated_at", raw.get("timestamp")))
+    age_ms = None if observed_at is None else max(0, now_ms - observed_at)
+    freshness = (
+        "unknown" if observed_at is None
+        else "fresh" if age_ms is not None and age_ms <= stale_after_ms
+        else "stale"
+    )
+    session_id = raw.get("controller_session_id")
+    session_id = session_id if isinstance(session_id, str) and _CONTROLLER_SESSION_ID.fullmatch(session_id) else None
+    state_revision = _operations_uint(raw.get("controller_state_revision"))
+    identity = raw.get("active_identity")
+    identity = jsonable(identity) if isinstance(identity, Mapping) else None
+    current_identity_digest = raw.get("current_identity_digest")
+    current_identity_digest = (
+        current_identity_digest
+        if isinstance(current_identity_digest, str) and _SHA256.fullmatch(current_identity_digest)
+        else None
+    )
+    output_state = (
+        "running" if raw.get("is_running") is True
+        else "idle" if raw.get("is_running") is False
+        else "unknown"
+    )
+
+    latest = raw.get("latest_activation")
+    latest = dict(latest) if isinstance(latest, Mapping) else None
+    desired = latest.get("normalized_identity") if latest else None
+    desired = jsonable(desired) if isinstance(desired, Mapping) else None
+    receipt_session = (
+        latest.get("controller", {}).get("session_id")
+        if isinstance(latest and latest.get("controller"), Mapping) else None
+    )
+    phase = latest.get("phase") if latest else None
+    if freshness == "stale":
+        reconciliation_state = "stale"
+        reconciliation_reason = "The latest controller observation exceeded its freshness window."
+    elif session_id is None or state_revision is None:
+        reconciliation_state = "unavailable"
+        reconciliation_reason = "The controller did not supply a revision-qualified observation."
+    elif desired is None:
+        reconciliation_state = "unknown"
+        reconciliation_reason = "No activation receipt owns a desired output identity."
+    elif isinstance(receipt_session, str) and receipt_session != session_id:
+        reconciliation_state = "reconnected"
+        reconciliation_reason = "The controller session changed after the activation receipt."
+    elif identity != desired:
+        reconciliation_state = "diverged"
+        reconciliation_reason = "The observed output identity does not match the activation receipt."
+    elif phase == "active":
+        reconciliation_state = "current"
+        reconciliation_reason = "The latest activation receipt matches the fresh observed output."
+    else:
+        reconciliation_state = "pending"
+        reconciliation_reason = "An activation receipt exists but has not reached an active observation."
+
+    receiver = raw.get("receiver_hybrid")
+    if not isinstance(receiver, Mapping):
+        scene = raw.get("scene")
+        receiver = scene.get("receiver") if isinstance(scene, Mapping) else None
+    receiver = dict(receiver) if isinstance(receiver, Mapping) else {}
+    readable = sorted({value for value in receiver.get("readable_devices", ()) if _operations_uint(value) is not None})
+    unverified = sorted({value for value in receiver.get("unverified_devices", ()) if _operations_uint(value) is not None})
+    driver = raw.get("driver_stats")
+    devices = driver.get("devices") if isinstance(driver, Mapping) else None
+    device_count = len(devices) if isinstance(devices, list) else 0
+    expected_count = _operations_uint(raw.get("receiver_count"))
+    expected_count = expected_count if expected_count is not None else device_count
+    expected = list(range(expected_count))
+    missing = sorted(set(expected) - set(readable))
+    if not receiver:
+        receiver_state = "unknown"
+    elif receiver.get("healthy") is True and not missing:
+        receiver_state = "healthy"
+    elif receiver.get("operational") is False or receiver.get("degraded") is True or missing:
+        receiver_state = "degraded"
+    else:
+        receiver_state = "unknown"
+
+    target_fps = _operations_finite(raw.get("target_fps"))
+    actual_fps = _operations_finite(raw.get("actual_fps"))
+    if output_state != "running":
+        performance_state = "idle"
+    elif target_fps is None or target_fps <= 0 or actual_fps is None:
+        performance_state = "unknown"
+    elif actual_fps >= target_fps * 0.8:
+        performance_state = "healthy"
+    else:
+        performance_state = "degraded"
+
+    health_states = {receiver_state, performance_state}
+    overall = (
+        "unavailable" if freshness != "fresh"
+        else "degraded" if "degraded" in health_states
+        else "healthy" if health_states <= {"healthy", "idle"}
+        else "unknown"
+    )
+    return {
+        "schema": COMPOSER_OPERATIONS_STATUS_SCHEMA,
+        "schema_version": COMPOSER_OPERATIONS_STATUS_VERSION,
+        "observation": {
+            "state": output_state,
+            "freshness": freshness,
+            "observed_at": observed_at,
+            "age_ms": age_ms,
+            "revision": {
+                "session_id": session_id,
+                "state_revision": state_revision,
+                "identity_digest": current_identity_digest,
+            },
+            "identity": identity,
+        },
+        "reconciliation": {
+            "state": reconciliation_state,
+            "reason": reconciliation_reason,
+            "desired_identity": desired,
+            "receipt_phase": phase if isinstance(phase, str) else None,
+        },
+        "health": {
+            "state": overall,
+            "receivers": {
+                "state": receiver_state,
+                "expected": expected,
+                "connected": readable,
+                "missing": missing,
+                "unverified": unverified,
+                "telemetry_complete": receiver.get("telemetry_complete") if isinstance(receiver.get("telemetry_complete"), bool) else None,
+                "error": receiver.get("error") if isinstance(receiver.get("error"), str) else None,
+            },
+            "performance": {
+                "state": performance_state,
+                "target_fps": target_fps,
+                "actual_fps": actual_fps,
+            },
+        },
+        "raw_evidence": {
+            "owner": "controller_status",
+            "url": raw_evidence_url,
+            "observed_at": observed_at,
+        },
+    }
 
 
 def canonical_json_bytes(value: Any) -> bytes:

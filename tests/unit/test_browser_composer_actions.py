@@ -185,6 +185,10 @@ class BrowserComposerActionTests(unittest.TestCase):
         )
         actions = payload["capabilities"]["server_actions"]
         self.assertEqual(actions["status_url"], "/api/status")
+        self.assertEqual(
+            actions["operations_status_url"],
+            "/api/v1/composer/operations/status",
+        )
         self.assertEqual(actions["vibe_url"], "/api/v1/vibe")
         self.assertEqual(actions["masks_url"], "/api/painter/masks")
         self.assertEqual(
@@ -192,6 +196,36 @@ class BrowserComposerActionTests(unittest.TestCase):
             "legacy_speed_param",
         )
         self.assert_no_live_effect()
+
+    def test_operations_status_is_uncached_revision_qualified_and_fixture_backed(self) -> None:
+        self.channel.status = {
+            "updated_at": 1_000.0,
+            "is_running": True,
+            "controller_session_id": "1" * 32,
+            "controller_state_revision": 7,
+            "current_identity_digest": "a" * 64,
+            "active_identity": {"scene_identity": {"revision": 2, "digest": "b" * 64}},
+            "target_fps": 60,
+            "actual_fps": 55,
+            "receiver_count": 2,
+            "receiver_hybrid": {
+                "operational": True,
+                "degraded": True,
+                "telemetry_complete": False,
+                "readable_devices": [0],
+                "unverified_devices": [1],
+            },
+        }
+
+        response = self.client.get("/api/v1/composer/operations/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        payload = response.get_json()
+        self.assertEqual(payload["schema"], "ledgrid.composer-operations-status")
+        self.assertEqual(payload["observation"]["revision"]["state_revision"], 7)
+        self.assertEqual(payload["health"]["receivers"]["missing"], [1])
+        self.assertEqual(payload["raw_evidence"]["owner"], "controller_status")
 
     def test_interaction_capabilities_are_provider_qualified_and_live_fail_closed(self) -> None:
         gradient = self.interface.preview_manager.components[0]
