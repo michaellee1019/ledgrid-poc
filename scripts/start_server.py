@@ -53,6 +53,7 @@ from drivers.led_layout import (
     device_count_for_strips,
 )
 from web.app import create_app
+from web.maintenance_api import MaintenanceRequest, MaintenanceRequestError, MaintenanceRunError
 from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
 from tools.deployment.preserve_deploy_settings import (
     load_saved_state,
@@ -797,6 +798,9 @@ def run_controller_mode(args):
             state_path=Path(args.saved_state_file),
         )
     ))
+    maintenance_authority_digest = getattr(
+        controller, "receiver_identity_authority_digest", None
+    )
 
     print("🎛️ Controller mode")
     print(f"  Control file: {args.control_file}")
@@ -812,6 +816,12 @@ def run_controller_mode(args):
 
     try:
         while True:
+            process_maintenance_requests(
+                channel,
+                manager,
+                authority_digest=maintenance_authority_digest,
+                controller_status=activation_coordinator.controller_status,
+            )
             activation_mutations = process_activation_commands(
                 channel, activation_coordinator
             )
@@ -870,6 +880,86 @@ def run_controller_mode(args):
 _TERMINAL_ACTIVATION_PHASES = frozenset({
     "active", "rolled_back", "failed", "timed_out",
 })
+
+
+def process_maintenance_requests(
+    channel,
+    manager: AnimationManager,
+    *,
+    authority_digest: str | None,
+    controller_status,
+) -> int:
+    """Execute only current queued maintenance requests, never restart replay.
+
+    The durable status is deliberately consulted before parsing or presenting.
+    A previous controller's ``running`` record has lost its in-memory capture,
+    so it is made terminal without touching the wall after restart.
+    """
+    completed = 0
+    for record in channel.list_maintenance_requests():
+        if not isinstance(record, dict):
+            continue
+        command = record.get("command")
+        request_id = command.get("request_id") if isinstance(command, dict) else None
+        try:
+            status = channel.read_maintenance_status(request_id)
+            if not isinstance(status, dict) or status.get("phase") in {
+                "restored", "safe_idle", "rejected", "failed"
+            }:
+                continue
+            pinned = record.get("authority_digest")
+            if not isinstance(authority_digest, str) or pinned != authority_digest:
+                channel.write_maintenance_status(
+                    request_id, phase="rejected", authority_digest=str(pinned),
+                    error="authoritative receiver identity is unavailable or stale",
+                )
+                completed += 1
+                continue
+            if status.get("phase") != "queued":
+                channel.write_maintenance_status(
+                    request_id, phase="failed", authority_digest=authority_digest,
+                    error="abandoned nonterminal maintenance request was not replayed after restart",
+                )
+                completed += 1
+                continue
+            request = MaintenanceRequest.from_mapping(command)
+            observed = controller_status()
+            if (
+                observed.get("controller_session_id") != request.expected_identity.controller_session_id
+                or observed.get("controller_state_revision") != request.expected_identity.controller_state_revision
+            ):
+                channel.write_maintenance_status(
+                    request_id, phase="rejected", authority_digest=authority_digest,
+                    error="controller session or state revision is stale",
+                )
+                completed += 1
+                continue
+            channel.write_maintenance_status(
+                request_id, phase="running", authority_digest=authority_digest
+            )
+            result = manager.run_maintenance_transaction(
+                request, authority_digest=authority_digest
+            )
+            channel.write_maintenance_status(
+                request_id, phase="restored", authority_digest=authority_digest,
+                result=result,
+            )
+            completed += 1
+        except (MaintenanceRequestError, ValueError, TypeError) as exc:
+            channel.write_maintenance_status(
+                request_id, phase="rejected", authority_digest=record.get("authority_digest"),
+                error=str(exc),
+            )
+            completed += 1
+        except MaintenanceRunError as exc:
+            # Manager has already attempted visible safe idle before it
+            # returns this error; make that fact durable and terminal.
+            channel.write_maintenance_status(
+                request_id, phase="safe_idle", authority_digest=record.get("authority_digest"),
+                error=str(exc),
+            )
+            completed += 1
+    return completed
 
 
 def _activation_request_result(channel, kind: str, activation_id: str):

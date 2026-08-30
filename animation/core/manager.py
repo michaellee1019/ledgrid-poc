@@ -7,6 +7,7 @@ Handles animation switching, parameter updates, and frame generation.
 """
 
 import hashlib
+import copy
 from io import BytesIO
 import json
 import math
@@ -295,6 +296,12 @@ class AnimationManager:
         self._run_state_lock = threading.RLock()
         self._run_generation = 0
         self._presentation_io_lock = threading.Lock()
+        # A maintenance transaction owns this lock for its complete
+        # capture/present/hold/restore interval.  The render loop observes it
+        # before generating its next frame and the I/O worker holds it while
+        # presenting, so a diagnostic can never be interleaved with a normal
+        # frame at the controller boundary.
+        self._maintenance_lease_lock = threading.RLock()
         self._presentation_state_lock = threading.RLock()
         self.animation_speed_scale = self._validate_tempo_scale(animation_speed_scale)
         self._resolved_vibe, self._vibe_diagnostic = self._resolve_initial_vibe(vibe)
@@ -4463,6 +4470,10 @@ class AnimationManager:
         # reusable buffers, so ownership remains deterministic without copies.
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix="led-present") as presenter:
             while self._run_is_active(run_generation):
+                # Do not generate a frame while a maintenance capture owns the
+                # wall.  Existing in-flight I/O is drained by the transaction.
+                with self._maintenance_guard():
+                    pass
                 loop_start = time.perf_counter()
                 generate_duration = 0.0
                 send_duration = 0.0
@@ -4635,9 +4646,114 @@ class AnimationManager:
             self._presentation_io_lock = lock
         return lock
 
+    def _maintenance_guard(self):
+        lock = getattr(self, "_maintenance_lease_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._maintenance_lease_lock = lock
+        return lock
+
+    def _maintenance_capture(self) -> dict[str, Any]:
+        """Capture only canonical manager state needed to restore presentation."""
+        with self.frame_data_lock:
+            raw = self.current_frame_data
+            frame = raw.copy() if isinstance(raw, np.ndarray) else copy.deepcopy(raw)
+        return {
+            "frame": frame,
+            "scene_mode": self._scene_mode,
+            "active_scene": self._active_scene_state,
+            "power": self.output_brightness,
+            "is_running": self.is_running,
+        }
+
+    def _maintenance_safe_idle(self) -> None:
+        """Leave a visible black frame when exact restoration is no longer safe."""
+        pixels = int(self.controller.strip_count) * int(self.controller.leds_per_strip)
+        black = [(0, 0, 0)] * pixels
+        with self.frame_data_lock:
+            self.current_frame_data = list(black)
+        self.is_running = False
+        # This is intentionally not an untrusted diagnostic frame: it is the
+        # manager's fail-safe output when the trusted receipt path itself has
+        # become unavailable.
+        self.controller.set_all_pixels(black)
+        if not getattr(self.controller, "inline_show", False) and hasattr(self.controller, "show"):
+            self.controller.show()
+
+    def run_maintenance_transaction(
+        self,
+        request,
+        *,
+        authority_digest: str,
+        sleep=time.sleep,
+    ) -> dict[str, Any]:
+        """Present one reviewed frame under an exclusive, receipt-backed lease.
+
+        ``request`` is the validated named request from ``maintenance_api``;
+        this method deliberately receives no caller-authored pixel buffer.
+        """
+        from web.maintenance_api import MaintenanceRunError, build_frame
+
+        if not isinstance(authority_digest, str) or len(authority_digest) != 64:
+            raise MaintenanceRunError("receiver identity authority is unavailable")
+        if request.duration_seconds <= 0 or request.duration_seconds > 30.0:
+            raise MaintenanceRunError("maintenance duration is outside its bounded contract")
+        with self._maintenance_guard():
+            capture = None
+            try:
+                # Taking the I/O lock after the lease drains a submitted normal
+                # presentation before the canonical frame is captured.
+                with self._presentation_io_guard():
+                    capture = self._maintenance_capture()
+                    receipt = self.controller.present_trusted_full_frame(
+                        request.request_id, build_frame(request)
+                    )
+                if (
+                    not isinstance(receipt, dict)
+                    or receipt.get("request_id") != request.request_id
+                ):
+                    raise MaintenanceRunError("maintenance acknowledgement belongs to another request")
+                if receipt.get("authority_digest") != authority_digest:
+                    raise MaintenanceRunError("maintenance acknowledgement authority is stale")
+                acknowledgements = receipt.get("acknowledged_receivers")
+                if not isinstance(acknowledgements, list) or {
+                    item.get("logical_device")
+                    for item in acknowledgements
+                    if isinstance(item, dict)
+                } != set(range(5)):
+                    raise MaintenanceRunError("maintenance acknowledgement is partial")
+                sleep(request.duration_seconds)
+                with self._presentation_io_guard():
+                    # Restore the exact captured raw frame through the same
+                    # complete-frame receipt primitive before releasing lease.
+                    restore_receipt = self.controller.present_trusted_full_frame(
+                        f"{request.request_id}:restore", capture["frame"]
+                    )
+                if (
+                    not isinstance(restore_receipt, dict)
+                    or restore_receipt.get("authority_digest") != authority_digest
+                ):
+                    raise MaintenanceRunError("maintenance restore acknowledgement is stale")
+                with self.frame_data_lock:
+                    self.current_frame_data = capture["frame"]
+                self._scene_mode = capture["scene_mode"]
+                self._active_scene_state = capture["active_scene"]
+                self.output_brightness = capture["power"]
+                self.is_running = capture["is_running"]
+                return {"receipt": receipt, "restore_receipt": restore_receipt}
+            except BaseException as exc:
+                try:
+                    with self._presentation_io_guard():
+                        self._maintenance_safe_idle()
+                except BaseException as idle_exc:
+                    raise MaintenanceRunError(
+                        f"maintenance failed ({exc}); safe idle also failed ({idle_exc})"
+                    ) from exc
+                raise MaintenanceRunError(f"maintenance failed; entered safe idle: {exc}") from exc
+
     def _present_frame(self, frame, dirty_ranges, use_partial, inline_show):
         """Present one frame on the dedicated I/O worker and return timings."""
-        with self._presentation_io_guard():
+        with self._maintenance_guard(), self._presentation_io_guard():
             send_start = time.perf_counter()
             if use_partial:
                 self.controller.set_frame(frame, dirty_ranges=dirty_ranges)

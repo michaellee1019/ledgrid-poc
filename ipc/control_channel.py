@@ -23,6 +23,14 @@ ACTIVATION_CANCEL_RESULT_SCHEMA = "ledgrid.scene-activation-cancel-result"
 ACTIVATION_ROLLBACK_RESULT_SCHEMA = "ledgrid.scene-activation-rollback-result"
 ACTIVATION_CHANNEL_VERSION = 1
 ACTIVATION_REQUEST_OUTCOMES = frozenset({"succeeded", "rejected", "failed"})
+MAINTENANCE_COMMAND_SCHEMA = "ledgrid.maintenance-frame-request"
+MAINTENANCE_STATUS_SCHEMA = "ledgrid.maintenance-frame-status"
+MAINTENANCE_RESULT_SCHEMA = "ledgrid.maintenance-frame-result"
+MAINTENANCE_CHANNEL_VERSION = 1
+MAINTENANCE_PHASES = frozenset(
+    {"queued", "running", "restored", "safe_idle", "rejected", "failed"}
+)
+MAINTENANCE_TERMINAL_PHASES = frozenset({"restored", "safe_idle", "rejected", "failed"})
 
 
 class FileControlChannel:
@@ -48,6 +56,10 @@ class FileControlChannel:
         self.activation_rollback_path = self.activation_root / "rollback"
         self.activation_cancel_result_path = self.activation_root / "cancel-result"
         self.activation_rollback_result_path = self.activation_root / "rollback-result"
+        self.maintenance_root = self.control_path.parent / "maintenance"
+        self.maintenance_queue_path = self.maintenance_root / "queue"
+        self.maintenance_status_path = self.maintenance_root / "status"
+        self.maintenance_result_path = self.maintenance_root / "result"
         self.control_path.parent.mkdir(parents=True, exist_ok=True)
         self.status_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -488,3 +500,129 @@ class FileControlChannel:
             self.activation_rollback_result_file(activation_id),
             "activation rollback result",
         )
+
+    # Maintenance is intentionally separate from the legacy control file.  The
+    # latter is a last-write-wins convenience channel and is not a suitable
+    # authority boundary for a full-wall diagnostic transaction.
+    def maintenance_request_path(self, request_id: str) -> Path:
+        return self.maintenance_queue_path / f"{self._request_id(request_id)}.json"
+
+    def maintenance_status_file(self, request_id: str) -> Path:
+        return self.maintenance_status_path / f"{self._request_id(request_id)}.json"
+
+    def maintenance_result_file(self, request_id: str) -> Path:
+        return self.maintenance_result_path / f"{self._request_id(request_id)}.json"
+
+    @staticmethod
+    def _maintenance_digest(value: Any) -> str:
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(c not in "0123456789abcdef" for c in value)
+        ):
+            raise ValueError("maintenance authority_digest must be a SHA-256")
+        return value
+
+    def enqueue_maintenance_request(
+        self, command: Dict[str, Any], *, authority_digest: str
+    ) -> Dict[str, Any]:
+        """Create one immutable named diagnostic request and queued receipt."""
+        if not isinstance(command, dict) or command.get("schema") != MAINTENANCE_COMMAND_SCHEMA:
+            raise ValueError("maintenance command schema is invalid")
+        if command.get("schema_version") != MAINTENANCE_CHANNEL_VERSION:
+            raise ValueError("maintenance command schema_version is invalid")
+        request_id = self._request_id(command.get("request_id"))
+        payload = {
+            "command": dict(command),
+            "authority_digest": self._maintenance_digest(authority_digest),
+        }
+        path = self.maintenance_request_path(request_id)
+        if self._atomic_create(path, payload):
+            self.write_maintenance_status(request_id, phase="queued", authority_digest=authority_digest)
+            return payload
+        existing = self._strict_json(path, "maintenance command")
+        if existing != payload:
+            raise FileExistsError("maintenance request ID already names a different durable command")
+        return existing
+
+    def read_maintenance_request(self, request_id: str) -> Optional[Dict[str, Any]]:
+        return self._strict_json(self.maintenance_request_path(request_id), "maintenance command")
+
+    def list_maintenance_requests(self) -> list[Dict[str, Any]]:
+        if not self.maintenance_queue_path.is_dir():
+            return []
+        requests = []
+        for path in sorted(self.maintenance_queue_path.glob("*.json")):
+            request = self._strict_json(path, "maintenance command")
+            if request is not None:
+                requests.append(request)
+        return requests
+
+    def read_maintenance_status(self, request_id: str) -> Optional[Dict[str, Any]]:
+        return self._strict_json(self.maintenance_status_file(request_id), "maintenance status")
+
+    def write_maintenance_status(
+        self,
+        request_id: str,
+        *,
+        phase: str,
+        authority_digest: str,
+        result: Dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> Dict[str, Any]:
+        request_id = self._request_id(request_id)
+        if phase not in MAINTENANCE_PHASES:
+            raise ValueError("maintenance phase is invalid")
+        if error is not None and (not isinstance(error, str) or not error):
+            raise ValueError("maintenance error must be null or non-empty")
+        existing = self.read_maintenance_status(request_id)
+        order = {
+            "queued": 0,
+            "running": 1,
+            "restored": 2,
+            "safe_idle": 2,
+            "rejected": 2,
+            "failed": 2,
+        }
+        if existing is not None:
+            if existing.get("authority_digest") != authority_digest:
+                raise ValueError("maintenance status authority digest changed")
+            old = existing.get("phase")
+            if old in MAINTENANCE_TERMINAL_PHASES:
+                if old != phase:
+                    raise FileExistsError("maintenance request already has a terminal status")
+                return existing
+            if order.get(phase, -1) <= order.get(old, -1):
+                raise ValueError("maintenance status must advance monotonically")
+        payload = {
+            "schema": MAINTENANCE_STATUS_SCHEMA,
+            "schema_version": MAINTENANCE_CHANNEL_VERSION,
+            "request_id": request_id,
+            "phase": phase,
+            "authority_digest": self._maintenance_digest(authority_digest),
+            "result": result,
+            "error": error,
+            "updated_at": time.time(),
+        }
+        self._atomic_write(self.maintenance_status_file(request_id), payload)
+        if phase in MAINTENANCE_TERMINAL_PHASES:
+            self._write_maintenance_result(payload)
+        return payload
+
+    def _write_maintenance_result(self, status: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(status)
+        payload["schema"] = MAINTENANCE_RESULT_SCHEMA
+        path = self.maintenance_result_file(payload["request_id"])
+        if self._atomic_create(path, payload):
+            return payload
+        existing = self._strict_json(path, "maintenance result")
+        comparable = dict(existing or {})
+        requested = dict(payload)
+        comparable.pop("updated_at", None)
+        requested.pop("updated_at", None)
+        if comparable != requested:
+            raise FileExistsError("maintenance request already has a different terminal result")
+        return existing
+
+    def read_maintenance_result(self, request_id: str) -> Optional[Dict[str, Any]]:
+        return self._strict_json(self.maintenance_result_file(request_id), "maintenance result")
