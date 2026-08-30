@@ -138,6 +138,12 @@
             selectedArtifactUrl: null,
             desiredDigest: null,
             desiredArtifactUrl: null,
+            // Authoring endpoints come from an observed profile bootstrap,
+            // while reconnect catalog refreshes deliberately omit them.  Keep
+            // the last verified, digest-qualified set outside the catalog so
+            // a refresh cannot turn an open draft's Save target into null.
+            authoringActions: null,
+            authoringDigest: null,
             candidate: null,
         },
         masks: {
@@ -666,6 +672,12 @@
         return state.bootstrap?.capabilities?.server_actions || {};
     }
 
+    const PROFILE_AUTHORING_ACTIONS = Object.freeze([
+        ['installation_profile_draft_url', 'draft'],
+        ['installation_profile_publish_url', 'publish'],
+        ['installation_profile_artifact_url', 'artifact'],
+    ]);
+
     function profileUrlForDigest(url, priorDigest, nextDigest) {
         if (typeof url !== 'string' || !url) return null;
         if (url.includes('{digest}')) return url.replace('{digest}', nextDigest);
@@ -678,12 +690,48 @@
         return `/api/v1/installation-profiles/${digest}/${kind}`;
     }
 
+    function trustedProfileAuthoringActions(actions, digest) {
+        if (!/^[0-9a-f]{64}$/.test(digest || '') || digest === EMPTY_PROFILE_DIGEST) return null;
+        const trusted = {};
+        for (const [name, kind] of PROFILE_AUTHORING_ACTIONS) {
+            const url = actions?.[name];
+            // These URLs authorize mutations of a specific managed draft.
+            // Only retain the literal digest-qualified endpoint observed from
+            // the host; a catalog-only response intentionally supplies null.
+            if (url !== managedProfileUrl(kind, digest)) return null;
+            trusted[name] = url;
+        }
+        return trusted;
+    }
+
+    function preserveTrustedProfileAuthoringActions(actions, payload) {
+        const profile = state.installationProfile;
+        const observed = trustedProfileAuthoringActions(
+            actions,
+            payload?.installation_profile?.digest,
+        );
+        if (observed) {
+            profile.authoringActions = observed;
+            profile.authoringDigest = payload.installation_profile.digest;
+            return;
+        }
+        if (!profile.authoringActions) return;
+        // A catalog-only refresh has no authority to observe or change the
+        // selected profile.  It may update component/preset catalog fields,
+        // but must retain the already verified authoring endpoints verbatim.
+        for (const [name] of PROFILE_AUTHORING_ACTIONS) {
+            if (!actions[name]) actions[name] = profile.authoringActions[name];
+        }
+    }
+
     function initializeInstallationProfileState() {
         const localProfile = ComposerState.localInstallationProfile(state.bootstrap);
         state.installationProfile.selectedDigest = localProfile?.digest || null;
         state.installationProfile.selectedArtifactUrl = localProfile?.artifactUrl || null;
         state.installationProfile.desiredDigest = localProfile?.digest || null;
         state.installationProfile.desiredArtifactUrl = localProfile?.artifactUrl || null;
+        state.installationProfile.authoringActions = null;
+        state.installationProfile.authoringDigest = null;
         state.installationProfile.candidate = null;
     }
 
@@ -714,12 +762,14 @@
         if (nextDigest === priorDigest && priorAuthority === 'host') return;
         const actions = globalActions();
         if (!isEmptyProfile) {
-            for (const name of (
-                ['installation_profile_draft_url', 'installation_profile_publish_url', 'installation_profile_artifact_url']
-            )) {
-                const kind = name.replace('installation_profile_', '').replace('_url', '');
+            for (const [name, kind] of PROFILE_AUTHORING_ACTIONS) {
                 actions[name] = profileUrlForDigest(actions[name], priorDigest, nextDigest)
                     || managedProfileUrl(kind, nextDigest);
+            }
+            const authoringActions = trustedProfileAuthoringActions(actions, nextDigest);
+            if (authoringActions) {
+                profile.authoringActions = authoringActions;
+                profile.authoringDigest = nextDigest;
             }
         }
         const followsSelected = !profile.desiredDigest || profile.desiredDigest === priorDigest;
@@ -1441,6 +1491,7 @@
         const payload = assertBootstrap(await requestJson(bootstrapUrl));
         state.serverBootstrap = payload;
         const actions = clone(payload.capabilities?.server_actions || {});
+        preserveTrustedProfileAuthoringActions(actions, payload);
         state.bootstrap.capabilities.server_actions = actions;
         mergeServerPresetCatalog(payload);
         updateServerComponentCompatibility();

@@ -6,6 +6,8 @@ import contextlib
 import hashlib
 import io
 import json
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -146,8 +148,11 @@ class BrowserComposerOfflineBootstrapTests(unittest.TestCase):
         readiness_start = source.index("function showOfflineReadiness", connectivity_start)
         connectivity_body = source[connectivity_start:readiness_start]
         self.assertIn("refreshServerBootstrap", connectivity_body)
-        self.assertNotIn("refreshGlobalSettings", connectivity_body)
-        self.assertNotIn("preloadMasks", connectivity_body)
+        bootstrap_start = source.index("async function refreshServerBootstrap")
+        bootstrap_body = source[bootstrap_start:source.index("function setServerOnline", bootstrap_start)]
+        self.assertNotIn("refreshGlobalSettings", bootstrap_body)
+        self.assertNotIn("preloadMasks", bootstrap_body)
+        self.assertNotIn("updateSelectedInstallationProfile", bootstrap_body)
         self.assertIn("state.bootstrap.capabilities.server_actions = actions", source)
         self.assertIn("function mergeServerPresetCatalog", source)
         self.assertIn("managedComponentIdentityMatches", source)
@@ -175,6 +180,87 @@ class BrowserComposerOfflineBootstrapTests(unittest.TestCase):
         import_body = source[import_start:masks_start]
         self.assertIn("locallyValidatedImport(payload)", import_body)
         self.assertNotIn("requestJson(", import_body)
+
+    @unittest.skipUnless(shutil.which("node"), "node is required for Composer action regression")
+    def test_catalog_refresh_keeps_trusted_profile_draft_action_for_save(self) -> None:
+        """A catalog-only reconnect must not erase an open draft's PUT target."""
+        source = COMPOSER_SOURCE.read_text(encoding="utf-8")
+        refresh_start = source.index("async function refreshServerBootstrap")
+        refresh_body = source[refresh_start:source.index("function setServerOnline", refresh_start)]
+        self.assertIn(
+            "preserveTrustedProfileAuthoringActions(actions, payload);",
+            refresh_body,
+        )
+        self.assertLess(
+            refresh_body.index("preserveTrustedProfileAuthoringActions(actions, payload);"),
+            refresh_body.index("state.bootstrap.capabilities.server_actions = actions;"),
+        )
+
+        helper_start = source.index("const PROFILE_AUTHORING_ACTIONS")
+        helper_end = source.index("function initializeInstallationProfileState", helper_start)
+        helpers = source[helper_start:helper_end]
+        digest = "a" * 64
+        script = f"""
+const state = {{installationProfile: {{
+  selectedDigest: 'selected-profile-must-not-change',
+  authoringActions: null,
+  authoringDigest: null,
+}}}};
+const EMPTY_PROFILE_DIGEST = '0'.repeat(64);
+{helpers}
+const digest = {json.dumps(digest)};
+const observed = {{
+  installation_profile_draft_url: `/api/v1/installation-profiles/${{digest}}/draft`,
+  installation_profile_publish_url: `/api/v1/installation-profiles/${{digest}}/publish`,
+  installation_profile_artifact_url: `/api/v1/installation-profiles/${{digest}}/artifact`,
+}};
+preserveTrustedProfileAuthoringActions(observed, {{installation_profile: {{digest}}}});
+const catalogOnly = {{
+  installation_profile_draft_url: null,
+  installation_profile_publish_url: null,
+  installation_profile_artifact_url: null,
+}};
+preserveTrustedProfileAuthoringActions(catalogOnly, {{
+  installation_profile: {{digest: EMPTY_PROFILE_DIGEST}},
+}});
+preserveTrustedProfileAuthoringActions(catalogOnly, {{
+  installation_profile: {{digest: EMPTY_PROFILE_DIGEST}},
+}});
+console.log(JSON.stringify({{
+  actions: catalogOnly,
+  authoringDigest: state.installationProfile.authoringDigest,
+  selectedDigest: state.installationProfile.selectedDigest,
+}}));
+"""
+        completed = subprocess.run(
+            [shutil.which("node") or "node", "-e", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = json.loads(completed.stdout)
+        self.assertEqual(result["authoringDigest"], digest)
+        self.assertEqual(result["selectedDigest"], "selected-profile-must-not-change")
+        self.assertEqual(result["actions"], {
+            "installation_profile_draft_url": (
+                f"/api/v1/installation-profiles/{digest}/draft"
+            ),
+            "installation_profile_publish_url": (
+                f"/api/v1/installation-profiles/{digest}/publish"
+            ),
+            "installation_profile_artifact_url": (
+                f"/api/v1/installation-profiles/{digest}/artifact"
+            ),
+        })
+
+        save_start = source.index("async function saveMasks()")
+        save_body = source[save_start:source.index("async function publishProfileDraft", save_start)]
+        self.assertIn(
+            "requestJsonResource(globalActions().installation_profile_draft_url, {",
+            save_body,
+        )
+        self.assertIn("method: 'PUT'", save_body)
+        self.assertIn("'If-Match': `\"${submittedRevision}\"`", save_body)
 
 
 if __name__ == "__main__":
