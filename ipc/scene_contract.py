@@ -836,7 +836,9 @@ def decorate_browser_component(
     # A preview-only renderer can still be saved as a private draft.  Scene
     # composability is deliberately an activation concern, not a persistence
     # gate.
-    saveable = previewable and not provider_collision
+    # Presets are keyed by provider/component/preset. A duplicate plugin ID is
+    # therefore only a legacy-file migration concern, never a saveability gate.
+    saveable = previewable
 
     managed_identity: dict[str, Any] = {
         "provider": provider,
@@ -872,8 +874,6 @@ def decorate_browser_component(
         reason = str(runtime.get("reason") or "Browser preview runtime is unavailable.")
     elif not runtime_identity_ready:
         reason = "Browser preview runtime has no verified content digest."
-    elif provider_collision:
-        reason = "Provider-qualified storage is unavailable for this component ID collision."
     elif not composable:
         reason = str(
             compatibility.get("diagnostic")

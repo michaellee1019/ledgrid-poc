@@ -401,7 +401,10 @@ class BrowserComposerActionTests(unittest.TestCase):
         payload = created.get_json()
         self.assertTrue(payload["created"])
         self.assertRegex(payload["preset_fingerprint"], r"^[0-9a-f]{64}$")
-        path = self.interface.animation_presets_dir / "gradient" / "soft_moss.json"
+        path = (
+            self.interface.animation_presets_dir / "python" / "gradient"
+            / "soft_moss.json"
+        )
         self.assertEqual(json.loads(path.read_text())["params"], {"speed": 0.7})
 
         conflict = self.client.post("/api/v1/composer/presets", json=body)
@@ -415,6 +418,90 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertFalse(replaced.get_json()["created"])
         self.assertEqual(json.loads(path.read_text())["params"], {"speed": 1.4})
         self.assert_no_live_effect()
+
+    def test_provider_collision_saves_two_exact_component_presets_and_withholds_legacy(self) -> None:
+        interface = AnimationWebInterface(
+            _Channel(),
+            _Manager([
+                _component("compiled_rainbow"),
+                _component("compiled_rainbow", provider="receiver_native"),
+            ]),
+            local_mode=True,
+        )
+        interface.animation_presets_dir = self.root / "collision-animations"
+        interface.scene_presets_dir = self.root / "collision-scenes"
+        legacy_dir = interface.animation_presets_dir / "compiled_rainbow"
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "old.json").write_text(json.dumps({
+            "preset_id": "old",
+            "animation": "compiled_rainbow",
+            "params": {"speed": 0.3},
+        }))
+        client = interface.app.test_client()
+
+        for provider, speed in (("python", 0.7), ("receiver_native", 1.3)):
+            with self.subTest(provider=provider):
+                response = client.post("/api/v1/composer/presets", json={
+                    "schema": "ledgrid.browser-composer-save",
+                    "schema_version": 1,
+                    "component_key": f"{provider}:compiled_rainbow",
+                    "name": "Shared Look",
+                    "params": {"speed": speed},
+                    "overwrite": False,
+                })
+                self.assertEqual(response.status_code, 201, response.get_json())
+                self.assertEqual(response.get_json()["preset"]["provider"], provider)
+
+        bootstrap = client.get("/api/v1/composer/bootstrap?catalog_only=1").get_json()
+        collision_components = [
+            item for item in bootstrap["components"]
+            if item["plugin_id"] == "compiled_rainbow"
+        ]
+        self.assertEqual(len(collision_components), 2)
+        self.assertTrue(all(
+            item["browser_capabilities"]["saveable"]
+            for item in collision_components
+        ))
+        self.assertEqual(bootstrap["diagnostics"][0]["code"], "provider_collision")
+        self.assertEqual(
+            bootstrap["diagnostics"][0]["recovery"]["reimport_url"],
+            "/api/v1/composer/presets",
+        )
+
+        python_presets = client.get(
+            "/api/v1/components/compiled_rainbow/presets?provider=python"
+        ).get_json()["presets"]
+        native_presets = client.get(
+            "/api/v1/components/compiled_rainbow/presets?provider=receiver_native"
+        ).get_json()["presets"]
+        self.assertEqual(
+            [(item["provider"], item["preset_id"]) for item in python_presets],
+            [("python", "shared_look")],
+        )
+        self.assertEqual(
+            [(item["provider"], item["preset_id"]) for item in native_presets],
+            [("receiver_native", "shared_look")],
+        )
+        self.assertEqual(
+            interface._load_animation_preset(
+                "compiled_rainbow", "shared_look", "python"
+            )["params"],
+            {"speed": 0.7},
+        )
+        self.assertEqual(
+            interface._load_animation_preset(
+                "compiled_rainbow", "shared_look", "receiver_native"
+            )["params"],
+            {"speed": 1.3},
+        )
+        self.assertIsNone(interface._load_animation_preset(
+            "compiled_rainbow", "old", "python"
+        ))
+        self.assertEqual(
+            client.get("/api/v1/presets/legacy/compiled_rainbow/export")
+            .get_json()["records"][0]["preset_id"],
+            "old",
+        )
 
     def test_invalid_params_never_create_a_preset(self) -> None:
         response = self.client.post("/api/v1/composer/presets", json={

@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "784d4902f9ef4ba603867772b8312e6797354630cfec807f52b55a82ab2dc283",
+    "catalog_digest": "3e0318ca421ccdc4d4631bd7318d1b12da880331efd1adda3d671a159732e808",
     "kind": "bundled",
     "version": 1
   },
@@ -1395,68 +1395,7 @@
         "vibe_capabilities": [],
         "vibe_color_policy": "preserve"
       },
-      "presets": [
-        {
-          "animation": "aurora_curtains_native",
-          "category": "Ambient",
-          "component_key": "receiver_native:aurora_curtains_native",
-          "created_at": "2026-08-21T00:00:00Z",
-          "description": "Dim, broad aurora folds for an unobtrusive living-wall backdrop.",
-          "key": "receiver_native:aurora_curtains_native:ambient",
-          "name": "Quiet Aurora Curtains",
-          "palette": null,
-          "params": {
-            "brightness": 0.28,
-            "curtain_width": 10,
-            "layers": 2,
-            "motion": 0.16,
-            "shimmer": false
-          },
-          "plugin_id": "aurora_curtains_native",
-          "preset_fingerprint": "6685007702f930d9929f4c842dab5709830d651d5b9d812c5bffb458d4551557",
-          "preset_id": "ambient",
-          "preview": null,
-          "provider": "receiver_native",
-          "swatches": [],
-          "tags": [
-            "aurora",
-            "ambient",
-            "native"
-          ],
-          "updated_at": "2026-08-21T00:00:00Z",
-          "version": 2
-        },
-        {
-          "animation": "aurora_curtains_native",
-          "category": "Showcase",
-          "component_key": "receiver_native:aurora_curtains_native",
-          "created_at": "2026-08-21T00:00:00Z",
-          "description": "Five quick luminous curtains with a bright moving edge shimmer.",
-          "key": "receiver_native:aurora_curtains_native:showcase",
-          "name": "Solar Wind Curtains",
-          "palette": null,
-          "params": {
-            "brightness": 0.82,
-            "curtain_width": 5,
-            "layers": 5,
-            "motion": 0.86,
-            "shimmer": true
-          },
-          "plugin_id": "aurora_curtains_native",
-          "preset_fingerprint": "d83c2205117a2a85cd4c3a346cbf226be92befd4eb25a93329a303981298f053",
-          "preset_id": "showcase",
-          "preview": null,
-          "provider": "receiver_native",
-          "swatches": [],
-          "tags": [
-            "aurora",
-            "showcase",
-            "native"
-          ],
-          "updated_at": "2026-08-21T00:00:00Z",
-          "version": 2
-        }
-      ],
+      "presets": [],
       "preview": {
         "capture_seconds": [
           0.0,

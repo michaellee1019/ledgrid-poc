@@ -8,6 +8,9 @@ from pathlib import Path
 from web.app import AnimationWebInterface
 
 
+ROOT = Path(__file__).resolve().parents[2]
+
+
 class _Controller:
     strip_count = 1
     leds_per_strip = 1
@@ -81,7 +84,7 @@ class AnimationPresetTests(unittest.TestCase):
             [],
         )
         self.assertEqual(self.channel.commands, [])
-        preset_path = Path(self.temp_dir.name) / 'sparkle' / 'calm.json'
+        preset_path = Path(self.temp_dir.name) / 'python' / 'sparkle' / 'calm.json'
         self.assertNotIn('plant_aware', json.loads(preset_path.read_text())['params'])
 
     def test_get_preset_returns_the_direct_preset_payload(self):
@@ -98,6 +101,71 @@ class AnimationPresetTests(unittest.TestCase):
         self.assertEqual(payload['params'], {'speed': 0.5})
         self.assertNotIn('preset', payload)
 
+    def test_provider_qualified_storage_rejects_mismatches_and_withholds_legacy_collisions(self):
+        self.interface.preview_manager.list_components = lambda: [
+            {'plugin_id': 'shared', 'provider': 'python', 'role': 'background'},
+            {'plugin_id': 'shared', 'provider': 'receiver_native', 'role': 'background'},
+        ]
+        legacy = Path(self.temp_dir.name) / 'shared'
+        legacy.mkdir()
+        (legacy / 'evening.json').write_text(json.dumps({
+            'preset_id': 'evening', 'animation': 'shared',
+            'params': {'speed': 0.5},
+        }), encoding='utf-8')
+
+        self.assertIsNone(self.interface._load_animation_preset(
+            'shared', 'evening', 'python'
+        ))
+        exported = self.client.get('/api/v1/presets/legacy/shared/export')
+        self.assertEqual(exported.status_code, 200)
+        self.assertEqual(
+            exported.get_json()['recovery']['reimport_url'],
+            '/api/v1/composer/presets',
+        )
+
+        self.interface._write_animation_preset('shared', 'evening', {
+            'preset_id': 'evening', 'animation': 'shared', 'provider': 'python',
+            'params': {'speed': 0.7},
+        }, 'python')
+        self.interface._write_animation_preset('shared', 'evening', {
+            'preset_id': 'evening', 'animation': 'shared',
+            'provider': 'receiver_native', 'params': {'speed': 0.9},
+        }, 'receiver_native')
+        self.assertEqual(
+            self.interface._load_animation_preset('shared', 'evening', 'python')['params'],
+            {'speed': 0.7},
+        )
+        self.assertEqual(
+            self.interface._load_animation_preset(
+                'shared', 'evening', 'receiver_native'
+            )['params'],
+            {'speed': 0.9},
+        )
+
+        mismatch = Path(self.temp_dir.name) / 'python' / 'shared' / 'bad.json'
+        mismatch.write_text(json.dumps({
+            'preset_id': 'bad', 'animation': 'shared',
+            'provider': 'receiver_native', 'params': {'speed': 1.0},
+        }), encoding='utf-8')
+        self.assertIsNone(self.interface._load_animation_preset('shared', 'bad', 'python'))
+
+    def test_clock_overlay_curated_presets_are_manifest_qualified_one_to_one(self):
+        class _Loader:
+            @staticmethod
+            def get_component_dir(name):
+                return ROOT / 'animation' / 'plugins' / name
+
+        self.interface.preview_manager.plugin_loader = _Loader()
+        manifest = json.loads((
+            ROOT / 'animation/plugins/clock_overlay/clock_preset_conversion.v1.json'
+        ).read_text(encoding='utf-8'))
+        expected = {entry['target_preset_id'] for entry in manifest['entries']}
+        presets = self.interface._list_animation_presets('clock_overlay', 'python')
+
+        self.assertEqual({preset['preset_id'] for preset in presets}, expected)
+        self.assertEqual(len(presets), 24)
+        self.assertEqual({preset['provider'] for preset in presets}, {'python'})
+
     def test_apply_alias_is_guarded_even_when_preset_changes_on_disk(self):
         response = self.client.post(
             '/api/animations/sparkle/presets',
@@ -107,7 +175,7 @@ class AnimationPresetTests(unittest.TestCase):
 
         # List once before changing the file to catch accidental startup/request caching.
         self.client.get('/api/animations/sparkle/presets')
-        path = Path(self.temp_dir.name) / 'sparkle' / 'evening.json'
+        path = Path(self.temp_dir.name) / 'python' / 'sparkle' / 'evening.json'
         payload = json.loads(path.read_text(encoding='utf-8'))
         payload['params']['brightness'] = 0.9
         path.write_text(json.dumps(payload), encoding='utf-8')

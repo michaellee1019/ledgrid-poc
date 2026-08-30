@@ -288,7 +288,7 @@ class AnimationWebInterface:
                 component_presets[component_key] = (
                     animation.get('presets', [])
                     if animation is not None
-                    else self._list_animation_presets(component_id)
+                    else self._list_animation_presets(component_id, provider)
                 )
             status = self._status_payload()
             return render_template(
@@ -1253,24 +1253,68 @@ class AnimationWebInterface:
             ]
             if not matches:
                 return jsonify({'error': 'Component not found'}), 404
-            if len(matches) != 1:
+            provider = request.args.get('provider')
+            if provider is None and len(matches) == 1:
+                provider = matches[0].get('provider')
+            if not isinstance(provider, str) or not any(
+                item.get('provider') == provider for item in matches
+            ):
                 return jsonify({
                     'error': (
-                        'Component preset discovery is ambiguous across providers; '
-                        'provider-qualified preset storage is required'
+                        'Component preset discovery requires a provider-qualified '
+                        'identity'
                     ),
                     'component_id': component_id,
                     'providers': sorted({
                         str(item.get('provider')) for item in matches
                     }),
                 }), 409
-            component = matches[0]
+            component = next(item for item in matches if item.get('provider') == provider)
             return jsonify({
                 'schema': 'ledgrid.component-preset-list', 'schema_version': 1,
                 'component_id': component_id,
+                'provider': provider,
                 'component': component,
-                'presets': self._list_animation_presets(component_id),
+                'presets': self._list_animation_presets(component_id, provider),
             })
+
+        @self.app.route('/api/v1/presets/legacy/<component_id>/export')
+        def api_export_legacy_component_presets(component_id: str):
+            """Export withheld pre-provider records so they can be reimported."""
+            if not self._legacy_preset_is_ambiguous(component_id):
+                return jsonify({'error': 'No ambiguous legacy presets exist'}), 404
+            legacy_dir = self._legacy_animation_preset_dir(component_id)
+            records = []
+            if legacy_dir is not None and legacy_dir.is_dir():
+                for path in sorted(legacy_dir.glob('*.json')):
+                    payload = self._read_json_file(path)
+                    if payload is not None:
+                        records.append(payload)
+            return jsonify({
+                'schema': 'ledgrid.legacy-component-preset-export',
+                'schema_version': 1,
+                'component_id': component_id,
+                'records': records,
+                'recovery': self._legacy_preset_recovery(component_id),
+            })
+
+        @self.app.route('/api/v1/presets/legacy/<component_id>', methods=['DELETE'])
+        def api_discard_legacy_component_presets(component_id: str):
+            """Discard only explicitly selected ambiguous legacy records."""
+            if not self._legacy_preset_is_ambiguous(component_id):
+                return jsonify({'error': 'No ambiguous legacy presets exist'}), 404
+            legacy_dir = self._legacy_animation_preset_dir(component_id)
+            if legacy_dir is None or not legacy_dir.is_dir():
+                return jsonify({'success': True, 'discarded': 0})
+            discarded = 0
+            for path in legacy_dir.glob('*.json'):
+                path.unlink()
+                discarded += 1
+            try:
+                legacy_dir.rmdir()
+            except OSError:
+                pass
+            return jsonify({'success': True, 'discarded': discarded})
 
         @self.app.route('/api/v1/scene-presets')
         def api_list_scene_presets():
@@ -1329,6 +1373,9 @@ class AnimationWebInterface:
                 'name': name,
                 'description': str(payload.get('description') or ''),
                 'scene': stored_scene,
+                'component_identities': self._scene_preset_component_identities(
+                    stored_scene
+                ),
                 'created_at': existing.get('created_at', now),
                 'updated_at': now,
             }
@@ -1412,13 +1459,16 @@ class AnimationWebInterface:
             if not preset_id:
                 return jsonify({'error': 'Preset name is invalid'}), 400
 
-            existing = self._load_animation_preset(animation_name, preset_id)
+            existing = self._load_animation_preset(
+                animation_name, preset_id, provider='python'
+            )
             now = time.time()
             preset_payload = {
                 'version': 2,
                 'preset_id': preset_id,
                 'name': raw_name,
                 'animation': animation_name,
+                'provider': 'python',
                 'params': params,
                 'created_at': existing.get('created_at', now) if existing else now,
                 'updated_at': now,
@@ -1428,10 +1478,14 @@ class AnimationWebInterface:
                     preset_payload[field] = payload[field]
                 elif existing and field in existing:
                     preset_payload[field] = existing[field]
-            self._write_animation_preset(animation_name, preset_id, preset_payload)
+            self._write_animation_preset(
+                animation_name, preset_id, preset_payload, provider='python'
+            )
             if self.runtime_preview_worker is not None:
                 fallback = self._preview_metadata(animation_name) or {}
-                preset_path = self._animation_preset_path(animation_name, preset_id)
+                preset_path = self._animation_preset_path(
+                    animation_name, preset_id, provider='python'
+                )
                 if preset_path is not None:
                     self.runtime_preview_worker.queue(
                         animation_name, preset_id, preset_path, fallback
@@ -1448,7 +1502,9 @@ class AnimationWebInterface:
         @self.app.route('/api/animations/<animation_name>/presets/<preset_id>', methods=['DELETE'])
         def api_delete_animation_preset(animation_name: str, preset_id: str):
             """API: Delete one animation preset."""
-            path = self._animation_preset_path(animation_name, preset_id)
+            path = self._animation_preset_path(
+                animation_name, preset_id, provider='python'
+            )
             if path is None or not path.is_file():
                 return jsonify({'error': 'Preset not found'}), 404
             try:
@@ -2746,7 +2802,11 @@ class AnimationWebInterface:
         withheld_presets = 0
         diagnostics = []
         for plugin_id, providers in sorted(collisions.items()):
-            discovered = self._list_animation_presets(plugin_id)
+            legacy_dir = self._legacy_animation_preset_dir(plugin_id)
+            discovered = (
+                list(legacy_dir.glob('*.json'))
+                if legacy_dir is not None and legacy_dir.is_dir() else []
+            )
             withheld_presets += len(discovered)
             diagnostics.append({
                 'code': 'provider_collision',
@@ -2792,27 +2852,26 @@ class AnimationWebInterface:
             )
             component['preset_keys'] = []
 
-            if not collision:
-                for preset in self._list_animation_presets(plugin_id):
-                    preset_id = preset.get('preset_id')
-                    if not isinstance(preset_id, str):
-                        continue
-                    preset_key = f'{component_key}:{preset_id}'
-                    item = dict(preset)
-                    item.update({
-                        'key': preset_key,
-                        'component_key': component_key,
-                        'provider': provider,
-                        'plugin_id': plugin_id,
-                        'preview': self._studio_next_preview(
-                            provider,
-                            descriptor_preview,
-                            preset.get('preview'),
-                        ),
-                        'action': dict(component['action']),
-                    })
-                    component['preset_keys'].append(preset_key)
-                    presets.append(item)
+            for preset in self._list_animation_presets(plugin_id, provider):
+                preset_id = preset.get('preset_id')
+                if not isinstance(preset_id, str):
+                    continue
+                preset_key = f'{component_key}:{preset_id}'
+                item = dict(preset)
+                item.update({
+                    'key': preset_key,
+                    'component_key': component_key,
+                    'provider': provider,
+                    'plugin_id': plugin_id,
+                    'preview': self._studio_next_preview(
+                        provider,
+                        descriptor_preview,
+                        preset.get('preview'),
+                    ),
+                    'action': dict(component['action']),
+                })
+                component['preset_keys'].append(preset_key)
+                presets.append(item)
             components.append(component)
 
         presets.sort(
@@ -2980,26 +3039,27 @@ class AnimationWebInterface:
                 runtime['digest'] = None
 
             preset_records: List[Dict[str, Any]] = []
-            if plugin_id not in collisions:
-                for summary in self._list_animation_presets(plugin_id):
-                    preset_id = summary.get('preset_id')
-                    if not isinstance(preset_id, str):
-                        continue
-                    payload = self._load_animation_preset(plugin_id, preset_id)
-                    if payload is None:
-                        continue
-                    preset = json.loads(json.dumps(summary))
-                    preset.update({
-                        'key': f'{provider}:{plugin_id}:{preset_id}',
-                        'component_key': f'{provider}:{plugin_id}',
-                        'provider': provider,
-                        'plugin_id': plugin_id,
-                        'params': self._browser_composer_params(
-                            provider, payload['params']
-                        ),
-                        'preset_fingerprint': self._component_preset_fingerprint(payload),
-                    })
-                    preset_records.append(preset)
+            for summary in self._list_animation_presets(plugin_id, provider):
+                preset_id = summary.get('preset_id')
+                if not isinstance(preset_id, str):
+                    continue
+                payload = self._load_animation_preset(
+                    plugin_id, preset_id, provider
+                )
+                if payload is None:
+                    continue
+                preset = json.loads(json.dumps(summary))
+                preset.update({
+                    'key': f'{provider}:{plugin_id}:{preset_id}',
+                    'component_key': f'{provider}:{plugin_id}',
+                    'provider': provider,
+                    'plugin_id': plugin_id,
+                    'params': self._browser_composer_params(
+                        provider, payload['params']
+                    ),
+                    'preset_fingerprint': self._component_preset_fingerprint(payload),
+                })
+                preset_records.append(preset)
 
             component = {
                 'key': f'{provider}:{plugin_id}',
@@ -3176,11 +3236,18 @@ class AnimationWebInterface:
                     'plugin_id': plugin_id,
                     'providers': providers,
                     'message': (
-                        'Presets are withheld because legacy storage is not '
-                        'provider-qualified.'
+                        'Only ambiguous legacy presets are withheld; '
+                        'provider-qualified presets remain available.'
                     ),
+                    'recovery': self._legacy_preset_recovery(plugin_id),
                 }
                 for plugin_id, providers in sorted(collisions.items())
+                if (
+                    (legacy_dir := self._legacy_animation_preset_dir(plugin_id))
+                    is not None
+                    and legacy_dir.is_dir()
+                    and any(legacy_dir.glob('*.json'))
+                )
             ],
         }
 
@@ -3432,16 +3499,6 @@ class AnimationWebInterface:
             )
         plugin_id = descriptor['plugin_id']
         provider = descriptor['provider']
-        provider_count = sum(
-            item.get('plugin_id') == plugin_id
-            for item in self._component_catalog()
-        )
-        if provider_count > 1:
-            raise ValueError(
-                'This plugin ID exists under multiple providers; legacy preset '
-                'storage cannot save it safely'
-            )
-
         name = str(payload.get('name') or '').strip()
         if not name:
             raise ValueError('preset name is required')
@@ -3463,7 +3520,7 @@ class AnimationWebInterface:
         if not isinstance(overwrite, bool):
             raise ValueError('overwrite must be a boolean')
 
-        existing = self._load_animation_preset(plugin_id, preset_id)
+        existing = self._load_animation_preset(plugin_id, preset_id, provider)
         if existing is not None and not overwrite:
             raise FileExistsError(preset_id)
         now = time.time()
@@ -3478,7 +3535,7 @@ class AnimationWebInterface:
             'created_at': existing.get('created_at', now) if existing else now,
             'updated_at': now,
         }
-        self._write_animation_preset(plugin_id, preset_id, preset)
+        self._write_animation_preset(plugin_id, preset_id, preset, provider)
         preset['component_key'] = f'{provider}:{plugin_id}'
         return ({
             'preset': preset,
@@ -3556,7 +3613,9 @@ class AnimationWebInterface:
                     raise SceneValidationError(error)
             preset_id = component.get('preset_id')
             if preset_id is not None:
-                preset = self._load_animation_preset(component_id, preset_id)
+                preset = self._load_animation_preset(
+                    component_id, preset_id, component.get('provider', 'python')
+                )
                 if preset is None or preset.get('animation') != component_id:
                     raise SceneValidationError(
                         f"Component preset {component_id}/{preset_id} does not exist"
@@ -3581,7 +3640,9 @@ class AnimationWebInterface:
                 continue
             component_id = component.get('plugin_id')
             preset_id = component.get('preset_id')
-            preset = self._load_animation_preset(component_id, preset_id)
+            preset = self._load_animation_preset(
+                component_id, preset_id, component.get('provider', 'python')
+            )
             expected = self._component_preset_fingerprint(preset) if preset else None
             actual = component.get('preset_fingerprint')
             dirty = preset is None or expected != actual or bool(component.get('parameter_overrides'))
@@ -3787,6 +3848,34 @@ class AnimationWebInterface:
             return None
         return self.scene_presets_dir / f'{safe_id}.json'
 
+    @staticmethod
+    def _scene_preset_component_identities(scene: Dict[str, Any]) -> List[Dict[str, str]]:
+        """Persist the exact provider/component tuple behind every saved scene."""
+        if not isinstance(scene, dict):
+            raise ValueError('scene preset must contain a scene object')
+        browser_document = scene.get('schema') == BROWSER_SCENE_SCHEMA
+        background = scene.get('background')
+        overlays = scene.get('layers') if browser_document else scene.get('overlays')
+        if not isinstance(background, dict) or not isinstance(overlays, list):
+            raise ValueError('scene preset component identity is invalid')
+        components = [background]
+        for overlay in overlays:
+            component = overlay.get('component') if isinstance(overlay, dict) else None
+            if not isinstance(component, dict):
+                raise ValueError('scene preset component identity is invalid')
+            components.append(component)
+        identities = []
+        for component in components:
+            provider = component.get('provider')
+            plugin_id = component.get('component_id' if browser_document else 'plugin_id')
+            if not isinstance(provider, str) or not isinstance(plugin_id, str):
+                raise ValueError('scene preset component identity is invalid')
+            identity = {'provider': provider, 'plugin_id': plugin_id}
+            if isinstance(component.get('preset_id'), str):
+                identity['preset_id'] = component['preset_id']
+            identities.append(identity)
+        return identities
+
     def _load_scene_preset(self, preset_id: str) -> Optional[Dict[str, Any]]:
         path = self._scene_preset_path(preset_id)
         if path is None:
@@ -3801,6 +3890,15 @@ class AnimationWebInterface:
             or any(key in payload for key in ('vibe', 'plant_modifiers', 'output'))
         ):
             return None
+        stored_identities = payload.get('component_identities')
+        if stored_identities is not None:
+            try:
+                if stored_identities != self._scene_preset_component_identities(
+                    payload.get('scene')
+                ):
+                    return None
+            except (TypeError, ValueError):
+                return None
         return payload
 
     def _list_scene_presets(self) -> List[Dict[str, Any]]:
@@ -4178,12 +4276,44 @@ class AnimationWebInterface:
             if temporary_path.exists():
                 temporary_path.unlink()
 
-    def _animation_preset_dir(self, animation_name: str) -> Optional[Path]:
-        """Resolve the writable runtime-preset directory for an animation."""
+    def _animation_preset_dir(
+        self, animation_name: str, provider: str = 'python'
+    ) -> Optional[Path]:
+        """Resolve provider-qualified writable preset storage."""
+        safe_name = self._sanitize_preset_id(animation_name)
+        safe_provider = self._sanitize_preset_id(provider)
+        if (
+            not safe_name or safe_name != animation_name
+            or not safe_provider or safe_provider != provider
+        ):
+            return None
+        return self.animation_presets_dir / safe_provider / safe_name
+
+    def _legacy_animation_preset_dir(self, animation_name: str) -> Optional[Path]:
+        """Return the pre-provider storage location without ever writing it."""
         safe_name = self._sanitize_preset_id(animation_name)
         if not safe_name or safe_name != animation_name:
             return None
         return self.animation_presets_dir / safe_name
+
+    def _legacy_preset_is_ambiguous(self, animation_name: str) -> bool:
+        """An old plugin-id-only file cannot be attributed after a collision."""
+        providers = {
+            item.get('provider') for item in self._component_catalog()
+            if item.get('plugin_id') == animation_name
+            and isinstance(item.get('provider'), str)
+        }
+        return len(providers) > 1
+
+    @staticmethod
+    def _legacy_preset_recovery(animation_name: str) -> Dict[str, str]:
+        """Stable user-facing migration paths for intentionally withheld data."""
+        quoted = animation_name.replace('/', '')
+        return {
+            'export_url': f'/api/v1/presets/legacy/{quoted}/export',
+            'discard_url': f'/api/v1/presets/legacy/{quoted}',
+            'reimport_url': '/api/v1/composer/presets',
+        }
 
     def _curated_animation_preset_dir(self, animation_name: str) -> Optional[Path]:
         """Resolve the read-only preset directory owned by a plugin package."""
@@ -4203,9 +4333,39 @@ class AnimationWebInterface:
             return None
         return component_dir / 'presets'
 
-    def _animation_preset_path(self, animation_name: str, preset_id: str) -> Optional[Path]:
-        """Resolve an animation/preset pair without allowing path traversal."""
-        preset_dir = self._animation_preset_dir(animation_name)
+    def _clock_overlay_conversion_preset_ids(self) -> Optional[frozenset[str]]:
+        """Read the plugin-owned Clock conversion manifest without rewriting it."""
+        manifest_path = (
+            self.project_root / 'animation' / 'plugins' / 'clock_overlay'
+            / 'clock_preset_conversion.v1.json'
+        )
+        manifest = self._read_json_file(manifest_path)
+        if not isinstance(manifest, dict):
+            return None
+        policy = manifest.get('policy')
+        entries = manifest.get('entries')
+        if (
+            manifest.get('schema') != 'ledgrid.clock-preset-conversion'
+            or manifest.get('version') != 1
+            or not isinstance(policy, dict)
+            or policy.get('target_component') != 'clock_overlay'
+            or not isinstance(entries, list)
+            or len(entries) != 24
+        ):
+            return None
+        preset_ids = {
+            entry.get('target_preset_id')
+            for entry in entries
+            if isinstance(entry, dict) and entry.get('status') == 'converted'
+            and isinstance(entry.get('target_preset_id'), str)
+        }
+        return frozenset(preset_ids) if len(preset_ids) == 24 else None
+
+    def _animation_preset_path(
+        self, animation_name: str, preset_id: str, provider: str = 'python'
+    ) -> Optional[Path]:
+        """Resolve a provider/component/preset path without traversal."""
+        preset_dir = self._animation_preset_dir(animation_name, provider)
         safe_id = self._sanitize_preset_id(preset_id)
         if preset_dir is None or not safe_id:
             return None
@@ -4217,6 +4377,7 @@ class AnimationWebInterface:
             'preset_id': payload.get('preset_id'),
             'name': payload.get('name'),
             'animation': payload.get('animation'),
+            'provider': payload.get('provider'),
             'created_at': payload.get('created_at'),
             'updated_at': payload.get('updated_at'),
             'category': payload.get('category'),
@@ -4268,14 +4429,33 @@ class AnimationWebInterface:
         if not 0.0 <= x < width or not 0.0 <= y < height:
             raise ValueError('interaction coordinates are outside the animation grid')
 
-    def _list_animation_presets(self, animation_name: str) -> List[Dict[str, Any]]:
-        """List curated and runtime presets, with runtime files overriding IDs."""
+    def _list_animation_presets(
+        self, animation_name: str, provider: str = 'python'
+    ) -> List[Dict[str, Any]]:
+        """List exact-provider presets; never guess an ambiguous legacy owner."""
         paths: Dict[str, Path] = {}
-        curated_dir = self._curated_animation_preset_dir(animation_name)
-        runtime_dir = self._animation_preset_dir(animation_name)
-        for preset_dir in (curated_dir, runtime_dir):
+        curated_dir = (
+            self._curated_animation_preset_dir(animation_name)
+            if provider == 'python' else None
+        )
+        legacy_dir = (
+            self._legacy_animation_preset_dir(animation_name)
+            if not self._legacy_preset_is_ambiguous(animation_name) else None
+        )
+        runtime_dir = self._animation_preset_dir(animation_name, provider)
+        for preset_dir in (curated_dir, legacy_dir, runtime_dir):
             if preset_dir is not None and preset_dir.is_dir():
                 paths.update({path.stem: path for path in sorted(preset_dir.glob('*.json'))})
+
+        if animation_name == 'clock_overlay' and provider == 'python':
+            # The plugin-owned manifest is the source of truth for curated Clock
+            # conversion. Runtime provider-qualified records remain independent.
+            converted_ids = self._clock_overlay_conversion_preset_ids()
+            paths = {
+                preset_id: path for preset_id, path in paths.items()
+                if path.parent != curated_dir
+                or converted_ids is not None and preset_id in converted_ids
+            }
 
         summaries: List[Dict[str, Any]] = []
         for path in paths.values():
@@ -4284,40 +4464,63 @@ class AnimationWebInterface:
             if path.stem == 'before-deploy':
                 continue
             payload = self._read_json_file(path)
-            if payload and payload.get('animation', animation_name) == animation_name:
+            if (
+                payload
+                and payload.get('animation', animation_name) == animation_name
+                and payload.get('provider', provider) == provider
+            ):
                 payload.setdefault('preset_id', path.stem)
                 payload.setdefault('name', path.stem)
+                payload.setdefault('animation', animation_name)
+                payload.setdefault('provider', provider)
                 summaries.append(self._animation_preset_summary(payload))
         summaries.sort(
             key=lambda preset: str(preset.get('name') or preset.get('preset_id') or '').casefold()
         )
         return summaries
 
-    def _load_animation_preset(self, animation_name: str, preset_id: str) -> Optional[Dict[str, Any]]:
-        """Read a runtime preset or fall back to its curated package preset."""
-        path = self._animation_preset_path(animation_name, preset_id)
+    def _load_animation_preset(
+        self, animation_name: str, preset_id: str, provider: str = 'python'
+    ) -> Optional[Dict[str, Any]]:
+        """Read an exact-provider preset, safely migrating only unique legacy data."""
+        path = self._animation_preset_path(animation_name, preset_id, provider)
         if path is None:
             return None
         if not path.is_file():
+            legacy_dir = (
+                self._legacy_animation_preset_dir(animation_name)
+                if not self._legacy_preset_is_ambiguous(animation_name) else None
+            )
+            path = legacy_dir / path.name if legacy_dir is not None else path
+        if not path.is_file() and provider == 'python':
             curated_dir = self._curated_animation_preset_dir(animation_name)
             path = curated_dir / path.name if curated_dir is not None else path
+            if animation_name == 'clock_overlay':
+                converted_ids = self._clock_overlay_conversion_preset_ids()
+                if converted_ids is None or preset_id not in converted_ids:
+                    return None
         if not path.is_file():
             return None
         payload = self._read_json_file(path)
         if not payload or not isinstance(payload.get('params'), dict):
             return None
-        if payload.get('animation', animation_name) != animation_name:
+        if (
+            payload.get('animation', animation_name) != animation_name
+            or payload.get('provider', provider) != provider
+        ):
             return None
         payload.setdefault('preset_id', path.stem)
         payload.setdefault('name', path.stem)
         payload.setdefault('animation', animation_name)
+        payload.setdefault('provider', provider)
         return payload
 
     def _write_animation_preset(
-        self, animation_name: str, preset_id: str, payload: Dict[str, Any]
+        self, animation_name: str, preset_id: str, payload: Dict[str, Any],
+        provider: str = 'python',
     ):
         """Persist an animation preset atomically."""
-        path = self._animation_preset_path(animation_name, preset_id)
+        path = self._animation_preset_path(animation_name, preset_id, provider)
         if path is None:
             raise ValueError("Invalid animation preset path")
         path.parent.mkdir(parents=True, exist_ok=True)
