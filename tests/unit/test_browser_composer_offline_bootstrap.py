@@ -73,6 +73,16 @@ class BrowserComposerOfflineBootstrapTests(unittest.TestCase):
             self.assertEqual(identity["runtime_digest"], runtime["digest"])
             self.assertEqual(identity["component_digest"], component["component_digest"])
 
+        clock = next(
+            item for item in payload["components"]
+            if item["key"] == "python:clock_overlay"
+        )
+        self.assertEqual(len(clock["presets"]), 24)
+        self.assertTrue(all(
+            preset["ownership"] == "built_in" for preset in clock["presets"]
+        ))
+        self.assertNotIn("CLOCK_STARTING_POINTS", COMPOSER_SOURCE.read_text())
+
     def test_catalog_only_server_refresh_does_not_observe_or_mutate_wall(self) -> None:
         with contextlib.redirect_stdout(io.StringIO()):
             manager = AnimationManager(

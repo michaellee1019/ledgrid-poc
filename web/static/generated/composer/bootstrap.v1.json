@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "3e0318ca421ccdc4d4631bd7318d1b12da880331efd1adda3d671a159732e808",
+    "catalog_digest": "e29438a22125d1a461b4249ae0bcda10182bc203e5a7a55740a2371f5ea22c69",
     "kind": "bundled",
     "version": 1
   },
@@ -217,6 +217,7 @@
           "description": "A dim, leisurely table for late-night background motion.",
           "key": "python:pinball:midnight-attract",
           "name": "Midnight Attract Mode",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.45,
@@ -247,6 +248,7 @@
           "description": "Maximum event density and full-speed arcade rendering.",
           "key": "python:pinball:multiball-mayhem",
           "name": "Multiball Mayhem",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.95,
@@ -277,6 +279,7 @@
           "description": "Saturated border chases, jackpots, and frequent table events.",
           "key": "python:pinball:neon-casino",
           "name": "Neon Casino",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.84,
@@ -307,6 +310,7 @@
           "description": "A low-speed view of trails, bumpers, and table choreography.",
           "key": "python:pinball:slow-motion-replay",
           "name": "Slow Motion Replay",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.7,
@@ -337,6 +341,7 @@
           "description": "Fast, legible table action with restrained surprise events.",
           "key": "python:pinball:tournament-table",
           "name": "Tournament Table",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.78,
@@ -612,6 +617,7 @@
           "description": "Slow warm terminal characters for a vintage computer mood.",
           "key": "python:ascii_drop:amber-terminal",
           "name": "Amber Terminal",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_blue": 0,
@@ -661,6 +667,7 @@
           "description": "Cool luminous data fragments fall rapidly through deep blue.",
           "key": "python:ascii_drop:cyan-datastream",
           "name": "Cyan Datastream",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_blue": 18,
@@ -710,6 +717,7 @@
           "description": "Pink and red lettering gently fills a burgundy night.",
           "key": "python:ascii_drop:love-letter",
           "name": "Love Letter",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_blue": 8,
@@ -759,6 +767,7 @@
           "description": "Fast green glyphs accumulate over a nearly black field.",
           "key": "python:ascii_drop:matrix-rain",
           "name": "Matrix Rain",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_blue": 4,
@@ -808,6 +817,7 @@
           "description": "The fastest supported rain of bright mixed alphanumeric forms.",
           "key": "python:ascii_drop:maximum-overflow",
           "name": "Maximum Overflow",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_blue": 18,
@@ -1070,6 +1080,7 @@
           "description": "Two slow green curtains with wide dark gaps.",
           "key": "python:aurora_curtains:quiet",
           "name": "Boreal Hush",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.34,
@@ -1110,6 +1121,7 @@
           "description": "Muted curtains behind a deep foreground silhouette.",
           "key": "python:aurora_curtains:night",
           "name": "Polar Night",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.22,
@@ -1152,6 +1164,7 @@
           "description": "Slow aurora folds float over a radiant mint-and-sky morning field.",
           "key": "python:aurora_curtains:solar-morning",
           "name": "Solar Morning Curtains",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#03121D",
@@ -1210,6 +1223,7 @@
           "description": "Layered violet sheets and bright moving folds.",
           "key": "python:aurora_curtains:showcase",
           "name": "Violet Solar Choir",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.65,
@@ -1660,6 +1674,7 @@
           "description": "Amber jungle ruins, brittle ledges, and a lively stream of rolling barrels.",
           "key": "python:canopy_cup:barrel-temple-climb",
           "name": "Barrel Temple Climb",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.83,
@@ -1710,6 +1725,7 @@
           "description": "Three qualifiers and a final fly by at maximum tournament speed.",
           "key": "python:canopy_cup:championship-speedrun",
           "name": "Championship Speedrun",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.92,
@@ -1760,6 +1776,7 @@
           "description": "A clean saturated fantasy race with standings hidden and environmental light emphasized.",
           "key": "python:canopy_cup:cinematic-no-hud",
           "name": "Cinematic No-HUD",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.78,
@@ -1810,6 +1827,7 @@
           "description": "Emerald mist, warm fireflies, plentiful leaf boosts, and a gentle rivalry.",
           "key": "python:canopy_cup:fern-gully-flutter",
           "name": "Fern Gully Flutter",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.84,
@@ -1860,6 +1878,7 @@
           "description": "Ivory stairs and coral shadows make every shortcut feel delightfully impossible.",
           "key": "python:canopy_cup:impossible-valley-relay",
           "name": "Impossible Valley Relay",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.78,
@@ -1910,6 +1929,7 @@
           "description": "Electric magenta vines and cyan mist stage a vivid championship after dark.",
           "key": "python:canopy_cup:neon-vine-night",
           "name": "Neon Vine Night",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.62,
@@ -1960,6 +1980,7 @@
           "description": "Maximum plant emission fills the tower with spores, beetles, and snapping vine jaws.",
           "key": "python:canopy_cup:plant-uprising",
           "name": "Plant Uprising",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.94,
@@ -2010,6 +2031,7 @@
           "description": "Rapid signature recharges produce webs, barrels, wings, and impossible stairs everywhere.",
           "key": "python:canopy_cup:power-up-pandemonium",
           "name": "Power-Up Pandemonium",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.96,
@@ -2060,6 +2082,7 @@
           "description": "The complete balanced seven-qualifier Canopy Cup tournament.",
           "key": "python:canopy_cup:seven-realm-grand-prix",
           "name": "Seven-Realm Grand Prix",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.82,
@@ -2110,6 +2133,7 @@
           "description": "A calm, forgiving forest tournament that makes every little personality readable.",
           "key": "python:canopy_cup:storybook-slow-motion",
           "name": "Storybook Slow Motion",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.56,
@@ -2160,6 +2184,7 @@
           "description": "Rose sunset mist and cyan crystal ledges turn the race into a jewel-box waterfall.",
           "key": "python:canopy_cup:sunset-crystal-falls",
           "name": "Sunset Crystal Falls",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.88,
@@ -2210,6 +2235,7 @@
           "description": "Blue-violet towers and long readable web arcs reward daring routes.",
           "key": "python:canopy_cup:webline-rooftops",
           "name": "Webline Rooftops",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.86,
@@ -2525,6 +2551,7 @@
           "description": "Dim complex threads scroll behind plant-shaped holes.",
           "key": "python:cellular_tapestry:night",
           "name": "Midnight Rule 110",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#010208",
@@ -2580,6 +2607,7 @@
           "description": "Slow triangular lace accumulates one row at a time.",
           "key": "python:cellular_tapestry:quiet",
           "name": "Quiet Rule 90 Lace",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#08121E",
@@ -2635,6 +2663,7 @@
           "description": "Pseudo-random prismatic weaving grows around plant habitat columns.",
           "key": "python:cellular_tapestry:showcase",
           "name": "Rule 30 Festival",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#120523",
@@ -2933,6 +2962,7 @@
           "description": "A warm cabin glows behind a traditional tree dressed in gold, garland, and presents.",
           "key": "python:christmas_tree:classic-christmas",
           "name": "Fireside Homecoming",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.72,
@@ -2971,6 +3001,7 @@
           "description": "Green and violet aurora ribbons drift behind a frost-blue tree and lively snow.",
           "key": "python:christmas_tree:blizzard-lights",
           "name": "Northern Lights Eve",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.68,
@@ -3009,6 +3040,7 @@
           "description": "A tall frost-tipped tree and sparse, slow snow beneath a deep midnight sky.",
           "key": "python:christmas_tree:quiet-snowfall",
           "name": "Silent Night",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.48,
@@ -3047,6 +3079,7 @@
           "description": "A bright candy-colored tree sparkles against a plum twilight with cheerful gifts.",
           "key": "python:christmas_tree:tiny-tree-party",
           "name": "Sugarplum Party",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.78,
@@ -3336,6 +3369,7 @@
           "description": "An accelerated full-day color-temperature study.",
           "key": "python:circadian_window:day-in-a-minute",
           "name": "Day in a Minute",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.62,
@@ -3381,6 +3415,7 @@
           "description": "A fixed midnight sky with sparse quiet stars.",
           "key": "python:circadian_window:midnight-window",
           "name": "Midnight Window",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.2,
@@ -3424,6 +3459,7 @@
           "description": "A fixed high-noon window washes the wall in radiant blush and powder-blue light.",
           "key": "python:circadian_window:pastel-noon",
           "name": "Pastel Noon Window",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#23183A",
@@ -3485,6 +3521,7 @@
           "description": "A restrained sky that follows the local clock.",
           "key": "python:circadian_window:quiet-real-time",
           "name": "Quiet Real Time",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.42,
@@ -3783,6 +3820,7 @@
           "description": "Rising time columns catch the warm afterglow of a low amber sun.",
           "key": "python:clock:amber-afterglow",
           "name": "Amber Afterglow",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#040100",
@@ -3835,6 +3873,7 @@
           "description": "Violet aurora ribbons drift behind a luminous minute hourglass.",
           "key": "python:clock:aurora-hourglass",
           "name": "Aurora Hourglass",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#04000E",
@@ -3887,6 +3926,7 @@
           "description": "Three drifting orbital bodies encode hours, minutes, and seconds inside a luminous polar haze.",
           "key": "python:clock:aurora-orbits",
           "name": "Aurora Orbits",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#05000F",
@@ -3939,6 +3979,7 @@
           "description": "A low-glare 12-hour bedside clock with a steady amber face and no ticking seconds.",
           "key": "python:clock:bedside-amber",
           "name": "Bedside Amber",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#040100",
@@ -3991,6 +4032,7 @@
           "description": "A six-column binary time code hovers like a machine constellation in an icy starfield.",
           "key": "python:clock:binary-constellation",
           "name": "Binary Constellation",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#00050C",
@@ -4043,6 +4085,7 @@
           "description": "Linear hour, minute, and second currents glow beneath a rolling blue aurora.",
           "key": "python:clock:bioluminescent-tide",
           "name": "Bioluminescent Tide",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000412",
@@ -4095,6 +4138,7 @@
           "description": "Time, weekday, and month-day arranged as a warm information panel for a quick daily glance.",
           "key": "python:clock:calendar-glance",
           "name": "Calendar Glance",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#120D08",
@@ -4147,6 +4191,7 @@
           "description": "Three horizontal measures track the day, hour, and minute through a restless red signal field.",
           "key": "python:clock:chrono-scan",
           "name": "Chrono Scan",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#020302",
@@ -4199,6 +4244,7 @@
           "description": "A clean analog clock with luminous hands, hour marks, and a restrained dark radial backdrop.",
           "key": "python:clock:classic-wall-clock",
           "name": "Classic Wall Clock",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#00050C",
@@ -4251,6 +4297,7 @@
           "description": "DAWN, DAY, DUSK, or NIGHT floats above a breathing horizon with only the current hour beneath.",
           "key": "python:clock:daypart-horizon",
           "name": "Daypart Horizon",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#120D08",
@@ -4303,6 +4350,7 @@
           "description": "A practical date and time almanac glows softly beneath a forest-green night sky.",
           "key": "python:clock:forest-night-almanac",
           "name": "Forest Night Almanac",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000704",
@@ -4355,6 +4403,7 @@
           "description": "A minimal time line hangs over a slowly breathing sunset horizon.",
           "key": "python:clock:last-light-horizon",
           "name": "Last Light Horizon",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#0A010A",
@@ -4407,6 +4456,7 @@
           "description": "Binary time floats like an icy instrument panel among dense constellations.",
           "key": "python:clock:lunar-binary-constellation",
           "name": "Lunar Binary Constellation",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#00050C",
@@ -4459,6 +4509,7 @@
           "description": "Three quiet time orbits travel through a sparse blue star field.",
           "key": "python:clock:midnight-planetarium",
           "name": "Midnight Planetarium",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000412",
@@ -4511,6 +4562,7 @@
           "description": "A subdued violet 24-hour clock with seconds hidden for quiet late-night workspaces.",
           "key": "python:clock:night-shift",
           "name": "Night Shift",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#04000E",
@@ -4563,6 +4615,7 @@
           "description": "A crisp monochrome 24-hour clock for studios, workshops, and shared offices.",
           "key": "python:clock:office-24-hour",
           "name": "Office 24 Hour",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000000",
@@ -4615,6 +4668,7 @@
           "description": "A high-contrast 24-hour reference clock that keeps seconds prominent for timing tasks.",
           "key": "python:clock:precision-seconds",
           "name": "Precision Seconds",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#020302",
@@ -4667,6 +4721,7 @@
           "description": "A cool 24-hour companion clock set six hours ahead of the controller's local time.",
           "key": "python:clock:remote-team-plus-six",
           "name": "Remote Team +6 Hours",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000412",
@@ -4719,6 +4774,7 @@
           "description": "A green 24-hour companion clock set eight hours behind the controller's local time.",
           "key": "python:clock:remote-team-minus-eight",
           "name": "Remote Team -8 Hours",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000704",
@@ -4771,6 +4827,7 @@
           "description": "Nested columns rise with the current hour, minute, and second against a radiant sunset center.",
           "key": "python:clock:temporal-monoliths",
           "name": "Temporal Monoliths",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#0A010A",
@@ -4823,6 +4880,7 @@
           "description": "Three spare points locate the hour, minute, and second on a slowly translating emerald grid.",
           "key": "python:clock:three-quiet-signals",
           "name": "Three Quiet Signals",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000704",
@@ -4875,6 +4933,7 @@
           "description": "Hour, minute, and second orbit through a moving blue lattice like a clockwork model of an alien tide.",
           "key": "python:clock:tidal-orrery",
           "name": "Tidal Orrery",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000412",
@@ -4927,6 +4986,7 @@
           "description": "Sparse time markers glide across a slow violet lattice like a distant navigation display.",
           "key": "python:clock:violet-drift-grid",
           "name": "Violet Drift Grid",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#04000E",
@@ -4979,6 +5039,7 @@
           "description": "A minute-long hourglass pours violet light while diagonal aurora currents move behind it.",
           "key": "python:clock:violet-sandstorm",
           "name": "Violet Sandstorm",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#04000E",
@@ -5268,6 +5329,7 @@
           "description": "Rising time columns catch the warm afterglow of a low amber sun.",
           "key": "python:clock_overlay:amber-afterglow",
           "name": "Amber Afterglow",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#040100",
@@ -5316,6 +5378,7 @@
           "description": "Violet aurora ribbons drift behind a luminous minute hourglass.",
           "key": "python:clock_overlay:aurora-hourglass",
           "name": "Aurora Hourglass",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#04000E",
@@ -5364,6 +5427,7 @@
           "description": "Three drifting orbital bodies encode hours, minutes, and seconds inside a luminous polar haze.",
           "key": "python:clock_overlay:aurora-orbits",
           "name": "Aurora Orbits",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#05000F",
@@ -5412,6 +5476,7 @@
           "description": "A low-glare 12-hour bedside clock with a steady amber face and no ticking seconds.",
           "key": "python:clock_overlay:bedside-amber",
           "name": "Bedside Amber",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#040100",
@@ -5460,6 +5525,7 @@
           "description": "A six-column binary time code hovers like a machine constellation in an icy starfield.",
           "key": "python:clock_overlay:binary-constellation",
           "name": "Binary Constellation",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#00050C",
@@ -5508,6 +5574,7 @@
           "description": "Linear hour, minute, and second currents glow beneath a rolling blue aurora.",
           "key": "python:clock_overlay:bioluminescent-tide",
           "name": "Bioluminescent Tide",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000412",
@@ -5556,6 +5623,7 @@
           "description": "Time, weekday, and month-day arranged as a warm information panel for a quick daily glance.",
           "key": "python:clock_overlay:calendar-glance",
           "name": "Calendar Glance",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#120D08",
@@ -5604,6 +5672,7 @@
           "description": "Three horizontal measures track the day, hour, and minute through a restless red signal field.",
           "key": "python:clock_overlay:chrono-scan",
           "name": "Chrono Scan",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#020302",
@@ -5652,6 +5721,7 @@
           "description": "A clean analog clock with luminous hands, hour marks, and a restrained dark radial backdrop.",
           "key": "python:clock_overlay:classic-wall-clock",
           "name": "Classic Wall Clock",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#00050C",
@@ -5700,6 +5770,7 @@
           "description": "DAWN, DAY, DUSK, or NIGHT floats above a breathing horizon with only the current hour beneath.",
           "key": "python:clock_overlay:daypart-horizon",
           "name": "Daypart Horizon",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#120D08",
@@ -5748,6 +5819,7 @@
           "description": "A practical date and time almanac glows softly beneath a forest-green night sky.",
           "key": "python:clock_overlay:forest-night-almanac",
           "name": "Forest Night Almanac",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000704",
@@ -5796,6 +5868,7 @@
           "description": "A minimal time line hangs over a slowly breathing sunset horizon.",
           "key": "python:clock_overlay:last-light-horizon",
           "name": "Last Light Horizon",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#0A010A",
@@ -5844,6 +5917,7 @@
           "description": "Binary time floats like an icy instrument panel among dense constellations.",
           "key": "python:clock_overlay:lunar-binary-constellation",
           "name": "Lunar Binary Constellation",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#00050C",
@@ -5892,6 +5966,7 @@
           "description": "Three quiet time orbits travel through a sparse blue star field.",
           "key": "python:clock_overlay:midnight-planetarium",
           "name": "Midnight Planetarium",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000412",
@@ -5940,6 +6015,7 @@
           "description": "A subdued violet 24-hour clock with seconds hidden for quiet late-night workspaces.",
           "key": "python:clock_overlay:night-shift",
           "name": "Night Shift",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#04000E",
@@ -5988,6 +6064,7 @@
           "description": "A crisp monochrome 24-hour clock for studios, workshops, and shared offices.",
           "key": "python:clock_overlay:office-24-hour",
           "name": "Office 24 Hour",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000000",
@@ -6036,6 +6113,7 @@
           "description": "A high-contrast 24-hour reference clock that keeps seconds prominent for timing tasks.",
           "key": "python:clock_overlay:precision-seconds",
           "name": "Precision Seconds",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#020302",
@@ -6084,6 +6162,7 @@
           "description": "A cool 24-hour companion clock set six hours ahead of the controller's local time.",
           "key": "python:clock_overlay:remote-team-plus-six",
           "name": "Remote Team +6 Hours",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000412",
@@ -6132,6 +6211,7 @@
           "description": "A green 24-hour companion clock set eight hours behind the controller's local time.",
           "key": "python:clock_overlay:remote-team-minus-eight",
           "name": "Remote Team -8 Hours",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000704",
@@ -6180,6 +6260,7 @@
           "description": "Nested columns rise with the current hour, minute, and second against a radiant sunset center.",
           "key": "python:clock_overlay:temporal-monoliths",
           "name": "Temporal Monoliths",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#0A010A",
@@ -6228,6 +6309,7 @@
           "description": "Three spare points locate the hour, minute, and second on a slowly translating emerald grid.",
           "key": "python:clock_overlay:three-quiet-signals",
           "name": "Three Quiet Signals",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000704",
@@ -6276,6 +6358,7 @@
           "description": "Hour, minute, and second orbit through a moving blue lattice like a clockwork model of an alien tide.",
           "key": "python:clock_overlay:tidal-orrery",
           "name": "Tidal Orrery",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000412",
@@ -6324,6 +6407,7 @@
           "description": "Sparse time markers glide across a slow violet lattice like a distant navigation display.",
           "key": "python:clock_overlay:violet-drift-grid",
           "name": "Violet Drift Grid",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#04000E",
@@ -6372,6 +6456,7 @@
           "description": "A minute-long hourglass pours violet light while diagonal aurora currents move behind it.",
           "key": "python:clock_overlay:violet-sandstorm",
           "name": "Violet Sandstorm",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#04000E",
@@ -6633,6 +6718,7 @@
           "description": "Bright blue cloud layers open around a slow-moving radiant canyon of light.",
           "key": "python:cloud_canyon:daylight-canyon",
           "name": "Daylight Cloud Canyon",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#1C3048",
@@ -6691,6 +6777,7 @@
           "description": "Dense low-luminance fog and soft foreground occlusion.",
           "key": "python:cloud_canyon:night",
           "name": "Deep Moon Canyon",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.2,
@@ -6731,6 +6818,7 @@
           "description": "Thin slow fog reveals a narrow moonlit passage.",
           "key": "python:cloud_canyon:quiet",
           "name": "Silver Clearing",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.38,
@@ -6771,6 +6859,7 @@
           "description": "Peach-lit cloud edges churn around a bright canyon opening.",
           "key": "python:cloud_canyon:showcase",
           "name": "Sunset Overcast",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.62,
@@ -7024,6 +7113,7 @@
           "description": "An icy horizontal fade from white-blue to deep cobalt.",
           "key": "python:gradient:arctic-horizon",
           "name": "Arctic Horizon",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "animated": false,
@@ -7062,6 +7152,7 @@
           "description": "A slow reverse cycle between gold and deep red.",
           "key": "python:gradient:ember-shift",
           "name": "Ember Shift",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "animated": true,
@@ -7100,6 +7191,7 @@
           "description": "Static moss green rising into warm morning gold.",
           "key": "python:gradient:forest-dawn",
           "name": "Forest Dawn",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "animated": false,
@@ -7138,6 +7230,7 @@
           "description": "Rapid cyan-to-magenta diagonal color cycling.",
           "key": "python:gradient:hypercolor-scan",
           "name": "Hypercolor Scan",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "animated": true,
@@ -7176,6 +7269,7 @@
           "description": "A gently cycling coral-to-ocean diagonal gradient.",
           "key": "python:gradient:miami-sunset",
           "name": "Miami Sunset",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "animated": true,
@@ -7435,6 +7529,7 @@
           "description": null,
           "key": "python:wave:chill_raining_fish_tank",
           "name": "chill raining fish tank",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "amplitude": 0.5,
@@ -7472,6 +7567,7 @@
           "description": "Broad horizontal green breathing bands.",
           "key": "python:wave:emerald-breath",
           "name": "Emerald Breath",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "amplitude": 0.65,
@@ -7512,6 +7608,7 @@
           "description": "A slow low-contrast silver-blue vertical tide.",
           "key": "python:wave:moonlit-tide",
           "name": "Moonlit Tide",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "amplitude": 0.45,
@@ -7552,6 +7649,7 @@
           "description": "Tight orange waves race diagonally like a solar transmission.",
           "key": "python:wave:solar-radio",
           "name": "Solar Radio",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "amplitude": 1.0,
@@ -7592,6 +7690,7 @@
           "description": "Magenta diagonal ribbons travel over a deep violet base.",
           "key": "python:wave:synthwave-ribbons",
           "name": "Synthwave Ribbons",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "amplitude": 0.9,
@@ -7632,6 +7731,7 @@
           "description": "Maximum-frequency violet bands drift slowly in reverse.",
           "key": "python:wave:ultraviolet-static",
           "name": "Ultraviolet Static",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "amplitude": 0.8,
@@ -8199,6 +8299,7 @@
           "description": null,
           "key": "python:conway_life:arcade-afterlife",
           "name": "Arcade Afterlife",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "arcade",
@@ -8243,6 +8344,7 @@
           "description": null,
           "key": "python:conway_life:aurora-garden",
           "name": "Aurora Garden",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "aurora",
@@ -8284,6 +8386,7 @@
           "description": null,
           "key": "python:conway_life:bioluminescent-tide",
           "name": "Bioluminescent Tide",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "deep_ocean",
@@ -8325,6 +8428,7 @@
           "description": null,
           "key": "python:conway_life:classic-green",
           "name": "Classic Green on Black",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "void",
@@ -8366,6 +8470,7 @@
           "description": null,
           "key": "python:conway_life:deep-space-acorn",
           "name": "Deep Space Acorn",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "starfield",
@@ -8411,6 +8516,7 @@
           "description": null,
           "key": "python:conway_life:earth-cities",
           "name": "Earth: Living Cities",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "earth",
@@ -8452,6 +8558,7 @@
           "description": null,
           "key": "python:conway_life:gosper-foundry",
           "name": "Gosper Glider Foundry",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "ember",
@@ -8494,6 +8601,7 @@
           "description": null,
           "key": "python:conway_life:ice-crystal",
           "name": "Ice Crystal",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "deep_ocean",
@@ -8535,6 +8643,7 @@
           "description": null,
           "key": "python:conway_life:maximum-chaos",
           "name": "Maximum Chaos",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "aurora",
@@ -8573,6 +8682,7 @@
           "description": null,
           "key": "python:conway_life:neon-glider-storm",
           "name": "Neon Glider Storm",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "twilight",
@@ -8611,6 +8721,7 @@
           "description": null,
           "key": "python:conway_life:oscillator-orchard",
           "name": "Oscillator Orchard",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "twilight",
@@ -8653,6 +8764,7 @@
           "description": null,
           "key": "python:conway_life:pulsar-observatory",
           "name": "Pulsar Observatory",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "starfield",
@@ -8695,6 +8807,7 @@
           "description": null,
           "key": "python:conway_life:r-pentomino-laboratory",
           "name": "R-pentomino Laboratory",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "void",
@@ -8740,6 +8853,7 @@
           "description": null,
           "key": "python:conway_life:solar-embers",
           "name": "Solar Embers",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "ember",
@@ -8781,6 +8895,7 @@
           "description": null,
           "key": "python:conway_life:synthwave-sunset",
           "name": "Synthwave Sunset",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "twilight",
@@ -9125,6 +9240,7 @@
           "description": "Muted reef waves curl around permanent plant-shaped cavities.",
           "key": "python:cyclic_reef:night",
           "name": "Midnight Reef Cavities",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.11,
@@ -9169,6 +9285,7 @@
           "description": "Broad slow species bands recolonize sparse grazer channels.",
           "key": "python:cyclic_reef:quiet",
           "name": "Quiet Polyps",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.2,
@@ -9213,6 +9330,7 @@
           "description": "Six vivid species chase one another around active channels.",
           "key": "python:cyclic_reef:showcase",
           "name": "Reef Competition",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.48,
@@ -9484,6 +9602,7 @@
           "description": "Golden dunes roll at an easy pace beneath a radiant candle-warm sky.",
           "key": "python:desert_wind:candlelit-dunes",
           "name": "Candlelit Dunes",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#1E0902",
@@ -9542,6 +9661,7 @@
           "description": "Layered red dunes with bright crest-borne sand.",
           "key": "python:desert_wind:martian-saltation",
           "name": "Martian Saltation",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.62,
@@ -9584,6 +9704,7 @@
           "description": "Broad ochre dunes with only a few drifting grains.",
           "key": "python:desert_wind:quiet-ochre",
           "name": "Quiet Ochre",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.4,
@@ -9624,6 +9745,7 @@
           "description": "Dim predawn dunes with almost motionless haze.",
           "key": "python:desert_wind:violet-night-dunes",
           "name": "Violet Night Dunes",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.22,
@@ -9931,6 +10053,7 @@
           "description": "The classic sunny smile on a deep midnight background.",
           "key": "python:emoji:golden-smile",
           "name": "Golden Smile",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "accent_blue": 65,
@@ -9976,6 +10099,7 @@
           "description": "A cool blue heart glowing over an arctic-night background.",
           "key": "python:emoji:ice-heart",
           "name": "Ice Heart",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "accent_blue": 255,
@@ -10021,6 +10145,7 @@
           "description": "Electric cyan and hot pink turn the smile into a sign.",
           "key": "python:emoji:neon-grin",
           "name": "Neon Grin",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "accent_blue": 178,
@@ -10066,6 +10191,7 @@
           "description": "A warm red heart with a gentle romantic pulse.",
           "key": "python:emoji:valentine-heart",
           "name": "Valentine Heart",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "accent_blue": 176,
@@ -10396,6 +10522,7 @@
           "description": "Dim cyan flashes synchronize in sheltered plant clearances.",
           "key": "python:firefly_synchrony:night",
           "name": "Calm Pockets",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.11,
@@ -10443,6 +10570,7 @@
           "description": "Many wandering clusters assemble into capped collective pulses.",
           "key": "python:firefly_synchrony:showcase",
           "name": "Firefly Assembly",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.47,
@@ -10488,6 +10616,7 @@
           "description": "Warm firefly clusters drift gently above a luminous candlelit meadow.",
           "key": "python:firefly_synchrony:lantern-meadow",
           "name": "Lantern Meadow",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#1E0902",
@@ -10553,6 +10682,7 @@
           "description": "Small local clusters softly exchange rhythms.",
           "key": "python:firefly_synchrony:quiet",
           "name": "Meadow Murmurs",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.19,
@@ -10935,6 +11065,7 @@
           "description": null,
           "key": "python:fireworks:golden-willows",
           "name": "Golden Willows",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "air_drag": 0.975,
@@ -10972,6 +11103,7 @@
           "description": null,
           "key": "python:fireworks:grand-finale",
           "name": "Grand Finale",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.9,
@@ -11008,6 +11140,7 @@
           "description": null,
           "key": "python:fireworks:neon-crackle",
           "name": "Neon Crackle",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "air_drag": 0.945,
@@ -11046,6 +11179,7 @@
           "description": null,
           "key": "python:fireworks:patriotic-salute",
           "name": "Patriotic Salute",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_level": 0.018,
@@ -11082,6 +11216,7 @@
           "description": null,
           "key": "python:fireworks:quiet-sparklers",
           "name": "Quiet Sparklers",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_level": 0.02,
@@ -11372,6 +11507,7 @@
           "description": "A vivid field of braided fibers bends around the living wall.",
           "key": "python:flow_field_silk:showcase",
           "name": "Braided Current",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#120523",
@@ -11425,6 +11561,7 @@
           "description": "A few coherent blue fibers drift through deep water.",
           "key": "python:flow_field_silk:quiet",
           "name": "Quiet Tidal Silk",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#08121E",
@@ -11478,6 +11615,7 @@
           "description": "Dim sparse fibers vanish behind plant silhouettes.",
           "key": "python:flow_field_silk:night",
           "name": "Shadow Thread",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#010208",
@@ -11854,6 +11992,7 @@
           "description": "Frequent strong bubbles animate a moderately filled luminous tank.",
           "key": "python:fluid_tank:bubble-column",
           "name": "Bubble Column",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "auto_hole": true,
@@ -11897,6 +12036,7 @@
           "description": "Bright underwater bands and precise low-foam surface physics.",
           "key": "python:fluid_tank:caustic-laboratory",
           "name": "Caustic Laboratory",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "auto_hole": false,
@@ -11940,6 +12080,7 @@
           "description": "Maximum inflow rapidly fills and punctures the tank.",
           "key": "python:fluid_tank:flash-flood",
           "name": "Flash Flood",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "auto_hole": true,
@@ -11984,6 +12125,7 @@
           "description": "A slow dim fill with sparse bubbles and lingering gentle ripples.",
           "key": "python:fluid_tank:quiet-aquarium",
           "name": "Quiet Aquarium",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "auto_hole": true,
@@ -12027,6 +12169,7 @@
           "description": null,
           "key": "python:fluid_tank:she_cute",
           "name": "she cute",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "auto_hole": true,
@@ -12073,6 +12216,7 @@
           "description": "Heavy inflow, strong bubbles, foam, and persistent surface waves.",
           "key": "python:fluid_tank:storm-tank",
           "name": "Storm Tank",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "auto_hole": true,
@@ -12353,6 +12497,7 @@
           "description": "Maximum speed and flicker with persistent glowing heat.",
           "key": "python:flame_burst:afterburner",
           "name": "Afterburner",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "afterglow": 0.75,
@@ -12388,6 +12533,7 @@
           "description": "Slow thick flame shells with long warm afterglow.",
           "key": "python:flame_burst:campfire-bloom",
           "name": "Campfire Bloom",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "afterglow": 0.85,
@@ -12423,6 +12569,7 @@
           "description": "Expanding flame waves originate from the lower-left wall.",
           "key": "python:flame_burst:off-center-comet",
           "name": "Off-Center Comet",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "afterglow": 0.45,
@@ -12458,6 +12605,7 @@
           "description": "Frequent thin shells with sharp energetic flicker.",
           "key": "python:flame_burst:rapid-ignition",
           "name": "Rapid Ignition",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "afterglow": 0.15,
@@ -12493,6 +12641,7 @@
           "description": "Balanced bright concentric solar eruptions.",
           "key": "python:flame_burst:solar-pulse",
           "name": "Solar Pulse",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "afterglow": 0.35,
@@ -12763,6 +12912,7 @@
           "description": "Dense magenta-cyan branching frost with visible regrowth.",
           "key": "python:frostwork:showcase",
           "name": "Crystal Front",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#120523",
@@ -12816,6 +12966,7 @@
           "description": "Sparse cold branches kept dim for late hours.",
           "key": "python:frostwork:night",
           "name": "Midnight Rime",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#010208",
@@ -12869,6 +13020,7 @@
           "description": "Soft rose and blue crystals grow slowly against a radiant winter morning.",
           "key": "python:frostwork:pastel-daybreak",
           "name": "Pastel Daybreak Frost",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#23183A",
@@ -12928,6 +13080,7 @@
           "description": "Slow blue-white border crystals for calm room light.",
           "key": "python:frostwork:quiet",
           "name": "Quiet Window Frost",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#06121E",
@@ -13242,6 +13395,7 @@
           "description": "Pink axolotls paddle through a rising bubble column.",
           "key": "python:gif_animation:axolotl-bubble-column",
           "name": "Axolotl Bubble Column",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000917",
@@ -13290,6 +13444,7 @@
           "description": "Happy blobs float under bobbing balloons.",
           "key": "python:gif_animation:balloon-blobs",
           "name": "Balloon Blobs",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#070719",
@@ -13338,6 +13493,7 @@
           "description": "Round bees buzz between pixel daisies.",
           "key": "python:gif_animation:bumblebee-garden",
           "name": "Bumblebee Garden",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#070C14",
@@ -13386,6 +13542,7 @@
           "description": "Flower-crowned cacti wiggle beneath desert stars.",
           "key": "python:gif_animation:cactus-bloom-dance",
           "name": "Cactus Bloom Dance",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#040910",
@@ -13434,6 +13591,7 @@
           "description": "Little ghosts warm up beside flickering campfires.",
           "key": "python:gif_animation:campfire-ghost-stories",
           "name": "Campfire Ghost Stories",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#04050D",
@@ -13482,6 +13640,7 @@
           "description": "Striped fish dart through a miniature reef.",
           "key": "python:gif_animation:coral-fish-friends",
           "name": "Coral Fish Friends",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000818",
@@ -13530,6 +13689,7 @@
           "description": "Pink clouds drift between warm little stars.",
           "key": "python:gif_animation:cotton-candy-clouds",
           "name": "Cotton Candy Clouds",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#0C0820",
@@ -13578,6 +13738,7 @@
           "description": "Sleepy blobs nap on warm wooden shelves.",
           "key": "python:gif_animation:cozy-shelf-naps",
           "name": "Cozy Shelf Naps",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#0D070D",
@@ -13626,6 +13787,7 @@
           "description": "Sleepy cats blink beside warm midnight windows.",
           "key": "python:gif_animation:cozy-window-cats",
           "name": "Cozy Window Cats",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#0B0612",
@@ -13674,6 +13836,7 @@
           "description": "Frosted cupcakes bounce through bright sprinkles.",
           "key": "python:gif_animation:cupcake-sprinkle-party",
           "name": "Cupcake Sprinkle Party",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#0F0615",
@@ -13722,6 +13885,7 @@
           "description": "Black cats watch lanterns through purple curtains.",
           "key": "python:gif_animation:curtain-cat-watch",
           "name": "Curtain Cat Watch",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#0A040F",
@@ -13770,6 +13934,7 @@
           "description": "Fireflies wink inside tiny glass jars.",
           "key": "python:gif_animation:firefly-bottle",
           "name": "Firefly Bottle",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#020A0C",
@@ -13818,6 +13983,7 @@
           "description": "Tiny frogs bob between rippling lily pads.",
           "key": "python:gif_animation:frog-pond-ripple",
           "name": "Frog Pond Ripple",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#010A11",
@@ -13866,6 +14032,7 @@
           "description": "Glossy grape bunches bounce from leafy vines.",
           "key": "python:gif_animation:grape-bounce",
           "name": "Grape Bounce",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#090512",
@@ -13914,6 +14081,7 @@
           "description": "Cheerful stars tumble slowly down the wall.",
           "key": "python:gif_animation:happy-star-fall",
           "name": "Happy Star Fall",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#030618",
@@ -13962,6 +14130,7 @@
           "description": "Blue hydrangeas shimmer in a gentle shower.",
           "key": "python:gif_animation:hydrangea-rain",
           "name": "Hydrangea Rain",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#040817",
@@ -14010,6 +14179,7 @@
           "description": "Glowing jellyfish pulse and trail tiny bubbles.",
           "key": "python:gif_animation:jellyfish-lanterns",
           "name": "Jellyfish Lanterns",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#010519",
@@ -14058,6 +14228,7 @@
           "description": "Colorful slimes bounce in precarious stacks.",
           "key": "python:gif_animation:jolly-slime-stack",
           "name": "Jolly Slime Stack",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#050912",
@@ -14106,6 +14277,7 @@
           "description": "Koi weave up a dark vertical stream.",
           "key": "python:gif_animation:koi-ribbon",
           "name": "Koi Ribbon",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#000912",
@@ -14154,6 +14326,7 @@
           "description": "Purple trees shelter softly swinging lanterns.",
           "key": "python:gif_animation:lantern-tree",
           "name": "Lantern Tree",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#070512",
@@ -14202,6 +14375,7 @@
           "description": "White bunnies bounce beneath violet moons.",
           "key": "python:gif_animation:moon-bunny-meadow",
           "name": "Moon Bunny Meadow",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#050718",
@@ -14250,6 +14424,7 @@
           "description": "Tiny ducks paddle across moonlit reflections.",
           "key": "python:gif_animation:moonlit-ducks",
           "name": "Moonlit Ducks",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#020618",
@@ -14298,6 +14473,7 @@
           "description": "Little mushroom homes glow beneath forest stars.",
           "key": "python:gif_animation:mushroom-village",
           "name": "Mushroom Village",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#040A0C",
@@ -14346,6 +14522,7 @@
           "description": "Blushing peaches sway on leafy branches.",
           "key": "python:gif_animation:peach-orchard",
           "name": "Peach Orchard",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#0B0815",
@@ -14394,6 +14571,7 @@
           "description": "Tiny penguins fish from floating ice shelves.",
           "key": "python:gif_animation:penguin-ice-fishing",
           "name": "Penguin Ice Fishing",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#040A1B",
@@ -14442,6 +14620,7 @@
           "description": "Ringed planets and blue moons orbit in a column.",
           "key": "python:gif_animation:planet-parade",
           "name": "Planet Parade",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#010412",
@@ -14490,6 +14669,7 @@
           "description": "Small rockets climb through lavender exhaust.",
           "key": "python:gif_animation:pocket-rocket",
           "name": "Pocket Rocket",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#020412",
@@ -14538,6 +14718,7 @@
           "description": "Friendly ghosts wave through a violet night.",
           "key": "python:gif_animation:shy-ghost-parade",
           "name": "Shy Ghost Parade",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#080514",
@@ -14586,6 +14767,7 @@
           "description": "Small bats flap, yawn, and settle under stars.",
           "key": "python:gif_animation:sleepy-bat-cave",
           "name": "Sleepy Bat Cave",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#05030F",
@@ -14634,6 +14816,7 @@
           "description": "Purple-shelled snails inch along rainy leaves.",
           "key": "python:gif_animation:snails-after-rain",
           "name": "Snails After Rain",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#020E10",
@@ -14682,6 +14865,7 @@
           "description": "Round hamsters peek from towering sunflowers.",
           "key": "python:gif_animation:sunflower-hamsters",
           "name": "Sunflower Hamsters",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#040B0D",
@@ -14730,6 +14914,7 @@
           "description": "Pocket robots blink and patrol a neon tower.",
           "key": "python:gif_animation:tiny-robot-patrol",
           "name": "Tiny Robot Patrol",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#02070F",
@@ -15053,6 +15238,7 @@
           "description": "Planter bowls kick and reheat colliding wax.",
           "key": "python:lava_lamp:bowl-bumpers",
           "name": "Bowl Bumpers",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "glass",
@@ -15098,6 +15284,7 @@
           "description": "The seven planter bowls release hot golden droplets in sequence.",
           "key": "python:lava_lamp:bowl-emitter",
           "name": "Bowl Emitter",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "black",
@@ -15145,6 +15332,7 @@
           "description": "Many small droplets split and rise from bowl rims.",
           "key": "python:lava_lamp:busy-bubbles",
           "name": "Busy Bubbles",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "black",
@@ -15190,6 +15378,7 @@
           "description": "The familiar orange-and-gold tabletop lamp.",
           "key": "python:lava_lamp:classic-amber",
           "name": "Classic Amber",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "glass",
@@ -15235,6 +15424,7 @@
           "description": "Pink and aqua wax gathers around plant silhouettes.",
           "key": "python:lava_lamp:cotton-candy",
           "name": "Cotton Candy",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "gradient",
@@ -15280,6 +15470,7 @@
           "description": "High-contrast monochrome wax makes foliage refraction visible.",
           "key": "python:lava_lamp:foliage-refraction",
           "name": "Foliage Refraction",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "black",
@@ -15325,6 +15516,7 @@
           "description": "Cool blue wax rests in bowl pockets before returning to the heater.",
           "key": "python:lava_lamp:habitat-pools",
           "name": "Habitat Pools",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "glass",
@@ -15370,6 +15562,7 @@
           "description": "Bright prismatic wax refracts through foliage and rebounds from bowls.",
           "key": "python:lava_lamp:showcase",
           "name": "Living Wall Showcase",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "glass",
@@ -15419,6 +15612,7 @@
           "description": "Dim violet wax and illuminated plant edges.",
           "key": "python:lava_lamp:night",
           "name": "Midnight Violet",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "black",
@@ -15464,6 +15658,7 @@
           "description": "Cool cyan wax drifts slowly through the foliage zone.",
           "key": "python:lava_lamp:ocean-blue",
           "name": "Ocean Blue",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "gradient",
@@ -15509,6 +15704,7 @@
           "description": "Slow amber wax with a soft plant shadow.",
           "key": "python:lava_lamp:quiet",
           "name": "Quiet Lava",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "black",
@@ -15554,6 +15750,7 @@
           "description": "Dense ruby wax curls around solid planter bowls.",
           "key": "python:lava_lamp:ruby-vintage",
           "name": "Ruby Vintage",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "glass",
@@ -15599,6 +15796,7 @@
           "description": "Wax disappears into one planter bowl and emerges from the next.",
           "key": "python:lava_lamp:seven-bowl-portals",
           "name": "Seven Bowl Portals",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "gradient",
@@ -15644,6 +15842,7 @@
           "description": "Three enormous wax bodies move at meditative speed.",
           "key": "python:lava_lamp:slow-giants",
           "name": "Slow Giants",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "glass",
@@ -15689,6 +15888,7 @@
           "description": "White-hot gold wax erupts from illuminated bowls.",
           "key": "python:lava_lamp:solar-flare",
           "name": "Solar Flare",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "ember",
@@ -15736,6 +15936,7 @@
           "description": "Fast turbulent wax rebounds violently from the bowls.",
           "key": "python:lava_lamp:stormy-wax",
           "name": "Stormy Wax",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "ember",
@@ -15781,6 +15982,7 @@
           "description": "Acid-green wax is repelled by the living structure.",
           "key": "python:lava_lamp:toxic-lime",
           "name": "Toxic Lime",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "black",
@@ -15826,6 +16028,7 @@
           "description": "Purple wax bends through calibrated plant glass.",
           "key": "python:lava_lamp:violet-glass",
           "name": "Violet Glass",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background": "gradient",
@@ -16202,6 +16405,7 @@
           "description": "Dense evolving crowns turn the wall into a moving orange, crimson, and ochre tapestry.",
           "key": "python:living_ecosystem:autumn-mosaic",
           "name": "Autumn Mosaic",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#1F170A",
@@ -16262,6 +16466,7 @@
           "description": "Cyan fauna, magenta hunters, emerald flora, and electric violet oceans glow through rapid alien nights.",
           "key": "python:living_ecosystem:bioluminescent-exoplanet",
           "name": "Bioluminescent Exoplanet",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#02051C",
@@ -16323,6 +16528,7 @@
           "description": "Dense cool forest, long dim nights, slow plant recovery, and low animal density.",
           "key": "python:living_ecosystem:boreal-night",
           "name": "Boreal Night",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#071B19",
@@ -16383,6 +16589,7 @@
           "description": "Low-luminance blue habitat with hundreds of rhythmic yellow-green points and silver water.",
           "key": "python:living_ecosystem:midnight-fireflies",
           "name": "Midnight Fireflies",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#040C1A",
@@ -16443,6 +16650,7 @@
           "description": "Maximum zoom-out: dense single-pixel populations become a high-frame-rate field of self-organizing colored light.",
           "key": "python:living_ecosystem:neon-microverse",
           "name": "Neon Microverse",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#120D6B",
@@ -16505,6 +16713,7 @@
           "description": "Warm amber habitat with lifted shadows and saturated moving highlights for ambient room light.",
           "key": "python:living_ecosystem:golden-hour",
           "name": "Perpetual Golden Hour",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#2D1408",
@@ -16565,6 +16774,7 @@
           "description": "Zoomed-out, single-pixel herds with sparse trees, strong grouping, and predator-driven migration.",
           "key": "python:living_ecosystem:serengeti-migration",
           "name": "Serengeti Migration",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#2D1408",
@@ -16625,6 +16835,7 @@
           "description": "Accelerated high-mutation evolution with sharp ultraviolet phenotype colors and frequent selection events.",
           "key": "python:living_ecosystem:synthetic-gene-lab",
           "name": "Synthetic Gene Lab",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#0C001F",
@@ -16686,6 +16897,7 @@
           "description": "Balanced fifteen-minute food web with natural color, seasonal tree turnover, and moderate predation.",
           "key": "python:living_ecosystem:temperate-wetland",
           "name": "Temperate Wetland",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#0A2B16",
@@ -16982,6 +17194,7 @@
           "description": "Green-blue panes migrate at a measured pace across a luminous northern window.",
           "key": "python:living_stained_glass:aurora-transept",
           "name": "Aurora Transept",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#03121D",
@@ -17039,6 +17252,7 @@
           "description": "Amber and cream panes breathe slowly like a wall lit by many candles.",
           "key": "python:living_stained_glass:candlelight-mosaic",
           "name": "Candlelight Mosaic",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#1E0902",
@@ -17096,6 +17310,7 @@
           "description": "A radiant white-and-sky rose window evolves with broad, readable panes.",
           "key": "python:living_stained_glass:daylight-rose",
           "name": "Daylight Rose Window",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#1C3048",
@@ -17153,6 +17368,7 @@
           "description": "A handful of indigo panes glow behind dark organic medallions.",
           "key": "python:living_stained_glass:night",
           "name": "Night Nave",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#010208",
@@ -17206,6 +17422,7 @@
           "description": "Blush, lavender, and powder-blue panes drift with a gentle luminous glow.",
           "key": "python:living_stained_glass:pastel-chapel",
           "name": "Pastel Chapel",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#23183A",
@@ -17263,6 +17480,7 @@
           "description": "Rich panes and glowing plant leadwork create a modern rose window.",
           "key": "python:living_stained_glass:showcase",
           "name": "Rose Cathedral",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#120523",
@@ -17316,6 +17534,7 @@
           "description": "Stable ocean-colored panes breathe with soft daylight.",
           "key": "python:living_stained_glass:quiet",
           "name": "Sea Glass Chapel",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#08121E",
@@ -17369,6 +17588,7 @@
           "description": "Fast magenta and cyan panes pulse over radiant midnight-violet glass.",
           "key": "python:living_stained_glass:synthwave-basilica",
           "name": "Synthwave Basilica",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#12052D",
@@ -17655,6 +17875,7 @@
           "description": "Broad turquoise fog banks drift slowly through a radiant green-blue dawn.",
           "key": "python:moonlit_fog_banks:aurora-morning-fog",
           "name": "Aurora Morning Fog",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#03121D",
@@ -17713,6 +17934,7 @@
           "description": "Sparse moonlit fog crossing a dark ridge.",
           "key": "python:moonlit_fog_banks:quiet-banks",
           "name": "Quiet Banks",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.34,
@@ -17753,6 +17975,7 @@
           "description": "Dense layered fog reveals a broad hidden-moon halo.",
           "key": "python:moonlit_fog_banks:silver-halo",
           "name": "Silver Halo",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.55,
@@ -17795,6 +18018,7 @@
           "description": "Near-black fog and a restrained mountain silhouette.",
           "key": "python:moonlit_fog_banks:sleeping-ridge",
           "name": "Sleeping Ridge",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.2,
@@ -18024,6 +18248,7 @@
           "description": "Balanced maze speed and classic hunter pressure.",
           "key": "python:maze_chase:classic-chase",
           "name": "Classic Chase",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.82,
@@ -18055,6 +18280,7 @@
           "description": "A gentle chase with forgiving hunters and readable motion.",
           "key": "python:maze_chase:family-maze",
           "name": "Family Maze",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.68,
@@ -18086,6 +18312,7 @@
           "description": "Shows faint AI target tiles while the hunters make decisions.",
           "key": "python:maze_chase:hunter-vision",
           "name": "Hunter Vision",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.75,
@@ -18117,6 +18344,7 @@
           "description": "Dim arcade motion with moderate pressure for a dark room.",
           "key": "python:maze_chase:midnight-pursuit",
           "name": "Midnight Pursuit",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.42,
@@ -18148,6 +18376,7 @@
           "description": "Maximum hunter intelligence at nearly full simulation speed.",
           "key": "python:maze_chase:nightmare-tunnel",
           "name": "Nightmare Tunnel",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.9,
@@ -18422,6 +18651,7 @@
           "description": "Warm towns and layered terrain pass at an expressive pace.",
           "key": "python:night_train_windows:ember-express",
           "name": "Ember Express",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.58,
@@ -18464,6 +18694,7 @@
           "description": "Low-light hills and infrequent poles for a sleeping room.",
           "key": "python:night_train_windows:moonlit-berth",
           "name": "Moonlit Berth",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.2,
@@ -18504,6 +18735,7 @@
           "description": "A slow dark route with rare warm windows.",
           "key": "python:night_train_windows:quiet-sleeper",
           "name": "Quiet Sleeper",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.34,
@@ -18544,6 +18776,7 @@
           "description": "A fast radiant magenta-and-cyan landscape streams past the carriage windows.",
           "key": "python:night_train_windows:synthwave-commuter",
           "name": "Synthwave Commuter",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#12052D",
@@ -18974,6 +19207,7 @@
           "description": "Thin cyan routes discover paths around physical plant cores.",
           "key": "python:physarum_network:night",
           "name": "Dark Detours",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "agent_count": 650,
@@ -19017,6 +19251,7 @@
           "description": "Dense explorers rapidly reinforce an adaptive violet web.",
           "key": "python:physarum_network:showcase",
           "name": "Electric Transport",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "agent_count": 1100,
@@ -19060,6 +19295,7 @@
           "description": "A sparse network slowly chooses routes between dim nutrients.",
           "key": "python:physarum_network:quiet",
           "name": "Quiet Mycelium",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "agent_count": 450,
@@ -19103,6 +19339,7 @@
           "description": "A fast adaptive network draws hot magenta paths through a radiant cyan field.",
           "key": "python:physarum_network:synthwave-mycelium",
           "name": "Synthwave Mycelium",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#12052D",
@@ -19615,6 +19852,7 @@
           "description": "A clean environmental presentation without game indicators.",
           "key": "python:pixel_quest:cinematic-no-hud",
           "name": "Cinematic No HUD",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.72,
@@ -19644,6 +19882,7 @@
           "description": "The balanced autonomous quest presentation.",
           "key": "python:pixel_quest:heroic-adventure",
           "name": "Heroic Adventure",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.8,
@@ -19673,6 +19912,7 @@
           "description": "Runs the complete quest at maximum playback speed.",
           "key": "python:pixel_quest:speedrun",
           "name": "Pixel Speedrun",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.9,
@@ -19702,6 +19942,7 @@
           "description": "A slow tour through every biome with the HUD visible.",
           "key": "python:pixel_quest:scenic-journey",
           "name": "Scenic Journey",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.58,
@@ -20351,6 +20592,7 @@
           "description": "Neon foliage cuts through Conway's psychedelic arcade field.",
           "key": "python:plant_glow:arcade-overgrowth",
           "name": "Arcade Overgrowth",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_source": "conway",
@@ -20402,6 +20644,7 @@
           "description": "Emerald plants float over Conway's rolling aurora atmosphere.",
           "key": "python:plant_glow:aurora-canopy",
           "name": "Aurora Canopy",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_source": "conway",
@@ -20453,6 +20696,7 @@
           "description": "A cyan plant silhouette breathing over deep-ocean waves.",
           "key": "python:plant_glow:bioluminescent-reef",
           "name": "Bioluminescent Reef",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_source": "conway",
@@ -20505,6 +20749,7 @@
           "description": "A restrained midnight table with icy blue plant silhouettes.",
           "key": "python:plant_glow:blue-hour-pinball",
           "name": "Blue Hour Pinball",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_seed": 1995,
@@ -20556,6 +20801,7 @@
           "description": "Pink foliage, citrus halos, and aqua rooting globes.",
           "key": "python:plant_glow:candy-roots",
           "name": "Candy Roots",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_blue": 8,
@@ -20608,6 +20854,7 @@
           "description": "Electric ivy and planetary globes suspended in a twinkling starfield.",
           "key": "python:plant_glow:cosmic-ivy",
           "name": "Cosmic Ivy",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_source": "conway",
@@ -20659,6 +20906,7 @@
           "description": "Living green masks cross a slowly rotating miniature Earth.",
           "key": "python:plant_glow:earthbound-garden",
           "name": "Earthbound Garden",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_source": "conway",
@@ -20710,6 +20958,7 @@
           "description": "A slow firelight pulse with molten globe cores.",
           "key": "python:plant_glow:ember-veins",
           "name": "Ember Veins",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_blue": 0,
@@ -20762,6 +21011,7 @@
           "description": "Golden leaves rise above Conway's low ember field.",
           "key": "python:plant_glow:hearth-vines",
           "name": "Hearth Vines",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_source": "conway",
@@ -20814,6 +21064,7 @@
           "description": "Hot tropical color over a fast, saturated arcade table.",
           "key": "python:plant_glow:jackpot-jungle",
           "name": "Jackpot Jungle",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_seed": 3133,
@@ -20865,6 +21116,7 @@
           "description": "Cool emerald foliage and violet globes on a nearly black wall.",
           "key": "python:plant_glow:moonlit-moss",
           "name": "Moonlit Moss",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_blue": 5,
@@ -20917,6 +21169,7 @@
           "description": "The living wall grows through a full-speed neon pinball table.",
           "key": "python:plant_glow:neon-pinball-vines",
           "name": "Neon Pinball Vines",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_seed": 7777,
@@ -20968,6 +21221,7 @@
           "description": "Maximum-speed pinball refracted through bright cyan and fuchsia masks.",
           "key": "python:plant_glow:prismatic-multiball",
           "name": "Prismatic Multiball",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_seed": 9090,
@@ -21019,6 +21273,7 @@
           "description": "A meditative slow-motion table behind pale garden light.",
           "key": "python:plant_glow:slow-table-garden",
           "name": "Slow Table Garden",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_seed": 42,
@@ -21070,6 +21325,7 @@
           "description": "Magenta orchids emerge from Conway's warm violet horizon.",
           "key": "python:plant_glow:twilight-orchids",
           "name": "Twilight Orchids",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "background_source": "conway",
@@ -21694,6 +21950,7 @@
           "description": "Eightfold crystalline geometry turns slowly over a radiant daylight field.",
           "key": "python:quasicrystal_bloom:daylight-prism",
           "name": "Daylight Prism",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#1C3048",
@@ -21754,6 +22011,7 @@
           "description": "Low-contrast fivefold bands preserve deep negative space.",
           "key": "python:quasicrystal_bloom:night",
           "name": "Fivefold Midnight",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#010208",
@@ -21808,6 +22066,7 @@
           "description": "Broad tenfold sea-glass rosettes evolve without scrolling.",
           "key": "python:quasicrystal_bloom:quiet",
           "name": "Quiet Decagon",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#08121E",
@@ -21862,6 +22121,7 @@
           "description": "Vivid twelvefold rosettes fold around the installation geometry.",
           "key": "python:quasicrystal_bloom:showcase",
           "name": "Twelvefold Portal",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#120523",
@@ -22129,6 +22389,7 @@
           "description": "Dense warm city light displaced by fast wet tracks.",
           "key": "python:rain_on_glass:showcase",
           "name": "Amber Downpour",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.62,
@@ -22171,6 +22432,7 @@
           "description": "Very dim cool rain with dry plant silhouettes.",
           "key": "python:rain_on_glass:night",
           "name": "Garden After Midnight",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.22,
@@ -22211,6 +22473,7 @@
           "description": "Readable rain tracks slide across luminous pink and powder-blue daylight.",
           "key": "python:rain_on_glass:pastel-sunshower",
           "name": "Pastel Sunshower",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#23183A",
@@ -22269,6 +22532,7 @@
           "description": "Sparse moonlit drops and long dark pauses.",
           "key": "python:rain_on_glass:quiet",
           "name": "Window Drizzle",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.32,
@@ -22485,6 +22749,7 @@
           "description": "One saturated rainbow per strip at balanced speed.",
           "key": "python:rainbow:classic-spectrum",
           "name": "Classic Spectrum",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.75,
@@ -22516,6 +22781,7 @@
           "description": "Maximum-speed triple rainbows sweep forward.",
           "key": "python:rainbow:hyperspectrum",
           "name": "Hyperspectrum",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.95,
@@ -22547,6 +22813,7 @@
           "description": "A slow desaturated rainbow with broad color bands.",
           "key": "python:rainbow:pastel-drift",
           "name": "Pastel Drift",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.5,
@@ -22578,6 +22845,7 @@
           "description": "Dense saturated spectra travel in reverse.",
           "key": "python:rainbow:reverse-prism",
           "name": "Reverse Prism",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.82,
@@ -22900,6 +23168,7 @@
           "description": "Aurora-colored coral fronts grow at a relaxed pace over a radiant conservatory floor.",
           "key": "python:reaction_diffusion_garden:aurora-conservatory",
           "name": "Aurora Conservatory",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#03121D",
@@ -22967,6 +23236,7 @@
           "description": "Bright active fronts branch through a seeded coral garden.",
           "key": "python:reaction_diffusion_garden:showcase",
           "name": "Coral Chemistry",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.48,
@@ -23010,6 +23280,7 @@
           "description": "Dim isolated cells glow around plant-created cavities.",
           "key": "python:reaction_diffusion_garden:night",
           "name": "Midnight Cells",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.12,
@@ -23053,6 +23324,7 @@
           "description": "Slow violet fingerprints accumulate luminous history.",
           "key": "python:reaction_diffusion_garden:quiet",
           "name": "Quiet Fingerprints",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.2,
@@ -23568,6 +23840,7 @@
           "description": "One green snake, crisp edges, and the original no-wall-crossing rules.",
           "key": "python:snake:classic-orchard",
           "name": "Classic Orchard",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#071008",
@@ -23620,6 +23893,7 @@
           "description": "Six rainbow comets grow into luminous, overlapping-looking arcs among stars.",
           "key": "python:snake:comet-garden",
           "name": "Comet Garden",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#02020C",
@@ -23674,6 +23948,7 @@
           "description": "Ten compact neon snakes form a dense, flickering competitive swarm.",
           "key": "python:snake:electric-hive",
           "name": "Electric Hive",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#050014",
@@ -23728,6 +24003,7 @@
           "description": "Five ember snakes paint hot fading paths through the dark.",
           "key": "python:snake:fire-serpents",
           "name": "Fire Serpents",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#180000",
@@ -23781,6 +24057,7 @@
           "description": "Cool blue snakes weave through offset gates under classic edge rules.",
           "key": "python:snake:ice-labyrinth",
           "name": "Ice Labyrinth",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#020B18",
@@ -23833,6 +24110,7 @@
           "description": "Two slow sunset-colored snakes drift like koi beneath a star field.",
           "key": "python:snake:koi-at-midnight",
           "name": "Koi at Midnight",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#030716",
@@ -23887,6 +24165,7 @@
           "description": "Two fast rivals hunt the same food across a luminous arena.",
           "key": "python:snake:neon-duel",
           "name": "Neon Duel",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#090018",
@@ -23939,6 +24218,7 @@
           "description": "Prismatic snakes vanish into paired gates and blossom elsewhere on the wall.",
           "key": "python:snake:portal-bloom",
           "name": "Portal Bloom",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#161038",
@@ -23992,6 +24272,7 @@
           "description": "Prismatic trails fold repeatedly around a shifting zigzag barrier.",
           "key": "python:snake:prism-switchbacks",
           "name": "Prism Switchbacks",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#111229",
@@ -24045,6 +24326,7 @@
           "description": "A long spectrum snake flows continuously through wrapped edges.",
           "key": "python:snake:rainbow-river",
           "name": "Rainbow River",
+          "ownership": "built_in",
           "palette": {
             "colors": [
               "#FF3040",
@@ -24377,6 +24659,7 @@
           "description": "A saturated low-light blue that recedes into the room.",
           "key": "python:solid:deep-ocean",
           "name": "Deep Ocean",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "blue": 180,
@@ -24413,6 +24696,7 @@
           "description": "Deep green slowly breathes between shadow and canopy light.",
           "key": "python:solid:forest-breath",
           "name": "Forest Breath",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "blue": 84,
@@ -24449,6 +24733,7 @@
           "description": "A gentle rosy wash with enough blue to stay soft.",
           "key": "python:solid:rose-quartz",
           "name": "Rose Quartz",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "blue": 132,
@@ -24485,6 +24770,7 @@
           "description": "A vivid violet pulse for late-night color and energy.",
           "key": "python:solid:ultraviolet-pulse",
           "name": "Ultraviolet Pulse",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "blue": 255,
@@ -24521,6 +24807,7 @@
           "description": "A soft warm-white wash for relaxed everyday light.",
           "key": "python:solid:warm-linen",
           "name": "Warm Linen",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "blue": 108,
@@ -24780,6 +25067,7 @@
           "description": "Sparse warm sparks shimmer over a dim amber base.",
           "key": "python:sparkle:candlelight",
           "name": "Candlelight",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "base_blue": 1,
@@ -24818,6 +25106,7 @@
           "description": "Maximum-density hot-pink flashes vanish rapidly over purple.",
           "key": "python:sparkle:confetti-storm",
           "name": "Confetti Storm",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "base_blue": 24,
@@ -24856,6 +25145,7 @@
           "description": "Bright icy glitter with crisp medium-length trails.",
           "key": "python:sparkle:diamond-dust",
           "name": "Diamond Dust",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "base_blue": 28,
@@ -24894,6 +25184,7 @@
           "description": "Yellow-green points flicker above a forest-dark base.",
           "key": "python:sparkle:emerald-fireflies",
           "name": "Emerald Fireflies",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "base_blue": 8,
@@ -24932,6 +25223,7 @@
           "description": "Cool white stars linger over midnight blue.",
           "key": "python:sparkle:starlight",
           "name": "Starlight",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "base_blue": 18,
@@ -25639,6 +25931,7 @@
           "description": "Forty-eight fast pieces turn the wall into a production line.",
           "key": "python:tetris:avalanche-factory",
           "name": "Avalanche Factory",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "bot_imperfection": 0.28,
@@ -25673,6 +25966,7 @@
           "description": "A readable four-piece cooperative game with careful placement.",
           "key": "python:tetris:classic-quartet",
           "name": "Classic Quartet",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "bot_imperfection": 0.08,
@@ -25707,6 +26001,7 @@
           "description": "Sixteen coordinated pieces reserve complementary landing zones.",
           "key": "python:tetris:cooperative-swarm",
           "name": "Cooperative Swarm",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "bot_imperfection": 0.12,
@@ -25741,6 +26036,7 @@
           "description": "Ninety-six imperfect bots race the board at bounded render cost.",
           "key": "python:tetris:impossible-shift",
           "name": "Impossible Shift",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "bot_imperfection": 0.5,
@@ -25775,6 +26071,7 @@
           "description": "One patient perfect-play piece at a time.",
           "key": "python:tetris:solo-zen",
           "name": "Solo Zen",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "bot_imperfection": 0.0,
@@ -26038,6 +26335,7 @@
           "description": "Deep navy swells with small green-blue disturbance halos.",
           "key": "python:tidal_bioluminescence:night",
           "name": "Midnight Plankton",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.19,
@@ -26078,6 +26376,7 @@
           "description": "A near-black sea with rare cool plankton sparks.",
           "key": "python:tidal_bioluminescence:quiet",
           "name": "Slack Tide",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.28,
@@ -26118,6 +26417,7 @@
           "description": "Frequent wakes spread through a vivid violet plankton bloom.",
           "key": "python:tidal_bioluminescence:showcase",
           "name": "Violet Bloom Tide",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.61,
@@ -26373,6 +26673,7 @@
           "description": "A few cool streams fall through a dark forest wall.",
           "key": "python:waterfall_veil:quiet",
           "name": "Forest Trickle",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.31,
@@ -26413,6 +26714,7 @@
           "description": "Barely visible streams and subdued violet mist.",
           "key": "python:waterfall_veil:night",
           "name": "Hidden Falls",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.2,
@@ -26453,6 +26755,7 @@
           "description": "Many silver streams fragment through dense impact mist.",
           "key": "python:waterfall_veil:showcase",
           "name": "Moonfall Cascade",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.65,
@@ -26783,6 +27086,7 @@
           "description": "A dense amber reed field rolls beneath coherent gust fronts.",
           "key": "python:wind_in_the_reeds:showcase",
           "name": "Harvest Gust",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.48,
@@ -26826,6 +27130,7 @@
           "description": "Sparse moonlit reeds move through a long lull.",
           "key": "python:wind_in_the_reeds:quiet",
           "name": "Reedbed Lull",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.22,
@@ -26869,6 +27174,7 @@
           "description": "Dim silver stalks silhouette the physical canopy.",
           "key": "python:wind_in_the_reeds:night",
           "name": "Winter Moon Reeds",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.14,
@@ -27133,6 +27439,7 @@
           "description": "Brazilian green, gold, and blue across the full wall.",
           "key": "python:world_flags:brazil-festival",
           "name": "Brazil Festival",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.78,
@@ -27169,6 +27476,7 @@
           "description": "Large stately flags with generous black spacing.",
           "key": "python:world_flags:grand-banners",
           "name": "Grand Banners",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.72,
@@ -27205,6 +27513,7 @@
           "description": "A clean full-wall Japanese flag.",
           "key": "python:world_flags:japan-rising-sun",
           "name": "Japan Rising Sun",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.72,
@@ -27241,6 +27550,7 @@
           "description": "Small tightly packed flags race down the installation.",
           "key": "python:world_flags:mini-banner-rush",
           "name": "Mini Banner Rush",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.88,
@@ -27277,6 +27587,7 @@
           "description": "The full catalog scrolls in the opposite direction.",
           "key": "python:world_flags:reverse-parade",
           "name": "Reverse Parade",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.82,
@@ -27313,6 +27624,7 @@
           "description": "A bright full-wall United States flag.",
           "key": "python:world_flags:stars-and-stripes",
           "name": "Stars and Stripes",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.8,
@@ -27349,6 +27661,7 @@
           "description": "A full-wall blue and gold Ukrainian flag.",
           "key": "python:world_flags:ukraine-solidarity",
           "name": "Ukraine Solidarity",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.75,
@@ -27385,6 +27698,7 @@
           "description": "A balanced forward parade using the camera visibility map.",
           "key": "python:world_flags:world-parade",
           "name": "World Parade",
+          "ownership": "built_in",
           "palette": null,
           "params": {
             "brightness": 0.8,

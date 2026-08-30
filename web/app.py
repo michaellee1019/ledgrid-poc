@@ -1278,6 +1278,81 @@ class AnimationWebInterface:
                 'presets': self._list_animation_presets(component_id, provider),
             })
 
+        @self.app.route(
+            '/api/v1/components/<component_id>/presets/<preset_id>',
+            methods=['GET', 'DELETE'],
+        )
+        def api_component_preset_record(component_id: str, preset_id: str):
+            """Read or remove one exact-provider Composer preset record.
+
+            Runtime records are the only mutable user-owned records. Curated
+            plugin presets and legacy records remain read-only, including when
+            their names match a record for another provider.
+            """
+            matches = [
+                item for item in self._component_catalog()
+                if item.get('plugin_id') == component_id
+            ]
+            if not matches:
+                return jsonify({'error': 'Component not found'}), 404
+            provider = request.args.get('provider')
+            if provider is None and len(matches) == 1:
+                provider = matches[0].get('provider')
+            if not isinstance(provider, str) or not any(
+                item.get('provider') == provider for item in matches
+            ):
+                return jsonify({
+                    'error': (
+                        'Component preset record requires a provider-qualified '
+                        'identity'
+                    ),
+                    'component_id': component_id,
+                    'providers': sorted({
+                        str(item.get('provider')) for item in matches
+                    }),
+                }), 409
+            safe_id = self._sanitize_preset_id(preset_id)
+            if not safe_id or safe_id != preset_id:
+                return jsonify({'error': 'Preset ID is invalid'}), 400
+            component_key = f'{provider}:{component_id}'
+            runtime_path = self._animation_preset_path(
+                component_id, preset_id, provider
+            )
+            if request.method == 'DELETE':
+                if runtime_path is not None and runtime_path.is_file():
+                    try:
+                        runtime_path.unlink()
+                    except OSError:
+                        return jsonify({'error': 'Failed to delete preset'}), 500
+                    if provider == 'python' and self.runtime_preview_worker is not None:
+                        self.runtime_preview_worker.delete(component_id, preset_id)
+                    return jsonify({
+                        'success': True,
+                        'component_key': component_key,
+                        'preset_id': preset_id,
+                    })
+                if self._load_animation_preset(component_id, preset_id, provider):
+                    return jsonify({
+                        'error': 'Built-in and legacy preset records are read-only.',
+                        'code': 'preset_immutable',
+                        'component_key': component_key,
+                        'preset_id': preset_id,
+                    }), 409
+                return jsonify({'error': 'Preset not found'}), 404
+
+            preset = self._load_animation_preset(component_id, preset_id, provider)
+            if preset is None:
+                return jsonify({'error': 'Preset not found'}), 404
+            preset = dict(preset)
+            preset['component_key'] = component_key
+            preset['ownership'] = self._component_preset_ownership(
+                component_id, preset_id, provider
+            )
+            preset['preset_fingerprint'] = self._component_preset_fingerprint(preset)
+            response = jsonify({'preset': preset})
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+
         @self.app.route('/api/v1/presets/legacy/<component_id>/export')
         def api_export_legacy_component_presets(component_id: str):
             """Export withheld pre-provider records so they can be reimported."""
@@ -3537,6 +3612,7 @@ class AnimationWebInterface:
         }
         self._write_animation_preset(plugin_id, preset_id, preset, provider)
         preset['component_key'] = f'{provider}:{plugin_id}'
+        preset['ownership'] = 'user'
         return ({
             'preset': preset,
             'preset_fingerprint': self._component_preset_fingerprint(preset),
@@ -4392,6 +4468,27 @@ class AnimationWebInterface:
             summary['preview'] = self._preview_metadata(animation_name, preset_id)
         return summary
 
+    def _component_preset_ownership(
+        self, animation_name: str, preset_id: str, provider: str
+    ) -> str:
+        """Classify the backing record without ever resolving a provider guess."""
+        runtime_path = self._animation_preset_path(animation_name, preset_id, provider)
+        if runtime_path is not None and runtime_path.is_file():
+            return 'user'
+        curated_dir = (
+            self._curated_animation_preset_dir(animation_name)
+            if provider == 'python' else None
+        )
+        if curated_dir is not None and (curated_dir / f'{preset_id}.json').is_file():
+            return 'built_in'
+        legacy_dir = (
+            self._legacy_animation_preset_dir(animation_name)
+            if not self._legacy_preset_is_ambiguous(animation_name) else None
+        )
+        if legacy_dir is not None and (legacy_dir / f'{preset_id}.json').is_file():
+            return 'legacy'
+        return 'unknown'
+
     @staticmethod
     def _animation_preset_selection(payload: Dict[str, Any]) -> Dict[str, str]:
         """Return the identity stored with the active animation runtime state."""
@@ -4473,7 +4570,11 @@ class AnimationWebInterface:
                 payload.setdefault('name', path.stem)
                 payload.setdefault('animation', animation_name)
                 payload.setdefault('provider', provider)
-                summaries.append(self._animation_preset_summary(payload))
+                summary = self._animation_preset_summary(payload)
+                summary['ownership'] = self._component_preset_ownership(
+                    animation_name, str(payload['preset_id']), provider
+                )
+                summaries.append(summary)
         summaries.sort(
             key=lambda preset: str(preset.get('name') or preset.get('preset_id') or '').casefold()
         )

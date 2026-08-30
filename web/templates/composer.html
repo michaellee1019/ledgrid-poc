@@ -95,6 +95,23 @@
         </div>
         <div class="preset-list" id="presetList"></div>
       </section>
+      <section class="preset-section" id="savedRecordSection" aria-labelledby="savedRecordHeading">
+        <div class="section-heading">
+          <div><h2 id="savedRecordHeading">Saved records</h2><small>Built-in looks are read-only; saved looks and scenes stay separate.</small></div>
+        </div>
+        <label class="catalog-category-filter" for="savedRecordSelect">
+          <span>Open a saved look or scene</span>
+          <select id="savedRecordSelect" disabled>
+            <option value="">Loading saved records…</option>
+          </select>
+        </label>
+        <p id="savedRecordStatus" role="status" aria-live="polite">Saved records load without changing the wall.</p>
+        <div class="local-action-buttons" aria-label="Saved preset actions">
+          <button class="quiet-button server-action" id="reopenSavedRecordButton" type="button" disabled>Reopen</button>
+          <button class="quiet-button server-action" id="updateSavedRecordButton" type="button" disabled>Update</button>
+          <button class="danger-button server-action" id="deleteSavedRecordButton" type="button" disabled>Delete</button>
+        </div>
+      </section>
 
       <label class="search-field" for="componentSearch">
         <span aria-hidden="true">⌕</span>

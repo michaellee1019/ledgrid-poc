@@ -5,8 +5,8 @@
   ],
   "localAssets": [
     {
-      "bytes": 271007,
-      "sha256": "5725abcd0dd4ee8b299f3e6f1aa3bd1b93f6b9be68864034f39f76b7ec2f8eb7",
+      "bytes": 282822,
+      "sha256": "d6b0b49909ebe420ad1266400f5094ef88f96997d0469a0ee1f63d820b4af953",
       "url": "/composer-app.js"
     },
     {
@@ -30,8 +30,8 @@
       "url": "/static/generated/composer/aurora_curtains_native.wasm"
     },
     {
-      "bytes": 856852,
-      "sha256": "8c28db22f365cf1e57725204e1f5adf1b8b820c6bb0a093a952e2d0d924bc896",
+      "bytes": 867842,
+      "sha256": "d14b8674e56549c78ecde1630b708f1c4a8f26b038d3560346c7790d22d9f16b",
       "url": "/static/generated/composer/bootstrap.v1.json"
     },
     {

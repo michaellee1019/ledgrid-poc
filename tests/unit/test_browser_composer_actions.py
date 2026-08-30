@@ -503,6 +503,118 @@ class BrowserComposerActionTests(unittest.TestCase):
             "old",
         )
 
+    def test_provider_qualified_component_record_routes_are_user_only(self) -> None:
+        class _PreviewWorker:
+            def __init__(self) -> None:
+                self.deleted: list[tuple[str, str]] = []
+
+            def delete(self, animation_name: str, preset_id: str) -> None:
+                self.deleted.append((animation_name, preset_id))
+
+        channel = _Channel()
+        interface = AnimationWebInterface(
+            channel,
+            _Manager([
+                _component("compiled_rainbow"),
+                _component("compiled_rainbow", provider="receiver_native"),
+            ]),
+            local_mode=True,
+        )
+        interface.animation_presets_dir = self.root / "record-animations"
+        client = interface.app.test_client()
+        for provider, speed in (("python", 0.7), ("receiver_native", 1.3)):
+            response = client.post("/api/v1/composer/presets", json={
+                "schema": "ledgrid.browser-composer-save",
+                "schema_version": 1,
+                "component_key": f"{provider}:compiled_rainbow",
+                "name": "Shared Look",
+                "params": {"speed": speed},
+                "overwrite": False,
+            })
+            self.assertEqual(response.status_code, 201, response.get_json())
+
+        ambiguous = client.get(
+            "/api/v1/components/compiled_rainbow/presets/shared_look"
+        )
+        self.assertEqual(ambiguous.status_code, 409)
+        malformed = client.get(
+            "/api/v1/components/compiled_rainbow/presets/not%20valid?provider=python"
+        )
+        self.assertEqual(malformed.status_code, 400)
+
+        fetched = client.get(
+            "/api/v1/components/compiled_rainbow/presets/shared_look?provider=python"
+        )
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.headers["Cache-Control"], "no-store")
+        self.assertEqual(fetched.get_json()["preset"]["params"], {"speed": 0.7})
+        self.assertEqual(fetched.get_json()["preset"]["ownership"], "user")
+
+        preview_worker = _PreviewWorker()
+        interface.runtime_preview_worker = preview_worker
+        deleted_native = client.delete(
+            "/api/v1/components/compiled_rainbow/presets/shared_look?provider=receiver_native"
+        )
+        self.assertEqual(deleted_native.status_code, 200)
+        self.assertEqual(preview_worker.deleted, [])
+        self.assertEqual(
+            client.get(
+                "/api/v1/components/compiled_rainbow/presets/shared_look?provider=python"
+            ).get_json()["preset"]["params"],
+            {"speed": 0.7},
+        )
+        deleted_python = client.delete(
+            "/api/v1/components/compiled_rainbow/presets/shared_look?provider=python"
+        )
+        self.assertEqual(deleted_python.status_code, 200)
+        self.assertEqual(preview_worker.deleted, [("compiled_rainbow", "shared_look")])
+
+        curated = self.root / "curated"
+        curated.mkdir()
+        (curated / "built_in.json").write_text(json.dumps({
+            "version": 2,
+            "preset_id": "built_in",
+            "name": "Built in",
+            "animation": "compiled_rainbow",
+            "provider": "python",
+            "params": {"speed": 0.9},
+        }), encoding="utf-8")
+        interface._curated_animation_preset_dir = lambda _name: curated
+        override = client.post("/api/v1/composer/presets", json={
+            "schema": "ledgrid.browser-composer-save",
+            "schema_version": 1,
+            "component_key": "python:compiled_rainbow",
+            "name": "Built in",
+            "params": {"speed": 1.1},
+            "overwrite": True,
+        })
+        self.assertEqual(override.status_code, 200, override.get_json())
+        self.assertEqual(
+            client.get(
+                "/api/v1/components/compiled_rainbow/presets/built_in?provider=python"
+            ).get_json()["preset"]["ownership"],
+            "user",
+        )
+        restored = client.delete(
+            "/api/v1/components/compiled_rainbow/presets/built_in?provider=python"
+        )
+        self.assertEqual(restored.status_code, 200)
+        self.assertEqual(
+            client.get(
+                "/api/v1/components/compiled_rainbow/presets/built_in?provider=python"
+            ).get_json()["preset"]["ownership"],
+            "built_in",
+        )
+        immutable = client.delete(
+            "/api/v1/components/compiled_rainbow/presets/built_in?provider=python"
+        )
+        self.assertEqual(immutable.status_code, 409)
+        self.assertEqual(immutable.get_json()["code"], "preset_immutable")
+        self.assertFalse((curated / "built_in.json").is_symlink())
+        self.assertTrue((curated / "built_in.json").is_file())
+        self.assertEqual(channel.commands, [])
+        self.assertEqual(channel.read_count, 0)
+
     def test_invalid_params_never_create_a_preset(self) -> None:
         response = self.client.post("/api/v1/composer/presets", json={
             "schema": "ledgrid.browser-composer-save",
@@ -631,6 +743,35 @@ class BrowserComposerActionTests(unittest.TestCase):
         self.assertIn("queueLiveEdit({immediate: true})", javascript)
         self.assertIn("liveEditMatchesObservedComponent()", javascript)
         self.assertIn("Activate ${state.component?.name", javascript)
+
+    def test_saved_preset_controls_use_provider_qualified_drafts_not_apply_shortcuts(self) -> None:
+        html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "web/static/js/composer.js").read_text(encoding="utf-8")
+
+        for element_id in (
+            "savedRecordSelect", "savedRecordStatus", "reopenSavedRecordButton",
+            "updateSavedRecordButton", "deleteSavedRecordButton",
+        ):
+            self.assertIn(f'id="{element_id}"', html)
+        for function_name in (
+            "refreshSavedRecords", "reopenSavedRecord", "updateSavedRecord",
+            "deleteSavedRecord",
+        ):
+            self.assertIn(f"function {function_name}", javascript)
+        self.assertIn("/api/v1/components/${encodeURIComponent(component.plugin_id)}/presets/", javascript)
+        self.assertIn("provider=${encodeURIComponent(component.provider)}", javascript)
+        self.assertIn("preset_immutable", (ROOT / "web/app.py").read_text(encoding="utf-8"))
+        self.assertIn("Run Check before reviewed activation.", javascript)
+        self.assertNotIn("/apply", javascript[javascript.index("function reopenSavedRecord"):javascript.index("function updateSavedRecord")])
+        update_start = javascript.index("async function updateSavedRecord")
+        delete_start = javascript.index("async function deleteSavedRecord")
+        update_body = javascript[update_start:delete_start]
+        self.assertIn("state.savedRecords.reopened !== state.savedRecords.selected", update_body)
+        self.assertIn("presetIdForName", update_body)
+        self.assertIn("Keep this record name to update it", update_body)
+        delete_body = javascript[delete_start:javascript.index("function defaultParams", delete_start)]
+        self.assertIn("state.lastSavedPreset = null", delete_body)
+        self.assertIn("preset?.ownership !== 'user'", delete_body)
 
     def test_wall_workspace_is_complete_and_presets_exclude_global_state(self) -> None:
         html = (ROOT / "web/templates/composer.html").read_text(encoding="utf-8")

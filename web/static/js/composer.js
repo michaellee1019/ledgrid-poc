@@ -38,11 +38,6 @@
         {id: 'surface', name: 'Surface · choose one', mode: 'exclusive', modifiers: ['obstacle', 'portal', 'bumper', 'hazard', 'habitat']},
         {id: 'source', name: 'Source', mode: 'multiple', modifiers: ['emitter']},
     ]);
-    const CLOCK_STARTING_POINTS = Object.freeze([
-        {key: 'composer:clock:amber-digital', name: 'Amber digital', params: {face: 'digital', palette: 'amber', format_24h: false, show_seconds: true, position_y: .5, scale: 1, glow: .45, brightness: 1, opacity: 1, backdrop_opacity: 0}},
-        {key: 'composer:clock:quiet-analog', name: 'Quiet analog', params: {face: 'analog', palette: 'mono', format_24h: false, show_seconds: false, position_y: .32, scale: 1, glow: .18, brightness: .72, opacity: .88, backdrop_opacity: 0}},
-        {key: 'composer:clock:high-contrast', name: 'High contrast 24h', params: {face: 'digital', palette: 'ice', format_24h: true, show_seconds: false, position_y: .5, scale: 2, glow: .28, brightness: 1, opacity: 1, backdrop_opacity: .58, backdrop_padding: 2}},
-    ]);
     const state = {
         bootstrap: null,
         component: null,
@@ -180,6 +175,12 @@
         library: {
             favorites: [],
             recents: [],
+        },
+        savedRecords: {
+            scenes: [],
+            selected: '',
+            reopened: '',
+            loading: false,
         },
     };
     let previewInteractions = null;
@@ -1819,6 +1820,7 @@
                 }
             }
             setServerOnline(payload.online === true, {quiet});
+            if (payload.online === true) await refreshSavedRecords({quiet: true});
         } catch (_error) {
             state.serverBootstrap = null;
             state.serverCatalogCompatible = false;
@@ -2198,6 +2200,227 @@
             empty.textContent = 'No curated presets for this renderer.';
             host.appendChild(empty);
         }
+        renderSavedRecords();
+    }
+
+    function savedRecordValue(kind, componentKey, presetId) {
+        return [kind, encodeURIComponent(componentKey || ''), encodeURIComponent(presetId || '')].join(':');
+    }
+
+    function savedRecordFromValue(value = state.savedRecords.selected) {
+        const [kind, componentKey, presetId] = String(value || '').split(':');
+        if (!kind || !presetId) return null;
+        return {
+            kind,
+            componentKey: decodeURIComponent(componentKey || ''),
+            presetId: decodeURIComponent(presetId),
+        };
+    }
+
+    function savedComponentRecords() {
+        if (!state.component) return [];
+        return (state.component.presets || []).map((preset, index) => ({
+            kind: 'component',
+            componentKey: state.component.key,
+            presetId: String(preset.preset_id || presetIdentity(preset, index)),
+            name: preset.name || humanize(presetIdentity(preset, index)),
+            ownership: preset.ownership || 'built_in',
+        }));
+    }
+
+    function allSavedRecords() {
+        return [
+            ...savedComponentRecords(),
+            ...state.savedRecords.scenes.map((preset) => ({
+                kind: 'scene',
+                componentKey: '',
+                presetId: String(preset.preset_id || ''),
+                name: preset.name || humanize(preset.preset_id),
+                ownership: 'user',
+            })),
+        ].filter((record) => record.presetId);
+    }
+
+    function renderSavedRecords() {
+        const select = $('savedRecordSelect');
+        if (!select) return;
+        const previous = state.savedRecords.selected || select.value;
+        const records = allSavedRecords();
+        select.replaceChildren(new Option('Choose a saved record…', ''));
+        records.forEach((record) => {
+            const value = savedRecordValue(record.kind, record.componentKey, record.presetId);
+            const ownership = record.kind === 'scene'
+                ? 'Scene'
+                : record.ownership === 'user' ? 'User look' : record.ownership === 'legacy' ? 'Legacy read-only look' : 'Built-in look';
+            select.appendChild(new Option(`${record.name} · ${ownership}`, value));
+        });
+        const selected = records.some((record) => savedRecordValue(record.kind, record.componentKey, record.presetId) === previous)
+            ? previous : '';
+        select.value = selected;
+        state.savedRecords.selected = selected;
+        select.disabled = state.savedRecords.loading || !records.length;
+        const selectedRecord = savedRecordFromValue(selected);
+        const componentRecord = selectedRecord?.kind === 'component'
+            ? records.find((record) => record.kind === 'component' && record.componentKey === selectedRecord.componentKey && record.presetId === selectedRecord.presetId)
+            : null;
+        const editableRecord = Boolean(selectedRecord && (!componentRecord || componentRecord.ownership === 'user'));
+        const canEdit = editableRecord && state.savedRecords.reopened === selected && !state.savedRecords.loading && !state.busyAction;
+        $('reopenSavedRecordButton').disabled = !selectedRecord || state.savedRecords.loading || Boolean(state.busyAction);
+        $('updateSavedRecordButton').disabled = !canEdit;
+        $('deleteSavedRecordButton').disabled = !canEdit;
+        $('savedRecordStatus').textContent = state.savedRecords.loading
+            ? 'Loading saved records without changing the wall…'
+            : selectedRecord
+                ? componentRecord?.ownership === 'user'
+                    ? state.savedRecords.reopened === selected
+                        ? 'User look reopened as this draft: update or delete the provider-qualified record.'
+                        : 'Reopen this user look before updating or deleting it.'
+                    : componentRecord
+                        ? 'Built-in and legacy looks can be reopened but cannot be changed or deleted.'
+                        : state.savedRecords.reopened === selected
+                            ? 'Scene record reopened as this draft: update or delete it.'
+                            : 'Reopen this scene before updating or deleting it.'
+                : 'Saved records load without changing the wall.';
+    }
+
+    async function refreshSavedRecords({quiet = true} = {}) {
+        if (!state.serverOnline || state.savedRecords.loading) {
+            renderSavedRecords();
+            return;
+        }
+        state.savedRecords.loading = true;
+        renderSavedRecords();
+        try {
+            const payload = await requestJson('/api/v1/scene-presets');
+            state.savedRecords.scenes = Array.isArray(payload.presets) ? payload.presets : [];
+        } catch (error) {
+            if (!quiet) toast(`Saved scene list could not be refreshed: ${error.message}`, 'error');
+        } finally {
+            state.savedRecords.loading = false;
+            renderSavedRecords();
+        }
+    }
+
+    async function reopenSavedRecord() {
+        const record = savedRecordFromValue();
+        if (!record || state.busyAction) return;
+        try {
+            if (record.kind === 'scene') {
+                const payload = await requestJson(`/api/v1/scene-presets/${encodeURIComponent(record.presetId)}`);
+                await applyImportedDraft(locallyValidatedImport(payload));
+            } else if (record.kind === 'component') {
+                const component = state.bootstrap.components.find((item) => item.key === record.componentKey);
+                if (!component) throw new Error('This saved look no longer identifies a catalogued component.');
+                const payload = await requestJson(
+                    `/api/v1/components/${encodeURIComponent(component.plugin_id)}/presets/${encodeURIComponent(record.presetId)}?provider=${encodeURIComponent(component.provider)}`
+                );
+                const preset = payload?.preset;
+                if (!preset || preset.component_key !== component.key || preset.provider !== component.provider) {
+                    throw new Error('The server returned a preset for a different provider-qualified component.');
+                }
+                const recordIndex = component.presets.findIndex((item) => item.preset_id === preset.preset_id);
+                const catalogRecord = {
+                    ...clone(preset),
+                    key: `${component.key}:${preset.preset_id}`,
+                    preset_fingerprint: preset.preset_fingerprint,
+                };
+                if (recordIndex >= 0) component.presets.splice(recordIndex, 1, catalogRecord);
+                else component.presets.push(catalogRecord);
+                await selectComponent(component, {force: true, focusEditor: true});
+                applyPreset(catalogRecord, Math.max(0, component.presets.indexOf(catalogRecord)));
+            } else {
+                throw new Error('The selected saved record is invalid.');
+            }
+            state.savedRecords.reopened = state.savedRecords.selected;
+            renderSavedRecords();
+            $('serverActionStatus').textContent = 'Saved record reopened as a local draft. Run Check before reviewed activation.';
+            toast('Saved record reopened as a draft; the wall was not changed.', 'success');
+        } catch (error) {
+            if (error.code === 'offline') setServerOnline(false);
+            $('savedRecordStatus').textContent = `Could not reopen record: ${error.message}`;
+            toast(error.message, 'error');
+        }
+    }
+
+    async function updateSavedRecord() {
+        const record = savedRecordFromValue();
+        if (!record) return;
+        if (state.savedRecords.reopened !== state.savedRecords.selected) {
+            $('savedRecordStatus').textContent = 'Reopen the selected record before updating it.';
+            return;
+        }
+        if (presetIdForName($('presetName').value.trim()) !== record.presetId) {
+            $('savedRecordStatus').textContent = 'Keep this record name to update it; use Save to create a new record.';
+            return;
+        }
+        if (record.kind === 'component') {
+            await saveToLibrary({overwrite: true});
+            await refreshSavedRecords();
+            return;
+        }
+        try {
+            const result = await requestJson('/api/v1/scene-presets', {
+                method: 'POST',
+                body: JSON.stringify({
+                    name: $('presetName').value.trim(),
+                    description: 'Versioned browser scene authored and previewed locally; not physically observed.',
+                    scene: buildScene(state.lastSavedPreset),
+                }),
+            });
+            state.savedRecords.selected = savedRecordValue('scene', '', result.preset.preset_id);
+            $('serverActionStatus').textContent = 'Scene draft updated. The wall was not changed.';
+            await refreshSavedRecords();
+            toast('Scene draft updated in the library.', 'success');
+        } catch (error) {
+            $('savedRecordStatus').textContent = `Scene update failed: ${error.message}`;
+            toast(error.message, 'error');
+        }
+    }
+
+    async function deleteSavedRecord() {
+        const record = savedRecordFromValue();
+        if (!record || state.busyAction) return;
+        try {
+            if (record.kind === 'scene') {
+                await requestJson(`/api/v1/scene-presets/${encodeURIComponent(record.presetId)}`, {method: 'DELETE'});
+            } else if (record.kind === 'component') {
+                const component = state.bootstrap.components.find((item) => item.key === record.componentKey);
+                if (!component) throw new Error('This saved look no longer identifies a catalogued component.');
+                const recordUrl = `/api/v1/components/${encodeURIComponent(component.plugin_id)}/presets/${encodeURIComponent(record.presetId)}?provider=${encodeURIComponent(component.provider)}`;
+                await requestJson(
+                    recordUrl,
+                    {method: 'DELETE'},
+                );
+                component.presets = component.presets.filter((item) => item.preset_id !== record.presetId);
+                if (state.selectedPreset === `${component.key}:${record.presetId}`) state.selectedPreset = null;
+                if (
+                    state.lastSavedPreset?.preset_id === record.presetId
+                    && (state.lastSavedPreset.component_key || component.key) === component.key
+                ) state.lastSavedPreset = null;
+                try {
+                    const restored = await requestJson(recordUrl);
+                    const preset = restored?.preset;
+                    if (preset?.ownership !== 'user') {
+                        component.presets.push({
+                            ...clone(preset),
+                            key: `${component.key}:${preset.preset_id}`,
+                        });
+                        component.presets.sort((left, right) => String(left.name || left.preset_id || '').localeCompare(String(right.name || right.preset_id || '')));
+                    }
+                } catch (error) {
+                    if (error.status !== 404) throw error;
+                }
+            }
+            state.savedRecords.selected = '';
+            state.savedRecords.reopened = '';
+            renderPresets();
+            await refreshSavedRecords();
+            $('serverActionStatus').textContent = 'Saved record deleted. The wall was not changed.';
+            toast('Saved record deleted from the library.', 'success');
+        } catch (error) {
+            $('savedRecordStatus').textContent = `Delete failed: ${error.message}`;
+            toast(error.message, 'error');
+        }
     }
 
     function defaultParams(component) {
@@ -2317,7 +2540,7 @@
         custom.value = '';
         custom.textContent = 'Custom';
         presetSelect.appendChild(custom);
-        [...(clock?.presets || []), ...CLOCK_STARTING_POINTS].forEach((preset, index) => {
+        (clock?.presets || []).forEach((preset, index) => {
             const option = document.createElement('option');
             option.value = presetIdentity(preset, index);
             option.textContent = preset.name || humanize(option.value);
@@ -2364,7 +2587,7 @@
     function applyClockPreset(presetId) {
         if (!presetId) return;
         const clock = clockComponent();
-        const presets = [...(clock?.presets || []), ...CLOCK_STARTING_POINTS];
+        const presets = clock?.presets || [];
         const preset = presets.find((item, index) => presetIdentity(item, index) === presetId);
         if (!preset) return;
         state.layers.clockParams = enforceInstallationParams(clock, {...defaultParams(clock), ...presetParams(preset)});
@@ -3708,6 +3931,7 @@
                 left.name || left.preset_id || ''
             ).localeCompare(String(right.name || right.preset_id || '')));
             state.selectedPreset = record.key;
+            state.savedRecords.selected = savedRecordValue('component', state.component.key, record.preset_id);
             invalidateCheckerForPresetIdentityChange(previousPresetIdentity);
             renderPresets();
 
@@ -3723,6 +3947,7 @@
                         scene,
                     }),
                 });
+                await refreshSavedRecords();
                 $('serverActionStatus').textContent = 'Saved the component preset and exact scene revision to the server library. The physical wall was not changed.';
                 scheduleAutosave();
                 toast('Look and scene saved to the library.', 'success');
@@ -5093,6 +5318,14 @@
         $('exportButton').addEventListener('click', exportJson);
         $('exportPanelButton').addEventListener('click', exportJson);
         ['saveLibraryButton', 'saveLibraryPanelButton'].forEach((id) => $(id).addEventListener('click', () => saveToLibrary()));
+        $('savedRecordSelect').addEventListener('change', (event) => {
+            state.savedRecords.selected = event.target.value;
+            state.savedRecords.reopened = '';
+            renderSavedRecords();
+        });
+        $('reopenSavedRecordButton').addEventListener('click', () => { void reopenSavedRecord(); });
+        $('updateSavedRecordButton').addEventListener('click', () => { void updateSavedRecord(); });
+        $('deleteSavedRecordButton').addEventListener('click', () => { void deleteSavedRecord(); });
         ['activateButton', 'activatePanelButton', 'mobileActivateButton'].forEach((id) => $(id).addEventListener('click', reviewActivation));
         $('cancelActivationButton')?.addEventListener('click', cancelPendingActivation);
         $('rollbackActivationButton')?.addEventListener('click', rollbackActivation);
