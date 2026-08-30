@@ -46,7 +46,20 @@
     <aside class="pane library-pane mobile-view is-active" data-mobile-view="library" aria-labelledby="libraryHeading">
       <div class="pane-heading">
         <div><p class="eyebrow">Assets</p><h1 id="libraryHeading">Presets</h1></div>
+        <button class="quiet-button" id="toggleLibraryFavoriteButton" type="button" aria-pressed="false" disabled>Save favorite</button>
       </div>
+      <section class="preset-section" id="favoriteLibrarySection" aria-labelledby="favoriteLibraryHeading" hidden>
+        <div class="section-heading">
+          <div><h2 id="favoriteLibraryHeading">Favorites</h2><small>Saved on this device</small></div>
+        </div>
+        <div class="preset-list" id="favoriteList" role="list"></div>
+      </section>
+      <section class="preset-section" id="recentLibrarySection" aria-labelledby="recentLibraryHeading" hidden>
+        <div class="section-heading">
+          <div><h2 id="recentLibraryHeading">Recent</h2><small>Your latest local selections</small></div>
+        </div>
+        <div class="preset-list" id="recentList" role="list"></div>
+      </section>
       <section class="preset-section featured-starts" aria-labelledby="presetHeading">
         <div class="section-heading">
           <div><h2 id="presetHeading">Starting points</h2><small>For the selected renderer</small></div>

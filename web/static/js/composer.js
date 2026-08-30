@@ -5,6 +5,8 @@
     const ComposerState = window.LEDGridComposerState || {};
     const $ = (id) => document.getElementById(id);
     const STORAGE_PREFIX = 'ledgrid.browser-composer.v1';
+    const LIBRARY_FAVORITES_STORAGE_KEY = 'ledgrid.browser-composer.library.favorites.v1';
+    const LIBRARY_RECENTS_STORAGE_KEY = 'ledgrid.browser-composer.library.recents.v1';
     const BUNDLED_BOOTSTRAP_URL = '/static/generated/composer/bootstrap.v1.json';
     const SAMPLE_FRAMES = 48;
     const LIVE_EDIT_MIN_INTERVAL_MS = 40;
@@ -161,6 +163,10 @@
             coalescing: false,
             lastCanonicalUrl: null,
         },
+        library: {
+            favorites: [],
+            recents: [],
+        },
     };
 
     /**
@@ -293,6 +299,117 @@
         window.history?.replaceState?.({composer: true}, '', canonical);
         state.urlState.lastCanonicalUrl = canonical;
         toast(`Link could not be fully restored: ${message}`, 'error');
+    }
+
+    function librarySelectionFor(component = state.component, preset = state.selectedPreset) {
+        return ComposerState.normalizeLibrarySelection?.({
+            provider: component?.provider,
+            component: component?.plugin_id,
+            preset,
+        }) || null;
+    }
+
+    function readLocalLibraryEntries(key, {sort = false} = {}) {
+        try {
+            const entries = JSON.parse(localStorage.getItem(key) || '[]');
+            return ComposerState.uniqueLibrarySelections?.(entries, {sort}) || [];
+        } catch (_error) {
+            return [];
+        }
+    }
+
+    function initializeLocalLibrary() {
+        state.library.favorites = readLocalLibraryEntries(LIBRARY_FAVORITES_STORAGE_KEY, {sort: true});
+        state.library.recents = readLocalLibraryEntries(LIBRARY_RECENTS_STORAGE_KEY);
+    }
+
+    function persistLocalLibrary() {
+        try {
+            localStorage.setItem(LIBRARY_FAVORITES_STORAGE_KEY, JSON.stringify(state.library.favorites));
+            localStorage.setItem(LIBRARY_RECENTS_STORAGE_KEY, JSON.stringify(state.library.recents));
+        } catch (_error) {
+            // Discovery remains usable for this session if private storage is unavailable.
+        }
+    }
+
+    function describeLibrarySelection(selection) {
+        const resolved = ComposerState.resolveLibrarySelection?.(selection, state.bootstrap?.components || []);
+        if (!resolved) return {title: 'Unavailable selection', detail: 'This item is no longer in the catalog.'};
+        const component = resolved.component;
+        const preset = resolved.presetIndex == null ? null : component.presets?.[resolved.presetIndex];
+        return {
+            title: preset?.name || component.name || humanize(component.plugin_id),
+            detail: preset ? (component.name || humanize(component.plugin_id)) : `${humanize(component.provider)} · ${humanize(component.role)}`,
+        };
+    }
+
+    function renderSavedLibraryList(hostId, sectionId, selections, emptyCopy) {
+        const host = $(hostId);
+        const section = $(sectionId);
+        if (!host || !section) return;
+        host.replaceChildren();
+        section.hidden = !selections.length;
+        if (!selections.length) return;
+        selections.forEach((selection) => {
+            const item = describeLibrarySelection(selection);
+            const button = document.createElement('button');
+            button.type = 'button';
+            // Keep local discovery entries distinct from server-library preset
+            // controls; browser qualification and assistive technology can
+            // then address each library independently.
+            button.className = 'quiet-button library-saved-button';
+            button.setAttribute('aria-label', `Restore ${item.title}`);
+            const name = document.createElement('strong');
+            name.textContent = item.title;
+            const detail = document.createElement('small');
+            detail.textContent = item.detail || emptyCopy;
+            button.append(name, detail);
+            button.addEventListener('click', () => restoreLibrarySelection(selection));
+            host.appendChild(button);
+        });
+    }
+
+    function renderLocalLibrary() {
+        const selection = librarySelectionFor();
+        const favoriteButton = $('toggleLibraryFavoriteButton');
+        if (favoriteButton) {
+            const key = ComposerState.librarySelectionKey?.(selection);
+            const favorite = Boolean(key && state.library.favorites.some((item) => ComposerState.librarySelectionKey?.(item) === key));
+            favoriteButton.disabled = !selection;
+            favoriteButton.setAttribute('aria-pressed', String(favorite));
+            favoriteButton.textContent = favorite ? 'Remove favorite' : 'Save favorite';
+        }
+        renderSavedLibraryList('favoriteList', 'favoriteLibrarySection', state.library.favorites, 'Favorite');
+        renderSavedLibraryList('recentList', 'recentLibrarySection', state.library.recents, 'Recent selection');
+    }
+
+    function rememberLibrarySelection() {
+        const selection = librarySelectionFor();
+        if (!selection || !ComposerState.recordLibraryRecent) return;
+        state.library.recents = ComposerState.recordLibraryRecent(state.library.recents, selection);
+        persistLocalLibrary();
+        renderLocalLibrary();
+    }
+
+    function toggleCurrentLibraryFavorite() {
+        const selection = librarySelectionFor();
+        if (!selection || !ComposerState.toggleLibraryFavorite) return;
+        const before = state.library.favorites.length;
+        state.library.favorites = ComposerState.toggleLibraryFavorite(state.library.favorites, selection);
+        persistLocalLibrary();
+        renderLocalLibrary();
+        toast(state.library.favorites.length > before ? 'Saved as a local favorite.' : 'Removed local favorite.');
+    }
+
+    async function restoreLibrarySelection(selection) {
+        const resolved = ComposerState.resolveLibrarySelection?.(selection, state.bootstrap?.components || []);
+        if (!resolved || !componentCapability(resolved.component).previewable) {
+            toast('That saved selection is no longer available in this catalog.', 'error');
+            return;
+        }
+        await selectComponent(resolved.component, {focusEditor: true, skipLibraryRecent: true});
+        if (resolved.presetIndex != null) applyPreset(resolved.component.presets[resolved.presetIndex], resolved.presetIndex);
+        else rememberLibrarySelection();
     }
 
     function parsedComposerUrl() {
@@ -1554,10 +1671,12 @@
         });
         if (!response.ok) throw new Error(`Bundled catalog request failed (${response.status}).`);
         state.bootstrap = assertBootstrap(await response.json(), {requireLocalProfile: true});
+        initializeLocalLibrary();
         initializeInstallationProfileState();
         initializeGlobalSettings();
         configureCanvas();
         renderCatalog();
+        renderLocalLibrary();
         const lastKey = localStorage.getItem(`${STORAGE_PREFIX}.last-component`);
         const preferred = state.bootstrap.components.find((item) => item.key === lastKey && item.role === 'background' && componentCapability(item).previewable)
             || state.bootstrap.components.find((item) => item.role === 'background' && componentCapability(item).previewable);
@@ -1585,6 +1704,7 @@
                 historyMode: 'preserve',
                 urlMode: 'none',
                 deferRuntime: true,
+                skipLibraryRecent: true,
             });
             const requestedPreset = (component.presets || []).find((item, index) => (
                 presetIdentity(item, index) === (preset || draft.selectedPreset)
@@ -1613,6 +1733,7 @@
             await startRuntimes();
             scheduleAutosave();
             requestRender();
+            rememberLibrarySelection();
         } finally {
             state.urlState.applying = false;
         }
@@ -1979,6 +2100,7 @@
         resetChecker();
         updateComponentCopy();
         renderCatalog();
+        renderLocalLibrary();
         renderPresets();
         renderParameterControls();
         renderLayers();
@@ -1990,6 +2112,7 @@
         if (!options.deferRuntime) await startRuntimes();
         scheduleAutosave();
         requestRender();
+        if (!options.skipLibraryRecent) rememberLibrarySelection();
         const urlMode = options.urlMode ?? (hadHistory ? 'push' : 'replace');
         if (urlMode !== 'none') syncComposerUrl({mode: urlMode});
     }
@@ -2012,6 +2135,7 @@
         scheduleAutosave();
         if (window.matchMedia('(max-width: 760px)').matches) selectMobileView('edit');
         queueLiveEdit({immediate: true});
+        rememberLibrarySelection();
         toast(`Loaded ${$('presetName').value}.`);
     }
 
@@ -4478,6 +4602,7 @@
             if (state.query.trim()) $('animationCatalogDisclosure').open = true;
             renderCatalog();
         });
+        $('toggleLibraryFavoriteButton').addEventListener('click', toggleCurrentLibraryFavorite);
         document.querySelectorAll('[data-filter]').forEach((button) => button.addEventListener('click', () => {
             state.catalogFilter = button.dataset.filter;
             document.querySelectorAll('[data-filter]').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));

@@ -166,6 +166,56 @@ console.log(JSON.stringify({local, absent, empty}));
         self.assertIsNone(result["absent"])
         self.assertIsNone(result["empty"])
 
+    def test_local_library_favorites_are_provider_qualified_and_sorted(self) -> None:
+        result = _run_state_script("""
+const first = {provider: 'python', component: 'aurora', preset: 'night'};
+const collision = {provider: 'receiver_native', component: 'aurora', preset: 'night'};
+const favorites = state.toggleLibraryFavorite([collision, first, first], first);
+const added = state.toggleLibraryFavorite(favorites, {provider: 'python', component: 'aurora', preset: null});
+console.log(JSON.stringify({
+  favorites,
+  added,
+  firstKey: state.librarySelectionKey(first),
+  collisionKey: state.librarySelectionKey(collision),
+}));
+""")
+
+        self.assertEqual(result["favorites"], [
+            {"provider": "receiver_native", "component": "aurora", "preset": "night"},
+        ])
+        self.assertEqual(result["added"], [
+            {"provider": "python", "component": "aurora", "preset": None},
+            {"provider": "receiver_native", "component": "aurora", "preset": "night"},
+        ])
+        self.assertNotEqual(result["firstKey"], result["collisionKey"])
+
+    def test_local_library_recents_are_capped_and_replay_exact_catalog_identity(self) -> None:
+        result = _run_state_script("""
+const entries = Array.from({length: 14}, (_unused, index) => ({
+  provider: index % 2 ? 'python' : 'receiver_native', component: `item-${index}`, preset: index % 3 ? null : 'look',
+}));
+const recents = entries.reduce((current, entry) => state.recordLibraryRecent(current, entry), []);
+const repeated = state.recordLibraryRecent(recents, entries[4]);
+const components = [
+  {provider: 'python', plugin_id: 'same', role: 'background', presets: [{preset_id: 'warm'}]},
+  {provider: 'receiver_native', plugin_id: 'same', role: 'background', presets: [{preset_id: 'warm'}]},
+];
+const resolved = state.resolveLibrarySelection({provider: 'receiver_native', component: 'same', preset: 'warm'}, components);
+console.log(JSON.stringify({
+  limit: state.LIBRARY_RECENTS_LIMIT,
+  recents, repeated,
+  resolved: {provider: resolved.component.provider, plugin: resolved.component.plugin_id, presetIndex: resolved.presetIndex},
+}));
+""")
+
+        self.assertEqual(result["limit"], 12)
+        self.assertEqual(len(result["recents"]), 12)
+        self.assertEqual(len(result["repeated"]), 12)
+        self.assertEqual(result["repeated"][0]["component"], "item-4")
+        self.assertEqual(result["resolved"], {
+            "provider": "receiver_native", "plugin": "same", "presetIndex": 0,
+        })
+
     def test_activation_accepts_current_cautions_but_rejects_failures_and_stale_checks(self) -> None:
         result = _run_state_script("""
 const component = {key: 'host_python:solid', browser_runtime: {digest: 'runtime-1'}};
@@ -369,6 +419,22 @@ console.log(JSON.stringify({
         self.assertIn('id="cancelActivationButton"', html)
         self.assertIn('id="rollbackActivationButton"', html)
         self.assertLess(html.index("composer_state.js"), html.index("composer_runtime.js"))
+
+    def test_application_replays_saved_library_selection_with_semantic_urls_only(self) -> None:
+        source = COMPOSER_SOURCE.read_text(encoding="utf-8")
+
+        for marker in (
+            "LIBRARY_FAVORITES_STORAGE_KEY",
+            "LIBRARY_RECENTS_STORAGE_KEY",
+            "function rememberLibrarySelection()",
+            "function restoreLibrarySelection(selection)",
+            "skipLibraryRecent: true",
+            "toggleLibraryFavoriteButton",
+            "renderLocalLibrary()",
+        ):
+            self.assertIn(marker, source)
+        self.assertIn("syncComposerUrl({mode: urlMode})", source)
+        self.assertNotIn("fetch('/api/v1", source[source.index("function restoreLibrarySelection"):source.index("function parsedComposerUrl")])
 
 
 if __name__ == "__main__":

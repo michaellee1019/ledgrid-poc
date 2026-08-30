@@ -118,6 +118,85 @@
         };
     }
 
+    const LIBRARY_RECENTS_LIMIT = 12;
+    const LIBRARY_FAVORITES_LIMIT = 128;
+
+    /**
+     * A library entry is deliberately only a catalog identity.  It never
+     * contains authored parameters or wall state, so saving or replaying one
+     * is a local discovery action rather than a live-wall command.
+     */
+    function normalizeLibrarySelection(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+        const provider = typeof value.provider === 'string' ? value.provider.trim() : '';
+        const component = typeof (value.component ?? value.plugin_id) === 'string'
+            ? String(value.component ?? value.plugin_id).trim()
+            : '';
+        const presetValue = value.preset;
+        const preset = presetValue == null || presetValue === '' ? null
+            : (typeof presetValue === 'string' ? presetValue.trim() : '');
+        if (!provider || !component || (presetValue != null && presetValue !== '' && !preset)) return null;
+        if (provider.length > 120 || component.length > 240 || (preset && preset.length > 240)) return null;
+        return Object.freeze({provider, component, preset: preset || null});
+    }
+
+    function librarySelectionKey(value) {
+        const selection = normalizeLibrarySelection(value);
+        return selection ? JSON.stringify([selection.provider, selection.component, selection.preset || '']) : null;
+    }
+
+    function uniqueLibrarySelections(values, {limit = LIBRARY_RECENTS_LIMIT, sort = false} = {}) {
+        if (!Array.isArray(values) || !Number.isSafeInteger(limit) || limit < 1) return [];
+        const seen = new Set();
+        const entries = [];
+        values.forEach((value) => {
+            const selection = normalizeLibrarySelection(value);
+            const key = selection && librarySelectionKey(selection);
+            if (!key || seen.has(key) || entries.length >= limit) return;
+            seen.add(key);
+            entries.push(selection);
+        });
+        if (sort) entries.sort((left, right) => librarySelectionKey(left).localeCompare(librarySelectionKey(right)));
+        return entries;
+    }
+
+    function toggleLibraryFavorite(favorites, selection) {
+        const normalized = normalizeLibrarySelection(selection);
+        if (!normalized) return uniqueLibrarySelections(favorites, {limit: LIBRARY_FAVORITES_LIMIT, sort: true});
+        const key = librarySelectionKey(normalized);
+        const current = uniqueLibrarySelections(favorites, {limit: LIBRARY_FAVORITES_LIMIT, sort: false});
+        const exists = current.some((item) => librarySelectionKey(item) === key);
+        return uniqueLibrarySelections(
+            exists ? current.filter((item) => librarySelectionKey(item) !== key) : [...current, normalized],
+            {limit: LIBRARY_FAVORITES_LIMIT, sort: true},
+        );
+    }
+
+    function recordLibraryRecent(recents, selection) {
+        const normalized = normalizeLibrarySelection(selection);
+        if (!normalized) return uniqueLibrarySelections(recents, {limit: LIBRARY_RECENTS_LIMIT});
+        const key = librarySelectionKey(normalized);
+        return uniqueLibrarySelections(
+            [normalized, ...uniqueLibrarySelections(recents, {limit: LIBRARY_RECENTS_LIMIT}).filter((item) => librarySelectionKey(item) !== key)],
+            {limit: LIBRARY_RECENTS_LIMIT},
+        );
+    }
+
+    function resolveLibrarySelection(selection, components) {
+        const normalized = normalizeLibrarySelection(selection);
+        if (!normalized || !Array.isArray(components)) return null;
+        const component = components.find((item) => (
+            item?.provider === normalized.provider
+            && item?.plugin_id === normalized.component
+            && item?.role === 'background'
+        ));
+        if (!component) return null;
+        const presetIndex = normalized.preset == null ? null : (component.presets || []).findIndex((item, index) => (
+            String(item?.key || item?.preset_id || item?.id || `preset-${index}`) === normalized.preset
+        ));
+        return Object.freeze({component, presetIndex: presetIndex == null || presetIndex < 0 ? null : presetIndex});
+    }
+
     function capability(component) {
         const declared = component?.browser_capabilities || component?.activation_capability || component?.capability || {};
         const previewable = declared.previewable ?? Boolean(component?.browser_runtime?.supported);
@@ -261,11 +340,19 @@
         createWallReconciliation,
         formatNumber,
         localInstallationProfile,
+        LIBRARY_FAVORITES_LIMIT,
+        LIBRARY_RECENTS_LIMIT,
+        librarySelectionKey,
         normalizeNumber,
+        normalizeLibrarySelection,
         orderedMetricStats,
         runtimeDigest,
+        recordLibraryRecent,
         reconcileWallObservation,
+        resolveLibrarySelection,
         sameCheckBinding,
         stableJson,
+        toggleLibraryFavorite,
+        uniqueLibrarySelections,
     });
 })(typeof window === 'undefined' ? globalThis : window);
