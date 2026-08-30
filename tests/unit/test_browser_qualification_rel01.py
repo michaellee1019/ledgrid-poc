@@ -29,11 +29,13 @@ from tools.browser_qualification.fixture_server import (
 )
 from tools.browser_qualification.source_identity import fixture_release_id
 from tools.browser_qualification.run import create_run_directory, write_index
+from tools.composer_asset_publication import read_service_worker_config
 
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = ROOT / "tools" / "browser_qualification" / "rel01_manifest.json"
 SERVICE_WORKER_PATH = ROOT / "web" / "static" / "js" / "composer_service_worker.js"
+SERVICE_WORKER_CONFIG_PATH = ROOT / "web" / "static" / "generated" / "composer" / "service_worker_config.v1.js"
 NOW = "2026-08-28T01:00:00.000Z"
 LATER = "2026-08-28T01:01:00.000Z"
 
@@ -110,6 +112,7 @@ def _engine_result(engine: str, manifest: dict) -> dict:
 class BrowserQualificationRel01Tests(unittest.TestCase):
     def setUp(self) -> None:
         self.manifest = load_manifest(MANIFEST_PATH)
+        self.service_worker_config = read_service_worker_config(SERVICE_WORKER_CONFIG_PATH)
         self.results = {
             engine: _engine_result(engine, self.manifest)
             for engine in self.manifest["required_engines"]
@@ -148,8 +151,8 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
         self.assertEqual(
             self.manifest["service_worker_upgrade"],
             {
-                "previous_cache": "ledgrid-composer-shell-v23",
-                "current_cache": "ledgrid-composer-shell-v24",
+                "previous_cache": "ledgrid-composer-shell-" + str(self.service_worker_config["previousCacheVersion"]),
+                "current_cache": "ledgrid-composer-shell-" + str(self.service_worker_config["cacheVersion"]),
             },
         )
         self.assertEqual(
@@ -294,16 +297,14 @@ class BrowserQualificationRel01Tests(unittest.TestCase):
     def test_manifest_cache_upgrade_tracks_composer_service_worker(self) -> None:
         worker = SERVICE_WORKER_PATH.read_text(encoding="utf-8")
         prefix = re.search(r"const CACHE_PREFIX = '([^']+)';", worker)
-        previous = re.search(r"const PREVIOUS_CACHE_VERSION = '([^']+)';", worker)
-        current = re.search(r"const CACHE_VERSION = '([^']+)';", worker)
         self.assertIsNotNone(prefix)
-        self.assertIsNotNone(previous)
-        self.assertIsNotNone(current)
+        self.assertIn("const PREVIOUS_CACHE_VERSION = ASSET_CONFIG.previousCacheVersion", worker)
+        self.assertIn("const CACHE_VERSION = ASSET_CONFIG.cacheVersion", worker)
         self.assertEqual(
             self.manifest["service_worker_upgrade"],
             {
-                "previous_cache": f"{prefix.group(1)}{previous.group(1)}",
-                "current_cache": f"{prefix.group(1)}{current.group(1)}",
+                "previous_cache": f"{prefix.group(1)}{self.service_worker_config['previousCacheVersion']}",
+                "current_cache": f"{prefix.group(1)}{self.service_worker_config['cacheVersion']}",
             },
         )
 

@@ -138,10 +138,7 @@ fetch-presets: fetch-wall-data
 
 # Rebuild the deterministic browser runtimes and their digest-pinned manifest.
 browser-composer-assets:
-	{{python_env}} python tools/build_browser_python_bundle.py
-	python3 tools/build_browser_native.py --check
-	{{python_env}} python tools/build_browser_composer_bootstrap.py
-	{{python_env}} python tools/build_browser_offline_manifest.py
+	{{python_env}} python tools/build_browser_composer_assets.py
 
 # Install the exact browser runner and engines committed beside the qualification.
 browser-qualification-setup:

@@ -7,68 +7,46 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 if __package__:
     from tools.build_browser_python_bundle import PYODIDE_VERSION
+    from tools.composer_asset_publication import all_local_assets, read_service_worker_config
 else:  # Direct script execution puts tools/ rather than the repository on sys.path.
     from build_browser_python_bundle import PYODIDE_VERSION
+    from composer_asset_publication import all_local_assets, read_service_worker_config
 
 
-PREVIOUS_CACHE_VERSION = "v25"
-CACHE_VERSION = "v26"
 DEFAULT_OUTPUT = Path("web/static/generated/composer/offline_assets.json")
-LOCAL_ASSETS = {
-    "/composer-service-worker.js": Path("web/static/js/composer_service_worker.js"),
-    "/static/composer.webmanifest": Path("web/static/composer.webmanifest"),
-    "/static/css/composer.css": Path("web/static/css/composer.css"),
-    "/static/generated/composer/aurora_curtains_native.wasm": Path(
-        "web/static/generated/composer/aurora_curtains_native.wasm"
-    ),
-    "/static/generated/composer/compiled_rainbow.wasm": Path(
-        "web/static/generated/composer/compiled_rainbow.wasm"
-    ),
-    "/static/generated/composer/bootstrap.v1.json": Path(
-        "web/static/generated/composer/bootstrap.v1.json"
-    ),
-    (
-        "/static/generated/composer/installation_profile_"
-        "ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin"
-    ): Path(
-        "web/static/generated/composer/installation_profile_"
-        "ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin"
-    ),
-    "/static/generated/composer/ledgrid_python_runtime.zip": Path(
-        "web/static/generated/composer/ledgrid_python_runtime.zip"
-    ),
-    "/static/icons/composer-180.png": Path("web/static/icons/composer-180.png"),
-    "/static/icons/composer-512.png": Path("web/static/icons/composer-512.png"),
-    "/static/icons/composer.svg": Path("web/static/icons/composer.svg"),
-    "/composer-app.js": Path("web/static/js/composer.js"),
-    "/static/js/composer_compositor.js": Path(
-        "web/static/js/composer_compositor.js"
-    ),
-    "/static/js/composer_interactions.js": Path(
-        "web/static/js/composer_interactions.js"
-    ),
-    "/static/js/composer-operations.js": Path(
-        "web/static/js/composer-operations.js"
-    ),
-    "/static/js/composer_native_worker.js": Path(
-        "web/static/js/composer_native_worker.js"
-    ),
-    "/static/js/composer_python_worker.js": Path(
-        "web/static/js/composer_python_worker.js"
-    ),
-    "/static/js/composer_runtime.js": Path("web/static/js/composer_runtime.js"),
-    "/static/js/composer_sha256.js": Path("web/static/js/composer_sha256.js"),
-    "/static/js/composer_state.js": Path("web/static/js/composer_state.js"),
-}
+CONFIG_OUTPUT = Path("web/static/generated/composer/service_worker_config.v1.js")
 
 
-def build_manifest(repo_root: Path) -> dict[str, object]:
+def publication_inputs(repo_root: Path) -> tuple[Mapping[str, Path], str, str | None]:
+    """Load every publication identity from its generated source of truth."""
+    config = read_service_worker_config(repo_root / CONFIG_OUTPUT)
+    profile_url = str(config["bundledProfileUrl"])
+    profile_digest = profile_url.rsplit("_", 1)[1].removesuffix(".bin")
+    previous = config.get("previousCacheVersion")
+    if previous is not None and not isinstance(previous, str):
+        raise ValueError("Composer cache lineage must be a string or null")
+    return all_local_assets(profile_digest), str(config["cacheVersion"]), previous
+
+
+def build_manifest(
+    repo_root: Path,
+    *,
+    local_assets: Mapping[str, Path] | None = None,
+    cache_version: str | None = None,
+    previous_cache_version: str | None = None,
+) -> dict[str, object]:
+    if local_assets is None or cache_version is None:
+        configured_assets, configured_cache, configured_previous = publication_inputs(repo_root)
+        local_assets = local_assets or configured_assets
+        cache_version = cache_version or configured_cache
+        if previous_cache_version is None:
+            previous_cache_version = configured_previous
     assets = []
-    for url, relative_path in sorted(LOCAL_ASSETS.items()):
+    for url, relative_path in sorted(local_assets.items()):
         payload = (repo_root / relative_path).read_bytes()
         assets.append(
             {
@@ -80,8 +58,8 @@ def build_manifest(repo_root: Path) -> dict[str, object]:
     return {
         "schema": "ledgrid.composer-offline-assets",
         "schemaVersion": 1,
-        "cacheVersion": CACHE_VERSION,
-        "previousCacheVersion": PREVIOUS_CACHE_VERSION,
+        "cacheVersion": cache_version,
+        "previousCacheVersion": previous_cache_version,
         "localAssets": assets,
         "capturedAssets": ["/composer"],
         "pythonRuntime": {
@@ -99,10 +77,30 @@ def build_manifest(repo_root: Path) -> dict[str, object]:
     }
 
 
-def write_manifest(repo_root: Path, output: Path) -> bytes:
+def encoded_manifest(
+    repo_root: Path,
+    *,
+    local_assets: Mapping[str, Path] | None = None,
+    cache_version: str | None = None,
+    previous_cache_version: str | None = None,
+) -> bytes:
     payload = (
-        json.dumps(build_manifest(repo_root.resolve()), indent=2, sort_keys=True) + "\n"
+        json.dumps(
+            build_manifest(
+                repo_root.resolve(),
+                local_assets=local_assets,
+                cache_version=cache_version,
+                previous_cache_version=previous_cache_version,
+            ),
+            indent=2,
+            sort_keys=True,
+        ) + "\n"
     ).encode("utf-8")
+    return payload
+
+
+def write_manifest(repo_root: Path, output: Path) -> bytes:
+    payload = encoded_manifest(repo_root)
     resolved = output if output.is_absolute() else repo_root / output
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_bytes(payload)

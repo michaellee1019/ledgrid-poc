@@ -12,11 +12,8 @@ from animation.browser_preview.python.runtime import (
     BrowserPreviewRuntime,
     MAX_RUNTIME_INSTANCES,
 )
-from tools.build_browser_offline_manifest import (
-    CACHE_VERSION,
-    PREVIOUS_CACHE_VERSION,
-    build_manifest,
-)
+from tools.build_browser_offline_manifest import build_manifest
+from tools.composer_asset_publication import all_local_assets, read_service_worker_config
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,6 +22,9 @@ WORKER_JS = ROOT / "web/static/js/composer_python_worker.js"
 SERVICE_WORKER_JS = ROOT / "web/static/js/composer_service_worker.js"
 OFFLINE_MANIFEST = (
     ROOT / "web/static/generated/composer/offline_assets.json"
+)
+SERVICE_CONFIG = (
+    ROOT / "web/static/generated/composer/service_worker_config.v1.js"
 )
 
 
@@ -444,6 +444,7 @@ const localPaths = {
   '/static/generated/composer/compiled_rainbow.wasm': 'web/static/generated/composer/compiled_rainbow.wasm',
   '/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin': 'web/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin',
   '/static/generated/composer/ledgrid_python_runtime.zip': 'web/static/generated/composer/ledgrid_python_runtime.zip',
+  '/static/generated/composer/service_worker_config.v1.js': 'web/static/generated/composer/service_worker_config.v1.js',
   '/static/icons/composer-180.png': 'web/static/icons/composer-180.png',
   '/static/icons/composer-512.png': 'web/static/icons/composer-512.png',
   '/static/icons/composer.svg': 'web/static/icons/composer.svg',
@@ -542,6 +543,13 @@ function makeHarness(failUrl = null) {
     clients: {async claim() {}},
     async skipWaiting() {},
     addEventListener(name, handler) { events[name] = handler; },
+  };
+  context.importScripts = (url) => {
+    assert.strictEqual(url, '/static/generated/composer/service_worker_config.v1.js');
+    const configSource = fs.readFileSync(`${repoRoot}/web/static/generated/composer/service_worker_config.v1.js`, 'utf8');
+    const prefix = "self.LEDGRID_COMPOSER_ASSET_CONFIG = Object.freeze(";
+    const start = configSource.indexOf(prefix) + prefix.length;
+    context.self.LEDGRID_COMPOSER_ASSET_CONFIG = JSON.parse(configSource.slice(start, -3));
   };
   vm.runInNewContext(source, context);
   return {
@@ -677,11 +685,16 @@ async function message(harness, data) {
 
     def test_offline_manifest_is_reproducible_and_pins_every_local_digest(self) -> None:
         committed = json.loads(OFFLINE_MANIFEST.read_text(encoding="utf-8"))
-        self.assertEqual(committed, build_manifest(ROOT))
-        self.assertEqual(committed["cacheVersion"], CACHE_VERSION)
-        self.assertEqual(
-            committed["previousCacheVersion"], PREVIOUS_CACHE_VERSION
-        )
+        config = read_service_worker_config(SERVICE_CONFIG)
+        digest = str(config["bundledProfileUrl"]).rsplit("_", 1)[1][:-4]
+        self.assertEqual(committed, build_manifest(
+            ROOT,
+            local_assets=all_local_assets(digest),
+            cache_version=str(config["cacheVersion"]),
+            previous_cache_version=config.get("previousCacheVersion"),
+        ))
+        self.assertEqual(committed["cacheVersion"], config["cacheVersion"])
+        self.assertEqual(committed["previousCacheVersion"], config["previousCacheVersion"])
         self.assertFalse(committed["pythonRuntime"]["selfHosted"])
         self.assertEqual(
             committed["pythonRuntime"]["integrity"],
@@ -693,10 +706,9 @@ async function message(harness, data) {
 
     def test_service_worker_readiness_requires_verified_shell_catalog_and_python(self) -> None:
         source = SERVICE_WORKER_JS.read_text(encoding="utf-8")
-        self.assertIn(f"const CACHE_VERSION = '{CACHE_VERSION}'", source)
-        self.assertIn(
-            f"const PREVIOUS_CACHE_VERSION = '{PREVIOUS_CACHE_VERSION}'", source
-        )
+        self.assertIn("importScripts('/static/generated/composer/service_worker_config.v1.js')", source)
+        self.assertIn("const CACHE_VERSION = ASSET_CONFIG.cacheVersion", source)
+        self.assertIn("const PREVIOUS_CACHE_VERSION = ASSET_CONFIG.previousCacheVersion", source)
         self.assertIn("const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`", source)
         self.assertIn("const STAGING_CACHE_NAME = `${CACHE_NAME}-staging`", source)
         self.assertIn("installVersionedShell", source)

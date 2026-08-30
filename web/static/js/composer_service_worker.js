@@ -1,44 +1,26 @@
 'use strict';
 
+importScripts('/static/generated/composer/service_worker_config.v1.js');
+const ASSET_CONFIG = self.LEDGRID_COMPOSER_ASSET_CONFIG;
+if (!ASSET_CONFIG || ASSET_CONFIG.schema !== 'ledgrid.composer-service-worker-config') {
+    throw new Error('Composer service-worker asset configuration is unavailable.');
+}
 const CACHE_PREFIX = 'ledgrid-composer-shell-';
-const PREVIOUS_CACHE_VERSION = 'v25';
-const CACHE_VERSION = 'v26';
+const PREVIOUS_CACHE_VERSION = ASSET_CONFIG.previousCacheVersion;
+const CACHE_VERSION = ASSET_CONFIG.cacheVersion;
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 const STAGING_CACHE_NAME = `${CACHE_NAME}-staging`;
 const RUNTIME_CACHE_NAME = `${CACHE_NAME}-python-runtime`;
-const OFFLINE_MANIFEST_URL = '/static/generated/composer/offline_assets.json';
+const OFFLINE_MANIFEST_URL = ASSET_CONFIG.offlineManifestUrl;
 const OFFLINE_METADATA_URL = '/.ledgrid-composer/offline-metadata';
 const PROFILE_ARTIFACT_PATH = /^\/api\/v1\/installation-profiles\/([0-9a-f]{64})\/artifact$/;
-const BUNDLED_BOOTSTRAP_URL = '/static/generated/composer/bootstrap.v1.json';
-const BUNDLED_PROFILE_URL = '/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin';
+const BUNDLED_BOOTSTRAP_URL = ASSET_CONFIG.bundledBootstrapUrl;
+const BUNDLED_PROFILE_URL = ASSET_CONFIG.bundledProfileUrl;
 const BUNDLED_PROFILE_PATH = /^\/static\/generated\/composer\/installation_profile_([0-9a-f]{64})\.bin$/;
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_BASE_URL = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const REQUIRED_PYTHON_PACKAGES = Object.freeze(['numpy', 'pillow']);
-const SHELL_ASSETS = [
-    '/composer',
-    '/composer-service-worker.js',
-    '/static/css/composer.css',
-    '/static/js/composer_compositor.js',
-    '/static/js/composer_interactions.js',
-    '/static/js/composer-operations.js',
-    '/static/js/composer_state.js',
-    '/static/js/composer_runtime.js',
-    '/static/js/composer_sha256.js',
-    '/composer-app.js',
-    '/static/js/composer_native_worker.js',
-    '/static/js/composer_python_worker.js',
-    '/static/generated/composer/aurora_curtains_native.wasm',
-    '/static/generated/composer/compiled_rainbow.wasm',
-    '/static/generated/composer/bootstrap.v1.json',
-    '/static/generated/composer/installation_profile_ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a.bin',
-    '/static/generated/composer/ledgrid_python_runtime.zip',
-    '/static/generated/composer/offline_assets.json',
-    '/static/composer.webmanifest',
-    '/static/icons/composer-180.png',
-    '/static/icons/composer-512.png',
-    '/static/icons/composer.svg',
-];
+const SHELL_ASSETS = Object.freeze([...ASSET_CONFIG.shellAssets]);
 const SHELL_ASSET_SET = new Set(SHELL_ASSETS);
 const OBSERVED_SHELL_ASSETS = new Set(['/composer', OFFLINE_MANIFEST_URL]);
 let metadataUpdate = Promise.resolve();

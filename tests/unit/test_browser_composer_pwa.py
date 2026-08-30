@@ -15,6 +15,7 @@ from tools import render_browser_composer_contact_sheet as contact_sheet
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC = ROOT / "web" / "static"
+CONFIG = STATIC / "generated" / "composer" / "service_worker_config.v1.js"
 
 
 def _read(relative: str) -> str:
@@ -22,14 +23,12 @@ def _read(relative: str) -> str:
 
 
 def _service_worker_shell_assets(source: str) -> set[str]:
-    match = re.search(
-        r"const\s+SHELL_ASSETS\s*=\s*\[(?P<body>.*?)\];",
-        source,
-        flags=re.DOTALL,
-    )
-    if match is None:
-        raise AssertionError("service worker has no declarative shell asset list")
-    return set(re.findall(r"['\"](/[^'\"]+)['\"]", match.group("body")))
+    del source
+    prefix = "self.LEDGRID_COMPOSER_ASSET_CONFIG = Object.freeze("
+    payload = CONFIG.read_text(encoding="utf-8")
+    if not payload.startswith("'use strict';\n" + prefix):
+        raise AssertionError("service worker has no generated asset configuration")
+    return set(json.loads(payload[len("'use strict';\n" + prefix):-3])["shellAssets"])
 
 
 class _ComposerHTMLAudit(HTMLParser):
@@ -117,6 +116,7 @@ class BrowserComposerPWATests(unittest.TestCase):
             ),
             "/static/generated/composer/ledgrid_python_runtime.zip",
             "/static/generated/composer/offline_assets.json",
+            "/static/generated/composer/service_worker_config.v1.js",
             "/static/composer.webmanifest",
             "/static/icons/composer-180.png",
             "/static/icons/composer-512.png",
@@ -129,7 +129,8 @@ class BrowserComposerPWATests(unittest.TestCase):
                 (STATIC / asset.removeprefix("/static/")).is_file(),
                 f"precache asset does not exist: {asset}",
             )
-        self.assertRegex(self.worker, r"CACHE_VERSION\s*=\s*['\"]v\d+['\"]")
+        self.assertIn("importScripts('/static/generated/composer/service_worker_config.v1.js')", self.worker)
+        self.assertIn("const CACHE_VERSION = ASSET_CONFIG.cacheVersion", self.worker)
         self.assertIn(
             "CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`",
             self.worker,

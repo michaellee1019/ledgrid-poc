@@ -16,29 +16,22 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE
-from animation.core.feature_flags import AnimationPipelineFeatureFlags
-from animation.core.installation_profile import (
+from animation.core.defaults import DEFAULT_ANIMATION_SPEED_SCALE, DEFAULT_PLANT_AWARE  # noqa: E402
+from animation.core.feature_flags import AnimationPipelineFeatureFlags  # noqa: E402
+from animation.core.installation_profile import (  # noqa: E402
     compile_installation_profile,
     encode_installation_profile,
 )
-from animation.core.manager import AnimationManager, PreviewLEDController
-from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT
-from web.app import AnimationWebInterface
+from animation.core.manager import AnimationManager, PreviewLEDController  # noqa: E402
+from drivers.led_layout import DEFAULT_LEDS_PER_STRIP, DEFAULT_STRIP_COUNT  # noqa: E402
+from web.app import AnimationWebInterface  # noqa: E402
 
 
 ARTIFACT_VERSION = 1
 DEFAULT_BOOTSTRAP_OUTPUT = Path(
     "web/static/generated/composer/bootstrap.v1.json"
 )
-BUNDLED_PROFILE_DIGEST = (
-    "ce457a14efd131395507c449f35a7701ca78ddca059620dc3757806ef553ca6a"
-)
-DEFAULT_PROFILE_OUTPUT = Path(
-    "web/static/generated/composer/"
-    f"installation_profile_{BUNDLED_PROFILE_DIGEST}.bin"
-)
-BUNDLED_PROFILE_URL = "/static/generated/composer/" + DEFAULT_PROFILE_OUTPUT.name
+DEFAULT_PROFILE_OUTPUT = Path("web/static/generated/composer/installation_profile.bin")
 
 
 class _NoWallChannel:
@@ -54,15 +47,22 @@ class _NoWallChannel:
 def build_profile() -> tuple[bytes, str]:
     payload = encode_installation_profile(compile_installation_profile())
     digest = payload[68:100].hex()
-    if digest != BUNDLED_PROFILE_DIGEST:
-        raise RuntimeError(
-            "the bundled installation-profile identity changed; version the "
-            "Composer asset URL and service-worker generation before rebuilding"
-        )
     return payload, digest
 
 
-def build_bootstrap(repo_root: Path) -> dict[str, Any]:
+# Compatibility exports for callers; values are derived from the canonical
+# binary profile rather than carried as independently maintained literals.
+BUNDLED_PROFILE_DIGEST = build_profile()[1]
+BUNDLED_PROFILE_URL = (
+    "/static/generated/composer/installation_profile_"
+    + BUNDLED_PROFILE_DIGEST
+    + ".bin"
+)
+
+
+def build_bootstrap(
+    repo_root: Path, *, bundled_profile_url: str | None = None
+) -> dict[str, Any]:
     controller = PreviewLEDController(DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP)
     flags = AnimationPipelineFeatureFlags(
         receiver_local_background=True,
@@ -89,6 +89,9 @@ def build_bootstrap(repo_root: Path) -> dict[str, Any]:
         )
 
     _profile, profile_digest = build_profile()
+    profile_url = bundled_profile_url or (
+        "/static/generated/composer/installation_profile_" + profile_digest + ".bin"
+    )
     payload["generated_at"] = 0
     payload["artifact"] = {
         "kind": "bundled",
@@ -100,7 +103,7 @@ def build_bootstrap(repo_root: Path) -> dict[str, Any]:
         "authority": "bundled",
         "draft_url": None,
         "publish_url": None,
-        "artifact_url": BUNDLED_PROFILE_URL,
+        "artifact_url": profile_url,
     }
     actions = payload["capabilities"]["server_actions"]
     actions.update({
@@ -119,9 +122,15 @@ def build_bootstrap(repo_root: Path) -> dict[str, Any]:
     return payload
 
 
-def encoded_bootstrap(repo_root: Path) -> bytes:
+def encoded_bootstrap(
+    repo_root: Path, *, bundled_profile_url: str | None = None
+) -> bytes:
     return (
-        json.dumps(build_bootstrap(repo_root.resolve()), indent=2, sort_keys=True)
+        json.dumps(
+            build_bootstrap(repo_root.resolve(), bundled_profile_url=bundled_profile_url),
+            indent=2,
+            sort_keys=True,
+        )
         + "\n"
     ).encode("utf-8")
 
@@ -129,11 +138,14 @@ def encoded_bootstrap(repo_root: Path) -> bytes:
 def write_assets(
     repo_root: Path,
     bootstrap_output: Path = DEFAULT_BOOTSTRAP_OUTPUT,
-    profile_output: Path = DEFAULT_PROFILE_OUTPUT,
+    profile_output: Path | None = None,
 ) -> tuple[bytes, bytes]:
     root = repo_root.resolve()
-    bootstrap = encoded_bootstrap(root)
-    profile, _digest = build_profile()
+    profile, digest = build_profile()
+    if profile_output is None:
+        profile_output = Path("web/static/generated/composer/") / (
+            f"installation_profile_{digest}.bin"
+        )
     resolved_bootstrap = (
         bootstrap_output if bootstrap_output.is_absolute() else root / bootstrap_output
     )
@@ -142,6 +154,9 @@ def write_assets(
     )
     resolved_bootstrap.parent.mkdir(parents=True, exist_ok=True)
     resolved_profile.parent.mkdir(parents=True, exist_ok=True)
+    bootstrap = encoded_bootstrap(
+        root, bundled_profile_url="/static/generated/composer/" + resolved_profile.name
+    )
     resolved_bootstrap.write_bytes(bootstrap)
     resolved_profile.write_bytes(profile)
     return bootstrap, profile
@@ -153,7 +168,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--repo-root", type=Path, default=ROOT
     )
     parser.add_argument("--bootstrap-output", type=Path, default=DEFAULT_BOOTSTRAP_OUTPUT)
-    parser.add_argument("--profile-output", type=Path, default=DEFAULT_PROFILE_OUTPUT)
+    parser.add_argument("--profile-output", type=Path)
     return parser.parse_args(argv)
 
 
