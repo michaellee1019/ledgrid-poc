@@ -80,6 +80,12 @@ from animation.core.presentation_contracts import (
     list_vibe_profiles,
     resolve_vibe,
 )
+
+
+# A controller transaction must not wait indefinitely for a renderer that has
+# crashed or stalled between frames.  This is intentionally short because it
+# protects the fail-safe path, not normal presentation throughput.
+MAINTENANCE_PAUSE_ACK_TIMEOUT_SECONDS = 2.0
 from drivers.led_layout import DEFAULT_STRIP_COUNT, DEFAULT_LEDS_PER_STRIP
 from drivers.frame_codec import encode_frame_data, FRAME_ENCODING_NAME
 from ipc.scene_contract import SceneProviderPolicy
@@ -306,6 +312,8 @@ class AnimationManager:
         self._maintenance_pause_condition = threading.Condition(threading.RLock())
         self._maintenance_pause_requested = False
         self._maintenance_pause_acknowledged = False
+        self._maintenance_pending_presentation_lock = threading.Lock()
+        self._maintenance_pending_presentation = None
         self._presentation_state_lock = threading.RLock()
         self.animation_speed_scale = self._validate_tempo_scale(animation_speed_scale)
         self._resolved_vibe, self._vibe_diagnostic = self._resolve_initial_vibe(vibe)
@@ -1480,6 +1488,7 @@ class AnimationManager:
             self._run_generation = getattr(self, '_run_generation', 0) + 1
             self.is_running = True
             self.stop_event.clear()
+            self._maintenance_force_safe_idle = False
         self.frame_count = 0
         self.frames_presented = 0
         self.unchanged_frames_skipped = 0
@@ -4534,6 +4543,7 @@ class AnimationManager:
                         completed = pending_present
                         pending_present = None
                         send_duration, show_duration = completed.result()
+                        self._clear_maintenance_pending_presentation(completed)
                         if not self._run_owns_generation(run_generation):
                             break
 
@@ -4550,6 +4560,9 @@ class AnimationManager:
                                 dirty_ranges,
                                 use_partial,
                                 inline_show,
+                            )
+                            self._set_maintenance_pending_presentation(
+                                pending_present
                             )
                         except RuntimeError:
                             # ThreadPoolExecutor shuts down from atexit while a
@@ -4675,6 +4688,33 @@ class AnimationManager:
             self._maintenance_pause_acknowledged = False
         return condition
 
+    def _maintenance_pending_presentation_guard(self):
+        lock = getattr(self, "_maintenance_pending_presentation_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._maintenance_pending_presentation_lock = lock
+            self._maintenance_pending_presentation = None
+        return lock
+
+    def _set_maintenance_pending_presentation(self, pending) -> None:
+        with self._maintenance_pending_presentation_guard():
+            self._maintenance_pending_presentation = pending
+
+    def _clear_maintenance_pending_presentation(self, pending) -> None:
+        with self._maintenance_pending_presentation_guard():
+            if getattr(self, "_maintenance_pending_presentation", None) is pending:
+                self._maintenance_pending_presentation = None
+
+    def _drain_maintenance_pending_presentation(self) -> None:
+        """Resolve the globally tracked I/O future before a capture or idle."""
+        with self._maintenance_pending_presentation_guard():
+            pending = getattr(self, "_maintenance_pending_presentation", None)
+        if pending is not None:
+            try:
+                pending.result()
+            finally:
+                self._clear_maintenance_pending_presentation(pending)
+
     def _request_maintenance_pause(self) -> None:
         """Ask the renderer to drain and park before a capture begins."""
         condition = self._maintenance_pause_guard()
@@ -4688,8 +4728,30 @@ class AnimationManager:
                 self._maintenance_pause_acknowledged = True
                 condition.notify_all()
                 return
+            deadline = time.monotonic() + MAINTENANCE_PAUSE_ACK_TIMEOUT_SECONDS
             while not self._maintenance_pause_acknowledged:
-                condition.wait()
+                if not thread.is_alive():
+                    # A dead renderer cannot generate another frame.  Any
+                    # still-running presentation is drained when the caller
+                    # takes the presentation I/O lock before capture.
+                    self._maintenance_pause_acknowledged = True
+                    condition.notify_all()
+                    return
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._revoke_maintenance_render_ownership()
+                    raise RuntimeError("maintenance renderer pause acknowledgement timed out")
+                # Poll liveness in addition to condition notifications: a
+                # render thread can die without notifying this condition.
+                condition.wait(min(remaining, 0.05))
+
+    def _revoke_maintenance_render_ownership(self) -> None:
+        """Prevent a late renderer from overwriting a maintenance safe idle."""
+        with self._run_state_guard():
+            self._run_generation = getattr(self, "_run_generation", 0) + 1
+            self.is_running = False
+            self.stop_event.set()
+            self._maintenance_force_safe_idle = True
 
     def _release_maintenance_pause(self) -> None:
         condition = self._maintenance_pause_guard()
@@ -4709,6 +4771,7 @@ class AnimationManager:
             # The transaction has not acquired the I/O/lease lock yet, so an
             # already submitted frame can complete here without deadlocking.
             pending_present.result()
+            self._clear_maintenance_pending_presentation(pending_present)
             pending_present = None
         with condition:
             self._maintenance_pause_acknowledged = True
@@ -4737,6 +4800,7 @@ class AnimationManager:
         with self.frame_data_lock:
             self.current_frame_data = list(black)
         self.is_running = False
+        self._maintenance_force_safe_idle = True
         # This is intentionally not an untrusted diagnostic frame: it is the
         # manager's fail-safe output when the trusted receipt path itself has
         # become unavailable.
@@ -4768,6 +4832,11 @@ class AnimationManager:
             try:
                 pause_requested = True
                 self._request_maintenance_pause()
+                # A renderer can die after its liveness check but before it
+                # reaches the boundary.  The global future still names its
+                # submitted controller I/O, so drain it before acquiring the
+                # lease and capturing the canonical frame.
+                self._drain_maintenance_pending_presentation()
                 with self._maintenance_guard():
                     with self._presentation_io_guard():
                         capture = self._maintenance_capture()
@@ -4797,7 +4866,11 @@ class AnimationManager:
                     return {"receipt": receipt, "restore_receipt": restore_receipt}
             except BaseException as exc:
                 try:
-                    with self._presentation_io_guard():
+                    # The lease makes a pending normal presentation drain
+                    # before black is output; force-safe-idle makes any late
+                    # submission a no-op after this point.
+                    self._drain_maintenance_pending_presentation()
+                    with self._maintenance_guard(), self._presentation_io_guard():
                         self._maintenance_safe_idle()
                 except BaseException as idle_exc:
                     raise MaintenanceRunError(
@@ -4826,19 +4899,22 @@ class AnimationManager:
 
     def _present_frame(self, frame, dirty_ranges, use_partial, inline_show):
         """Present one frame on the dedicated I/O worker and return timings."""
-        with self._maintenance_guard(), self._presentation_io_guard():
-            send_start = time.perf_counter()
-            if use_partial:
-                self.controller.set_frame(frame, dirty_ranges=dirty_ranges)
-            else:
-                self.controller.set_all_pixels(frame)
-            send_duration = time.perf_counter() - send_start
+        with self._maintenance_guard():
+            if getattr(self, "_maintenance_force_safe_idle", False):
+                return 0.0, 0.0
+            with self._presentation_io_guard():
+                send_start = time.perf_counter()
+                if use_partial:
+                    self.controller.set_frame(frame, dirty_ranges=dirty_ranges)
+                else:
+                    self.controller.set_all_pixels(frame)
+                send_duration = time.perf_counter() - send_start
 
-            show_duration = 0.0
-            if not inline_show and hasattr(self.controller, "show"):
-                show_start = time.perf_counter()
-                self.controller.show()
-                show_duration = time.perf_counter() - show_start
+                show_duration = 0.0
+                if not inline_show and hasattr(self.controller, "show"):
+                    show_start = time.perf_counter()
+                    self.controller.show()
+                    show_duration = time.perf_counter() - show_start
         return send_duration, show_duration
 
     def set_target_fps(self, target_fps: int) -> int:

@@ -7,6 +7,7 @@ import threading
 import unittest
 from concurrent.futures import Future
 from pathlib import Path
+from unittest import mock
 
 from animation.core.manager import AnimationManager
 from ipc.control_channel import FileControlChannel
@@ -103,6 +104,10 @@ def _manager(controller):
     manager._maintenance_pause_requested = False
     manager._maintenance_pause_acknowledged = False
     manager.animation_thread = None
+    manager._run_state_lock = threading.RLock()
+    manager._run_generation = 7
+    manager.stop_event = threading.Event()
+    manager._maintenance_force_safe_idle = False
     manager._presentation_io_lock = threading.Lock()
     manager._scene_mode = True
     manager._active_scene_state = object()
@@ -283,6 +288,71 @@ class MaintenanceLeaseTests(unittest.TestCase):
                 MaintenanceRequest.from_mapping(_command()), authority_digest=AUTHORITY,
                 sleep=lambda _seconds: None,
             )
+        self.assertEqual(len(controller.idle), 1)
+
+    def test_dead_renderer_is_treated_as_drained_without_waiting_for_deadline(self):
+        controller = _Controller()
+        manager = _manager(controller)
+        dead_renderer = threading.Thread(target=lambda: None)
+        dead_renderer.start()
+        dead_renderer.join(1)
+        manager.animation_thread = dead_renderer
+        manager.run_maintenance_transaction(
+            MaintenanceRequest.from_mapping(_command()), authority_digest=AUTHORITY,
+            sleep=lambda _seconds: None,
+        )
+        self.assertEqual(len(controller.calls), 2)
+        self.assertEqual(controller.idle, [])
+
+    def test_dead_renderer_drains_its_tracked_presentation_before_capture(self):
+        controller = _Controller()
+        manager = _manager(controller)
+        pending = Future()
+        manager._set_maintenance_pending_presentation(pending)
+        dead_renderer = threading.Thread(target=lambda: None)
+        dead_renderer.start()
+        dead_renderer.join(1)
+        manager.animation_thread = dead_renderer
+        transaction = threading.Thread(
+            target=lambda: manager.run_maintenance_transaction(
+                MaintenanceRequest.from_mapping(_command()), authority_digest=AUTHORITY,
+                sleep=lambda _seconds: None,
+            )
+        )
+        transaction.start()
+        self.assertTrue(transaction.is_alive())
+        self.assertEqual(controller.calls, [])
+        pending.set_result((0.0, 0.0))
+        transaction.join(1)
+        self.assertFalse(transaction.is_alive())
+        self.assertEqual(len(controller.calls), 2)
+
+    def test_stalled_renderer_times_out_revokes_ownership_and_enters_safe_idle(self):
+        controller = _Controller()
+        manager = _manager(controller)
+        stalled = threading.Event()
+        release = threading.Event()
+
+        def stalled_renderer():
+            stalled.set()
+            release.wait(1)
+
+        renderer = threading.Thread(target=stalled_renderer)
+        renderer.start()
+        self.assertTrue(stalled.wait(1))
+        manager.animation_thread = renderer
+        with mock.patch(
+            "animation.core.manager.MAINTENANCE_PAUSE_ACK_TIMEOUT_SECONDS", 0.05
+        ), self.assertRaisesRegex(RuntimeError, "safe idle"):
+            manager.run_maintenance_transaction(
+                MaintenanceRequest.from_mapping(_command()), authority_digest=AUTHORITY,
+                sleep=lambda _seconds: None,
+            )
+        release.set()
+        renderer.join(1)
+        self.assertTrue(manager.stop_event.is_set())
+        self.assertFalse(manager.is_running)
+        self.assertGreater(manager._run_generation, 7)
         self.assertEqual(len(controller.idle), 1)
 
 
