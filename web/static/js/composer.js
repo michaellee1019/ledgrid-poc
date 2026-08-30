@@ -1755,10 +1755,10 @@
         if (options.historyMode === 'preserve') updateHistoryButtons();
         else if (options.historyMode === 'commit' || (options.historyMode == null && state.history.length)) commitHistory();
         else resetHistory();
+        if (options.focusEditor && window.matchMedia('(max-width: 760px)').matches) selectMobileView('tune');
         if (!options.deferRuntime) await startRuntimes();
         scheduleAutosave();
         requestRender();
-        if (options.focusEditor && window.matchMedia('(max-width: 760px)').matches) selectMobileView('tune');
     }
 
     function applyPreset(preset, index) {
