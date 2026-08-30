@@ -261,6 +261,59 @@ console.log(JSON.stringify({
             '["receiver_native","aurora","showcase"]',
         ])
 
+    def test_library_discovery_classifies_non_show_material_and_hides_it_by_default(self) -> None:
+        result = _run_state_script("""
+const components = [
+  {
+    provider: 'python', plugin_id: 'aurora', key: 'python:aurora', role: 'background',
+    name: 'Aurora', browser_runtime: {kind: 'python', supported: true},
+    presets: [{preset_id: 'night', name: 'Polar Night', tags: ['show']}],
+  },
+  {
+    provider: 'python', plugin_id: 'simple_test', key: 'python:simple_test', role: 'background',
+    name: 'Simple Test', browser_runtime: {kind: 'python', supported: true},
+    presets: [{preset_id: 'fixture', name: 'Fixture'}],
+  },
+  {
+    provider: 'python', plugin_id: 'wall_reference', key: 'python:wall_reference', role: 'background',
+    name: 'Wall Calibration Reference', browser_runtime: {kind: 'python', supported: true},
+    presets: [{preset_id: 'globe', name: 'Globe map', discovery_classification: 'calibration'}],
+  },
+  {
+    provider: 'receiver_native', plugin_id: 'offline', key: 'receiver_native:offline', role: 'background',
+    name: 'Offline', browser_runtime: {kind: 'native', supported: false},
+  },
+];
+const entries = state.libraryDiscoveryEntries(components);
+console.log(JSON.stringify({
+  schemaVersions: [...new Set(entries.map((entry) => entry.schemaVersion))],
+  classifications: entries.map((entry) => [entry.key, entry.classification, entry.eligible]),
+  defaultEntries: state.filterLibraryDiscoveryEntries(entries, {}).map((entry) => entry.key),
+  testEntries: state.filterLibraryDiscoveryEntries(entries, {classification: 'test', includeIneligible: true}).map((entry) => entry.key),
+  calibrationEntries: state.filterLibraryDiscoveryEntries(entries, {classification: 'calibration', includeIneligible: true}).map((entry) => entry.key),
+  presetKeyQuery: state.filterLibraryDiscoveryEntries(entries, {query: 'night'}).map((entry) => entry.key),
+}));
+""")
+
+        self.assertEqual(result["schemaVersions"], [1])
+        classifications = dict((key, (classification, eligible)) for key, classification, eligible in result["classifications"])
+        self.assertEqual(classifications['["python","simple_test",""]'], ("test", False))
+        self.assertEqual(classifications['["python","wall_reference","globe"]'], ("calibration", False))
+        self.assertEqual(classifications['["receiver_native","offline",""]'], ("show", False))
+        self.assertEqual(result["defaultEntries"], [
+            '["python","aurora",""]',
+            '["python","aurora","night"]',
+        ])
+        self.assertEqual(result["testEntries"], [
+            '["python","simple_test","fixture"]',
+            '["python","simple_test",""]',
+        ])
+        self.assertEqual(result["calibrationEntries"], [
+            '["python","wall_reference","globe"]',
+            '["python","wall_reference",""]',
+        ])
+        self.assertEqual(result["presetKeyQuery"], ['["python","aurora","night"]'])
+
     def test_activation_accepts_current_cautions_but_rejects_failures_and_stale_checks(self) -> None:
         result = _run_state_script("""
 const component = {key: 'host_python:solid', browser_runtime: {digest: 'runtime-1'}};

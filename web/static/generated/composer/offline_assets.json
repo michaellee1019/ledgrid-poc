@@ -90,8 +90,8 @@
       "url": "/static/js/composer_sha256.js"
     },
     {
-      "bytes": 21874,
-      "sha256": "3d1966db3f392149362a4395c42a2a2c32963640414be0895a62fb05f1ef7231",
+      "bytes": 24923,
+      "sha256": "54b4c2b6a7b3a4a565a7c8d531e44331da99c26f65d903f0bdcfe028957f4dcc",
       "url": "/static/js/composer_state.js"
     }
   ],

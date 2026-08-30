@@ -121,6 +121,8 @@
     const LIBRARY_RECENTS_LIMIT = 12;
     const LIBRARY_FAVORITES_LIMIT = 128;
     const LIBRARY_DISCOVERY_BATCH_SIZE = 24;
+    const LIBRARY_DISCOVERY_SCHEMA_VERSION = 1;
+    const LIBRARY_DISCOVERY_MATERIALS = new Set(['show', 'test', 'calibration']);
 
     /**
      * A library entry is deliberately only a catalog identity.  It never
@@ -146,6 +148,15 @@
         return selection ? JSON.stringify([selection.provider, selection.component, selection.preset || '']) : null;
     }
 
+    // Do not use localeCompare for persisted/library ordering. Its result can
+    // differ with the browser's configured locale, while these identities are
+    // replayed from local storage and shared URLs.
+    function compareLibraryText(left, right) {
+        const first = String(left || '');
+        const second = String(right || '');
+        return first === second ? 0 : (first < second ? -1 : 1);
+    }
+
     function uniqueLibrarySelections(values, {limit = LIBRARY_RECENTS_LIMIT, sort = false} = {}) {
         if (!Array.isArray(values) || !Number.isSafeInteger(limit) || limit < 1) return [];
         const seen = new Set();
@@ -157,7 +168,7 @@
             seen.add(key);
             entries.push(selection);
         });
-        if (sort) entries.sort((left, right) => librarySelectionKey(left).localeCompare(librarySelectionKey(right)));
+        if (sort) entries.sort((left, right) => compareLibraryText(librarySelectionKey(left), librarySelectionKey(right)));
         return entries;
     }
 
@@ -199,12 +210,42 @@
     }
 
     function normalizedSearchText(value) {
-        return String(value || '').trim().toLocaleLowerCase();
+        return String(value || '').trim().toLowerCase();
+    }
+
+    function libraryDiscoveryClassification(component, preset = null) {
+        const materials = [preset, component].filter((item) => item && typeof item === 'object');
+        const labels = materials.flatMap((item) => [
+            item.library_classification,
+            item.discovery_classification,
+            item.classification,
+            item.gallery,
+            item.category,
+            ...(Array.isArray(item.tags) ? item.tags : []),
+        ]).map(normalizedSearchText);
+        const identifiers = materials.flatMap((item) => [
+            item.plugin_id, item.key, item.name, item.description,
+        ]).map(normalizedSearchText);
+        if (
+            materials.some((item) => item.is_calibration === true)
+            || labels.includes('calibration')
+            || identifiers.some((value) => /(^|[_:\-\s])calibration($|[_:\-\s])/.test(value))
+        ) return 'calibration';
+        if (
+            materials.some((item) => item.is_test === true)
+            || labels.includes('test')
+            || identifiers.some((value) => /(^|[_:\-\s])test($|[_:\-\s])/.test(value))
+        ) return 'test';
+        // Unknown or legacy material remains a show item. Legacy bootstrap
+        // entries predate explicit taxonomy, so only whole-word stable IDs and
+        // labels supply the compatibility classification.
+        return 'show';
     }
 
     function libraryDiscoveryEntries(components) {
         if (!Array.isArray(components)) return [];
         const entries = [];
+        const keys = new Set();
         components.forEach((component) => {
             if (!component || component.role !== 'background') return;
             const selection = normalizeLibrarySelection({
@@ -228,6 +269,10 @@
                     preset: String(preset?.key || preset?.preset_id || preset?.id || `preset-${presetIndex}`),
                 });
                 if (!identity) return null;
+                const classification = libraryDiscoveryClassification(component, preset);
+                const key = librarySelectionKey(identity);
+                if (!key || keys.has(key)) return null;
+                keys.add(key);
                 const category = String(preset?.category || component.category || '').trim();
                 const tags = [...new Set([...componentTags, ...(Array.isArray(preset?.tags) ? preset.tags : [])]
                     .map((tag) => String(tag).trim()).filter(Boolean))];
@@ -236,20 +281,26 @@
                 const searchText = normalizedSearchText([
                     name, description, component.name, component.description,
                     component.provider, component.plugin_id, component.key, component.role,
-                    category, ...tags,
+                    preset?.key, preset?.preset_id, preset?.id, category, ...tags,
                 ].filter(Boolean).join(' '));
                 return Object.freeze({
                     ...base,
+                    schemaVersion: LIBRARY_DISCOVERY_SCHEMA_VERSION,
                     kind: preset == null ? 'renderer' : 'preset',
                     preset,
                     presetIndex,
                     selection: identity,
-                    key: librarySelectionKey(identity),
+                    key,
                     name,
                     description,
                     category,
                     tags: Object.freeze(tags),
                     searchText,
+                    classification,
+                    // Discovery is deliberately read-only. Test and
+                    // calibration entries remain classified in generated
+                    // metadata, but never enter the default user library.
+                    eligible: Boolean(previewable) && classification === 'show',
                 });
             };
             const renderer = createEntry();
@@ -260,17 +311,17 @@
             });
         });
         return entries.sort((left, right) => (
-            left.name.localeCompare(right.name)
-            || left.kind.localeCompare(right.kind)
-            || left.provider.localeCompare(right.provider)
-            || left.key.localeCompare(right.key)
+            compareLibraryText(left.name, right.name)
+            || compareLibraryText(left.kind, right.kind)
+            || compareLibraryText(left.provider, right.provider)
+            || compareLibraryText(left.key, right.key)
         ));
     }
 
     function libraryDiscoveryCategories(entries) {
         if (!Array.isArray(entries)) return [];
         return [...new Set(entries.map((entry) => String(entry?.category || '').trim()).filter(Boolean))]
-            .sort((left, right) => left.localeCompare(right));
+            .sort(compareLibraryText);
     }
 
     function filterLibraryDiscoveryEntries(entries, filters = {}) {
@@ -280,16 +331,22 @@
         const kind = filters.kind || 'all';
         const category = filters.category || 'all';
         const saved = filters.saved || 'all';
+        const classification = LIBRARY_DISCOVERY_MATERIALS.has(filters.classification)
+            ? filters.classification
+            : 'all';
+        const includeIneligible = filters.includeIneligible === true;
         const favoriteKeys = new Set(uniqueLibrarySelections(filters.favorites, {limit: LIBRARY_FAVORITES_LIMIT, sort: false})
             .map(librarySelectionKey).filter(Boolean));
         const recentKeys = new Set(uniqueLibrarySelections(filters.recents, {limit: LIBRARY_RECENTS_LIMIT, sort: false})
             .map(librarySelectionKey).filter(Boolean));
         const visible = entries.filter((entry) => (
             entry
+            && (includeIneligible || entry.eligible === true)
             && (!query || entry.searchText.includes(query))
             && (runtime === 'all' || entry.runtimeKind === runtime)
             && (kind === 'all' || entry.kind === kind)
             && (category === 'all' || entry.category === category)
+            && (classification === 'all' || entry.classification === classification)
             && (saved === 'all'
                 || (saved === 'favorites' && favoriteKeys.has(entry.key))
                 || (saved === 'recent' && recentKeys.has(entry.key)))
@@ -454,7 +511,9 @@
         filterLibraryDiscoveryEntries,
         libraryDiscoveryCategories,
         libraryDiscoveryEntries,
+        libraryDiscoveryClassification,
         librarySelectionKey,
+        LIBRARY_DISCOVERY_SCHEMA_VERSION,
         normalizeNumber,
         normalizeLibrarySelection,
         orderedMetricStats,
