@@ -53,13 +53,24 @@ class _Channel:
 
 
 class PreviewPublicationRemovalTests(unittest.TestCase):
-    def test_asset_routes_are_unregistered_and_preset_discovery_remains_available(self) -> None:
+    def test_asset_and_legacy_preset_routes_are_unregistered(self) -> None:
         client = AnimationWebInterface(_Channel(), _Manager(), local_mode=True).app.test_client()
         self.assertEqual(client.get("/preview-assets/generated/old.webp").status_code, 404)
         self.assertEqual(client.get("/preview-assets/runtime/old.webp").status_code, 404)
-        response = client.get("/api/animations/solid/presets")
+        self.assertEqual(client.get("/api/animations/solid/presets").status_code, 404)
+
+    def test_composer_catalog_remains_discoverable_through_current_bootstrap(self) -> None:
+        client = AnimationWebInterface(_Channel(), _Manager(), local_mode=True).app.test_client()
+
+        response = client.get("/api/v1/composer/bootstrap?catalog_only=1")
+
         self.assertEqual(response.status_code, 200)
-        self.assertIn("presets", response.get_json())
+        payload = response.get_json()
+        self.assertEqual(payload["schema"], "ledgrid.browser-composer-bootstrap")
+        self.assertEqual(payload["schema_version"], 1)
+        components = {component["key"]: component for component in payload["components"]}
+        self.assertEqual(components["python:solid"]["name"], "Solid")
+        self.assertIn("presets", components["python:solid"])
 
     def test_publication_modules_and_deployment_hooks_are_absent(self) -> None:
         removed = (
@@ -79,8 +90,12 @@ class PreviewPublicationRemovalTests(unittest.TestCase):
         self.assertNotIn("generate_animation_previews", deploy_source)
         self.assertNotIn("generate_animation_previews", sync_source)
 
-    def test_composer_bootstrap_contains_no_published_preview_contract(self) -> None:
+    def test_generated_composer_bootstrap_has_catalog_without_published_preview_contract(self) -> None:
         payload = json.loads(BOOTSTRAP_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(payload["schema"], "ledgrid.browser-composer-bootstrap")
+        solid = next(component for component in payload["components"] if component["key"] == "python:solid")
+        self.assertEqual(solid["name"], "Solid Color")
+        self.assertTrue(solid["presets"])
         self.assertEqual(_exact_key_count(payload, "preview"), 0)
         self.assertEqual(_exact_key_count(payload, "poster_url"), 0)
         self.assertEqual(_exact_key_count(payload, "loop_url"), 0)
