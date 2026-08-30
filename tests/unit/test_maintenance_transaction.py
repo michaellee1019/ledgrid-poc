@@ -30,7 +30,7 @@ def _status():
         "controller_state_revision": 7,
         "receiver_roster": [
             {"logical_device": number, "connected": True, "route": [number, 0],
-             "hardware_serial": f"serial-{number}", "firmware_revision": "firmware"}
+             "hardware_serial": f"aa:bb:cc:dd:ee:{number:02x}", "firmware_sha256": "f" * 64}
             for number in range(5)
         ],
     }

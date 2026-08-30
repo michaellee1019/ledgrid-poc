@@ -99,6 +99,16 @@ from web.activation_token_store import (
     ActivationTokenStore,
     canonical_digest,
 )
+from web.maintenance_api import (
+    DIAGNOSTICS as MAINTENANCE_DIAGNOSTICS,
+    MAX_DURATION_SECONDS as MAINTENANCE_MAX_DURATION_SECONDS,
+    MAX_INTENSITY as MAINTENANCE_MAX_INTENSITY,
+    MAINTENANCE_SCHEMA,
+    MAINTENANCE_SCHEMA_VERSION,
+    MaintenanceRequest,
+    MaintenanceRequestError,
+    identity_from_status as maintenance_identity_from_status,
+)
 
 # Browser execution is deliberately capability-gated. The generated Pyodide
 # asset contains the authoritative Python animation-plugin package, so every
@@ -122,6 +132,7 @@ class AnimationWebInterface:
                  release_id: Optional[str] = None,
                  activation_token_store_path: Optional[Path] = None,
                  activation_enabled: Optional[bool] = None,
+                 maintenance_enabled: Optional[bool] = None,
                  installation_profile_authoring: Optional[
                      InstallationProfileAuthoring
                  ] = None,
@@ -149,6 +160,14 @@ class AnimationWebInterface:
         self.activation_mode = (
             'development_canary' if self.activation_enabled else 'disabled'
         )
+        # This separate, default-off capability guards the only Composer
+        # endpoint that can ask the controller to present a named diagnostic.
+        # It does not grant a web client any frame or controller authority.
+        self.maintenance_enabled = (
+            bool(maintenance_enabled)
+            if maintenance_enabled is not None
+            else os.environ.get('LEDGRID_COMPOSER_MAINTENANCE_ENABLED') == '1'
+        ) and self.activation_enabled
         self._scene_preview_lock = threading.RLock()
         self.project_root = (
             Path(project_root)
@@ -351,6 +370,96 @@ class AnimationWebInterface:
             response = jsonify(build_composer_operations_status(
                 self._status_payload(), now_ms=int(time.time() * 1000),
             ))
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+
+        @self.app.route('/api/v1/composer/maintenance', methods=['POST'])
+        def api_browser_composer_maintenance():
+            """Enqueue one reviewed maintenance request through controller IPC."""
+            if not self.maintenance_enabled:
+                return self._maintenance_unavailable()
+            try:
+                request_id = self._maintenance_request_id(
+                    request.headers.get('Idempotency-Key')
+                )
+                submitted = self._maintenance_browser_input(request.get_json(silent=True))
+                existing = self.control_channel.read_maintenance_request(request_id)
+                if existing is not None:
+                    command = existing.get('command')
+                    parsed = MaintenanceRequest.from_mapping(command)
+                    if self._maintenance_browser_shape(parsed) != submitted:
+                        return self._maintenance_error(
+                            'the idempotency key already names a different maintenance request',
+                            'maintenance_conflict', 409,
+                        )
+                    return self._maintenance_accepted(
+                        parsed,
+                        self.control_channel.read_maintenance_status(request_id),
+                        exact_retry=True,
+                    )
+
+                status = dict(self.control_channel.read_status() or {})
+                self._require_activation_release_identity(status)
+                # Use the existing Composer mutation guard in full: release
+                # parity is not sufficient without a current session/revision
+                # identity that the controller has itself published.
+                self._activation_controller_identity(status)
+                identity = maintenance_identity_from_status(status)
+                authority_digest = self._maintenance_authority_digest(status)
+                parsed = MaintenanceRequest.from_mapping({
+                    'schema': MAINTENANCE_SCHEMA,
+                    'schema_version': MAINTENANCE_SCHEMA_VERSION,
+                    'request_id': request_id,
+                    **submitted,
+                    'expected_identity': identity.to_dict(),
+                    'provenance': {
+                        'operator': 'composer-trusted-network',
+                        'source_revision': self.release_id,
+                        'purpose': 'reviewed Composer maintenance diagnostic',
+                    },
+                })
+                self.control_channel.enqueue_maintenance_request(
+                    parsed.to_dict(), authority_digest=authority_digest,
+                )
+                return self._maintenance_accepted(
+                    parsed,
+                    self.control_channel.read_maintenance_status(request_id),
+                    exact_retry=False,
+                )
+            except (MaintenanceRequestError, RuntimeError, ValueError, AttributeError) as exc:
+                return self._maintenance_error(str(exc), 'invalid_maintenance', 409)
+
+        @self.app.route('/api/v1/composer/maintenance/<request_id>')
+        def api_browser_composer_maintenance_status(request_id: str):
+            """Expose one monotonic lifecycle plus its immutable terminal proof."""
+            if not self.maintenance_enabled:
+                return self._maintenance_unavailable()
+            try:
+                request_id = self._maintenance_request_id(request_id)
+                record = self.control_channel.read_maintenance_request(request_id)
+                if record is None:
+                    return self._maintenance_error(
+                        'maintenance request not found', 'maintenance_not_found', 404,
+                    )
+                parsed = MaintenanceRequest.from_mapping(record.get('command'))
+                status = self.control_channel.read_maintenance_status(request_id)
+                result = self.control_channel.read_maintenance_result(request_id)
+            except (MaintenanceRequestError, ValueError, AttributeError) as exc:
+                return self._maintenance_error(
+                    f'maintenance status is invalid: {exc}',
+                    'maintenance_status_invalid', 500,
+                )
+            response = jsonify({
+                'schema': 'ledgrid.composer-maintenance-status',
+                'schema_version': 1,
+                'request': parsed.to_dict(),
+                'phase': (status or {}).get('phase', 'queued'),
+                'status': status,
+                'result': result,
+                'terminal': (status or {}).get('phase') in {
+                    'restored', 'safe_idle', 'rejected', 'failed',
+                },
+            })
             response.headers['Cache-Control'] = 'no-store'
             return response
 
@@ -2170,6 +2279,85 @@ class AnimationWebInterface:
         response.headers['Cache-Control'] = 'no-store'
         return response, 503
 
+    @staticmethod
+    def _maintenance_error(message: str, code: str, status: int):
+        response = jsonify({'error': message, 'code': code})
+        response.headers['Cache-Control'] = 'no-store'
+        return response, status
+
+    def _maintenance_unavailable(self):
+        return self._maintenance_error(
+            'Guarded Composer maintenance is disabled on this server.',
+            'maintenance_unavailable', 503,
+        )
+
+    @staticmethod
+    def _maintenance_request_id(value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError('Idempotency-Key must be a lowercase UUID')
+        try:
+            canonical = str(uuid.UUID(value))
+        except (AttributeError, ValueError) as exc:
+            raise ValueError('Idempotency-Key must be a lowercase UUID') from exc
+        if value != canonical:
+            raise ValueError('Idempotency-Key must be a lowercase UUID')
+        return canonical
+
+    @staticmethod
+    def _maintenance_browser_input(value: Any) -> Dict[str, Any]:
+        if not isinstance(value, dict) or set(value) != {
+            'diagnostic', 'target', 'intensity', 'duration_seconds',
+        }:
+            raise ValueError(
+                'maintenance requests require exactly diagnostic, target, intensity, and duration_seconds'
+            )
+        return {
+            'diagnostic': value['diagnostic'],
+            'target': value['target'],
+            'intensity': value['intensity'],
+            'duration_seconds': value['duration_seconds'],
+        }
+
+    @staticmethod
+    def _maintenance_browser_shape(request_value: MaintenanceRequest) -> Dict[str, Any]:
+        return {
+            'diagnostic': request_value.diagnostic,
+            'target': dict(request_value.target),
+            'intensity': request_value.intensity,
+            'duration_seconds': request_value.duration_seconds,
+        }
+
+    @staticmethod
+    def _maintenance_authority_digest(status: Dict[str, Any]) -> str:
+        """Read the controller-published immutable authority without guessing."""
+        value = status.get('receiver_identity_authority_digest')
+        if isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value):
+            return value
+        raise RuntimeError('controller receiver identity authority is unavailable')
+
+    def _maintenance_accepted(
+        self,
+        request_value: MaintenanceRequest,
+        status: Any,
+        *,
+        exact_retry: bool,
+    ):
+        phase = status.get('phase', 'queued') if isinstance(status, dict) else 'queued'
+        status_url = f'/api/v1/composer/maintenance/{request_value.request_id}'
+        response = jsonify({
+            'schema': 'ledgrid.composer-maintenance-accepted',
+            'schema_version': 1,
+            'request_id': request_value.request_id,
+            'phase': phase,
+            'pending': phase in {'queued', 'running'},
+            'status_url': status_url,
+            'exact_retry': exact_retry,
+        })
+        response.status_code = 202
+        response.headers['Location'] = status_url
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+
     def _deliver_activation_outbox(self, stored: Any) -> Dict[str, Any]:
         """Project one SQLite-committed activation into durable IPC idempotently."""
 
@@ -3015,6 +3203,15 @@ class AnimationWebInterface:
                 'checker': 'browser_worker',
                 'live_wall_mutated': False,
                 'framebuffer_readback': False,
+                'maintenance': {
+                    'available': self.maintenance_enabled,
+                    'url': '/api/v1/composer/maintenance',
+                    'diagnostics': sorted(MAINTENANCE_DIAGNOSTICS),
+                    'max_intensity': MAINTENANCE_MAX_INTENSITY,
+                    'max_duration_seconds': MAINTENANCE_MAX_DURATION_SECONDS,
+                    'requires_idempotency_key': True,
+                    'execution': 'controller_file_channel',
+                },
                 'server_actions': {
                     'activation_available': self.activation_enabled,
                     'activation_mode': self.activation_mode,

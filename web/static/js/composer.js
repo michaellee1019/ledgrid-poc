@@ -1505,6 +1505,7 @@
         const bootstrapUrl = url || globalActions().bootstrap_url || '/api/v1/composer/bootstrap?catalog_only=1';
         const payload = assertBootstrap(await requestJson(bootstrapUrl));
         state.serverBootstrap = payload;
+        document.dispatchEvent(new CustomEvent('composer:capability-change'));
         const actions = clone(payload.capabilities?.server_actions || {});
         preserveTrustedProfileAuthoringActions(actions, payload);
         state.bootstrap.capabilities.server_actions = actions;
@@ -1517,6 +1518,7 @@
         const wasOnline = state.serverOnline;
         state.serverOnline = Boolean(online);
         state.serverChecking = checking;
+        document.dispatchEvent(new CustomEvent('composer:capability-change'));
         if (!online && wasOnline) {
             invalidateImmediateApply('Not sent · wall connection lost. Reconnect does not replay prior edits.');
         }
@@ -1963,6 +1965,11 @@
         });
         if (!response.ok) throw new Error(`Bundled catalog request failed (${response.status}).`);
         state.bootstrap = assertBootstrap(await response.json(), {requireLocalProfile: true});
+        // Deferred Composer modules load after the application shell.  Signal
+        // precisely once the bootstrap becomes authoritative so they can
+        // render capability-gated controls instead of retaining their empty
+        // pre-bootstrap state.
+        document.dispatchEvent(new CustomEvent('composer:bootstrap'));
         initializeLocalLibrary();
         initializeInstallationProfileState();
         initializeGlobalSettings();

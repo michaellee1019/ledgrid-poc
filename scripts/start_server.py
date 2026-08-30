@@ -374,7 +374,62 @@ def controller_status_payload(
     payload['last_command_id'] = last_command_id
     payload['updated_at'] = updated_at
     payload.update(controller_activation_coordinator(manager).controller_status())
+    maintenance_identity = controller_maintenance_identity(manager.controller)
+    if maintenance_identity is not None:
+        payload.update(maintenance_identity)
     return payload
+
+
+def controller_maintenance_identity(controller) -> dict | None:
+    """Publish only the injected canonical authority needed by maintenance.
+
+    This is deliberately derived from the controller's immutable startup
+    binding, never from receiver discovery or a best-effort status sample.
+    Missing or malformed identities are omitted so web callers fail closed.
+    """
+    identities = getattr(controller, "receiver_identities", None)
+    authority_digest = getattr(controller, "receiver_identity_authority_digest", None)
+    if (
+        not isinstance(identities, tuple)
+        or len(identities) != 5
+        or not isinstance(authority_digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", authority_digest) is None
+    ):
+        return None
+    validator = getattr(controller, "_require_pinned_receipt_roster", None)
+    if not callable(validator):
+        return None
+    try:
+        if tuple(validator()) != identities:
+            return None
+    except Exception:
+        return None
+    roster = []
+    for logical_device, identity in enumerate(identities):
+        route = getattr(identity, "spi_route", None)
+        serial = getattr(identity, "hardware_serial", None)
+        firmware_sha256 = getattr(identity, "firmware_sha256", None)
+        if (
+            getattr(identity, "logical_device", None) != logical_device
+            or not isinstance(route, tuple)
+            or not route
+            or any(type(item) is not int or item < 0 for item in route)
+            or not isinstance(serial, str)
+            or not re.fullmatch(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}", serial)
+            or not isinstance(firmware_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", firmware_sha256) is None
+        ):
+            return None
+        roster.append({
+            "logical_device": logical_device,
+            "route": list(route),
+            "hardware_serial": serial,
+            "firmware_sha256": firmware_sha256,
+        })
+    return {
+        "receiver_identity_authority_digest": authority_digest,
+        "receiver_roster": roster,
+    }
 
 
 def persist_controller_restart_state(

@@ -138,17 +138,17 @@ def receiver_roster_digest(roster: Any) -> str:
         logical_id = _uint(item.get("logical_device"), "receiver logical_device")
         if logical_id != expected_id:
             raise MaintenanceRequestError("receiver_roster must be in exact logical order")
-        if item.get("connected") is not True:
+        if item.get("connected") is False:
             raise MaintenanceRequestError(f"receiver {logical_id} is disconnected")
         # A stable receiver identity is intentionally smaller than the broad
-        # status payload, so changing counters cannot make an acknowledgement
-        # look stale while a route, serial, or firmware revision still can.
+        # status payload. Connectivity is proved by the controller's complete
+        # frame receipt, not guessed from its immutable startup binding.
         normalized.append(
             {
                 "logical_device": logical_id,
                 "route": item.get("route"),
                 "hardware_serial": item.get("hardware_serial"),
-                "firmware_revision": item.get("firmware_revision"),
+                "firmware_sha256": item.get("firmware_sha256"),
             }
         )
     if len(normalized) != len(WALL_RECEIVER_STRIP_COUNTS):

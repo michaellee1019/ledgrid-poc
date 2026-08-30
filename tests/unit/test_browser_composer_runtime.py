@@ -452,6 +452,7 @@ const localPaths = {
   '/static/js/composer_compositor.js': 'web/static/js/composer_compositor.js',
   '/static/js/composer_interactions.js': 'web/static/js/composer_interactions.js',
   '/static/js/composer-operations.js': 'web/static/js/composer-operations.js',
+  '/static/js/composer-maintenance.js': 'web/static/js/composer-maintenance.js',
   '/static/js/composer_native_worker.js': 'web/static/js/composer_native_worker.js',
   '/static/js/composer_python_worker.js': 'web/static/js/composer_python_worker.js',
   '/static/js/composer_runtime.js': 'web/static/js/composer_runtime.js',

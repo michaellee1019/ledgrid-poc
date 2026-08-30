@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "catalog_digest": "f8aa6b8f31c4d7a7d0b4488b924fe1f9542268cdb4ad7039b120da6798de28f4",
+    "catalog_digest": "f9c30afd7078463e3923961b407d85ee9c5fabc9b10a5518b657872e954d3562",
     "kind": "bundled",
     "version": 1
   },
@@ -9,6 +9,21 @@
     "draft_storage": "browser_local_storage",
     "framebuffer_readback": false,
     "live_wall_mutated": false,
+    "maintenance": {
+      "available": false,
+      "diagnostics": [
+        "direction_sentinel",
+        "receiver_band",
+        "sparse_boundary",
+        "strip_ramp",
+        "tail_lane_probe"
+      ],
+      "execution": "controller_file_channel",
+      "max_duration_seconds": 30.0,
+      "max_intensity": 64,
+      "requires_idempotency_key": true,
+      "url": "/api/v1/composer/maintenance"
+    },
     "rendering": "browser_webassembly",
     "server_actions": {
       "activate_scene_url": "/api/v1/scene",

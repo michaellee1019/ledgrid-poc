@@ -27,7 +27,7 @@ def _status(*, revision: int = 7, connected: bool = True):
                 "connected": connected,
                 "route": [index // 2, index % 2],
                 "hardware_serial": f"aa:bb:cc:dd:ee:{index:02x}",
-                "firmware_revision": "v7",
+                "firmware_sha256": "f" * 64,
             }
             for index in range(5)
         ],

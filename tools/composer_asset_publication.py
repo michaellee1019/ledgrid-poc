@@ -32,6 +32,7 @@ FIXED_LOCAL_ASSETS: dict[str, Path] = {
     "/static/js/composer_compositor.js": Path("web/static/js/composer_compositor.js"),
     "/static/js/composer_interactions.js": Path("web/static/js/composer_interactions.js"),
     "/static/js/composer-operations.js": Path("web/static/js/composer-operations.js"),
+    "/static/js/composer-maintenance.js": Path("web/static/js/composer-maintenance.js"),
     "/static/js/composer_native_worker.js": Path("web/static/js/composer_native_worker.js"),
     "/static/js/composer_python_worker.js": Path("web/static/js/composer_python_worker.js"),
     "/static/js/composer_runtime.js": Path("web/static/js/composer_runtime.js"),

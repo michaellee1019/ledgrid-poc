@@ -91,6 +91,13 @@ button:disabled, input:disabled { cursor: not-allowed; opacity: .42; }
 .operations-diagnostics p strong { color: var(--ink); }
 .operations-diagnostics p span, .operations-diagnostics a { color: var(--muted); line-height: 1.4; }
 .operations-diagnostics a { color: var(--acid); font-size: .6rem; }
+.maintenance-panel { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.maintenance-panel h2, .maintenance-panel p { margin: 0; }
+.maintenance-panel h2 { font-size: .7rem; }
+.maintenance-panel > p { color: var(--muted); font-size: .6rem; line-height: 1.4; }
+.maintenance-panel label { display: grid; gap: 4px; color: var(--muted); font-size: .6rem; }
+.maintenance-panel input, .maintenance-panel select { width: 100%; min-height: 34px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+.maintenance-panel #maintenanceResult { overflow-wrap: anywhere; }
 .operations-bar[data-state="failed"] { border-bottom-color: #a34f43; }
 .operations-bar[data-state="stale"], .operations-bar[data-state="divergent"], .operations-bar[data-state="partial-receiver"] { border-bottom-color: #927638; }
 .operations-bar[data-state="pending"] { border-bottom-color: #4f8a74; }
@@ -790,7 +797,18 @@ h2 { font-size: 11px; font-weight: 650; }
   .operations-actions button, .danger-button { min-height: 44px; padding-inline: 9px; font-size: 11px; }
   .operations-diagnostics { grid-column: 1 / -1; }
   .operations-diagnostics > summary { min-height: 44px; padding: 12px 0; font-size: 11px; }
-  .operations-diagnostics > div { right: auto; left: 0; width: min(360px, calc(100vw - 20px)); }
+  .operations-diagnostics > div {
+    position: absolute;
+    top: calc(100% + 4px);
+    bottom: auto;
+    right: auto;
+    left: calc(10px + env(safe-area-inset-left));
+    width: min(360px, calc(100vw - 20px));
+    max-height: calc(100dvh - var(--mobile-header-height) - var(--operations-height) - var(--mobile-nav-height) - var(--mobile-activate-height) - 24px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
   .operations-identities strong, .operations-readout strong { font-size: 11px; }
   .operations-identities span, .operations-summary small, .operations-readout span { font-size: 10px; }
   .composer-shell { height: calc(100dvh - var(--mobile-header-height) - var(--operations-height) - var(--mobile-nav-height) - var(--mobile-activate-height)); min-height: 0; margin-top: 0; }

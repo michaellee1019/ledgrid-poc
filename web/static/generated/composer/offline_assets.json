@@ -1,12 +1,12 @@
 {
-  "cacheVersion": "g-99101a07aca7a82be37d",
+  "cacheVersion": "g-3898c1b20f733e1aea2b",
   "capturedAssets": [
     "/composer"
   ],
   "localAssets": [
     {
-      "bytes": 276919,
-      "sha256": "f52401e0646590da96c8cf3586b8ac2cd2ddfbc3b845de67bff25e5cb52e45cb",
+      "bytes": 277410,
+      "sha256": "dee08a2506f7c67341778441f0c7254f90be9c653bd0c6d8b47d00130b90c834",
       "url": "/composer-app.js"
     },
     {
@@ -20,8 +20,8 @@
       "url": "/static/composer.webmanifest"
     },
     {
-      "bytes": 76854,
-      "sha256": "aa7709150f030e391a08c1cead2b7cc87d935ae516a13f1542050b318da5a34c",
+      "bytes": 77855,
+      "sha256": "7cfa433ddf4795690758b86215ec8de540572beabf3bd460a14fc55c241c5d9f",
       "url": "/static/css/composer.css"
     },
     {
@@ -30,8 +30,8 @@
       "url": "/static/generated/composer/aurora_curtains_native.wasm"
     },
     {
-      "bytes": 849799,
-      "sha256": "0800abedb51d1e146a6e2231772286f8085e4e8ba110c93801990dc6de275e3a",
+      "bytes": 850208,
+      "sha256": "f92072d0afbad429dc1dfec00730733cf0d20b1e2e5dd8111d7c848abc7268a8",
       "url": "/static/generated/composer/bootstrap.v1.json"
     },
     {
@@ -50,8 +50,8 @@
       "url": "/static/generated/composer/ledgrid_python_runtime.zip"
     },
     {
-      "bytes": 1453,
-      "sha256": "7154bc0ac17c6d4a9c1ebf2bf95dc5693c04c3b37487f271d1660cd256a659eb",
+      "bytes": 1490,
+      "sha256": "3fc047f844ad23f5dd8f64d43b4174a8822f53afaad28f907e714d7fa2b38be1",
       "url": "/static/generated/composer/service_worker_config.v1.js"
     },
     {
@@ -68,6 +68,11 @@
       "bytes": 682,
       "sha256": "89f4fedb10a43ac427c66ffcc8139a935c94fd97767bb4ea5407eccbe0fc3ba3",
       "url": "/static/icons/composer.svg"
+    },
+    {
+      "bytes": 9675,
+      "sha256": "1054ef3fb9b79b24503153fc346c6adc1bacf2250b97fa91fa570c7900b1ee0d",
+      "url": "/static/js/composer-maintenance.js"
     },
     {
       "bytes": 6616,
@@ -110,7 +115,7 @@
       "url": "/static/js/composer_state.js"
     }
   ],
-  "previousCacheVersion": "g-bb8b9cc47657fdfaa381",
+  "previousCacheVersion": "g-fd13134b875d8facc855",
   "pythonRuntime": {
     "baseUrl": "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/",
     "delivery": "pinned-cross-origin-cache",

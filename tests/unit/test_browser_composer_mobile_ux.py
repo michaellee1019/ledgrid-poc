@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
@@ -140,6 +141,142 @@ class BrowserComposerMobileUXTests(unittest.TestCase):
             {"client_mode": "navigate-existing"},
         )
         self.assertFalse(self.manifest["prefer_related_applications"])
+
+    def test_deferred_maintenance_module_receives_authoritative_bootstrap_signal(self) -> None:
+        maintenance = (ROOT / "web" / "static" / "js" / "composer-maintenance.js").read_text(encoding="utf-8")
+        assignment = "state.bootstrap = assertBootstrap(await response.json(), {requireLocalProfile: true});"
+        signal = "document.dispatchEvent(new CustomEvent('composer:bootstrap'));"
+        self.assertIn(signal, self.javascript)
+        self.assertLess(self.javascript.index(assignment), self.javascript.index(signal))
+        self.assertIn("events.on(dom.document, 'composer:bootstrap', render);", maintenance)
+        self.assertIn("document.dispatchEvent(new CustomEvent('composer:capability-change'));", self.javascript)
+        self.assertIn("events.on(dom.document, 'composer:capability-change', render);", maintenance)
+        self.assertGreater(
+            self.html.index("composer-maintenance.js"),
+            self.html.index("browser_composer_application"),
+        )
+        self.assertIn("Duration (0.1–30 s)", self.html)
+
+    def test_maintenance_capability_uses_live_server_bootstrap_and_connection(self) -> None:
+        maintenance = ROOT / "web" / "static" / "js" / "composer-maintenance.js"
+        script = """
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const context = {window: {}, console};
+context.window.LEDGridComposerModules = {register() {}};
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const resolve = context.window.LEDGridComposerMaintenance.resolveCapability;
+const offline = {capabilities: {maintenance: {available: false, execution: 'controller_file_channel'}}};
+const live = {capabilities: {maintenance: {available: true, execution: 'controller_file_channel', max_intensity: 64}}};
+assert.equal(resolve({bootstrap: offline, serverBootstrap: live, serverOnline: true, serverChecking: false}), live.capabilities.maintenance);
+assert.equal(resolve({bootstrap: offline, serverBootstrap: live, serverOnline: false, serverChecking: false}), null);
+assert.equal(resolve({bootstrap: offline, serverBootstrap: offline, serverOnline: true, serverChecking: false}), null);
+"""
+        completed = subprocess.run(
+            ["node", "-e", script, str(maintenance)],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_late_registered_maintenance_click_queues_named_request_without_random_uuid(self) -> None:
+        maintenance = ROOT / "web" / "static" / "js" / "composer-maintenance.js"
+        script = """
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+class Target {
+  constructor(value = '') { this.value = value; this.hidden = false; this.disabled = false; this.dataset = {}; this.firstChild = {textContent: ''}; this.listeners = new Map(); this.textContent = ''; }
+  addEventListener(type, listener) { this.listeners.set(type, [...(this.listeners.get(type) || []), listener]); }
+  dispatch(type) { for (const listener of this.listeners.get(type) || []) listener({preventDefault() {}}); }
+}
+const elements = {
+  maintenancePanel: new Target(), maintenanceDiagnostic: new Target('receiver_band'),
+  maintenanceTarget: new Target('0'), maintenanceTargetField: new Target(),
+  maintenanceLane: new Target('0'), maintenanceLaneField: new Target(),
+  maintenanceIntensity: new Target('32'), maintenanceDuration: new Target('1'),
+  maintenanceRunButton: new Target(), maintenanceResult: new Target(),
+};
+const document = new Target();
+const window = new Target();
+const requests = [];
+window.crypto = {getRandomValues(bytes) { for (let index = 0; index < bytes.length; index += 1) bytes[index] = index; return bytes; }};
+window.fetch = async (url, init = {}) => {
+  requests.push({url, init});
+  if (init.method === 'POST') return {ok: true, json: async () => ({phase: 'queued', request_id: init.headers['Idempotency-Key']})};
+  return {ok: true, json: async () => ({phase: 'queued'})};
+};
+window.setTimeout = () => 1;
+window.clearTimeout = () => {};
+const state = {serverOnline: true, serverChecking: false, serverBootstrap: {capabilities: {maintenance: {
+  available: true, execution: 'controller_file_channel', url: '/api/v1/composer/maintenance', max_intensity: 64, max_duration_seconds: 30,
+}}}};
+const context = {state, dom: {byId: (id) => elements[id], document}, events: {on: (target, type, listener) => target.addEventListener(type, listener)}, runtime: {window}};
+window.LEDGridComposerModules = {register(_name, installer) { installer(context); }};
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), {window, Set, Number, Math, JSON, Object, Array, Uint8Array, encodeURIComponent});
+elements.maintenanceRunButton.dispatch('click');
+(async () => {
+  for (let index = 0; index < 5; index += 1) await Promise.resolve();
+  assert.equal(requests.length >= 1, true);
+  assert.equal(requests[0].url, '/api/v1/composer/maintenance');
+  assert.equal(requests[0].init.method, 'POST');
+  assert.equal(JSON.parse(requests[0].init.body).diagnostic, 'receiver_band');
+  assert.match(elements.maintenanceResult.textContent, /^queued/i);
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+"""
+        completed = subprocess.run(
+            ["node", "-e", script, str(maintenance)],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_phone_diagnostics_popover_keeps_duration_and_run_reachable_above_fixed_bars(self) -> None:
+        rule = re.search(
+            r"\.operations-diagnostics > div\s*\{(?P<body>[^}]*)\}",
+            self.final_mobile_css,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(rule)
+        declarations = rule.group("body")
+        for declaration in (
+            "position: absolute;",
+            "top: calc(100% + 4px);",
+            "overflow-y: auto;",
+            "overscroll-behavior: contain;",
+            "-webkit-overflow-scrolling: touch;",
+        ):
+            self.assertIn(declaration, declarations)
+
+        # At the reviewed 390x844 viewport (zero safe-area insets), the
+        # independently scrolling popover must end before the fixed action/nav
+        # bars. Its 613px diagnostic content can therefore scroll to Duration
+        # and Run rather than being clipped by the document body.
+        viewport_height = 844
+        header_height = 72
+        configured_operations_height = 148
+        observed_operations_height = 158
+        action_bar_height = 60
+        navigation_height = 68
+        popover_top = header_height + observed_operations_height + 4
+        popover_max_height = (
+            viewport_height
+            - header_height
+            - configured_operations_height
+            - action_bar_height
+            - navigation_height
+            - 24
+        )
+        popover_bottom = popover_top + popover_max_height
+        self.assertLessEqual(popover_bottom, viewport_height - action_bar_height - navigation_height)
+        self.assertGreaterEqual(popover_max_height, 44)
+        self.assertLess(popover_max_height, 613)
+        self.assertLessEqual(10 + min(360, 390 - 20), 390)
 
     def test_mobile_shell_reserves_safe_areas_and_full_size_targets(self) -> None:
         for inset in ("top", "right", "bottom", "left"):

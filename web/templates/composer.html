@@ -65,6 +65,33 @@
         <p><strong>Receivers</strong><span id="operationsReceiver">Unknown</span></p>
         <p><strong>Performance</strong><span id="operationsPerformance">Unknown</span></p>
         <a id="operationsRawEvidence" href="/api/status" target="_blank" rel="noopener" hidden>View raw controller evidence</a>
+        <section class="maintenance-panel" id="maintenancePanel" aria-labelledby="maintenanceHeading" hidden>
+          <h2 id="maintenanceHeading">Guarded maintenance</h2>
+          <p>Runs one named, bounded diagnostic through the controller and restores the prior output.</p>
+          <label for="maintenanceDiagnostic">Diagnostic
+            <select id="maintenanceDiagnostic">
+              <option value="receiver_band">Receiver band</option>
+              <option value="strip_ramp">Strip ramp</option>
+              <option value="direction_sentinel">Direction sentinel</option>
+              <option value="sparse_boundary">Sparse boundary</option>
+              <option value="tail_lane_probe">Tail lane probe</option>
+            </select>
+          </label>
+          <label for="maintenanceTarget" id="maintenanceTargetField">Receiver
+            <input id="maintenanceTarget" type="number" min="0" max="4" step="1" value="0" inputmode="numeric">
+          </label>
+          <label for="maintenanceLane" id="maintenanceLaneField" hidden>Tail lane
+            <input id="maintenanceLane" type="number" min="0" max="7" step="1" value="0" inputmode="numeric">
+          </label>
+          <label for="maintenanceIntensity">Intensity (1–64)
+            <input id="maintenanceIntensity" type="number" min="1" max="64" step="1" value="32" inputmode="numeric">
+          </label>
+          <label for="maintenanceDuration">Duration (0.1–30 s)
+            <input id="maintenanceDuration" type="number" min="0.1" max="30" step="0.1" value="1" inputmode="decimal">
+          </label>
+          <button class="quiet-button server-action" id="maintenanceRunButton" type="button">Run diagnostic</button>
+          <p id="maintenanceResult" role="status" aria-live="polite">Maintenance is unavailable until the controller capability is enabled.</p>
+        </section>
       </div>
     </details>
   </section>
@@ -488,5 +515,6 @@
   <script src="{{ url_for('static', filename='js/composer-profiles.js') }}" defer></script>
   <script src="{{ url_for('static', filename='js/composer-operations.js') }}" defer></script>
   <script src="{{ url_for('browser_composer_application') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/composer-maintenance.js') }}" defer></script>
 </body>
 </html>
