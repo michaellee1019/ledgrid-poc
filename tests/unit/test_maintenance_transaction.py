@@ -355,6 +355,39 @@ class MaintenanceLeaseTests(unittest.TestCase):
         self.assertGreater(manager._run_generation, 7)
         self.assertEqual(len(controller.idle), 1)
 
+    def test_failed_pending_future_still_enters_safe_idle_once_after_revocation(self):
+        controller = _Controller()
+        manager = _manager(controller)
+        failed = Future()
+        failed.set_exception(RuntimeError("normal presentation disconnected"))
+        manager._set_maintenance_pending_presentation(failed)
+        stalled = threading.Event()
+        release = threading.Event()
+
+        def stalled_renderer():
+            stalled.set()
+            release.wait(1)
+
+        renderer = threading.Thread(target=stalled_renderer)
+        renderer.start()
+        self.assertTrue(stalled.wait(1))
+        manager.animation_thread = renderer
+        with mock.patch(
+            "animation.core.manager.MAINTENANCE_PAUSE_ACK_TIMEOUT_SECONDS", 0.05
+        ), self.assertRaisesRegex(RuntimeError, "pending presentation failed"):
+            manager.run_maintenance_transaction(
+                MaintenanceRequest.from_mapping(_command()), authority_digest=AUTHORITY,
+                sleep=lambda _seconds: None,
+            )
+        release.set()
+        renderer.join(1)
+        self.assertEqual(len(controller.idle), 1)
+        self.assertIsNone(manager._maintenance_pending_presentation)
+        self.assertTrue(manager.stop_event.is_set())
+        calls_before_late_present = list(controller.idle)
+        manager._present_frame([(9, 9, 9)], None, False, True)
+        self.assertEqual(controller.idle, calls_before_late_present)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

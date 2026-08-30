@@ -4770,8 +4770,10 @@ class AnimationManager:
         if pending_present is not None:
             # The transaction has not acquired the I/O/lease lock yet, so an
             # already submitted frame can complete here without deadlocking.
-            pending_present.result()
-            self._clear_maintenance_pending_presentation(pending_present)
+            try:
+                pending_present.result()
+            finally:
+                self._clear_maintenance_pending_presentation(pending_present)
             pending_present = None
         with condition:
             self._maintenance_pause_acknowledged = True
@@ -4865,18 +4867,37 @@ class AnimationManager:
                     self.is_running = capture["is_running"]
                     return {"receipt": receipt, "restore_receipt": restore_receipt}
             except BaseException as exc:
+                drain_error = None
                 try:
                     # The lease makes a pending normal presentation drain
                     # before black is output; force-safe-idle makes any late
                     # submission a no-op after this point.
                     self._drain_maintenance_pending_presentation()
+                except BaseException as drain_exc:
+                    # A completed failed future is still fully drained.  Keep
+                    # its error for the terminal diagnostic, but never let it
+                    # bypass the physical safe-idle attempt below.
+                    drain_error = drain_exc
+                try:
                     with self._maintenance_guard(), self._presentation_io_guard():
                         self._maintenance_safe_idle()
                 except BaseException as idle_exc:
+                    drain_detail = (
+                        ""
+                        if drain_error is None
+                        else f"; pending presentation failed ({drain_error})"
+                    )
                     raise MaintenanceRunError(
-                        f"maintenance failed ({exc}); safe idle also failed ({idle_exc})"
+                        f"maintenance failed ({exc}){drain_detail}; safe idle also failed ({idle_exc})"
                     ) from exc
-                raise MaintenanceRunError(f"maintenance failed; entered safe idle: {exc}") from exc
+                drain_detail = (
+                    ""
+                    if drain_error is None
+                    else f"; pending presentation failed ({drain_error})"
+                )
+                raise MaintenanceRunError(
+                    f"maintenance failed{drain_detail}; entered safe idle: {exc}"
+                ) from exc
             finally:
                 if pause_requested:
                     self._release_maintenance_pause()
